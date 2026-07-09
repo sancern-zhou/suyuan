@@ -12,6 +12,31 @@ from datetime import datetime
 logger = structlog.get_logger()
 
 
+CITY_NAME_SUFFIXES = ("市", "地区", "自治州", "盟")
+
+
+def normalize_city_names(cities: List[str]) -> List[str]:
+    """Expand short city names to match full names stored in XcAiDb."""
+    normalized = []
+    seen = set()
+
+    for city in cities:
+        city_name = city.strip()
+        if not city_name:
+            continue
+
+        candidates = [city_name]
+        if not city_name.endswith(CITY_NAME_SUFFIXES):
+            candidates.append(f"{city_name}市")
+
+        for candidate in candidates:
+            if candidate not in seen:
+                normalized.append(candidate)
+                seen.add(candidate)
+
+    return normalized
+
+
 class SQLServerClient:
     """SQL Server客户端（XcAiDb数据库）"""
 
@@ -76,8 +101,9 @@ class SQLServerClient:
 
         try:
             # 构建参数化SQL
-            city_placeholders = ','.join(['?' for _ in cities])
-            params = cities + [start_time, end_time]
+            query_cities = normalize_city_names(cities)
+            city_placeholders = ','.join(['?' for _ in query_cities])
+            params = query_cities + [start_time, end_time]
 
             if table == "CityAQIPublishHistory":
                 sql = f"""
@@ -131,7 +157,7 @@ class SQLServerClient:
                 "sql_server_query_success",
                 table=table,
                 record_count=len(records),
-                cities_queried=cities
+                cities_queried=query_cities
             )
 
             return records

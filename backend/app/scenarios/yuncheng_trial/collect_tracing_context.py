@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from app.scenarios.yuncheng_trial.config import YUNCHENG_TRIAL_CONFIG
+from app.scenarios.yuncheng_trial.fire_hotspot_assets import build_fire_hotspot_summary, render_fire_hotspot_map
 
 REQUIRED_ASSETS: dict[str, str] = {
     "target_city_pollutants": "target_city_pollutants.json",
@@ -17,12 +18,42 @@ REQUIRED_ASSETS: dict[str, str] = {
     "trajectory_image": "trajectory.png",
     "hourly_wind_field_image": "wind_field.png",
     "precipitation_forecast_image": "precipitation_forecast.png",
+    "wind_forecast_24h_image": "wind_forecast_024.png",
+    "wind_forecast_48h_image": "wind_forecast_048.png",
+    "wind_forecast_72h_image": "wind_forecast_072.png",
+    "precipitation_forecast_24h_image": "precipitation_forecast_024.png",
+    "precipitation_forecast_48h_image": "precipitation_forecast_048.png",
+    "precipitation_forecast_72h_image": "precipitation_forecast_072.png",
     "national_max_temperature_forecast_image": "national_tmax_forecast.png",
+    "national_min_temperature_forecast_image": "national_tmin_forecast.png",
+    "visibility_image": "visibility.png",
+    "rainfall_24h_image": "rainfall_24h.png",
+    "radar_mosaic_image": "radar_mosaic.png",
+    "radar_composite_reflectivity_image": "radar_composite_reflectivity_003.png",
+    "precipitable_water_image": "precipitable_water_000.png",
+    "hourly_precipitation_forecast_image": "hourly_precipitation_forecast.png",
+    "fire_hotspots": "fire_hotspots.json",
+    "fire_hotspots_summary": "fire_hotspots_summary.json",
+    "fire_hotspots_map_image": "fire_hotspots_map.png",
     "forecast_meteorology": "forecast_meteorology.json",
-    "air_quality_5day_forecast": "air_quality_5day_forecast.json",
+    "air_quality_24h_forecast": "air_quality_24h_forecast.json",
 }
 
 ToolRunner = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+_SIMPLE_CONTEXT_DATA: dict[str, Any] = {}
+
+AIR_QUALITY_FORECAST_CITY_CODE = "140800"
+AIR_QUALITY_FORECAST_TABLE = "dbo.OpenMeteoAirQualityForecast72h"
+AIR_QUALITY_FORECAST_BASE_FIELDS = ["forecast_time", "city_name", "city_code", "aqi", "primary_pollutant"]
+AIR_QUALITY_FORECAST_POLLUTANT_ORDER = ["pm25", "pm10", "o3", "no2", "co"]
+AIR_QUALITY_FORECAST_THRESHOLDS = {
+    "pm25": YUNCHENG_TRIAL_CONFIG.pm25_watch_level,
+    "pm10": YUNCHENG_TRIAL_CONFIG.pm10_watch_level,
+    "o3": YUNCHENG_TRIAL_CONFIG.o3_watch_level,
+    "no2": YUNCHENG_TRIAL_CONFIG.no2_watch_level,
+    "co": YUNCHENG_TRIAL_CONFIG.co_watch_level,
+}
 
 
 def _parse_time(value: str) -> datetime:
@@ -54,7 +85,7 @@ def build_context_manifest(alert: dict[str, Any]) -> dict[str, Any]:
             "end": _format_time(end),
         },
         "assets": dict(REQUIRED_ASSETS),
-        "asset_requests": _build_asset_requests(start=start, end=end),
+        "asset_requests": _build_asset_requests(start=start, end=end, alert=alert),
         "missing_assets": [],
         "fetch_errors": [],
         "suggested_evidence_gaps": [],
@@ -66,9 +97,14 @@ def build_context_manifest(alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_asset_requests(start: datetime, end: datetime) -> dict[str, dict[str, Any]]:
-    date_text = end.strftime("%Y%m%d")
-    wind_hour = min(max(end.hour, 0), 7)
+def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    wind_date, wind_hour = _platform_hourly_wind_slot(end)
+    visibility_date, visibility_hour = _platform_visibility_slot(end)
+    rainfall_date, rainfall_hour = _platform_rainfall_24h_slot(end)
+    radar_date, radar_time = _platform_radar_mosaic_slot(end)
+    precip_date, precip_forecast_hour = _platform_precip_forecast_slot(end)
+    forecast_image_date = _platform_forecast_image_run_date(end)
+    fire_start = end - timedelta(hours=6)
     return {
         "target_city_pollutants": {
             "kind": "json",
@@ -88,12 +124,14 @@ def _build_asset_requests(start: datetime, end: datetime) -> dict[str, dict[str,
         },
         "meteorology_history": {
             "kind": "json",
-            "tool": "get_weather_data",
-            "data_type": "era5",
+            "tool": "get_weather_forecast",
             "lat": YUNCHENG_TRIAL_CONFIG.lat,
             "lon": YUNCHENG_TRIAL_CONFIG.lon,
-            "start_time": _format_time(start),
-            "end_time": _format_time(end),
+            "location_name": YUNCHENG_TRIAL_CONFIG.city,
+            "forecast_days": 1,
+            "past_days": 1,
+            "hourly": True,
+            "daily": False,
         },
         "trajectory_analysis": {
             "kind": "trajectory_analysis",
@@ -113,24 +151,128 @@ def _build_asset_requests(start: datetime, end: datetime) -> dict[str, dict[str,
             "kind": "image",
             "tool": "get_platform_weather_image",
             "product": "hourly_wind_field",
-            "date": date_text,
-            "time": f"{wind_hour:02d}",
+            "date": wind_date,
+            "time": wind_hour,
             "download": True,
         },
         "precipitation_forecast_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
             "product": "***REMOVED***",
-            "date": date_text,
+            "date": precip_date,
+            "time": precip_forecast_hour,
+            "download": True,
+        },
+        "wind_forecast_24h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "***REMOVED***",
+            "date": forecast_image_date,
             "time": "024",
+            "download": True,
+        },
+        "wind_forecast_48h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "***REMOVED***",
+            "date": forecast_image_date,
+            "time": "048",
+            "download": True,
+        },
+        "wind_forecast_72h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "***REMOVED***",
+            "date": forecast_image_date,
+            "time": "072",
+            "download": True,
+        },
+        "precipitation_forecast_24h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "***REMOVED***",
+            "date": forecast_image_date,
+            "time": "024",
+            "download": True,
+        },
+        "precipitation_forecast_48h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "***REMOVED***",
+            "date": forecast_image_date,
+            "time": "048",
+            "download": True,
+        },
+        "precipitation_forecast_72h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "***REMOVED***",
+            "date": forecast_image_date,
+            "time": "072",
             "download": True,
         },
         "national_max_temperature_forecast_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
             "product": "national_max_temperature_forecast",
-            "date": date_text,
+            "date": forecast_image_date,
             "time": "024",
+            "download": True,
+        },
+        "national_min_temperature_forecast_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "national_min_temperature_forecast",
+            "date": forecast_image_date,
+            "time": "024",
+            "download": True,
+        },
+        "visibility_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "visibility",
+            "date": visibility_date,
+            "time": visibility_hour,
+            "download": True,
+        },
+        "rainfall_24h_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "rainfall_24h",
+            "date": rainfall_date,
+            "time": rainfall_hour,
+            "download": True,
+        },
+        "radar_mosaic_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "radar_mosaic",
+            "date": radar_date,
+            "time": radar_time,
+            "download": True,
+        },
+        "radar_composite_reflectivity_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "radar_composite_reflectivity",
+            "date": forecast_image_date,
+            "time": "003",
+            "download": True,
+        },
+        "precipitable_water_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "precipitable_water",
+            "date": forecast_image_date,
+            "time": "000",
+            "download": True,
+        },
+        "hourly_precipitation_forecast_image": {
+            "kind": "image",
+            "tool": "get_platform_weather_image",
+            "product": "hourly_precip_forecast",
+            "date": forecast_image_date,
+            "time": _platform_hourly_precip_forecast_time(end),
             "download": True,
         },
         "forecast_meteorology": {
@@ -144,14 +286,149 @@ def _build_asset_requests(start: datetime, end: datetime) -> dict[str, dict[str,
             "hourly": True,
             "daily": True,
         },
-        "air_quality_5day_forecast": {
+        "fire_hotspots": {
+            "kind": "json",
+            "tool": "get_fire_hotspots",
+            "region": {
+                "min_lat": 33.5,
+                "max_lat": 36.6,
+                "min_lon": 109.3,
+                "max_lon": 112.7,
+            },
+            "start_time": _format_time(fire_start),
+            "end_time": _format_time(end),
+            "min_confidence": 50,
+        },
+        "fire_hotspots_summary": {
+            "kind": "sidecar",
+            "source_asset": "fire_hotspots",
+        },
+        "fire_hotspots_map_image": {
+            "kind": "sidecar",
+            "source_asset": "fire_hotspots",
+        },
+        "air_quality_24h_forecast": {
             "kind": "json",
             "tool": "execute_sql_query",
-            "purpose": "WeatherForecast7Day future 5-day air quality forecast",
+            "purpose": "OpenMeteoAirQualityForecast72h future 24-hour AQI and triggered/exceeded pollutant forecast",
             "city": YUNCHENG_TRIAL_CONFIG.city,
-            "days": 5,
+            "city_code": AIR_QUALITY_FORECAST_CITY_CODE,
+            "start_time": _format_time(end),
+            "end_time": _format_time(end + timedelta(hours=24)),
+            "triggered_pollutants": _triggered_pollutants_from_alert(alert),
+            "pollutant_thresholds": dict(AIR_QUALITY_FORECAST_THRESHOLDS),
+            "sql": _build_air_quality_24h_forecast_sql(
+                city_code=AIR_QUALITY_FORECAST_CITY_CODE,
+                start_time=end,
+                end_time=end + timedelta(hours=24),
+            ),
         },
     }
+
+
+def _build_air_quality_24h_forecast_sql(city_code: str, start_time: datetime, end_time: datetime) -> str:
+    return (
+        "SELECT forecast_time, city_name, city_code, aqi, primary_pollutant, "
+        "pm25, pm10, o3, no2, co "
+        f"FROM {AIR_QUALITY_FORECAST_TABLE} "
+        f"WHERE city_code = N'{city_code}' "
+        f"AND forecast_time > '{_format_time(start_time)}' "
+        f"AND forecast_time <= '{_format_time(end_time)}' "
+        "ORDER BY forecast_time"
+    )
+
+
+def _triggered_pollutants_from_alert(alert: dict[str, Any]) -> list[str]:
+    pollutants: list[str] = []
+    for hit in alert.get("rule_hits") or []:
+        if not isinstance(hit, dict):
+            continue
+        pollutant = _pollutant_from_rule_id(str(hit.get("rule_id") or ""))
+        if pollutant and pollutant not in pollutants:
+            pollutants.append(pollutant)
+
+    target_pollutant = _normalize_forecast_pollutant(alert.get("target_pollutant"))
+    if target_pollutant and target_pollutant not in pollutants:
+        pollutants.append(target_pollutant)
+
+    return pollutants
+
+
+def _pollutant_from_rule_id(rule_id: str) -> str | None:
+    if rule_id.startswith("pm25"):
+        return "pm25"
+    if rule_id.startswith("pm10"):
+        return "pm10"
+    if rule_id.startswith("o3"):
+        return "o3"
+    if rule_id.startswith("no2"):
+        return "no2"
+    if rule_id.startswith("co"):
+        return "co"
+    return None
+
+
+def _normalize_forecast_pollutant(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower().replace(".", "").replace("_", "")
+    aliases = {
+        "pm25": "pm25",
+        "pm10": "pm10",
+        "o3": "o3",
+        "no2": "no2",
+        "co": "co",
+    }
+    return aliases.get(normalized)
+
+
+def _platform_hourly_wind_slot(alert_time: datetime) -> tuple[str, str]:
+    event_utc = alert_time - timedelta(hours=8)
+    platform_hour = min(max(event_utc.hour, 0), 7)
+    return event_utc.strftime("%Y%m%d"), f"{platform_hour:02d}"
+
+
+def _platform_visibility_slot(alert_time: datetime) -> tuple[str, str]:
+    event_utc = alert_time - timedelta(hours=8)
+    return event_utc.strftime("%Y%m%d"), f"{event_utc.hour:02d}"
+
+
+def _platform_rainfall_24h_slot(alert_time: datetime) -> tuple[str, str]:
+    event_utc = alert_time - timedelta(hours=8)
+    for hour in (12, 6, 0):
+        if event_utc.hour >= hour:
+            return event_utc.strftime("%Y%m%d"), f"{hour:02d}"
+    previous_day = event_utc - timedelta(days=1)
+    return previous_day.strftime("%Y%m%d"), "12"
+
+
+def _platform_radar_mosaic_slot(alert_time: datetime) -> tuple[str, str]:
+    event_utc = alert_time - timedelta(hours=8)
+    radar_time = event_utc.replace(second=0, microsecond=0)
+    radar_time -= timedelta(minutes=radar_time.minute % 6)
+    if radar_time.hour < 8:
+        radar_time = (event_utc - timedelta(days=1)).replace(hour=23, minute=36, second=0, microsecond=0)
+    elif radar_time.hour == 23 and radar_time.minute > 36:
+        radar_time = radar_time.replace(minute=36)
+    return radar_time.strftime("%Y%m%d"), radar_time.strftime("%H:%M")
+
+
+def _platform_precip_forecast_slot(alert_time: datetime) -> tuple[str, str]:
+    event_utc = alert_time - timedelta(hours=8)
+    forecast_hour = 24 + event_utc.hour
+    return _platform_forecast_image_run_date(alert_time), f"{forecast_hour:03d}"
+
+
+def _platform_hourly_precip_forecast_time(alert_time: datetime) -> str:
+    event_utc = alert_time - timedelta(hours=8)
+    for forecast_hour in (6, 12, 18, 24):
+        if event_utc.hour <= forecast_hour:
+            return f"{forecast_hour:02d}"
+    return "24"
+
+
+def _platform_forecast_image_run_date(alert_time: datetime) -> str:
+    event_utc = alert_time - timedelta(hours=8)
+    forecast_run = event_utc - timedelta(days=1)
+    return forecast_run.strftime("%Y%m%d")
 
 
 def create_tool_request(manifest: dict[str, Any], asset_name: str) -> dict[str, Any]:
@@ -241,10 +518,12 @@ class SimpleToolContext:
         return self
 
     def save_data(self, data, schema, metadata=None):
-        return f"yuncheng_trial_{schema}:{datetime.now().strftime('%H%M%S%f')}"
+        data_id = f"yuncheng_trial_{schema}:{datetime.now().strftime('%H%M%S%f')}"
+        _SIMPLE_CONTEXT_DATA[data_id] = data
+        return data_id
 
     def get_data(self, data_id):
-        return None
+        return _SIMPLE_CONTEXT_DATA.get(data_id)
 
 
 async def default_tool_runner(asset_name: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -309,23 +588,24 @@ async def default_tool_runner(asset_name: str, request: dict[str, Any]) -> dict[
                 hourly=request["hourly"],
                 daily=request["daily"],
             )
+        if tool_name == "get_fire_hotspots":
+            from app.tools.query.get_fire_hotspots import GetFireHotspotsTool
+
+            return await GetFireHotspotsTool().execute(
+                region=request["region"],
+                start_time=request["start_time"],
+                end_time=request["end_time"],
+                min_confidence=request.get("min_confidence", 50),
+            )
         if tool_name == "execute_sql_query":
             from app.tools.query.execute_sql_query.tool import ExecuteSQLQueryTool
 
-            city = str(request["city"]).replace("'", "''")
-            sql = (
-                "SELECT TOP 5 TimePoint, cityname, MinAqi, MaxAqi, MaxPollution, "
-                "WeatherCondition, Temperature, WindLevel, WindDirection "
-                "FROM WeatherForecast7Day "
-                f"WHERE cityname = N'{city}' "
-                "AND TimePoint IS NOT NULL "
-                "AND UpdateDate = ("
-                "SELECT MAX(UpdateDate) FROM WeatherForecast7Day "
-                f"WHERE cityname = N'{city}' AND TimePoint IS NOT NULL"
-                ") "
-                "ORDER BY TimePoint"
+            return await ExecuteSQLQueryTool().execute(
+                context=context,
+                sql=request["sql"],
+                database=request.get("database", "XcAiDb"),
+                limit=request.get("limit", 100),
             )
-            return await ExecuteSQLQueryTool().execute(context=context, sql=sql, database="XcAiDb", limit=5)
     except Exception as exc:
         return {"success": False, "error": str(exc)}
     return {"success": False, "error": f"Unsupported tool: {tool_name}"}
@@ -335,6 +615,7 @@ async def collect_required_assets(
     manifest: dict[str, Any],
     output_dir: Path,
     tool_runner: ToolRunner,
+    data_context: Any | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     requests = manifest.get("asset_requests") or {}
@@ -370,11 +651,20 @@ async def collect_required_assets(
                 continue
             target_path.write_bytes(content)
         else:
-            payload = result.get("data", result)
+            payload = _resolve_json_payload(result, data_context=data_context)
+            if asset_name == "air_quality_24h_forecast":
+                payload = create_air_quality_24h_forecast_payload(result, request, data_context=data_context)
             target_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
                 encoding="utf-8",
             )
+            if asset_name == "fire_hotspots":
+                _write_fire_hotspot_sidecars(
+                    manifest=manifest,
+                    payload=payload,
+                    output_dir=output_dir,
+                    request=request,
+                )
 
     manifest_path = output_dir / "tracing_context_manifest.json"
     manifest_path.write_text(
@@ -382,6 +672,139 @@ async def collect_required_assets(
         encoding="utf-8",
     )
     return manifest_path
+
+
+def _write_fire_hotspot_sidecars(
+    *,
+    manifest: dict[str, Any],
+    payload: Any,
+    output_dir: Path,
+    request: dict[str, Any],
+) -> None:
+    if not isinstance(payload, dict):
+        _record_missing(manifest, "fire_hotspots_summary", "fire hotspot payload is not a JSON object")
+        _record_missing(manifest, "fire_hotspots_map_image", "fire hotspot payload is not a JSON object")
+        return
+    try:
+        alert_time = _parse_time(str(request["end_time"]))
+        summary = build_fire_hotspot_summary(payload, alert_time=alert_time)
+        map_summary = build_fire_hotspot_summary(payload, alert_time=alert_time, max_hotspots=10_000)
+        summary_filename = manifest.get("assets", {}).get("fire_hotspots_summary", "fire_hotspots_summary.json")
+        map_filename = manifest.get("assets", {}).get("fire_hotspots_map_image", "fire_hotspots_map.png")
+        (output_dir / summary_filename).write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
+        render_fire_hotspot_map(map_summary, output_dir / map_filename, bbox=request["region"])
+    except Exception as exc:
+        _record_missing(manifest, "fire_hotspots_summary", str(exc))
+        _record_missing(manifest, "fire_hotspots_map_image", str(exc))
+
+
+def create_air_quality_24h_forecast_payload(
+    result: dict[str, Any],
+    request: dict[str, Any],
+    data_context: Any | None = None,
+) -> dict[str, Any]:
+    payload = _resolve_json_payload(result, data_context=data_context)
+    rows = _extract_forecast_rows(payload)
+    threshold_exceeded = _threshold_exceeded_pollutants(rows, request.get("pollutant_thresholds") or {})
+    triggered = [
+        pollutant
+        for pollutant in request.get("triggered_pollutants") or []
+        if pollutant in AIR_QUALITY_FORECAST_POLLUTANT_ORDER
+    ]
+    selected_pollutants = []
+    for pollutant in triggered + threshold_exceeded:
+        if pollutant in AIR_QUALITY_FORECAST_POLLUTANT_ORDER and pollutant not in selected_pollutants:
+            selected_pollutants.append(pollutant)
+
+    return {
+        "source_table": AIR_QUALITY_FORECAST_TABLE,
+        "city": request.get("city"),
+        "city_code": request.get("city_code"),
+        "forecast_window": {
+            "start_exclusive": request.get("start_time"),
+            "end_inclusive": request.get("end_time"),
+            "hours": 24,
+        },
+        "base_fields": list(AIR_QUALITY_FORECAST_BASE_FIELDS),
+        "pollutant_fields": selected_pollutants,
+        "selection_basis": {
+            "triggered_pollutants": triggered,
+            "threshold_exceeded_pollutants": threshold_exceeded,
+            "pollutant_thresholds": request.get("pollutant_thresholds") or {},
+        },
+        "rows": [_select_forecast_row_fields(row, selected_pollutants) for row in rows],
+    }
+
+
+def _extract_forecast_rows(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        for key in ("records", "rows", "result", "data"):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _threshold_exceeded_pollutants(rows: list[dict[str, Any]], thresholds: dict[str, Any]) -> list[str]:
+    exceeded: list[str] = []
+    for pollutant in AIR_QUALITY_FORECAST_POLLUTANT_ORDER:
+        threshold = _as_float(thresholds.get(pollutant))
+        if threshold is None:
+            continue
+        if any((_as_float(row.get(pollutant)) or 0) >= threshold for row in rows):
+            exceeded.append(pollutant)
+    return exceeded
+
+
+def _select_forecast_row_fields(row: dict[str, Any], pollutants: list[str]) -> dict[str, Any]:
+    selected: dict[str, Any] = {}
+    for field in AIR_QUALITY_FORECAST_BASE_FIELDS + pollutants:
+        if field in row:
+            selected[field] = row[field]
+    return selected
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_json_payload(result: dict[str, Any], data_context: Any | None = None) -> Any:
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    data_id = metadata.get("data_id")
+    total_records = metadata.get("total_records")
+    returned_records = metadata.get("returned_records")
+    if data_id and _is_preview_payload(total_records, returned_records):
+        full_data = _get_context_data(data_context, str(data_id))
+        if full_data is not None:
+            return full_data
+    return result.get("data", result)
+
+
+def _is_preview_payload(total_records: Any, returned_records: Any) -> bool:
+    try:
+        return int(total_records) > int(returned_records)
+    except (TypeError, ValueError):
+        return False
+
+
+def _get_context_data(data_context: Any | None, data_id: str) -> Any:
+    for context in (data_context, SimpleToolContext()):
+        if context is None or not hasattr(context, "get_data"):
+            continue
+        data = context.get_data(data_id)
+        if data is not None:
+            return data
+    return None
 
 
 def _record_missing(manifest: dict[str, Any], asset_name: str, reason: str) -> None:
@@ -406,13 +829,13 @@ async def collect_from_alert_file(alert_path: Path, output_dir: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect Yuncheng alert tracing context.")
-    parser.add_argument("--latest-alert", required=True)
+    parser.add_argument("--alert-json", required=True)
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
 
     manifest_path = asyncio.run(
         collect_from_alert_file(
-            alert_path=Path(args.latest_alert),
+            alert_path=Path(args.alert_json),
             output_dir=Path(args.output_dir),
         )
     )

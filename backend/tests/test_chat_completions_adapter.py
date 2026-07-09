@@ -8,6 +8,7 @@ from app.services.chat_completions_adapter import (
     convert_chat_response_to_anthropic,
     map_finish_reason,
 )
+from app.services.llm_service import LLMService
 
 
 def test_convert_anthropic_tools_to_chat_tools():
@@ -73,7 +74,7 @@ def test_convert_anthropic_messages_to_chat_messages_with_tool_chain():
         {"role": "user", "content": "查广州天气"},
         {
             "role": "assistant",
-            "content": None,
+            "content": "",
             "tool_calls": [
                 {
                     "id": "toolu_1",
@@ -87,6 +88,70 @@ def test_convert_anthropic_messages_to_chat_messages_with_tool_chain():
         },
         {"role": "tool", "tool_call_id": "toolu_1", "content": "晴，28度"},
     ]
+
+
+def test_convert_anthropic_messages_to_chat_preserves_image_url_blocks():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "描述这张图片"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "url": "https://example.com/image.jpg",
+                    },
+                },
+            ],
+        }
+    ]
+
+    converted = convert_anthropic_messages_to_chat(messages)
+
+    assert converted == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "描述这张图片"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/image.jpg"},
+                },
+            ],
+        }
+    ]
+
+
+def test_chat_completions_payload_omits_false_stream_and_disables_qwen_thinking():
+    service = object.__new__(LLMService)
+    service.provider = "qwen"
+    service.model = "qwen-plus"
+
+    payload = service._build_chat_completions_payload(
+        messages=[{"role": "user", "content": "你好"}],
+        tools=None,
+        max_tokens=None,
+        temperature=0.3,
+        system=None,
+        stream=False,
+    )
+
+    assert "stream" not in payload
+    assert payload["enable_thinking"] is False
+
+
+def test_get_request_config_normalizes_trailing_slash_base_url():
+    service = object.__new__(LLMService)
+    service.provider = "agnes"
+    service.model = "agnes-2.0-flash"
+    service.base_url = "https://example.test/v1/"
+    service.api_key = "test-key"
+
+    url, headers = service._get_request_config()
+
+    assert url == "https://example.test/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer test-key"
 
 
 def test_convert_chat_response_to_anthropic_content_blocks():
@@ -236,6 +301,72 @@ def test_stream_adapter_converts_reasoning_text_and_tool_call_events():
         },
     }
     assert events[-1] == {"type": "message_stop", "data": {}}
+
+
+def test_stream_adapter_waits_for_tool_call_finish_before_emitting_tool_use():
+    adapter = ChatCompletionsStreamAdapter(model="agnes-2.0-flash")
+
+    first_events = adapter.feed_chunk(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"path"',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert all(event["type"] != "content_block_start" for event in first_events)
+
+    adapter.feed_chunk(
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {
+                                    "arguments": ':"backend/AGENTS.md"}',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    )
+
+    events = adapter.finish()
+
+    assert any(
+        event == {
+            "type": "content_block_start",
+            "data": {
+                "index": 0,
+                "block": {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": {"path": "backend/AGENTS.md"},
+                },
+            },
+        }
+        for event in events
+    )
 
 
 def test_stream_adapter_does_not_treat_pseudo_tool_markup_as_tool_call():

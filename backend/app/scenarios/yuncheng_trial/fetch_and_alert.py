@@ -8,6 +8,7 @@ from typing import Any
 
 from app.scenarios.yuncheng_trial.config import YUNCHENG_TRIAL_CONFIG
 from app.scenarios.yuncheng_trial.models import AlertState, RuleHit
+from app.scenarios.yuncheng_trial.paths import build_evidence_run_paths
 from app.tools.query.query_xcai_city_history.sql_client import get_sql_server_client
 
 
@@ -192,8 +193,17 @@ def _target_pollutant(rule_id: str) -> str:
     return "O3"
 
 
-def write_latest_alert(registry_root: Path, state: dict[str, Any]) -> Path:
-    output_path = registry_root / "scenarios" / "yuncheng_trial" / "latest_alert.json"
+def _parse_checked_at(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.now().astimezone()
+
+
+def write_alert_evidence(registry_root: Path, state: dict[str, Any]) -> Path:
+    paths = build_evidence_run_paths(registry_root, _parse_checked_at(state.get("checked_at")))
+    output_path = paths.alert_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
@@ -262,8 +272,8 @@ def main() -> int:
             hours=args.hours,
         )
     state = evaluate_alert_rules(rows)
-    output_path = write_latest_alert(Path(args.registry_root), state)
-    print(f"LATEST_ALERT:{output_path}")
+    output_path = write_alert_evidence(Path(args.registry_root), state)
+    print(f"ALERT_EVIDENCE:{output_path}")
     return 0
 
 

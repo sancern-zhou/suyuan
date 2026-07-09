@@ -348,6 +348,44 @@ async def test_long_labels_are_rendered_as_horizontal_bar_with_warning():
 
 
 @pytest.mark.asyncio
+async def test_crowded_categorical_bar_labels_are_rendered_horizontally():
+    result = await CreateReportChartTool().execute(
+        chart_id="crowded_station_bar_case",
+        chart_type="bar",
+        title="深圳市各站点O₃峰值浓度排名（7月5日16-20时）",
+        data={
+            "labels": [
+                "观澜",
+                "新湖街道",
+                "洪湖",
+                "西乡",
+                "南海子站",
+                "南山",
+                "南油",
+                "莲花山",
+                "田心",
+                "盐田",
+                "华侨城",
+                "坪山",
+                "南澳",
+                "葵涌",
+                "梅沙",
+                "西丽",
+                "荔园",
+                "龙岗",
+            ],
+            "values": [65, 64, 64, 60, 60, 60, 59, 59, 59, 58, 57, 57, 56, 55, 53, 53, 51, 44],
+        },
+        output_context="word",
+    )
+
+    assert result["success"] is True
+    assert result["data"]["metadata"]["applied_chart_type"] == "horizontal_bar"
+    assert "crowded_categorical_labels_horizontal_bar" in result["data"]["layout_warnings"]
+    assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+@pytest.mark.asyncio
 async def test_bar_chart_accepts_categories_with_single_series_data():
     result = await CreateReportChartTool().execute(
         chart_id="single_series_bar_case",

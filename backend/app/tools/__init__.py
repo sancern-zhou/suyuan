@@ -961,9 +961,11 @@ def create_global_tool_registry() -> ToolRegistry:
     try:
         from app.tools.report.report_package.tool import (
             CreateReportPackageTool,
+            RenderReportPackageTool,
             ValidateReportPackageTool,
         )
         registry.register(CreateReportPackageTool(), priority=388)
+        registry.register(RenderReportPackageTool(), priority=389)
         registry.register(ValidateReportPackageTool(), priority=390)
         logger.info("tool_loaded", tool="report_package_tools")
     except ImportError as e:

@@ -466,8 +466,15 @@ class AgentRuntime:
             return
 
         self._ensure_user_message_written(state)
-        messages = [item.content for item in items]
-        for content in messages:
+        messages: List[str] = []
+        attachment_count = 0
+        for item in items:
+            content = item.content
+            if item.attachments:
+                state.pending_attachments.extend(item.attachments)
+                attachment_count += len(item.attachments)
+                content = self._append_attachment_summary(content, item.attachments)
+            messages.append(content)
             self.writer.add_user_message(f"【执行中用户补充】{content}")
 
         logger.info(
@@ -475,8 +482,35 @@ class AgentRuntime:
             session_id=state.session_id,
             run_id=state.run_id,
             count=len(messages),
+            attachment_count=attachment_count,
         )
         yield self.events.steering_applied(state, messages)
+
+    @staticmethod
+    def _append_attachment_summary(content: str, attachments: List[Dict[str, Any]]) -> str:
+        if not attachments:
+            return content
+
+        lines = ["", "", "**用户上传的附件**："]
+        for index, attachment in enumerate(attachments, 1):
+            att_type = attachment.get("type") or "file"
+            att_name = attachment.get("name") or "attachment"
+            att_path = (
+                attachment.get("local_path")
+                or attachment.get("path")
+                or attachment.get("url")
+                or attachment.get("signed_url")
+                or ""
+            )
+            att_mime_type = attachment.get("mime_type") or attachment.get("content_type")
+            label = "图片" if att_type == "image" else "文件"
+            lines.append(f"{index}. {label}: {att_name}")
+            if att_path:
+                lines.append(f"   路径: {att_path}")
+            if att_mime_type:
+                lines.append(f"   类型: {att_mime_type}")
+
+        return f"{content}{chr(10).join(lines)}"
 
     async def _build_context(self, state: RunState) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         latest_observation = ""
@@ -841,6 +875,13 @@ class AgentRuntime:
             self._ensure_user_message_written(state)
             self.writer.add_iteration(planner_result.thought, action, observation)
             yield self.events.tool_result(state, "task_guard", observation, True, "task_guard")
+            return
+
+        late_steering_applied = False
+        async for event in self._apply_steering_inputs(state):
+            late_steering_applied = True
+            yield event
+        if late_steering_applied:
             return
 
         self.observation_processor.capture_last_knowledge_sources(state)

@@ -20,6 +20,10 @@ from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
 from app.fetchers.tenders import TenderInformationFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher
 from app.fetchers.yuncheng_trial import YunchengTrialFetcher
+from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
+    OpenMeteoAirQualityForecastFetcher,
+)
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -44,6 +48,8 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(TenderInformationFetcher())  # 招投标信息每日抓取
     scheduler.register(JiningQuickTraceFetcher())  # 济宁市快速溯源报告每日生成
     scheduler.register(YunchengTrialFetcher())  # 运城市驻场试用场景小时数据盯守
+    scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时气象实况
+    scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
 
     return scheduler
 

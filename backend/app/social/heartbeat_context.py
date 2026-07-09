@@ -54,7 +54,6 @@ def build_heartbeat_context_message(
         f"\n执行时间：{executed_at}"
         f"\n心跳会话：{heartbeat_session_id}"
         f"\n摘要：{summary}"
-        "\n如用户追问详情，应优先基于该事件回答；需要完整过程时，可按心跳会话或任务名检索历史运行记录。"
     )
 
     return {

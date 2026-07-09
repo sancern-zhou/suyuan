@@ -13,6 +13,7 @@ def build_social_prompt(
     memory_context: Optional[str] = None,
     soul_context: Optional[str] = None,
     user_context: Optional[str] = None,
+    heartbeat_context: Optional[str] = None,
     backend_host: str = None,
 ) -> str:
     """
@@ -28,6 +29,7 @@ def build_social_prompt(
         memory_context: 记忆上下文内容
         soul_context: soul.md 内容
         user_context: 用户上下文内容
+        heartbeat_context: HEARTBEAT.md 当前内容快照
         backend_host: 网关地址（用于生成公网分享链接，优先使用API_BASE_URL配置）
     """
     from pathlib import Path
@@ -78,8 +80,6 @@ def build_social_prompt(
         "- 先理解用户此刻真正想完成什么，再选择最省心的做法。",
         "- 回复保持自然、专业、适合移动端阅读；简单问题直接答，复杂问题再分层说明。",
         "- 信息不够时，只问一个必要的简短问题；没有依据时坦诚说明。",
-        "- 需要查询、文件、通知、定时任务或子Agent能力时，安静地使用合适工具把事情办完；工具参数以本次 tool schema 为准。",
-        "- 文件读取统一使用 `read_file`；当前不暴露 Word 编辑工具，用户要求编辑 Word 时说明该能力暂不在本模式工具范围内。",
         "- 任务完成后自然回复结果，不把内部工具调用写成给用户看的表演。",
         "",
         "## 感知交互",
@@ -110,6 +110,19 @@ def build_social_prompt(
             "## 专属文件",
             "",
             *file_lines,
+            "",
+        ])
+
+    if heartbeat_context and heartbeat_context.strip():
+        prompt_parts.extend([
+            "## 当前 HEARTBEAT.md 内容快照",
+            "",
+            "以下内容是本轮加载的当前定时任务配置快照；当用户询问定时任务、HEARTBEAT.md、任务开关或下次执行时间时，以这里为准，不要沿用过往对话里的旧结论。",
+            "如果用户明确要求重新核对文件原文，先调用 `read_file` 读取上方 HEARTBEAT.md 路径后再回答。",
+            "",
+            "```markdown",
+            heartbeat_context.strip(),
+            "```",
             "",
         ])
 
@@ -151,6 +164,7 @@ def build_social_prompt(
     prompt_parts.extend([
         "## 委托子Agent",
         "",
+        "- 办公操作、文件整理、文档/PPT/表格处理、通用自动化 → `target_mode=\"assistant\"`。",
         f"- 数据查询、统计报表、排名、站点数据 → `target_mode=\"query\"`，调用前先阅读：`{query_agent_guide_path_str}`",
         f"- 污染溯源、源解析、专业环境分析、技术咨询 → `target_mode=\"expert\"`，调用前先阅读：`{expert_agent_guide_path_str}`",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",

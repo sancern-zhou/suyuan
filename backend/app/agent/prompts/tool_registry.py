@@ -24,7 +24,7 @@ ASSISTANT_TOOL_NAMES = [
     "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
-    "create_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
+    "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
 
     # 编辑
     "write_file", "edit_file", "grep",
@@ -144,7 +144,7 @@ REPORT_TOOL_NAMES = [
     "create_report_chart", "execute_python",
 
     # 报告产物收口
-    "create_report_package", "validate_report_package",
+    "create_report_package", "render_report_package", "validate_report_package",
 ]
 
 # ===== 图表模式工具 =====
@@ -181,7 +181,7 @@ OPS_TOOL_NAMES = [
     "create_diagram_artifact", "create_report_chart", "present_artifact",
 
     # 报告产物收口
-    "create_report_package", "validate_report_package",
+    "create_report_package", "render_report_package", "validate_report_package",
 
     # 子 Agent 复核
     "call_sub_agent",
@@ -218,14 +218,11 @@ SOCIAL_TOOL_NAMES = [
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
 
-    # 数据查询（统一通过 call_sub_agent 调用问数模式）
-    "get_weather_forecast",
-
     # 代码执行和模式互调
     "execute_python", "call_sub_agent",
 
     # 网络搜索
-    "web_search", "web_fetch", "browser",
+    "web_search", "web_fetch",
 
     # 呼吸式特有工具
     "schedule_task", "send_notification", "spawn", "wait_task",

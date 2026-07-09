@@ -77,7 +77,7 @@ class NASAFirmsClient:
         """
         # 确定查询日期
         if date is None:
-            query_date = datetime.now().strftime("%Y-%m-%d")
+            query_date = self._default_query_date()
         else:
             query_date = date
 
@@ -156,6 +156,9 @@ class NASAFirmsClient:
             logger.error("nasa_firms_error", error=str(e), region=region, exc_info=True)
             raise
 
+    def _default_query_date(self) -> str:
+        return datetime.utcnow().strftime("%Y-%m-%d")
+
     async def fetch_fires_by_bbox(
         self,
         min_lat: float,
@@ -213,7 +216,7 @@ class NASAFirmsClient:
                 fire = {
                     "latitude": float(row["latitude"]),
                     "longitude": float(row["longitude"]),
-                    "brightness": float(row["brightness"]),
+                    "brightness": self._float_field(row, "brightness", "bright_ti4"),
                     "scan": float(row.get("scan", 0)),
                     "track": float(row.get("track", 0)),
                     "acq_date": row["acq_date"],
@@ -221,7 +224,7 @@ class NASAFirmsClient:
                     "satellite": row["satellite"],
                     "confidence": self._parse_confidence(row["confidence"]),
                     "version": row.get("version", ""),
-                    "bright_t31": float(row.get("bright_t31", 0)),
+                    "bright_t31": self._float_field(row, "bright_t31", "bright_ti5"),
                     "frp": float(row["frp"]),
                     "daynight": row.get("daynight", "D")
                 }
@@ -232,6 +235,13 @@ class NASAFirmsClient:
         except Exception as e:
             logger.error("nasa_firms_parse_error", error=str(e))
             return []
+
+    def _float_field(self, row: Dict[str, Any], *field_names: str) -> float:
+        for field_name in field_names:
+            value = row.get(field_name)
+            if value not in (None, ""):
+                return float(value)
+        return 0.0
 
     def _parse_confidence(self, confidence_str: str) -> int:
         """
@@ -254,8 +264,11 @@ class NASAFirmsClient:
 
         # VIIRS文本置信度转换
         confidence_map = {
+            "l": 30,
             "low": 30,
+            "n": 70,
             "nominal": 70,
+            "h": 90,
             "high": 90
         }
 

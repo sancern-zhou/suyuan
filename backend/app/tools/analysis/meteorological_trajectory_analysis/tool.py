@@ -17,6 +17,7 @@ API文档: https://www.ready.noaa.gov/READYmetapi.php
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -30,6 +31,74 @@ if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
+
+RECENT_GFS_AVAILABILITY_LAG = timedelta(minutes=90)
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+@dataclass(frozen=True)
+class TrajectoryTiming:
+    requested_start: datetime
+    effective_start: datetime
+    meteo_source: str
+    adjusted: bool
+    reason: str
+
+
+def _floor_to_hour(value: datetime) -> datetime:
+    return value.replace(minute=0, second=0, microsecond=0)
+
+
+def _latest_recent_gfs_start(now: datetime) -> datetime:
+    return _floor_to_hour(now - RECENT_GFS_AVAILABILITY_LAG)
+
+
+def _format_beijing_time(value: datetime) -> str:
+    return value.astimezone(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _resolve_trajectory_timing(
+    requested_start: datetime,
+    now: datetime,
+    direction: str,
+    meteo_source: str,
+) -> TrajectoryTiming:
+    requested_start = requested_start.astimezone(timezone.utc)
+    now = now.astimezone(timezone.utc)
+    time_diff = now - requested_start
+
+    if time_diff.days < 3:
+        effective_start = requested_start
+        reason = "recent_analysis_uses_gfs"
+        if direction.lower() == "backward":
+            latest_available = _latest_recent_gfs_start(now)
+            if requested_start > latest_available:
+                effective_start = latest_available
+                reason = "recent_gfs_data_not_yet_available"
+        return TrajectoryTiming(
+            requested_start=requested_start,
+            effective_start=effective_start,
+            meteo_source="gfs0p25",
+            adjusted=effective_start != requested_start,
+            reason=reason,
+        )
+
+    if time_diff.days < 7:
+        return TrajectoryTiming(
+            requested_start=requested_start,
+            effective_start=requested_start,
+            meteo_source="gfs0p25",
+            adjusted=False,
+            reason="using_gfs_for_3_to_7_day_range",
+        )
+
+    return TrajectoryTiming(
+        requested_start=requested_start,
+        effective_start=requested_start,
+        meteo_source="gdas1",
+        adjusted=False,
+        reason="historical_analysis_uses_gdas1",
+    )
 
 
 class MeteorologicalTrajectoryAnalysisTool(LLMTool):
@@ -60,7 +129,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
 
 参数：
 - lat/lon: 起始位置坐标（受体点）
-- start_time: 起始时间（默认当前时间，UTC）
+- start_time: 起始时间，默认按北京时间理解；无时区字符串如 2026-07-08T00:00:00 表示北京时间
 - hours: 回溯/预测小时数（24-168小时，默认72）
 - heights: 轨迹高度层列表（米AGL，默认[10, 500, 1000]）
 - direction: 轨迹方向（"Backward"反向或"Forward"正向）
@@ -85,7 +154,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "起始时间（ISO 8601格式，默认当前时间UTC）"
+                        "description": "起始时间（ISO 8601格式）。无时区时按北京时间理解；建议面向用户和Agent传北京时间。"
                     },
                     "hours": {
                         "type": "integer",
@@ -177,32 +246,22 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
             else:
                 start_datetime = start_datetime.astimezone(timezone.utc)
 
-            # 根据请求时间自动选择气象数据源
-            now = datetime.now(timezone.utc)
-            time_diff = now - start_datetime
-
-            if time_diff.days < 3:
-                # 近期数据（3天内）：使用GFS，调整到1天前确保数据可用
-                adjusted_time = now - timedelta(days=1)
-                meteo_source = "gfs0p25"
-                logger.info("noaa_using_gfs",
-                           original=start_datetime.isoformat(),
-                           adjusted=adjusted_time.isoformat(),
-                           reason="Recent analysis uses GFS (faster updates)")
-            elif time_diff.days < 7:
-                # 中期数据（3-7天）：使用GFS，保持原时间
-                adjusted_time = start_datetime
-                meteo_source = "gfs0p25"
-                logger.info("noaa_using_gfs",
-                           original=start_datetime.isoformat(),
-                           reason="Using GFS for 3-7 day range")
-            else:
-                # 历史数据（7天+）：使用GDAS1
-                adjusted_time = start_datetime
-                meteo_source = "gdas1"
-                logger.info("noaa_using_gdas1",
-                           original=start_datetime.isoformat(),
-                           reason="Historical analysis uses GDAS1")
+            timing = _resolve_trajectory_timing(
+                requested_start=start_datetime,
+                now=datetime.now(timezone.utc),
+                direction=direction,
+                meteo_source=meteo_source,
+            )
+            adjusted_time = timing.effective_start
+            meteo_source = timing.meteo_source
+            logger.info(
+                "noaa_trajectory_timing_resolved",
+                requested=timing.requested_start.isoformat(),
+                effective=timing.effective_start.isoformat(),
+                adjusted=timing.adjusted,
+                meteo_source=timing.meteo_source,
+                reason=timing.reason,
+            )
 
             logger.info(
                 "noaa_trajectory_analysis_start",
@@ -262,6 +321,12 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                             "lat": lat,
                             "lon": lon,
                             "start_time": adjusted_time.isoformat(),
+                            "requested_start_time": timing.requested_start.isoformat(),
+                            "effective_start_time": timing.effective_start.isoformat(),
+                            "requested_start_time_beijing": _format_beijing_time(timing.requested_start),
+                            "effective_start_time_beijing": _format_beijing_time(timing.effective_start),
+                            "trajectory_time_adjusted": timing.adjusted,
+                            "trajectory_time_adjustment_reason": timing.reason,
                             "hours": hours,
                             "heights": heights,
                             "direction": direction,
@@ -407,6 +472,12 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                         "lat": lat,
                         "lon": lon,
                         "start_time": adjusted_time.isoformat(),
+                        "requested_start_time": timing.requested_start.isoformat(),
+                        "effective_start_time": timing.effective_start.isoformat(),
+                        "requested_start_time_beijing": _format_beijing_time(timing.requested_start),
+                        "effective_start_time_beijing": _format_beijing_time(timing.effective_start),
+                        "trajectory_time_adjusted": timing.adjusted,
+                        "trajectory_time_adjustment_reason": timing.reason,
                         "hours": hours,
                         "heights": heights,
                         "direction": direction,

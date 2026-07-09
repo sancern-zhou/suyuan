@@ -3,6 +3,7 @@ from datetime import date
 import pytest
 
 from app.fetchers.tenders.tender_information_fetcher import TenderInformationFetcher
+from app.services.tenders.config import DEFAULT_TENDER_KEYWORDS
 from app.services.tenders.llm import TenderLLMClientPool
 from app.services.tenders.models import NoticeType, PipelineRunResult
 
@@ -41,14 +42,9 @@ def test_fetcher_uses_approved_identity_and_schedule():
     fetcher = TenderInformationFetcher()
 
     assert fetcher.name == "tender_information_fetcher"
-    assert fetcher.schedule == "30 6 * * *"
+    assert fetcher.schedule == "30 2 * * *"
     assert "招投标信息" in fetcher.description
-    assert fetcher.config.keywords == [
-        "生态环境局",
-        "环境监测中心",
-        "生态环境厅",
-        "环境监测站",
-    ]
+    assert fetcher.config.keywords == DEFAULT_TENDER_KEYWORDS
     assert fetcher.config.notice_types == [NoticeType.TENDER, NoticeType.WINNING_BID]
 
 
@@ -100,6 +96,28 @@ def test_fetcher_builds_dual_llm_pool_from_settings(monkeypatch):
     assert llm.entries[1].client.model == "agnes-2.0-flash"
 
 
+def test_default_client_receives_qianlima_account_pool_from_settings(monkeypatch):
+    captured_kwargs = {}
+
+    class FakeQianlimaClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.QianlimaClient",
+        FakeQianlimaClient,
+    )
+    monkeypatch.setattr(
+        "app.fetchers.tenders.tender_information_fetcher.settings.qianlima_accounts",
+        "account1:pass1,account2:pass2",
+        raising=False,
+    )
+
+    TenderInformationFetcher()._default_client()
+
+    assert captured_kwargs["accounts"] == "account1:pass1,account2:pass2"
+
+
 @pytest.mark.asyncio
 async def test_disabled_fetcher_skips_pipeline():
     pipeline = FakePipeline(PipelineRunResult())
@@ -140,7 +158,7 @@ async def test_fetcher_runs_pipeline_and_finishes_summary():
 
     assert pipeline.calls == [
         {
-            "keywords": ["生态环境局", "环境监测中心", "生态环境厅", "环境监测站"],
+            "keywords": DEFAULT_TENDER_KEYWORDS,
             "notice_types": [NoticeType.TENDER, NoticeType.WINNING_BID],
             "publish_date": date(2026, 6, 30),
             "max_pages": 0,
@@ -149,7 +167,7 @@ async def test_fetcher_runs_pipeline_and_finishes_summary():
     assert repository.created_runs == [
         (
             date(2026, 6, 30),
-            ["生态环境局", "环境监测中心", "生态环境厅", "环境监测站"],
+            DEFAULT_TENDER_KEYWORDS,
             [NoticeType.TENDER, NoticeType.WINNING_BID],
         )
     ]
