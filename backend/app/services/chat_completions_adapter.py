@@ -52,6 +52,51 @@ def _message_text_from_content(content: Any) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _image_url_block(block: Any) -> Optional[Dict[str, Any]]:
+    if _block_get(block, "type") != "image":
+        return None
+    source = _block_get(block, "source", {}) or {}
+    if not isinstance(source, dict):
+        return None
+
+    if source.get("type") == "url" and source.get("url"):
+        return {
+            "type": "image_url",
+            "image_url": {"url": str(source["url"])},
+        }
+    if source.get("type") == "base64" and source.get("data"):
+        media_type = str(source.get("media_type") or "image/png")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{media_type};base64,{source['data']}",
+            },
+        }
+    return None
+
+
+def _chat_user_content_from_blocks(content: List[Any]) -> str | List[Dict[str, Any]]:
+    parts: List[Dict[str, Any]] = []
+    for block in content:
+        block_type = _block_get(block, "type")
+        if block_type == "text":
+            text = str(_block_get(block, "text", ""))
+            if text:
+                parts.append({"type": "text", "text": text})
+            continue
+        image_url = _image_url_block(block)
+        if image_url:
+            parts.append(image_url)
+
+    if any(part.get("type") == "image_url" for part in parts):
+        return parts
+    return "\n".join(
+        part["text"]
+        for part in parts
+        if part.get("type") == "text" and part.get("text")
+    )
+
+
 def _tool_result_content(block: Any) -> str:
     content = _block_get(block, "content", "")
     if isinstance(content, str):
@@ -106,9 +151,9 @@ def convert_anthropic_messages_to_chat(
                 for block in content
                 if _block_get(block, "type") == "tool_result"
             ]
-            text = _message_text_from_content(content)
-            if text:
-                converted.append({"role": "user", "content": text})
+            user_content = _chat_user_content_from_blocks(content)
+            if user_content:
+                converted.append({"role": "user", "content": user_content})
             for block in tool_result_blocks:
                 converted.append(
                     {
@@ -117,7 +162,7 @@ def convert_anthropic_messages_to_chat(
                         "content": _tool_result_content(block),
                     }
                 )
-            if not text and not tool_result_blocks:
+            if not user_content and not tool_result_blocks:
                 converted.append({"role": "user", "content": ""})
             continue
 
@@ -137,7 +182,7 @@ def convert_anthropic_messages_to_chat(
                         },
                     }
                 )
-            payload: Dict[str, Any] = {"role": "assistant", "content": text or None}
+            payload: Dict[str, Any] = {"role": "assistant", "content": text or ""}
             if tool_calls:
                 payload["tool_calls"] = tool_calls
             converted.append(payload)
@@ -378,7 +423,6 @@ class ChatCompletionsStreamAdapter:
             events.extend(self._emit_text_delta(str(delta["content"])))
         if delta.get("tool_calls"):
             self._accumulate_tool_calls(delta["tool_calls"])
-            events.extend(self._emit_completed_tool_calls())
 
         return events
 

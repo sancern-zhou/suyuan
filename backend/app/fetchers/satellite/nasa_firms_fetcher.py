@@ -3,7 +3,7 @@ NASA FIRMS Fire Hotspot Data Fetcher
 
 定时获取NASA FIRMS火点数据
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
@@ -11,6 +11,13 @@ from app.external_apis.nasa_firms_client import NASAFirmsClient
 from app.db.repositories.satellite_repo import SatelliteRepository
 
 logger = structlog.get_logger()
+
+FIRMS_SATELLITES = [
+    "VIIRS_SNPP_NRT",
+    "VIIRS_NOAA20_NRT",
+    "VIIRS_NOAA21_NRT",
+    "MODIS_NRT",
+]
 
 
 class NASAFirmsFetcher(DataFetcher):
@@ -60,20 +67,32 @@ class NASAFirmsFetcher(DataFetcher):
             logger.info("nasa_firms_fetch_start")
 
             # 1. 获取最近24小时的火点数据
-            # Note: FIRMS数据有3小时延迟，使用24小时窗口确保完整性
-            raw_fires = await self.client.fetch_recent_fires(
-                region=self.china_bbox,
-                satellite="VIIRS_SNPP_NRT",  # 375m高分辨率
-                days=1  # 最近24小时
-            )
+            # Note: FIRMS数据有延迟，不同卫星源可用时间不同；多源采集避免单源空窗。
+            raw_fires = []
+            source_counts: dict[str, int] = {}
+            for satellite in FIRMS_SATELLITES:
+                satellite_fires = await self.client.fetch_recent_fires(
+                    region=self.china_bbox,
+                    satellite=satellite,
+                    days=1,
+                )
+                source_counts[satellite] = len(satellite_fires)
+                raw_fires.extend(satellite_fires)
 
             if not raw_fires:
-                logger.info("nasa_firms_no_data")
-                return
+                logger.info("nasa_firms_no_data", source_counts=source_counts)
+                return {
+                    "fetched": 0,
+                    "cleaned": 0,
+                    "high_confidence": 0,
+                    "saved": 0,
+                    "source_counts": source_counts,
+                }
 
             logger.info(
                 "nasa_firms_data_fetched",
-                total_count=len(raw_fires)
+                total_count=len(raw_fires),
+                source_counts=source_counts,
             )
 
             # 2. 清洗和转换数据
@@ -105,8 +124,22 @@ class NASAFirmsFetcher(DataFetcher):
                     high_confidence=len(high_confidence_fires),
                     saved=saved_count
                 )
+                return {
+                    "fetched": len(raw_fires),
+                    "cleaned": len(cleaned_fires),
+                    "high_confidence": len(high_confidence_fires),
+                    "saved": saved_count,
+                    "source_counts": source_counts,
+                }
             else:
                 logger.info("nasa_firms_no_high_confidence_fires")
+                return {
+                    "fetched": len(raw_fires),
+                    "cleaned": len(cleaned_fires),
+                    "high_confidence": 0,
+                    "saved": 0,
+                    "source_counts": source_counts,
+                }
 
         except Exception as e:
             logger.error(
@@ -199,7 +232,7 @@ class NASAFirmsFetcher(DataFetcher):
         # 组合日期和时间
         datetime_str = f"{date_str} {time_padded[:2]}:{time_padded[2:4]}:00"
 
-        return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+        return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
 
     def _is_valid_coordinate(self, lat: float, lon: float) -> bool:
         """

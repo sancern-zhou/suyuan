@@ -2,7 +2,7 @@
 LLM Service
 
 提供LLM调用服务，支持JSON格式响应解析。
-支持多种LLM provider: deepseek, minimax, openai, qwen, glm
+支持多种LLM provider: deepseek, minimax, openai, agnes, qwen, glm
 """
 import asyncio
 import json
@@ -1001,6 +1001,13 @@ class LLMService:
             "model_env": "MIMO_MODEL",
             "model_default": "mimo-v2.5",
         },
+        "agnes": {
+            "url_env": "AGNES_BASE_URL",
+            "url_default": "https://apihub.agnes-ai.com/v1",
+            "key_env": "AGNES_API_KEY",
+            "model_env": "AGNES_MODEL",
+            "model_default": "agnes-2.0-flash",
+        },
         # 千问3本地部署（OpenAI 兼容协议）
         "qwen": {
             "url_env": "QWEN_BASE_URL",
@@ -1341,6 +1348,24 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_mimo_model_fallback_to_env", model=self.model)
 
+        elif self.provider == "agnes":
+            self.api_mode = getattr(settings, "agnes_api_mode", "chat_completions")
+            self.base_url = (
+                settings.agnes_base_url
+                or os.getenv(config["url_env"])
+                or config["url_default"]
+            )
+            self.api_key = (
+                settings.agnes_api_key
+                or os.getenv(config["key_env"])
+                or getattr(settings, "tender_secondary_llm_api_key", None)
+                or ""
+            )
+            self.model = settings.agnes_model
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_agnes_model_fallback_to_env", model=self.model)
+
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
             self.base_url = (
@@ -1540,7 +1565,7 @@ class LLMService:
             )
             raise ValueError(f"base_url is None for provider: {self.provider}")
 
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
 
         # 🔍 调试日志：记录请求配置
         logger.debug(
@@ -2686,16 +2711,17 @@ class LLMService:
                 system=system,
             ),
             "temperature": temperature,
-            "stream": stream,
         }
+        if stream:
+            payload["stream"] = True
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
             payload["tools"] = converted_tools
             payload["tool_choice"] = tool_choice or "auto"
-        if self.provider == "deepseek":
+        if self.provider in {"deepseek", "qwen"}:
             payload["enable_thinking"] = False
-            if stream:
+            if self.provider == "deepseek" and stream:
                 payload["stream_options"] = {"include_usage": True}
         return payload
 

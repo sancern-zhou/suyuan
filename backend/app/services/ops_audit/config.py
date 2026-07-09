@@ -117,8 +117,9 @@ DEFAULT_ATTACHMENT_REQUIREMENTS = {
             "maintenance_types": ["Quarter", "HalfYear", "Year"],
             "rf_tables": ["RF_Y_PreventiveMaintenance"],
             "required_types": ["report", "photo"],
+            "any_of_types": ["report", "photo"],
             "severity": "中",
-            "suggestion": "补充预防性维护报告和现场照片附件。",
+            "suggestion": "补充预防性维护报告或现场照片附件。",
         },
     ],
 }

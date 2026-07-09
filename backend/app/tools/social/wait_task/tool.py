@@ -185,7 +185,18 @@ class WaitTaskTool(LLMTool):
 
             manager = get_subagent_manager()
             if manager:
-                return manager
+                if hasattr(manager, "get_task"):
+                    return manager
+                task_store = getattr(manager, "task_store", None)
+                if task_store and hasattr(task_store, "get_task"):
+                    class SpawnTaskStoreManager:
+                        def __init__(self, store: Any) -> None:
+                            self.task_store = store
+
+                        async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+                            return await self.task_store.get_task(task_id)
+
+                    return SpawnTaskStoreManager(task_store)
         except Exception:
             pass
 

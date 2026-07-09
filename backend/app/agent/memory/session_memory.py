@@ -1685,6 +1685,14 @@ class SessionMemory:
 
                 is_native_content_blocks = isinstance(msg.get("content"), list)
 
+                if msg_type in {"tool_use", "tool_result"} and not is_native_content_blocks:
+                    # Display transcript tool rows are UI/runtime events. Replaying
+                    # them on a later turn makes stale failures and old tool output
+                    # compete with the user's current request. Native content blocks
+                    # produced inside the active LLM session are still handled below.
+                    skipped_count += 1
+                    continue
+
                 if msg_type == "tool_use" and not is_native_content_blocks:
                     tool_use_block = self._display_tool_use_block(msg)
                     if tool_use_block:

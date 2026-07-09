@@ -292,7 +292,8 @@ class ActiveMemoryRetriever:
                     "content": compacted_context,
                     "score": score + self.recency_weight,
                     "line_number": result.get("line_number", 0),
-                    "source": result.get("source", "memory/*.md")
+                    "source": result.get("source", "memory/*.md"),
+                    "timestamp": result.get("timestamp") or result.get("created_at"),
                 })
 
                 if len(facts) >= self.max_facts:
@@ -312,6 +313,9 @@ class ActiveMemoryRetriever:
 
     def _is_internal_daily_note_line(self, line: str) -> bool:
         """过滤 daily notes 中不应进入 LLM prompt 的内部工具协议行。"""
+        stripped = line.strip()
+        if stripped.startswith("**助手**:"):
+            return True
         return any(
             pattern.search(line)
             for pattern in DAILY_NOTE_INTERNAL_PROTOCOL_PATTERNS
@@ -370,7 +374,14 @@ class ActiveMemoryRetriever:
 
         for fact in facts:
             source = fact.get("source", "memory")
-            lines.append(f"- [{source}] {fact['content']}")
+            line_number = fact.get("line_number")
+            source_ref = f"{source}:{line_number}" if line_number else source
+            lines.append("- memory_snippet:")
+            lines.append(f"  snippet: {fact['content']}")
+            lines.append(f"  source: {source_ref}")
+            timestamp = fact.get("timestamp")
+            if timestamp:
+                lines.append(f"  timestamp: {timestamp}")
 
         return "\n".join(lines) + "\n"
 
@@ -389,11 +400,13 @@ def build_social_memory_context(
     query: str,
     recent_messages: Optional[List[Dict]] = None,
     retriever: Optional[ActiveMemoryRetriever] = None,
+    include_daily_notes: bool = False,
 ) -> str:
     """Build social-mode memory context.
 
-    Social mode injects the current user's full MEMORY.md first, then appends
-    clearly-labeled historical conversation snippets from daily notes.
+    Social mode injects the current user's full MEMORY.md by default.
+    Daily notes recall is opt-in because raw conversation snippets are easy for
+    the model to copy instead of using as background.
     """
     sections = []
 
@@ -407,6 +420,9 @@ def build_social_memory_context(
 
     if memory_context and memory_context.strip():
         sections.append(memory_context.strip())
+
+    if not include_daily_notes:
+        return "\n\n".join(sections)
 
     history_retriever = retriever or ActiveMemoryRetriever()
     history_context = history_retriever.retrieve(
