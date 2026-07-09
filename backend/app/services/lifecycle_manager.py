@@ -9,11 +9,17 @@ from app.fetchers.base.scheduler import FetcherScheduler
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
+from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
+    OpenMeteoAirQualityForecastFetcher,
+)
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
 from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
+from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
+from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
 from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultationFileFetcher  # 会商文件批量更新、月度完整会商文件
 from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
 from app.fetchers.consultation.monthly_supplement_fetchers import (
@@ -46,6 +52,8 @@ def initialize_fetchers():
         fetcher_scheduler.register(ERA5Fetcher())
         fetcher_scheduler.register(ObservedWeatherFetcher())
         fetcher_scheduler.register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
+        fetcher_scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
+        fetcher_scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
 
         # 注册Satellite Fetchers
         fetcher_scheduler.register(NASAFirmsFetcher())
@@ -61,6 +69,12 @@ def initialize_fetchers():
 
         # 注册招投标信息每日抓取Fetcher
         fetcher_scheduler.register(TenderInformationFetcher())
+
+        # 注册济宁市快速溯源报告每日生成Fetcher
+        fetcher_scheduler.register(JiningQuickTraceFetcher())
+
+        # 注册运城市驻场试用场景小时数据盯守Fetcher
+        fetcher_scheduler.register(YunchengTrialFetcher())
 
         # 注册会商文件批量更新Fetcher
         fetcher_scheduler.register(ConsultationFileFetcher())

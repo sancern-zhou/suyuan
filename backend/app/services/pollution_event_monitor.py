@@ -29,8 +29,10 @@ import structlog
 from app.agent.context.data_context_manager import DataContextManager
 from app.agent.context.execution_context import ExecutionContext
 from app.agent.memory.hybrid_manager import HybridMemoryManager
+from app.services.pollution_event_evidence_enhancer import PollutionEventEvidenceEnhancer
 from app.services.pollution_event_state_store import PollutionEventStateStore
 from app.external_apis.openmeteo_client import OpenMeteoClient
+from app.utils.component_station_directory import PM25_DOMAIN, VOCS_DOMAIN, resolve_component_station_names
 
 logger = structlog.get_logger()
 
@@ -71,6 +73,11 @@ WEATHER_FIELDS = (
     "boundary_layer_height",
 )
 
+LOW_LEVEL_CONSTANT_VALUE_LIMITS = {
+    "SO2": 20.0,
+    "CO": 1.0,
+}
+
 
 @dataclass
 class MonitorConfig:
@@ -80,7 +87,13 @@ class MonitorConfig:
     output_root: Optional[Path] = None
     force_collect: bool = False
     include_components: bool = True
+    auto_enhance_evidence: bool = True
+    include_trajectory: bool = True
+    include_upwind_enterprises: bool = True
+    include_component_models: bool = True
+    max_target_stations: int = 1
     event_context_hours: int = 2
+    component_min_hours: int = 24
     event_merge_gap_hours: int = 3
     event_inactive_hours: int = 6
     min_event_points: int = 2
@@ -220,6 +233,7 @@ class PollutionEventMonitorService:
             "ended_events": ended_events,
             "event_state_index": str(self.event_state_store.index_path),
             "force_collect": self.config.force_collect,
+            "analysis_selection": self._build_run_analysis_selection(event_results),
         }
         self._write_json(run_dir / "run_manifest.json", run_manifest)
 
@@ -295,6 +309,11 @@ class PollutionEventMonitorService:
         event_end = self._parse_time(event["time_range"]["end"]) or full_end
         fetch_start = max(full_start, event_start - timedelta(hours=self.config.event_context_hours))
         fetch_end = min(full_end, event_end + timedelta(hours=self.config.event_context_hours))
+        component_fetch_start, component_fetch_end = self._component_fetch_window(
+            event_start=event_start,
+            event_end=event_end,
+            full_end=full_end,
+        )
 
         fetch_errors: List[Dict[str, str]] = []
 
@@ -335,7 +354,13 @@ class PollutionEventMonitorService:
 
         component_results: Dict[str, Any] = {}
         if self.config.include_components:
-            component_results = await self._fetch_component_data(city, fetch_start, fetch_end, event_dir, fetch_errors)
+            component_results = await self._fetch_component_data(
+                city,
+                component_fetch_start,
+                component_fetch_end,
+                event_dir,
+                fetch_errors,
+            )
 
         event_city_records = self._filter_records_by_time(city_records, fetch_start, fetch_end)
         event_summary = self._summarize_event_data(event, event_city_records, station_records, weather_records)
@@ -349,7 +374,31 @@ class PollutionEventMonitorService:
             weather_records=weather_records,
             component_results=component_results,
         )
+        auto_analysis: Dict[str, Any] | None = None
+        if self.config.auto_enhance_evidence and event.get("event_lifecycle", {}).get("status") != "routine":
+            enhancer = PollutionEventEvidenceEnhancer(
+                include_trajectory=self.config.include_trajectory,
+                include_upwind_enterprises=self.config.include_upwind_enterprises,
+                include_component_models=self.config.include_component_models,
+            )
+            auto_analysis = await enhancer.enhance(
+                context=self.context,
+                city=city,
+                event=event,
+                event_dir=event_dir,
+                station_records=station_records,
+                weather_records=weather_records,
+                component_results=component_results,
+                fetch_start=fetch_start,
+                fetch_end=fetch_end,
+            )
 
+        selection_hint = self._build_evidence_selection_hint(
+            event=event,
+            quality_gate=quality_gate,
+            auto_analysis=auto_analysis,
+            fetch_errors=fetch_errors,
+        )
         evidence_pack = {
             "schema_version": "pollution_event_evidence_pack/v1",
             "schema_features": [
@@ -357,6 +406,8 @@ class PollutionEventMonitorService:
                 "quality_gate",
                 "observed_signal_summary",
                 "suggested_evidence_gaps",
+                "auto_analysis",
+                "selection_hint",
             ],
             "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
             "city": city,
@@ -364,6 +415,10 @@ class PollutionEventMonitorService:
             "collection_window": {
                 "start": self._format_api_time(fetch_start),
                 "end": self._format_api_time(fetch_end),
+                "event_context_hours": self.config.event_context_hours,
+                "component_start": self._format_api_time(component_fetch_start),
+                "component_end": self._format_api_time(component_fetch_end),
+                "component_min_hours": self.config.component_min_hours,
             },
             "quality_gate": quality_gate,
             "data_quality": quality_report,
@@ -381,23 +436,22 @@ class PollutionEventMonitorService:
             "event_summary": event_summary,
             "observed_signal_summary": observed_signal_summary,
             "suggested_evidence_gaps": suggested_evidence_gaps,
+            "auto_analysis": auto_analysis,
+            "selection_hint": selection_hint,
             "fetch_errors": fetch_errors,
             "analysis_contract": {
                 "skill_name": "city_pollution_process_analysis",
                 "skill_file": str(self.backend_dir / "docs" / "skills" / "city_pollution_process_analysis.md"),
-                "agent_goal": "Use the project pollution process analysis skill to generate hypotheses, verify them with the evidence pack, optionally collect missing evidence, and write reasoning_analysis.md.",
+                "agent_goal": "Use the project pollution process analysis skill to create a formal source-apportionment report.qmd from the evidence pack. Focus on data displays, analysis, source judgment, and upwind enterprise lists.",
                 "required_outputs": [
-                    "observed_facts",
-                    "hypothesis_ranking",
-                    "evidence_matrix",
-                    "counter_evidence",
-                    "confidence",
-                    "follow_up_actions",
+                    "report.qmd",
+                    "report_package_preview",
                 ],
                 "llm_role_limits": [
                     "Do not re-decide deterministic alert triggers.",
                     "Do not assert a source without cited evidence.",
                     "Downgrade conclusions when quality_gate limits confidence.",
+                    "Do not output a management/control advice section.",
                 ],
             },
         }
@@ -408,10 +462,123 @@ class PollutionEventMonitorService:
 
         return {
             "event_id": event_id,
+            "city": city,
+            "main_pollutant": event.get("main_pollutant"),
+            "time_range": event.get("time_range"),
+            "event_lifecycle": event.get("event_lifecycle", {}),
             "event_dir": str(event_dir),
             "evidence_pack": str(event_dir / "evidence_pack.json"),
             "analysis_request": str(event_dir / "analysis_request.md"),
             "fetch_errors": fetch_errors,
+            "auto_analysis": auto_analysis,
+            "selection_hint": selection_hint,
+        }
+
+    def _component_fetch_window(
+        self,
+        *,
+        event_start: datetime,
+        event_end: datetime,
+        full_end: datetime,
+    ) -> Tuple[datetime, datetime]:
+        base_start = event_start - timedelta(hours=self.config.event_context_hours)
+        base_end = min(full_end, event_end + timedelta(hours=self.config.event_context_hours))
+        min_hours = max(1, self.config.component_min_hours)
+        min_span = timedelta(hours=min_hours - 1)
+        if base_end - base_start >= min_span:
+            return base_start, base_end
+        return base_end - min_span, base_end
+
+    def _build_evidence_selection_hint(
+        self,
+        event: Dict[str, Any],
+        quality_gate: Dict[str, Any],
+        auto_analysis: Optional[Dict[str, Any]],
+        fetch_errors: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        lifecycle = event.get("event_lifecycle") if isinstance(event.get("event_lifecycle"), dict) else {}
+        status = str(lifecycle.get("status") or "active")
+        reason_codes: List[str] = []
+        priority_score = 0
+
+        if status == "routine":
+            reason_codes.append("routine_baseline")
+            recommendation = "not_recommended"
+        else:
+            recommendation = "recommended"
+            if status == "ended":
+                reason_codes.append("ended_pollution_event")
+                priority_score += 80
+            else:
+                reason_codes.append("active_pollution_event")
+                priority_score += 100
+
+            if self._auto_analysis_succeeded(auto_analysis):
+                reason_codes.append("auto_analysis_success")
+                priority_score += 20
+            elif auto_analysis:
+                reason_codes.append("auto_analysis_partial")
+                priority_score += 5
+            else:
+                reason_codes.append("auto_analysis_missing")
+
+            quality_status = str(quality_gate.get("status") or "")
+            if quality_status == "fail":
+                reason_codes.append("quality_gate_fail")
+                priority_score -= 30
+            elif quality_status == "caution":
+                reason_codes.append("quality_gate_caution")
+                priority_score -= 10
+
+            if fetch_errors:
+                reason_codes.append("fetch_errors_present")
+                priority_score -= min(20, len(fetch_errors) * 5)
+
+        return {
+            "recommendation": recommendation,
+            "priority_score": max(0, priority_score),
+            "reason_codes": reason_codes,
+            "policy": "Prefer current-run non-routine evidence packs with completed auto_analysis; use routine packages only as baselines.",
+        }
+
+    def _auto_analysis_succeeded(self, auto_analysis: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(auto_analysis, dict) or auto_analysis.get("analysis_errors"):
+            return False
+        statuses = [
+            auto_analysis.get("trajectory", {}).get("status") if isinstance(auto_analysis.get("trajectory"), dict) else None,
+            auto_analysis.get("upwind_enterprises", {}).get("status") if isinstance(auto_analysis.get("upwind_enterprises"), dict) else None,
+            auto_analysis.get("component_analysis", {}).get("status") if isinstance(auto_analysis.get("component_analysis"), dict) else None,
+        ]
+        relevant = [status for status in statuses if status and status != "skipped"]
+        return bool(relevant) and all(status == "success" for status in relevant)
+
+    def _build_run_analysis_selection(self, event_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        recommended = []
+        skipped = []
+        for result in event_results:
+            hint = result.get("selection_hint") if isinstance(result.get("selection_hint"), dict) else {}
+            item = {
+                "event_id": result.get("event_id"),
+                "city": result.get("city"),
+                "main_pollutant": result.get("main_pollutant"),
+                "time_range": result.get("time_range"),
+                "event_lifecycle": result.get("event_lifecycle"),
+                "evidence_pack": result.get("evidence_pack"),
+                "analysis_request": result.get("analysis_request"),
+                "priority_score": hint.get("priority_score", 0),
+                "reason_codes": hint.get("reason_codes", []),
+            }
+            if hint.get("recommendation") == "recommended" and result.get("evidence_pack"):
+                recommended.append(item)
+            else:
+                skipped.append(item)
+
+        recommended.sort(key=lambda item: item.get("priority_score", 0), reverse=True)
+        return {
+            "policy": "Analyze recommended_evidence_packs in order; default_evidence_pack is the first item unless the user names a city, pollutant, event_id, or time range.",
+            "default_evidence_pack": recommended[0]["evidence_pack"] if recommended else None,
+            "recommended_evidence_packs": recommended,
+            "skipped_evidence_packs": skipped,
         }
 
     def _fetch_station_hour_data(self, city: str, start_time: datetime, end_time: datetime) -> Dict[str, Any]:
@@ -469,30 +636,44 @@ class PollutionEventMonitorService:
         try:
             from app.tools.query.get_particulate_components import GetParticulateComponentsTool
 
-            pm_tool = GetParticulateComponentsTool()
-            pm_result = await pm_tool.execute(
-                context=self.context,
-                locations=[city],
-                start_time=start_text,
-                end_time=end_text,
-                data_type=0,
-                time_granularity=1,
-            )
-            pm_data_id = self._extract_data_id(pm_result)
-            pm_records = self._load_data_records(pm_data_id, pm_result)
-            self._write_json(event_dir / "pm25_components.json", {
-                "city": city,
-                "records": pm_records,
-                "source_result": self._compact_result(pm_result),
-            })
-            if not pm_records:
+            pm_stations = resolve_component_station_names(city, data_domain=PM25_DOMAIN)
+            if not pm_stations:
                 fetch_errors.append({
                     "source": "pm25_components",
                     "severity": "warning",
-                    "error": "PM2.5 component evidence returned no records.",
+                    "error": f"No PM2.5 component stations configured for {city}.",
                 })
-            files["pm25_components"] = str(event_dir / "pm25_components.json")
-            data_refs["pm25_components_data_id"] = pm_data_id
+            else:
+                pm_tool = GetParticulateComponentsTool()
+                pm_result = await pm_tool.execute(
+                    context=self.context,
+                    locations=pm_stations,
+                    start_time=start_text,
+                    end_time=end_text,
+                    data_type=0,
+                    time_granularity=1,
+                )
+                pm_data_id = self._extract_data_id(pm_result)
+                pm_records = self._load_data_records(pm_data_id, pm_result)
+                self._write_json(event_dir / "pm25_components.json", {
+                    "city": city,
+                    "stations": pm_stations,
+                    "time_range": {
+                        "start": start_text,
+                        "end": end_text,
+                        "min_hours": self.config.component_min_hours,
+                    },
+                    "records": pm_records,
+                    "source_result": self._compact_result(pm_result),
+                })
+                if not pm_records:
+                    fetch_errors.append({
+                        "source": "pm25_components",
+                        "severity": "warning",
+                        "error": "PM2.5 component evidence returned no records.",
+                    })
+                files["pm25_components"] = str(event_dir / "pm25_components.json")
+                data_refs["pm25_components_data_id"] = pm_data_id
         except Exception as exc:
             fetch_errors.append({"source": "pm25_components", "error": str(exc)})
             logger.warning("pm25_component_evidence_fetch_failed", city=city, error=str(exc))
@@ -500,30 +681,44 @@ class PollutionEventMonitorService:
         try:
             from app.tools.query.get_vocs_data import GetVOCsDataTool
 
-            vocs_tool = GetVOCsDataTool()
-            vocs_result = await vocs_tool.execute(
-                context=self.context,
-                locations=[city],
-                start_time=start_text,
-                end_time=end_text,
-                table_type=1,
-                data_type=0,
-            )
-            vocs_data_id = self._extract_data_id(vocs_result)
-            vocs_records = self._load_data_records(vocs_data_id, vocs_result)
-            self._write_json(event_dir / "vocs_components.json", {
-                "city": city,
-                "records": vocs_records,
-                "source_result": self._compact_result(vocs_result),
-            })
-            if not vocs_records:
+            vocs_stations = resolve_component_station_names(city, data_domain=VOCS_DOMAIN)
+            if not vocs_stations:
                 fetch_errors.append({
                     "source": "vocs_components",
                     "severity": "warning",
-                    "error": "VOCs component evidence returned no records.",
+                    "error": f"No VOCs component stations configured for {city}.",
                 })
-            files["vocs_components"] = str(event_dir / "vocs_components.json")
-            data_refs["vocs_components_data_id"] = vocs_data_id
+            else:
+                vocs_tool = GetVOCsDataTool()
+                vocs_result = await vocs_tool.execute(
+                    context=self.context,
+                    locations=vocs_stations,
+                    start_time=start_text,
+                    end_time=end_text,
+                    table_type=1,
+                    data_type=0,
+                )
+                vocs_data_id = self._extract_data_id(vocs_result)
+                vocs_records = self._load_data_records(vocs_data_id, vocs_result)
+                self._write_json(event_dir / "vocs_components.json", {
+                    "city": city,
+                    "stations": vocs_stations,
+                    "time_range": {
+                        "start": start_text,
+                        "end": end_text,
+                        "min_hours": self.config.component_min_hours,
+                    },
+                    "records": vocs_records,
+                    "source_result": self._compact_result(vocs_result),
+                })
+                if not vocs_records:
+                    fetch_errors.append({
+                        "source": "vocs_components",
+                        "severity": "warning",
+                        "error": "VOCs component evidence returned no records.",
+                    })
+                files["vocs_components"] = str(event_dir / "vocs_components.json")
+                data_refs["vocs_components_data_id"] = vocs_data_id
         except Exception as exc:
             fetch_errors.append({"source": "vocs_components", "error": str(exc)})
             logger.warning("vocs_component_evidence_fetch_failed", city=city, error=str(exc))
@@ -594,12 +789,24 @@ class PollutionEventMonitorService:
                     "impact": f"{spec.key} event confidence should be downgraded.",
                 })
             if stale_streak >= 6 and len(values) >= 8:
+                is_low_level_rounded = (
+                    spec.key in LOW_LEVEL_CONSTANT_VALUE_LIMITS
+                    and max(values) <= LOW_LEVEL_CONSTANT_VALUE_LIMITS[spec.key]
+                )
                 issues.append({
-                    "severity": "medium",
+                    "severity": "low" if is_low_level_rounded else "medium",
                     "issue_type": "long_constant_value",
                     "pollutant": spec.key,
-                    "message": f"{spec.key} has a constant streak of {stale_streak} records.",
-                    "impact": "Potential stale data or instrument issue.",
+                    "message": (
+                        f"{spec.key} has a low-level rounded constant streak of {stale_streak} records."
+                        if is_low_level_rounded
+                        else f"{spec.key} has a constant streak of {stale_streak} records."
+                    ),
+                    "impact": (
+                        "Low-level rounded data; use as a variability caution, not confirmed stale instrument data."
+                        if is_low_level_rounded
+                        else "Potential stale data or instrument issue."
+                    ),
                 })
             if spike_count > 0:
                 issues.append({
@@ -1428,16 +1635,18 @@ class PollutionEventMonitorService:
         return (
             "# 城市污染过程自动分析请求\n\n"
             f"- 城市: {evidence_pack['city']}\n"
-            f"- 事件ID: {event['event_id']}\n"
-            f"- 事件类型: {event['event_type']}\n"
             f"- 主污染物: {event['main_pollutant']}\n"
             f"- 时间范围: {event['time_range']['start']} 至 {event['time_range']['end']}\n"
-            f"- 事件状态: {event.get('event_lifecycle', {}).get('status', 'unknown')}\n"
-            f"- 质量门禁: {evidence_pack.get('quality_gate', {}).get('status', 'unknown')}\n"
             f"- 证据包: {evidence_pack['data_files']['event'].replace('event.json', 'evidence_pack.json')}\n"
             f"- 项目技能文档: {evidence_pack['analysis_contract']['skill_file']}\n\n"
-            "请使用项目污染过程自动分析技能执行：先读取 evidence_pack 并列出可引用事实，再提出可检验假设，"
-            "必要时主动补证，逐项核验证据和反证，最后在同目录写入 reasoning_analysis.md。\n"
+            "请使用项目污染过程自动分析技能执行：先读取证据包及其中已经生成的增强证据，"
+            "结合证据包推荐信息判断该包是否为本次默认分析对象；"
+            "梳理可引用事实、自动模型结果和证据缺口；不要重复运行已经成功的自动分析工具；"
+            "完成必要的假设验证后，直接生成面向用户的正式溯源分析报告 report.qmd，"
+            "并创建报告包用于右侧预览。报告应突出数据展示、污染来源研判和上风向企业清单；"
+            "开头不要使用“项目-内容”元数据表，不要描述系统判定字段；"
+            "不要在报告正文输出系统字段名或IT技术用语；"
+            "数据来源、数据可用性限制和工具失败说明放在最后的附件；不要输出建议章节。\n"
         )
 
     def _build_run_summary(self, city_results: List[Dict[str, Any]], detected_count: int) -> str:
@@ -1648,9 +1857,18 @@ class PollutionEventMonitorService:
         try:
             client = OpenMeteoClient()
 
-            # 格式化时间参数（ERA5 要求 end_date 是包含的日期）
-            start_str = start_time.strftime("%Y-%m-%d")
-            end_str = end_time.strftime("%Y-%m-%d")
+            # Open-Meteo ERA5 历史数据通常不会开放当天日期；整点运行跨到当天
+            # 00:00 时，需要把 end_date 截到前一天，避免整个气象补充失败。
+            date_window = self._era5_date_window(start_time, end_time)
+            if date_window is None:
+                logger.warning(
+                    "openmeteo_date_window_unavailable",
+                    city=city,
+                    start=self._format_api_time(start_time),
+                    end=self._format_api_time(end_time),
+                )
+                return {}
+            start_str, end_str = date_window
 
             # 调用 ERA5 API 获取历史气象数据（异步方法）
             response = await client.fetch_era5_data(
@@ -1706,6 +1924,26 @@ class PollutionEventMonitorService:
         except Exception as e:
             logger.error("openmeteo_fetch_failed", city=city, error=str(e))
             return {}
+
+    def _era5_date_window(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        *,
+        now: Optional[datetime] = None,
+    ) -> Optional[Tuple[str, str]]:
+        current_time = now or datetime.now(TZ_SHANGHAI)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=TZ_SHANGHAI)
+        else:
+            current_time = current_time.astimezone(TZ_SHANGHAI)
+        latest_available_date = current_time.date() - timedelta(days=1)
+        start_date = start_time.astimezone(TZ_SHANGHAI).date() if start_time.tzinfo else start_time.date()
+        requested_end_date = end_time.astimezone(TZ_SHANGHAI).date() if end_time.tzinfo else end_time.date()
+        end_date = min(requested_end_date, latest_available_date)
+        if start_date > end_date:
+            return None
+        return start_date.isoformat(), end_date.isoformat()
 
     def _safe_get(self, data: Dict[str, List], key: str, index: int, default: Any = None) -> Any:
         """安全获取列表数据"""

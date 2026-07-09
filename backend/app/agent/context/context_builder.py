@@ -80,6 +80,9 @@ class SimplifiedContextBuilder:
         # ✅ 新增：HEARTBEAT文件路径（仅social模式使用）
         self.heartbeat_file_path = None
 
+        # ✅ 新增：HEARTBEAT文件内容快照（仅social模式使用）
+        self.heartbeat_context = None
+
         # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
         self.board_context = None
 
@@ -256,6 +259,7 @@ class SimplifiedContextBuilder:
             memory_context=self.memory_context,  # ✅ 传递记忆上下文内容（MEMORY.md）
             soul_context=self.soul_context,  # ✅ 传递 soul.md 内容
             user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
+            heartbeat_context=self.heartbeat_context,  # ✅ 传递 HEARTBEAT.md 当前内容
             backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
             board_context=self.board_context if self.current_mode == "chart" else None,
         )
@@ -277,8 +281,18 @@ class SimplifiedContextBuilder:
             )
         if self.cognitive_map_context:
             sections.append(str(self.cognitive_map_context).strip())
+        sections.append(self._build_runtime_metadata_prompt())
         sections.append(self._build_agent_control_prompt())
         return "\n\n".join(section for section in sections if section)
+
+    def _build_runtime_metadata_prompt(self) -> str:
+        """Build system-only runtime metadata used for temporal reasoning."""
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return (
+            "<runtime_metadata>\n"
+            f"系统参考时间: {current_time}\n"
+            "</runtime_metadata>"
+        )
 
     def _build_agent_control_prompt(self) -> str:
         """Build system-level loop control rules for every agent mode."""
@@ -311,6 +325,7 @@ class SimplifiedContextBuilder:
             self.soul_file_path,
             self.user_file_path,
             self.heartbeat_file_path,
+            self.heartbeat_context,
         ]):
             logger.warning(
                 "non_social_context_stripped",
@@ -321,6 +336,7 @@ class SimplifiedContextBuilder:
                 had_soul_file_path=self.soul_file_path is not None,
                 had_user_file_path=self.user_file_path is not None,
                 had_heartbeat_file_path=self.heartbeat_file_path is not None,
+                had_heartbeat_context=self.heartbeat_context is not None,
             )
 
         self.user_preferences = None
@@ -329,6 +345,7 @@ class SimplifiedContextBuilder:
         self.soul_file_path = None
         self.user_file_path = None
         self.heartbeat_file_path = None
+        self.heartbeat_context = None
 
         if mode != "chart" and self.board_context is not None:
             logger.warning(
@@ -580,9 +597,6 @@ class SimplifiedContextBuilder:
         if not conversation_history:
             logger.warning("context_builder_no_conversation_history", iteration=iteration)
 
-        # 2. 当前进行的任务
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         # ✅ 检测记忆增强内容
         has_memory_enhancement = "长期记忆" in query and "用户问题：" in query
         has_attachments = "**用户上传的附件**" in query
@@ -640,8 +654,7 @@ class SimplifiedContextBuilder:
             # 已有对话历史：结构化 history 已通过 messages 单独传递。
             # 此处只放当前轮状态，不重复展开工具调用、工具结果或通用控制规则。
             status_section = (
-                f"## 当前状态\n"
-                f"**迭代次数**: {iteration} | **当前时间**: {current_time}"
+                "## 当前状态"
             )
             sections.append(status_section)
 
@@ -682,7 +695,7 @@ class SimplifiedContextBuilder:
             graph_map_context_summary = self._build_graph_map_context_user_summary()
             if graph_map_context_summary:
                 sections.append(graph_map_context_summary)
-            sections.append(f"{current_input_section}\n**当前时间**: {current_time}\n**迭代次数**: {iteration}")
+            sections.append(current_input_section)
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）
         # conversation_history已包含所有历史对话，包括完整的observation数据

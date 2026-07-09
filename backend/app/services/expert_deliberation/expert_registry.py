@@ -68,6 +68,7 @@ def get_default_experts() -> list[ExpertCard]:
             ],
             tool_whitelist=[
                 "get_weather_forecast",
+                "get_observed_meteorology",
                 "query_gd_suncere_city_hour",
                 "query_gd_suncere_station_hour_new",
                 "meteorological_trajectory_analysis",

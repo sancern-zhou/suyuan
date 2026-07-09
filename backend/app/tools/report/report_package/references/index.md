@@ -17,6 +17,34 @@
 - 不根据缓存 ID 猜测 `assets/charts/{image_id}.png`；由工具复制真实文件并规范化引用。
 - 需要静态正式图表时优先用 `create_report_chart`，再把返回的真实文件路径传给 `assets`。
 
+### YAML 目录与编号配置（重要）
+
+Quarto 的 `number-sections: true` 会自动给标题加编号（如 `1.2`、`1.2.1`）。如果 QMD 正文中的标题**已经手动写了编号**（如 `## 1.2 项目立项依据`），会导致双重编号显示为 `1.2 1.2 项目立项依据`。
+
+**Word/DOCX 导出规则**：本项目的 Word 正式稿由 DOCX 后处理统一插入目录并重写 1-3 级标题编号。Agent 生成 QMD 时不要在 `format.docx` 中启用 Quarto 自带目录或章节编号，必须显式写为 `toc: false`、`number-sections: false`，或省略这两个字段。不要在 QMD 正文里手写“目录”页。
+
+推荐 YAML：
+
+```yaml
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: false
+  docx:
+    toc: false
+    number-sections: false
+```
+
+**HTML 预览编号规则：二选一，不能同时启用。**
+
+| 方案 | YAML 配置 | 正文标题写法 | 适用场景 |
+|------|----------|-------------|----------|
+| A（推荐） | `number-sections: false` | `## 1.2 项目立项依据` | 需要自定义编号格式（如中文数字章节 `一、`），或标题已含手动编号 |
+| B | `number-sections: true` | `## 项目立项依据`（不写编号） | 标准学术/技术报告，编号格式由 Quarto 统一控制 |
+
+**检查方法**：生成报告后，在右侧预览面板查看 HTML 目录，如出现 `1.2 1.2 xxx` 即说明 HTML 预览发生双重编号，需按方案 A 或 B 修复。Word 下载稿的目录和标题编号以 DOCX 后处理结果为准。
+
 ## Assets
 
 `assets` 可传:

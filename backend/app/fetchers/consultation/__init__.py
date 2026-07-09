@@ -50,13 +50,13 @@ GUANGDONG_CITIES = [
 ]
 
 CITY_STANDARD_FIELD_ALIASES = {
-    "PM2.5": ["pM2_5_Decimal", "PM2_5_Decimal", "pM2_5", "PM2_5"],
-    "PM10": ["pM10_Decimal", "PM10_Decimal", "pM10", "PM10"],
-    "NO2": ["nO2", "NO2"],
-    "O3": ["o3_8h", "O3_8h"],
-    "AQI": ["fineRate", "FineRate", "AQIStandardRate"],
-    "SO2": ["sO2", "SO2"],
-    "CO": ["co", "cO", "CO"],
+    "PM2.5": ["pM2_5_Decimal"],
+    "PM10": ["pM10_Decimal"],
+    "NO2": ["nO2"],
+    "O3": ["o3_8h"],
+    "AQI": ["fineRate"],
+    "SO2": ["sO2"],
+    "CO": ["co"],
 }
 
 
@@ -76,7 +76,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # N列计算同比差值
             },
             {
@@ -84,7 +84,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -105,7 +105,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # N列计算同比差值
             },
             {
@@ -113,7 +113,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -134,7 +134,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # N列计算同比差值
             },
             {
@@ -142,7 +142,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -163,7 +163,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # N列计算同比差值
             },
             {
@@ -171,7 +171,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -203,7 +203,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -226,7 +226,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # 计算同比差值
             },
             {
@@ -234,7 +234,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -254,7 +254,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # N列计算同比差值
             },
             {
@@ -262,7 +262,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -282,7 +282,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # 计算同比差值
             },
             {
@@ -290,7 +290,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -310,7 +310,7 @@ SHEET_CONFIG = {
                 "source_value_col": "B",
                 "target_name_col": "M",
                 "target_value_col": "N",
-                "sort_ascending": True,
+                "sort_ascending": False,
                 "calculate_diff": True,  # 计算同比差值
             },
             {
@@ -318,7 +318,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -348,7 +348,7 @@ SHEET_CONFIG = {
                 "source_value_col": "D",
                 "target_name_col": "W",
                 "target_value_col": "X",
-                "sort_ascending": True,  # 按D列（去年数据）升序
+                "sort_ascending": False,  # 按D列（去年数据）降序
             }
         ],
         "headers": {
@@ -518,6 +518,61 @@ class ConsultationFileFetcher(DataFetcher):
         return result
 
     @staticmethod
+    def _province_record(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        for record in records:
+            if record.get("cityName") == "全省":
+                return record
+        return None
+
+    def _get_required_city_standard_value(
+        self,
+        record: Optional[Dict[str, Any]],
+        field: str,
+    ) -> float:
+        if not record:
+            logger.warning("required_city_standard_record_missing", field=field)
+            return 0.0
+        value = record.get(field)
+        if value is None or value == "":
+            logger.warning(
+                "required_city_standard_field_missing",
+                field=field,
+                city_name=record.get("cityName"),
+                available_keys=list(record.keys())[:20],
+            )
+            return 0.0
+        return self._to_float(value)
+
+    async def _query_province_single_period_record(
+        self,
+        start_date: str,
+        end_date: str,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            records = await self._query_city_standard_records(
+                start_date,
+                end_date,
+                ns_type=2,
+            )
+        except Exception as exc:
+            logger.warning(
+                "province_single_period_query_failed",
+                start_date=start_date,
+                end_date=end_date,
+                error=str(exc),
+            )
+            return None
+        province_record = self._province_record(records)
+        if not province_record:
+            logger.warning(
+                "province_record_not_found_in_single_period",
+                start_date=start_date,
+                end_date=end_date,
+                total_records=len(records),
+            )
+        return province_record
+
+    @staticmethod
     def _historical_standard_label(year: int) -> str:
         """Return the standard label used by historical concentration queries."""
         from app.tools.query.query_city_standard_report.tool import DEFAULT_NEW_STANDARD_START
@@ -683,6 +738,17 @@ class ConsultationFileFetcher(DataFetcher):
             rankings[name] = previous_rank
 
         return rankings
+
+    @staticmethod
+    def _excel_display_value(pollutant: str, value: float, number_format: str = "") -> float:
+        if pollutant == "AQI" and "%" in (number_format or ""):
+            return round(value / 100, 4)
+        return round(value, 2)
+
+    @staticmethod
+    def _apply_excel_number_format(cell: Any, pollutant: str) -> None:
+        if pollutant in {"PM2.5", "PM10"}:
+            cell.number_format = "0.0"
 
     def _period_cache_key(
         self,
@@ -1352,9 +1418,9 @@ class ConsultationFileFetcher(DataFetcher):
             except Exception as e:
                 logger.error("guangdong_data_replace_failed", pollutant=pollutant, error=str(e), exc_info=True)
 
-        # 主数据区按B列（今年数据）升序排序
+        # 主数据区按B列（今年数据）降序排序
         paired_data = list(zip(area_names, current_data, last_year_data))
-        paired_data.sort(key=lambda x: x[1])  # 按今年数据升序
+        paired_data.sort(key=lambda x: x[1], reverse=True)
         area_names = [item[0] for item in paired_data]
         current_data = [item[1] for item in paired_data]
         last_year_data = [item[2] for item in paired_data]
@@ -1497,9 +1563,9 @@ class ConsultationFileFetcher(DataFetcher):
         current_data = current_data[:data_len]
         last_year_data = last_year_data[:data_len]
         
-        # 主数据区按B列（今年数据）升序排序
+        # 主数据区按B列（今年数据）降序排序
         paired_data = list(zip(area_names, current_data, last_year_data))
-        paired_data.sort(key=lambda x: x[1])  # 按今年数据升序
+        paired_data.sort(key=lambda x: x[1], reverse=True)
         area_names = [item[0] for item in paired_data]
         current_data = [item[1] for item in paired_data]
         last_year_data = [item[2] for item in paired_data]
@@ -1749,8 +1815,14 @@ class ConsultationFileFetcher(DataFetcher):
                 ws[f"{name_col}{row}"] = province_name
 
                 # 填充指标值
-                display_value = round(province_value, 2)
-                ws[f"{value_col}{row}"] = display_value
+                value_cell = ws[f"{value_col}{row}"]
+                display_value = self._excel_display_value(
+                    pollutant,
+                    province_value,
+                    value_cell.number_format,
+                )
+                value_cell.value = display_value
+                self._apply_excel_number_format(value_cell, pollutant)
 
                 # 填充排名（如果是广东，添加变化标记）
                 rank_display = str(current_ranking.get(province_name, current_rank))
@@ -1872,6 +1944,15 @@ class ConsultationFileFetcher(DataFetcher):
             ns_type=1,
         )
 
+        current_single_record = await self._query_province_single_period_record(
+            current_start,
+            current_end,
+        )
+        last_year_single_record = await self._query_province_single_period_record(
+            last_year_start,
+            last_year_end,
+        )
+
         # 筛选出"全省"记录
         province_records = [r for r in records if r.get("cityName") == "全省"]
         old_standard_province_records = [
@@ -1924,11 +2005,33 @@ class ConsultationFileFetcher(DataFetcher):
                 continue
 
             try:
-                source_record = old_standard_province_record if row == 7 and pollutant == "AQI" else province_record
+                source_record = old_standard_province_record if row == 7 and pollutant == "AQI" else current_single_record
                 source_ns_type = 1 if source_record is old_standard_province_record else 2
 
-                current_value = self._get_city_standard_value(source_record, pollutant)
-                last_year_value = self._get_city_standard_value(source_record, pollutant, suffix="_Compare")
+                if pollutant == "PM2.5":
+                    current_value = self._get_required_city_standard_value(
+                        current_single_record,
+                        "pM2_5_Decimal",
+                    )
+                    last_year_value = self._get_required_city_standard_value(
+                        last_year_single_record,
+                        "pM2_5_Decimal",
+                    )
+                elif pollutant == "PM10":
+                    current_value = self._get_required_city_standard_value(
+                        current_single_record,
+                        "pM10_Decimal",
+                    )
+                    last_year_value = self._get_required_city_standard_value(
+                        last_year_single_record,
+                        "pM10_Decimal",
+                    )
+                elif row == 7 and pollutant == "AQI":
+                    current_value = self._get_city_standard_value(source_record, pollutant)
+                    last_year_value = self._get_city_standard_value(source_record, pollutant, suffix="_Compare")
+                else:
+                    current_value = self._get_city_standard_value(current_single_record, pollutant)
+                    last_year_value = self._get_city_standard_value(last_year_single_record, pollutant)
 
                 ws[f"{config['current_col']}{row}"] = current_value
                 ws[f"{config['last_year_col']}{row}"] = last_year_value
@@ -2150,6 +2253,70 @@ class ConsultationFileFetcher(DataFetcher):
             如果 return_all_data=True: {"current": {所有污染物今年值}, "last_year": {所有污染物去年值}}
         """
         try:
+            if return_all_data:
+                current_record = await self._query_province_single_period_record(
+                    current_start,
+                    current_end,
+                )
+                last_year_record = await self._query_province_single_period_record(
+                    last_year_start,
+                    last_year_end,
+                )
+
+                all_current = {
+                    "PM2.5": self._get_required_city_standard_value(current_record, "pM2_5_Decimal"),
+                    "PM10": self._get_required_city_standard_value(current_record, "pM10_Decimal"),
+                    "NO2": self._get_city_standard_value(current_record, "NO2") if current_record else 0.0,
+                    "O3": self._get_city_standard_value(current_record, "O3") if current_record else 0.0,
+                    "AQI": self._get_city_standard_value(current_record, "AQI") if current_record else 0.0,
+                }
+                all_last_year = {
+                    "PM2.5": self._get_required_city_standard_value(last_year_record, "pM2_5_Decimal"),
+                    "PM10": self._get_required_city_standard_value(last_year_record, "pM10_Decimal"),
+                    "NO2": self._get_city_standard_value(last_year_record, "NO2") if last_year_record else 0.0,
+                    "O3": self._get_city_standard_value(last_year_record, "O3") if last_year_record else 0.0,
+                    "AQI": self._get_city_standard_value(last_year_record, "AQI") if last_year_record else 0.0,
+                }
+
+                logger.info(
+                    "guangdong_all_pollutants_retrieved",
+                    source="single_period_records",
+                    current_city_count=1 if current_record else 0,
+                    last_year_city_count=1 if last_year_record else 0,
+                    pollutants_count=len(all_current),
+                )
+
+                return {
+                    "current": all_current,
+                    "last_year": all_last_year,
+                }
+
+            if pollutant in {"PM2.5", "PM10"}:
+                current_record = await self._query_province_single_period_record(
+                    current_start,
+                    current_end,
+                )
+                last_year_record = await self._query_province_single_period_record(
+                    last_year_start,
+                    last_year_end,
+                )
+                field = "pM2_5_Decimal" if pollutant == "PM2.5" else "pM10_Decimal"
+                current_value = self._get_required_city_standard_value(current_record, field)
+                last_year_value = self._get_required_city_standard_value(last_year_record, field)
+
+                logger.info(
+                    "pollutant_value_from_single_period_province_record",
+                    pollutant=pollutant,
+                    field=field,
+                    current_value=current_value,
+                    last_year_value=last_year_value,
+                )
+
+                return {
+                    "current": float(current_value),
+                    "last_year": float(last_year_value),
+                }
+
             logger.info(
                 "query_guangdong_yoy_start",
                 pollutant=pollutant,
@@ -2188,53 +2355,24 @@ class ConsultationFileFetcher(DataFetcher):
                 time_point=province_record.get("timePoint")
             )
 
-            if return_all_data:
-                # 直接使用"全省"记录的所有污染物数据
-                all_current = {
-                    "PM2.5": self._get_city_standard_value(province_record, "PM2.5"),
-                    "PM10": self._get_city_standard_value(province_record, "PM10"),
-                    "NO2": self._get_city_standard_value(province_record, "NO2"),
-                    "O3": self._get_city_standard_value(province_record, "O3"),
-                    "AQI": self._get_city_standard_value(province_record, "AQI"),
-                }
-                all_last_year = {
-                    "PM2.5": self._get_city_standard_value(province_record, "PM2.5", suffix="_Compare"),
-                    "PM10": self._get_city_standard_value(province_record, "PM10", suffix="_Compare"),
-                    "NO2": self._get_city_standard_value(province_record, "NO2", suffix="_Compare"),
-                    "O3": self._get_city_standard_value(province_record, "O3", suffix="_Compare"),
-                    "AQI": self._get_city_standard_value(province_record, "AQI", suffix="_Compare"),
-                }
+            if pollutant not in CITY_STANDARD_FIELD_ALIASES:
+                logger.warning("unknown_pollutant_for_guangdong", pollutant=pollutant)
+                return None
 
-                logger.info(
-                    "guangdong_all_pollutants_retrieved",
-                    source="province_record",
-                    current_city_count=1,
-                    pollutants_count=len(all_current)
-                )
+            current_value = self._get_city_standard_value(province_record, pollutant)
+            last_year_value = self._get_city_standard_value(province_record, pollutant, suffix="_Compare")
 
-                return {
-                    "current": all_current,
-                    "last_year": all_last_year
-                }
-            else:
-                if pollutant not in CITY_STANDARD_FIELD_ALIASES:
-                    logger.warning("unknown_pollutant_for_guangdong", pollutant=pollutant)
-                    return None
+            logger.info(
+                "pollutant_value_from_province_record",
+                pollutant=pollutant,
+                current_value=current_value,
+                last_year_value=last_year_value
+            )
 
-                current_value = self._get_city_standard_value(province_record, pollutant)
-                last_year_value = self._get_city_standard_value(province_record, pollutant, suffix="_Compare")
-
-                logger.info(
-                    "pollutant_value_from_province_record",
-                    pollutant=pollutant,
-                    current_value=current_value,
-                    last_year_value=last_year_value
-                )
-
-                return {
-                    "current": float(current_value),
-                    "last_year": float(last_year_value)
-                }
+            return {
+                "current": float(current_value),
+                "last_year": float(last_year_value)
+            }
 
         except Exception as e:
             logger.error("guangdong_data_query_failed", pollutant=pollutant, error=str(e), exc_info=True)

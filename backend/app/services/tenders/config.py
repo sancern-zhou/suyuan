@@ -11,6 +11,13 @@ DEFAULT_TENDER_KEYWORDS = [
     "环境监测中心",
     "生态环境厅",
     "环境监测站",
+    "生态环境分局",
+    "环境监控中心",
+    "污染源在线监控",
+    "空气自动站",
+    "水质自动站",
+    "VOCs走航",
+    "噪声自动监测",
 ]
 
 
@@ -56,7 +63,7 @@ def default_target_date(today: date | None = None) -> date:
 @dataclass(slots=True)
 class TenderFetcherConfig:
     enabled: bool = True
-    schedule: str = "30 6 * * *"
+    schedule: str = "30 2 * * *"
     keywords: list[str] = field(default_factory=lambda: list(DEFAULT_TENDER_KEYWORDS))
     notice_types: list[NoticeType] = field(
         default_factory=lambda: [NoticeType.TENDER, NoticeType.WINNING_BID]

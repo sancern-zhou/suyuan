@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 
 STEERABLE_MODES = {"assistant", "social"}
@@ -14,6 +14,7 @@ STEERABLE_MODES = {"assistant", "social"}
 @dataclass
 class SteeringInput:
     content: str
+    attachments: List[Dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -47,15 +48,21 @@ class SteeringRegistry:
             if active and active.run_id == run_id:
                 self._runs.pop(session_id, None)
 
-    async def add_input(self, session_id: str, content: str) -> bool:
+    async def add_input(
+        self,
+        session_id: str,
+        content: str,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
         text = (content or "").strip()
-        if not text:
+        clean_attachments = [dict(item) for item in attachments or [] if isinstance(item, dict)]
+        if not text and not clean_attachments:
             return False
         async with self._lock:
             active = self._runs.get(session_id)
             if not active or active.mode not in STEERABLE_MODES:
                 return False
-            active.queue.append(SteeringInput(content=text))
+            active.queue.append(SteeringInput(content=text, attachments=clean_attachments))
             return True
 
     async def drain(self, session_id: str, run_id: str) -> List[SteeringInput]:

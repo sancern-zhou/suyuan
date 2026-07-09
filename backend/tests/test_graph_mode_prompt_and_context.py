@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.agent.context.context_builder import SimplifiedContextBuilder
 from app.agent.react_agent import ReActAgent
-from app.agent.prompts.tool_registry import get_tool_order_by_mode, get_tools_by_mode
+from app.agent.prompts.tool_registry import CHART_TOOL_ORDER, get_tool_order_by_mode, get_tools_by_mode
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.tools.social.remember_fact.tool import RememberFactTool
 from app.tools.social.replace_memory.tool import ReplaceMemoryTool
@@ -40,6 +40,12 @@ def test_graph_mode_tool_order_matches_registry_order():
         "list_directory",
         "search_files",
     ]
+
+
+def test_present_artifact_tool_is_available_in_expert_and_chart_modes():
+    assert "present_artifact" in get_tools_by_mode("expert")
+    assert "present_artifact" in get_tools_by_mode("chart")
+    assert "present_artifact" in CHART_TOOL_ORDER
 
 
 def test_graph_prompt_routes_from_prompt_builder():
@@ -101,6 +107,32 @@ def test_graph_mode_preserves_map_context_and_builds_summary():
     assert "map.json" in summary
     assert "relation_abc" in summary
     assert "visible_entity_ids=3" in summary
+
+
+def test_runtime_metadata_is_not_exposed_in_user_conversation():
+    builder = SimplifiedContextBuilder(None, None)
+
+    first_iteration = builder._build_user_conversation(
+        query="分析招投标数据",
+        iteration=1,
+        latest_observation="",
+        conversation_history=[],
+    )
+    later_iteration = builder._build_user_conversation(
+        query="分析招投标数据",
+        iteration=4,
+        latest_observation="",
+        conversation_history=[{"role": "user", "content": "历史消息"}],
+    )
+    system_prompt = builder._build_system_prompt()
+
+    assert "当前时间" not in first_iteration
+    assert "当前时间" not in later_iteration
+    assert "迭代次数" not in first_iteration
+    assert "迭代次数" not in later_iteration
+    assert "系统参考时间" in system_prompt
+    assert "<runtime_metadata>" in system_prompt
+    assert "</runtime_metadata>" in system_prompt
 
 
 def test_non_graph_non_query_modes_strip_map_context():

@@ -16,6 +16,20 @@ class ConversationPersistenceService:
     """Apply display transcript and artifact metadata to a Session."""
 
     @staticmethod
+    def _is_persistent_message(message: Dict[str, Any]) -> bool:
+        # Thought events are runtime/debug progress. They may be streamed to the
+        # UI, but keeping them in restored transcripts causes the model to treat
+        # prior intermediate text as conversational history.
+        return message.get("type") != "thought"
+
+    def _persistent_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            dict(message)
+            for message in messages
+            if self._is_persistent_message(message)
+        ]
+
+    @staticmethod
     def _message_key(message: Dict[str, Any]) -> tuple[Any, ...]:
         explicit_id = message.get("id") or message.get("message_id")
         if explicit_id:
@@ -41,10 +55,10 @@ class ConversationPersistenceService:
         existing_history: List[Dict[str, Any]],
         display_history: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        merged = [dict(message) for message in existing_history]
+        merged = self._persistent_messages(existing_history)
         seen = {self._message_key(message) for message in merged}
 
-        for message in display_history:
+        for message in self._persistent_messages(display_history):
             key = self._message_key(message)
             if key in seen:
                 continue
@@ -63,7 +77,7 @@ class ConversationPersistenceService:
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
-        session.conversation_history = list(display_history)
+        session.conversation_history = self._persistent_messages(display_history)
         self.apply_metadata(
             session,
             collected_data_ids=collected_data_ids,
@@ -105,7 +119,9 @@ class ConversationPersistenceService:
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
-        session.conversation_history = list(display_history) + [dict(terminal_message)]
+        session.conversation_history = self._persistent_messages(
+            list(display_history) + [dict(terminal_message)]
+        )
         self.apply_metadata(
             session,
             collected_data_ids=collected_data_ids,

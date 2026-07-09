@@ -18,12 +18,56 @@ import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.vocs_api_client import get_voc_api_client
 from app.utils.particulate_geo_matcher import get_particulate_geo_matcher
-from app.utils.particulate_city_mapper import get_particulate_city_mapper
 
 if TYPE_CHECKING:
     from app.agent.context import ExecutionContext
 
 logger = structlog.get_logger()
+
+
+def _resolve_station_and_code(
+    *,
+    locations: Union[List[str], None],
+    station: Union[str, None],
+    code: Union[str, None],
+) -> tuple[str | None, str | None, Dict[str, Any] | None]:
+    if locations:
+        station_names = [str(location).strip() for location in locations if str(location).strip()]
+    elif station:
+        station_names = [station.strip()]
+    else:
+        station_names = []
+
+    if station_names:
+        matcher = get_particulate_geo_matcher()
+        try:
+            station_codes = matcher.stations_to_codes(station_names)
+        except ValueError as e:
+            return None, None, {
+                "success": False,
+                "error": (
+                    f"{e} 请先调用 resolve_station_geo 获取城市下辖 VOCs 组分站点，"
+                    "再传入具体站点名称查询。"
+                ),
+                "locations": locations,
+                "station_names": station_names,
+            }
+        if not station_codes:
+            return None, None, {
+                "success": False,
+                "error": f"无法将站点名称映射到VOCs组分站点编码: {station_names}",
+                "locations": locations,
+                "station_names": station_names,
+            }
+        return station_names[0], code or station_codes[0], None
+
+    if station and code:
+        return station, code, None
+
+    return None, None, {
+        "success": False,
+        "error": "必须提供具体VOCs组分站点名称 station，或同时提供 station 和 code；城市请先用 resolve_station_geo 展开。"
+    }
 
 
 class GetVOCsDataTool(LLMTool):
@@ -34,9 +78,9 @@ class GetVOCsDataTool(LLMTool):
             "name": "get_vocs_data",
             "description": (
                 "查询VOCs组分数据，包括烷烃、烯烃、炔烃、芳香烃、OVOCs、卤代烃、有机硫等。"
-                "直接调用广东超站API获取结构化数据，支持站点自动映射。"
+                "直接调用广东超站API获取结构化数据，支持站点名称自动映射编码。"
                 "用于VOCs组分分析和臭氧生成潜势(OFP)分析。"
-                "locations参数可自动映射站点编码。"
+                "城市下辖VOCs站点需先用 resolve_station_geo 获取，本工具只查询指定站点。"
             ),
             "parameters": {
                 "type": "object",
@@ -44,15 +88,15 @@ class GetVOCsDataTool(LLMTool):
                     "locations": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市或站点名称列表，可自动映射站点编码"
+                        "description": "VOCs组分站点名称列表，不接受城市名；城市需先用 resolve_station_geo 展开"
                     },
                     "station": {
                         "type": "string",
-                        "description": "中文站点名；优先用locations"
+                        "description": "中文VOCs组分站点名，可自动映射站点编码"
                     },
                     "code": {
                         "type": "string",
-                        "description": "站点编码；locations存在时可省略"
+                        "description": "站点编码；传入 station 时可省略"
                     },
                     "start_time": {
                         "type": "string",
@@ -99,50 +143,9 @@ class GetVOCsDataTool(LLMTool):
     ) -> Dict[str, Any]:
         """执行VOCs类别查询"""
 
-        # 参数处理：支持 locations 自动映射
-        if locations:
-            # 第一步：城市名 → 站点名（使用城市映射器）
-            city_mapper = get_particulate_city_mapper()
-            station_names = []
-            for loc in locations:
-                # 尝试作为城市名映射
-                station_name = city_mapper.city_to_station_name(loc)
-                if station_name:
-                    station_names.append(station_name)
-                    logger.info("city_to_station_mapped", city=loc, station=station_name)
-                else:
-                    # 可能已经是站点名，直接使用
-                    station_names.append(loc)
-
-            # 第二步：站点名 → 站点编码（使用组分站点映射器）
-            component_matcher = get_particulate_geo_matcher()
-            try:
-                station_codes = component_matcher.stations_to_codes(station_names)
-            except ValueError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "locations": locations,
-                    "station_names": station_names
-                }
-
-            if not station_codes:
-                return {
-                    "success": False,
-                    "error": f"无法将站点名称映射到组分站点编码: {station_names}",
-                    "locations": locations,
-                    "station_names": station_names
-                }
-
-            # 使用第一个映射的编码和站点名
-            code = station_codes[0]
-            station = station_names[0]
-
-        elif not (station and code):
-            return {
-                "success": False,
-                "error": "必须提供 locations 参数，或者同时提供 station 和 code 参数"
-            }
+        station, code, error = _resolve_station_and_code(locations=locations, station=station, code=code)
+        if error:
+            return error
 
         logger.info(
             "voc_categories_query_start",

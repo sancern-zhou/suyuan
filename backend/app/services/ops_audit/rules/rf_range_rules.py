@@ -949,6 +949,8 @@ def _field_specific_remark_fields(value_field: Any) -> list[str]:
         return []
     upper = field.upper()
     candidates = []
+    if upper.endswith("BCHECKVALUE"):
+        candidates.append(field[: -len("BCHECKVALUE")] + "CHECKROW")
     if upper.endswith("VALUE"):
         candidates.append(field[: -len("VALUE")] + "ROW")
     if upper.endswith("CHECKVALUE"):

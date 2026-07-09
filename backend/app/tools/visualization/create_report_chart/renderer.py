@@ -144,9 +144,13 @@ def _render_single_chart(
     applied_chart_type = _normalize_chart_type(chart_type)
     labels = _string_list(data.get("labels") or data.get("categories") or data.get("x") or [])
 
-    if applied_chart_type == "bar" and _has_long_labels(labels):
-        applied_chart_type = "horizontal_bar"
-        warnings.append("long_labels_horizontal_bar")
+    if applied_chart_type == "bar":
+        if _has_long_labels(labels):
+            applied_chart_type = "horizontal_bar"
+            warnings.append("long_labels_horizontal_bar")
+        elif _has_crowded_categorical_labels(labels, output_context):
+            applied_chart_type = "horizontal_bar"
+            warnings.append("crowded_categorical_labels_horizontal_bar")
 
     if applied_chart_type in SPECIALIZED_CHART_TYPES:
         from app.tools.visualization.create_report_chart.specialized import render_specialized_chart
@@ -729,6 +733,11 @@ def _layout_warnings(fig) -> List[str]:
                 text_boxes.append(bbox)
         if len(text_boxes) > 45:
             warnings.append("high_text_density")
+        for ax in fig.axes:
+            if _has_overlapping_text_boxes(ax.get_xticklabels(), renderer, axis="x"):
+                warnings.append("x_tick_label_overlap_detected")
+            if _has_overlapping_text_boxes(ax.get_yticklabels(), renderer, axis="y"):
+                warnings.append("y_tick_label_overlap_detected")
     except Exception:
         warnings.append("layout_check_failed")
     return warnings
@@ -761,6 +770,46 @@ def _summary(title: str, warnings: Sequence[str]) -> str:
 
 def _has_long_labels(labels: Sequence[str]) -> bool:
     return any(len(label) > 12 for label in labels) or sum(len(label) for label in labels) > 60
+
+
+def _has_crowded_categorical_labels(labels: Sequence[str], output_context: str) -> bool:
+    if len(labels) < 10:
+        return False
+
+    normalized_labels = [str(normalize_matplotlib_label_text(label)) for label in labels]
+    label_lengths = [len(label) for label in normalized_labels if label]
+    if not label_lengths:
+        return False
+
+    target_width = WORD_TARGET_WIDTH_IN if output_context == "word" else 7.2
+    slot_width = target_width / max(len(labels), 1)
+    widest_label_width = max(label_lengths) * 0.14 + 0.08
+    average_label_width = (sum(label_lengths) / len(label_lengths)) * 0.14 + 0.08
+
+    return (
+        widest_label_width > slot_width * 0.9
+        or (len(labels) >= 16 and average_label_width > slot_width * 0.72)
+    )
+
+
+def _has_overlapping_text_boxes(labels: Sequence[Any], renderer: Any, axis: str) -> bool:
+    boxes = []
+    for label in labels:
+        try:
+            if not label.get_visible() or not str(label.get_text()).strip():
+                continue
+            bbox = label.get_window_extent(renderer=renderer)
+        except Exception:
+            continue
+        if bbox.width > 0 and bbox.height > 0:
+            boxes.append(bbox)
+
+    if len(boxes) < 2:
+        return False
+
+    key = (lambda box: box.x0) if axis == "x" else (lambda box: box.y0)
+    sorted_boxes = sorted(boxes, key=key)
+    return any(left.overlaps(right) for left, right in zip(sorted_boxes, sorted_boxes[1:]))
 
 
 def _wrap_label(label: str, width: int) -> str:

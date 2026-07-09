@@ -174,6 +174,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="get_universal_meteorology", error=str(e))
 
     try:
+        from app.tools.query.get_observed_meteorology.tool import GetObservedMeteorologyTool
+        registry.register(GetObservedMeteorologyTool(), priority=26)
+        logger.info("tool_loaded", tool="get_observed_meteorology")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="get_observed_meteorology", error=str(e))
+
+    try:
         from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool
         registry.register(GetJiningRegularStationsTool(), priority=31)
         logger.info("tool_loaded", tool="get_jining_regular_stations")
@@ -304,13 +311,22 @@ def create_global_tool_registry() -> ToolRegistry:
 
     # 通用SQL执行工具
     try:
-        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool
+        from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool, ExecuteTenderSQLQueryTool
         registry.register(ExecuteSQLQueryTool(), priority=47)
         logger.info("tool_loaded", tool="execute_sql_query")
         registry.register(ExecuteOpsSQLQueryTool(), priority=47)
         logger.info("tool_loaded", tool="execute_ops_sql_query")
+        registry.register(ExecuteTenderSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_tender_sql_query")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
+
+    try:
+        from app.tools.query.qianlima_realtime_tender.tool import QianlimaRealtimeTenderTool
+        registry.register(QianlimaRealtimeTenderTool(), priority=46)
+        logger.info("tool_loaded", tool="qianlima_realtime_tender")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="qianlima_realtime_tender", error=str(e))
 
     try:
         from app.tools.analysis.ops_work_order_audit.tool import (
@@ -945,9 +961,11 @@ def create_global_tool_registry() -> ToolRegistry:
     try:
         from app.tools.report.report_package.tool import (
             CreateReportPackageTool,
+            RenderReportPackageTool,
             ValidateReportPackageTool,
         )
         registry.register(CreateReportPackageTool(), priority=388)
+        registry.register(RenderReportPackageTool(), priority=389)
         registry.register(ValidateReportPackageTool(), priority=390)
         logger.info("tool_loaded", tool="report_package_tools")
     except ImportError as e:

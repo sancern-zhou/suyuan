@@ -43,6 +43,17 @@ class ERA5Fetcher(DataFetcher):
             'min_lon': 109.0,  # 最西端：廉江（约109°E）
             'max_lon': 117.0   # 最东端：潮州（约117°E）
         }
+        self.extra_city_points = {
+            "运城市": {"lat": 35.0264, "lon": 111.0076},
+            "许昌市": {"lat": 34.036, "lon": 113.852},
+        }
+
+    @staticmethod
+    def _align_to_era5_grid(lat: float, lon: float) -> Tuple[float, float]:
+        grid_spacing = 0.25
+        grid_lat = round(lat / grid_spacing) * grid_spacing
+        grid_lon = round(lon / grid_spacing) * grid_spacing
+        return round(grid_lat, 2), round(grid_lon, 2)
 
     async def fetch_and_store(self):
         """
@@ -139,8 +150,7 @@ class ERA5Fetcher(DataFetcher):
             lon = self.region['min_lon']
             while lon <= self.region['max_lon']:
                 # 对齐到ERA5 0.25°网格
-                grid_lat = round(lat / grid_spacing) * grid_spacing
-                grid_lon = round(lon / grid_spacing) * grid_spacing
+                grid_lat, grid_lon = self._align_to_era5_grid(lat, lon)
 
                 # 检查是否在广东省范围内
                 if (self.region['min_lat'] <= grid_lat <= self.region['max_lat'] and
@@ -149,6 +159,16 @@ class ERA5Fetcher(DataFetcher):
 
                 lon += grid_spacing
             lat += grid_spacing
+
+        for city, point in self.extra_city_points.items():
+            grid_point = self._align_to_era5_grid(point["lat"], point["lon"])
+            grid_points.add(grid_point)
+            logger.info(
+                "extra_city_era5_grid_point_added",
+                city=city,
+                original=(point["lat"], point["lon"]),
+                aligned=grid_point,
+            )
 
         result = list(grid_points)
 

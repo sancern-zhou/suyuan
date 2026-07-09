@@ -28,6 +28,8 @@ for path in (str(BACKEND_DIR), str(REPO_DIR)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from app.utils.component_station_directory import PM25_DOMAIN, VOCS_DOMAIN, resolve_component_station_names
+
 for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
@@ -736,13 +738,19 @@ class EvidencePackageBuilder:
             pollutant = city.get("main_pollutant") or ""
             task_prefix = f"component_{city['city']}"
             if pollutant in O3_POLLUTANTS:
+                vocs_stations = resolve_component_station_names(city["city"], data_domain=VOCS_DOMAIN)
+                if not vocs_stations:
+                    self.manifest["warnings"].append(
+                        f"{city['city']} has no configured VOCs component stations; skipped."
+                    )
+                    continue
                 component_tasks.append(
                     self.run_tool(
                         f"{task_prefix}_vocs",
                         f"component_vocs_{safe_name(city['city'])}.json",
-                        lambda city=city: GetVOCsDataTool().execute(
+                        lambda city=city, vocs_stations=vocs_stations: GetVOCsDataTool().execute(
                             self.context,
-                            locations=[city["city"]],
+                            locations=vocs_stations,
                             start_time=start_time,
                             end_time=end_time,
                             table_type=1,
@@ -751,14 +759,20 @@ class EvidencePackageBuilder:
                     )
                 )
             elif pollutant in PM_POLLUTANTS or not pollutant:
+                pm_stations = resolve_component_station_names(city["city"], data_domain=PM25_DOMAIN)
+                if not pm_stations:
+                    self.manifest["warnings"].append(
+                        f"{city['city']} has no configured PM2.5 component stations; skipped."
+                    )
+                    continue
                 component_tasks.extend(
                     [
                         self.run_tool(
                             f"{task_prefix}_pm25_ionic",
                             f"component_pm25_ionic_{safe_name(city['city'])}.json",
-                            lambda city=city: GetPM25IonicTool().execute(
+                            lambda city=city, pm_stations=pm_stations: GetPM25IonicTool().execute(
                                 self.context,
-                                locations=[city["city"]],
+                                locations=pm_stations,
                                 start_time=start_time,
                                 end_time=end_time,
                                 data_type=0,
@@ -768,9 +782,9 @@ class EvidencePackageBuilder:
                         self.run_tool(
                             f"{task_prefix}_pm25_carbon",
                             f"component_pm25_carbon_{safe_name(city['city'])}.json",
-                            lambda city=city: GetPM25CarbonTool().execute(
+                            lambda city=city, pm_stations=pm_stations: GetPM25CarbonTool().execute(
                                 self.context,
-                                locations=[city["city"]],
+                                locations=pm_stations,
                                 start_time=start_time,
                                 end_time=end_time,
                                 data_type=0,
@@ -780,9 +794,9 @@ class EvidencePackageBuilder:
                         self.run_tool(
                             f"{task_prefix}_pm25_crustal",
                             f"component_pm25_crustal_{safe_name(city['city'])}.json",
-                            lambda city=city: GetPM25CrustalTool().execute(
+                            lambda city=city, pm_stations=pm_stations: GetPM25CrustalTool().execute(
                                 self.context,
-                                locations=[city["city"]],
+                                locations=pm_stations,
                                 start_time=start_time,
                                 end_time=end_time,
                                 data_type=1,

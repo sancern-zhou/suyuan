@@ -56,6 +56,8 @@ class ReActAgent:
     )
 
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
+    SESSION_DOCUMENT_CONTEXT_LIMIT = 5
+    OFFICE_DOCUMENT_STORE_LIMIT = 50
 
     @staticmethod
     def _select_auto_profile(
@@ -69,6 +71,88 @@ class ReActAgent:
         if supports_native_multimodal(manual_mode):
             return "multimodal"
         return None
+
+    @staticmethod
+    def _trim_office_documents(
+        documents: List[Dict[str, Any]],
+        max_documents: int,
+    ) -> List[Dict[str, Any]]:
+        if max_documents <= 0:
+            return []
+
+        deduped_by_key: Dict[str, Dict[str, Any]] = {}
+        ordered_keys: List[str] = []
+        anonymous: List[Dict[str, Any]] = []
+        for document in documents or []:
+            if not isinstance(document, dict):
+                continue
+            doc = dict(document)
+            key = (
+                doc.get("file_path")
+                or doc.get("pdf_preview", {}).get("pdf_id")
+                or doc.get("html_preview", {}).get("html_id")
+                or doc.get("file_name")
+            )
+            if not key:
+                anonymous.append(doc)
+                continue
+            key = str(key)
+            if key in deduped_by_key:
+                ordered_keys.remove(key)
+            deduped_by_key[key] = doc
+            ordered_keys.append(key)
+
+        merged = [deduped_by_key[key] for key in ordered_keys] + anonymous
+        return merged[-max_documents:]
+
+    @staticmethod
+    def _office_document_path(document: Dict[str, Any]) -> str:
+        if not isinstance(document, dict):
+            return ""
+        return str(
+            document.get("file_path")
+            or document.get("source_file_path")
+            or document.get("path")
+            or document.get("markdown_preview", {}).get("markdown_path")
+            or document.get("pdf_preview", {}).get("pdf_path")
+            or document.get("pdf_preview", {}).get("pdf_id")
+            or document.get("html_preview", {}).get("html_id")
+            or document.get("svg_preview", {}).get("svg_path")
+            or ""
+        )
+
+    @classmethod
+    def _build_session_document_context(
+        cls,
+        documents: List[Dict[str, Any]],
+        max_documents: Optional[int] = None,
+    ) -> str:
+        recent_docs = cls._trim_office_documents(
+            documents or [],
+            max_documents or cls.SESSION_DOCUMENT_CONTEXT_LIMIT,
+        )
+        if not recent_docs:
+            return ""
+
+        lines = [
+            "## 当前会话可用文档",
+            "下面是本会话已经上传、读取或生成过的最近文档。",
+        ]
+        for index, document in enumerate(recent_docs, 1):
+            name = document.get("file_name") or document.get("title") or "未命名文档"
+            path = cls._office_document_path(document)
+            file_type = document.get("file_type") or document.get("doc_type") or ""
+            summary = str(document.get("summary") or "").strip()
+            line = f"{index}. {name}"
+            if file_type:
+                line += f" ({file_type})"
+            if path:
+                line += f"\n   路径: {path}"
+            if summary:
+                line += f"\n   摘要: {summary[:160]}"
+            lines.append(line)
+
+        return "\n".join(lines)
 
     @staticmethod
     def _apply_session_store_entry_for_persistence(session, entry: Dict[str, Any]) -> None:
@@ -122,7 +206,10 @@ class ReActAgent:
 
         office_docs = entry.get("office_documents", [])
         if office_docs:
-            session.office_documents = office_docs
+            session.office_documents = ReActAgent._trim_office_documents(
+                office_docs,
+                ReActAgent.OFFICE_DOCUMENT_STORE_LIMIT,
+            )
 
         if entry.get("has_error"):
             session.error = {
@@ -422,6 +509,22 @@ class ReActAgent:
             reset_session,
             manual_mode=manual_mode,
         )
+        session_document_context = self._build_session_document_context(
+            self._session_store.get(actual_session_id, {}).get("office_documents", []),
+        )
+        if session_document_context:
+            user_query = f"{user_query}\n\n{session_document_context}"
+            logger.info(
+                "session_document_context_added",
+                session_id=actual_session_id,
+                context_length=len(session_document_context),
+                document_count=len(
+                    self._trim_office_documents(
+                        self._session_store.get(actual_session_id, {}).get("office_documents", []),
+                        self.SESSION_DOCUMENT_CONTEXT_LIMIT,
+                    )
+                ),
+            )
 
         from .task.task_models import TaskList
 
@@ -800,6 +903,10 @@ class ReActAgent:
                 generator=doc_entry["generator"],
                 total_documents=len(existing),
             )
+        self._session_store[session_id]["office_documents"] = self._trim_office_documents(
+            existing,
+            self.OFFICE_DOCUMENT_STORE_LIMIT,
+        )
 
     def _should_run_report_auto_followup(
         self,

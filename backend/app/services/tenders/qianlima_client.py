@@ -3,15 +3,21 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, List, Optional
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote, quote_plus, urljoin, urlsplit, urlunsplit
 
 import requests
+import structlog
 import urllib3
 
+from config.settings import settings
 from .models import NoticeType, TenderCandidate
+
+logger = structlog.get_logger()
 
 NOTICE_TYPE_QUERY = {
     NoticeType.TENDER: "招标公告",
@@ -19,6 +25,21 @@ NOTICE_TYPE_QUERY = {
     NoticeType.CHANGE: "变更公告",
     NoticeType.OTHER: "招标采购",
 }
+
+
+@dataclass(frozen=True)
+class _QianlimaAccount:
+    username: str
+    password: str
+    storage_state_path: str
+
+
+class _QianlimaDailyLimitError(RuntimeError):
+    pass
+
+
+class QianlimaDetailAccessExhaustedError(RuntimeError):
+    stop_tender_detail_processing = True
 
 
 def parse_qianlima_list_html(
@@ -148,6 +169,8 @@ def _looks_like_notice(title: str) -> bool:
 
 
 class QianlimaClient:
+    search_ignores_notice_type = True
+
     def __init__(
         self,
         base_url: str = "https://www.qianlima.com",
@@ -160,6 +183,7 @@ class QianlimaClient:
         use_search_api: Optional[bool] = None,
         use_detail_http: Optional[bool] = None,
         verify_tls: Optional[bool] = None,
+        accounts: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.search_url_template = search_url_template or os.getenv(
@@ -170,9 +194,21 @@ class QianlimaClient:
             "QIANLIMA_SEARCH_API_URL",
             "https://search.vip.qianlima.com/rest/service/website/search/solr",
         )
-        self.username = username or os.getenv("QIANLIMA_USERNAME")
-        self.password = password or os.getenv("QIANLIMA_PASSWORD")
-        self.storage_state_path = storage_state_path
+        self._accounts = _parse_qianlima_accounts(
+            username or os.getenv("QIANLIMA_USERNAME"),
+            password or os.getenv("QIANLIMA_PASSWORD"),
+            storage_state_path,
+            accounts,
+        )
+        self._active_account_index = 0
+        self._daily_limited_accounts: dict[date, set[int]] = {}
+        self._detail_access_exhausted = False
+        self._account_switch_lock = asyncio.Lock()
+        self.username = self._accounts[0].username if self._accounts else None
+        self.password = self._accounts[0].password if self._accounts else None
+        self.storage_state_path = (
+            self._accounts[0].storage_state_path if self._accounts else storage_state_path
+        )
         self.headless = headless
         self.request_delay_ms = request_delay_ms
         self.use_search_api = (
@@ -195,6 +231,15 @@ class QianlimaClient:
         self._playwright = None
         self._browser = None
         self._context = None
+        self._start_lock = asyncio.Lock()
+        self._browser_detail_semaphore = asyncio.Semaphore(
+            max(1, int(os.getenv("QIANLIMA_BROWSER_DETAIL_CONCURRENCY", "3")))
+        )
+        logger.info(
+            "qianlima_account_pool_loaded",
+            account_count=len(self._accounts),
+            active_username=self.username,
+        )
 
     async def __aenter__(self) -> "QianlimaClient":
         await self.start()
@@ -206,16 +251,25 @@ class QianlimaClient:
     async def start(self) -> None:
         if self._context is not None:
             return
-        from playwright.async_api import async_playwright
+        async with self._start_lock:
+            if self._context is not None:
+                return
+            from playwright.async_api import async_playwright
 
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=self.headless)
-        context_kwargs = {}
-        if os.path.exists(self.storage_state_path):
-            context_kwargs["storage_state"] = self.storage_state_path
-        self._context = await self._browser.new_context(
-            ignore_https_errors=not self.verify_tls, **context_kwargs
-        )
+            self._playwright = await async_playwright().start()
+            launch_kwargs = {"headless": self.headless}
+            proxy_config = _qianlima_playwright_proxy()
+            if proxy_config:
+                launch_kwargs["proxy"] = proxy_config
+            self._browser = await self._playwright.chromium.launch(**launch_kwargs)
+            context_kwargs = {}
+            if os.path.exists(self.storage_state_path):
+                context_kwargs["storage_state"] = self.storage_state_path
+            self._context = await self._browser.new_context(
+                ignore_https_errors=not self.verify_tls, **context_kwargs
+            )
+            if _env_bool("QIANLIMA_BLOCK_HEAVY_RESOURCES", True):
+                await self._context.route("**/*", self._route_lightweight_detail_resources)
 
     async def close(self) -> None:
         if self._context is not None:
@@ -289,9 +343,36 @@ class QianlimaClient:
         if data.get("loginStatus") != 200:
             message = data.get("message") or payload.get("msg") or "千里马登录失败"
             raise RuntimeError(message)
+        auth_token = str(data.get("token") or "").strip()
         os.makedirs(os.path.dirname(self.storage_state_path), exist_ok=True)
+        cookies = self._cookies_to_storage_state(session.cookies)
+        if auth_token:
+            cookies.extend(
+                [
+                    {
+                        "name": "xAuthToken",
+                        "value": auth_token,
+                        "domain": ".qianlima.com",
+                        "path": "/",
+                        "expires": -1,
+                        "httpOnly": False,
+                        "secure": True,
+                        "sameSite": "Lax",
+                    },
+                    {
+                        "name": "xAuthToken",
+                        "value": auth_token,
+                        "domain": ".vip.qianlima.com",
+                        "path": "/",
+                        "expires": -1,
+                        "httpOnly": False,
+                        "secure": True,
+                        "sameSite": "Lax",
+                    },
+                ]
+            )
         state = {
-            "cookies": self._cookies_to_storage_state(session.cookies),
+            "cookies": cookies,
             "origins": [],
         }
         with open(self.storage_state_path, "w", encoding="utf-8") as file_obj:
@@ -333,13 +414,17 @@ class QianlimaClient:
                 return await self._search_via_api(
                     keyword, notice_type, publish_date, max_pages
                 )
-            except Exception:
+            except Exception as exc:
                 if os.getenv("QIANLIMA_STRICT_SEARCH_API", "").lower() in {
                     "1",
                     "true",
                     "yes",
                 }:
                     raise
+                if publish_date is not None and max_pages <= 0:
+                    raise RuntimeError(
+                        "千里马完整日期抓取依赖搜索API；API失败时不能降级为空浏览器抓取"
+                    ) from exc
         return await self._search_via_browser(
             keyword, notice_type, publish_date, max_pages
         )
@@ -350,29 +435,145 @@ class QianlimaClient:
                 detail = await asyncio.to_thread(self._fetch_detail_http, candidate.url)
             except Exception:
                 detail = ""
-            if detail and not _is_access_verification_page(detail):
+            if (
+                detail
+                and not _is_access_verification_page(detail)
+                and not _is_detail_unavailable_page(detail)
+            ):
                 return detail
-        await self.start()
-        max_retries = int(os.getenv("QIANLIMA_DETAIL_MAX_RETRIES", "3"))
-        last_error: Exception | None = None
-        for _ in range(max_retries):
-            page = await self._context.new_page()
-            try:
-                await page.goto(candidate.url, wait_until="domcontentloaded")
+
+        if self._detail_access_exhausted:
+            raise QianlimaDetailAccessExhaustedError(
+                "千里马详情账号池浏览上限已耗尽，停止后续详情页访问"
+            )
+        async with self._browser_detail_semaphore:
+            if self._detail_access_exhausted:
+                raise QianlimaDetailAccessExhaustedError(
+                    "千里马详情账号池浏览上限已耗尽，停止后续详情页访问"
+                )
+            last_error: Exception | None = None
+            max_retries = int(os.getenv("QIANLIMA_DETAIL_MAX_RETRIES", "3"))
+            max_attempts = max_retries * max(1, len(self._accounts))
+            for _ in range(max_attempts):
+                account_index = self._active_account_index
+                await self._ensure_member_detail_session()
+                await self.start()
+                await _sleep_before_detail_request()
+                page = await self._context.new_page()
+                daily_limit_error: _QianlimaDailyLimitError | None = None
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass
-                await page.wait_for_timeout(self.request_delay_ms)
-                return await page.content()
-            except Exception as exc:
-                last_error = exc
-                await page.wait_for_timeout(self.request_delay_ms)
-            finally:
-                await page.close()
-        if last_error:
-            raise last_error
-        return ""
+                    await page.goto(candidate.url, wait_until="domcontentloaded")
+                    networkidle_timeout_ms = int(
+                        os.getenv("QIANLIMA_DETAIL_NETWORKIDLE_TIMEOUT_MS", "1500")
+                    )
+                    if networkidle_timeout_ms > 0:
+                        try:
+                            await page.wait_for_load_state(
+                                "networkidle", timeout=networkidle_timeout_ms
+                            )
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(self.request_delay_ms)
+                    content = await page.content()
+                    if _is_detail_unavailable_page(content):
+                        raise _QianlimaDailyLimitError(
+                            "千里马详情页返回浏览上限或壳页面，拒绝入库"
+                        )
+                    if _is_member_limited_page(content):
+                        raise RuntimeError("千里马详情页返回会员受限内容，拒绝使用非会员脱敏详情")
+                    if _is_access_verification_page(content):
+                        raise RuntimeError("千里马详情页触发访问验证，无法确认会员详情内容")
+                    return content
+                except _QianlimaDailyLimitError as exc:
+                    last_error = exc
+                    daily_limit_error = exc
+                except Exception as exc:
+                    last_error = exc
+                    await page.wait_for_timeout(self.request_delay_ms)
+                finally:
+                    await page.close()
+                if daily_limit_error is not None:
+                    if await self._switch_to_next_detail_account(account_index):
+                        continue
+                    self._detail_access_exhausted = True
+                    raise QianlimaDetailAccessExhaustedError(
+                        "千里马详情账号池浏览上限已耗尽，停止后续详情页访问"
+                    ) from daily_limit_error
+            if last_error:
+                raise last_error
+            return ""
+
+    async def _ensure_member_detail_session(self) -> None:
+        if not _env_bool("QIANLIMA_REQUIRE_MEMBER_DETAIL", True):
+            return
+        if self._storage_state_cookie_value("xAuthToken"):
+            return
+        if not self.username or not self.password:
+            raise RuntimeError("千里马详情页抓取要求会员登录态，但缺少账号密码配置")
+        await self._login_via_browser()
+        if not self._storage_state_cookie_value("xAuthToken"):
+            raise RuntimeError("千里马会员登录态刷新失败，缺少xAuthToken")
+
+    async def _switch_to_next_detail_account(self, limited_account_index: int) -> bool:
+        if len(self._accounts) <= 1:
+            logger.warning(
+                "qianlima_account_switch_unavailable",
+                reason="single_account",
+                limited_account_index=limited_account_index,
+            )
+            return False
+        today = date.today()
+        async with self._account_switch_lock:
+            limited = self._daily_limited_accounts.setdefault(today, set())
+            limited.add(limited_account_index)
+            if self._active_account_index not in limited:
+                logger.info(
+                    "qianlima_account_switch_skipped",
+                    active_account_index=self._active_account_index,
+                    limited_account_index=limited_account_index,
+                )
+                return True
+            for offset in range(1, len(self._accounts) + 1):
+                next_index = (self._active_account_index + offset) % len(self._accounts)
+                if next_index in limited:
+                    continue
+                self._active_account_index = next_index
+                account = self._accounts[next_index]
+                self.username = account.username
+                self.password = account.password
+                self.storage_state_path = account.storage_state_path
+                await self.close()
+                logger.warning(
+                    "qianlima_account_switched_after_daily_limit",
+                    from_account_index=limited_account_index,
+                    to_account_index=next_index,
+                    to_username=account.username,
+                )
+                return True
+        logger.warning(
+            "qianlima_account_switch_unavailable",
+            reason="all_accounts_limited",
+            limited_account_index=limited_account_index,
+            account_count=len(self._accounts),
+        )
+        return False
+
+    async def _route_lightweight_detail_resources(self, route) -> None:
+        request = route.request
+        resource_type = getattr(request, "resource_type", "")
+        url = getattr(request, "url", "")
+        blocked_types = {"image", "font", "media"}
+        blocked_hosts = (
+            "hm.baidu.com",
+            "analytics",
+            "doubleclick",
+            "googletagmanager",
+            "cnzz.com",
+        )
+        if resource_type in blocked_types or any(host in url for host in blocked_hosts):
+            await route.abort()
+            return
+        await route.continue_()
 
     async def _search_via_api(
         self,
@@ -438,6 +639,7 @@ class QianlimaClient:
     ) -> dict[str, Any]:
         max_retries = int(os.getenv("QIANLIMA_SEARCH_MAX_RETRIES", "4"))
         last_error: Exception | None = None
+        refreshed_member_session = False
         for attempt in range(1, max_retries + 1):
             try:
                 return await asyncio.to_thread(
@@ -445,12 +647,33 @@ class QianlimaClient:
                 )
             except requests.RequestException as exc:
                 last_error = exc
+                if (
+                    self._is_unauthorized_error(exc)
+                    and not refreshed_member_session
+                    and self.username
+                    and self.password
+                ):
+                    refreshed_member_session = True
+                    await self._login_via_browser()
+                    try:
+                        return await asyncio.to_thread(
+                            self._request_search_api,
+                            query,
+                            page_number,
+                            publish_date,
+                        )
+                    except requests.RequestException as retry_exc:
+                        last_error = retry_exc
                 if attempt >= max_retries:
                     break
                 await asyncio.sleep(min(3 * attempt, 12))
         if last_error:
             raise last_error
         return {}
+
+    def _is_unauthorized_error(self, exc: requests.RequestException) -> bool:
+        response = getattr(exc, "response", None)
+        return getattr(response, "status_code", None) == 401
 
     def _is_past_target_date_page(
         self,
@@ -487,6 +710,7 @@ class QianlimaClient:
             verify=self.verify_tls,
             headers=self._http_headers("https://search.qianlima.com/"),
             cookies=self._storage_state_cookies(),
+            proxies=_qianlima_search_proxies(),
         )
         response.raise_for_status()
         return response.json()
@@ -534,16 +758,31 @@ class QianlimaClient:
         auth_token = self._storage_state_cookie_value("xAuthToken")
         if auth_token:
             headers["x-auth-token"] = auth_token
-        response = requests.post(
+        response = self._post_vip_search_api(payload, headers)
+        if response.status_code == 401 and self.username and self.password:
+            self._login_via_api()
+            headers = self._http_headers("https://search.vip.qianlima.com/index.html")
+            headers["Origin"] = "https://search.vip.qianlima.com"
+            headers["Content-Type"] = "application/json"
+            auth_token = self._storage_state_cookie_value("xAuthToken")
+            if auth_token:
+                headers["x-auth-token"] = auth_token
+            response = self._post_vip_search_api(payload, headers)
+        response.raise_for_status()
+        return response.json()
+
+    def _post_vip_search_api(
+        self, payload: dict[str, Any], headers: dict[str, str]
+    ) -> requests.Response:
+        return requests.post(
             self.search_api_url,
             json=payload,
             timeout=int(os.getenv("QIANLIMA_REQUEST_TIMEOUT", "30")),
             verify=self.verify_tls,
             headers=headers,
             cookies=self._storage_state_cookies(),
+            proxies=_qianlima_search_proxies(),
         )
-        response.raise_for_status()
-        return response.json()
 
     async def _search_via_browser(
         self,
@@ -554,7 +793,7 @@ class QianlimaClient:
     ) -> List[TenderCandidate]:
         await self.start()
         candidates: List[TenderCandidate] = []
-        query = " ".join([keyword, NOTICE_TYPE_QUERY.get(notice_type, "")]).strip()
+        query = keyword.strip()
         for page_number in range(1, max_pages + 1):
             url = self.search_url_template.format(
                 keyword=quote_plus(query),
@@ -580,6 +819,7 @@ class QianlimaClient:
             verify=self.verify_tls,
             headers=self._http_headers("https://search.qianlima.com/"),
             cookies=self._storage_state_cookies(),
+            proxies=_qianlima_requests_proxies(),
         )
         response.raise_for_status()
         response.encoding = response.apparent_encoding or response.encoding
@@ -623,6 +863,189 @@ def _is_access_verification_page(html: str) -> bool:
         or "showValidateCode" in value
         or "请输入验证码" in value
     )
+
+
+def _is_member_limited_page(html: str) -> bool:
+    value = _clean_link_label(html or "")
+    patterns = [
+        r"会员专享",
+        r"会员可见",
+        r"开通会员",
+        r"升级会员",
+        r"VIP会员",
+        r"登录后查看",
+        r"请登录后查看",
+        r"查看完整信息",
+        r"查看完整内容",
+        r"下文中\*+为隐藏内容",
+        r"\*+为隐藏内容",
+        r"尚未开通.*权限",
+        r"未开通.*权限",
+        r"联系信息.*隐藏",
+        r"联系方式.*隐藏",
+    ]
+    return any(re.search(pattern, value, re.IGNORECASE) for pattern in patterns)
+
+
+def _qianlima_playwright_proxy() -> dict[str, str] | None:
+    server = _qianlima_proxy_setting("server")
+    if not server:
+        return None
+    proxy = {"server": server}
+    username = _qianlima_proxy_setting("username")
+    password = _qianlima_proxy_setting("password")
+    if username:
+        proxy["username"] = username
+    if password:
+        proxy["password"] = password
+    return proxy
+
+
+def _qianlima_requests_proxies() -> dict[str, str] | None:
+    server = _qianlima_proxy_setting("server")
+    if not server:
+        return None
+    if server.lower().startswith(("socks4://", "socks5://", "socks5h://")):
+        return None
+    proxy_url = _proxy_url_with_credentials(
+        server,
+        _qianlima_proxy_setting("username"),
+        _qianlima_proxy_setting("password"),
+    )
+    return {"http": proxy_url, "https": proxy_url}
+
+
+def _qianlima_search_proxies() -> dict[str, str] | None:
+    return None
+
+
+def _qianlima_proxy_setting(name: str) -> str:
+    env_name = f"QIANLIMA_PROXY_{name.upper()}"
+    value = os.getenv(env_name)
+    if value is not None and value.strip():
+        return value.strip()
+    return str(getattr(settings, f"qianlima_proxy_{name}", "") or "").strip()
+
+
+async def _sleep_before_detail_request() -> None:
+    min_delay = float(os.getenv("QIANLIMA_DETAIL_MIN_DELAY_SECONDS", "0"))
+    max_delay = float(os.getenv("QIANLIMA_DETAIL_MAX_DELAY_SECONDS", "0"))
+    if max_delay <= 0 and min_delay <= 0:
+        return
+    if max_delay < min_delay:
+        max_delay = min_delay
+    await asyncio.sleep(random.uniform(min_delay, max_delay))
+
+
+def _proxy_url_with_credentials(
+    server: str, username: str, password: str
+) -> str:
+    if not username:
+        return server
+    parts = urlsplit(server)
+    if "@" in parts.netloc:
+        return server
+    credentials = quote(username, safe="")
+    if password:
+        credentials += f":{quote(password, safe='')}"
+    return urlunsplit(
+        (parts.scheme, f"{credentials}@{parts.netloc}", parts.path, parts.query, parts.fragment)
+    )
+
+
+def _parse_qianlima_accounts(
+    username: str | None,
+    password: str | None,
+    storage_state_path: str,
+    accounts_value: str | None = None,
+) -> list[_QianlimaAccount]:
+    account_specs: list[tuple[str, str]] = []
+    raw_accounts = (
+        accounts_value
+        if accounts_value is not None
+        else os.getenv("QIANLIMA_ACCOUNTS")
+    )
+    for item in (raw_accounts or "").split(","):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        account_username, account_password = item.split(":", 1)
+        account_username = account_username.strip()
+        account_password = account_password.strip()
+        if account_username and account_password:
+            account_specs.append((account_username, account_password))
+    if not account_specs and username and password:
+        account_specs.append((username, password))
+    accounts: list[_QianlimaAccount] = []
+    for index, (account_username, account_password) in enumerate(account_specs):
+        if len(account_specs) == 1:
+            account_storage_path = storage_state_path
+        else:
+            account_storage_path = _account_storage_state_path(
+                storage_state_path, account_username, index
+            )
+        accounts.append(
+            _QianlimaAccount(
+                username=account_username,
+                password=account_password,
+                storage_state_path=account_storage_path,
+            )
+        )
+    return accounts
+
+
+def _account_storage_state_path(
+    storage_state_path: str, username: str, index: int
+) -> str:
+    directory = os.path.dirname(storage_state_path)
+    filename = os.path.basename(storage_state_path)
+    stem, ext = os.path.splitext(filename)
+    safe_username = re.sub(r"[^A-Za-z0-9_.-]+", "_", username).strip("._")
+    suffix = safe_username or f"account{index + 1}"
+    return os.path.join(directory, f"{stem}.{suffix}{ext or '.json'}")
+
+
+def _is_detail_unavailable_page(html: str) -> bool:
+    value = _clean_link_label(html or "")
+    procurement_content_markers = [
+        "采购内容",
+        "采购需求",
+        "招标范围",
+        "项目概况",
+        "预算金额",
+        "最高限价",
+        "响应文件",
+        "投标文件",
+        "成交供应商",
+        "中标供应商",
+        "合同金额",
+    ]
+    has_procurement_content = any(marker in value for marker in procurement_content_markers)
+    if value.strip() in {"详情", "加载中", "详情 加载中"}:
+        return True
+    shell_markers = [
+        "加载中",
+        "防诈骗提醒",
+        "数据来自千里马招标网",
+        "标题",
+        "标的物",
+        "项目编号",
+        "招标单位",
+    ]
+    shell_score = sum(1 for marker in shell_markers if marker in value)
+    has_daily_limit_marker = re.search(
+        r"今日浏览已达到上限|浏览已达到上限|明日再试", value, re.IGNORECASE
+    )
+    if has_daily_limit_marker and not has_procurement_content:
+        return True
+    if (
+        has_daily_limit_marker
+        and shell_score >= 3
+        and not has_procurement_content
+        and len(value) < 1500
+    ):
+        return True
+    return shell_score >= 5 and not has_procurement_content
 
 
 def _dedupe_candidates(candidates: List[TenderCandidate]) -> List[TenderCandidate]:

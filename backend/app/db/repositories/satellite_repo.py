@@ -3,8 +3,8 @@ Satellite Data Repository
 
 数据访问层 - 火点数据（NASA FIRMS）
 """
-from typing import List, Optional
-from datetime import datetime
+from typing import Any, Iterable, List, Optional
+from datetime import datetime, timezone
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import FireHotspot
@@ -12,6 +12,37 @@ from app.db.database import async_session
 import structlog
 
 logger = structlog.get_logger()
+
+
+def fire_hotspot_key(hotspot: Any) -> tuple[float, float, datetime, str]:
+    if isinstance(hotspot, dict):
+        lat = hotspot["lat"]
+        lon = hotspot["lon"]
+        acq_datetime = hotspot["acq_datetime"]
+        satellite = hotspot.get("satellite") or ""
+    else:
+        lat = hotspot.lat
+        lon = hotspot.lon
+        acq_datetime = hotspot.acq_datetime
+        satellite = hotspot.satellite or ""
+    if acq_datetime.tzinfo is not None:
+        acq_datetime = acq_datetime.astimezone(timezone.utc).replace(tzinfo=None)
+    return (round(float(lat), 5), round(float(lon), 5), acq_datetime, str(satellite))
+
+
+def filter_existing_fire_hotspots(
+    hotspots: List[dict],
+    existing_keys: Iterable[tuple[float, float, datetime, str]],
+) -> List[dict]:
+    seen = set(existing_keys)
+    filtered: List[dict] = []
+    for hotspot in hotspots:
+        key = fire_hotspot_key(hotspot)
+        if key in seen:
+            continue
+        seen.add(key)
+        filtered.append(hotspot)
+    return filtered
 
 
 class SatelliteRepository:
@@ -55,6 +86,11 @@ class SatelliteRepository:
 
         try:
             async with async_session() as session:
+                hotspots = await self._filter_new_hotspots(session, hotspots)
+                if not hotspots:
+                    logger.info("fire_hotspots_saved", total=0, saved=0, skipped_duplicates=True)
+                    return 0
+
                 # 批量插入
                 for i in range(0, len(hotspots), batch_size):
                     batch = hotspots[i:i + batch_size]
@@ -99,6 +135,28 @@ class SatelliteRepository:
         except Exception as e:
             logger.error("fire_save_failed", error=str(e), exc_info=True)
             raise
+
+    async def _filter_new_hotspots(self, session: AsyncSession, hotspots: List[dict]) -> List[dict]:
+        min_time = min(h["acq_datetime"] for h in hotspots)
+        max_time = max(h["acq_datetime"] for h in hotspots)
+        min_lat = min(float(h["lat"]) for h in hotspots)
+        max_lat = max(float(h["lat"]) for h in hotspots)
+        min_lon = min(float(h["lon"]) for h in hotspots)
+        max_lon = max(float(h["lon"]) for h in hotspots)
+
+        stmt = select(FireHotspot).where(
+            and_(
+                FireHotspot.acq_datetime >= min_time,
+                FireHotspot.acq_datetime <= max_time,
+                FireHotspot.lat >= min_lat,
+                FireHotspot.lat <= max_lat,
+                FireHotspot.lon >= min_lon,
+                FireHotspot.lon <= max_lon,
+            )
+        )
+        result = await session.execute(stmt)
+        existing_keys = {fire_hotspot_key(record) for record in result.scalars().all()}
+        return filter_existing_fire_hotspots(hotspots, existing_keys)
 
     async def get_fire_hotspots(
         self,
