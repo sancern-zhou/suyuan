@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from .graph_build_models import KnowledgeGraphBuildTask
 from .graph_models import KnowledgeChunk, KnowledgeGraphEntity, KnowledgeGraphRelation, KnowledgeGraphEntityMention, KnowledgeGraphRelationMention, KnowledgeIndexOutbox
 from .models import KnowledgeBase
 from .ingestion_service import KnowledgeIngestionService
 from .graph_extractor import KnowledgeGraphExtractor
+from .index_outbox import KnowledgeIndexOutboxRepository
 
 class GraphBuildService:
     def __init__(self, session_factory, *, extractor=None, batch_size=20, lease_seconds=300, concurrency=4):
@@ -47,10 +48,13 @@ class GraphBuildService:
     async def run(self, task_id):
         task = await self.get_status(task_id=task_id)
         if not task: raise ValueError("task not found")
-        if task.status == "running" and task.lease_until and task.lease_until > datetime.utcnow():
+        now = datetime.utcnow()
+        if task.status == "running" and task.lease_until and task.lease_until > now:
             raise ValueError("task already running")
-        if task.mode == "reset_and_build": await self.reset_graph(task.kb_id)
-        await self._set_task(task_id, status="running", started_at=datetime.utcnow(), lease_until=datetime.utcnow()+timedelta(seconds=self.lease_seconds))
+        if task.status not in {"queued", "running"}:
+            raise ValueError(f"task cannot run from status {task.status}")
+        await self._set_task(task_id, status="running", started_at=now, lease_until=now+timedelta(seconds=self.lease_seconds))
+        if task.mode == "reset_and_build": await self.reset_graph(task.kb_id, task_id=task_id)
         ids = list(task.failed_chunk_ids or [])
         async with self._session() as db:
             q=select(KnowledgeChunk).where(KnowledgeChunk.kb_id==task.kb_id, KnowledgeChunk.graph_status!="completed")
@@ -59,6 +63,9 @@ class GraphBuildService:
         succeeded=[]; failed=[]; errors=[]; cancelled=False
         async def one(c):
             try:
+                current = await self.get_status(task_id=task_id)
+                if current and current.cancel_requested:
+                    return None, None
                 async with self._session() as db: kb=await db.get(KnowledgeBase, task.kb_id); schema=kb.graph_schema or {}
                 extractor=self.extractor or KnowledgeGraphExtractor()
                 extraction=await extractor.extract_chunk(kb_id=task.kb_id, chunk=c, schema=schema)
@@ -77,10 +84,16 @@ class GraphBuildService:
             cur=await self.get_status(task_id=task_id)
             if cur and cur.cancel_requested: cancelled=True; break
             for c,(ok,err) in zip(chunks[i:i+self.batch_size], await asyncio.gather(*(guarded(c) for c in chunks[i:i+self.batch_size]))):
+                if ok is None:
+                    cancelled = True
+                    continue
                 (succeeded if ok else failed).append(c.id)
                 if not ok and err:
                     errors.append(err)
             await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+            await self._set_task(task_id, lease_until=datetime.utcnow()+timedelta(seconds=self.lease_seconds))
+            if cancelled:
+                break
         status="cancelled" if cancelled else ("partial" if failed else "completed")
         await self._set_task(task_id,status=status,completed_at=datetime.utcnow(),lease_until=None,failed_chunk_ids=failed,processed_chunks=len(succeeded),failed_chunks=len(failed),remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
         return await self.get_status(task_id=task_id)
@@ -96,24 +109,32 @@ class GraphBuildService:
     async def retry(self, task_id=None, kb_id=None):
         old=await self.get_status(task_id=task_id,kb_id=kb_id)
         if not old: raise ValueError("task not found")
+        if old.status not in {"failed", "partial"}:
+            raise ValueError("only failed or partial graph builds can be retried")
         ids=list(old.failed_chunk_ids or [])
         if not ids:
             async with self._session() as db:
                 ids=(await db.execute(select(KnowledgeChunk.id).where(KnowledgeChunk.kb_id==old.kb_id, KnowledgeChunk.graph_status=="failed"))).scalars().all()
-        task=await self.create_task(old.kb_id, user_id="system")
+        task=await self.create_task(old.kb_id, mode="pending", user_id="system")
         await self._set_task(task.id, failed_chunk_ids=ids, total_chunks=len(ids), remaining_chunks=len(ids))
         return await self.get_status(task_id=task.id)
 
     async def cancel(self, task_id):
         await self._set_task(task_id,cancel_requested=True)
 
-    async def reset_graph(self, kb_id):
+    async def reset_graph(self, kb_id, *, task_id=None):
         async with self._session() as db:
-            from .index_outbox import KnowledgeIndexOutboxRepository
+            active = await db.scalar(select(KnowledgeGraphBuildTask).where(KnowledgeGraphBuildTask.kb_id == kb_id, KnowledgeGraphBuildTask.status.in_(["queued", "running"]), KnowledgeGraphBuildTask.id != task_id))
+            if active:
+                raise ValueError("task already running")
             outbox=KnowledgeIndexOutboxRepository.for_session(db)
+            record_ids = {}
             for typ,model in (("entity",KnowledgeGraphEntity),("relation",KnowledgeGraphRelation)):
                 for rid in (await db.execute(select(model.id).where(model.kb_id==kb_id))).scalars().all():
-                    await outbox.enqueue_delete(kb_id,typ,rid,1)
+                    record_ids[(typ, rid)] = int(await db.scalar(select(func.max(KnowledgeIndexOutbox.payload_version)).where(KnowledgeIndexOutbox.kb_id == kb_id, KnowledgeIndexOutbox.record_type == typ, KnowledgeIndexOutbox.record_id == rid)) or 0) + 1
+            await db.execute(delete(KnowledgeIndexOutbox).where(KnowledgeIndexOutbox.kb_id == kb_id, KnowledgeIndexOutbox.record_type.in_(["entity", "relation"])))
+            for (typ, rid), revision in record_ids.items():
+                await outbox.enqueue_delete(kb_id, typ, rid, revision)
             for model in (KnowledgeGraphEntityMention,KnowledgeGraphRelationMention,KnowledgeGraphRelation,KnowledgeGraphEntity): await db.execute(delete(model).where(model.kb_id==kb_id))
             for c in (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.kb_id==kb_id))).scalars(): c.graph_status="pending"; c.last_error=None
             await db.commit()
