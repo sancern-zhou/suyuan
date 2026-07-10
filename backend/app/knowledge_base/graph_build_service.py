@@ -47,6 +47,8 @@ class GraphBuildService:
     async def run(self, task_id):
         task = await self.get_status(task_id=task_id)
         if not task: raise ValueError("task not found")
+        if task.status == "running" and task.lease_until and task.lease_until > datetime.utcnow():
+            raise ValueError("task already running")
         if task.mode == "reset_and_build": await self.reset_graph(task.kb_id)
         await self._set_task(task_id, status="running", started_at=datetime.utcnow(), lease_until=datetime.utcnow()+timedelta(seconds=self.lease_seconds))
         ids = list(task.failed_chunk_ids or [])
@@ -107,6 +109,11 @@ class GraphBuildService:
 
     async def reset_graph(self, kb_id):
         async with self._session() as db:
-            for model in (KnowledgeGraphEntityMention,KnowledgeGraphRelationMention,KnowledgeGraphRelation,KnowledgeGraphEntity,KnowledgeIndexOutbox): await db.execute(delete(model).where(model.kb_id==kb_id))
+            from .index_outbox import KnowledgeIndexOutboxRepository
+            outbox=KnowledgeIndexOutboxRepository.for_session(db)
+            for typ,model in (("entity",KnowledgeGraphEntity),("relation",KnowledgeGraphRelation)):
+                for rid in (await db.execute(select(model.id).where(model.kb_id==kb_id))).scalars().all():
+                    await outbox.enqueue_delete(kb_id,typ,rid,1)
+            for model in (KnowledgeGraphEntityMention,KnowledgeGraphRelationMention,KnowledgeGraphRelation,KnowledgeGraphEntity): await db.execute(delete(model).where(model.kb_id==kb_id))
             for c in (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.kb_id==kb_id))).scalars(): c.graph_status="pending"; c.last_error=None
             await db.commit()
