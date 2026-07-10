@@ -199,7 +199,7 @@ OPS_TOOL_NAMES = [
 
 # ===== 认知地图图谱编辑模式工具 =====
 GRAPH_TOOL_NAMES = [
-    "cognitive_map_guidance",
+    "knowledge_graph_query",
     "read_file",
     "edit_file",
     "grep",

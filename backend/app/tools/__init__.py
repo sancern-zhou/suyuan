@@ -351,27 +351,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="knowledge_graph_query", error=str(e))
 
     try:
-        from app.tools.analysis.cognitive_map_guidance.tool import CognitiveMapGuidanceTool
-        registry.register(CognitiveMapGuidanceTool(), priority=51)
-        logger.info("tool_loaded", tool="cognitive_map_guidance")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="cognitive_map_guidance", error=str(e))
-
-    try:
-        from app.tools.cognition.cognitive_map_entity_query.tool import CognitiveMapEntityQueryTool
-        registry.register(CognitiveMapEntityQueryTool(), priority=52)
-        logger.info("tool_loaded", tool="cognitive_map_entity_query")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="cognitive_map_entity_query", error=str(e))
-
-    try:
-        from app.tools.cognition.cognitive_map_graph_traverse.tool import CognitiveMapGraphTraverseTool
-        registry.register(CognitiveMapGraphTraverseTool(), priority=53)
-        logger.info("tool_loaded", tool="cognitive_map_graph_traverse")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="cognitive_map_graph_traverse", error=str(e))
-
-    try:
         from app.tools.query.resolve_station_geo.tool import ResolveStationGeoTool
         registry.register(ResolveStationGeoTool(), priority=54)
         logger.info("tool_loaded", tool="resolve_station_geo")

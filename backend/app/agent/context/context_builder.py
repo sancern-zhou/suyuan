@@ -90,7 +90,6 @@ class SimplifiedContextBuilder:
         self.map_context = None
 
         # 认知地图上下文，由 Agent 入口按模式绑定注入。
-        self.cognitive_map_context = None
 
         logger.info(
             "context_builder_initialized",
@@ -279,8 +278,6 @@ class SimplifiedContextBuilder:
                 "- 用户可能用“这个节点”“这条关系”“刚才那个实体”等表达指代，优先结合用户消息中的“当前认知地图上下文”。\n"
                 "- 修改图谱时默认通过认知地图 REST API 完成，不要直接改内部 JSON 文件。"
             )
-        if self.cognitive_map_context:
-            sections.append(str(self.cognitive_map_context).strip())
         sections.append(self._build_runtime_metadata_prompt())
         sections.append(self._build_agent_control_prompt())
         return "\n\n".join(section for section in sections if section)
@@ -498,32 +495,16 @@ class SimplifiedContextBuilder:
         return "\n".join(lines)
 
     def _build_graph_map_context_user_summary(self) -> str:
-        """Build a compact current-turn summary for cognitive-map graph editing."""
+        """Build a compact current-turn summary for knowledge-base graph editing."""
         if self.current_mode != "graph" or not isinstance(self.map_context, dict):
             return ""
 
-        active_map_id = self.map_context.get("active_map_id") or self.map_context.get("map_id")
-        if not active_map_id:
-            return "## 当前认知地图上下文\n未收到 active_map_id；请先在认知地图面板选择地图。"
+        knowledge_base_id = self.map_context.get("knowledge_base_id")
+        if not knowledge_base_id:
+            return "## 当前知识库图谱上下文\n未收到 knowledge_base_id；请先在知识库面板选择知识库。"
 
-        lines = ["## 当前认知地图上下文", f"active_map_id={active_map_id}"]
-        active_map_name = self.map_context.get("active_map_name") or self.map_context.get("map_name")
-        if active_map_name:
-            lines.append(f"active_map_name={active_map_name}")
-
-        map_dir = f"backend_data_registry/cognitive_maps/{active_map_id}/"
-        lines.extend([
-            "",
-            "文件优先路径:",
-            f"- map_dir={map_dir}",
-            f"- extraction={map_dir}extraction.json",
-            f"- evaluation={map_dir}evaluation.json",
-            f"- map={map_dir}map.json",
-            f"- files={map_dir}files.json",
-            f"- build_runs={map_dir}build_runs.json",
-            f"- property_graph_store={map_dir}property_graph_store.json",
-            "解释/查看/总结时优先 read_file 读取这些文件；编辑时先 read_file 再 edit_file。",
-        ])
+        lines = ["## 当前知识库图谱上下文", f"knowledge_base_id={knowledge_base_id}"]
+        lines.append("图谱事实通过知识库图谱子资源查询和修改，不读取独立 JSON 文件。")
 
         selected_item = self.map_context.get("selected_item")
         if isinstance(selected_item, dict):
