@@ -60,6 +60,20 @@ class GraphBuildService:
             await db.commit()
             return bool(result.rowcount)
 
+    async def _finish_task(self, tid, owner_token, **values):
+        async with self._session() as db:
+            result = await db.execute(
+                update(KnowledgeGraphBuildTask)
+                .where(
+                    KnowledgeGraphBuildTask.id == tid,
+                    KnowledgeGraphBuildTask.status == "running",
+                    KnowledgeGraphBuildTask.started_at == owner_token,
+                )
+                .values(**values)
+            )
+            await db.commit()
+            return bool(result.rowcount)
+
     async def run(self, task_id):
         task = await self.get_status(task_id=task_id)
         if not task: raise ValueError("task not found")
@@ -125,7 +139,7 @@ class GraphBuildService:
             if cancelled:
                 break
         status="cancelled" if cancelled else ("partial" if failed else "completed")
-        await self._set_task(task_id,status=status,completed_at=datetime.utcnow(),lease_until=None,failed_chunk_ids=failed,processed_chunks=len(succeeded),failed_chunks=len(failed),remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+        await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=len(succeeded), failed_chunks=len(failed), remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
         return await self.get_status(task_id=task_id)
 
     async def recover_expired_tasks(self):
