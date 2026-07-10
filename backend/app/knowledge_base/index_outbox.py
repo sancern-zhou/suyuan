@@ -22,8 +22,16 @@ CollectionResolver = Callable[[str], str | Awaitable[str]]
 class KnowledgeIndexOutboxRepository:
     """Persist and claim idempotent knowledge-index operations."""
 
-    def __init__(self, session_factory):
+    def __init__(self, session_factory=None, *, session=None):
+        if session_factory is None and session is None:
+            raise ValueError("session_factory or session is required")
         self.session_factory = session_factory
+        self.session = session
+
+    @classmethod
+    def for_session(cls, session) -> KnowledgeIndexOutboxRepository:
+        """Bind enqueue operations to the caller's fact transaction."""
+        return cls(session=session)
 
     async def enqueue_upsert(
         self,
@@ -74,6 +82,22 @@ class KnowledgeIndexOutboxRepository:
             raise ValueError("payload_version must be positive")
 
         identity = (record_type, record_id, operation, payload_version)
+        if self.session is not None:
+            existing = await self._find_identity(self.session, identity)
+            if existing is not None:
+                return existing
+            item = KnowledgeIndexOutbox(
+                kb_id=kb_id,
+                record_type=record_type,
+                record_id=record_id,
+                operation=operation,
+                payload_version=payload_version,
+                payload=payload,
+            )
+            self.session.add(item)
+            await self.session.flush()
+            return item
+
         async with self.session_factory() as session:
             existing = await self._find_identity(session, identity)
             if existing is not None:
