@@ -89,6 +89,42 @@ async def test_retry_uses_exponential_backoff(outbox_repository):
     assert retried.next_retry_at >= before + timedelta(seconds=1)
 
 
+@pytest.mark.asyncio
+async def test_claim_recovers_expired_processing_lease(outbox_repository):
+    item = await outbox_repository.enqueue_delete(
+        kb_id="kb1",
+        record_type="chunk",
+        record_id="stuck",
+        payload_version=1,
+    )
+    await outbox_repository.claim_batch(limit=1)
+    async with outbox_repository.session_factory() as session, session.begin():
+        stuck = await session.get(KnowledgeIndexOutbox, item.id)
+        stuck.updated_at = datetime.utcnow() - timedelta(minutes=10)
+
+    recovered = await outbox_repository.claim_batch(limit=1)
+
+    assert [record.id for record in recovered] == [item.id]
+
+
+@pytest.mark.asyncio
+async def test_graph_record_revision_is_independent_and_monotonic(outbox_repository):
+    async with outbox_repository.session_factory() as session, session.begin():
+        bound = KnowledgeIndexOutboxRepository.for_session(session)
+        first = await bound.next_payload_version("kb1", "relation", "shared")
+        await bound.enqueue_upsert(
+            "kb1",
+            "relation",
+            "shared",
+            first,
+            {"record_type": "relation", "record_id": "shared"},
+        )
+        second = await bound.next_payload_version("kb1", "relation", "shared")
+        await bound.enqueue_delete("kb1", "relation", "shared", second)
+
+    assert (first, second) == (1, 2)
+
+
 class _RetryRepository:
     def __init__(self):
         self.item = SimpleNamespace(

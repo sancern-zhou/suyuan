@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.knowledge_base.graph_models import KnowledgeIndexOutbox
@@ -22,11 +22,12 @@ CollectionResolver = Callable[[str], str | Awaitable[str]]
 class KnowledgeIndexOutboxRepository:
     """Persist and claim idempotent knowledge-index operations."""
 
-    def __init__(self, session_factory=None, *, session=None):
+    def __init__(self, session_factory=None, *, session=None, processing_lease_seconds: int = 300):
         if session_factory is None and session is None:
             raise ValueError("session_factory or session is required")
         self.session_factory = session_factory
         self.session = session
+        self.processing_lease_seconds = max(1, processing_lease_seconds)
 
     @classmethod
     def for_session(cls, session) -> KnowledgeIndexOutboxRepository:
@@ -65,6 +66,30 @@ class KnowledgeIndexOutboxRepository:
             payload_version=payload_version,
             payload={},
         )
+
+    async def next_payload_version(
+        self,
+        kb_id: str,
+        record_type: str,
+        record_id: str,
+    ) -> int:
+        """Allocate a per-record revision independent of document generations."""
+        if self.session is None:
+            raise RuntimeError("next_payload_version requires a transaction-bound repository")
+        bind = self.session.get_bind()
+        if bind.dialect.name == "postgresql":
+            lock_key = f"knowledge-index:{kb_id}:{record_type}:{record_id}"
+            await self.session.execute(
+                select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0)))
+            )
+        latest = await self.session.scalar(
+            select(func.max(KnowledgeIndexOutbox.payload_version)).where(
+                KnowledgeIndexOutbox.kb_id == kb_id,
+                KnowledgeIndexOutbox.record_type == record_type,
+                KnowledgeIndexOutbox.record_id == record_id,
+            )
+        )
+        return int(latest or 0) + 1
 
     async def _enqueue(
         self,
@@ -141,11 +166,21 @@ class KnowledgeIndexOutboxRepository:
         if limit <= 0:
             return []
         async with self.session_factory() as session, session.begin():
+            now = datetime.utcnow()
+            expired = now - timedelta(seconds=self.processing_lease_seconds)
             result = await session.execute(
                 select(KnowledgeIndexOutbox)
                 .where(
-                    KnowledgeIndexOutbox.status == "pending",
-                    KnowledgeIndexOutbox.next_retry_at <= datetime.utcnow(),
+                    or_(
+                        and_(
+                            KnowledgeIndexOutbox.status == "pending",
+                            KnowledgeIndexOutbox.next_retry_at <= now,
+                        ),
+                        and_(
+                            KnowledgeIndexOutbox.status == "processing",
+                            KnowledgeIndexOutbox.updated_at <= expired,
+                        ),
+                    )
                 )
                 .order_by(
                     KnowledgeIndexOutbox.created_at,
@@ -157,6 +192,7 @@ class KnowledgeIndexOutboxRepository:
             items = list(result.scalars())
             for item in items:
                 item.status = "processing"
+                item.updated_at = now
             await session.flush()
             return items
 
@@ -233,6 +269,7 @@ class KnowledgeIndexOutboxWorker:
         self.idle_poll_seconds = idle_poll_seconds
         self._stopping = asyncio.Event()
         self._batch_lock = asyncio.Lock()
+        self._ensured_collections: set[str] = set()
 
     async def run_once(self) -> int:
         succeeded = 0
@@ -248,6 +285,15 @@ class KnowledgeIndexOutboxWorker:
                     if inspect.isawaitable(collection_name):
                         collection_name = await collection_name
                     if item.operation == "upsert":
+                        create_collection = getattr(self.vector_store, "create_collection", None)
+                        if (
+                            collection_name not in self._ensured_collections
+                            and create_collection is not None
+                        ):
+                            created = create_collection(collection_name)
+                            if inspect.isawaitable(created):
+                                await created
+                            self._ensured_collections.add(collection_name)
                         await self.vector_store.upsert_records(
                             collection_name,
                             [dict(item.payload)],

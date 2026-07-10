@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.db.database import Base
+from app.knowledge_base.graph_models import KnowledgeChunk
+from app.knowledge_base.models import Document, KnowledgeBase
 from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 
 
@@ -55,3 +59,63 @@ async def test_cross_kb_search_never_mixes_graph_paths():
         for item in results
         for path in item["graph_paths"]
     )
+
+
+@pytest.mark.asyncio
+async def test_search_filters_deleted_and_unacknowledged_qdrant_points(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'retrieval.db'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with factory() as session, session.begin():
+        session.add(
+            KnowledgeBase(
+                id="kb1",
+                name="KB1",
+                qdrant_collection="kb1",
+                graph_enabled=False,
+            )
+        )
+        session.add(Document(id="doc1", knowledge_base_id="kb1", filename="a.md"))
+        session.add_all(
+            [
+                KnowledgeChunk(
+                    id="indexed",
+                    kb_id="kb1",
+                    document_id="doc1",
+                    content_generation=1,
+                    chunk_key="i",
+                    content_hash="i",
+                    chunk_index=0,
+                    content="current",
+                    embedding_text="current",
+                    vector_status="indexed",
+                ),
+                KnowledgeChunk(
+                    id="pending",
+                    kb_id="kb1",
+                    document_id="doc1",
+                    content_generation=1,
+                    chunk_key="p",
+                    content_hash="p",
+                    chunk_index=1,
+                    content="pending",
+                    embedding_text="pending",
+                    vector_status="pending",
+                ),
+            ]
+        )
+
+    class _VectorStore:
+        async def hybrid_search(self, **_kwargs):
+            return [
+                {"chunk_id": "deleted", "content": "stale"},
+                {"chunk_id": "pending", "content": "not acknowledged"},
+                {"chunk_id": "indexed", "content": "current"},
+            ]
+
+    service = KnowledgeRetrievalService(session_factory=factory, vector_store=_VectorStore())
+    results = await service.search(query="current", kb_ids=["kb1"], top_k=10)
+
+    assert [item["chunk_id"] for item in results] == ["indexed"]
+    await engine.dispose()

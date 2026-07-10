@@ -12,7 +12,6 @@ from app.db.database import get_db
 from app.knowledge_base.graph_models import (
     KnowledgeGraphEntity,
     KnowledgeGraphRelation,
-    KnowledgeIndexOutbox,
 )
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.graph_schemas import (
@@ -91,19 +90,22 @@ def _relation_data(relation: KnowledgeGraphRelation) -> dict:
     }
 
 
-async def _next_payload_version(db: AsyncSession, record_type: str, record_id: str) -> int:
-    latest = await db.scalar(
-        select(func.max(KnowledgeIndexOutbox.payload_version)).where(
-            KnowledgeIndexOutbox.record_type == record_type,
-            KnowledgeIndexOutbox.record_id == record_id,
-        )
+async def _next_payload_version(
+    db: AsyncSession,
+    kb_id: str,
+    record_type: str,
+    record_id: str,
+) -> int:
+    return await KnowledgeIndexOutboxRepository.for_session(db).next_payload_version(
+        kb_id,
+        record_type,
+        record_id,
     )
-    return int(latest or 0) + 1
 
 
 async def _index_entity(db: AsyncSession, entity: KnowledgeGraphEntity) -> None:
     outbox = KnowledgeIndexOutboxRepository.for_session(db)
-    version = await _next_payload_version(db, "entity", entity.id)
+    version = await _next_payload_version(db, entity.kb_id, "entity", entity.id)
     if entity.review_status in {"rejected", "archived", "merged"}:
         await outbox.enqueue_delete(entity.kb_id, "entity", entity.id, version)
     else:
@@ -118,7 +120,7 @@ async def _index_entity(db: AsyncSession, entity: KnowledgeGraphEntity) -> None:
 
 async def _index_relation(db: AsyncSession, relation: KnowledgeGraphRelation) -> None:
     outbox = KnowledgeIndexOutboxRepository.for_session(db)
-    version = await _next_payload_version(db, "relation", relation.id)
+    version = await _next_payload_version(db, relation.kb_id, "relation", relation.id)
     if relation.review_status in {"rejected", "archived", "merged"}:
         await outbox.enqueue_delete(relation.kb_id, "relation", relation.id, version)
         return
@@ -433,7 +435,7 @@ async def merge_entities(
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     repository = KnowledgeGraphRepository(db)
-    await repository.merge_entities(
+    merge_result = await repository.merge_entities(
         kb_id=kb_id,
         source_id=request.source_id,
         target_id=request.target_id,
@@ -444,6 +446,14 @@ async def merge_entities(
         await _index_entity(db, source)
     if target is not None:
         await _index_entity(db, target)
+    for relation_id in merge_result.changed_relation_ids:
+        relation = await db.get(KnowledgeGraphRelation, relation_id)
+        if relation is not None:
+            await _index_relation(db, relation)
+    outbox = KnowledgeIndexOutboxRepository.for_session(db)
+    for relation_id in merge_result.deleted_relation_ids:
+        version = await _next_payload_version(db, kb_id, "relation", relation_id)
+        await outbox.enqueue_delete(kb_id, "relation", relation_id, version)
     return {"source_id": request.source_id, "target": _entity_data(target)}
 
 

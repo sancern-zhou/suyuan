@@ -84,9 +84,7 @@ def test_graph_query_defaults_to_trusted_review_statuses(graph_api):
     )
 
     assert response.status_code == 200
-    assert {item["review_status"] for item in response.json()["entities"]} == {
-        "confirmed"
-    }
+    assert {item["review_status"] for item in response.json()["entities"]} == {"confirmed"}
 
 
 def test_graph_status_and_schema_are_scoped_to_knowledge_base(graph_api):
@@ -123,3 +121,14 @@ def test_graph_query_validates_depth_limit(graph_api):
     )
 
     assert response.status_code == 422
+
+
+def test_default_manage_permission_requires_owner_or_admin():
+    from app.knowledge_base.permissions import KnowledgeBasePermissions
+
+    kb = KnowledgeBase(id="private", name="私有库", owner_id="owner")
+
+    assert KnowledgeBasePermissions.can_manage(kb, "owner") is True
+    assert KnowledgeBasePermissions.can_manage(kb, "other") is False
+    assert KnowledgeBasePermissions.can_manage(kb, "anonymous") is False
+    assert KnowledgeBasePermissions.can_manage(kb, "other", is_admin=True) is True

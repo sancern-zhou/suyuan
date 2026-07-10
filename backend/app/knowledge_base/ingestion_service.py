@@ -12,7 +12,10 @@ from sqlalchemy import func, select
 
 from app.agent.cognition.models import CognitiveSchema
 from app.knowledge_base.chunk_diff import build_chunk_drafts
-from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
+from app.knowledge_base.chunk_repository import (
+    KnowledgeChunkRepository,
+    StaleContentGeneration,
+)
 from app.knowledge_base.graph_models import (
     KnowledgeChunk,
     KnowledgeGraphEntity,
@@ -76,7 +79,11 @@ class KnowledgeIngestionService:
                 llm_mode=self.processing_options.get("llm_mode", "online"),
             )
         except Exception as exc:
-            await self._mark_document_failed(document_id, str(exc))
+            await self._mark_document_failed(
+                document_id,
+                str(exc),
+                expected_generation=snapshot.content_generation,
+            )
             raise
 
         drafts = build_chunk_drafts(chunks)
@@ -114,7 +121,11 @@ class KnowledgeIngestionService:
                 if isinstance(result, BaseException):
                     error = str(result)
                     graph_errors.append(error)
-                    await self._mark_chunk_graph_failed(chunk.id, error)
+                    await self._mark_chunk_graph_failed(
+                        chunk.id,
+                        error,
+                        expected_generation=snapshot.content_generation,
+                    )
                     continue
                 changed_entity_ids.update(result.changed_entity_ids)
                 changed_relation_ids.update(result.changed_relation_ids)
@@ -157,6 +168,7 @@ class KnowledgeIngestionService:
                 kb_id=old_snapshot.kb_id,
                 document_id=document_id,
                 payload_version=old_snapshot.content_generation + 1,
+                expected_generation=old_snapshot.content_generation + 1,
             )
             raise
 
@@ -166,6 +178,7 @@ class KnowledgeIngestionService:
             kb_id=kb_id,
             document_id=document_id,
             payload_version=snapshot.content_generation,
+            expected_generation=snapshot.content_generation,
         )
         await self._delete_original_file(snapshot)
         async with self.session_factory() as session, session.begin():
@@ -226,18 +239,24 @@ class KnowledgeIngestionService:
                     )
                     await session.delete(chunk)
                 for entity_id in deactivated_entities:
+                    revision = await outbox.next_payload_version(
+                        snapshot.kb_id, "entity", entity_id
+                    )
                     await outbox.enqueue_delete(
                         kb_id=snapshot.kb_id,
                         record_type="entity",
                         record_id=entity_id,
-                        payload_version=snapshot.content_generation,
+                        payload_version=revision,
                     )
                 for relation_id in deactivated_relations:
+                    revision = await outbox.next_payload_version(
+                        snapshot.kb_id, "relation", relation_id
+                    )
                     await outbox.enqueue_delete(
                         kb_id=snapshot.kb_id,
                         record_type="relation",
                         record_id=relation_id,
-                        payload_version=snapshot.content_generation,
+                        payload_version=revision,
                     )
             chunks_to_index = [
                 *persisted.added,
@@ -259,13 +278,22 @@ class KnowledgeIngestionService:
 
     async def _persist_graph_extraction(self, snapshot, chunk, extraction):
         async with self.session_factory() as session, session.begin():
+            current_document = await session.scalar(
+                select(Document).where(Document.id == snapshot.document_id).with_for_update()
+            )
+            if (
+                current_document is None
+                or current_document.content_generation != snapshot.content_generation
+            ):
+                raise StaleContentGeneration(
+                    f"document {snapshot.document_id} no longer belongs to generation "
+                    f"{snapshot.content_generation}"
+                )
             current_chunk = await session.get(KnowledgeChunk, chunk.id)
             if (
                 current_chunk is None
                 or current_chunk.content_generation != snapshot.content_generation
             ):
-                from app.knowledge_base.chunk_repository import StaleContentGeneration
-
                 raise StaleContentGeneration(
                     f"chunk {chunk.id} no longer belongs to generation "
                     f"{snapshot.content_generation}"
@@ -281,11 +309,14 @@ class KnowledgeIngestionService:
             for entity_id in result.changed_entity_ids:
                 entity = await session.get(KnowledgeGraphEntity, entity_id)
                 if entity is not None:
+                    revision = await outbox.next_payload_version(
+                        snapshot.kb_id, "entity", entity.id
+                    )
                     await outbox.enqueue_upsert(
                         kb_id=snapshot.kb_id,
                         record_type="entity",
                         record_id=entity.id,
-                        payload_version=snapshot.content_generation,
+                        payload_version=revision,
                         payload=self._entity_payload(entity),
                     )
             for relation_id in result.changed_relation_ids:
@@ -293,11 +324,14 @@ class KnowledgeIngestionService:
                 if relation is not None:
                     source = await session.get(KnowledgeGraphEntity, relation.source_entity_id)
                     target = await session.get(KnowledgeGraphEntity, relation.target_entity_id)
+                    revision = await outbox.next_payload_version(
+                        snapshot.kb_id, "relation", relation.id
+                    )
                     await outbox.enqueue_upsert(
                         kb_id=snapshot.kb_id,
                         record_type="relation",
                         record_id=relation.id,
-                        payload_version=snapshot.content_generation,
+                        payload_version=revision,
                         payload=self._relation_payload(relation, source, target),
                     )
             await self.chunk_repository_factory(session).mark_graph_status(
@@ -306,18 +340,37 @@ class KnowledgeIngestionService:
             )
             return result
 
-    async def _mark_chunk_graph_failed(self, chunk_id: str, error: str) -> None:
+    async def _mark_chunk_graph_failed(
+        self,
+        chunk_id: str,
+        error: str,
+        *,
+        expected_generation: int,
+    ) -> None:
         async with self.session_factory() as session, session.begin():
+            chunk = await session.scalar(
+                select(KnowledgeChunk).where(KnowledgeChunk.id == chunk_id).with_for_update()
+            )
+            if chunk is None or chunk.content_generation != expected_generation:
+                return
             await self.chunk_repository_factory(session).mark_graph_status(
                 [chunk_id],
                 "failed",
                 error[:1000],
             )
 
-    async def _mark_document_failed(self, document_id: str, error: str) -> None:
+    async def _mark_document_failed(
+        self,
+        document_id: str,
+        error: str,
+        *,
+        expected_generation: int,
+    ) -> None:
         async with self.session_factory() as session, session.begin():
-            document = await session.get(Document, document_id)
-            if document is None:
+            document = await session.scalar(
+                select(Document).where(Document.id == document_id).with_for_update()
+            )
+            if document is None or document.content_generation != expected_generation:
                 return
             document.status = DocumentStatus.FAILED
             document.ingestion_status = "failed"
@@ -336,10 +389,17 @@ class KnowledgeIngestionService:
         graph_errors: list[str],
     ) -> None:
         async with self.session_factory() as session, session.begin():
-            document = await session.get(Document, snapshot.document_id)
+            document = await session.scalar(
+                select(Document).where(Document.id == snapshot.document_id).with_for_update()
+            )
             kb = await session.get(KnowledgeBase, snapshot.kb_id)
             if document is None or kb is None:
                 raise ValueError("Document or knowledge base disappeared during ingestion")
+            if document.content_generation != snapshot.content_generation:
+                raise StaleContentGeneration(
+                    f"document {snapshot.document_id} advanced from generation "
+                    f"{snapshot.content_generation} to {document.content_generation}"
+                )
             document.status = DocumentStatus.COMPLETED
             document.ingestion_status = status
             document.graph_status = "failed" if graph_errors else "completed"
@@ -356,6 +416,14 @@ class KnowledgeIngestionService:
             return
         try:
             async with self.session_factory() as session, session.begin():
+                document = await session.scalar(
+                    select(Document).where(Document.id == snapshot.document_id).with_for_update()
+                )
+                if document is None or document.content_generation != snapshot.content_generation:
+                    raise StaleContentGeneration(
+                        f"document {snapshot.document_id} no longer belongs to generation "
+                        f"{snapshot.content_generation}"
+                    )
                 storage = (
                     self.file_storage(session) if callable(self.file_storage) else self.file_storage
                 )
@@ -365,8 +433,7 @@ class KnowledgeIngestionService:
                     document_id=snapshot.document_id,
                     knowledge_base_id=snapshot.kb_id,
                 )
-                document = await session.get(Document, snapshot.document_id)
-                if document is not None and info:
+                if info:
                     document.file_storage_type = info.get("storage_type", "none")
                     document.file_mime_type = info.get("mime_type")
                     document.file_checksum = info.get("checksum")
@@ -375,6 +442,8 @@ class KnowledgeIngestionService:
                         document.original_file_oid = int(info["loid"])
                     elif info.get("storage_type") == "local":
                         document.file_path = info.get("storage_path", snapshot.file_path)
+        except StaleContentGeneration:
+            raise
         except Exception as exc:
             logger.warning(
                 "original_file_storage_failed",
@@ -446,8 +515,19 @@ class KnowledgeIngestionService:
         kb_id: str,
         document_id: str,
         payload_version: int,
+        expected_generation: int,
     ) -> None:
         async with self.session_factory() as session, session.begin():
+            document = await session.scalar(
+                select(Document)
+                .where(
+                    Document.id == document_id,
+                    Document.knowledge_base_id == kb_id,
+                )
+                .with_for_update()
+            )
+            if document is None or document.content_generation != expected_generation:
+                return
             chunks = list(
                 (
                     await session.execute(
@@ -475,18 +555,20 @@ class KnowledgeIngestionService:
                 )
                 await session.delete(chunk)
             for entity_id in deactivated_entities:
+                revision = await outbox.next_payload_version(kb_id, "entity", entity_id)
                 await outbox.enqueue_delete(
                     kb_id=kb_id,
                     record_type="entity",
                     record_id=entity_id,
-                    payload_version=payload_version,
+                    payload_version=revision,
                 )
             for relation_id in deactivated_relations:
+                revision = await outbox.next_payload_version(kb_id, "relation", relation_id)
                 await outbox.enqueue_delete(
                     kb_id=kb_id,
                     record_type="relation",
                     record_id=relation_id,
-                    payload_version=payload_version,
+                    payload_version=revision,
                 )
             await self._recalculate_kb_stats(session, kb_id)
 

@@ -29,6 +29,12 @@ class GraphUpsertResult:
     changed_relation_ids: list[str]
 
 
+@dataclass(frozen=True)
+class GraphMergeResult:
+    changed_relation_ids: list[str]
+    deleted_relation_ids: list[str]
+
+
 class KnowledgeGraphRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -41,6 +47,7 @@ class KnowledgeGraphRepository:
         extraction: ChunkGraphExtraction,
         extraction_run_id: str,
     ) -> GraphUpsertResult:
+        await self._lock_kb_graph(kb_id)
         chunk = await self.session.get(KnowledgeChunk, extraction.chunk_id)
         if chunk is None or chunk.kb_id != kb_id or chunk.document_id != document_id:
             raise ValueError(f"Chunk not found in knowledge base document: {extraction.chunk_id}")
@@ -153,6 +160,7 @@ class KnowledgeGraphRepository:
     ) -> tuple[list[str], list[str]]:
         if not chunk_ids:
             return [], []
+        await self._lock_kb_graph(kb_id)
 
         entity_ids = set(
             (
@@ -252,7 +260,8 @@ class KnowledgeGraphRepository:
         kb_id: str,
         source_id: str,
         target_id: str,
-    ) -> None:
+    ) -> GraphMergeResult:
+        await self._lock_kb_graph(kb_id)
         if source_id == target_id:
             raise ValueError("Source and target entities must differ")
         source = await self.session.get(KnowledgeGraphEntity, source_id)
@@ -276,6 +285,8 @@ class KnowledgeGraphRepository:
             .scalars()
             .all()
         )
+        changed_relation_ids: set[str] = set()
+        deleted_relation_ids: set[str] = set()
         for relation in relations:
             new_source_id = (
                 target_id if relation.source_entity_id == source_id else relation.source_entity_id
@@ -284,6 +295,7 @@ class KnowledgeGraphRepository:
                 target_id if relation.target_entity_id == source_id else relation.target_entity_id
             )
             if new_source_id == new_target_id:
+                deleted_relation_ids.add(relation.id)
                 await self.session.delete(relation)
                 continue
             duplicate = await self.session.scalar(
@@ -297,10 +309,13 @@ class KnowledgeGraphRepository:
             )
             if duplicate is not None:
                 await self._move_relation_mentions(relation.id, duplicate.id)
+                changed_relation_ids.add(duplicate.id)
+                deleted_relation_ids.add(relation.id)
                 await self.session.delete(relation)
             else:
                 relation.source_entity_id = new_source_id
                 relation.target_entity_id = new_target_id
+                changed_relation_ids.add(relation.id)
 
         target.aliases = self._clean_aliases(
             [*(target.aliases or []), source.name, *(source.aliases or [])]
@@ -310,6 +325,11 @@ class KnowledgeGraphRepository:
         source.merged_into_id = target_id
         source.mention_count = 0
         await self.session.flush()
+        await self._refresh_relation_counts(changed_relation_ids)
+        return GraphMergeResult(
+            changed_relation_ids=sorted(changed_relation_ids),
+            deleted_relation_ids=sorted(deleted_relation_ids),
+        )
 
     async def query_entities(
         self,
@@ -640,6 +660,16 @@ class KnowledgeGraphRepository:
             )
         )
         return bool(count)
+
+    async def _lock_kb_graph(self, kb_id: str) -> None:
+        """Serialize short fact mutations per KB to protect identity/count invariants."""
+        bind = self.session.get_bind()
+        if bind.dialect.name == "postgresql":
+            await self.session.execute(
+                select(
+                    func.pg_advisory_xact_lock(func.hashtextextended(f"knowledge-graph:{kb_id}", 0))
+                )
+            )
 
     @staticmethod
     def _is_disposable(record: KnowledgeGraphEntity | KnowledgeGraphRelation) -> bool:

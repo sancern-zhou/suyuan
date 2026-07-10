@@ -218,7 +218,9 @@ async def test_merge_entities_rewrites_relations_and_mentions(db_session):
     )
     source_id, target_id = result.entity_ids
 
-    await repository.merge_entities(kb_id="kb1", source_id=source_id, target_id=target_id)
+    merge_result = await repository.merge_entities(
+        kb_id="kb1", source_id=source_id, target_id=target_id
+    )
     source = await db_session.get(KnowledgeGraphEntity, source_id)
     target = await db_session.get(KnowledgeGraphEntity, target_id)
     relations = await repository.traverse(
@@ -233,6 +235,8 @@ async def test_merge_entities_rewrites_relations_and_mentions(db_session):
     assert source.merged_into_id == target_id
     assert "广州站" in target.aliases
     assert relations[1] == []
+    assert merge_result.changed_relation_ids == []
+    assert merge_result.deleted_relation_ids == result.relation_ids
 
 
 @pytest.mark.asyncio
