@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+import asyncio
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.database import get_db, async_session
+from app.knowledge_base.graph_build_service import GraphBuildService
+from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
 from app.knowledge_base.graph_models import (
     KnowledgeGraphEntity,
     KnowledgeGraphRelation,
@@ -22,6 +25,8 @@ from app.knowledge_base.graph_schemas import (
     GraphRelationCreate,
     GraphRelationUpdate,
     GraphSchemaUpdate,
+    GraphBuildCreate,
+    GraphBuildTaskResponse,
 )
 from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
 from app.knowledge_base.ingestion_service import KnowledgeIngestionService
@@ -32,6 +37,30 @@ router = APIRouter(
     prefix="/knowledge-base/{kb_id}/graph",
     tags=["Knowledge Graph"],
 )
+
+_graph_build_tasks: set[asyncio.Task] = set()
+
+
+def _build_data(task: KnowledgeGraphBuildTask) -> dict:
+    return {
+        "id": task.id, "knowledge_base_id": task.kb_id, "status": task.status,
+        "mode": task.mode, "created_by": task.created_by,
+        "created_at": task.created_at, "started_at": task.started_at,
+        "completed_at": task.completed_at, "total_chunks": task.total_chunks,
+        "processed_chunks": task.processed_chunks, "failed_chunks": task.failed_chunks,
+        "remaining_chunks": task.remaining_chunks,
+        "failed_chunk_ids": list(task.failed_chunk_ids or []),
+        "last_error": task.last_error, "cancel_requested": task.cancel_requested,
+        "lease_until": task.lease_until,
+    }
+
+
+def _launch_build(task_id: str) -> None:
+    async def _run():
+        await GraphBuildService(async_session).run(task_id)
+    task = asyncio.create_task(_run())
+    _graph_build_tasks.add(task)
+    task.add_done_callback(_graph_build_tasks.discard)
 
 
 async def _knowledge_base(db: AsyncSession, kb_id: str) -> KnowledgeBase:
@@ -168,6 +197,91 @@ async def graph_status(
         "failed_documents": int(failed_documents or 0),
         "updated_at": kb.graph_updated_at,
     }
+
+
+@router.post("/build", response_model=GraphBuildTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_graph_build(
+    kb_id: str,
+    request: GraphBuildCreate,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    try:
+        task = await GraphBuildService(async_session).create_task(
+            kb_id, mode=request.mode, batch_size=request.batch_size, user_id=user_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _launch_build(task.id)
+    return _build_data(task)
+
+
+@router.get("/build", response_model=GraphBuildTaskResponse | None)
+async def get_graph_build(
+    kb_id: str,
+    task_id: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    await _readable_kb(db, kb_id, user_id)
+    task = await GraphBuildService(async_session).get_status(kb_id=kb_id, task_id=task_id)
+    if task is None:
+        return None
+    if task.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Build task not found")
+    return _build_data(task)
+
+
+@router.post("/build/{task_id}/cancel", response_model=GraphBuildTaskResponse)
+async def cancel_graph_build(
+    kb_id: str, task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    service = GraphBuildService(async_session)
+    task = await service.get_status(task_id=task_id)
+    if not task or task.kb_id != kb_id: raise HTTPException(status_code=404, detail="Build task not found")
+    await service.cancel(task_id)
+    return _build_data(await service.get_status(task_id=task_id))
+
+
+@router.post("/build/{task_id}/retry", response_model=GraphBuildTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+async def retry_graph_build(
+    kb_id: str, task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    service = GraphBuildService(async_session)
+    old = await service.get_status(task_id=task_id)
+    if not old or old.kb_id != kb_id: raise HTTPException(status_code=404, detail="Build task not found")
+    try: task = await service.retry(task_id=task_id)
+    except ValueError as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _launch_build(task.id)
+    return _build_data(task)
+
+
+@router.post("/build/recover-expired")
+async def recover_expired_graph_builds(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    service = GraphBuildService(async_session)
+    ids = await service.recover_expired_tasks()
+    recovered = []
+    for task_id in ids:
+        task = await service.get_status(task_id=task_id)
+        if task and task.kb_id == kb_id:
+            _launch_build(task_id); recovered.append(task_id)
+    return {"recovered_task_ids": recovered}
 
 
 @router.get("/schema")

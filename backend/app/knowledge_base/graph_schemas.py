@@ -61,6 +61,30 @@ class GraphSchemaUpdate(BaseModel):
     extractor_config: dict[str, Any] | None = None
 
 
+class GraphBuildCreate(BaseModel):
+    mode: Literal["pending", "reset_and_build"] = "pending"
+    batch_size: int | None = Field(default=None, ge=1, le=500)
+
+
+class GraphBuildTaskResponse(BaseModel):
+    id: str
+    knowledge_base_id: str
+    status: str
+    mode: str
+    created_by: str
+    created_at: Any
+    started_at: Any = None
+    completed_at: Any = None
+    total_chunks: int
+    processed_chunks: int
+    failed_chunks: int
+    remaining_chunks: int
+    failed_chunk_ids: list[str] = Field(default_factory=list)
+    last_error: str | None = None
+    cancel_requested: bool
+    lease_until: Any = None
+
+
 class GraphEntityCreate(BaseModel):
     entity_type: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=512)
