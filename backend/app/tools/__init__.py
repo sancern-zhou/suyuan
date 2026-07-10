@@ -344,6 +344,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
     try:
+        from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool
+        registry.register(KnowledgeGraphQueryTool(), priority=51)
+        logger.info("tool_loaded", tool="knowledge_graph_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="knowledge_graph_query", error=str(e))
+
+    try:
         from app.tools.analysis.cognitive_map_guidance.tool import CognitiveMapGuidanceTool
         registry.register(CognitiveMapGuidanceTool(), priority=51)
         logger.info("tool_loaded", tool="cognitive_map_guidance")

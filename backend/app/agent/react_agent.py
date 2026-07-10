@@ -594,27 +594,6 @@ class ReActAgent:
                     context_length=len(memory_context)
                 )
 
-            try:
-                from app.api.cognitive_map_routes import build_cognitive_map_prompt_context
-
-                cognitive_map_context = build_cognitive_map_prompt_context(
-                    task=user_query,
-                    agent_mode=manual_mode or "expert",
-                )
-                if cognitive_map_context:
-                    react_loop.context_builder.cognitive_map_context = cognitive_map_context
-                    logger.info(
-                        "cognitive_map_context_set_to_context_builder",
-                        mode=manual_mode or "expert",
-                        context_length=len(cognitive_map_context),
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "cognitive_map_context_injection_failed",
-                    mode=manual_mode or "expert",
-                    error=str(exc),
-                )
-
             if manual_mode == "chart" and board_context:
                 react_loop.context_builder.board_context = board_context
                 logger.info(
