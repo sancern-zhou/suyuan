@@ -47,7 +47,10 @@ class GraphBuildService:
             task = await db.get(KnowledgeGraphBuildTask, task_id)
             if not task: raise ValueError("task not found")
             task.status = "running"; task.started_at = datetime.utcnow(); task.lease_until = datetime.utcnow() + timedelta(seconds=self.lease_seconds); await db.commit()
-            chunks = (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.kb_id == task.kb_id, KnowledgeChunk.graph_status != "completed"))).scalars().all()
+            q = select(KnowledgeChunk).where(KnowledgeChunk.kb_id == task.kb_id, KnowledgeChunk.graph_status != "completed")
+            if task.failed_chunk_ids:
+                q = q.where(KnowledgeChunk.id.in_(task.failed_chunk_ids))
+            chunks = (await db.execute(q)).scalars().all()
         sem = asyncio.Semaphore(self.concurrency)
         async def one(chunk):
             async with sem:
@@ -75,7 +78,16 @@ class GraphBuildService:
         return await self.get_status(task_id=task_id)
 
     async def retry(self, task_id=None, kb_id=None):
-        return await self.create_task(kb_id or (await self.get_status(task_id=task_id)).kb_id, "pending", self.batch_size, "system")
+        old = await self.get_status(task_id=task_id, kb_id=kb_id)
+        if not old:
+            raise ValueError("task not found")
+        async with self._session() as db:
+            ids = list(old.failed_chunk_ids or [])
+            if not ids:
+                ids = list((await db.execute(select(KnowledgeChunk.id).where(KnowledgeChunk.kb_id == old.kb_id, KnowledgeChunk.graph_status == "failed"))).scalars())
+            task = KnowledgeGraphBuildTask(kb_id=old.kb_id, mode="pending", created_by="system", total_chunks=len(ids), remaining_chunks=len(ids), failed_chunk_ids=ids)
+            db.add(task); await db.commit(); await db.refresh(task)
+            return task
 
     async def cancel(self, task_id):
         self._cancelled.add(task_id)
