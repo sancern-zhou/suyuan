@@ -211,11 +211,11 @@ class KnowledgeIngestionService:
             outbox = self.outbox_factory(session)
             removed_ids = [chunk.id for chunk in persisted.removed]
             if removed_ids:
-                deactivated_entities, deactivated_relations = (
-                    await self.graph_repository_factory(session).remove_chunk_contributions(
-                        kb_id=snapshot.kb_id,
-                        chunk_ids=removed_ids,
-                    )
+                deactivated_entities, deactivated_relations = await self.graph_repository_factory(
+                    session
+                ).remove_chunk_contributions(
+                    kb_id=snapshot.kb_id,
+                    chunk_ids=removed_ids,
                 )
                 for chunk in persisted.removed:
                     await outbox.enqueue_delete(
@@ -356,7 +356,9 @@ class KnowledgeIngestionService:
             return
         try:
             async with self.session_factory() as session, session.begin():
-                storage = self.file_storage(session) if callable(self.file_storage) else self.file_storage
+                storage = (
+                    self.file_storage(session) if callable(self.file_storage) else self.file_storage
+                )
                 info = await storage.store_file(
                     temp_file_path=snapshot.file_path,
                     original_filename=snapshot.filename,
@@ -457,11 +459,11 @@ class KnowledgeIngestionService:
                 ).scalars()
             )
             chunk_ids = [chunk.id for chunk in chunks]
-            deactivated_entities, deactivated_relations = (
-                await self.graph_repository_factory(session).remove_chunk_contributions(
-                    kb_id=kb_id,
-                    chunk_ids=chunk_ids,
-                )
+            deactivated_entities, deactivated_relations = await self.graph_repository_factory(
+                session
+            ).remove_chunk_contributions(
+                kb_id=kb_id,
+                chunk_ids=chunk_ids,
             )
             outbox = self.outbox_factory(session)
             for chunk in chunks:
@@ -522,17 +524,17 @@ class KnowledgeIngestionService:
             return
         kb.document_count = int(
             await session.scalar(
-                select(func.count()).select_from(Document).where(
-                    Document.knowledge_base_id == kb_id
-                )
+                select(func.count())
+                .select_from(Document)
+                .where(Document.knowledge_base_id == kb_id)
             )
             or 0
         )
         kb.chunk_count = int(
             await session.scalar(
-                select(func.count()).select_from(KnowledgeChunk).where(
-                    KnowledgeChunk.kb_id == kb_id
-                )
+                select(func.count())
+                .select_from(KnowledgeChunk)
+                .where(KnowledgeChunk.kb_id == kb_id)
             )
             or 0
         )

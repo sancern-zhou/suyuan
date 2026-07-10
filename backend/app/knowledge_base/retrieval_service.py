@@ -229,4 +229,5 @@ class KnowledgeRetrievalService:
             item.setdefault("matched_entity_ids", [])
             item.setdefault("matched_relation_ids", [])
             item.setdefault("graph_paths", [])
+            item["graph_paths"] = item["graph_paths"][:10]
         return sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)

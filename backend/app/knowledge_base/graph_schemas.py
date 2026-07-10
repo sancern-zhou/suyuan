@@ -52,9 +52,7 @@ class GraphQueryRequest(BaseModel):
     query: str = ""
     depth: int = Field(default=2, ge=1, le=2)
     limit: int = Field(default=50, ge=1, le=200)
-    review_statuses: set[ReviewStatus] = Field(
-        default_factory=lambda: {"confirmed", "published"}
-    )
+    review_statuses: set[ReviewStatus] = Field(default_factory=lambda: {"confirmed", "published"})
 
 
 class GraphSchemaUpdate(BaseModel):

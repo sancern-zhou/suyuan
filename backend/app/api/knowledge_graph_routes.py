@@ -141,17 +141,19 @@ async def graph_status(
 ):
     kb = await _readable_kb(db, kb_id, user_id)
     entity_count = await db.scalar(
-        select(func.count()).select_from(KnowledgeGraphEntity).where(
-            KnowledgeGraphEntity.kb_id == kb_id
-        )
+        select(func.count())
+        .select_from(KnowledgeGraphEntity)
+        .where(KnowledgeGraphEntity.kb_id == kb_id)
     )
     relation_count = await db.scalar(
-        select(func.count()).select_from(KnowledgeGraphRelation).where(
-            KnowledgeGraphRelation.kb_id == kb_id
-        )
+        select(func.count())
+        .select_from(KnowledgeGraphRelation)
+        .where(KnowledgeGraphRelation.kb_id == kb_id)
     )
     failed_documents = await db.scalar(
-        select(func.count()).select_from(Document).where(
+        select(func.count())
+        .select_from(Document)
+        .where(
             Document.knowledge_base_id == kb_id,
             Document.graph_status == "failed",
         )
@@ -359,7 +361,9 @@ async def create_relation(
     source = await db.get(KnowledgeGraphEntity, request.source_entity_id)
     target = await db.get(KnowledgeGraphEntity, request.target_entity_id)
     if source is None or target is None or source.kb_id != kb_id or target.kb_id != kb_id:
-        raise HTTPException(status_code=400, detail="Relation endpoints must belong to knowledge base")
+        raise HTTPException(
+            status_code=400, detail="Relation endpoints must belong to knowledge base"
+        )
     relation = KnowledgeGraphRelation(
         kb_id=kb_id,
         source_entity_id=source.id,
