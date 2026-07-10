@@ -72,6 +72,11 @@ async def upgrade() -> None:
             last_error TEXT, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, lease_until TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
         await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        await connection.execute(text("""DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'knowledge_graph_build_tasks_kb_id_fkey') THEN
+                ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT knowledge_graph_build_tasks_kb_id_fkey FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE;
+            END IF;
+        END $$;"""))
         await connection.execute(text("UPDATE knowledge_graph_build_tasks SET status = CASE WHEN status IN ('queued','running','completed','partial','failed','cancelled') THEN status ELSE 'failed' END"))
         await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN status SET DEFAULT 'queued'"))
         await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT IF EXISTS ck_kg_build_status"))
