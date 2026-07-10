@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from .graph_build_models import KnowledgeGraphBuildTask
 from .graph_models import KnowledgeChunk, KnowledgeGraphEntity, KnowledgeGraphRelation, KnowledgeGraphEntityMention, KnowledgeGraphRelationMention, KnowledgeIndexOutbox
@@ -101,8 +101,19 @@ class GraphBuildService:
     async def recover_expired_tasks(self):
         now=datetime.utcnow(); out=[]
         async with self._session() as db:
-            rows=(await db.execute(select(KnowledgeGraphBuildTask).where(KnowledgeGraphBuildTask.status=="running", KnowledgeGraphBuildTask.lease_until < now))).scalars().all()
-            for t in rows: t.status="queued"; t.lease_until=None; out.append(t.id)
+            rows=(await db.execute(select(KnowledgeGraphBuildTask).where(KnowledgeGraphBuildTask.status=="running", KnowledgeGraphBuildTask.lease_until < now).with_for_update())).scalars().all()
+            for t in rows:
+                result = await db.execute(
+                    update(KnowledgeGraphBuildTask)
+                    .where(
+                        KnowledgeGraphBuildTask.id == t.id,
+                        KnowledgeGraphBuildTask.status == "running",
+                        KnowledgeGraphBuildTask.lease_until < now,
+                    )
+                    .values(status="queued", lease_until=None)
+                )
+                if result.rowcount:
+                    out.append(t.id)
             await db.commit()
         return out
 
