@@ -58,11 +58,6 @@
             @delete-doc="$emit('delete-kb-doc', $event)"
           />
 
-          <CognitiveMapPanel
-            v-else-if="managementPanel === 'cognitive-map'"
-            @close="$emit('close-management-panel')"
-          />
-
           <FetchersPanel
             v-else-if="managementPanel === 'fetchers'"
             :fetcher-system-status="fetcherSystemStatus"
@@ -168,11 +163,6 @@
             @view-chunks="$emit('view-kb-chunks', $event)"
             @retry-doc="$emit('retry-kb-doc', $event)"
             @delete-doc="$emit('delete-kb-doc', $event)"
-          />
-
-          <CognitiveMapPanel
-            v-else-if="managementPanel === 'cognitive-map'"
-            @close="$emit('close-management-panel')"
           />
 
           <FetchersPanel
@@ -286,7 +276,6 @@ import QueryDashboardWorkspace from '@/components/queryDashboard/QueryDashboardW
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
 import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
-import CognitiveMapPanel from '@/components/management/CognitiveMapPanel.vue'
 import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'

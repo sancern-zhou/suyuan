@@ -21,6 +21,12 @@
       @update="updateReview"
       @merge="mergeEntities"
     />
+    <CognitiveMapGraphChat
+      :knowledge-base-id="kbId"
+      :entities="store.graphEntities"
+      :relations="store.graphRelations"
+      @graph-updated="reload"
+    />
   </div>
 </template>
 
@@ -31,6 +37,7 @@ import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { buildGraphLinks } from '../cognitiveMapGraphLinks'
 import KnowledgeGraphReview from './KnowledgeGraphReview.vue'
 import KnowledgeGraphStatus from './KnowledgeGraphStatus.vue'
+import CognitiveMapGraphChat from '../CognitiveMapGraphChat.vue'
 
 const props = defineProps({ kbId: { type: String, required: true } })
 const store = useKnowledgeBaseStore()
