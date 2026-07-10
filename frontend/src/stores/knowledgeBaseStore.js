@@ -20,6 +20,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const chunksError = ref(null)
   const stats = ref(null)
   const strategies = ref([])
+  const graphStatus = ref(null)
+  const graphEntities = ref([])
+  const graphRelations = ref([])
 
   // 计算属性
   const publicKbs = computed(() =>
@@ -148,6 +151,44 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
+  async function replaceDocument(kbId, docId, file) {
+    loading.value = true
+    error.value = null
+    try {
+      const doc = await api.replaceDocument(kbId, docId, file)
+      const index = documents.value.findIndex(item => item.id === docId)
+      if (index !== -1) documents.value[index] = doc
+      return doc
+    } catch (e) {
+      error.value = e.message || '替换文档失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadGraph(kbId) {
+    loading.value = true
+    error.value = null
+    try {
+      const statuses = ['candidate', 'confirmed', 'published', 'rejected', 'archived']
+      const [status, entities, relations] = await Promise.all([
+        api.getKnowledgeGraphStatus(kbId),
+        api.listKnowledgeGraphEntities(kbId, statuses),
+        api.listKnowledgeGraphRelations(kbId, statuses)
+      ])
+      graphStatus.value = status
+      graphEntities.value = entities.entities || []
+      graphRelations.value = relations.relations || []
+      return { status, entities: graphEntities.value, relations: graphRelations.value }
+    } catch (e) {
+      error.value = e.message || '加载知识图谱失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function retryDocument(kbId, docId) {
     loading.value = true
     try {
@@ -244,6 +285,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     chunksError,
     stats,
     strategies,
+    graphStatus,
+    graphEntities,
+    graphRelations,
 
     // Computed
     publicKbs,
@@ -259,11 +303,13 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     deleteKnowledgeBase,
     fetchDocuments,
     uploadDocument,
+    replaceDocument,
     deleteDocument,
     retryDocument,
     fetchStats,
     fetchStrategies,
     fetchDocumentChunks,
+    loadGraph,
     clearCurrentDoc,
     toggleSelection,
     selectKnowledgeBase,

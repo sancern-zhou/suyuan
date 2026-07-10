@@ -98,9 +98,7 @@ QUERY_TOOL_NAMES = [
     "query_station_standard_report", "query_station_standard_yoy_report",
     "query_gd_suncere_district_report",
     "analyze_city_pollutant_rankings",
-    "cognitive_map_guidance",
-    "cognitive_map_entity_query",
-    "cognitive_map_graph_traverse",
+    "knowledge_graph_query",
     "resolve_station_geo",
 
     # === 全国省份空气质量查询 ===
@@ -175,7 +173,7 @@ OPS_TOOL_NAMES = [
 
     # 工单查询
     "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
-    "cognitive_map_guidance", "execute_ops_sql_query",
+    "knowledge_graph_query", "execute_ops_sql_query",
 
     # 展示型流程图
     "create_diagram_artifact", "create_report_chart", "present_artifact",
@@ -201,7 +199,7 @@ OPS_TOOL_NAMES = [
 
 # ===== 认知地图图谱编辑模式工具 =====
 GRAPH_TOOL_NAMES = [
-    "cognitive_map_guidance",
+    "knowledge_graph_query",
     "read_file",
     "edit_file",
     "grep",

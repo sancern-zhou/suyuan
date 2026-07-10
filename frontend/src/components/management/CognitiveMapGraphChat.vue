@@ -41,7 +41,7 @@
           @keydown.enter.exact.prevent="sendGraphMessage"
         ></textarea>
         <div class="graph-chat-input-footer">
-          <span>{{ currentMap?.id ? '将携带当前地图和选中对象上下文' : '请先选择认知地图' }}</span>
+          <span>{{ knowledgeBaseId ? '将携带当前知识库和选中对象上下文' : '请先选择知识库' }}</span>
           <button class="graph-chat-send" type="submit" :disabled="!canSend">
             {{ isGraphAnalyzing ? '处理中' : '发送' }}
           </button>
@@ -57,7 +57,7 @@ import ReActMessageList from '@/components/ReActMessageList.vue'
 import { useReactStore } from '@/stores/reactStore'
 
 const props = defineProps({
-  currentMap: { type: Object, default: null },
+  knowledgeBaseId: { type: String, default: '' },
   selectedGraphItem: { type: Object, default: null },
   entities: { type: Array, default: () => [] },
   relations: { type: Array, default: () => [] }
@@ -82,7 +82,7 @@ const graphMessages = computed(() => {
 const isGraphAnalyzing = computed(() => !!store.modeStates.graph?.isAnalyzing)
 
 const canSend = computed(() => (
-  !!props.currentMap?.id &&
+  !!props.knowledgeBaseId &&
   draft.value.trim().length > 0 &&
   !isGraphAnalyzing.value
 ))
@@ -103,8 +103,7 @@ const selectedItemPayload = () => {
 }
 
 const buildGraphMapContext = () => ({
-  active_map_id: props.currentMap?.id || null,
-  active_map_name: props.currentMap?.name || '',
+  knowledge_base_id: props.knowledgeBaseId || null,
   selected_item: selectedItemPayload(),
   visible_entity_ids: props.entities
     .map(entity => entity.entity_id || entity.id)

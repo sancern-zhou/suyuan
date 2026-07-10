@@ -35,7 +35,10 @@ class ToolCoordinator:
         board_context: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         normalized = tool_input or {}
-        if self.knowledge_base_ids and tool_name == "knowledge_qa_workflow":
+        if self.knowledge_base_ids and tool_name in {
+            "knowledge_qa_workflow",
+            "knowledge_graph_query",
+        }:
             normalized = {**normalized, "knowledge_base_ids": self.knowledge_base_ids}
         normalized = self._inject_drawio_board_context(tool_name, normalized, mode, board_context)
         return normalized

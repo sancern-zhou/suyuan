@@ -49,6 +49,8 @@ class LlamaIndexPropertyGraphExtractorProvider:
         self,
         chunks: list[DocumentChunk],
         schema: CognitiveSchema,
+        *,
+        source_namespace: str | None = None,
     ) -> ExtractionResult:
         try:
             from llama_index.core import PropertyGraphIndex
@@ -123,6 +125,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
         return self.map_property_graph_store_to_extraction(
             map_id=map_id,
             graph_store=graph_store,
+            source_namespace=source_namespace,
             diagnostic=ExtractionDiagnostic(
                 provider_name=self.provider_name,
                 provider_version="llama-index-core",
@@ -171,7 +174,9 @@ class LlamaIndexPropertyGraphExtractorProvider:
         payload: dict[str, Any],
         evidence_by_id: dict[str, dict[str, Any]],
         diagnostic: ExtractionDiagnostic | None = None,
+        source_namespace: str | None = None,
     ) -> ExtractionResult:
+        identity_namespace = source_namespace or map_id
         enriched_evidence_by_id = {key: dict(value) for key, value in evidence_by_id.items()}
 
         entities: dict[tuple[str, str], CandidateEntity] = {}
@@ -184,7 +189,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 continue
             key = (entity_type, name)
             entities[key] = CandidateEntity(
-                entity_id=self._stable_id("ent", map_id, entity_type, name),
+                entity_id=self._stable_id("ent", identity_namespace, entity_type, name),
                 map_id=map_id,
                 entity_type=entity_type,
                 name=name,
@@ -239,7 +244,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 CandidateRelation(
                     relation_id=self._stable_id(
                         "rel",
-                        map_id,
+                        identity_namespace,
                         source.entity_id,
                         relation_type,
                         target.entity_id,
@@ -283,8 +288,11 @@ class LlamaIndexPropertyGraphExtractorProvider:
         map_id: str,
         graph_store: Any,
         diagnostic: ExtractionDiagnostic | None = None,
+        source_namespace: str | None = None,
     ) -> ExtractionResult:
         from llama_index.core.graph_stores.types import TRIPLET_SOURCE_KEY
+
+        identity_namespace = source_namespace or map_id
 
         evidence_by_source: dict[str, Evidence] = {}
         entities: dict[tuple[str, str], CandidateEntity] = {}
@@ -311,7 +319,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
                     or ""
                 )[:240]
                 evidence_by_source[key] = Evidence(
-                    evidence_id=self._stable_id("ev", map_id, key),
+                    evidence_id=self._stable_id("ev", identity_namespace, key),
                     map_id=map_id,
                     source_file_id=str(properties.get("source_file_id") or "unknown"),
                     chunk_id=str(properties.get("chunk_id") or source_id),
@@ -342,7 +350,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
             if key not in entities:
                 description = str(properties.get("description") or "").strip() or None
                 entities[key] = CandidateEntity(
-                    entity_id=self._stable_id("ent", map_id, entity_type, name),
+                    entity_id=self._stable_id("ent", identity_namespace, entity_type, name),
                     map_id=map_id,
                     entity_type=entity_type,
                     name=name,
@@ -376,7 +384,13 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 continue
             description = str(properties.get("description") or "").strip() or None
             relations[key] = CandidateRelation(
-                relation_id=self._stable_id("rel", map_id, source.entity_id, relation_type, target.entity_id),
+                relation_id=self._stable_id(
+                    "rel",
+                    identity_namespace,
+                    source.entity_id,
+                    relation_type,
+                    target.entity_id,
+                ),
                 map_id=map_id,
                 source_entity_id=source.entity_id,
                 target_entity_id=target.entity_id,
