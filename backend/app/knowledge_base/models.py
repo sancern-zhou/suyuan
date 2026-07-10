@@ -76,6 +76,10 @@ class KnowledgeBase(Base):
     )
     chunk_size = Column(Integer, default=256)
     chunk_overlap = Column(Integer, default=64)
+    graph_enabled = Column(Boolean, nullable=False, default=True)
+    graph_schema = Column(JSON, nullable=False, default=dict)
+    graph_extractor_config = Column(JSON, nullable=False, default=dict)
+    graph_updated_at = Column(DateTime)
 
     # Qdrant Collection名称
     qdrant_collection = Column(String(128), unique=True, nullable=False)
@@ -151,6 +155,10 @@ class Document(Base):
     chunk_count = Column(Integer, default=0)
     error_message = Column(Text)
     retry_count = Column(Integer, default=0)
+    content_generation = Column(Integer, nullable=False, default=1)
+    ingestion_status = Column(String(20), nullable=False, default="pending")
+    graph_status = Column(String(20), nullable=False, default="pending")
+    processing_error = Column(Text)
 
     # 元数据（用户自定义）
     extra_metadata = Column(JSON, default=dict)
