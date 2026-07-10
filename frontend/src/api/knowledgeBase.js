@@ -274,3 +274,27 @@ export async function retryFailedKnowledgeGraph(kbId) {
 export async function reindexKnowledgeGraph(kbId) {
   return await request(graphUrl(kbId, '/reindex'), { method: 'POST' })
 }
+
+export async function createKnowledgeGraphBuild(kbId, params = {}) {
+  return await request(graphUrl(kbId, '/build'), {
+    method: 'POST',
+    body: JSON.stringify({ mode: params.mode || 'pending', batch_size: params.batch_size || 20 })
+  })
+}
+
+export async function getKnowledgeGraphBuild(kbId, taskId = null) {
+  const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''
+  return await request(graphUrl(kbId, `/build${query}`))
+}
+
+export async function cancelKnowledgeGraphBuild(kbId, taskId) {
+  return await request(graphUrl(kbId, `/build/${encodeURIComponent(taskId)}/cancel`), { method: 'POST' })
+}
+
+export async function retryKnowledgeGraphBuild(kbId, taskId) {
+  return await request(graphUrl(kbId, `/build/${encodeURIComponent(taskId)}/retry`), { method: 'POST' })
+}
+
+export async function recoverKnowledgeGraphBuilds(kbId) {
+  return await request(graphUrl(kbId, '/build/recover-expired'), { method: 'POST' })
+}
