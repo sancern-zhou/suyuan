@@ -72,6 +72,14 @@ async def upgrade() -> None:
             last_error TEXT, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, lease_until TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
         await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        await connection.execute(text("UPDATE knowledge_graph_build_tasks SET mode='pending' WHERE mode IS NULL OR mode NOT IN ('pending','reset_and_build')"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN mode SET NOT NULL"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN mode SET DEFAULT 'pending'"))
+        await connection.execute(text("""DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='knowledge_graph_build_tasks' AND column_name='failed_chunk_ids' AND udt_name='json') THEN
+                ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN failed_chunk_ids TYPE JSONB USING failed_chunk_ids::jsonb;
+            END IF;
+        END $$;"""))
         await connection.execute(text("""DO $$ DECLARE c record; BEGIN
             FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='knowledge_graph_build_tasks'::regclass AND (pg_get_constraintdef(oid) ILIKE '%status%' OR pg_get_constraintdef(oid) ILIKE '%mode%') LOOP
                 EXECUTE format('ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT %I', c.conname);
