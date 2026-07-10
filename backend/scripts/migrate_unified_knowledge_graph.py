@@ -53,7 +53,9 @@ class ChunkBackfillMigrator:
             if not document_id:
                 missing_documents += 1
                 continue
-            recovered = payload.get("start_char") is not None and payload.get("end_char") is not None
+            recovered = (
+                payload.get("start_char") is not None and payload.get("end_char") is not None
+            )
             if not recovered:
                 unrecovered_metadata += 1
             grouped[document_id].append(
@@ -93,9 +95,9 @@ class ChunkBackfillMigrator:
         async with self.session_factory() as session:
             postgres_chunks = int(
                 await session.scalar(
-                    select(func.count()).select_from(KnowledgeChunk).where(
-                        KnowledgeChunk.kb_id == kb_id
-                    )
+                    select(func.count())
+                    .select_from(KnowledgeChunk)
+                    .where(KnowledgeChunk.kb_id == kb_id)
                 )
                 or 0
             )

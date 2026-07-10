@@ -60,7 +60,9 @@ class CognitiveMapMigrator:
             if apply:
                 files_path = map_dir / "files.json"
                 files = json.loads(files_path.read_text()) if files_path.exists() else []
-                await self._apply_map(meta, map_id, schema, extraction, files, map_id in enabled_maps)
+                await self._apply_map(
+                    meta, map_id, schema, extraction, files, map_id in enabled_maps
+                )
             reports.append(report)
         return reports
 
@@ -108,7 +110,9 @@ class CognitiveMapMigrator:
                 legacy_chunk_id = str(raw.get("chunk_id") or evidence_id)
                 chunk_id = _id("chunk", map_id, legacy_chunk_id)
                 chunk = await session.get(KnowledgeChunk, chunk_id)
-                text_span = str(raw.get("text_span") or raw.get("quote") or raw.get("normalized_summary") or "")
+                text_span = str(
+                    raw.get("text_span") or raw.get("quote") or raw.get("normalized_summary") or ""
+                )
                 if chunk is None:
                     content_hash = sha256(" ".join(text_span.split()).encode()).hexdigest()
                     chunk = KnowledgeChunk(
@@ -261,23 +265,28 @@ class CognitiveMapMigrator:
         async with self.session_factory() as session:
             for item in expected:
                 entity_count = await session.scalar(
-                    select(func.count()).select_from(KnowledgeGraphEntity).where(
-                        KnowledgeGraphEntity.kb_id == item["kb_id"]
-                    )
+                    select(func.count())
+                    .select_from(KnowledgeGraphEntity)
+                    .where(KnowledgeGraphEntity.kb_id == item["kb_id"])
                 )
                 relation_count = await session.scalar(
-                    select(func.count()).select_from(KnowledgeGraphRelation).where(
-                        KnowledgeGraphRelation.kb_id == item["kb_id"]
-                    )
+                    select(func.count())
+                    .select_from(KnowledgeGraphRelation)
+                    .where(KnowledgeGraphRelation.kb_id == item["kb_id"])
                 )
-                if int(entity_count or 0) != item["entities"] or int(relation_count or 0) != item["relations"]:
+                if (
+                    int(entity_count or 0) != item["entities"]
+                    or int(relation_count or 0) != item["relations"]
+                ):
                     return False
         return True
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, default=Path("backend_data_registry/cognitive_maps"))
+    parser.add_argument(
+        "--source-root", type=Path, default=Path("backend_data_registry/cognitive_maps")
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview only (default)")
     mode.add_argument("--apply", action="store_true", help="Write knowledge-base graph facts")
