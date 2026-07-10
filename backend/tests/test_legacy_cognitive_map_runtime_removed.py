@@ -16,3 +16,7 @@ def test_legacy_cognitive_map_runtime_is_not_registered():
         assert legacy_name not in tools
         assert legacy_name not in registry
     assert "backend_data_registry/cognitive_maps" not in agent
+    for path in Path("backend/app").rglob("*.py"):
+        source = path.read_text()
+        assert "app.api.cognitive_map_routes" not in source
+        assert "app.tools.analysis.cognitive_map_guidance" not in source

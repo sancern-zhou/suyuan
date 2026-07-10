@@ -117,9 +117,7 @@ async def test_replace_reuses_unchanged_chunk_and_deletes_changed_chunk(replacem
     async with factory() as session:
         old_chunks = list(
             (
-                await session.execute(
-                    select(KnowledgeChunk).order_by(KnowledgeChunk.chunk_index)
-                )
+                await session.execute(select(KnowledgeChunk).order_by(KnowledgeChunk.chunk_index))
             ).scalars()
         )
     processor.chunks = [{"content": "A"}, {"content": "C"}]
@@ -137,9 +135,7 @@ async def test_replace_reuses_unchanged_chunk_and_deletes_changed_chunk(replacem
     async with factory() as session:
         current = list(
             (
-                await session.execute(
-                    select(KnowledgeChunk).order_by(KnowledgeChunk.chunk_index)
-                )
+                await session.execute(select(KnowledgeChunk).order_by(KnowledgeChunk.chunk_index))
             ).scalars()
         )
         document = await session.get(Document, "doc1")
@@ -181,6 +177,45 @@ async def test_replace_parse_failure_cleans_old_derived_data(replacement_context
     assert document.status == DocumentStatus.FAILED
     assert document.ingestion_status == "failed"
     assert chunks == []
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_failure_cannot_mark_or_purge_newer_document(
+    replacement_context,
+):
+    factory, _processor, _storage, service, _tmp_path = replacement_context
+    async with factory() as session, session.begin():
+        document = await session.get(Document, "doc1")
+        document.content_generation = 2
+        document.ingestion_status = "processing"
+        chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
+        for chunk in chunks:
+            chunk.content_generation = 2
+
+    await service._mark_document_failed(
+        "doc1",
+        "stale failure",
+        expected_generation=1,
+    )
+    await service._mark_chunk_graph_failed(
+        chunks[0].id,
+        "stale failure",
+        expected_generation=1,
+    )
+    await service._purge_document_derivatives(
+        kb_id="kb1",
+        document_id="doc1",
+        payload_version=1,
+        expected_generation=1,
+    )
+
+    async with factory() as session:
+        document = await session.get(Document, "doc1")
+        remaining = list((await session.execute(select(KnowledgeChunk))).scalars())
+    assert document.content_generation == 2
+    assert document.ingestion_status == "processing"
+    assert len(remaining) == 2
+    assert all(chunk.graph_status == "completed" for chunk in remaining)
 
 
 @pytest.mark.asyncio

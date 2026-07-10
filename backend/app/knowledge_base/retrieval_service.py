@@ -100,6 +100,26 @@ class KnowledgeRetrievalService:
                     "type": kb.kb_type.value,
                 }
 
+            # Qdrant is a rebuildable projection. Never return a point whose
+            # PostgreSQL fact was deleted/replaced or has not been acknowledged.
+            hit_chunk_ids = [item["chunk_id"] for item in chunk_results if item["chunk_id"]]
+            current_chunk_ids = set(
+                (
+                    await session.execute(
+                        select(KnowledgeChunk.id).where(
+                            KnowledgeChunk.kb_id == kb_id,
+                            KnowledgeChunk.id.in_(hit_chunk_ids),
+                            KnowledgeChunk.vector_status == "indexed",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            chunk_results = [
+                item for item in chunk_results if item["chunk_id"] in current_chunk_ids
+            ]
+
             if not use_graph_retrieval or not kb.graph_enabled:
                 return self.reciprocal_rank_fusion(chunk_results, [], graph_weight)
 
@@ -160,6 +180,7 @@ class KnowledgeRetrievalService:
                         select(KnowledgeChunk).where(
                             KnowledgeChunk.kb_id == kb_id,
                             KnowledgeChunk.id.in_(graph_chunk_ids[:graph_chunk_top_k]),
+                            KnowledgeChunk.vector_status == "indexed",
                         )
                     )
                 ).scalars()
