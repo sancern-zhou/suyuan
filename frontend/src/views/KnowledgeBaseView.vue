@@ -564,13 +564,17 @@ watch(() => currentKb.value, (kb) => {
   if (kb) loadGraphBuildTask()
 })
 
-const loadGraphBuildTask = async () => {
-  if (!currentKb.value) return
+const loadGraphBuildTask = async (requestedKbId = currentKb.value?.id) => {
+  if (!requestedKbId) return
   try {
-    graphBuildTask.value = await getKnowledgeGraphBuild(currentKb.value.id)
-    if (graphBuildBusy.value && !graphBuildPoller) graphBuildPoller = setInterval(loadGraphBuildTask, 2000)
+    const task = await getKnowledgeGraphBuild(requestedKbId)
+    if (currentKb.value?.id !== requestedKbId) return
+    graphBuildTask.value = task
+    if (graphBuildBusy.value && !graphBuildPoller) graphBuildPoller = setInterval(() => loadGraphBuildTask(requestedKbId), 2000)
     if (!graphBuildBusy.value && graphBuildPoller) { clearInterval(graphBuildPoller); graphBuildPoller = null }
-  } catch (e) { graphBuildTask.value = null }
+  } catch (e) {
+    if (currentKb.value?.id === requestedKbId) graphBuildTask.value = null
+  }
 }
 const startGraphBuild = async () => {
   try { graphBuildTask.value = await createKnowledgeGraphBuild(currentKb.value.id, { mode: graphBuildMode.value }); await loadGraphBuildTask() } catch (e) { alert('启动图谱构建失败: ' + e.message) }
