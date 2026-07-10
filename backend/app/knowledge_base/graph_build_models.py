@@ -15,6 +15,7 @@ class KnowledgeGraphBuildTask(Base):
     __tablename__ = "knowledge_graph_build_tasks"
     __table_args__ = (
         CheckConstraint("status IN ('queued','running','completed','partial','failed','cancelled')", name="ck_kg_build_status"),
+        CheckConstraint("mode IN ('pending','reset_and_build')", name="ck_kg_build_mode"),
         Index(
             "uq_kg_build_active_kb",
             "kb_id",
@@ -27,7 +28,7 @@ class KnowledgeGraphBuildTask(Base):
     id = Column(String(36), primary_key=True, default=_new_id)
     kb_id = Column(String(36), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="queued")
-    mode = Column(String(20), nullable=False, default="full")
+    mode = Column(String(20), nullable=False, default="pending")
     created_by = Column(String(36), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     started_at = Column(DateTime)
