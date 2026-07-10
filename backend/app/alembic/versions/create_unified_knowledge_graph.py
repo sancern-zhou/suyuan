@@ -86,7 +86,8 @@ async def upgrade() -> None:
             END LOOP;
         END $$;"""))
         await connection.execute(text("""DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'knowledge_graph_build_tasks_kb_id_fkey') THEN
+            IF EXISTS (SELECT 1 FROM knowledge_graph_build_tasks t WHERE NOT EXISTS (SELECT 1 FROM knowledge_bases k WHERE k.id=t.kb_id)) THEN RAISE EXCEPTION 'knowledge_graph_build_tasks contains orphan kb_id values'; END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class r ON r.oid=c.conrelid JOIN pg_class f ON f.oid=c.confrelid WHERE c.contype='f' AND r.relname='knowledge_graph_build_tasks' AND f.relname='knowledge_bases' AND c.conkey[1]=(SELECT attnum FROM pg_attribute WHERE attrelid=r.oid AND attname='kb_id')) THEN
                 ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT knowledge_graph_build_tasks_kb_id_fkey FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE;
             END IF;
         END $$;"""))
