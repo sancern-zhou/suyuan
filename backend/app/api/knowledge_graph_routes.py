@@ -275,7 +275,7 @@ async def recover_expired_graph_builds(
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     service = GraphBuildService(async_session)
-    ids = await service.recover_expired_tasks()
+    ids = await service.recover_expired_tasks(kb_id=kb_id)
     recovered = []
     for task_id in ids:
         task = await service.get_status(task_id=task_id)
