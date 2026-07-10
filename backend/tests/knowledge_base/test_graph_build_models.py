@@ -28,3 +28,13 @@ def test_graph_build_task_rejects_invalid_mode_and_status():
             conn.execute(KnowledgeGraphBuildTask.__table__.insert().values(kb_id="kb", created_by="u", mode="full"))
         with pytest.raises(IntegrityError):
             conn.execute(KnowledgeGraphBuildTask.__table__.insert().values(kb_id="kb", created_by="u", status="bogus"))
+
+
+def test_active_unique_allows_terminal_but_not_two_active_tasks():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[KnowledgeGraphBuildTask.__table__])
+    with engine.begin() as conn:
+        conn.execute(KnowledgeGraphBuildTask.__table__.insert().values(id="a", kb_id="kb", created_by="u", status="queued"))
+        with pytest.raises(IntegrityError):
+            conn.execute(KnowledgeGraphBuildTask.__table__.insert().values(id="b", kb_id="kb", created_by="u", status="running"))
+        conn.execute(KnowledgeGraphBuildTask.__table__.insert().values(id="c", kb_id="kb", created_by="u", status="completed"))

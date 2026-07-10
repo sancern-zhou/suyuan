@@ -123,6 +123,28 @@
           </div>
         </div>
 
+        <div class="graph-build-section">
+          <div class="section-title">知识图谱构建</div>
+          <div class="graph-build-controls">
+            <select v-model="graphBuildMode" :disabled="graphBuildBusy">
+              <option value="pending">增量构建（仅处理新增/变更分块）</option>
+              <option value="reset_and_build">重置并全量构建</option>
+            </select>
+            <button class="btn-primary" :disabled="graphBuildBusy" @click="startGraphBuild">
+              {{ graphBuildBusy ? '构建中...' : '开始构建' }}
+            </button>
+            <button v-if="graphBuildTask && ['queued', 'running'].includes(graphBuildTask.status)" class="btn-secondary" @click="cancelGraphBuildTask">取消</button>
+            <button v-if="graphBuildTask && ['failed', 'partial'].includes(graphBuildTask.status)" class="btn-secondary" @click="retryGraphBuildTask">重试失败分块</button>
+            <button class="btn-text" @click="recoverGraphBuildTask">恢复过期任务</button>
+          </div>
+          <div v-if="graphBuildTask" class="graph-build-status">
+            <span>状态：{{ graphBuildStatusLabel }}</span>
+            <span>{{ graphBuildTask.processed_chunks || 0 }}/{{ graphBuildTask.total_chunks || 0 }} 分块</span>
+            <span v-if="graphBuildTask.failed_chunks">失败 {{ graphBuildTask.failed_chunks }}</span>
+            <span v-if="graphBuildTask.last_error" class="error-text">{{ graphBuildTask.last_error }}</span>
+          </div>
+        </div>
+
         <!-- 文档上传 -->
         <div class="upload-section">
           <div class="section-title">上传文档</div>
@@ -444,10 +466,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
-import { searchKnowledgeBase } from '@/api/knowledgeBase'
+import {
+  searchKnowledgeBase,
+  createKnowledgeGraphBuild,
+  getKnowledgeGraphBuild,
+  cancelKnowledgeGraphBuild,
+  retryKnowledgeGraphBuild,
+  recoverKnowledgeGraphBuilds
+} from '@/api/knowledgeBase'
 
 const store = useKnowledgeBaseStore()
 const router = useRouter()
@@ -504,10 +533,23 @@ const documents = computed(() => store.documents)
 const stats = computed(() => store.stats)
 const currentDoc = computed(() => store.currentDoc)
 const documentChunks = computed(() => store.documentChunks)
+const graphBuildMode = ref('pending')
+const graphBuildTask = ref(null)
+const graphBuildBusy = computed(() => ['queued', 'running'].includes(graphBuildTask.value?.status))
+const graphBuildStatusLabel = computed(() => ({ queued: '排队中', running: '构建中', completed: '已完成', failed: '失败', partial: '部分完成', cancelled: '已取消' }[graphBuildTask.value?.status] || graphBuildTask.value?.status || '未知'))
+let graphBuildPoller
+let graphBuildRequest = 0
 
 onMounted(async () => {
   await store.fetchKnowledgeBases()
   await store.fetchStats()
+})
+
+onUnmounted(() => {
+  if (graphBuildPoller) {
+    clearInterval(graphBuildPoller)
+    graphBuildPoller = null
+  }
 })
 
 watch(() => currentKb.value, (kb) => {
@@ -518,7 +560,36 @@ watch(() => currentKb.value, (kb) => {
       is_default: kb.is_default
     }
   }
+  if (graphBuildPoller) clearInterval(graphBuildPoller)
+  graphBuildTask.value = null
+  if (kb) loadGraphBuildTask()
 })
+
+const loadGraphBuildTask = async (requestedKbId = currentKb.value?.id) => {
+  if (!requestedKbId) return
+  const requestId = ++graphBuildRequest
+  try {
+    const task = await getKnowledgeGraphBuild(requestedKbId)
+    if (requestId !== graphBuildRequest || currentKb.value?.id !== requestedKbId) return
+    graphBuildTask.value = task
+    if (graphBuildBusy.value && !graphBuildPoller) graphBuildPoller = setInterval(() => loadGraphBuildTask(requestedKbId), 2000)
+    if (!graphBuildBusy.value && graphBuildPoller) { clearInterval(graphBuildPoller); graphBuildPoller = null }
+  } catch (e) {
+    if (requestId === graphBuildRequest && currentKb.value?.id === requestedKbId) graphBuildTask.value = null
+  }
+}
+const startGraphBuild = async () => {
+  try { graphBuildTask.value = await createKnowledgeGraphBuild(currentKb.value.id, { mode: graphBuildMode.value }); await loadGraphBuildTask() } catch (e) { alert('启动图谱构建失败: ' + e.message) }
+}
+const cancelGraphBuildTask = async () => {
+  try { graphBuildTask.value = await cancelKnowledgeGraphBuild(currentKb.value.id, graphBuildTask.value.id); await loadGraphBuildTask() } catch (e) { alert('取消失败: ' + e.message) }
+}
+const retryGraphBuildTask = async () => {
+  try { graphBuildTask.value = await retryKnowledgeGraphBuild(currentKb.value.id, graphBuildTask.value.id); await loadGraphBuildTask() } catch (e) { alert('重试失败: ' + e.message) }
+}
+const recoverGraphBuildTask = async () => {
+  try { await recoverKnowledgeGraphBuilds(currentKb.value.id); await loadGraphBuildTask() } catch (e) { alert('恢复任务失败: ' + e.message) }
+}
 
 const refreshList = async () => {
   await store.fetchKnowledgeBases()
@@ -1587,4 +1658,10 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
   padding: 40px;
   color: #999;
 }
+
+.graph-build-section { margin: 18px 0; padding: 16px; border: 1px solid #e8e8e8; border-radius: 6px; }
+.graph-build-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.graph-build-controls select { min-width: 260px; padding: 7px 9px; border: 1px solid #d9d9d9; border-radius: 4px; }
+.graph-build-status { display: flex; gap: 18px; margin-top: 12px; font-size: 13px; color: #666; flex-wrap: wrap; }
+.error-text { color: #d4380d; }
 </style>

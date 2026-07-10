@@ -24,6 +24,7 @@ from app.knowledge_base.graph_models import (
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
 from app.knowledge_base.models import Document, DocumentStatus, KnowledgeBase
+from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
 
 logger = structlog.get_logger()
 
@@ -276,8 +277,22 @@ class KnowledgeIngestionService:
             )
             return persisted
 
-    async def _persist_graph_extraction(self, snapshot, chunk, extraction):
+    async def _persist_graph_extraction(self, snapshot, chunk, extraction, *, task_id=None, owner_token=None):
         async with self.session_factory() as session, session.begin():
+            if task_id is not None:
+                task = await session.scalar(
+                    select(KnowledgeGraphBuildTask)
+                    .where(KnowledgeGraphBuildTask.id == task_id)
+                    .with_for_update()
+                )
+                if (
+                    task is None or task.status != "running"
+                    or task.started_at != owner_token
+                    or task.cancel_requested
+                    or task.lease_until is None
+                    or task.lease_until <= datetime.utcnow()
+                ):
+                    raise StaleContentGeneration(f"graph build task {task_id} lease is no longer owned")
             current_document = await session.scalar(
                 select(Document).where(Document.id == snapshot.document_id).with_for_update()
             )

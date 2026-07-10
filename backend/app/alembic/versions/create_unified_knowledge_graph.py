@@ -62,29 +62,46 @@ async def upgrade() -> None:
         for statement in _POSTGRES_COLUMN_STATEMENTS:
             await connection.execute(text(statement))
         await connection.run_sync(_create_graph_tables)
-        # Keep this explicit and idempotent for deployments where the table
-        # was created outside SQLAlchemy metadata.
-        await connection.execute(text("""
-            CREATE TABLE IF NOT EXISTS knowledge_graph_build_tasks (
-                id VARCHAR(36) PRIMARY KEY,
-                kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-                status VARCHAR(20) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','partial','failed','cancelled')),
-                mode VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (mode IN ('pending','reset_and_build')),
-                created_by VARCHAR(36) NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                started_at TIMESTAMP, completed_at TIMESTAMP,
-                total_chunks INTEGER NOT NULL DEFAULT 0,
-                processed_chunks INTEGER NOT NULL DEFAULT 0,
-                failed_chunks INTEGER NOT NULL DEFAULT 0,
-                remaining_chunks INTEGER NOT NULL DEFAULT 0,
-                failed_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-                last_error TEXT, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
-                lease_until TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """))
+        await connection.execute(text("""CREATE TABLE IF NOT EXISTS knowledge_graph_build_tasks (
+            id VARCHAR(36) PRIMARY KEY, kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+            status VARCHAR(20) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','partial','failed','cancelled')), mode VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (mode IN ('pending','reset_and_build')),
+            created_by VARCHAR(36) NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMP, completed_at TIMESTAMP, total_chunks INTEGER NOT NULL DEFAULT 0,
+            processed_chunks INTEGER NOT NULL DEFAULT 0, failed_chunks INTEGER NOT NULL DEFAULT 0,
+            remaining_chunks INTEGER NOT NULL DEFAULT 0, failed_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            last_error TEXT, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, lease_until TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        await connection.execute(text("UPDATE knowledge_graph_build_tasks SET mode='pending' WHERE mode IS NULL OR mode NOT IN ('pending','reset_and_build')"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN mode SET NOT NULL"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN mode SET DEFAULT 'pending'"))
+        await connection.execute(text("""DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='knowledge_graph_build_tasks' AND column_name='failed_chunk_ids' AND udt_name='json') THEN
+                ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN failed_chunk_ids TYPE JSONB USING failed_chunk_ids::jsonb;
+            END IF;
+        END $$;"""))
+        await connection.execute(text("""DO $$ DECLARE c record; BEGIN
+            FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='knowledge_graph_build_tasks'::regclass AND (pg_get_constraintdef(oid) ILIKE '%status%' OR pg_get_constraintdef(oid) ILIKE '%mode%') LOOP
+                EXECUTE format('ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT %I', c.conname);
+            END LOOP;
+        END $$;"""))
+        await connection.execute(text("""DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM knowledge_graph_build_tasks t WHERE NOT EXISTS (SELECT 1 FROM knowledge_bases k WHERE k.id=t.kb_id)) THEN RAISE EXCEPTION 'knowledge_graph_build_tasks contains orphan kb_id values'; END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class r ON r.oid=c.conrelid JOIN pg_class f ON f.oid=c.confrelid WHERE c.contype='f' AND r.relname='knowledge_graph_build_tasks' AND f.relname='knowledge_bases' AND c.conkey[1]=(SELECT attnum FROM pg_attribute WHERE attrelid=r.oid AND attname='kb_id')) THEN
+                ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT knowledge_graph_build_tasks_kb_id_fkey FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE;
+            END IF;
+        END $$;"""))
+        await connection.execute(text("UPDATE knowledge_graph_build_tasks SET status = CASE WHEN status IN ('queued','running','completed','partial','failed','cancelled') THEN status ELSE 'failed' END"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ALTER COLUMN status SET DEFAULT 'queued'"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT IF EXISTS ck_kg_build_status"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT ck_kg_build_status CHECK (status IN ('queued','running','completed','partial','failed','cancelled'))"))
+        await connection.execute(text("UPDATE knowledge_graph_build_tasks SET mode = 'pending' WHERE mode IS NULL OR mode = 'full' OR mode NOT IN ('pending','reset_and_build')"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT IF EXISTS ck_kg_build_mode"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT ck_kg_build_mode CHECK (mode IN ('pending','reset_and_build'))"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_kg_build_task_status ON knowledge_graph_build_tasks(status)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_graph_build_tasks_kb_id ON knowledge_graph_build_tasks(kb_id)"))
-        await connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_kg_build_active_kb ON knowledge_graph_build_tasks(kb_id) WHERE status IN ('queued', 'running')"))
+        await connection.execute(text("DROP INDEX IF EXISTS uq_kg_build_active_kb"))
+        await connection.execute(text("CREATE UNIQUE INDEX uq_kg_build_active_kb ON knowledge_graph_build_tasks(kb_id) WHERE status IN ('queued', 'running')"))
 
 
 async def main() -> None:
