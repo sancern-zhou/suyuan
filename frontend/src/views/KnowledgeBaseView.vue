@@ -466,7 +466,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import {
@@ -542,6 +542,13 @@ let graphBuildPoller
 onMounted(async () => {
   await store.fetchKnowledgeBases()
   await store.fetchStats()
+})
+
+onUnmounted(() => {
+  if (graphBuildPoller) {
+    clearInterval(graphBuildPoller)
+    graphBuildPoller = null
+  }
 })
 
 watch(() => currentKb.value, (kb) => {
