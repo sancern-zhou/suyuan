@@ -69,7 +69,7 @@ async def upgrade() -> None:
                 id VARCHAR(36) PRIMARY KEY,
                 kb_id VARCHAR(36) NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
                 status VARCHAR(20) NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','partial','failed','cancelled')),
-                mode VARCHAR(20) NOT NULL DEFAULT 'full',
+                mode VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (mode IN ('pending','reset_and_build')),
                 created_by VARCHAR(36) NOT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 started_at TIMESTAMP, completed_at TIMESTAMP,
