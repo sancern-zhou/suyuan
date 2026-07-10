@@ -181,10 +181,16 @@ class GraphBuildService:
         await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=len(succeeded), failed_chunks=len(failed), remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
         return await self.get_status(task_id=task_id)
 
-    async def recover_expired_tasks(self):
+    async def recover_expired_tasks(self, kb_id=None):
         now=datetime.utcnow(); out=[]
         async with self._session() as db:
-            rows=(await db.execute(select(KnowledgeGraphBuildTask).where(KnowledgeGraphBuildTask.status=="running", KnowledgeGraphBuildTask.lease_until < now).with_for_update())).scalars().all()
+            query = select(KnowledgeGraphBuildTask).where(
+                KnowledgeGraphBuildTask.status=="running",
+                KnowledgeGraphBuildTask.lease_until < now,
+            )
+            if kb_id:
+                query = query.where(KnowledgeGraphBuildTask.kb_id == kb_id)
+            rows=(await db.execute(query.with_for_update())).scalars().all()
             for t in rows:
                 result = await db.execute(
                     update(KnowledgeGraphBuildTask)
@@ -193,7 +199,7 @@ class GraphBuildService:
                         KnowledgeGraphBuildTask.status == "running",
                         KnowledgeGraphBuildTask.lease_until < now,
                     )
-                    .values(status="queued", lease_until=None)
+                .values(status="queued", lease_until=None)
                 )
                 if result.rowcount:
                     out.append(t.id)
