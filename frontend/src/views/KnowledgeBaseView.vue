@@ -538,6 +538,7 @@ const graphBuildTask = ref(null)
 const graphBuildBusy = computed(() => ['queued', 'running'].includes(graphBuildTask.value?.status))
 const graphBuildStatusLabel = computed(() => ({ queued: '排队中', running: '构建中', completed: '已完成', failed: '失败', partial: '部分完成', cancelled: '已取消' }[graphBuildTask.value?.status] || graphBuildTask.value?.status || '未知'))
 let graphBuildPoller
+let graphBuildRequest = 0
 
 onMounted(async () => {
   await store.fetchKnowledgeBases()
@@ -566,14 +567,15 @@ watch(() => currentKb.value, (kb) => {
 
 const loadGraphBuildTask = async (requestedKbId = currentKb.value?.id) => {
   if (!requestedKbId) return
+  const requestId = ++graphBuildRequest
   try {
     const task = await getKnowledgeGraphBuild(requestedKbId)
-    if (currentKb.value?.id !== requestedKbId) return
+    if (requestId !== graphBuildRequest || currentKb.value?.id !== requestedKbId) return
     graphBuildTask.value = task
     if (graphBuildBusy.value && !graphBuildPoller) graphBuildPoller = setInterval(() => loadGraphBuildTask(requestedKbId), 2000)
     if (!graphBuildBusy.value && graphBuildPoller) { clearInterval(graphBuildPoller); graphBuildPoller = null }
   } catch (e) {
-    if (currentKb.value?.id === requestedKbId) graphBuildTask.value = null
+    if (requestId === graphBuildRequest && currentKb.value?.id === requestedKbId) graphBuildTask.value = null
   }
 }
 const startGraphBuild = async () => {
