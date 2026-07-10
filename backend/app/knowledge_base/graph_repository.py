@@ -450,6 +450,29 @@ class KnowledgeGraphRepository:
             )
         return sorted(chunk_ids)
 
+    async def entity_ids_for_chunk_ids(
+        self,
+        *,
+        kb_id: str,
+        chunk_ids: list[str],
+        statuses: set[str],
+    ) -> list[str]:
+        if not chunk_ids:
+            return []
+        result = await self.session.execute(
+            select(KnowledgeGraphEntityMention.entity_id)
+            .join(
+                KnowledgeGraphEntity,
+                KnowledgeGraphEntity.id == KnowledgeGraphEntityMention.entity_id,
+            )
+            .where(
+                KnowledgeGraphEntityMention.kb_id == kb_id,
+                KnowledgeGraphEntityMention.chunk_id.in_(chunk_ids),
+                KnowledgeGraphEntity.review_status.in_(statuses),
+            )
+        )
+        return list(dict.fromkeys(result.scalars().all()))
+
     async def get_relation(self, relation_id: str) -> KnowledgeGraphRelation | None:
         return await self.session.get(KnowledgeGraphRelation, relation_id)
 

@@ -561,7 +561,12 @@ async def search_knowledge_base(
                 top_k=request.top_k,
                 score_threshold=request.score_threshold,
                 filters=request.filters,
-                use_reranker=request.use_reranker if request.use_reranker is not None else request.rerank_mode
+                use_reranker=request.use_reranker if request.use_reranker is not None else request.rerank_mode,
+                use_graph_retrieval=request.use_graph_retrieval,
+                graph_depth=request.graph_depth,
+                graph_seed_top_k=request.graph_seed_top_k,
+                graph_chunk_top_k=request.graph_chunk_top_k,
+                graph_weight=request.graph_weight,
             )
 
             # 为每个结果添加溯源链接

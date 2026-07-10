@@ -561,7 +561,12 @@ class KnowledgeBaseService:
         filters: Optional[Dict[str, Any]] = None,
         use_reranker: bool | str = True,
         use_hybrid: bool = True,
-        alpha: float = 0.7
+        alpha: float = 0.7,
+        use_graph_retrieval: bool = True,
+        graph_depth: int = 2,
+        graph_seed_top_k: int = 10,
+        graph_chunk_top_k: int = 20,
+        graph_weight: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """
         检索知识库（支持混合检索）
@@ -605,6 +610,30 @@ class KnowledgeBaseService:
 
         if not kbs:
             return []
+
+        if use_graph_retrieval:
+            from app.db.database import async_session
+            from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
+
+            rerank_mode = self._normalize_rerank_mode(use_reranker)
+            retrieval = KnowledgeRetrievalService(
+                session_factory=async_session,
+                vector_store=self.vector_store,
+                reranker=self._rerank if rerank_mode != "never" else None,
+            )
+            results = await retrieval.search(
+                query=query,
+                kb_ids=[kb.id for kb in kbs],
+                top_k=top_k,
+                use_graph_retrieval=True,
+                graph_depth=graph_depth,
+                graph_seed_top_k=graph_seed_top_k,
+                graph_chunk_top_k=graph_chunk_top_k,
+                graph_weight=graph_weight,
+            )
+            await self._enrich_results_with_document_info(results)
+            self._attach_chunk_source_fields(results)
+            return results
 
         search_started_at = time.time()
 
@@ -889,6 +918,8 @@ class KnowledgeBaseService:
 
                 doc = docs_map.get(doc_id)
                 if doc:
+                    r.setdefault("filename", doc.filename)
+                    r.setdefault("metadata", {})
                     # 检查是否有原文件
                     has_original_file = bool(
                         doc.original_file_oid or
