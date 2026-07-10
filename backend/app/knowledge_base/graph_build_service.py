@@ -145,6 +145,8 @@ class GraphBuildService:
                 svc=KnowledgeIngestionService(session_factory=self.session_factory, processor=None, extractor=extractor)
                 await svc._persist_graph_extraction(snap,c,extraction); return True,None
             except Exception as e:
+                if not await self._owns_task(task_id, owner_token):
+                    return None, None
                 async with self._session() as db:
                     cc=await db.get(KnowledgeChunk,c.id)
                     if cc: cc.graph_status="failed"; cc.last_error=str(e); await db.commit()
