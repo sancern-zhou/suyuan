@@ -3,15 +3,14 @@
 
 实现公共/个人知识库的权限检查和访问控制。
 
-当前策略：保留PUBLIC/PRIVATE概念，但允许所有人访问所有知识库。
+当前策略：保留PUBLIC/PRIVATE概念；读取沿用全员可见策略，管理仅限 owner/admin。
 """
 
-from typing import List, Optional
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
-from .models import KnowledgeBase, KnowledgeBaseType, KnowledgeBaseStatus
+from .models import KnowledgeBase, KnowledgeBaseStatus
 
 logger = structlog.get_logger()
 
@@ -22,10 +21,10 @@ class KnowledgeBasePermissions:
     @staticmethod
     async def get_accessible_knowledge_bases(
         db: AsyncSession,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         include_public: bool = True,
-        status: Optional[KnowledgeBaseStatus] = None
-    ) -> List[KnowledgeBase]:
+        status: KnowledgeBaseStatus | None = None,
+    ) -> list[KnowledgeBase]:
         """
         获取用户可访问的知识库列表
 
@@ -51,24 +50,17 @@ class KnowledgeBasePermissions:
             query = query.where(KnowledgeBase.status == status)
 
         # 排序：默认在前，然后按创建时间倒序
-        query = query.order_by(
-            KnowledgeBase.is_default.desc(),
-            KnowledgeBase.created_at.desc()
-        )
+        query = query.order_by(KnowledgeBase.is_default.desc(), KnowledgeBase.created_at.desc())
 
         result = await db.execute(query)
         return list(result.scalars().all())
 
     @staticmethod
-    def can_manage(
-        kb: KnowledgeBase,
-        user_id: str,
-        is_admin: bool = False
-    ) -> bool:
+    def can_manage(kb: KnowledgeBase, user_id: str, is_admin: bool = False) -> bool:
         """
         检查用户是否有管理权限
 
-        当前规则（临时措施）: 所有人可管理所有知识库
+        当前规则：管理员或知识库所有者可管理。
 
         Args:
             kb: 知识库对象
@@ -78,13 +70,10 @@ class KnowledgeBasePermissions:
         Returns:
             是否有管理权限
         """
-        return True  # 所有人可管理（临时措施）
+        return bool(is_admin or (user_id and kb.owner_id == user_id))
 
     @staticmethod
-    def can_search(
-        kb: KnowledgeBase,
-        user_id: Optional[str] = None
-    ) -> bool:
+    def can_search(kb: KnowledgeBase, user_id: str | None = None) -> bool:
         """
         检查用户是否有检索权限
 
@@ -100,11 +89,7 @@ class KnowledgeBasePermissions:
         return True  # 所有人可检索
 
     @staticmethod
-    def can_upload(
-        kb: KnowledgeBase,
-        user_id: Optional[str] = None,
-        is_admin: bool = False
-    ) -> bool:
+    def can_upload(kb: KnowledgeBase, user_id: str | None = None, is_admin: bool = False) -> bool:
         """
         检查用户是否有上传文档权限
 
@@ -122,10 +107,8 @@ class KnowledgeBasePermissions:
 
     @staticmethod
     async def filter_accessible_ids(
-        db: AsyncSession,
-        knowledge_base_ids: List[str],
-        user_id: Optional[str] = None
-    ) -> List[str]:
+        db: AsyncSession, knowledge_base_ids: list[str], user_id: str | None = None
+    ) -> list[str]:
         """
         过滤出用户可访问的知识库ID
 

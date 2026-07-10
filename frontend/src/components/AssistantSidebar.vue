@@ -211,14 +211,6 @@ const modules = [
     isAction: true
   },
   {
-    id: 'cognitive-map',
-    name: '认知地图',
-    abbr: '地图',
-    desc: '管理实体、关系、规则与证据',
-    badge: '管理',
-    isAction: true
-  },
-  {
     id: 'tools-management',
     name: '工具管理',
     abbr: '工具',
@@ -308,18 +300,6 @@ const moduleIcons = {
       <path d="M8 8h8" />
       <path d="M8 11.5h8" />
       <path d="M8 15h5" />
-    </svg>
-  `,
-  'cognitive-map': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="6" cy="7" r="2.5" />
-      <circle cx="17" cy="6" r="2.5" />
-      <circle cx="18" cy="17" r="2.5" />
-      <circle cx="7" cy="18" r="2.5" />
-      <path d="M8.3 6.7 14.5 6.2" />
-      <path d="M15.8 8.1 8.8 16.1" />
-      <path d="M8.9 8.6 16.1 15.3" />
-      <path d="M9.5 18h6" />
     </svg>
   `,
   'file-manager': `
@@ -421,7 +401,7 @@ const moduleGroups = computed(() => {
     {
       id: 'resources',
       title: '资源',
-      ids: ['knowledge-base', 'cognitive-map', 'file-manager']
+      ids: ['knowledge-base', 'file-manager']
     },
     {
       id: 'system',

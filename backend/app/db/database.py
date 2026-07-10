@@ -147,6 +147,7 @@ async def init_db():
     # before create_all runs.
     import app.social.models  # noqa: F401
     import app.knowledge_base.models  # noqa: F401
+    import app.knowledge_base.graph_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -7,9 +7,8 @@
 import json
 import os
 import shutil
-import tempfile
 import time
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +33,7 @@ from app.knowledge_base.schemas import (
     DocumentChunk
 )
 from app.knowledge_base.chunking_strategies import get_all_strategies
-from app.knowledge_base.models import KnowledgeBaseStatus, DocumentStatus
+from app.knowledge_base.models import DocumentStatus
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/knowledge-base", tags=["Knowledge Base"])
@@ -396,6 +395,37 @@ async def list_documents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{kb_id}/documents/{doc_id}/content", response_model=DocumentResponse)
+async def replace_document_content(
+    kb_id: str,
+    doc_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: Optional[str] = Depends(get_user_id),
+    is_admin: bool = Depends(get_is_admin),
+):
+    """直接替换当前文档，不保留旧文件或旧版本。"""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    service = KnowledgeBaseService(db=db)
+    try:
+        document = await service.replace_document_content(
+            kb_id=kb_id,
+            doc_id=doc_id,
+            upload=file,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+        return _doc_to_response(document)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("replace_document_content_failed", doc_id=doc_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.delete("/{kb_id}/documents/{doc_id}")
 async def delete_document(
     kb_id: str,
@@ -531,7 +561,12 @@ async def search_knowledge_base(
                 top_k=request.top_k,
                 score_threshold=request.score_threshold,
                 filters=request.filters,
-                use_reranker=request.use_reranker if request.use_reranker is not None else request.rerank_mode
+                use_reranker=request.use_reranker if request.use_reranker is not None else request.rerank_mode,
+                use_graph_retrieval=request.use_graph_retrieval,
+                graph_depth=request.graph_depth,
+                graph_seed_top_k=request.graph_seed_top_k,
+                graph_chunk_top_k=request.graph_chunk_top_k,
+                graph_weight=request.graph_weight,
             )
 
             # 为每个结果添加溯源链接
@@ -609,9 +644,13 @@ def _doc_to_response(doc) -> DocumentResponse:
         status=doc.status.value,
         chunk_count=doc.chunk_count,
         error_message=doc.error_message,
-        metadata=doc.metadata or {},
+        extra_metadata=getattr(doc, "extra_metadata", {}) or {},
         created_at=doc.created_at,
         processed_at=doc.processed_at,
+        content_generation=getattr(doc, "content_generation", 1),
+        ingestion_status=getattr(doc, "ingestion_status", "pending"),
+        graph_status=getattr(doc, "graph_status", "pending"),
+        processing_error=getattr(doc, "processing_error", None),
         # 新增溯源相关字段
         file_storage_type=getattr(doc, 'file_storage_type', None),
         file_mime_type=getattr(doc, 'file_mime_type', None),

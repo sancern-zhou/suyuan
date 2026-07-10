@@ -347,9 +347,6 @@ const handleSidebarAction = async (actionId) => {
       showManagementPanel('knowledge-base')
       await kbStore.fetchKnowledgeBases()
       break
-    case 'cognitive-map':
-      showManagementPanel('cognitive-map')
-      break
     case 'fetchers':
       showManagementPanel('fetchers')
       await refreshFetcherStatus()

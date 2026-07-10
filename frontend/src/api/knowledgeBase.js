@@ -155,6 +155,15 @@ export async function deleteDocument(kbId, docId) {
   })
 }
 
+export async function replaceDocument(kbId, docId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return await request(`${BASE_URL}/${kbId}/documents/${docId}/content`, {
+    method: 'PUT',
+    body: formData
+  })
+}
+
 /**
  * 重试处理失败的文档
  */
@@ -179,4 +188,89 @@ export async function searchKnowledgeBase(params) {
  */
 export async function getDocumentChunks(kbId, docId) {
   return await request(`${BASE_URL}/${kbId}/documents/${docId}/chunks`)
+}
+
+const graphUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/graph${path}`
+
+export async function getKnowledgeGraphStatus(kbId) {
+  return await request(graphUrl(kbId, '/status'))
+}
+
+export async function getKnowledgeGraphSchema(kbId) {
+  return await request(graphUrl(kbId, '/schema'))
+}
+
+export async function updateKnowledgeGraphSchema(kbId, params) {
+  return await request(graphUrl(kbId, '/schema'), {
+    method: 'PUT',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function queryKnowledgeGraph(kbId, params = {}) {
+  return await request(graphUrl(kbId, '/query'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function listKnowledgeGraphEntities(kbId, statuses = []) {
+  const query = statuses.length ? `?${statuses.map(status => `review_statuses=${encodeURIComponent(status)}`).join('&')}` : ''
+  return await request(graphUrl(kbId, `/entities${query}`))
+}
+
+export async function createKnowledgeGraphEntity(kbId, params) {
+  return await request(graphUrl(kbId, '/entities'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function updateKnowledgeGraphEntity(kbId, entityId, params) {
+  return await request(graphUrl(kbId, `/entities/${entityId}`), {
+    method: 'PATCH',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function deleteKnowledgeGraphEntity(kbId, entityId) {
+  return await request(graphUrl(kbId, `/entities/${entityId}`), { method: 'DELETE' })
+}
+
+export async function listKnowledgeGraphRelations(kbId, statuses = []) {
+  const query = statuses.length ? `?${statuses.map(status => `review_statuses=${encodeURIComponent(status)}`).join('&')}` : ''
+  return await request(graphUrl(kbId, `/relations${query}`))
+}
+
+export async function createKnowledgeGraphRelation(kbId, params) {
+  return await request(graphUrl(kbId, '/relations'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function updateKnowledgeGraphRelation(kbId, relationId, params) {
+  return await request(graphUrl(kbId, `/relations/${relationId}`), {
+    method: 'PATCH',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function deleteKnowledgeGraphRelation(kbId, relationId) {
+  return await request(graphUrl(kbId, `/relations/${relationId}`), { method: 'DELETE' })
+}
+
+export async function mergeKnowledgeGraphEntities(kbId, sourceId, targetId) {
+  return await request(graphUrl(kbId, '/merge'), {
+    method: 'POST',
+    body: JSON.stringify({ source_id: sourceId, target_id: targetId })
+  })
+}
+
+export async function retryFailedKnowledgeGraph(kbId) {
+  return await request(graphUrl(kbId, '/retry-failed'), { method: 'POST' })
+}
+
+export async function reindexKnowledgeGraph(kbId) {
+  return await request(graphUrl(kbId, '/reindex'), { method: 'POST' })
 }

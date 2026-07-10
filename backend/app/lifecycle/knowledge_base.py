@@ -25,6 +25,13 @@ async def start_knowledge_base_services() -> None:
         logger.warning("knowledge_base_queue_start_failed", error=str(e))
 
     try:
+        from app.knowledge_base.index_outbox import start_index_outbox_worker
+
+        await start_index_outbox_worker()
+    except Exception as e:
+        logger.warning("knowledge_index_outbox_start_failed", error=str(e))
+
+    try:
         await warmup_knowledge_base_models()
     except Exception as e:
         logger.warning("knowledge_base_warmup_failed", error=str(e))
@@ -63,6 +70,13 @@ async def warmup_knowledge_base_models() -> None:
 async def stop_knowledge_base_services() -> None:
     """Stop knowledge base processing queue before database shutdown."""
     try:
+        from app.knowledge_base.index_outbox import stop_index_outbox_worker
+
+        await stop_index_outbox_worker()
+    except Exception as e:
+        logger.warning("knowledge_index_outbox_stop_failed", error=str(e))
+
+    try:
         from app.knowledge_base.tasks import stop_processing_queue
 
         await stop_processing_queue()
@@ -70,4 +84,3 @@ async def stop_knowledge_base_services() -> None:
         await asyncio.sleep(1.0)
     except Exception as e:
         logger.warning("knowledge_base_queue_stop_failed", error=str(e))
-

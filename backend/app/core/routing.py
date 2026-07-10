@@ -27,7 +27,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
     RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Query dashboard API"),
     RouterSpec("app.api.knowledge_base_routes", prefix="/api", description="Knowledge Base API"),
-    RouterSpec("app.api.cognitive_map_routes", description="Cognitive Map API"),
+    RouterSpec("app.api.knowledge_graph_routes", prefix="/api", description="Knowledge Graph API"),
     RouterSpec("app.routers.report_generation", prefix="/api", description="Report generation"),
     RouterSpec("app.routers.expert_deliberation", prefix="/api", description="Expert deliberation"),
     RouterSpec("app.routers.monitoring", description="LLM monitoring"),

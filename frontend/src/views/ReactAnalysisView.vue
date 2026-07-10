@@ -367,10 +367,6 @@ const handleSidebarAction = async (actionId) => {
       showManagementPanel('knowledge-base')
       await kbStore.fetchKnowledgeBases()
       break
-    case 'cognitive-map':
-      console.log('[ReactAnalysisView] Showing cognitive-map panel')
-      showManagementPanel('cognitive-map')
-      break
     case 'fetchers':
       console.log('[ReactAnalysisView] Showing fetchers panel')
       showManagementPanel('fetchers')

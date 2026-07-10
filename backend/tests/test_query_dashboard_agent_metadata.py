@@ -24,9 +24,7 @@ def test_query_mode_tool_order_is_derived_from_allowlist():
     query_tool_names = list(get_tools_by_mode("query").keys())
 
     assert get_tool_order("query") == query_tool_names
-    assert "cognitive_map_guidance" in query_tool_names
-    assert "cognitive_map_entity_query" in query_tool_names
-    assert "cognitive_map_graph_traverse" in query_tool_names
+    assert "knowledge_graph_query" in query_tool_names
     assert "resolve_station_geo" in query_tool_names
 
 
