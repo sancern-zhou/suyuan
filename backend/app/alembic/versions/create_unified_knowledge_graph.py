@@ -25,6 +25,7 @@ from app.knowledge_base.graph_models import (
 )
 
 _POSTGRES_COLUMN_STATEMENTS = (
+    "ALTER TYPE documentstatus ADD VALUE IF NOT EXISTS 'DELETING'",
     "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS graph_enabled BOOLEAN NOT NULL DEFAULT TRUE",
     "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS graph_schema JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS graph_extractor_config JSONB NOT NULL DEFAULT '{}'::jsonb",

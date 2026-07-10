@@ -179,6 +179,13 @@ class KnowledgeIndexOutboxRepository:
                 return
             item.status = "completed"
             item.last_error = None
+            if item.record_type == "chunk" and item.operation == "upsert":
+                from app.knowledge_base.graph_models import KnowledgeChunk
+
+                chunk = await session.get(KnowledgeChunk, item.record_id)
+                if chunk is not None and chunk.content_generation == item.payload_version:
+                    chunk.vector_status = "indexed"
+                    chunk.last_error = None
 
     async def mark_retry(self, item_id: str, error: str) -> None:
         async with self.session_factory() as session, session.begin():

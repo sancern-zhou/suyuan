@@ -369,27 +369,30 @@ class KnowledgeBaseService:
         **processing_options,
     ):
         """Run the unified Chunk + graph ingestion state machine."""
-        if self.ingestion_service_factory is not None:
-            ingestion = self.ingestion_service_factory(processing_options)
-        else:
-            from app.db.database import async_session
-            from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
-            from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
-            from app.knowledge_base.graph_repository import KnowledgeGraphRepository
-            from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
-            from app.knowledge_base.ingestion_service import KnowledgeIngestionService
-
-            ingestion = KnowledgeIngestionService(
-                session_factory=async_session,
-                processor=self.processor,
-                chunk_repository_factory=KnowledgeChunkRepository,
-                graph_repository_factory=KnowledgeGraphRepository,
-                extractor=KnowledgeGraphExtractor(),
-                outbox_factory=KnowledgeIndexOutboxRepository.for_session,
-                file_storage=SmartFileStorage,
-                processing_options=processing_options,
-            )
+        ingestion = self._create_ingestion_service(processing_options)
         return await ingestion.ingest_document(document_id)
+
+    def _create_ingestion_service(self, processing_options: dict | None = None):
+        if self.ingestion_service_factory is not None:
+            return self.ingestion_service_factory(processing_options or {})
+
+        from app.db.database import async_session
+        from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
+        from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
+        from app.knowledge_base.graph_repository import KnowledgeGraphRepository
+        from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
+        from app.knowledge_base.ingestion_service import KnowledgeIngestionService
+
+        return KnowledgeIngestionService(
+            session_factory=async_session,
+            processor=self.processor,
+            chunk_repository_factory=KnowledgeChunkRepository,
+            graph_repository_factory=KnowledgeGraphRepository,
+            extractor=KnowledgeGraphExtractor(),
+            outbox_factory=KnowledgeIndexOutboxRepository.for_session,
+            file_storage=SmartFileStorage,
+            processing_options=processing_options,
+        )
 
     async def _process_document(
         self,
@@ -435,20 +438,67 @@ class KnowledgeBaseService:
         if not doc:
             raise ValueError(f"Document not found: {doc_id}")
 
-        # 删除向量
-        await self.vector_store.delete_by_document(kb.qdrant_collection, doc_id)
-
-        # 更新知识库统计
-        kb.document_count = max(0, kb.document_count - 1)
-        kb.chunk_count = max(0, kb.chunk_count - doc.chunk_count)
-        kb.total_size = max(0, kb.total_size - doc.file_size)
-
-        # 删除数据库记录
-        await self.db.delete(doc)
-        await self.db.commit()
+        await self._create_ingestion_service().delete_document(kb_id, doc_id)
 
         logger.info("document_deleted", kb_id=kb_id, doc_id=doc_id)
         return True
+
+    async def replace_document_content(
+        self,
+        *,
+        kb_id: str,
+        doc_id: str,
+        upload,
+        user_id: str,
+        is_admin: bool = False,
+    ) -> Document:
+        """Replace a document in place without retaining an old version."""
+        kb = await self.get_knowledge_base(kb_id)
+        if not kb:
+            raise ValueError(f"Knowledge base not found: {kb_id}")
+        if not KnowledgeBasePermissions.can_manage(kb, user_id, is_admin):
+            raise PermissionError("No permission to replace document")
+        result = await self.db.execute(
+            select(Document).where(
+                Document.id == doc_id,
+                Document.knowledge_base_id == kb_id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError(f"Document not found: {doc_id}")
+
+        storage_dir = Path(os.getenv("KNOWLEDGE_BASE_STORAGE_DIR", "data/knowledge_base"))
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        suffix = Path(upload.filename or "replacement").suffix
+        temp_path = storage_dir / f"{kb_id}_{doc_id}_{uuid4().hex}{suffix}"
+        data = await upload.read()
+        temp_path.write_bytes(data)
+        try:
+            await self._create_ingestion_service().replace_document(
+                doc_id,
+                str(temp_path),
+                {
+                    "filename": upload.filename or "replacement",
+                    "file_type": self.processor.get_file_type(str(temp_path)),
+                    "file_size": len(data),
+                    "file_hash": self._calculate_file_hash(str(temp_path)),
+                    "mime_type": getattr(upload, "content_type", None),
+                },
+            )
+            if temp_path.exists():
+                temp_path.unlink()
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+        from app.db.database import async_session
+
+        async with async_session() as session:
+            document = await session.get(Document, doc_id)
+            if document is None:
+                raise ValueError(f"Document not found after replacement: {doc_id}")
+            return document
 
     async def list_documents(self, kb_id: str) -> List[Document]:
         """列出知识库中的文档"""
