@@ -35,6 +35,7 @@ class DocumentStatus(enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    DELETING = "deleting"
 
 
 class ChunkingStrategy(enum.Enum):

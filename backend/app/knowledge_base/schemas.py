@@ -131,6 +131,10 @@ class DocumentResponse(BaseModel):
     extra_metadata: Dict[str, Any] = Field(default_factory=dict, alias="extra_metadata")
     created_at: datetime
     processed_at: Optional[datetime]
+    content_generation: int = 1
+    ingestion_status: str = "pending"
+    graph_status: str = "pending"
+    processing_error: Optional[str] = None
     # 溯源相关字段
     file_storage_type: Optional[str] = Field(default=None, description="存储类型：database/local/oss")
     file_mime_type: Optional[str] = Field(default=None, description="MIME类型")

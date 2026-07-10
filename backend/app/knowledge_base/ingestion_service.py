@@ -144,10 +144,35 @@ class KnowledgeIngestionService:
         new_file_path: str,
         file_metadata: dict,
     ) -> IngestionResult:
-        raise NotImplementedError("Document replacement is implemented in the next lifecycle phase")
+        old_snapshot = await self._begin_replacement(
+            document_id=document_id,
+            new_file_path=new_file_path,
+            file_metadata=file_metadata,
+        )
+        await self._delete_original_file(old_snapshot)
+        try:
+            return await self.ingest_document(document_id)
+        except Exception:
+            await self._purge_document_derivatives(
+                kb_id=old_snapshot.kb_id,
+                document_id=document_id,
+                payload_version=old_snapshot.content_generation + 1,
+            )
+            raise
 
     async def delete_document(self, kb_id: str, document_id: str) -> None:
-        raise NotImplementedError("Document deletion is implemented in the next lifecycle phase")
+        snapshot = await self._begin_delete(kb_id, document_id)
+        await self._purge_document_derivatives(
+            kb_id=kb_id,
+            document_id=document_id,
+            payload_version=snapshot.content_generation,
+        )
+        await self._delete_original_file(snapshot)
+        async with self.session_factory() as session, session.begin():
+            document = await session.get(Document, document_id)
+            if document is not None:
+                await session.delete(document)
+            await self._recalculate_kb_stats(session, kb_id)
 
     async def _load_and_mark_processing(self, document_id: str):
         async with self.session_factory() as session, session.begin():
@@ -184,9 +209,39 @@ class KnowledgeIngestionService:
                 drafts=drafts,
             )
             outbox = self.outbox_factory(session)
+            removed_ids = [chunk.id for chunk in persisted.removed]
+            if removed_ids:
+                deactivated_entities, deactivated_relations = (
+                    await self.graph_repository_factory(session).remove_chunk_contributions(
+                        kb_id=snapshot.kb_id,
+                        chunk_ids=removed_ids,
+                    )
+                )
+                for chunk in persisted.removed:
+                    await outbox.enqueue_delete(
+                        kb_id=snapshot.kb_id,
+                        record_type="chunk",
+                        record_id=chunk.id,
+                        payload_version=snapshot.content_generation,
+                    )
+                    await session.delete(chunk)
+                for entity_id in deactivated_entities:
+                    await outbox.enqueue_delete(
+                        kb_id=snapshot.kb_id,
+                        record_type="entity",
+                        record_id=entity_id,
+                        payload_version=snapshot.content_generation,
+                    )
+                for relation_id in deactivated_relations:
+                    await outbox.enqueue_delete(
+                        kb_id=snapshot.kb_id,
+                        record_type="relation",
+                        record_id=relation_id,
+                        payload_version=snapshot.content_generation,
+                    )
             chunks_to_index = [
                 *persisted.added,
-                *(chunk for chunk in persisted.reused if chunk.vector_status != "completed"),
+                *(chunk for chunk in persisted.reused if chunk.vector_status != "indexed"),
             ]
             for chunk in chunks_to_index:
                 await outbox.enqueue_upsert(
@@ -204,6 +259,17 @@ class KnowledgeIngestionService:
 
     async def _persist_graph_extraction(self, snapshot, chunk, extraction):
         async with self.session_factory() as session, session.begin():
+            current_chunk = await session.get(KnowledgeChunk, chunk.id)
+            if (
+                current_chunk is None
+                or current_chunk.content_generation != snapshot.content_generation
+            ):
+                from app.knowledge_base.chunk_repository import StaleContentGeneration
+
+                raise StaleContentGeneration(
+                    f"chunk {chunk.id} no longer belongs to generation "
+                    f"{snapshot.content_generation}"
+                )
             repository = self.graph_repository_factory(session)
             result = await repository.upsert_chunk_extraction(
                 kb_id=snapshot.kb_id,
@@ -283,30 +349,7 @@ class KnowledgeIngestionService:
             document.file_preview_text = content[:500] if content else None
             document.processed_at = datetime.utcnow()
 
-            kb.document_count = int(
-                await session.scalar(
-                    select(func.count()).select_from(Document).where(
-                        Document.knowledge_base_id == snapshot.kb_id
-                    )
-                )
-                or 0
-            )
-            kb.chunk_count = int(
-                await session.scalar(
-                    select(func.count()).select_from(KnowledgeChunk).where(
-                        KnowledgeChunk.kb_id == snapshot.kb_id
-                    )
-                )
-                or 0
-            )
-            kb.total_size = int(
-                await session.scalar(
-                    select(func.coalesce(func.sum(Document.file_size), 0)).where(
-                        Document.knowledge_base_id == snapshot.kb_id
-                    )
-                )
-                or 0
-            )
+            await self._recalculate_kb_stats(session, snapshot.kb_id)
 
     async def _store_original_file(self, snapshot) -> None:
         if self.file_storage is None:
@@ -336,6 +379,185 @@ class KnowledgeIngestionService:
                 document_id=snapshot.document_id,
                 error=str(exc),
             )
+
+    async def _begin_replacement(
+        self,
+        *,
+        document_id: str,
+        new_file_path: str,
+        file_metadata: dict,
+    ) -> _DocumentSnapshot:
+        async with self.session_factory() as session, session.begin():
+            document = await session.scalar(
+                select(Document).where(Document.id == document_id).with_for_update()
+            )
+            if document is None:
+                raise ValueError(f"Document not found: {document_id}")
+            kb = await session.get(KnowledgeBase, document.knowledge_base_id)
+            if kb is None:
+                raise ValueError(f"Knowledge base not found: {document.knowledge_base_id}")
+            old_snapshot = self._snapshot(document, kb)
+            document.content_generation += 1
+            document.filename = str(file_metadata.get("filename") or document.filename)
+            document.file_path = new_file_path
+            document.file_type = file_metadata.get("file_type")
+            document.file_size = int(file_metadata.get("file_size") or 0)
+            document.file_hash = file_metadata.get("file_hash")
+            document.extra_metadata = dict(file_metadata.get("metadata") or {})
+            document.original_file_oid = None
+            document.file_storage_type = "none"
+            document.file_mime_type = file_metadata.get("mime_type")
+            document.file_checksum = None
+            document.storage_size = 0
+            document.file_preview_text = None
+            document.status = DocumentStatus.PROCESSING
+            document.ingestion_status = "processing"
+            document.graph_status = "processing"
+            document.processing_error = None
+            document.error_message = None
+            return old_snapshot
+
+    async def _begin_delete(self, kb_id: str, document_id: str) -> _DocumentSnapshot:
+        async with self.session_factory() as session, session.begin():
+            document = await session.scalar(
+                select(Document)
+                .where(
+                    Document.id == document_id,
+                    Document.knowledge_base_id == kb_id,
+                )
+                .with_for_update()
+            )
+            if document is None:
+                raise ValueError(f"Document not found: {document_id}")
+            kb = await session.get(KnowledgeBase, kb_id)
+            if kb is None:
+                raise ValueError(f"Knowledge base not found: {kb_id}")
+            document.content_generation += 1
+            document.status = DocumentStatus.DELETING
+            document.ingestion_status = "deleting"
+            document.graph_status = "deleting"
+            return self._snapshot(document, kb)
+
+    async def _purge_document_derivatives(
+        self,
+        *,
+        kb_id: str,
+        document_id: str,
+        payload_version: int,
+    ) -> None:
+        async with self.session_factory() as session, session.begin():
+            chunks = list(
+                (
+                    await session.execute(
+                        select(KnowledgeChunk).where(
+                            KnowledgeChunk.kb_id == kb_id,
+                            KnowledgeChunk.document_id == document_id,
+                        )
+                    )
+                ).scalars()
+            )
+            chunk_ids = [chunk.id for chunk in chunks]
+            deactivated_entities, deactivated_relations = (
+                await self.graph_repository_factory(session).remove_chunk_contributions(
+                    kb_id=kb_id,
+                    chunk_ids=chunk_ids,
+                )
+            )
+            outbox = self.outbox_factory(session)
+            for chunk in chunks:
+                await outbox.enqueue_delete(
+                    kb_id=kb_id,
+                    record_type="chunk",
+                    record_id=chunk.id,
+                    payload_version=payload_version,
+                )
+                await session.delete(chunk)
+            for entity_id in deactivated_entities:
+                await outbox.enqueue_delete(
+                    kb_id=kb_id,
+                    record_type="entity",
+                    record_id=entity_id,
+                    payload_version=payload_version,
+                )
+            for relation_id in deactivated_relations:
+                await outbox.enqueue_delete(
+                    kb_id=kb_id,
+                    record_type="relation",
+                    record_id=relation_id,
+                    payload_version=payload_version,
+                )
+            await self._recalculate_kb_stats(session, kb_id)
+
+    async def _delete_original_file(self, snapshot: _DocumentSnapshot) -> None:
+        reference = snapshot.original_file_oid or (
+            snapshot.file_path if snapshot.file_storage_type == "local" else None
+        )
+        if reference is None:
+            return
+        try:
+            if self.file_storage is not None and not callable(self.file_storage):
+                await self.file_storage.delete_file(reference)
+                return
+            async with self.session_factory() as session, session.begin():
+                if snapshot.original_file_oid:
+                    from app.knowledge_base.file_storage import DatabaseFileStorageService
+
+                    storage = DatabaseFileStorageService(session)
+                    await storage.delete_file(int(snapshot.original_file_oid))
+                else:
+                    from app.knowledge_base.file_storage import LocalFileStorageService
+
+                    await LocalFileStorageService().delete_file(str(reference))
+        except Exception as exc:
+            logger.warning(
+                "original_file_delete_failed",
+                document_id=snapshot.document_id,
+                error=str(exc),
+            )
+
+    @staticmethod
+    async def _recalculate_kb_stats(session, kb_id: str) -> None:
+        kb = await session.get(KnowledgeBase, kb_id)
+        if kb is None:
+            return
+        kb.document_count = int(
+            await session.scalar(
+                select(func.count()).select_from(Document).where(
+                    Document.knowledge_base_id == kb_id
+                )
+            )
+            or 0
+        )
+        kb.chunk_count = int(
+            await session.scalar(
+                select(func.count()).select_from(KnowledgeChunk).where(
+                    KnowledgeChunk.kb_id == kb_id
+                )
+            )
+            or 0
+        )
+        kb.total_size = int(
+            await session.scalar(
+                select(func.coalesce(func.sum(Document.file_size), 0)).where(
+                    Document.knowledge_base_id == kb_id
+                )
+            )
+            or 0
+        )
+
+    def _snapshot(self, document: Document, kb: KnowledgeBase) -> _DocumentSnapshot:
+        return _DocumentSnapshot(
+            document_id=document.id,
+            kb_id=kb.id,
+            content_generation=document.content_generation,
+            filename=document.filename,
+            file_path=document.file_path,
+            file_size=document.file_size or 0,
+            graph_enabled=bool(kb.graph_enabled),
+            schema=self._schema(kb.graph_schema),
+            original_file_oid=document.original_file_oid,
+            file_storage_type=document.file_storage_type,
+        )
 
     @staticmethod
     def _schema(raw_schema: dict | None) -> CognitiveSchema:
@@ -410,3 +632,5 @@ class _DocumentSnapshot:
     file_size: int
     graph_enabled: bool
     schema: CognitiveSchema
+    original_file_oid: int | None = None
+    file_storage_type: str | None = None
