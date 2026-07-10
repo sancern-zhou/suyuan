@@ -227,8 +227,8 @@ class DocumentProcessingQueue:
             if not doc:
                 raise ValueError(f"Document not found: {task.doc_id}")
 
-            # 调用服务处理文档
-            await service._process_document(doc, kb)
+            # 统一状态机负责 Chunk、图谱事实和 Outbox，不再直接写向量。
+            await service.ingest_document(task.doc_id)
 
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.utcnow()

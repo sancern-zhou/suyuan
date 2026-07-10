@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -86,11 +86,13 @@ class KnowledgeBaseService:
     def __init__(
         self,
         db: AsyncSession = None,
-        vector_store = None
+        vector_store = None,
+        ingestion_service_factory=None,
     ):
         self.db = db
         self.processor = get_document_processor()
         self.vector_store = vector_store or get_vector_store()
+        self.ingestion_service_factory = ingestion_service_factory
         self._reranker = None
 
     def _get_reranker(self):
@@ -361,6 +363,34 @@ class KnowledgeBaseService:
             )
             return doc_result.scalar_one()
 
+    async def ingest_document(
+        self,
+        document_id: str,
+        **processing_options,
+    ):
+        """Run the unified Chunk + graph ingestion state machine."""
+        if self.ingestion_service_factory is not None:
+            ingestion = self.ingestion_service_factory(processing_options)
+        else:
+            from app.db.database import async_session
+            from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
+            from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
+            from app.knowledge_base.graph_repository import KnowledgeGraphRepository
+            from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
+            from app.knowledge_base.ingestion_service import KnowledgeIngestionService
+
+            ingestion = KnowledgeIngestionService(
+                session_factory=async_session,
+                processor=self.processor,
+                chunk_repository_factory=KnowledgeChunkRepository,
+                graph_repository_factory=KnowledgeGraphRepository,
+                extractor=KnowledgeGraphExtractor(),
+                outbox_factory=KnowledgeIndexOutboxRepository.for_session,
+                file_storage=SmartFileStorage,
+                processing_options=processing_options,
+            )
+        return await ingestion.ingest_document(document_id)
+
     async def _process_document(
         self,
         doc: Document,
@@ -368,145 +398,16 @@ class KnowledgeBaseService:
         chunking_strategy: str = "llm",
         chunk_size: int = 800,
         chunk_overlap: int = 100,
-        llm_mode: str = "local"
+        llm_mode: str = "local",
     ):
-        """处理文档：解析、分块、向量化、存储原文件（支持LLM模式选择）"""
-        # 先提取所有需要的值（避免在线程中访问 SQLAlchemy 对象）
-        doc_id = doc.id
-        doc_file_path = doc.file_path
-        doc_filename = doc.filename
-        doc_file_size = doc.file_size
-        doc_extra_metadata = dict(doc.extra_metadata) if doc.extra_metadata else {}
-
-        kb_id = kb.id
-        kb_collection = kb.qdrant_collection
-
-        try:
-            # 1. 解析文档（在线程池中执行）
-            content = await self.processor.parse(doc_file_path)
-
-            # 2. 分块（使用传入的分块策略参数和LLM模式）
-            chunks = await self.processor.chunk(
-                content=content,
-                strategy=chunking_strategy,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                filename=doc_filename,
-                llm_mode=llm_mode
-            )
-
-            # 3. 向量化并存储（在线程池中执行）
-            chunk_count = await self.vector_store.add_chunks(
-                collection_name=kb_collection,
-                chunks=chunks,
-                metadata={
-                    "document_id": doc_id,
-                    "filename": doc_filename,
-                    "knowledge_base_id": kb_id,
-                    **doc_extra_metadata
-                }
-            )
-
-            # 4. 存储原文件到数据库（使用智能存储策略）
-            storage_info = None
-            try:
-                from app.db.database import async_session
-                async with async_session() as storage_db:
-                    file_storage = SmartFileStorage(storage_db)
-                    storage_info = await file_storage.store_file(
-                        temp_file_path=doc_file_path,
-                        original_filename=doc_filename,
-                        document_id=doc_id,
-                        knowledge_base_id=kb_id
-                    )
-                    await storage_db.commit()
-                    logger.info(
-                        "original_file_stored",
-                        doc_id=doc_id,
-                        storage_type=storage_info.get("storage_type"),
-                        size=storage_info.get("size")
-                    )
-            except Exception as storage_err:
-                # 文件存储失败不应阻止文档处理完成
-                logger.warning(
-                    "original_file_storage_failed",
-                    doc_id=doc_id,
-                    error=str(storage_err)
-                )
-
-            # 5. 生成文件预览文本（取前500字符）
-            preview_text = content[:500] if content else None
-
-            # 6. 使用新的数据库会话更新状态（避免长时间操作导致连接超时）
-            from app.db.database import async_session
-            async with async_session() as fresh_db:
-                doc_result = await fresh_db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                doc_fresh = doc_result.scalar_one()
-                doc_fresh.status = DocumentStatus.COMPLETED
-                doc_fresh.chunk_count = chunk_count
-                doc_fresh.processed_at = datetime.utcnow()
-                doc_fresh.file_preview_text = preview_text
-
-                # 更新文件存储信息
-                if storage_info:
-                    doc_fresh.file_storage_type = storage_info.get("storage_type", "none")
-                    doc_fresh.file_mime_type = storage_info.get("mime_type")
-                    doc_fresh.file_checksum = storage_info.get("checksum")
-                    doc_fresh.storage_size = storage_info.get("size", 0)
-                    if storage_info.get("storage_type") == "database":
-                        loid = storage_info.get("loid")
-                        if loid:
-                            doc_fresh.original_file_oid = int(loid)
-                    elif storage_info.get("storage_type") == "local":
-                        doc_fresh.file_path = storage_info.get("storage_path", doc_file_path)
-
-                kb_result = await fresh_db.execute(
-                    select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-                )
-                kb_fresh = kb_result.scalar_one()
-                kb_fresh.document_count += 1
-                kb_fresh.chunk_count += chunk_count
-                kb_fresh.total_size += doc_file_size
-
-                await fresh_db.commit()
-
-            logger.info(
-                "document_processed",
-                doc_id=doc_id,
-                filename=doc_filename,
-                chunk_count=chunk_count,
-                storage_type=storage_info.get("storage_type") if storage_info else "none"
-            )
-
-        except Exception as e:
-            # 使用新的数据库会话更新失败状态（避免连接超时问题）
-            try:
-                from app.db.database import async_session
-                async with async_session() as fresh_db:
-                    doc_result = await fresh_db.execute(
-                        select(Document).where(Document.id == doc_id)
-                    )
-                    doc_fresh = doc_result.scalar_one_or_none()
-                    if doc_fresh:
-                        doc_fresh.status = DocumentStatus.FAILED
-                        doc_fresh.error_message = str(e)[:500]  # 限制错误信息长度
-                        doc_fresh.retry_count += 1
-                        await fresh_db.commit()
-            except Exception as update_error:
-                logger.error(
-                    "failed_to_update_document_status",
-                    doc_id=doc_id,
-                    error=str(update_error)
-                )
-
-            logger.error(
-                "document_process_failed",
-                doc_id=doc_id,
-                error=str(e)
-            )
-            raise
+        """Compatibility wrapper around the unified ingestion service."""
+        return await self.ingest_document(
+            doc.id,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            llm_mode=llm_mode,
+        )
 
     async def delete_document(
         self,
