@@ -22,7 +22,10 @@ class GraphBuildService:
         async with self._session() as db:
             active = await db.scalar(select(KnowledgeGraphBuildTask).where(KnowledgeGraphBuildTask.kb_id==kb_id, KnowledgeGraphBuildTask.status.in_(["queued","running"])))
             if active: raise ValueError("knowledge graph build already queued or running")
-            chunks = (await db.execute(select(KnowledgeChunk.id).where(KnowledgeChunk.kb_id==kb_id, KnowledgeChunk.graph_status!="completed"))).scalars().all()
+            chunk_query = select(KnowledgeChunk.id).where(KnowledgeChunk.kb_id == kb_id)
+            if mode != "reset_and_build":
+                chunk_query = chunk_query.where(KnowledgeChunk.graph_status != "completed")
+            chunks = (await db.execute(chunk_query)).scalars().all()
             task = KnowledgeGraphBuildTask(kb_id=kb_id, mode=mode, created_by=user_id or "system", total_chunks=len(chunks), remaining_chunks=len(chunks))
             db.add(task)
             try: await db.commit()
@@ -51,7 +54,7 @@ class GraphBuildService:
             q=select(KnowledgeChunk).where(KnowledgeChunk.kb_id==task.kb_id, KnowledgeChunk.graph_status!="completed")
             if ids: q=q.where(KnowledgeChunk.id.in_(ids))
             chunks=(await db.execute(q)).scalars().all()
-        succeeded=[]; failed=[]; cancelled=False
+        succeeded=[]; failed=[]; errors=[]; cancelled=False
         async def one(c):
             try:
                 async with self._session() as db: kb=await db.get(KnowledgeBase, task.kb_id); schema=kb.graph_schema or {}
@@ -73,9 +76,11 @@ class GraphBuildService:
             if cur and cur.cancel_requested: cancelled=True; break
             for c,(ok,err) in zip(chunks[i:i+self.batch_size], await asyncio.gather(*(guarded(c) for c in chunks[i:i+self.batch_size]))):
                 (succeeded if ok else failed).append(c.id)
-            await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)))
+                if not ok and err:
+                    errors.append(err)
+            await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
         status="cancelled" if cancelled else ("partial" if failed else "completed")
-        await self._set_task(task_id,status=status,completed_at=datetime.utcnow(),lease_until=None,failed_chunk_ids=failed,processed_chunks=len(succeeded),failed_chunks=len(failed),remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)))
+        await self._set_task(task_id,status=status,completed_at=datetime.utcnow(),lease_until=None,failed_chunk_ids=failed,processed_chunks=len(succeeded),failed_chunks=len(failed),remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
         return await self.get_status(task_id=task_id)
 
     async def recover_expired_tasks(self):
