@@ -72,6 +72,11 @@ async def upgrade() -> None:
             last_error TEXT, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, lease_until TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
         await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        await connection.execute(text("""DO $$ DECLARE c record; BEGIN
+            FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='knowledge_graph_build_tasks'::regclass AND (pg_get_constraintdef(oid) ILIKE '%status%' OR pg_get_constraintdef(oid) ILIKE '%mode%') LOOP
+                EXECUTE format('ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT %I', c.conname);
+            END LOOP;
+        END $$;"""))
         await connection.execute(text("""DO $$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'knowledge_graph_build_tasks_kb_id_fkey') THEN
                 ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT knowledge_graph_build_tasks_kb_id_fkey FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE;
@@ -86,7 +91,8 @@ async def upgrade() -> None:
         await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT ck_kg_build_mode CHECK (mode IN ('pending','reset_and_build'))"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_kg_build_task_status ON knowledge_graph_build_tasks(status)"))
         await connection.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_graph_build_tasks_kb_id ON knowledge_graph_build_tasks(kb_id)"))
-        await connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_kg_build_active_kb ON knowledge_graph_build_tasks(kb_id) WHERE status IN ('queued', 'running')"))
+        await connection.execute(text("DROP INDEX IF EXISTS uq_kg_build_active_kb"))
+        await connection.execute(text("CREATE UNIQUE INDEX uq_kg_build_active_kb ON knowledge_graph_build_tasks(kb_id) WHERE status IN ('queued', 'running')"))
 
 
 async def main() -> None:
