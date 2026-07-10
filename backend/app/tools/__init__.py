@@ -351,6 +351,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="knowledge_graph_query", error=str(e))
 
     try:
+        from app.tools.knowledge.knowledge_graph_build.tool import KnowledgeGraphBuildTool
+        registry.register(KnowledgeGraphBuildTool(), priority=52)
+        logger.info("tool_loaded", tool="knowledge_graph_build")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="knowledge_graph_build", error=str(e))
+
+    try:
         from app.tools.query.resolve_station_geo.tool import ResolveStationGeoTool
         registry.register(ResolveStationGeoTool(), priority=54)
         logger.info("tool_loaded", tool="resolve_station_geo")

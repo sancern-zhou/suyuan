@@ -74,6 +74,16 @@ class GraphBuildService:
             await db.commit()
             return bool(result.rowcount)
 
+    async def _mark_task_failed(self, tid, error):
+        async with self._session() as db:
+            result = await db.execute(
+                update(KnowledgeGraphBuildTask)
+                .where(KnowledgeGraphBuildTask.id == tid, KnowledgeGraphBuildTask.status.in_(["queued", "running"]))
+                .values(status="failed", last_error=error, completed_at=datetime.utcnow(), lease_until=None)
+            )
+            await db.commit()
+            return bool(result.rowcount)
+
     async def _claim_task(self, task_id, now):
         async with self._session() as db:
             result = await db.execute(
