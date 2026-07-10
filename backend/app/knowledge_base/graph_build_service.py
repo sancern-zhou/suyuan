@@ -143,7 +143,9 @@ class GraphBuildService:
                     return None, None
                 snap=SimpleNamespace(kb_id=task.kb_id, document_id=c.document_id, content_generation=c.content_generation)
                 svc=KnowledgeIngestionService(session_factory=self.session_factory, processor=None, extractor=extractor)
-                await svc._persist_graph_extraction(snap,c,extraction); return True,None
+                await svc._persist_graph_extraction(
+                    snap, c, extraction, task_id=task_id, owner_token=owner_token
+                ); return True,None
             except Exception as e:
                 if not await self._owns_task(task_id, owner_token):
                     return None, None
