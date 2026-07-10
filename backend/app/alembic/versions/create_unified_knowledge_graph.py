@@ -62,6 +62,19 @@ async def upgrade() -> None:
         for statement in _POSTGRES_COLUMN_STATEMENTS:
             await connection.execute(text(statement))
         await connection.run_sync(_create_graph_tables)
+        await connection.execute(text("""CREATE TABLE IF NOT EXISTS knowledge_graph_build_tasks (
+            id VARCHAR(36) PRIMARY KEY, kb_id VARCHAR(36) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'queued', mode VARCHAR(20) NOT NULL DEFAULT 'pending',
+            created_by VARCHAR(36) NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMP, completed_at TIMESTAMP, total_chunks INTEGER NOT NULL DEFAULT 0,
+            processed_chunks INTEGER NOT NULL DEFAULT 0, failed_chunks INTEGER NOT NULL DEFAULT 0,
+            remaining_chunks INTEGER NOT NULL DEFAULT 0, failed_chunk_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            last_error TEXT, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, lease_until TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"""))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'pending'"))
+        await connection.execute(text("UPDATE knowledge_graph_build_tasks SET mode = 'pending' WHERE mode IS NULL OR mode = 'full' OR mode NOT IN ('pending','reset_and_build')"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks DROP CONSTRAINT IF EXISTS ck_kg_build_mode"))
+        await connection.execute(text("ALTER TABLE knowledge_graph_build_tasks ADD CONSTRAINT ck_kg_build_mode CHECK (mode IN ('pending','reset_and_build'))"))
         # Keep this explicit and idempotent for deployments where the table
         # was created outside SQLAlchemy metadata.
         await connection.execute(text("""
