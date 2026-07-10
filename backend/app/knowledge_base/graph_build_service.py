@@ -45,6 +45,21 @@ class GraphBuildService:
                 for k,v in vals.items(): setattr(t,k,v)
                 await db.commit()
 
+    async def _renew_lease(self, tid, owner_token):
+        deadline = datetime.utcnow() + timedelta(seconds=self.lease_seconds)
+        async with self._session() as db:
+            result = await db.execute(
+                update(KnowledgeGraphBuildTask)
+                .where(
+                    KnowledgeGraphBuildTask.id == tid,
+                    KnowledgeGraphBuildTask.status == "running",
+                    KnowledgeGraphBuildTask.started_at == owner_token,
+                )
+                .values(lease_until=deadline)
+            )
+            await db.commit()
+            return bool(result.rowcount)
+
     async def run(self, task_id):
         task = await self.get_status(task_id=task_id)
         if not task: raise ValueError("task not found")
@@ -54,6 +69,7 @@ class GraphBuildService:
         if task.status not in {"queued", "running"}:
             raise ValueError(f"task cannot run from status {task.status}")
         await self._set_task(task_id, status="running", started_at=now, lease_until=now+timedelta(seconds=self.lease_seconds))
+        owner_token = now
         if task.mode == "reset_and_build": await self.reset_graph(task.kb_id, task_id=task_id)
         ids = list(task.failed_chunk_ids or [])
         async with self._session() as db:
@@ -64,7 +80,14 @@ class GraphBuildService:
         async def one(c):
             try:
                 current = await self.get_status(task_id=task_id)
-                if current and current.cancel_requested:
+                if (
+                    current is None
+                    or current.status != "running"
+                    or current.started_at != owner_token
+                    or not current.lease_until
+                    or current.lease_until <= datetime.utcnow()
+                    or current.cancel_requested
+                ):
                     return None, None
                 async with self._session() as db: kb=await db.get(KnowledgeBase, task.kb_id); schema=kb.graph_schema or {}
                 extractor=self.extractor or KnowledgeGraphExtractor()
@@ -82,7 +105,15 @@ class GraphBuildService:
             async with sem: return await one(c)
         for i in range(0,len(chunks),self.batch_size):
             cur=await self.get_status(task_id=task_id)
-            if cur and cur.cancel_requested: cancelled=True; break
+            if (
+                cur is None
+                or cur.status != "running"
+                or cur.started_at != owner_token
+                or not await self._renew_lease(task_id, owner_token)
+            ):
+                cancelled = True
+                break
+            if cur.cancel_requested: cancelled=True; break
             for c,(ok,err) in zip(chunks[i:i+self.batch_size], await asyncio.gather(*(guarded(c) for c in chunks[i:i+self.batch_size]))):
                 if ok is None:
                     cancelled = True
@@ -91,7 +122,6 @@ class GraphBuildService:
                 if not ok and err:
                     errors.append(err)
             await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
-            await self._set_task(task_id, lease_until=datetime.utcnow()+timedelta(seconds=self.lease_seconds))
             if cancelled:
                 break
         status="cancelled" if cancelled else ("partial" if failed else "completed")
