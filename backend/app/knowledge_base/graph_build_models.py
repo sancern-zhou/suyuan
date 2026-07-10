@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db.database import Base
 
@@ -21,6 +22,7 @@ class KnowledgeGraphBuildTask(Base):
             "kb_id",
             unique=True,
             postgresql_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text("status IN ('queued', 'running')"),
         ),
         Index("ix_kg_build_task_status", "status"),
     )
@@ -37,7 +39,7 @@ class KnowledgeGraphBuildTask(Base):
     processed_chunks = Column(Integer, nullable=False, default=0)
     failed_chunks = Column(Integer, nullable=False, default=0)
     remaining_chunks = Column(Integer, nullable=False, default=0)
-    failed_chunk_ids = Column(JSON, nullable=False, default=list)
+    failed_chunk_ids = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
     last_error = Column(Text)
     cancel_requested = Column(Boolean, nullable=False, default=False)
     lease_until = Column(DateTime)
