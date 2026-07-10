@@ -74,6 +74,37 @@ class GraphBuildService:
             await db.commit()
             return bool(result.rowcount)
 
+    async def _claim_task(self, task_id, now):
+        async with self._session() as db:
+            result = await db.execute(
+                update(KnowledgeGraphBuildTask)
+                .where(
+                    KnowledgeGraphBuildTask.id == task_id,
+                    (KnowledgeGraphBuildTask.status == "queued")
+                    | (
+                        (KnowledgeGraphBuildTask.status == "running")
+                        & (KnowledgeGraphBuildTask.lease_until < now)
+                    ),
+                )
+                .values(
+                    status="running",
+                    started_at=now,
+                    lease_until=now + timedelta(seconds=self.lease_seconds),
+                )
+            )
+            await db.commit()
+            return bool(result.rowcount)
+
+    async def _owns_task(self, task_id, owner_token):
+        current = await self.get_status(task_id=task_id)
+        return bool(
+            current
+            and current.status == "running"
+            and current.started_at == owner_token
+            and current.lease_until
+            and current.lease_until > datetime.utcnow()
+        )
+
     async def run(self, task_id):
         task = await self.get_status(task_id=task_id)
         if not task: raise ValueError("task not found")
@@ -82,7 +113,9 @@ class GraphBuildService:
             raise ValueError("task already running")
         if task.status not in {"queued", "running"}:
             raise ValueError(f"task cannot run from status {task.status}")
-        await self._set_task(task_id, status="running", started_at=now, lease_until=now+timedelta(seconds=self.lease_seconds))
+        if not await self._claim_task(task_id, now):
+            raise ValueError("task was claimed by another worker or is not runnable")
+        task = await self.get_status(task_id=task_id)
         owner_token = now
         if task.mode == "reset_and_build": await self.reset_graph(task.kb_id, task_id=task_id)
         ids = list(task.failed_chunk_ids or [])
@@ -106,6 +139,8 @@ class GraphBuildService:
                 async with self._session() as db: kb=await db.get(KnowledgeBase, task.kb_id); schema=kb.graph_schema or {}
                 extractor=self.extractor or KnowledgeGraphExtractor()
                 extraction=await extractor.extract_chunk(kb_id=task.kb_id, chunk=c, schema=schema)
+                if not await self._owns_task(task_id, owner_token):
+                    return None, None
                 snap=SimpleNamespace(kb_id=task.kb_id, document_id=c.document_id, content_generation=c.content_generation)
                 svc=KnowledgeIngestionService(session_factory=self.session_factory, processor=None, extractor=extractor)
                 await svc._persist_graph_extraction(snap,c,extraction); return True,None
@@ -187,6 +222,30 @@ class GraphBuildService:
             for typ,model in (("entity",KnowledgeGraphEntity),("relation",KnowledgeGraphRelation)):
                 for rid in (await db.execute(select(model.id).where(model.kb_id==kb_id))).scalars().all():
                     record_ids[(typ, rid)] = int(await db.scalar(select(func.max(KnowledgeIndexOutbox.payload_version)).where(KnowledgeIndexOutbox.kb_id == kb_id, KnowledgeIndexOutbox.record_type == typ, KnowledgeIndexOutbox.record_id == rid)) or 0) + 1
+            for typ, rid in (
+                await db.execute(
+                    select(
+                        KnowledgeIndexOutbox.record_type,
+                        KnowledgeIndexOutbox.record_id,
+                    )
+                    .where(
+                        KnowledgeIndexOutbox.kb_id == kb_id,
+                        KnowledgeIndexOutbox.record_type.in_(["entity", "relation"]),
+                    )
+                    .distinct()
+                )
+            ).all():
+                if (typ, rid) not in record_ids:
+                    record_ids[(typ, rid)] = int(
+                        await db.scalar(
+                            select(func.max(KnowledgeIndexOutbox.payload_version)).where(
+                                KnowledgeIndexOutbox.kb_id == kb_id,
+                                KnowledgeIndexOutbox.record_type == typ,
+                                KnowledgeIndexOutbox.record_id == rid,
+                            )
+                        )
+                        or 0
+                    ) + 1
             await db.execute(delete(KnowledgeIndexOutbox).where(KnowledgeIndexOutbox.kb_id == kb_id, KnowledgeIndexOutbox.record_type.in_(["entity", "relation"])))
             for (typ, rid), revision in record_ids.items():
                 await outbox.enqueue_delete(kb_id, typ, rid, revision)
