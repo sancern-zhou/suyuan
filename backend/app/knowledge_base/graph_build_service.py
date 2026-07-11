@@ -11,6 +11,7 @@ from .models import KnowledgeBase
 from .ingestion_service import KnowledgeIngestionService
 from .graph_extractor import KnowledgeGraphExtractor
 from .index_outbox import KnowledgeIndexOutboxRepository
+from .graph_revision import bump_graph_revision
 
 class GraphBuildService:
     def __init__(self, session_factory, *, extractor=None, batch_size=20, lease_seconds=300, concurrency=4):
@@ -271,4 +272,5 @@ class GraphBuildService:
                 await outbox.enqueue_delete(kb_id, typ, rid, revision)
             for model in (KnowledgeGraphEntityMention,KnowledgeGraphRelationMention,KnowledgeGraphRelation,KnowledgeGraphEntity): await db.execute(delete(model).where(model.kb_id==kb_id))
             for c in (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.kb_id==kb_id))).scalars(): c.graph_status="pending"; c.last_error=None
+            await bump_graph_revision(db, kb_id)
             await db.commit()

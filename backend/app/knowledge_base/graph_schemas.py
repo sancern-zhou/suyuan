@@ -85,6 +85,16 @@ class GraphBuildTaskResponse(BaseModel):
     lease_until: Any = None
 
 
+class GraphSnapshotResponse(BaseModel):
+    knowledge_base_id: str
+    snapshot_version: int
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
+    next_cursor: str | None = None
+    entity_total: int
+    relation_total: int
+
+
 class GraphEntityCreate(BaseModel):
     entity_type: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=512)
@@ -96,6 +106,7 @@ class GraphEntityCreate(BaseModel):
 
 
 class GraphEntityUpdate(BaseModel):
+    entity_type: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=512)
     canonical_name: str | None = None
     aliases: list[str] | None = None
