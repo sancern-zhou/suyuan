@@ -27,10 +27,16 @@ from app.knowledge_base.graph_schemas import (
     GraphSchemaUpdate,
     GraphBuildCreate,
     GraphBuildTaskResponse,
+    GraphSnapshotResponse,
 )
 from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
 from app.knowledge_base.ingestion_service import KnowledgeIngestionService
 from app.knowledge_base.graph_revision import bump_graph_revision
+from app.knowledge_base.graph_snapshot import (
+    GraphSnapshotChanged,
+    GraphSnapshotRepository,
+    InvalidGraphSnapshotCursor,
+)
 from app.knowledge_base.models import Document, KnowledgeBase
 from app.knowledge_base.permissions import KnowledgeBasePermissions
 
@@ -343,6 +349,42 @@ async def query_graph(
     return {
         "entities": [_entity_data(entity) for entity in entities],
         "relations": [_relation_data(relation) for relation in relations],
+    }
+
+
+@router.get("/snapshot", response_model=GraphSnapshotResponse)
+async def get_graph_snapshot(
+    kb_id: str,
+    review_statuses: list[str] = Query(
+        default=["candidate", "confirmed", "published"]
+    ),
+    cursor: str | None = Query(default=None),
+    snapshot_version: int | None = Query(default=None),
+    page_size: int = Query(default=1000, ge=100, le=2000),
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    await _readable_kb(db, kb_id, user_id)
+    try:
+        page = await GraphSnapshotRepository(db).page(
+            kb_id=kb_id,
+            statuses=set(review_statuses),
+            cursor=cursor,
+            expected_revision=snapshot_version,
+            page_size=page_size,
+        )
+    except InvalidGraphSnapshotCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GraphSnapshotChanged as exc:
+        raise HTTPException(status_code=409, detail="graph_snapshot_changed") from exc
+    return {
+        "knowledge_base_id": page.knowledge_base_id,
+        "snapshot_version": page.snapshot_version,
+        "entities": [_entity_data(item) for item in page.entities],
+        "relations": [_relation_data(item) for item in page.relations],
+        "next_cursor": page.next_cursor,
+        "entity_total": page.entity_total,
+        "relation_total": page.relation_total,
     }
 
 

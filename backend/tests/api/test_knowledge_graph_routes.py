@@ -123,6 +123,19 @@ def test_graph_query_validates_depth_limit(graph_api):
     assert response.status_code == 422
 
 
+def test_graph_snapshot_returns_complete_selected_statuses(graph_api):
+    response = graph_api.get(
+        "/api/knowledge-base/kb1/graph/snapshot?page_size=100"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["knowledge_base_id"] == "kb1"
+    assert payload["entity_total"] == 2
+    assert {item["id"] for item in payload["entities"]} == {"candidate", "confirmed"}
+    assert payload["next_cursor"] is None
+
+
 def test_default_manage_permission_requires_owner_or_admin():
     from app.knowledge_base.permissions import KnowledgeBasePermissions
 
