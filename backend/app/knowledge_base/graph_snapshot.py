@@ -60,7 +60,11 @@ class GraphSnapshotRepository:
         self, *, kb_id: str, statuses: set[str], cursor: str | None,
         expected_revision: int | None, page_size: int,
     ) -> GraphSnapshotPage:
-        kb = await self.session.get(KnowledgeBase, kb_id)
+        kb = await self.session.scalar(
+            select(KnowledgeBase)
+            .where(KnowledgeBase.id == kb_id)
+            .with_for_update(read=True)
+        )
         if kb is None:
             raise ValueError(f"Knowledge base not found: {kb_id}")
         revision = int(kb.graph_revision or 0)

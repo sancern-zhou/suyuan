@@ -19,6 +19,12 @@ export function toG6Data(entities = [], relations = []) {
     degrees.set(source, (degrees.get(source) || 0) + 1)
     degrees.set(target, (degrees.get(target) || 0) + 1)
   })
+  const parallelCounts = new Map()
+  relations.forEach(relation => {
+    const key = `${relation.source_entity_id}::${relation.target_entity_id}`
+    parallelCounts.set(key, (parallelCounts.get(key) || 0) + 1)
+  })
+  const parallelIndexes = new Map()
   return {
     nodes: entities.map(entity => ({
       id: String(entity.id),
@@ -30,7 +36,11 @@ export function toG6Data(entities = [], relations = []) {
         original: entity
       }
     })),
-    edges: relations.map((relation, index) => ({
+    edges: relations.map((relation, index) => {
+      const key = `${relation.source_entity_id}::${relation.target_entity_id}`
+      const parallelIndex = parallelIndexes.get(key) || 0
+      parallelIndexes.set(key, parallelIndex + 1)
+      return {
       id: String(relation.id || `relation-${index}`),
       source: String(relation.source_entity_id),
       target: String(relation.target_entity_id),
@@ -38,9 +48,11 @@ export function toG6Data(entities = [], relations = []) {
         label: relation.relation_type || 'RELATED_TO',
         type: relation.relation_type || 'RELATED_TO',
         color: stableTypeColor(relation.relation_type || 'RELATED_TO', EDGE_COLORS),
+        parallelIndex,
+        parallelCount: parallelCounts.get(key) || 1,
         original: relation
       }
-    }))
+    }} )
   }
 }
 

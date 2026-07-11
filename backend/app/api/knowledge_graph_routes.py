@@ -112,6 +112,9 @@ def _entity_data(entity: KnowledgeGraphEntity) -> dict:
         "locked_by_user": entity.locked_by_user,
         "mention_count": entity.mention_count,
         "merged_into_id": entity.merged_into_id,
+        "created_by": entity.created_by,
+        "created_at": entity.created_at,
+        "updated_at": entity.updated_at,
     }
 
 
@@ -126,6 +129,9 @@ def _relation_data(relation: KnowledgeGraphRelation) -> dict:
         "review_status": relation.review_status,
         "locked_by_user": relation.locked_by_user,
         "mention_count": relation.mention_count,
+        "created_by": relation.created_by,
+        "created_at": relation.created_at,
+        "updated_at": relation.updated_at,
     }
 
 

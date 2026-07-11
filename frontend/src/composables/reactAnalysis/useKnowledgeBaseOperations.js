@@ -259,7 +259,7 @@ export function useKnowledgeBaseOperations() {
     }
 
     try {
-      await kbStore.fetchDocumentChunks(currentKb.value.id, doc.id)
+      await kbStore.fetchDocumentChunks(currentKb.value.id, doc.id, doc.targetChunkId || null)
       return true
     } catch (e) {
       alert('获取分块失败: ' + e.message)
