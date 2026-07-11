@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",
+    "@antv/g6": "^5.1.1",
     "@eigenpal/docx-editor-vue": "^1.9.0",
     "@traptitech/markdown-it-katex": "^3.6.0",
     "axios": "^1.13.6",
