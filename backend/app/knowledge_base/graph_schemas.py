@@ -96,6 +96,7 @@ class GraphEntityCreate(BaseModel):
 
 
 class GraphEntityUpdate(BaseModel):
+    entity_type: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=512)
     canonical_name: str | None = None
     aliases: list[str] | None = None

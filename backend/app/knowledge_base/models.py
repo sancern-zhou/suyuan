@@ -81,6 +81,7 @@ class KnowledgeBase(Base):
     graph_schema = Column(JSON, nullable=False, default=dict)
     graph_extractor_config = Column(JSON, nullable=False, default=dict)
     graph_updated_at = Column(DateTime)
+    graph_revision = Column(BigInteger, nullable=False, default=0, server_default="0")
 
     # Qdrant Collection名称
     qdrant_collection = Column(String(128), unique=True, nullable=False)
