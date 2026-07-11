@@ -5,6 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as api from '@/api/knowledgeBase'
+import { collectGraphSnapshot } from './knowledgeGraphSnapshot.js'
 
 export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   // 状态
@@ -23,6 +24,11 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const graphStatus = ref(null)
   const graphEntities = ref([])
   const graphRelations = ref([])
+  const graphLoading = ref(false)
+  const graphProgress = ref({ loadedEntities: 0, loadedRelations: 0, entityTotal: 0, relationTotal: 0 })
+  const graphSnapshotVersion = ref(null)
+  let graphRequestGeneration = 0
+  let graphAbortController = null
 
   // 计算属性
   const publicKbs = computed(() =>
@@ -167,25 +173,42 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
-  async function loadGraph(kbId) {
-    loading.value = true
+  async function loadGraph(kbId, { includeHistory = false } = {}) {
+    graphAbortController?.abort()
+    graphAbortController = new AbortController()
+    const generation = ++graphRequestGeneration
+    const signal = graphAbortController.signal
+    graphLoading.value = true
     error.value = null
     try {
-      const statuses = ['candidate', 'confirmed', 'published', 'rejected', 'archived']
-      const [status, entities, relations] = await Promise.all([
+      const statuses = includeHistory
+        ? ['candidate', 'confirmed', 'published', 'rejected', 'archived', 'merged']
+        : ['candidate', 'confirmed', 'published']
+      const [status, snapshot] = await Promise.all([
         api.getKnowledgeGraphStatus(kbId),
-        api.listKnowledgeGraphEntities(kbId, statuses),
-        api.listKnowledgeGraphRelations(kbId, statuses)
+        collectGraphSnapshot(
+          params => api.getKnowledgeGraphSnapshotPage(kbId, params),
+          {
+            statuses,
+            signal,
+            onProgress: progress => {
+              if (generation === graphRequestGeneration) graphProgress.value = progress
+            }
+          }
+        )
       ])
+      if (generation !== graphRequestGeneration || signal.aborted) return null
       graphStatus.value = status
-      graphEntities.value = entities.entities || []
-      graphRelations.value = relations.relations || []
-      return { status, entities: graphEntities.value, relations: graphRelations.value }
+      graphEntities.value = snapshot.entities
+      graphRelations.value = snapshot.relations
+      graphSnapshotVersion.value = snapshot.snapshotVersion
+      return { status, entities: snapshot.entities, relations: snapshot.relations }
     } catch (e) {
+      if (e?.name === 'AbortError') return null
       error.value = e.message || '加载知识图谱失败'
       throw e
     } finally {
-      loading.value = false
+      if (generation === graphRequestGeneration) graphLoading.value = false
     }
   }
 
@@ -288,6 +311,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     graphStatus,
     graphEntities,
     graphRelations,
+    graphLoading,
+    graphProgress,
+    graphSnapshotVersion,
 
     // Computed
     publicKbs,
