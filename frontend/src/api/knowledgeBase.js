@@ -37,7 +37,14 @@ async function request(url, options = {}) {
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(errorText || `HTTP error! status: ${response.status}`)
+    const error = new Error(errorText || `HTTP error! status: ${response.status}`)
+    error.status = response.status
+    try {
+      const payload = JSON.parse(errorText)
+      error.code = payload.detail
+      error.message = typeof payload.detail === 'string' ? payload.detail : error.message
+    } catch {}
+    throw error
   }
 
   // 204 No Content
@@ -212,6 +219,25 @@ export async function queryKnowledgeGraph(kbId, params = {}) {
     method: 'POST',
     body: JSON.stringify(params)
   })
+}
+
+export async function getKnowledgeGraphSnapshotPage(kbId, {
+  statuses = ['candidate', 'confirmed', 'published'], cursor = null,
+  snapshotVersion = null, pageSize = 1000, signal
+} = {}) {
+  const query = new URLSearchParams({ page_size: String(pageSize) })
+  statuses.forEach(value => query.append('review_statuses', value))
+  if (cursor) query.set('cursor', cursor)
+  if (snapshotVersion !== null) query.set('snapshot_version', String(snapshotVersion))
+  return await request(graphUrl(kbId, `/snapshot?${query}`), { signal })
+}
+
+export async function getKnowledgeGraphEntityMentions(kbId, entityId, { signal } = {}) {
+  return await request(graphUrl(kbId, `/entities/${encodeURIComponent(entityId)}/mentions`), { signal })
+}
+
+export async function getKnowledgeGraphRelationMentions(kbId, relationId, { signal } = {}) {
+  return await request(graphUrl(kbId, `/relations/${encodeURIComponent(relationId)}/mentions`), { signal })
 }
 
 export async function listKnowledgeGraphEntities(kbId, statuses = []) {
