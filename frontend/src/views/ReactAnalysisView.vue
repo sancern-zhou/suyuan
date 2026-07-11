@@ -530,7 +530,7 @@ const handleViewKbChunks = async (doc) => {
   }
 
   try {
-    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, doc.id)
+    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, doc.id, doc.targetChunkId || null)
     openDialog('kbChunks')
   } catch (e) {
     alert('获取分块失败: ' + e.message)

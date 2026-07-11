@@ -19,6 +19,7 @@ from app.knowledge_base.graph_models import (
     KnowledgeGraphRelationMention,
 )
 from app.knowledge_base.graph_schemas import ChunkGraphExtraction, ReviewStatus
+from app.knowledge_base.graph_revision import bump_graph_revision
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,8 @@ class KnowledgeGraphRepository:
         await self.session.flush()
         await self._refresh_entity_counts(set(changed_entity_ids))
         await self._refresh_relation_counts(set(changed_relation_ids))
+        if changed_entity_ids or changed_relation_ids:
+            await bump_graph_revision(self.session, kb_id)
         return GraphUpsertResult(
             entity_ids=list(dict.fromkeys(entity.id for entity in entity_by_local_id.values())),
             relation_ids=list(dict.fromkeys(relation_ids)),
@@ -230,6 +233,8 @@ class KnowledgeGraphRepository:
                 entity.review_status = "archived"
 
         await self.session.flush()
+        if entity_ids or relation_ids:
+            await bump_graph_revision(self.session, kb_id)
         return sorted(deactivated_entity_ids), sorted(deactivated_relation_ids)
 
     async def set_review_status(
@@ -326,6 +331,7 @@ class KnowledgeGraphRepository:
         source.mention_count = 0
         await self.session.flush()
         await self._refresh_relation_counts(changed_relation_ids)
+        await bump_graph_revision(self.session, kb_id)
         return GraphMergeResult(
             changed_relation_ids=sorted(changed_relation_ids),
             deleted_relation_ids=sorted(deleted_relation_ids),
