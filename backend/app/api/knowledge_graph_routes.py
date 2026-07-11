@@ -30,6 +30,7 @@ from app.knowledge_base.graph_schemas import (
 )
 from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
 from app.knowledge_base.ingestion_service import KnowledgeIngestionService
+from app.knowledge_base.graph_revision import bump_graph_revision
 from app.knowledge_base.models import Document, KnowledgeBase
 from app.knowledge_base.permissions import KnowledgeBasePermissions
 
@@ -400,6 +401,7 @@ async def create_entity(
     db.add(entity)
     await db.flush()
     await _index_entity(db, entity)
+    await bump_graph_revision(db, kb_id)
     return _entity_data(entity)
 
 
@@ -419,12 +421,23 @@ async def update_entity(
     changes = request.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(entity, field, value)
-    if request.name is not None or request.canonical_name is not None:
+    if request.name is not None or request.canonical_name is not None or request.entity_type is not None:
         entity.normalized_name = KnowledgeGraphRepository.normalize_entity_name(
             entity.canonical_name or entity.name
         )
+        duplicate = await db.scalar(
+            select(KnowledgeGraphEntity).where(
+                KnowledgeGraphEntity.kb_id == kb_id,
+                KnowledgeGraphEntity.entity_type == entity.entity_type,
+                KnowledgeGraphEntity.normalized_name == entity.normalized_name,
+                KnowledgeGraphEntity.id != entity.id,
+            )
+        )
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="Entity already exists")
     entity.locked_by_user = True
     await _index_entity(db, entity)
+    await bump_graph_revision(db, kb_id)
     return _entity_data(entity)
 
 
@@ -443,6 +456,7 @@ async def delete_entity(
     entity.review_status = "archived"
     entity.locked_by_user = True
     await _index_entity(db, entity)
+    await bump_graph_revision(db, kb_id)
 
 
 @router.get("/relations")
@@ -494,6 +508,7 @@ async def create_relation(
     db.add(relation)
     await db.flush()
     await _index_relation(db, relation)
+    await bump_graph_revision(db, kb_id)
     return _relation_data(relation)
 
 
@@ -519,6 +534,7 @@ async def update_relation(
         )
     relation.locked_by_user = True
     await _index_relation(db, relation)
+    await bump_graph_revision(db, kb_id)
     return _relation_data(relation)
 
 
@@ -537,6 +553,7 @@ async def delete_relation(
     relation.review_status = "archived"
     relation.locked_by_user = True
     await _index_relation(db, relation)
+    await bump_graph_revision(db, kb_id)
 
 
 @router.post("/merge")
