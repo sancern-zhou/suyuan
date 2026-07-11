@@ -5,9 +5,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.database import Base, get_db
 from app.knowledge_base.graph_models import (
+    KnowledgeChunk,
     KnowledgeGraphEntity,
+    KnowledgeGraphEntityMention,
+    KnowledgeGraphRelation,
+    KnowledgeGraphRelationMention,
 )
-from app.knowledge_base.models import KnowledgeBase
+from app.knowledge_base.models import Document, KnowledgeBase
 
 
 @pytest.fixture
@@ -50,6 +54,30 @@ def graph_api(tmp_path, monkeypatch):
                     ),
                 ]
             )
+            session.add(Document(
+                id="doc1", knowledge_base_id="kb1", filename="source.docx",
+                file_type="docx", content_generation=2,
+            ))
+            session.add(KnowledgeChunk(
+                id="chunk1", kb_id="kb1", document_id="doc1", content_generation=2,
+                chunk_key="chunk-1", content_hash="hash-1", chunk_index=0,
+                content="臭氧来源原文", embedding_text="臭氧来源原文", graph_status="completed",
+            ))
+            session.add(KnowledgeGraphRelation(
+                id="relation1", kb_id="kb1", source_entity_id="candidate",
+                target_entity_id="confirmed", relation_type="RELATED_TO",
+                review_status="confirmed",
+            ))
+            session.add(KnowledgeGraphEntityMention(
+                id="mention1", kb_id="kb1", document_id="doc1", chunk_id="chunk1",
+                entity_id="confirmed", evidence_text="臭氧来源", confidence=0.9,
+                extractor_name="test", extraction_run_id="run1",
+            ))
+            session.add(KnowledgeGraphRelationMention(
+                id="mention2", kb_id="kb1", document_id="doc1", chunk_id="chunk1",
+                relation_id="relation1", evidence_text="二者相关", confidence=0.8,
+                extractor_name="test", extraction_run_id="run1",
+            ))
             await session.commit()
 
     import asyncio
@@ -133,7 +161,25 @@ def test_graph_snapshot_returns_complete_selected_statuses(graph_api):
     assert payload["knowledge_base_id"] == "kb1"
     assert payload["entity_total"] == 2
     assert {item["id"] for item in payload["entities"]} == {"candidate", "confirmed"}
-    assert payload["next_cursor"] is None
+    assert payload["relation_total"] == 1
+    assert payload["next_cursor"] is not None
+
+
+def test_graph_mentions_include_source_document_and_chunk(graph_api):
+    entity = graph_api.get(
+        "/api/knowledge-base/kb1/graph/entities/confirmed/mentions"
+    )
+    relation = graph_api.get(
+        "/api/knowledge-base/kb1/graph/relations/relation1/mentions"
+    )
+
+    assert entity.status_code == 200
+    assert relation.status_code == 200
+    evidence = entity.json()["mentions"][0]
+    assert evidence["filename"] == "source.docx"
+    assert evidence["content"] == "臭氧来源原文"
+    assert evidence["confidence"] == 0.9
+    assert evidence["stale"] is False
 
 
 def test_default_manage_permission_requires_owner_or_admin():

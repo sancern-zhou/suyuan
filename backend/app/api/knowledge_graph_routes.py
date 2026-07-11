@@ -13,8 +13,11 @@ from app.db.database import get_db, async_session
 from app.knowledge_base.graph_build_service import GraphBuildService
 from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
 from app.knowledge_base.graph_models import (
+    KnowledgeChunk,
     KnowledgeGraphEntity,
+    KnowledgeGraphEntityMention,
     KnowledgeGraphRelation,
+    KnowledgeGraphRelationMention,
 )
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.graph_schemas import (
@@ -123,6 +126,26 @@ def _relation_data(relation: KnowledgeGraphRelation) -> dict:
         "review_status": relation.review_status,
         "locked_by_user": relation.locked_by_user,
         "mention_count": relation.mention_count,
+    }
+
+
+def _mention_data(mention, document: Document, chunk: KnowledgeChunk) -> dict:
+    return {
+        "id": mention.id,
+        "document_id": document.id,
+        "filename": document.filename,
+        "document_content_generation": document.content_generation,
+        "chunk_id": chunk.id,
+        "chunk_content_generation": chunk.content_generation,
+        "chunk_index": chunk.chunk_index,
+        "content": chunk.content,
+        "evidence_text": mention.evidence_text,
+        "evidence_start": mention.evidence_start,
+        "evidence_end": mention.evidence_end,
+        "page_number": mention.page_number,
+        "confidence": mention.confidence,
+        "extractor_name": mention.extractor_name,
+        "stale": document.content_generation != chunk.content_generation,
     }
 
 
@@ -501,6 +524,30 @@ async def delete_entity(
     await bump_graph_revision(db, kb_id)
 
 
+@router.get("/entities/{entity_id}/mentions")
+async def list_entity_mentions(
+    kb_id: str,
+    entity_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    await _readable_kb(db, kb_id, user_id)
+    entity = await db.get(KnowledgeGraphEntity, entity_id)
+    if entity is None or entity.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    rows = (await db.execute(
+        select(KnowledgeGraphEntityMention, Document, KnowledgeChunk)
+        .join(Document, Document.id == KnowledgeGraphEntityMention.document_id)
+        .join(KnowledgeChunk, KnowledgeChunk.id == KnowledgeGraphEntityMention.chunk_id)
+        .where(
+            KnowledgeGraphEntityMention.kb_id == kb_id,
+            KnowledgeGraphEntityMention.entity_id == entity_id,
+        )
+        .order_by(Document.filename, KnowledgeChunk.chunk_index)
+    )).all()
+    return {"mentions": [_mention_data(mention, document, chunk) for mention, document, chunk in rows]}
+
+
 @router.get("/relations")
 async def list_relations(
     kb_id: str,
@@ -596,6 +643,30 @@ async def delete_relation(
     relation.locked_by_user = True
     await _index_relation(db, relation)
     await bump_graph_revision(db, kb_id)
+
+
+@router.get("/relations/{relation_id}/mentions")
+async def list_relation_mentions(
+    kb_id: str,
+    relation_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
+    await _readable_kb(db, kb_id, user_id)
+    relation = await db.get(KnowledgeGraphRelation, relation_id)
+    if relation is None or relation.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Relation not found")
+    rows = (await db.execute(
+        select(KnowledgeGraphRelationMention, Document, KnowledgeChunk)
+        .join(Document, Document.id == KnowledgeGraphRelationMention.document_id)
+        .join(KnowledgeChunk, KnowledgeChunk.id == KnowledgeGraphRelationMention.chunk_id)
+        .where(
+            KnowledgeGraphRelationMention.kb_id == kb_id,
+            KnowledgeGraphRelationMention.relation_id == relation_id,
+        )
+        .order_by(Document.filename, KnowledgeChunk.chunk_index)
+    )).all()
+    return {"mentions": [_mention_data(mention, document, chunk) for mention, document, chunk in rows]}
 
 
 @router.post("/merge")
