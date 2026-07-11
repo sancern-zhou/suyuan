@@ -38,12 +38,15 @@ function options() {
       type: datum => datum.source === datum.target ? 'loop' : 'quadratic',
       style: {
         stroke: datum => datum.data?.color || '#99add1',
+        curveOffset: datum => ((datum.data?.parallelIndex || 0) - ((datum.data?.parallelCount || 1) - 1) / 2) * 22,
         endArrow: true,
         labelText: datum => props.showRelationLabels ? (datum.data?.label || '') : '',
         labelBackground: true, labelBackgroundFill: '#fff'
       }
     },
-    behaviors: ['drag-element', 'drag-canvas', 'zoom-canvas', 'hover-activate', 'click-select']
+    behaviors: ['drag-element', 'drag-canvas', 'zoom-canvas', 'hover-activate', {
+      type: 'click-select', degree: 1, state: 'selected', neighborState: 'active', unselectedState: 'inactive'
+    }]
   }
 }
 

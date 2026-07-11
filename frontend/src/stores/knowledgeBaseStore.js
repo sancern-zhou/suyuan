@@ -243,7 +243,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
-  async function fetchDocumentChunks(kbId, docId) {
+  async function fetchDocumentChunks(kbId, docId, targetChunkId = null) {
     chunksLoading.value = true
     chunksError.value = null
     try {
@@ -252,7 +252,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       currentDoc.value = {
         id: data.document_id,
         filename: data.filename,
-        total: data.total
+        total: data.total,
+        targetChunkId
       }
       return data
     } catch (e) {

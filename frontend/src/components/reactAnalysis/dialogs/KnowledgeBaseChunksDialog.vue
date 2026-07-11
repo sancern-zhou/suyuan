@@ -27,7 +27,13 @@
       </div>
 
       <div v-else class="chunks-list-full">
-        <div v-for="(chunk, index) in chunks" :key="index" class="chunk-card">
+        <div
+          v-for="(chunk, index) in chunks"
+          :key="chunk.id || index"
+          :ref="element => setChunkElement(chunk.id, element)"
+          class="chunk-card"
+          :class="{ targeted: document?.targetChunkId === chunk.id }"
+        >
           <div class="chunk-card-header">
             <span class="chunk-number">分块 #{{ chunk.chunk_index + 1 }}</span>
             <span class="chunk-length">{{ chunk.content?.length || 0 }} 字符</span>
@@ -92,6 +98,15 @@ const emit = defineEmits([
   'retry',
   'update:visible'
 ])
+const chunkElements = new Map()
+const setChunkElement = (id, element) => { if (id && element) chunkElements.set(id, element) }
+watch(
+  () => [props.visible, props.document?.targetChunkId, props.chunks.length],
+  ([visible, target]) => {
+    if (visible && target) requestAnimationFrame(() => chunkElements.get(target)?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+  },
+  { flush: 'post' }
+)
 
 // 获取分块类型名称
 const getChunkTypeName = (type) => {
@@ -235,6 +250,7 @@ defineExpose({
   border-radius: 8px;
   overflow: hidden;
 }
+.chunk-card.targeted { border-color: #1976d2; box-shadow: 0 0 0 2px rgba(25, 118, 210, .16); }
 
 .chunk-card-header {
   display: flex;

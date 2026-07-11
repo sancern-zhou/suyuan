@@ -13,6 +13,8 @@
     </template>
     <form v-else @submit.prevent="save">
       <label v-if="selected.kind === 'entity'">名称<input v-model="form.name" required /></label>
+      <label v-if="selected.kind === 'entity'">规范名称<input v-model="form.canonicalName" /></label>
+      <label v-if="selected.kind === 'entity'">别名（逗号分隔）<input v-model="form.aliasesText" /></label>
       <label>类型<input v-model="form.type" required /></label>
       <label>描述<textarea v-model="form.description" /></label>
       <label>属性 JSON<textarea v-model="form.attributesText" /></label>
@@ -38,7 +40,7 @@ import { getKnowledgeGraphEntityMentions, getKnowledgeGraphRelationMentions } fr
 const props = defineProps({ kbId: { type: String, required: true }, selected: { type: Object, default: null } })
 const emit = defineEmits(['close', 'confirm', 'reject', 'save', 'begin-merge', 'delete', 'open-document-chunk'])
 const mentions = ref([]); const loading = ref(false); const evidenceError = ref(''); const editing = ref(false); const formError = ref('')
-const form = reactive({ name: '', type: '', description: '', attributesText: '{}' })
+const form = reactive({ name: '', canonicalName: '', aliasesText: '', type: '', description: '', attributesText: '{}' })
 let controller = null
 const title = computed(() => props.selected?.raw?.name || props.selected?.raw?.relation_type || '图谱详情')
 const summary = computed(() => {
@@ -49,14 +51,14 @@ const summary = computed(() => {
 })
 function beginEdit() {
   const raw = props.selected.raw
-  Object.assign(form, { name: raw.name || '', type: raw.entity_type || raw.relation_type || '', description: raw.description || '', attributesText: JSON.stringify(raw.attributes || {}, null, 2) })
+  Object.assign(form, { name: raw.name || '', canonicalName: raw.canonical_name || '', aliasesText: (raw.aliases || []).join(', '), type: raw.entity_type || raw.relation_type || '', description: raw.description || '', attributesText: JSON.stringify(raw.attributes || {}, null, 2) })
   editing.value = true; formError.value = ''
 }
 function save() {
   try {
     const attributes = JSON.parse(form.attributesText || '{}')
     const payload = props.selected.kind === 'entity'
-      ? { name: form.name, entity_type: form.type, description: form.description, attributes }
+      ? { name: form.name, canonical_name: form.canonicalName || null, aliases: form.aliasesText.split(',').map(value => value.trim()).filter(Boolean), entity_type: form.type, description: form.description, attributes }
       : { relation_type: form.type, description: form.description, attributes }
     emit('save', { selected: props.selected, payload }); editing.value = false
   } catch { formError.value = '属性必须是合法 JSON' }
