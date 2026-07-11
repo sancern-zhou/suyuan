@@ -182,7 +182,11 @@
         </div>
       </div>
       <div v-if="activeTab === 'retrieval'" class="kb-tab-placeholder">检索默认融合普通分块召回与可信图谱路径。</div>
-      <KnowledgeGraphTab v-if="activeTab === 'graph'" :kb-id="kbStore.currentKb.id" />
+      <KnowledgeGraphTab
+        v-if="activeTab === 'graph'"
+        :kb-id="kbStore.currentKb.id"
+        @open-document-chunk="$emit('view-chunks', { id: $event.documentId, targetChunkId: $event.chunkId })"
+      />
       <div v-if="activeTab === 'schema'" class="kb-tab-placeholder">图谱 schema 与抽取配置由当前知识库独立维护。</div>
     </div>
   </div>
