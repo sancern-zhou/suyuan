@@ -18,8 +18,8 @@ from app.knowledge_base.graph_models import (
     KnowledgeGraphRelation,
     KnowledgeGraphRelationMention,
 )
-from app.knowledge_base.graph_schemas import ChunkGraphExtraction, ReviewStatus
 from app.knowledge_base.graph_revision import bump_graph_revision
+from app.knowledge_base.graph_schemas import ChunkGraphExtraction, ReviewStatus
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,10 @@ class KnowledgeGraphRepository:
         document_id: str,
         extraction: ChunkGraphExtraction,
         extraction_run_id: str,
+        source_type: str = "document_fact",
+        scene_profile_version: int = 0,
+        schema_version: int = 0,
+        rule_version: int = 0,
     ) -> GraphUpsertResult:
         await self._lock_kb_graph(kb_id)
         chunk = await self.session.get(KnowledgeChunk, extraction.chunk_id)
@@ -74,6 +78,10 @@ class KnowledgeGraphRepository:
                     aliases=self._clean_aliases(extracted.aliases),
                     description=extracted.description,
                     attributes=dict(extracted.attributes),
+                    source_type=source_type,
+                    scene_profile_version=scene_profile_version,
+                    schema_version=schema_version,
+                    rule_version=rule_version,
                 )
                 self.session.add(entity)
                 await self.session.flush()
@@ -85,12 +93,17 @@ class KnowledgeGraphRepository:
                     **(entity.attributes or {}),
                     **extracted.attributes,
                 }
+                entity.scene_profile_version = scene_profile_version
+                entity.schema_version = schema_version
+                entity.rule_version = rule_version
 
             entity_by_local_id[extracted.local_id] = entity
             await self._upsert_entity_mention(
                 entity=entity,
                 chunk=chunk,
                 evidence_text=extracted.evidence_text,
+                evidence_start=extracted.evidence.start_char if extracted.evidence else None,
+                evidence_end=extracted.evidence.end_char if extracted.evidence else None,
                 confidence=extracted.confidence,
                 extractor_name=extraction.extractor_name,
                 extraction_run_id=extraction_run_id,
@@ -121,6 +134,10 @@ class KnowledgeGraphRepository:
                     relation_type=relation_type,
                     description=extracted.description,
                     attributes=dict(extracted.attributes),
+                    source_type=source_type,
+                    scene_profile_version=scene_profile_version,
+                    schema_version=schema_version,
+                    rule_version=rule_version,
                 )
                 self.session.add(relation)
                 await self.session.flush()
@@ -131,11 +148,16 @@ class KnowledgeGraphRepository:
                     **(relation.attributes or {}),
                     **extracted.attributes,
                 }
+                relation.scene_profile_version = scene_profile_version
+                relation.schema_version = schema_version
+                relation.rule_version = rule_version
 
             await self._upsert_relation_mention(
                 relation=relation,
                 chunk=chunk,
                 evidence_text=extracted.evidence_text,
+                evidence_start=extracted.evidence.start_char if extracted.evidence else None,
+                evidence_end=extracted.evidence.end_char if extracted.evidence else None,
                 confidence=extracted.confidence,
                 extractor_name=extraction.extractor_name,
                 extraction_run_id=extraction_run_id,
@@ -508,6 +530,8 @@ class KnowledgeGraphRepository:
         entity: KnowledgeGraphEntity,
         chunk: KnowledgeChunk,
         evidence_text: str,
+        evidence_start: int | None,
+        evidence_end: int | None,
         confidence: float | None,
         extractor_name: str,
         extraction_run_id: str,
@@ -529,6 +553,8 @@ class KnowledgeGraphRepository:
             )
             self.session.add(mention)
         mention.evidence_text = evidence_text
+        mention.evidence_start = evidence_start
+        mention.evidence_end = evidence_end
         mention.confidence = confidence
 
     async def _upsert_relation_mention(
@@ -537,6 +563,8 @@ class KnowledgeGraphRepository:
         relation: KnowledgeGraphRelation,
         chunk: KnowledgeChunk,
         evidence_text: str,
+        evidence_start: int | None,
+        evidence_end: int | None,
         confidence: float | None,
         extractor_name: str,
         extraction_run_id: str,
@@ -558,6 +586,8 @@ class KnowledgeGraphRepository:
             )
             self.session.add(mention)
         mention.evidence_text = evidence_text
+        mention.evidence_start = evidence_start
+        mention.evidence_end = evidence_end
         mention.confidence = confidence
 
     async def _move_entity_mentions(self, source_id: str, target_id: str) -> None:

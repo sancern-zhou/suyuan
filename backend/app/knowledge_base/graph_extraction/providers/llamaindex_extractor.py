@@ -7,11 +7,11 @@ from typing import Any, Literal
 from app.knowledge_base.graph_extraction.models import (
     CandidateEntity,
     CandidateRelation,
-    GraphExtractionSchema,
-    GraphDocumentChunk,
     Evidence,
     ExtractionDiagnostic,
+    GraphDocumentChunk,
     GraphExtractionResult,
+    GraphExtractionSchema,
 )
 
 
@@ -71,6 +71,10 @@ class LlamaIndexPropertyGraphExtractorProvider:
             )
         if hasattr(self.llm, "set_cognitive_schema"):
             self.llm.set_cognitive_schema(schema)
+        if hasattr(self.llm, "set_business_rules"):
+            self.llm.set_business_rules(
+                list((schema.normalization_rules or {}).get("business_rules") or [])
+            )
 
         components = self.build_schema_components(schema)
         extractor = SchemaLLMPathExtractor(
@@ -155,11 +159,13 @@ class LlamaIndexPropertyGraphExtractorProvider:
         ]
         if "has_alias" in (schema.allowed_relation_types or []):
             for entity_type in schema.allowed_entity_types or []:
-                validation_schema.append((
-                    self._llamaindex_label(entity_type),
-                    self._llamaindex_label("has_alias"),
-                    self._llamaindex_label(entity_type),
-                ))
+                validation_schema.append(
+                    (
+                        self._llamaindex_label(entity_type),
+                        self._llamaindex_label("has_alias"),
+                        self._llamaindex_label(entity_type),
+                    )
+                )
         return LlamaIndexSchemaComponents(
             possible_entities=possible_entities,
             possible_relations=possible_relations,
@@ -196,7 +202,9 @@ class LlamaIndexPropertyGraphExtractorProvider:
                 canonical_name=item.get("canonical_name") or name,
                 aliases=list(item.get("aliases") or []),
                 description=item.get("description"),
-                source_evidence_ids=[str(item.get("evidence_id"))] if item.get("evidence_id") else [],
+                source_evidence_ids=[str(item.get("evidence_id"))]
+                if item.get("evidence_id")
+                else [],
                 attributes=dict(item.get("attributes") or {}),
             )
 
@@ -234,7 +242,9 @@ class LlamaIndexPropertyGraphExtractorProvider:
                     or data.get("quote")
                     or data["text_span"][:160]
                 )
-                data["support_type"] = item.get("support_type") or data.get("support_type") or "unknown"
+                data["support_type"] = (
+                    item.get("support_type") or data.get("support_type") or "unknown"
+                )
                 data["evidence_quality"] = (
                     "llm_relation_evidence"
                     if item.get("evidence_quote") or item.get("evidence_summary")
@@ -367,12 +377,14 @@ class LlamaIndexPropertyGraphExtractorProvider:
             if not relation_type or source.entity_id == target.entity_id:
                 continue
             properties = dict(getattr(relation, "properties", {}) or {})
-            relation_evidence_key = "|".join([
-                str(properties.get(TRIPLET_SOURCE_KEY) or properties.get("chunk_id") or ""),
-                source.name,
-                relation_type,
-                target.name,
-            ])
+            relation_evidence_key = "|".join(
+                [
+                    str(properties.get(TRIPLET_SOURCE_KEY) or properties.get("chunk_id") or ""),
+                    source.name,
+                    relation_type,
+                    target.name,
+                ]
+            )
             fallback_summary = f"{source.name} --{relation_type}--> {target.name}"
             relation_evidence_id = evidence_for_properties(
                 properties,
@@ -453,6 +465,7 @@ class LlamaIndexPropertyGraphExtractorProvider:
             return
 
         from llama_index.core.graph_stores.types import EntityNode, Relation
+
         nodes_by_name: dict[str, EntityNode] = {}
         relations: list[Relation] = []
         for item in payload.get("triplets", []):

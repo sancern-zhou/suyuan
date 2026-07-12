@@ -6,10 +6,11 @@ import hashlib
 
 import structlog
 
-from app.knowledge_base.graph_extraction.models import GraphExtractionSchema, GraphDocumentChunk
+from app.knowledge_base.graph_extraction.models import GraphDocumentChunk, GraphExtractionSchema
 from app.knowledge_base.graph_schemas import (
     ChunkGraphExtraction,
     ExtractedEntity,
+    ExtractedEvidence,
     ExtractedRelation,
 )
 
@@ -22,7 +23,9 @@ class KnowledgeGraphExtractor:
     def __init__(self, provider=None):
         if provider is None:
             from app.knowledge_base.graph_extraction.llm_factory import create_llamaindex_llm
-            from app.knowledge_base.graph_extraction.provider_factory import create_extractor_provider
+            from app.knowledge_base.graph_extraction.provider_factory import (
+                create_extractor_provider,
+            )
 
             provider = create_extractor_provider(
                 "llamaindex",
@@ -57,6 +60,7 @@ class KnowledgeGraphExtractor:
             entity.entity_id: self._local_id(source_namespace, entity.entity_id)
             for entity in extraction.candidate_entities
         }
+        evidence_by_id = {item.evidence_id: item for item in extraction.evidence}
         entities = [
             ExtractedEntity(
                 local_id=entity_id_map[entity.entity_id],
@@ -66,7 +70,12 @@ class KnowledgeGraphExtractor:
                 aliases=list(entity.aliases),
                 description=entity.description,
                 attributes=dict(entity.attributes),
-                evidence_text=chunk.content,
+                evidence_text=self._evidence_text(
+                    entity.source_evidence_ids, evidence_by_id, chunk.content, entity.name
+                ),
+                evidence=self._exact_evidence(
+                    entity.source_evidence_ids, evidence_by_id, chunk.content, entity.name
+                ),
             )
             for entity in extraction.candidate_entities
         ]
@@ -91,7 +100,12 @@ class KnowledgeGraphExtractor:
                     relation_type=relation.relation_type,
                     description=relation.description,
                     attributes=dict(relation.attributes),
-                    evidence_text=chunk.content,
+                    evidence_text=self._evidence_text(
+                        relation.source_evidence_ids, evidence_by_id, chunk.content
+                    ),
+                    evidence=self._exact_evidence(
+                        relation.source_evidence_ids, evidence_by_id, chunk.content
+                    ),
                 )
             )
 
@@ -120,3 +134,23 @@ class KnowledgeGraphExtractor:
         if chunk.section_path:
             parts.append("section:" + "/".join(chunk.section_path))
         return ";".join(parts) or f"chunk:{chunk.chunk_index}"
+
+    @staticmethod
+    def _evidence_text(evidence_ids, evidence_by_id, chunk_text: str, fallback: str = "") -> str:
+        for evidence_id in evidence_ids or []:
+            evidence = evidence_by_id.get(evidence_id)
+            quote = str(getattr(evidence, "quote", "") or "")
+            if quote and quote in chunk_text:
+                return quote
+        if fallback and fallback in chunk_text:
+            return fallback
+        return chunk_text
+
+    @classmethod
+    def _exact_evidence(cls, evidence_ids, evidence_by_id, chunk_text: str, fallback: str = ""):
+        quote = cls._evidence_text(evidence_ids, evidence_by_id, chunk_text, fallback)
+        evidence = ExtractedEvidence(quote=quote)
+        try:
+            return evidence.validate_against(chunk_text)
+        except ValueError:
+            return None

@@ -27,6 +27,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const graphLoading = ref(false)
   const graphProgress = ref({ loadedEntities: 0, loadedRelations: 0, entityTotal: 0, relationTotal: 0 })
   const graphSnapshotVersion = ref(null)
+  const knowledgeScene = ref(null)
+  const sceneLoading = ref(false)
   let graphRequestGeneration = 0
   let graphAbortController = null
 
@@ -212,6 +214,43 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
+  async function loadKnowledgeScene(kbId) {
+    sceneLoading.value = true
+    try {
+      knowledgeScene.value = await api.getKnowledgeScene(kbId)
+      return knowledgeScene.value
+    } finally {
+      sceneLoading.value = false
+    }
+  }
+
+  async function discoverKnowledgeScene(kbId, payload) {
+    sceneLoading.value = true
+    try {
+      const profile = await api.discoverKnowledgeScene(kbId, payload)
+      knowledgeScene.value = {
+        ...(knowledgeScene.value || {}),
+        knowledge_base_id: kbId,
+        scene_status: 'awaiting_confirmation',
+        profile
+      }
+      return profile
+    } finally {
+      sceneLoading.value = false
+    }
+  }
+
+  async function confirmKnowledgeScene(kbId, profileId, payload) {
+    sceneLoading.value = true
+    try {
+      const result = await api.confirmKnowledgeScene(kbId, profileId, payload)
+      knowledgeScene.value = { ...result, profile: result.profile || result }
+      return result
+    } finally {
+      sceneLoading.value = false
+    }
+  }
+
   async function retryDocument(kbId, docId) {
     loading.value = true
     try {
@@ -315,6 +354,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     graphLoading,
     graphProgress,
     graphSnapshotVersion,
+    knowledgeScene,
+    sceneLoading,
 
     // Computed
     publicKbs,
@@ -337,6 +378,9 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     fetchStrategies,
     fetchDocumentChunks,
     loadGraph,
+    loadKnowledgeScene,
+    discoverKnowledgeScene,
+    confirmKnowledgeScene,
     clearCurrentDoc,
     toggleSelection,
     selectKnowledgeBase,

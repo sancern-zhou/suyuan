@@ -198,6 +198,65 @@ export async function getDocumentChunks(kbId, docId) {
 }
 
 const graphUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/graph${path}`
+const sceneUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/scene${path}`
+
+export async function getKnowledgeScene(kbId) {
+  return await request(sceneUrl(kbId))
+}
+
+export async function discoverKnowledgeScene(kbId, params) {
+  return await request(sceneUrl(kbId, '/discover'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function confirmKnowledgeScene(kbId, profileId, params) {
+  return await request(sceneUrl(kbId, `/profiles/${profileId}/confirm`), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function listKnowledgeSceneSuggestions(kbId) {
+  return await request(sceneUrl(kbId, '/suggestions'))
+}
+
+export async function acceptKnowledgeSceneSuggestion(kbId, suggestionId) {
+  return await request(sceneUrl(kbId, `/suggestions/${suggestionId}/accept`), { method: 'POST' })
+}
+
+export async function rejectKnowledgeSceneSuggestion(kbId, suggestionId) {
+  return await request(sceneUrl(kbId, `/suggestions/${suggestionId}/reject`), { method: 'POST' })
+}
+
+export async function listKnowledgeBusinessRules(kbId, includeArchived = false) {
+  return await request(sceneUrl(kbId, `/rules?include_archived=${includeArchived}`))
+}
+
+export async function parseKnowledgeBusinessRule(kbId, text) {
+  return await request(sceneUrl(kbId, '/rules/parse'), { method: 'POST', body: JSON.stringify({ text }) })
+}
+
+export async function confirmKnowledgeBusinessRule(kbId, ruleId, expectedVersion) {
+  return await request(sceneUrl(kbId, `/rules/${ruleId}/confirm`), { method: 'POST', body: JSON.stringify({ expected_version: expectedVersion }) })
+}
+
+export async function archiveKnowledgeBusinessRule(kbId, ruleId) {
+  return await request(sceneUrl(kbId, `/rules/${ruleId}`), { method: 'DELETE' })
+}
+
+export async function listKnowledgeUserFacts(kbId) {
+  return await request(sceneUrl(kbId, '/facts'))
+}
+
+export async function parseKnowledgeUserFact(kbId, text) {
+  return await request(sceneUrl(kbId, '/facts/parse'), { method: 'POST', body: JSON.stringify({ text }) })
+}
+
+export async function confirmKnowledgeUserFact(kbId, factId, resolutions = {}) {
+  return await request(sceneUrl(kbId, `/facts/${factId}/confirm`), { method: 'POST', body: JSON.stringify({ resolutions }) })
+}
 
 export async function getKnowledgeGraphStatus(kbId) {
   return await request(graphUrl(kbId, '/status'))

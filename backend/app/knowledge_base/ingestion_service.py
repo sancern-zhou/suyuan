@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import uuid4
@@ -10,12 +11,18 @@ from uuid import uuid4
 import structlog
 from sqlalchemy import func, select
 
-from app.knowledge_base.graph_extraction.models import GraphExtractionSchema
 from app.knowledge_base.chunk_diff import build_chunk_drafts
 from app.knowledge_base.chunk_repository import (
     KnowledgeChunkRepository,
     StaleContentGeneration,
 )
+from app.knowledge_base.extraction_run_repository import (
+    ExtractionRunContext,
+    ExtractionRunRepository,
+)
+from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
+from app.knowledge_base.graph_extraction.llm_factory import PROMPT_VERSION
+from app.knowledge_base.graph_extraction.models import GraphExtractionSchema
 from app.knowledge_base.graph_models import (
     KnowledgeChunk,
     KnowledgeGraphEntity,
@@ -24,7 +31,7 @@ from app.knowledge_base.graph_models import (
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
 from app.knowledge_base.models import Document, DocumentStatus, KnowledgeBase
-from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
+from app.knowledge_base.scene_models import KnowledgeBusinessRule
 
 logger = structlog.get_logger()
 
@@ -103,11 +110,7 @@ class KnowledgeIngestionService:
 
             async def process_chunk(chunk):
                 async with semaphore:
-                    extraction = await self.extractor.extract_chunk(
-                        kb_id=snapshot.kb_id,
-                        chunk=chunk,
-                        schema=snapshot.schema,
-                    )
+                    extraction = await self._extract_with_provenance(snapshot, chunk)
                 return await self._persist_graph_extraction(snapshot, chunk, extraction)
 
             results = await asyncio.gather(
@@ -202,6 +205,23 @@ class KnowledgeIngestionService:
             document.ingestion_status = "processing"
             document.graph_status = "processing" if kb.graph_enabled else "disabled"
             document.processing_error = None
+            schema = self._schema(kb.graph_schema)
+            rules = []
+            if int(kb.rule_version or 0) > 0:
+                rules = list(
+                    (
+                        await session.scalars(
+                            select(KnowledgeBusinessRule).where(
+                                KnowledgeBusinessRule.kb_id == kb.id,
+                                KnowledgeBusinessRule.status == "confirmed",
+                            )
+                        )
+                    ).all()
+                )
+            schema.normalization_rules = {
+                **(schema.normalization_rules or {}),
+                "business_rules": [dict(item.structured_rule or {}) for item in rules],
+            }
             return _DocumentSnapshot(
                 document_id=document.id,
                 kb_id=kb.id,
@@ -210,7 +230,8 @@ class KnowledgeIngestionService:
                 file_path=document.file_path,
                 file_size=document.file_size or 0,
                 graph_enabled=bool(kb.graph_enabled),
-                schema=self._schema(kb.graph_schema),
+                schema=schema,
+                rule_version=int(kb.rule_version or 0),
             )
 
     async def _persist_chunks_and_outbox(self, snapshot, drafts):
@@ -277,7 +298,9 @@ class KnowledgeIngestionService:
             )
             return persisted
 
-    async def _persist_graph_extraction(self, snapshot, chunk, extraction, *, task_id=None, owner_token=None):
+    async def _persist_graph_extraction(
+        self, snapshot, chunk, extraction, *, task_id=None, owner_token=None
+    ):
         async with self.session_factory() as session, session.begin():
             if task_id is not None:
                 task = await session.scalar(
@@ -286,13 +309,16 @@ class KnowledgeIngestionService:
                     .with_for_update()
                 )
                 if (
-                    task is None or task.status != "running"
+                    task is None
+                    or task.status != "running"
                     or task.started_at != owner_token
                     or task.cancel_requested
                     or task.lease_until is None
                     or task.lease_until <= datetime.utcnow()
                 ):
-                    raise StaleContentGeneration(f"graph build task {task_id} lease is no longer owned")
+                    raise StaleContentGeneration(
+                        f"graph build task {task_id} lease is no longer owned"
+                    )
             current_document = await session.scalar(
                 select(Document).where(Document.id == snapshot.document_id).with_for_update()
             )
@@ -318,7 +344,13 @@ class KnowledgeIngestionService:
                 kb_id=snapshot.kb_id,
                 document_id=snapshot.document_id,
                 extraction=extraction,
-                extraction_run_id=str(uuid4()),
+                extraction_run_id=extraction.extraction_run_id or str(uuid4()),
+                source_type="document_fact",
+                scene_profile_version=getattr(
+                    getattr(snapshot, "schema", None), "scene_profile_version", 0
+                ),
+                schema_version=getattr(getattr(snapshot, "schema", None), "schema_version", 0),
+                rule_version=getattr(snapshot, "rule_version", 0),
             )
             outbox = self.outbox_factory(session)
             for entity_id in result.changed_entity_ids:
@@ -354,6 +386,53 @@ class KnowledgeIngestionService:
                 "completed",
             )
             return result
+
+    async def _extract_with_provenance(self, snapshot, chunk):
+        if snapshot.schema.schema_version <= 0:
+            return await self.extractor.extract_chunk(
+                kb_id=snapshot.kb_id, chunk=chunk, schema=snapshot.schema
+            )
+        provider = getattr(self.extractor, "provider", None)
+        llm = getattr(provider, "llm", None)
+        model_name = str(getattr(llm, "model_name", "project-configured-model"))
+        context = ExtractionRunContext(
+            kb_id=snapshot.kb_id,
+            document_id=snapshot.document_id,
+            chunk_id=chunk.id,
+            content_generation=snapshot.content_generation,
+            scene_profile_version=snapshot.schema.scene_profile_version,
+            schema_version=snapshot.schema.schema_version,
+            prompt_version=PROMPT_VERSION,
+            model_name=model_name,
+            model_params={"temperature": getattr(llm, "temperature", None)},
+        )
+        async with self.session_factory() as session:
+            repository = ExtractionRunRepository(session)
+            run_id = await repository.start(context)
+            started = time.perf_counter()
+            try:
+                extraction = await self.extractor.extract_chunk(
+                    kb_id=snapshot.kb_id, chunk=chunk, schema=snapshot.schema
+                )
+                extraction.extraction_run_id = run_id
+                raw = getattr(llm, "last_structured_payload", None) or {}
+                await repository.complete(
+                    run_id,
+                    raw_response=dict(raw),
+                    parsed_response=extraction.model_dump(mode="json"),
+                    token_usage={},
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
+                return extraction
+            except Exception as exc:
+                raw = getattr(llm, "last_structured_payload", None) or {}
+                await repository.fail(
+                    run_id,
+                    raw_response=dict(raw),
+                    validation_errors=[str(exc)],
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
+                raise
 
     async def _mark_chunk_graph_failed(
         self,
@@ -654,6 +733,7 @@ class KnowledgeIngestionService:
             file_size=document.file_size or 0,
             graph_enabled=bool(kb.graph_enabled),
             schema=self._schema(kb.graph_schema),
+            rule_version=int(kb.rule_version or 0),
             original_file_oid=document.original_file_oid,
             file_storage_type=document.file_storage_type,
         )
@@ -731,5 +811,6 @@ class _DocumentSnapshot:
     file_size: int
     graph_enabled: bool
     schema: GraphExtractionSchema
+    rule_version: int = 0
     original_file_oid: int | None = None
     file_storage_type: str | None = None
