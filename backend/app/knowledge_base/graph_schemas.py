@@ -16,6 +16,33 @@ ReviewStatus: TypeAlias = Literal[
 ]
 GraphRecordKind: TypeAlias = Literal["entity", "relation"]
 
+
+class EvidenceMismatch(ValueError):
+    """Raised when an extracted quote is not the declared current-Chunk span."""
+
+
+class ExtractedEvidence(BaseModel):
+    quote: str = Field(min_length=1)
+    start_char: int | None = Field(default=None, ge=0)
+    end_char: int | None = Field(default=None, ge=0)
+
+    def validate_against(self, chunk_text: str) -> ExtractedEvidence:
+        start = self.start_char
+        end = self.end_char
+        if start is None or end is None:
+            first = chunk_text.find(self.quote)
+            if first < 0 or chunk_text.find(self.quote, first + 1) >= 0:
+                raise EvidenceMismatch(
+                    "evidence quote must occur exactly once when offsets are absent"
+                )
+            self.start_char = first
+            self.end_char = first + len(self.quote)
+            return self
+        if end < start or chunk_text[start:end] != self.quote:
+            raise EvidenceMismatch("evidence quote does not match declared offsets")
+        return self
+
+
 TRUSTED_REVIEW_STATUSES = frozenset({"confirmed", "published"})
 
 
@@ -29,6 +56,7 @@ class ExtractedEntity(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
     evidence_text: str = ""
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence: ExtractedEvidence | None = None
 
 
 class ExtractedRelation(BaseModel):
@@ -39,11 +67,13 @@ class ExtractedRelation(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
     evidence_text: str = ""
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence: ExtractedEvidence | None = None
 
 
 class ChunkGraphExtraction(BaseModel):
     chunk_id: str
     extractor_name: str
+    extraction_run_id: str | None = None
     entities: list[ExtractedEntity] = Field(default_factory=list)
     relations: list[ExtractedRelation] = Field(default_factory=list)
 

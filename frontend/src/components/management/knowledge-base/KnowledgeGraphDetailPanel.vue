@@ -26,7 +26,9 @@
       <article v-for="mention in mentions" :key="mention.id" :class="{ stale: mention.stale }">
         <strong>{{ mention.filename }} · 分块 {{ mention.chunk_index + 1 }}</strong>
         <p>{{ mention.evidence_text || mention.content }}</p>
-        <small>confidence: {{ mention.confidence ?? '-' }} · extractor: {{ mention.extractor_name }}</small>
+        <small>置信度 {{ mention.confidence ?? '-' }} · 抽取器 {{ mention.extractor_name }}</small>
+        <small v-if="mention.prompt_version || mention.model_name">Prompt {{ mention.prompt_version || '-' }} · 模型 {{ mention.model_name || '-' }}</small>
+        <p v-if="mention.validation_errors?.length" class="warning">校验信息：{{ mention.validation_errors.join('；') }}</p>
         <button :disabled="mention.stale" @click="$emit('open-document-chunk', { documentId: mention.document_id, chunkId: mention.chunk_id })">{{ mention.stale ? '证据已失效' : '查看原文' }}</button>
       </article>
     </section>
@@ -46,9 +48,10 @@ const title = computed(() => props.selected?.raw?.name || props.selected?.raw?.r
 const summary = computed(() => {
   const raw = props.selected?.raw || {}
   return props.selected?.kind === 'entity'
-    ? { 类型: raw.entity_type, 状态: raw.review_status, 别名: (raw.aliases || []).join('、'), 描述: raw.description || '-', Mention: raw.mention_count || 0 }
-    : { 关系: raw.relation_type, 状态: raw.review_status, 描述: raw.description || '-', Mention: raw.mention_count || 0 }
+    ? { 类型: raw.entity_type, 来源: sourceLabel(raw.source_type), 状态: raw.review_status, 场景版本: raw.scene_profile_version ?? 0, Schema版本: raw.schema_version ?? 0, 规则版本: raw.rule_version ?? 0, 别名: (raw.aliases || []).join('、'), 描述: raw.description || '-', Mention: raw.mention_count || 0 }
+    : { 关系: raw.relation_type, 来源: sourceLabel(raw.source_type), 状态: raw.review_status, 场景版本: raw.scene_profile_version ?? 0, Schema版本: raw.schema_version ?? 0, 规则版本: raw.rule_version ?? 0, 描述: raw.description || '-', Mention: raw.mention_count || 0 }
 })
+const sourceLabel = value => value === 'user_asserted' ? '用户确认事实' : '文档事实'
 function beginEdit() {
   const raw = props.selected.raw
   Object.assign(form, { name: raw.name || '', canonicalName: raw.canonical_name || '', aliasesText: (raw.aliases || []).join(', '), type: raw.entity_type || raw.relation_type || '', description: raw.description || '', attributesText: JSON.stringify(raw.attributes || {}, null, 2) })
@@ -86,5 +89,5 @@ onUnmounted(() => controller?.abort())
 header { display: flex; justify-content: space-between; } dl { display: grid; grid-template-columns: 80px 1fr; gap: 6px; } dt { color: #667085; } dd { margin: 0; }
 .actions { display: flex; gap: 7px; flex-wrap: wrap; margin: 12px 0; } button { cursor: pointer; } .danger, .error { color: #b42318; }
 form label { display: grid; gap: 4px; margin: 8px 0; } textarea { min-height: 70px; }
-.evidence article { border-top: 1px solid #eee; padding: 10px 0; } .evidence article.stale { opacity: .6; } .evidence p { white-space: pre-wrap; }
+.evidence article { border-top: 1px solid #eee; padding: 10px 0; } .evidence article.stale { opacity: .6; } .evidence p { white-space: pre-wrap; }.evidence small { display: block; color: #667085; }.warning { color: #9a6700; }
 </style>

@@ -1,17 +1,18 @@
 """Knowledge graph subresources scoped to one knowledge base."""
+# ruff: noqa: B008
 
 from __future__ import annotations
 
-from datetime import datetime
 import asyncio
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db, async_session
-from app.knowledge_base.graph_build_service import GraphBuildService
+from app.db.database import async_session, get_db
 from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
+from app.knowledge_base.graph_build_service import GraphBuildService
 from app.knowledge_base.graph_models import (
     KnowledgeChunk,
     KnowledgeGraphEntity,
@@ -20,7 +21,10 @@ from app.knowledge_base.graph_models import (
     KnowledgeGraphRelationMention,
 )
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
+from app.knowledge_base.graph_revision import bump_graph_revision
 from app.knowledge_base.graph_schemas import (
+    GraphBuildCreate,
+    GraphBuildTaskResponse,
     GraphEntityCreate,
     GraphEntityUpdate,
     GraphMergeRequest,
@@ -28,20 +32,18 @@ from app.knowledge_base.graph_schemas import (
     GraphRelationCreate,
     GraphRelationUpdate,
     GraphSchemaUpdate,
-    GraphBuildCreate,
-    GraphBuildTaskResponse,
     GraphSnapshotResponse,
 )
-from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
-from app.knowledge_base.ingestion_service import KnowledgeIngestionService
-from app.knowledge_base.graph_revision import bump_graph_revision
 from app.knowledge_base.graph_snapshot import (
     GraphSnapshotChanged,
     GraphSnapshotRepository,
     InvalidGraphSnapshotCursor,
 )
+from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
+from app.knowledge_base.ingestion_service import KnowledgeIngestionService
 from app.knowledge_base.models import Document, KnowledgeBase
 from app.knowledge_base.permissions import KnowledgeBasePermissions
+from app.knowledge_base.scene_models import KnowledgeGraphExtractionRun
 
 router = APIRouter(
     prefix="/knowledge-base/{kb_id}/graph",
@@ -53,14 +55,21 @@ _graph_build_tasks: set[asyncio.Task] = set()
 
 def _build_data(task: KnowledgeGraphBuildTask) -> dict:
     return {
-        "id": task.id, "knowledge_base_id": task.kb_id, "status": task.status,
-        "mode": task.mode, "created_by": task.created_by,
-        "created_at": task.created_at, "started_at": task.started_at,
-        "completed_at": task.completed_at, "total_chunks": task.total_chunks,
-        "processed_chunks": task.processed_chunks, "failed_chunks": task.failed_chunks,
+        "id": task.id,
+        "knowledge_base_id": task.kb_id,
+        "status": task.status,
+        "mode": task.mode,
+        "created_by": task.created_by,
+        "created_at": task.created_at,
+        "started_at": task.started_at,
+        "completed_at": task.completed_at,
+        "total_chunks": task.total_chunks,
+        "processed_chunks": task.processed_chunks,
+        "failed_chunks": task.failed_chunks,
         "remaining_chunks": task.remaining_chunks,
         "failed_chunk_ids": list(task.failed_chunk_ids or []),
-        "last_error": task.last_error, "cancel_requested": task.cancel_requested,
+        "last_error": task.last_error,
+        "cancel_requested": task.cancel_requested,
         "lease_until": task.lease_until,
     }
 
@@ -68,6 +77,7 @@ def _build_data(task: KnowledgeGraphBuildTask) -> dict:
 def _launch_build(task_id: str) -> None:
     async def _run():
         await GraphBuildService(async_session).run(task_id)
+
     task = asyncio.create_task(_run())
     _graph_build_tasks.add(task)
     task.add_done_callback(_graph_build_tasks.discard)
@@ -108,6 +118,10 @@ def _entity_data(entity: KnowledgeGraphEntity) -> dict:
         "aliases": list(entity.aliases or []),
         "description": entity.description,
         "attributes": dict(entity.attributes or {}),
+        "source_type": entity.source_type,
+        "scene_profile_version": entity.scene_profile_version,
+        "schema_version": entity.schema_version,
+        "rule_version": entity.rule_version,
         "review_status": entity.review_status,
         "locked_by_user": entity.locked_by_user,
         "mention_count": entity.mention_count,
@@ -126,6 +140,10 @@ def _relation_data(relation: KnowledgeGraphRelation) -> dict:
         "relation_type": relation.relation_type,
         "description": relation.description,
         "attributes": dict(relation.attributes or {}),
+        "source_type": relation.source_type,
+        "scene_profile_version": relation.scene_profile_version,
+        "schema_version": relation.schema_version,
+        "rule_version": relation.rule_version,
         "review_status": relation.review_status,
         "locked_by_user": relation.locked_by_user,
         "mention_count": relation.mention_count,
@@ -135,7 +153,12 @@ def _relation_data(relation: KnowledgeGraphRelation) -> dict:
     }
 
 
-def _mention_data(mention, document: Document, chunk: KnowledgeChunk) -> dict:
+def _mention_data(
+    mention,
+    document: Document,
+    chunk: KnowledgeChunk,
+    extraction_run: KnowledgeGraphExtractionRun | None = None,
+) -> dict:
     return {
         "id": mention.id,
         "document_id": document.id,
@@ -151,6 +174,10 @@ def _mention_data(mention, document: Document, chunk: KnowledgeChunk) -> dict:
         "page_number": mention.page_number,
         "confidence": mention.confidence,
         "extractor_name": mention.extractor_name,
+        "extraction_run_id": mention.extraction_run_id,
+        "prompt_version": extraction_run.prompt_version if extraction_run else None,
+        "model_name": extraction_run.model_name if extraction_run else None,
+        "validation_errors": list(extraction_run.validation_errors or []) if extraction_run else [],
         "stale": document.content_generation != chunk.content_generation,
     }
 
@@ -274,7 +301,8 @@ async def get_graph_build(
 
 @router.post("/build/{task_id}/cancel", response_model=GraphBuildTaskResponse)
 async def cancel_graph_build(
-    kb_id: str, task_id: str,
+    kb_id: str,
+    task_id: str,
     db: AsyncSession = Depends(get_db),
     user_id: str | None = Header(default=None, alias="X-User-Id"),
     is_admin: bool = Header(default=False, alias="X-Is-Admin"),
@@ -282,14 +310,20 @@ async def cancel_graph_build(
     await _manageable_kb(db, kb_id, user_id, is_admin)
     service = GraphBuildService(async_session)
     task = await service.get_status(task_id=task_id)
-    if not task or task.kb_id != kb_id: raise HTTPException(status_code=404, detail="Build task not found")
+    if not task or task.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Build task not found")
     await service.cancel(task_id)
     return _build_data(await service.get_status(task_id=task_id))
 
 
-@router.post("/build/{task_id}/retry", response_model=GraphBuildTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/build/{task_id}/retry",
+    response_model=GraphBuildTaskResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def retry_graph_build(
-    kb_id: str, task_id: str,
+    kb_id: str,
+    task_id: str,
     db: AsyncSession = Depends(get_db),
     user_id: str | None = Header(default=None, alias="X-User-Id"),
     is_admin: bool = Header(default=False, alias="X-Is-Admin"),
@@ -297,9 +331,12 @@ async def retry_graph_build(
     await _manageable_kb(db, kb_id, user_id, is_admin)
     service = GraphBuildService(async_session)
     old = await service.get_status(task_id=task_id)
-    if not old or old.kb_id != kb_id: raise HTTPException(status_code=404, detail="Build task not found")
-    try: task = await service.retry(task_id=task_id)
-    except ValueError as exc: raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not old or old.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Build task not found")
+    try:
+        task = await service.retry(task_id=task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     _launch_build(task.id)
     return _build_data(task)
 
@@ -318,7 +355,8 @@ async def recover_expired_graph_builds(
     for task_id in ids:
         task = await service.get_status(task_id=task_id)
         if task and task.kb_id == kb_id:
-            _launch_build(task_id); recovered.append(task_id)
+            _launch_build(task_id)
+            recovered.append(task_id)
     return {"recovered_task_ids": recovered}
 
 
@@ -386,9 +424,7 @@ async def query_graph(
 @router.get("/snapshot", response_model=GraphSnapshotResponse)
 async def get_graph_snapshot(
     kb_id: str,
-    review_statuses: list[str] = Query(
-        default=["candidate", "confirmed", "published"]
-    ),
+    review_statuses: list[str] = Query(default=["candidate", "confirmed", "published"]),
     cursor: str | None = Query(default=None),
     snapshot_version: int | None = Query(default=None),
     page_size: int = Query(default=1000, ge=100, le=2000),
@@ -494,7 +530,11 @@ async def update_entity(
     changes = request.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(entity, field, value)
-    if request.name is not None or request.canonical_name is not None or request.entity_type is not None:
+    if (
+        request.name is not None
+        or request.canonical_name is not None
+        or request.entity_type is not None
+    ):
         entity.normalized_name = KnowledgeGraphRepository.normalize_entity_name(
             entity.canonical_name or entity.name
         )
@@ -543,17 +583,33 @@ async def list_entity_mentions(
     entity = await db.get(KnowledgeGraphEntity, entity_id)
     if entity is None or entity.kb_id != kb_id:
         raise HTTPException(status_code=404, detail="Entity not found")
-    rows = (await db.execute(
-        select(KnowledgeGraphEntityMention, Document, KnowledgeChunk)
-        .join(Document, Document.id == KnowledgeGraphEntityMention.document_id)
-        .join(KnowledgeChunk, KnowledgeChunk.id == KnowledgeGraphEntityMention.chunk_id)
-        .where(
-            KnowledgeGraphEntityMention.kb_id == kb_id,
-            KnowledgeGraphEntityMention.entity_id == entity_id,
+    rows = (
+        await db.execute(
+            select(
+                KnowledgeGraphEntityMention,
+                Document,
+                KnowledgeChunk,
+                KnowledgeGraphExtractionRun,
+            )
+            .join(Document, Document.id == KnowledgeGraphEntityMention.document_id)
+            .join(KnowledgeChunk, KnowledgeChunk.id == KnowledgeGraphEntityMention.chunk_id)
+            .outerjoin(
+                KnowledgeGraphExtractionRun,
+                KnowledgeGraphExtractionRun.id == KnowledgeGraphEntityMention.extraction_run_id,
+            )
+            .where(
+                KnowledgeGraphEntityMention.kb_id == kb_id,
+                KnowledgeGraphEntityMention.entity_id == entity_id,
+            )
+            .order_by(Document.filename, KnowledgeChunk.chunk_index)
         )
-        .order_by(Document.filename, KnowledgeChunk.chunk_index)
-    )).all()
-    return {"mentions": [_mention_data(mention, document, chunk) for mention, document, chunk in rows]}
+    ).all()
+    return {
+        "mentions": [
+            _mention_data(mention, document, chunk, extraction_run)
+            for mention, document, chunk, extraction_run in rows
+        ]
+    }
 
 
 @router.get("/relations")
@@ -664,17 +720,33 @@ async def list_relation_mentions(
     relation = await db.get(KnowledgeGraphRelation, relation_id)
     if relation is None or relation.kb_id != kb_id:
         raise HTTPException(status_code=404, detail="Relation not found")
-    rows = (await db.execute(
-        select(KnowledgeGraphRelationMention, Document, KnowledgeChunk)
-        .join(Document, Document.id == KnowledgeGraphRelationMention.document_id)
-        .join(KnowledgeChunk, KnowledgeChunk.id == KnowledgeGraphRelationMention.chunk_id)
-        .where(
-            KnowledgeGraphRelationMention.kb_id == kb_id,
-            KnowledgeGraphRelationMention.relation_id == relation_id,
+    rows = (
+        await db.execute(
+            select(
+                KnowledgeGraphRelationMention,
+                Document,
+                KnowledgeChunk,
+                KnowledgeGraphExtractionRun,
+            )
+            .join(Document, Document.id == KnowledgeGraphRelationMention.document_id)
+            .join(KnowledgeChunk, KnowledgeChunk.id == KnowledgeGraphRelationMention.chunk_id)
+            .outerjoin(
+                KnowledgeGraphExtractionRun,
+                KnowledgeGraphExtractionRun.id == KnowledgeGraphRelationMention.extraction_run_id,
+            )
+            .where(
+                KnowledgeGraphRelationMention.kb_id == kb_id,
+                KnowledgeGraphRelationMention.relation_id == relation_id,
+            )
+            .order_by(Document.filename, KnowledgeChunk.chunk_index)
         )
-        .order_by(Document.filename, KnowledgeChunk.chunk_index)
-    )).all()
-    return {"mentions": [_mention_data(mention, document, chunk) for mention, document, chunk in rows]}
+    ).all()
+    return {
+        "mentions": [
+            _mention_data(mention, document, chunk, extraction_run)
+            for mention, document, chunk, extraction_run in rows
+        ]
+    }
 
 
 @router.post("/merge")

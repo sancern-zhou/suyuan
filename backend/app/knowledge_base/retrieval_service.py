@@ -12,6 +12,7 @@ from app.knowledge_base.graph_models import KnowledgeChunk
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.graph_schemas import TRUSTED_REVIEW_STATUSES
 from app.knowledge_base.models import KnowledgeBase
+from app.knowledge_base.scene_models import KnowledgeBusinessRule
 
 
 class KnowledgeRetrievalService:
@@ -192,6 +193,9 @@ class KnowledgeRetrievalService:
                     "source_entity_id": relation.source_entity_id,
                     "target_entity_id": relation.target_entity_id,
                     "relation_type": relation.relation_type,
+                    "source_type": relation.source_type,
+                    "review_status": relation.review_status,
+                    "schema_version": relation.schema_version,
                 }
                 for relation in relations[:10]
             ]
@@ -215,6 +219,17 @@ class KnowledgeRetrievalService:
                 }
                 for chunk in sorted(graph_chunks, key=lambda item: graph_chunk_ids.index(item.id))
             ]
+            business_rules = []
+            if int(kb.rule_version or 0) > 0:
+                active_rules = await session.scalars(
+                    select(KnowledgeBusinessRule).where(
+                        KnowledgeBusinessRule.kb_id == kb_id,
+                        KnowledgeBusinessRule.status == "confirmed",
+                    )
+                )
+                business_rules = [dict(item.structured_rule or {}) for item in active_rules]
+            for item in [*chunk_results, *graph_results]:
+                item["business_rules"] = business_rules
             return self.reciprocal_rank_fusion(chunk_results, graph_results, graph_weight)
 
     @staticmethod

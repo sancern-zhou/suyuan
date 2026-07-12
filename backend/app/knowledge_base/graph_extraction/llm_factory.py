@@ -13,6 +13,8 @@ from llama_index.core.llms import (
 from llama_index.core.llms.custom import CustomLLM
 from pydantic import Field
 
+PROMPT_VERSION = "scene-kg-v1"
+
 
 class ProjectLLMAdapter(CustomLLM):
     """LlamaIndex LLM adapter backed by the project's configured LLM service."""
@@ -24,6 +26,7 @@ class ProjectLLMAdapter(CustomLLM):
     context_window: int = 8000
     cognitive_schema: Any | None = Field(default=None, exclude=True)
     last_structured_payload: dict[str, Any] | None = Field(default=None, exclude=True)
+    business_rules: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
 
     @property
     def metadata(self) -> LLMMetadata:
@@ -103,52 +106,48 @@ class ProjectLLMAdapter(CustomLLM):
     def set_cognitive_schema(self, schema: Any) -> None:
         self.cognitive_schema = schema
 
+    def set_business_rules(self, rules: list[dict[str, Any]]) -> None:
+        self.business_rules = list(rules)
+
     def _build_structured_kg_prompt(self, text: str, max_triplets: int) -> str:
         return (
             "请从以下文本中抽取轻量知识图谱三元组，只返回 JSON，不要返回 Markdown。\n"
             "JSON schema:\n"
             "{\n"
-            "  \"triplets\": [\n"
+            '  "triplets": [\n'
             "    {\n"
-            "      \"subject\": {\n"
-            "        \"type\": \"实体类型\",\n"
-            "        \"name\": \"规范实体名\",\n"
-            "        \"description\": \"一句话解释实体含义，可为空，最多80个中文字符\",\n"
-            "        \"properties\": {}\n"
+            '      "subject": {\n'
+            '        "type": "实体类型",\n'
+            '        "name": "规范实体名",\n'
+            '        "description": "一句话解释实体含义，可为空，最多80个中文字符",\n'
+            '        "properties": {}\n'
             "      },\n"
-            "      \"relation\": {\n"
-            "        \"type\": \"关系类型\",\n"
-            "        \"description\": \"一句话解释这条关系，可为空，最多80个中文字符\",\n"
-            "        \"properties\": {}\n"
+            '      "relation": {\n'
+            '        "type": "关系类型",\n'
+            '        "description": "一句话解释这条关系，可为空，最多80个中文字符",\n'
+            '        "properties": {}\n'
             "      },\n"
-            "      \"object\": {\n"
-            "        \"type\": \"实体类型\",\n"
-            "        \"name\": \"规范实体名\",\n"
-            "        \"description\": \"一句话解释实体含义，可为空，最多80个中文字符\",\n"
-            "        \"properties\": {}\n"
+            '      "object": {\n'
+            '        "type": "实体类型",\n'
+            '        "name": "规范实体名",\n'
+            '        "description": "一句话解释实体含义，可为空，最多80个中文字符",\n'
+            '        "properties": {}\n'
             "      }\n"
             "    }\n"
             "  ]\n"
             "}\n"
-            "不要输出 evidence、quote、source、chunk、page、location、原文片段或来源文件信息。\n"
+            "每个实体和关系只能基于当前文本，不能从业务规则臆造具体事实。\n"
             "实体 description 只解释实体含义，不复述原文；常识型实体可留空。\n"
             "关系 description 只说明 subject 与 object 为什么存在该关系，不要放原文引用。\n"
             "实体名称必须是短规范名，不要把整句、长短语或文档标题当实体。\n"
-            "实体规范化要求：同义词、缩写、英文名、中文名、大小写差异、别名和上下位泛称如果实际指向同一概念，只选择一个最常用规范名；例如 PM2.5、细颗粒物、细颗粒物浓度不要生成两个实体。\n"
+            "实体规范化要求：同义词、缩写、英文名、中文名、大小写差异和别名如果实际指向同一概念，只选择一个最常用规范名。\n"
             "如果原文同时出现规范名和别名，可用 has_alias 连接规范实体与别名实体；不要为了表达同一含义重复生成多个业务实体。\n"
-            "连通性要求：优先把实体连接到已有核心实体，例如站点、污染物、指标、区域、时段、机制、措施、规则、数据源或分析方法。\n"
+            "连通性要求：优先把实体连接到当前场景已确认的核心业务对象。\n"
             "不要形成多个互不相连的小图；只有文本确实描述完全无关主题时，才允许产生独立子图。\n"
             "关系选择要服务查询和多跳遍历，优先抽取能把现象、原因、指标、对象、方法、规则串起来的关系，避免只生成孤立二元关系。\n"
-            "只抽取对后续 Agent 推理、图谱编辑、污染分析或设备诊断有用的实体和关系；忽略泛泛背景信息。\n"
+            "只抽取对当前场景的 Agent 推理、图谱编辑或业务分析有用的实体和关系；忽略泛泛背景信息。\n"
             f"最多抽取 {max_triplets} 个三元组。\n"
-            "实体类型必须优先使用：Station, Pollutant, Metric, TimeWindow, Region, "
-            "DataSource, AnalysisMethod, EmissionSource, ProcessMechanism, ControlMeasure, "
-            "StandardRule, Finding, Hypothesis, Dataset, Tool, AgentRole。\n"
-            "关系类型必须优先使用：located_in, measures, has_alias, belongs_to_category, "
-            "affects, indicates, supports, contradicts, requires_data, derived_from, "
-            "regulated_by, applies_to, produces, consumes, uses_method, has_limitation, "
-            "handled_by_agent。\n"
-            "如果没有可抽取内容，返回 {\"triplets\": []}。\n\n"
+            '如果没有可抽取内容，返回 {"triplets": []}。\n\n'
             f"{self._schema_prompt_hint()}\n\n"
             f"文本：\n{text}"
         )
@@ -157,18 +156,60 @@ class ProjectLLMAdapter(CustomLLM):
         schema = self.cognitive_schema
         if schema is None:
             return ""
-        lines = []
+        lines = [f"Prompt 版本：{PROMPT_VERSION}"]
         build_requirement = str(getattr(schema, "build_requirement", "") or "").strip()
         if build_requirement:
-            lines.extend([
-                "本次认知地图构建需求：",
-                build_requirement,
-                "抽取实体和关系时优先保留与该需求相关、可服务后续 Agent 推理和数据分析的内容；与需求无关的背景信息不要抽取。",
-            ])
+            lines.extend(
+                [
+                    "当前场景目标：",
+                    build_requirement,
+                    "抽取实体和关系时优先保留与该需求相关、可服务后续 Agent 推理和数据分析的内容；与需求无关的背景信息不要抽取。",
+                ]
+            )
+        entity_descriptions = getattr(schema, "entity_type_descriptions", {}) or {}
+        entity_types = getattr(schema, "allowed_entity_types", []) or []
+        if entity_types:
+            lines.append("允许的实体类型：")
+            lines.extend(
+                f"- {entity_type}：{entity_descriptions.get(entity_type, '当前场景业务对象')}"
+                for entity_type in entity_types
+            )
+        relation_descriptions = getattr(schema, "relation_type_descriptions", {}) or {}
+        relation_types = getattr(schema, "allowed_relation_types", []) or []
+        if relation_types:
+            lines.append("允许的关系类型：")
+            lines.extend(
+                f"- {relation_type}：{relation_descriptions.get(relation_type, '当前场景业务关系')}"
+                for relation_type in relation_types
+            )
         triplets = getattr(schema, "allowed_relation_triplets", []) or []
         if triplets:
             lines.append("允许的三元组方向只能使用以下组合：")
-            lines.extend(f"- {source} --{relation}--> {target}" for source, relation, target in triplets)
+            lines.extend(
+                f"- {source} --{relation}--> {target}" for source, relation, target in triplets
+            )
+        required = getattr(schema, "required_relation_triplets", []) or []
+        if required:
+            lines.append("文本证据充分时必须优先识别以下逻辑：")
+            lines.extend(
+                f"- {source} --{relation}--> {target}" for source, relation, target in required
+            )
+        forbidden = getattr(schema, "forbidden_relation_triplets", []) or []
+        if forbidden:
+            lines.append("禁止生成以下逻辑：")
+            lines.extend(
+                f"- {source} --{relation}--> {target}" for source, relation, target in forbidden
+            )
+        ignored = getattr(schema, "ignored_content", []) or []
+        if ignored:
+            lines.append("不要抽取：" + "、".join(ignored))
+        if self.business_rules:
+            lines.append("已确认业务规则（仅用于约束，不是具体事实）：")
+            lines.extend(
+                f"- {item.get('summary', '')}"
+                for item in self.business_rules
+                if item.get("summary")
+            )
         return "\n".join(lines)
 
     def _normalize_structured_payload(self, payload: dict[str, Any]) -> dict[str, Any]:

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.knowledge_base.graph_extraction.models import GraphExtractionSchema
 from app.knowledge_base.models import Document, DocumentStatus, KnowledgeBase
 from app.knowledge_base.scene_models import KnowledgeSceneProfile, KnowledgeSchemaSuggestion
-from app.knowledge_base.scene_schemas import SceneDraft
+from app.knowledge_base.scene_schemas import BusinessLogic, BusinessObject, SceneDraft
 
 
 class RepresentativeDocumentRequired(ValueError):
@@ -111,9 +111,7 @@ class SceneRepository:
         if profile.status != "draft":
             raise ValueError("stale_scene_profile")
         kb = await self.session.scalar(
-            select(KnowledgeBase)
-            .where(KnowledgeBase.id == profile.kb_id)
-            .with_for_update()
+            select(KnowledgeBase).where(KnowledgeBase.id == profile.kb_id).with_for_update()
         )
         if kb is None:
             raise ValueError(f"Knowledge base not found: {profile.kb_id}")
@@ -156,3 +154,66 @@ class SceneRepository:
                 )
             ).all()
         )
+
+    async def accept_suggestion(
+        self, kb_id: str, suggestion_id: str, created_by: str
+    ) -> KnowledgeSceneProfile:
+        suggestion = await self.session.scalar(
+            select(KnowledgeSchemaSuggestion)
+            .where(
+                KnowledgeSchemaSuggestion.id == suggestion_id,
+                KnowledgeSchemaSuggestion.kb_id == kb_id,
+            )
+            .with_for_update()
+        )
+        if suggestion is None or suggestion.status != "pending":
+            raise ValueError("stale_schema_suggestion")
+        current = await self.get_current_profile(kb_id)
+        if current is None:
+            raise ValueError("scene_profile_required")
+
+        objects = [BusinessObject.model_validate(item) for item in current.business_objects or []]
+        logic = [BusinessLogic.model_validate(item) for item in current.business_logic or []]
+        if suggestion.suggestion_type == "business_object":
+            candidate = BusinessObject.model_validate(suggestion.payload)
+            objects = [item for item in objects if item.key != candidate.key]
+            objects.append(candidate)
+        elif suggestion.suggestion_type == "business_logic":
+            candidate = BusinessLogic.model_validate(suggestion.payload)
+            logic = [item for item in logic if item.key != candidate.key]
+            logic.append(candidate)
+        else:
+            raise ValueError("unsupported_schema_suggestion")
+
+        draft = SceneDraft(
+            scene_goal=current.scene_goal,
+            desired_questions=list(current.desired_questions or []),
+            business_objects=objects,
+            business_logic=logic,
+            ignored_content=list(current.ignored_content or []),
+            source_document_ids=list(current.source_document_ids or []),
+            diagnostics={
+                **dict(current.discovery_diagnostics or {}),
+                "accepted_suggestion_id": suggestion.id,
+            },
+        )
+        profile = await self.create_draft(kb_id, draft, created_by)
+        suggestion.status = "accepted"
+        await self.session.commit()
+        return profile
+
+    async def reject_suggestion(self, kb_id: str, suggestion_id: str) -> KnowledgeSchemaSuggestion:
+        suggestion = await self.session.scalar(
+            select(KnowledgeSchemaSuggestion)
+            .where(
+                KnowledgeSchemaSuggestion.id == suggestion_id,
+                KnowledgeSchemaSuggestion.kb_id == kb_id,
+            )
+            .with_for_update()
+        )
+        if suggestion is None or suggestion.status != "pending":
+            raise ValueError("stale_schema_suggestion")
+        suggestion.status = "rejected"
+        await self.session.commit()
+        await self.session.refresh(suggestion)
+        return suggestion
