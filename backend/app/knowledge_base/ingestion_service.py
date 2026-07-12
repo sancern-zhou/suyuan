@@ -10,7 +10,7 @@ from uuid import uuid4
 import structlog
 from sqlalchemy import func, select
 
-from app.agent.cognition.models import CognitiveSchema
+from app.knowledge_base.graph_extraction.models import GraphExtractionSchema
 from app.knowledge_base.chunk_diff import build_chunk_drafts
 from app.knowledge_base.chunk_repository import (
     KnowledgeChunkRepository,
@@ -659,11 +659,11 @@ class KnowledgeIngestionService:
         )
 
     @staticmethod
-    def _schema(raw_schema: dict | None) -> CognitiveSchema:
+    def _schema(raw_schema: dict | None) -> GraphExtractionSchema:
         return (
-            CognitiveSchema.model_validate(raw_schema)
+            GraphExtractionSchema.model_validate(raw_schema)
             if raw_schema
-            else CognitiveSchema.default_air_quality_schema()
+            else GraphExtractionSchema.default_air_quality_schema()
         )
 
     @staticmethod
@@ -730,6 +730,6 @@ class _DocumentSnapshot:
     file_path: str
     file_size: int
     graph_enabled: bool
-    schema: CognitiveSchema
+    schema: GraphExtractionSchema
     original_file_oid: int | None = None
     file_storage_type: str | None = None

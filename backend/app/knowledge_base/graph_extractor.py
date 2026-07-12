@@ -6,7 +6,7 @@ import hashlib
 
 import structlog
 
-from app.agent.cognition.models import CognitiveSchema, DocumentChunk
+from app.knowledge_base.graph_extraction.models import GraphExtractionSchema, GraphDocumentChunk
 from app.knowledge_base.graph_schemas import (
     ChunkGraphExtraction,
     ExtractedEntity,
@@ -21,8 +21,8 @@ class KnowledgeGraphExtractor:
 
     def __init__(self, provider=None):
         if provider is None:
-            from app.agent.cognition.llm_factory import create_llamaindex_llm
-            from app.agent.cognition.provider_factory import create_extractor_provider
+            from app.knowledge_base.graph_extraction.llm_factory import create_llamaindex_llm
+            from app.knowledge_base.graph_extraction.provider_factory import create_extractor_provider
 
             provider = create_extractor_provider(
                 "llamaindex",
@@ -35,12 +35,12 @@ class KnowledgeGraphExtractor:
         *,
         kb_id: str,
         chunk,
-        schema: CognitiveSchema,
+        schema: GraphExtractionSchema,
     ) -> ChunkGraphExtraction:
         source_namespace = f"{kb_id}:{chunk.id}"
-        cognition_chunk = DocumentChunk(
+        graph_chunk = GraphDocumentChunk(
             chunk_id=chunk.id,
-            map_id=kb_id,
+            knowledge_base_id=kb_id,
             source_file_id=chunk.document_id,
             chunk_index=chunk.chunk_index,
             text=chunk.content,
@@ -48,7 +48,7 @@ class KnowledgeGraphExtractor:
             metadata=dict(chunk.chunk_metadata or {}),
         )
         extraction = await self.provider.extract(
-            [cognition_chunk],
+            [graph_chunk],
             schema,
             source_namespace=source_namespace,
         )
