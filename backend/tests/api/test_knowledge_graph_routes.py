@@ -151,6 +151,16 @@ def test_graph_query_validates_depth_limit(graph_api):
     assert response.status_code == 422
 
 
+def test_graph_build_requires_confirmed_scene(graph_api):
+    response = graph_api.post(
+        "/api/knowledge-base/kb1/graph/build",
+        headers={"X-User-Id": "owner"},
+        json={"mode": "pending"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "scene_confirmation_required"
+
+
 def test_graph_snapshot_returns_complete_selected_statuses(graph_api):
     response = graph_api.get(
         "/api/knowledge-base/kb1/graph/snapshot?page_size=100"

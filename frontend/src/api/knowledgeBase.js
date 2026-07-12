@@ -198,6 +198,29 @@ export async function getDocumentChunks(kbId, docId) {
 }
 
 const graphUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/graph${path}`
+const sceneUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/scene${path}`
+
+export async function getKnowledgeScene(kbId) {
+  return await request(sceneUrl(kbId))
+}
+
+export async function discoverKnowledgeScene(kbId, params) {
+  return await request(sceneUrl(kbId, '/discover'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function confirmKnowledgeScene(kbId, profileId, params) {
+  return await request(sceneUrl(kbId, `/profiles/${profileId}/confirm`), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function listKnowledgeSceneSuggestions(kbId) {
+  return await request(sceneUrl(kbId, '/suggestions'))
+}
 
 export async function getKnowledgeGraphStatus(kbId) {
   return await request(graphUrl(kbId, '/status'))

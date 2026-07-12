@@ -243,7 +243,9 @@ async def create_graph_build(
     user_id: str | None = Header(default=None, alias="X-User-Id"),
     is_admin: bool = Header(default=False, alias="X-Is-Admin"),
 ):
-    await _manageable_kb(db, kb_id, user_id, is_admin)
+    kb = await _manageable_kb(db, kb_id, user_id, is_admin)
+    if kb.scene_status != "ready":
+        raise HTTPException(status_code=409, detail="scene_confirmation_required")
     try:
         task = await GraphBuildService(async_session).create_task(
             kb_id, mode=request.mode, batch_size=request.batch_size, user_id=user_id
