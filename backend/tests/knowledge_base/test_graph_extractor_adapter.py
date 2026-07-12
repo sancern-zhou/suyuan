@@ -2,13 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent.cognition.models import (
+from app.knowledge_base.graph_extraction.models import (
     CandidateEntity,
     CandidateRelation,
-    CognitiveSchema,
+    GraphExtractionSchema,
     Evidence,
     ExtractionDiagnostic,
-    ExtractionResult,
+    GraphExtractionResult,
 )
 from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
 
@@ -21,12 +21,12 @@ class _FakeProvider:
 
     async def extract(self, chunks, schema, *, source_namespace=None):
         self.received = (chunks, schema, source_namespace)
-        return ExtractionResult(
-            map_id=chunks[0].map_id,
+        return GraphExtractionResult(
+            knowledge_base_id=chunks[0].knowledge_base_id,
             candidate_entities=[
                 CandidateEntity(
                     entity_id="old-o3",
-                    map_id=chunks[0].map_id,
+                    knowledge_base_id=chunks[0].knowledge_base_id,
                     entity_type="Pollutant",
                     name="臭氧",
                     canonical_name="O3",
@@ -34,7 +34,7 @@ class _FakeProvider:
                 ),
                 CandidateEntity(
                     entity_id="old-light",
-                    map_id=chunks[0].map_id,
+                    knowledge_base_id=chunks[0].knowledge_base_id,
                     entity_type="ProcessMechanism",
                     name="光化学反应",
                 ),
@@ -42,7 +42,7 @@ class _FakeProvider:
             candidate_relations=[
                 CandidateRelation(
                     relation_id="old-rel",
-                    map_id=chunks[0].map_id,
+                    knowledge_base_id=chunks[0].knowledge_base_id,
                     source_entity_id="old-light",
                     target_entity_id="old-o3",
                     relation_type="affects",
@@ -52,7 +52,7 @@ class _FakeProvider:
             evidence=[
                 Evidence(
                     evidence_id="ev-1",
-                    map_id=chunks[0].map_id,
+                    knowledge_base_id=chunks[0].knowledge_base_id,
                     source_file_id=chunks[0].source_file_id,
                     chunk_id=chunks[0].chunk_id,
                     location=chunks[0].location,
@@ -81,7 +81,7 @@ async def test_extract_chunk_maps_local_ids_and_current_chunk_evidence():
     result = await adapter.extract_chunk(
         kb_id="kb1",
         chunk=chunk,
-        schema=CognitiveSchema.default_air_quality_schema(),
+        schema=GraphExtractionSchema.default_air_quality_schema(),
     )
 
     assert result.chunk_id == chunk.id
@@ -92,11 +92,11 @@ async def test_extract_chunk_maps_local_ids_and_current_chunk_evidence():
     assert result.relations[0].target_local_id in local_ids
     assert result.entities[0].evidence_text == chunk.content
     assert result.relations[0].evidence_text == chunk.content
-    assert "map_id" not in result.model_dump()
+    assert "knowledge_base_id" not in result.model_dump()
 
     provider_chunk = provider.received[0][0]
     assert provider_chunk.chunk_id == chunk.id
-    assert provider_chunk.map_id == "kb1"
+    assert provider_chunk.knowledge_base_id == "kb1"
     assert provider.received[2] == "kb1:chunk-1"
 
 
@@ -125,7 +125,7 @@ async def test_extract_chunk_drops_relation_with_missing_endpoint():
     result = await adapter.extract_chunk(
         kb_id="kb1",
         chunk=chunk,
-        schema=CognitiveSchema.default_air_quality_schema(),
+        schema=GraphExtractionSchema.default_air_quality_schema(),
     )
 
     assert result.relations == []
