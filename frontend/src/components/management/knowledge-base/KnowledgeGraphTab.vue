@@ -14,7 +14,10 @@
     <template v-else-if="scene.scene_status === 'ready'">
     <KnowledgeBusinessRules :kb-id="kbId" :rule-version="scene.rule_version || 0" @changed="loadScene" />
     <KnowledgeUserFacts :kb-id="kbId" @changed="reload" />
-    <KnowledgeGraphStatus :status="store.graphStatus" :candidate-count="candidateCount" :confirmed-count="confirmedCount" @retry="retryFailed" @reindex="reindex" />
+    <KnowledgeSceneSuggestions :kb-id="kbId" @accepted="loadScene" />
+    <KnowledgeGraphStatus :status="store.graphStatus" :candidate-count="candidateCount" :confirmed-count="confirmedCount"
+      :scene-profile-version="scene.scene_profile_version || 0" :schema-version="scene.schema_version || 0" :rule-version="scene.rule_version || 0"
+      @retry="retryFailed" @reindex="reindex" />
     <KnowledgeGraphToolbar
       :entity-types="entityTypes" :relation-types="relationTypes"
       :selected-entity-types="[...selectedEntityTypes]" :selected-relation-types="[...selectedRelationTypes]"
@@ -57,6 +60,7 @@ import KnowledgeSceneSetup from './KnowledgeSceneSetup.vue'
 import KnowledgeSceneDraft from './KnowledgeSceneDraft.vue'
 import KnowledgeBusinessRules from './KnowledgeBusinessRules.vue'
 import KnowledgeUserFacts from './KnowledgeUserFacts.vue'
+import KnowledgeSceneSuggestions from './KnowledgeSceneSuggestions.vue'
 
 const props = defineProps({ kbId: { type: String, required: true } })
 defineEmits(['open-document-chunk'])

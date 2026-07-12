@@ -222,6 +222,14 @@ export async function listKnowledgeSceneSuggestions(kbId) {
   return await request(sceneUrl(kbId, '/suggestions'))
 }
 
+export async function acceptKnowledgeSceneSuggestion(kbId, suggestionId) {
+  return await request(sceneUrl(kbId, `/suggestions/${suggestionId}/accept`), { method: 'POST' })
+}
+
+export async function rejectKnowledgeSceneSuggestion(kbId, suggestionId) {
+  return await request(sceneUrl(kbId, `/suggestions/${suggestionId}/reject`), { method: 'POST' })
+}
+
 export async function listKnowledgeBusinessRules(kbId, includeArchived = false) {
   return await request(sceneUrl(kbId, `/rules?include_archived=${includeArchived}`))
 }

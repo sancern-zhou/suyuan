@@ -190,6 +190,40 @@ async def list_suggestions(
     }
 
 
+@router.post("/suggestions/{suggestion_id}/accept")
+async def accept_suggestion(
+    kb_id: str,
+    suggestion_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    try:
+        profile = await SceneRepository(db).accept_suggestion(
+            kb_id, suggestion_id, user_id or "anonymous"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _profile_data(profile)
+
+
+@router.post("/suggestions/{suggestion_id}/reject")
+async def reject_suggestion(
+    kb_id: str,
+    suggestion_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    try:
+        suggestion = await SceneRepository(db).reject_suggestion(kb_id, suggestion_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": suggestion.id, "status": suggestion.status}
+
+
 def _rule_data(rule) -> dict:
     return {
         "id": rule.id,
@@ -346,9 +380,7 @@ async def confirm_fact(
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     try:
-        fact = await _fact_service(db).confirm_fact(
-            fact_id, resolutions=request.resolutions
-        )
+        fact = await _fact_service(db).confirm_fact(fact_id, resolutions=request.resolutions)
     except FactResolutionRequired as exc:
         raise HTTPException(
             status_code=409,

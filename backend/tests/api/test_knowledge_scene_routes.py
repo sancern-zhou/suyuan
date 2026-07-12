@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db.database import Base, get_db
 from app.knowledge_base.graph_models import KnowledgeChunk
 from app.knowledge_base.models import Document, DocumentStatus, KnowledgeBase
+from app.knowledge_base.scene_models import KnowledgeSchemaSuggestion
 from app.knowledge_base.scene_schemas import SceneDraft
 
 
@@ -44,6 +45,17 @@ def scene_api(tmp_path, monkeypatch):
                         status=DocumentStatus.COMPLETED,
                         ingestion_status="completed",
                         chunk_count=1,
+                    ),
+                    KnowledgeSchemaSuggestion(
+                        id="suggestion1",
+                        kb_id="kb1",
+                        suggestion_type="business_object",
+                        payload={
+                            "key": "complaint",
+                            "name": "投诉",
+                            "description": "公众投诉记录",
+                        },
+                        evidence=[{"document_id": "doc1", "chunk_id": "chunk1"}],
                     ),
                 ]
             )
@@ -206,7 +218,11 @@ def test_user_fact_is_confirmed_after_preview(scene_api):
     scene_api.post(
         f"/api/knowledge-base/kb1/scene/profiles/{draft['id']}/confirm",
         headers={"X-User-Id": "owner"},
-        json={"business_objects": draft["business_objects"], "business_logic": draft["business_logic"], "ignored_content": []},
+        json={
+            "business_objects": draft["business_objects"],
+            "business_logic": draft["business_logic"],
+            "ignored_content": [],
+        },
     )
     preview = scene_api.post(
         "/api/knowledge-base/kb1/scene/facts/parse",
@@ -222,3 +238,47 @@ def test_user_fact_is_confirmed_after_preview(scene_api):
     )
     assert confirmed.status_code == 200
     assert confirmed.json()["review_status"] == "confirmed"
+
+
+def test_accept_suggestion_creates_draft_without_mutating_confirmed_schema(scene_api):
+    draft = scene_api.post(
+        "/api/knowledge-base/kb1/scene/discover",
+        headers={"X-User-Id": "owner"},
+        json={"scene_goal": "分析企业噪声投诉与整改闭环", "desired_questions": []},
+    ).json()
+    confirmed = scene_api.post(
+        f"/api/knowledge-base/kb1/scene/profiles/{draft['id']}/confirm",
+        headers={"X-User-Id": "owner"},
+        json={
+            "business_objects": draft["business_objects"],
+            "business_logic": draft["business_logic"],
+            "ignored_content": [],
+        },
+    ).json()
+
+    response = scene_api.post(
+        "/api/knowledge-base/kb1/scene/suggestions/suggestion1/accept",
+        headers={"X-User-Id": "owner"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "draft"
+    assert any(item["key"] == "complaint" for item in payload["business_objects"])
+    scene = scene_api.get("/api/knowledge-base/kb1/scene", headers={"X-User-Id": "owner"}).json()
+    assert scene["scene_status"] == "awaiting_confirmation"
+    assert scene["schema_version"] == confirmed["schema_version"]
+
+
+def test_reject_suggestion_removes_it_from_pending_list(scene_api):
+    response = scene_api.post(
+        "/api/knowledge-base/kb1/scene/suggestions/suggestion1/reject",
+        headers={"X-User-Id": "owner"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+    pending = scene_api.get(
+        "/api/knowledge-base/kb1/scene/suggestions",
+        headers={"X-User-Id": "owner"},
+    ).json()
+    assert pending["suggestions"] == []
