@@ -89,7 +89,7 @@ class SimplifiedContextBuilder:
         # 问数模式地图交互上下文，仅 query 模式允许注入。
         self.map_context = None
 
-        # 认知地图上下文，由 Agent 入口按模式绑定注入。
+        # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
 
         logger.info(
             "context_builder_initialized",
@@ -273,10 +273,10 @@ class SimplifiedContextBuilder:
             )
         if self.current_mode == "graph" and self.map_context:
             sections.append(
-                "## 认知地图图谱编辑上下文\n"
-                "- 当前请求来自认知地图面板右侧的对话编辑入口。\n"
-                "- 用户可能用“这个节点”“这条关系”“刚才那个实体”等表达指代，优先结合用户消息中的“当前认知地图上下文”。\n"
-                "- 修改图谱时默认通过认知地图 REST API 完成，不要直接改内部 JSON 文件。"
+                "## 知识库图谱编辑上下文\n"
+                "- 当前请求来自知识库图谱详情面板的对话编辑入口。\n"
+                "- 用户可能用“这个节点”“这条关系”“刚才那个实体”等表达指代，优先结合用户消息中的“当前知识库图谱上下文”。\n"
+                "- 修改图谱时使用知识库图谱工具和 API，所有操作限定在当前 knowledge_base_id。"
             )
         sections.append(self._build_runtime_metadata_prompt())
         sections.append(self._build_agent_control_prompt())

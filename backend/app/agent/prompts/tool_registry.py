@@ -197,7 +197,7 @@ OPS_TOOL_NAMES = [
     "grep", "write_file", "edit_file", "list_directory", "search_files",
 ]
 
-# ===== 认知地图图谱编辑模式工具 =====
+# ===== 知识库图谱编辑模式工具 =====
 GRAPH_TOOL_NAMES = [
     "knowledge_graph_query",
     "knowledge_graph_build",
