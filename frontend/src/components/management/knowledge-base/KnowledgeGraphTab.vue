@@ -23,7 +23,7 @@
         @begin-merge="mergeSource=$event" @delete="deleteFact" @open-document-chunk="$emit('open-document-chunk', $event)" />
     </div>
     <KnowledgeGraphReview :entities="store.graphEntities" @update="updateReview" @merge="mergeEntities" />
-    <CognitiveMapGraphChat :knowledge-base-id="kbId" :entities="store.graphEntities" :relations="store.graphRelations" @graph-updated="reload" />
+    <KnowledgeGraphChat :knowledge-base-id="kbId" :entities="store.graphEntities" :relations="store.graphRelations" @graph-updated="reload" />
   </div>
 </template>
 
@@ -32,7 +32,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as api from '@/api/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { filterGraphData, findEntityMatches, toG6Data } from './knowledgeGraphData.js'
-import CognitiveMapGraphChat from '../CognitiveMapGraphChat.vue'
+import KnowledgeGraphChat from '../KnowledgeGraphChat.vue'
 import KnowledgeGraphCanvas from './KnowledgeGraphCanvas.vue'
 import KnowledgeGraphDetailPanel from './KnowledgeGraphDetailPanel.vue'
 import KnowledgeGraphReview from './KnowledgeGraphReview.vue'
