@@ -12,6 +12,8 @@
       @confirmed="loadScene"
     />
     <template v-else-if="scene.scene_status === 'ready'">
+    <KnowledgeBusinessRules :kb-id="kbId" :rule-version="scene.rule_version || 0" @changed="loadScene" />
+    <KnowledgeUserFacts :kb-id="kbId" @changed="reload" />
     <KnowledgeGraphStatus :status="store.graphStatus" :candidate-count="candidateCount" :confirmed-count="confirmedCount" @retry="retryFailed" @reindex="reindex" />
     <KnowledgeGraphToolbar
       :entity-types="entityTypes" :relation-types="relationTypes"
@@ -53,6 +55,8 @@ import KnowledgeGraphStatus from './KnowledgeGraphStatus.vue'
 import KnowledgeGraphToolbar from './KnowledgeGraphToolbar.vue'
 import KnowledgeSceneSetup from './KnowledgeSceneSetup.vue'
 import KnowledgeSceneDraft from './KnowledgeSceneDraft.vue'
+import KnowledgeBusinessRules from './KnowledgeBusinessRules.vue'
+import KnowledgeUserFacts from './KnowledgeUserFacts.vue'
 
 const props = defineProps({ kbId: { type: String, required: true } })
 defineEmits(['open-document-chunk'])

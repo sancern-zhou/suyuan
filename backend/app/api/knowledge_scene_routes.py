@@ -1,4 +1,5 @@
 """Business-facing scene discovery and confirmation APIs."""
+# ruff: noqa: B008
 
 from __future__ import annotations
 
@@ -6,17 +7,28 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
+from app.knowledge_base.business_rule_service import BusinessRuleService
 from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
+from app.knowledge_base.entity_linker import EntityLinker
 from app.knowledge_base.models import KnowledgeBase
 from app.knowledge_base.permissions import KnowledgeBasePermissions
 from app.knowledge_base.scene_discovery import SceneDiscoveryError, SceneDiscoveryService
 from app.knowledge_base.scene_repository import RepresentativeDocumentRequired, SceneRepository
 from app.knowledge_base.scene_schemas import (
+    BusinessRuleConfirmRequest,
+    BusinessRuleParseRequest,
     SceneConfirmationRequest,
     SceneDiscoveryRequest,
     SceneDraft,
+    UserFactConfirmRequest,
+    UserFactParseRequest,
 )
 from app.knowledge_base.schema_compiler import SceneSchemaCompiler, SchemaCompilationError
+from app.knowledge_base.user_fact_service import (
+    FactResolutionRequired,
+    ProjectFactParser,
+    UserFactService,
+)
 
 router = APIRouter(prefix="/knowledge-base/{kb_id}/scene", tags=["Knowledge Scene"])
 
@@ -177,3 +189,173 @@ async def list_suggestions(
         ]
     }
 
+
+def _rule_data(rule) -> dict:
+    return {
+        "id": rule.id,
+        "knowledge_base_id": rule.kb_id,
+        "raw_text": rule.raw_text,
+        "structured_rule": dict(rule.structured_rule or {}),
+        "status": rule.status,
+        "version": rule.version,
+        "created_by": rule.created_by,
+        "created_at": rule.created_at,
+        "confirmed_at": rule.confirmed_at,
+    }
+
+
+@router.get("/rules")
+async def list_rules(
+    kb_id: str,
+    include_archived: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    from app.services.llm_service import llm_service
+
+    rules = await BusinessRuleService(db, llm=llm_service).list_rules(
+        kb_id, include_archived=include_archived
+    )
+    return {"rules": [_rule_data(item) for item in rules]}
+
+
+@router.post("/rules/parse")
+async def parse_rule(
+    kb_id: str,
+    request: BusinessRuleParseRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    from app.services.llm_service import llm_service
+
+    try:
+        rule = await BusinessRuleService(db, llm=llm_service).parse_rule(
+            kb_id, request.text, created_by=user_id or "anonymous"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _rule_data(rule)
+
+
+@router.post("/rules/{rule_id}/confirm")
+async def confirm_rule(
+    kb_id: str,
+    rule_id: str,
+    request: BusinessRuleConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    from app.services.llm_service import llm_service
+
+    try:
+        rule = await BusinessRuleService(db, llm=llm_service).confirm_rule(
+            rule_id, expected_version=request.expected_version
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if rule.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Business rule not found")
+    return _rule_data(rule)
+
+
+@router.delete("/rules/{rule_id}")
+async def archive_rule(
+    kb_id: str,
+    rule_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    from app.services.llm_service import llm_service
+
+    rule = await BusinessRuleService(db, llm=llm_service).archive_rule(rule_id)
+    if rule.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="Business rule not found")
+    return _rule_data(rule)
+
+
+def _fact_data(fact) -> dict:
+    return {
+        "id": fact.id,
+        "knowledge_base_id": fact.kb_id,
+        "raw_text": fact.raw_text,
+        "structured_fact": dict(fact.structured_fact or {}),
+        "entity_link_decisions": list(fact.entity_link_decisions or []),
+        "review_status": fact.review_status,
+        "source_type": fact.source_type,
+        "created_by": fact.created_by,
+        "created_at": fact.created_at,
+    }
+
+
+def _fact_service(db: AsyncSession):
+    from app.services.llm_service import llm_service
+
+    return UserFactService(
+        db,
+        parser=ProjectFactParser(llm_service),
+        linker=EntityLinker(db),
+    )
+
+
+@router.get("/facts")
+async def list_facts(
+    kb_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    facts = await _fact_service(db).list_facts(kb_id)
+    return {"facts": [_fact_data(item) for item in facts]}
+
+
+@router.post("/facts/parse")
+async def parse_fact(
+    kb_id: str,
+    request: UserFactParseRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    try:
+        fact = await _fact_service(db).parse_fact(
+            kb_id, request.text, created_by=user_id or "anonymous"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _fact_data(fact)
+
+
+@router.post("/facts/{fact_id}/confirm")
+async def confirm_fact(
+    kb_id: str,
+    fact_id: str,
+    request: UserFactConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+):
+    await _manageable_kb(db, kb_id, user_id, is_admin)
+    try:
+        fact = await _fact_service(db).confirm_fact(
+            fact_id, resolutions=request.resolutions
+        )
+    except FactResolutionRequired as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "entity_resolution_required", "decisions": exc.decisions},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if fact.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail="User fact not found")
+    return _fact_data(fact)

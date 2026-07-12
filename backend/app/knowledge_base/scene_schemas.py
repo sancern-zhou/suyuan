@@ -43,3 +43,45 @@ class SceneConfirmationRequest(BaseModel):
     business_logic: list[BusinessLogic]
     ignored_content: list[str] = Field(default_factory=list)
 
+
+class StructuredBusinessRule(BaseModel):
+    kind: Literal[
+        "relationship_constraint",
+        "conditional_constraint",
+        "normalization",
+        "exclusion",
+    ]
+    summary: str = Field(min_length=1, max_length=1000)
+    applies_to: list[str] = Field(default_factory=list)
+    conditions: list[str] = Field(default_factory=list)
+    required_logic: list[str] = Field(default_factory=list)
+    forbidden_logic: list[str] = Field(default_factory=list)
+
+
+class BusinessRuleParseRequest(BaseModel):
+    text: str = Field(min_length=2, max_length=4000)
+
+
+class BusinessRuleConfirmRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class UserFactEntity(BaseModel):
+    local_id: str
+    entity_type: str
+    name: str = Field(min_length=1, max_length=512)
+
+
+class UserFactDraft(BaseModel):
+    subject: UserFactEntity
+    relation_type: str
+    object: UserFactEntity
+    statement: str
+
+
+class UserFactParseRequest(BaseModel):
+    text: str = Field(min_length=2, max_length=4000)
+
+
+class UserFactConfirmRequest(BaseModel):
+    resolutions: dict[str, str] = Field(default_factory=dict)

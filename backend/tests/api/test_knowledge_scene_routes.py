@@ -14,6 +14,7 @@ from app.knowledge_base.scene_schemas import SceneDraft
 @pytest.fixture
 def scene_api(tmp_path, monkeypatch):
     from app.api import knowledge_scene_routes
+    from app.services.llm_service import llm_service
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'scene-api.db'}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -98,6 +99,25 @@ def scene_api(tmp_path, monkeypatch):
         staticmethod(lambda kb, user_id, is_admin=False: user_id == "owner"),
     )
 
+    async def fake_json(prompt, max_retries=2):
+        if "主体—关系—客体" in prompt:
+            return {
+                "subject": {"local_id": "s1", "entity_type": "enterprise", "name": "企业A"},
+                "relation_type": "has_noise_source",
+                "object": {"local_id": "o1", "entity_type": "noise_source", "name": "1号空压机"},
+                "statement": "企业A的主要噪声源是1号空压机",
+            }
+        return {
+            "kind": "conditional_constraint",
+            "summary": "按昼夜时段评价",
+            "applies_to": ["monitoring_result"],
+            "conditions": ["存在昼夜时段"],
+            "required_logic": ["使用对应限值"],
+            "forbidden_logic": [],
+        }
+
+    monkeypatch.setattr(llm_service, "call_llm_with_json_response", fake_json)
+
     async def override_db():
         async with factory() as session:
             yield session
@@ -140,3 +160,65 @@ def test_confirm_scene_compiles_schema_and_sets_ready(scene_api):
     assert response.status_code == 200
     assert response.json()["scene_status"] == "ready"
     assert response.json()["schema_version"] == 1
+
+
+def test_business_rule_parse_confirm_and_archive(scene_api):
+    draft = scene_api.post(
+        "/api/knowledge-base/kb1/scene/discover",
+        headers={"X-User-Id": "owner"},
+        json={"scene_goal": "分析企业噪声投诉与整改闭环", "desired_questions": []},
+    ).json()
+    scene_api.post(
+        f"/api/knowledge-base/kb1/scene/profiles/{draft['id']}/confirm",
+        headers={"X-User-Id": "owner"},
+        json={
+            "business_objects": draft["business_objects"],
+            "business_logic": draft["business_logic"],
+            "ignored_content": [],
+        },
+    )
+    parsed = scene_api.post(
+        "/api/knowledge-base/kb1/scene/rules/parse",
+        headers={"X-User-Id": "owner"},
+        json={"text": "监测结果应按昼夜时段评价"},
+    )
+    assert parsed.status_code == 200
+    assert parsed.json()["status"] == "draft"
+    confirmed = scene_api.post(
+        f"/api/knowledge-base/kb1/scene/rules/{parsed.json()['id']}/confirm",
+        headers={"X-User-Id": "owner"},
+        json={"expected_version": 1},
+    )
+    assert confirmed.json()["status"] == "confirmed"
+    archived = scene_api.delete(
+        f"/api/knowledge-base/kb1/scene/rules/{parsed.json()['id']}",
+        headers={"X-User-Id": "owner"},
+    )
+    assert archived.json()["status"] == "archived"
+
+
+def test_user_fact_is_confirmed_after_preview(scene_api):
+    draft = scene_api.post(
+        "/api/knowledge-base/kb1/scene/discover",
+        headers={"X-User-Id": "owner"},
+        json={"scene_goal": "分析企业噪声投诉与整改闭环", "desired_questions": []},
+    ).json()
+    scene_api.post(
+        f"/api/knowledge-base/kb1/scene/profiles/{draft['id']}/confirm",
+        headers={"X-User-Id": "owner"},
+        json={"business_objects": draft["business_objects"], "business_logic": draft["business_logic"], "ignored_content": []},
+    )
+    preview = scene_api.post(
+        "/api/knowledge-base/kb1/scene/facts/parse",
+        headers={"X-User-Id": "owner"},
+        json={"text": "企业A的主要噪声源是1号空压机"},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["review_status"] == "draft"
+    confirmed = scene_api.post(
+        f"/api/knowledge-base/kb1/scene/facts/{preview.json()['id']}/confirm",
+        headers={"X-User-Id": "owner"},
+        json={"resolutions": {}},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["review_status"] == "confirmed"
