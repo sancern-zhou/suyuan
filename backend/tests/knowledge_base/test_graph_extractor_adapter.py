@@ -5,10 +5,10 @@ import pytest
 from app.knowledge_base.graph_extraction.models import (
     CandidateEntity,
     CandidateRelation,
-    GraphExtractionSchema,
     Evidence,
     ExtractionDiagnostic,
     GraphExtractionResult,
+    GraphExtractionSchema,
 )
 from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
 
@@ -90,7 +90,9 @@ async def test_extract_chunk_maps_local_ids_and_current_chunk_evidence():
     local_ids = {item.local_id for item in result.entities}
     assert result.relations[0].source_local_id in local_ids
     assert result.relations[0].target_local_id in local_ids
-    assert result.entities[0].evidence_text == chunk.content
+    assert result.entities[0].evidence_text == "臭氧"
+    assert result.entities[0].evidence.start_char == 0
+    assert result.entities[0].evidence.end_char == 2
     assert result.relations[0].evidence_text == chunk.content
     assert "knowledge_base_id" not in result.model_dump()
 

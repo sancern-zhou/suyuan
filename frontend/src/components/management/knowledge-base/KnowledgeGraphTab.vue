@@ -1,6 +1,23 @@
 <template>
   <div ref="workbench" class="knowledge-graph-tab">
-    <KnowledgeGraphStatus :status="store.graphStatus" :candidate-count="candidateCount" :confirmed-count="confirmedCount" @retry="retryFailed" @reindex="reindex" />
+    <KnowledgeSceneSetup
+      v-if="!scene?.profile"
+      :kb-id="kbId"
+      @discovered="loadScene"
+    />
+    <KnowledgeSceneDraft
+      v-else-if="scene.scene_status === 'awaiting_confirmation'"
+      :kb-id="kbId"
+      :profile="scene.profile"
+      @confirmed="loadScene"
+    />
+    <template v-else-if="scene.scene_status === 'ready'">
+    <KnowledgeBusinessRules :kb-id="kbId" :rule-version="scene.rule_version || 0" @changed="loadScene" />
+    <KnowledgeUserFacts :kb-id="kbId" @changed="reload" />
+    <KnowledgeSceneSuggestions :kb-id="kbId" @accepted="loadScene" />
+    <KnowledgeGraphStatus :status="store.graphStatus" :candidate-count="candidateCount" :confirmed-count="confirmedCount"
+      :scene-profile-version="scene.scene_profile_version || 0" :schema-version="scene.schema_version || 0" :rule-version="scene.rule_version || 0"
+      @retry="retryFailed" @reindex="reindex" />
     <KnowledgeGraphToolbar
       :entity-types="entityTypes" :relation-types="relationTypes"
       :selected-entity-types="[...selectedEntityTypes]" :selected-relation-types="[...selectedRelationTypes]"
@@ -24,6 +41,7 @@
     </div>
     <KnowledgeGraphReview :entities="store.graphEntities" @update="updateReview" @merge="mergeEntities" />
     <KnowledgeGraphChat :knowledge-base-id="kbId" :entities="store.graphEntities" :relations="store.graphRelations" @graph-updated="reload" />
+    </template>
   </div>
 </template>
 
@@ -38,10 +56,16 @@ import KnowledgeGraphDetailPanel from './KnowledgeGraphDetailPanel.vue'
 import KnowledgeGraphReview from './KnowledgeGraphReview.vue'
 import KnowledgeGraphStatus from './KnowledgeGraphStatus.vue'
 import KnowledgeGraphToolbar from './KnowledgeGraphToolbar.vue'
+import KnowledgeSceneSetup from './KnowledgeSceneSetup.vue'
+import KnowledgeSceneDraft from './KnowledgeSceneDraft.vue'
+import KnowledgeBusinessRules from './KnowledgeBusinessRules.vue'
+import KnowledgeUserFacts from './KnowledgeUserFacts.vue'
+import KnowledgeSceneSuggestions from './KnowledgeSceneSuggestions.vue'
 
 const props = defineProps({ kbId: { type: String, required: true } })
 defineEmits(['open-document-chunk'])
 const store = useKnowledgeBaseStore(); const canvas = ref(null); const workbench = ref(null)
+const scene = computed(() => store.knowledgeScene)
 const includeHistory = ref(false); const showRelationLabels = ref(true); const selectedEntityTypes = ref(new Set()); const selectedRelationTypes = ref(new Set())
 const selected = ref(null); const mergeSource = ref(null); const layouting = ref(false); const loadError = ref('')
 let buildPoller = null; let lastBuildStatus = null
@@ -75,9 +99,13 @@ const fullscreen = () => workbench.value?.requestFullscreen?.()
 async function pollBuild() {
   try { const task = await api.getKnowledgeGraphBuild(props.kbId); const status = task?.status; if (lastBuildStatus && ['queued', 'running'].includes(lastBuildStatus) && status && !['queued', 'running'].includes(status)) await reload(); lastBuildStatus = status } catch {}
 }
-onMounted(() => { reload(); buildPoller = setInterval(pollBuild, 2500) })
+async function loadScene() {
+  await store.loadKnowledgeScene(props.kbId)
+  if (scene.value?.scene_status === 'ready') await reload()
+}
+onMounted(() => { loadScene(); buildPoller = setInterval(pollBuild, 2500) })
 onUnmounted(() => clearInterval(buildPoller))
-watch(() => props.kbId, () => { selected.value = null; mergeSource.value = null; selectedEntityTypes.value = new Set(); selectedRelationTypes.value = new Set(); lastBuildStatus = null; reload() })
+watch(() => props.kbId, () => { selected.value = null; mergeSource.value = null; selectedEntityTypes.value = new Set(); selectedRelationTypes.value = new Set(); lastBuildStatus = null; loadScene() })
 </script>
 
 <style scoped>

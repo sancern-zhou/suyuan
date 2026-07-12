@@ -5,6 +5,9 @@
     <div><strong>{{ candidateCount }}</strong><span>候选</span></div>
     <div><strong>{{ confirmedCount }}</strong><span>可信</span></div>
     <div><strong>{{ status?.failed_documents || 0 }}</strong><span>失败文档</span></div>
+    <div><strong>{{ sceneProfileVersion }}</strong><span>场景版本</span></div>
+    <div><strong>{{ schemaVersion }}</strong><span>Schema</span></div>
+    <div><strong>{{ ruleVersion }}</strong><span>规则版本</span></div>
     <button type="button" @click="$emit('retry')">重试失败</button>
     <button type="button" @click="$emit('reindex')">重建索引</button>
   </section>
@@ -14,7 +17,10 @@
 defineProps({
   status: { type: Object, default: null },
   candidateCount: { type: Number, default: 0 },
-  confirmedCount: { type: Number, default: 0 }
+  confirmedCount: { type: Number, default: 0 },
+  sceneProfileVersion: { type: Number, default: 0 },
+  schemaVersion: { type: Number, default: 0 },
+  ruleVersion: { type: Number, default: 0 }
 })
 defineEmits(['retry', 'reindex'])
 </script>

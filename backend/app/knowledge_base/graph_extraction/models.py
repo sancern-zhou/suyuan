@@ -42,6 +42,13 @@ class GraphExtractionSchema(BaseModel):
     build_requirement: str = ""
     domain_aliases: dict[str, list[str]] = Field(default_factory=dict)
     normalization_rules: dict[str, Any] = Field(default_factory=dict)
+    entity_type_descriptions: dict[str, str] = Field(default_factory=dict)
+    relation_type_descriptions: dict[str, str] = Field(default_factory=dict)
+    required_relation_triplets: list[tuple[str, str, str]] = Field(default_factory=list)
+    forbidden_relation_triplets: list[tuple[str, str, str]] = Field(default_factory=list)
+    ignored_content: list[str] = Field(default_factory=list)
+    scene_profile_version: int = 0
+    schema_version: int = 0
 
     @classmethod
     def default_air_quality_schema(cls) -> "GraphExtractionSchema":
@@ -210,5 +217,4 @@ def lightweight_extraction_payload(extraction: GraphExtractionResult) -> dict[st
 
 def lightweight_extraction(extraction: GraphExtractionResult) -> GraphExtractionResult:
     return GraphExtractionResult.model_validate(lightweight_extraction_payload(extraction))
-
 

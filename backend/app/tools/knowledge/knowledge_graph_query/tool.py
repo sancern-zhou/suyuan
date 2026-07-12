@@ -12,7 +12,7 @@ class KnowledgeGraphQueryTool(LLMTool):
         self.service = service
         super().__init__(
             name="knowledge_graph_query",
-            description="在已选择知识库内进行可信实体关系检索，并返回可追溯原文分块。",
+            description="检索可信文档事实、用户确认事实、业务规则、推理路径和可追溯原文；规则与推理路径不会冒充已观测事实。",
             category=ToolCategory.QUERY,
             function_schema={
                 "name": "knowledge_graph_query",
@@ -59,16 +59,32 @@ class KnowledgeGraphQueryTool(LLMTool):
             use_graph_retrieval=True,
             graph_depth=max(1, min(int(depth), 2)),
         )
+        business_rules = self._unique_nested(chunks, "business_rules", "summary")
+        graph_paths = self._unique_nested(chunks, "graph_paths", "relation_id")
         return {
             "status": "success" if chunks else "failed",
             "success": bool(chunks),
             "summary": f"从 {len(kb_ids)} 个知识库召回 {len(chunks)} 个可追溯分块。",
             "data": {
                 "chunks": chunks,
+                "evidence_chunks": chunks,
+                "business_rules": business_rules,
+                "graph_paths": graph_paths,
                 "knowledge_base_ids": kb_ids,
             },
             "metadata": {"tool_name": self.name},
         }
+
+    @staticmethod
+    def _unique_nested(
+        chunks: list[dict[str, Any]], field: str, identity: str
+    ) -> list[dict[str, Any]]:
+        unique: dict[str, dict[str, Any]] = {}
+        for chunk in chunks:
+            for item in chunk.get(field) or []:
+                key = str(item.get(identity) or item)
+                unique.setdefault(key, item)
+        return list(unique.values())
 
     @staticmethod
     def _default_service():
