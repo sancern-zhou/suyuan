@@ -377,3 +377,9 @@ rules:
     default_severity: 中
     scope: working_orders/RF_*/wo_commonfile_links/WO_COMMONFILE
     rationale: 现场照片不能替代正式报告或记录表时，应作为附件内容复核候选。
+  - rule_id: ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW
+    name: 多点校准曲线梯度与表单浓度待复核
+    category: 附件内容质量
+    default_severity: 中
+    scope: RF_Q_GASEOUSMULTIPOINT_*/多点曲线图片
+    rationale: 多点曲线应呈现与RF表单校准浓度点一致的明显梯度；疑似不一致和资料不足均需附图人工确认。
