@@ -16,6 +16,8 @@ from .models import (
     ScheduledTask,
     TaskStep,
     ScheduleType,
+    TriggerType,
+    TaskEvent,
     TaskExecution,
     ExecutionStatus
 )
@@ -29,6 +31,8 @@ __all__ = [
     "ScheduledTask",
     "TaskStep",
     "ScheduleType",
+    "TriggerType",
+    "TaskEvent",
     "TaskExecution",
     "ExecutionStatus",
 ]
