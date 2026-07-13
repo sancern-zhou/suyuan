@@ -430,6 +430,14 @@ DEFAULT_RULE_CATALOG = [
         "scope": "RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK",
         "rationale": "检查值单位与配置范围单位不可换算时，不进行数值超限判断，应提示单位不一致、无法比对。",
     },
+    {
+        "rule_id": "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+        "name": "多点校准曲线梯度与表单浓度待复核",
+        "category": "附件内容质量",
+        "default_severity": "中",
+        "scope": "RF_Q_GASEOUSMULTIPOINT_*/多点曲线图片",
+        "rationale": "多点曲线应呈现与RF表单校准浓度点一致的明显梯度；疑似不一致和资料不足均需附图人工确认。",
+    },
 ]
 
 DEFAULT_RF_FIELD_PROFILES = {
@@ -473,6 +481,7 @@ DEFAULT_SEMANTIC_REVIEW_PROFILES = {
     "flow_visual_enabled_rule_ids": [
         "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
         "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+        "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
     ],
 }
 
@@ -493,6 +502,9 @@ DEFAULT_RULE_REVIEW_STAGES = {
             "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
             "ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH",
             "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
+        ],
+        "manual_visual_review": [
+            "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
         ],
         "future_ocr": [
             "ATTACHMENT_CERT_INCOMPLETE",

@@ -55,9 +55,14 @@ def build_multipoint_curve_visual_tasks(
 
     items = _attachment_items(attachments, wo_commonfiles)
     tasks = []
+    seen_forms: set[tuple[Any, ...]] = set()
     for table, form in forms:
         if table not in MULTIPOINT_TABLES or form.get("_query_error"):
             continue
+        signature = _form_signature(table, form)
+        if signature in seen_forms:
+            continue
+        seen_forms.add(signature)
         pollutant, unit = MULTIPOINT_TABLES[table]
         candidates = [
             item
@@ -78,6 +83,25 @@ def build_multipoint_curve_visual_tasks(
             }
         )
     return tasks
+
+
+def _form_signature(table: str, form: dict[str, Any]) -> tuple[Any, ...]:
+    record_id = next(
+        (
+            form.get(field)
+            for field in ("RFQGASEOUSCHECKID", "ID", "id")
+            if form.get(field) not in (None, "")
+        ),
+        None,
+    )
+    if record_id is not None:
+        return (table, "id", str(record_id))
+    return (
+        table,
+        str(form.get("WORKINGORDERCODE") or ""),
+        str(form.get("POLLUTANTTYPE") or ""),
+        *(_number(form.get(field)) for field in CONCENTRATION_FIELDS),
+    )
 
 
 def _form_concentrations(form: dict[str, Any]) -> list[float]:

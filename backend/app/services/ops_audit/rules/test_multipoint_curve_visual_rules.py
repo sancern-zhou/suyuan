@@ -2,6 +2,12 @@ import json
 
 from app.services.ops_audit.rules import multipoint_curve_visual_rules as rules
 from app.services import ops_work_order_audit_engine as audit_engine
+from app.services.ops_audit.config import (
+    load_rule_catalog,
+    load_scoring_config,
+    load_semantic_review_profiles,
+    review_stage_for_rule,
+)
 from app.services.ops_audit.rules.multipoint_curve_visual_rules import (
     build_multipoint_curve_visual_tasks,
     run_multipoint_curve_visual_task,
@@ -63,6 +69,22 @@ def test_build_tasks_ignores_non_multipoint_forms(tmp_path):
     )
 
     assert tasks == []
+
+
+def test_build_tasks_deduplicates_repeated_join_rows(tmp_path):
+    repeated = _form(RFQGASEOUSCHECKID=3346)
+    tasks = build_multipoint_curve_visual_tasks(
+        {"WORKINGORDERCODE": "CH1"},
+        [
+            ("RF_Q_GASEOUSMULTIPOINT_O3", dict(repeated)),
+            ("RF_Q_GASEOUSMULTIPOINT_O3", dict(repeated)),
+        ],
+        [_attachment("O3多点曲线.jpg")],
+        [],
+        evidence_dir=tmp_path,
+    )
+
+    assert len(tasks) == 1
 
 
 def test_build_tasks_selects_curves_and_excludes_point_and_record_photos(tmp_path):
@@ -280,3 +302,15 @@ def test_audit_dataset_schedules_multipoint_review_only_when_visual_enabled(monk
     disabled_rules = {issue["rule_id"] for issue in disabled["records"][0]["issues"]}
     assert rules.RULE_ID in enabled_rules
     assert rules.RULE_ID not in disabled_rules
+
+
+def test_multipoint_review_rule_is_enabled_cataloged_and_not_hard_error():
+    semantic = load_semantic_review_profiles()
+    catalog = {item["rule_id"]: item for item in load_rule_catalog()}
+    scoring = load_scoring_config()
+
+    assert rules.RULE_ID in semantic["flow_visual_enabled_rule_ids"]
+    assert catalog[rules.RULE_ID]["display_status"] == "active"
+    assert review_stage_for_rule(rules.RULE_ID) == "manual_visual_review"
+    assert rules.RULE_ID not in scoring["hard_error_rules"]
+    assert rules.RULE_ID not in scoring["critical_hard_error_rules"]
