@@ -1,6 +1,7 @@
 import json
 
 from app.services.ops_audit.rules import multipoint_curve_visual_rules as rules
+from app.services import ops_work_order_audit_engine as audit_engine
 from app.services.ops_audit.rules.multipoint_curve_visual_rules import (
     build_multipoint_curve_visual_tasks,
     run_multipoint_curve_visual_task,
@@ -225,3 +226,57 @@ def test_no_curve_and_invalid_model_output_are_insufficient_evidence(monkeypatch
     invalid_evidence = json.loads(invalid_issues[0].evidence)
     assert invalid_evidence["report_classification"] == "资料不足待人工复核"
     assert invalid_evidence["reason_code"] == "IMAGE_UNREADABLE"
+
+
+def _dataset_with_curve():
+    return {
+        "orders": [
+            {
+                "WORKINGORDERCODE": "CH1",
+                "STATIONID": "1001",
+                "DDWORKINGORDERTYPE": "Check",
+                "MAINTENANCETYPE": "Quarter",
+                "ORDERSTATUS": "Finish",
+            }
+        ],
+        "details": [],
+        "attachments": [_attachment("O3多点曲线.jpg")],
+        "wo_commonfile": [],
+        "stations": [],
+        "devices": [],
+        "device_history": {},
+        "rf_forms": {"RF_Q_GASEOUSMULTIPOINT_O3": [_form()]},
+    }
+
+
+def test_audit_dataset_schedules_multipoint_review_only_when_visual_enabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(rules.requests, "get", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(
+        rules,
+        "extract_attachment_json",
+        lambda *args, **kwargs: {
+            "status": "success",
+            "data": {
+                "result": "ISSUE_REVIEW",
+                "reason_code": "NO_CLEAR_GRADIENT",
+                "reason": "没有明显多点梯度。",
+                "observed_summary": "曲线接近单一水平。",
+            },
+        },
+    )
+
+    enabled = audit_engine.audit_dataset(
+        _dataset_with_curve(),
+        enable_visual=True,
+        visual_evidence_dir=tmp_path,
+    )
+    disabled = audit_engine.audit_dataset(
+        _dataset_with_curve(),
+        enable_visual=False,
+        visual_evidence_dir=tmp_path,
+    )
+
+    enabled_rules = {issue["rule_id"] for issue in enabled["records"][0]["issues"]}
+    disabled_rules = {issue["rule_id"] for issue in disabled["records"][0]["issues"]}
+    assert rules.RULE_ID in enabled_rules
+    assert rules.RULE_ID not in disabled_rules
