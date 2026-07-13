@@ -126,15 +126,18 @@ async def test_broadcast_tool_forwards_names_media_and_source_metadata():
     )
 
     assert result["success"] is True
-    assert client.calls == [{
-        "message": "运城告警",
-        "target_user_names": ["周三成"],
-        "media": ["/tmp/report.docx"],
-        "context_metadata": {
-            "source": "assistant_tool",
-            "tool_name": "broadcast_social_users",
-        },
-    }]
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert call["message"] == "运城告警"
+    assert call["target_user_names"] == ["周三成"]
+    assert call["media"] == ["/tmp/report.docx"]
+    metadata = call["context_metadata"]
+    assert metadata["source"] == "assistant_tool"
+    assert metadata["tool_name"] == "broadcast_social_users"
+    assert metadata["task_id"] == "assistant_broadcast"
+    assert metadata["event_type"] == "assistant.broadcast"
+    assert metadata["event_id"].startswith("assistant-broadcast-")
+    assert metadata["execution_id"] == metadata["event_id"]
 
 
 @pytest.mark.asyncio
@@ -151,4 +154,19 @@ async def test_broadcast_tool_returns_structured_worker_unavailable_error():
 
     assert result["status"] == "failed"
     assert result["success"] is False
-    assert result["summary"] == "社交 Worker 不可用：connection refused"
+    assert result["summary"] == "社交 Worker 不可用，请稍后重试"
+
+
+@pytest.mark.asyncio
+async def test_broadcast_tool_hides_unexpected_internal_errors():
+    client = FakeWorkerClient(RuntimeError("http://internal-worker:8011 secret"))
+    tool = BroadcastSocialUsersTool(worker_client=client)
+
+    result = await tool.execute(
+        message="运城告警",
+        target_user_names=["周三成"],
+    )
+
+    assert result["success"] is False
+    assert result["summary"] == "广播失败，请联系管理员"
+    assert "internal-worker" not in result["summary"]

@@ -32,6 +32,11 @@ def create_social_worker_api_app(
 
     @app.middleware("http")
     async def require_internal_token(request: Request, call_next):
+        if request.url.path == "/internal/social/broadcast" and not internal_token:
+            return JSONResponse(
+                {"detail": "Social worker token is not configured"},
+                status_code=503,
+            )
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
         return await call_next(request)

@@ -71,6 +71,22 @@ class TargetedSocialBroadcastService:
                 continue
             valid.append((name, user))
 
+        users_by_social_id: dict[str, list[tuple[str, Any]]] = defaultdict(list)
+        for name, user in valid:
+            users_by_social_id[user.social_user_id].append((name, user))
+        valid = []
+        for bindings in users_by_social_id.values():
+            if len(bindings) == 1:
+                valid.append(bindings[0])
+                continue
+            for name, user in bindings:
+                rows_by_name[name] = self._failed_row(
+                    name,
+                    "duplicate social binding",
+                    user_id=user.id,
+                    social_user_id=user.social_user_id,
+                )
+
         broadcast_result: dict[str, Any] = {}
         if valid:
             broadcast_result = await self.broadcast_service.broadcast(
@@ -110,11 +126,18 @@ class TargetedSocialBroadcastService:
 
         delivery_results = [rows_by_name[name] for name in names]
         failed_names = [
-            row["user_name"] for row in delivery_results if not row.get("sent")
+            row["user_name"]
+            for row in delivery_results
+            if not (
+                row.get("sent") and row.get("context_persisted") is True
+            )
         ]
-        sent_count = sum(bool(row.get("sent")) for row in delivery_results)
-        success = sent_count > 0
-        summary = f"已广播给 {sent_count} 个目标用户"
+        completed_count = sum(
+            bool(row.get("sent") and row.get("context_persisted") is True)
+            for row in delivery_results
+        )
+        success = completed_count > 0
+        summary = f"已发送并持久化给 {completed_count} 个目标用户"
         if failed_names:
             summary += f"，失败 {len(failed_names)} 个"
         return {

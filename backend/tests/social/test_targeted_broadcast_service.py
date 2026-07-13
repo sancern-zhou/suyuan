@@ -33,8 +33,9 @@ class FakeRegistry:
 
 
 class FakeBroadcaster:
-    def __init__(self):
+    def __init__(self, *, context_persisted=True):
         self.calls = []
+        self.context_persisted = context_persisted
 
     async def broadcast(self, **kwargs):
         self.calls.append(kwargs)
@@ -48,8 +49,10 @@ class FakeBroadcaster:
                 {
                     "social_user_id": social_user_id,
                     "sent": True,
-                    "context_persisted": True,
-                    "error": None,
+                    "context_persisted": self.context_persisted,
+                    "error": (
+                        None if self.context_persisted else "context persist failed"
+                    ),
                 }
                 for social_user_id in targets
             ],
@@ -169,3 +172,46 @@ async def test_broadcast_rejects_empty_target_names_without_sending():
     assert result["summary"] == "必须指定目标用户名称"
     assert registry.list_calls == 0
     assert broadcaster.calls == []
+
+
+@pytest.mark.asyncio
+async def test_broadcast_rejects_names_sharing_one_social_binding():
+    registry = FakeRegistry([
+        _user("shared-1", "甲", social_user_id="weixin:auto:bot:shared"),
+        _user("shared-2", "乙", social_user_id="weixin:auto:bot:shared"),
+        _user("valid", "丙", social_user_id="weixin:auto:bot:valid"),
+    ])
+    broadcaster = FakeBroadcaster()
+    service = TargetedSocialBroadcastService(registry, broadcaster)
+
+    result = await service.broadcast(
+        message="运城告警",
+        target_user_names=["甲", "乙", "丙"],
+    )
+
+    assert broadcaster.calls[0]["target_user_ids"] == [
+        "weixin:auto:bot:valid"
+    ]
+    rows = {row["user_name"]: row for row in result["delivery_results"]}
+    assert rows["甲"]["error"] == "duplicate social binding"
+    assert rows["乙"]["error"] == "duplicate social binding"
+    assert rows["丙"]["sent"] is True
+
+
+@pytest.mark.asyncio
+async def test_broadcast_does_not_report_success_when_context_is_not_persisted():
+    registry = FakeRegistry([
+        _user("admin-1", "周三成", social_user_id="weixin:auto:bot:wx-1"),
+    ])
+    broadcaster = FakeBroadcaster(context_persisted=False)
+    service = TargetedSocialBroadcastService(registry, broadcaster)
+
+    result = await service.broadcast(
+        message="运城告警",
+        target_user_names=["周三成"],
+    )
+
+    assert result["success"] is False
+    assert result["failed_user_names"] == ["周三成"]
+    assert result["delivery_results"][0]["sent"] is True
+    assert result["delivery_results"][0]["context_persisted"] is False

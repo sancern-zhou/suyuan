@@ -56,6 +56,26 @@ def test_worker_broadcast_route_requires_internal_token():
     assert service.calls == []
 
 
+def test_worker_broadcast_route_fails_closed_when_token_is_not_configured():
+    service = FakeTargetedBroadcastService()
+    set_targeted_broadcast_service_override(service)
+    app = create_social_worker_api_app(
+        SimpleNamespace(channel_manager=None),
+        internal_token="",
+    )
+    try:
+        response = TestClient(app).post(
+            "/internal/social/broadcast",
+            json={"message": "运城告警", "target_user_names": ["周三成"]},
+        )
+    finally:
+        set_targeted_broadcast_service_override(None)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Social worker token is not configured"
+    assert service.calls == []
+
+
 def test_worker_broadcast_route_validates_required_target_names():
     service = FakeTargetedBroadcastService()
     client = _client(service)
