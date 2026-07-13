@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import structlog
 
@@ -82,6 +83,7 @@ class BroadcastSocialUsersTool(LLMTool):
             )
 
             client = self.worker_client or SocialBroadcastWorkerClient()
+            broadcast_id = f"assistant-broadcast-{uuid4().hex}"
             result = await client.broadcast(
                 message=message,
                 target_user_names=target_user_names or [],
@@ -89,6 +91,10 @@ class BroadcastSocialUsersTool(LLMTool):
                 context_metadata={
                     "source": "assistant_tool",
                     "tool_name": "broadcast_social_users",
+                    "task_id": "assistant_broadcast",
+                    "event_id": broadcast_id,
+                    "event_type": "assistant.broadcast",
+                    "execution_id": broadcast_id,
                 },
             )
 
@@ -105,12 +111,12 @@ class BroadcastSocialUsersTool(LLMTool):
             return {
                 "status": "failed",
                 "success": False,
-                "summary": f"社交 Worker 不可用：{str(e)}"
+                "summary": "社交 Worker 不可用，请稍后重试"
             }
         except Exception as e:
             logger.error("broadcast_social_users_failed", error=str(e), exc_info=True)
             return {
                 "status": "failed",
                 "success": False,
-                "summary": f"广播失败：{str(e)}"
+                "summary": "广播失败，请联系管理员"
             }
