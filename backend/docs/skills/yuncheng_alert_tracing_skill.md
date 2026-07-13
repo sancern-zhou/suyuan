@@ -5,20 +5,20 @@
 
 ## 使用场景
 
-当社交模式定时任务在最近证据目录中发现运城市小时盯守告警状态为 `has_alert=true` 且 `status=pending_trace` 时，由社交模式调用助手模式执行本 skill。助手模式调用专家子 Agent 分析，在同一证据目录生成报告和微信摘要后把结果返回社交模式；社交模式收到回复后推送报告给微信用户。
+当运城市小时盯守发布的告警状态为 `has_alert=true` 且 `status=pending_trace` 时，事件任务使用助手模式直接执行本 skill。助手模式调用专家子 Agent 分析，在同一证据目录生成报告、Word 文件和微信摘要，并返回事件任务服务要求的广播产物；事件任务服务负责广播和接收用户的对话上下文持久化。
 
 ## 场景流程
 
-1. 社交模式定时任务启动运城小时盯守。
+1. 运城小时盯守任务持续采集和判断告警。
 2. 盯守脚本每次抓取都创建证据目录：`backend/backend_data_registry/scenarios/yuncheng_trial/{YYYYMM}/{YYYYMMDD_HHMMSS}/`。
 3. 证据目录内写入 `{YYYYMMDD_HHMMSS}_alert.json`；无告警也保留该文件并写明 `has_alert=false`、`status=silent`。
 4. 有告警时在同一证据目录抓取上下文资产并输出 `tracing_context_manifest.json`。
-5. 社交模式调用助手模式执行本 skill，并传入告警路径、上下文 manifest 路径和证据目录作为报告目录。
+5. 告警发布后，事件任务使用助手模式直接执行本 skill，并通过可信事件上下文传入告警路径、上下文 manifest 路径和证据目录作为报告目录。
 6. 助手模式读取正式 skill 和输入资产。
 7. 助手模式调用专家子 Agent 分析，生成气象和常规分析草稿。
 8. 助手模式在同一证据目录生成报告、Word 文件和微信摘要。
-9. 助手模式返回报告路径、Word 路径和微信摘要，不直接推送微信。
-10. 社交模式收到回复后推送报告给微信用户。
+9. 助手模式确认 Word 文件存在后，返回事件任务服务要求的广播正文和 Word 附件路径。
+10. 事件任务服务负责广播，不直接调用微信、广播或通知工具；广播服务将结果推送给配置的微信用户并写入各自的社交主会话。
 
 ## 输入
 
@@ -48,7 +48,7 @@
 
 ## 助手模式 SOP
 
-助手模式必须按以下顺序执行，不能跳步，不能把中间状态返回给社交模式：
+助手模式必须按以下顺序执行，不能跳步，也不能在最终产物完成前返回中间状态：
 
 1. 校验输入路径：
    - `evidence_dir` 必须存在。
@@ -61,7 +61,7 @@
    - `report_qmd_path = {evidence_dir}/report.qmd`
    - `report_docx_path = {evidence_dir}/report.docx`
 3. 读取本 skill、告警 JSON、`tracing_context_manifest.json` 和 manifest 中列出的所有可用资产；如果存在 `fire_hotspots.json`，只能将其作为周边生物质燃烧、露天焚烧或热异常影响的提示性证据，不得据此确认具体污染源或责任主体。
-4. 只做输入一致性校验，不重新判断告警是否成立；如果告警 JSON 不是 `has_alert=true` 且 `status=pending_trace`，返回失败 JSON 给社交模式，不生成报告。
+4. 只做输入一致性校验，不重新判断告警是否成立；如果告警 JSON 不是 `has_alert=true` 且 `status=pending_trace`，返回失败 JSON，不生成报告。
 5. 同步调用气象 expert 子 Agent，要求输出 `weather_draft_path`。调用时必须在 goal 中明确要求专家 Agent 先阅读 `backend/docs/skills/weather_analysis_expert.md`，并按 Skill 中的"运城告警溯源场景资产要求"表读取和分析所有图片资产，将分析结果和图片引用写入草稿。
 6. 同步调用常规 expert 子 Agent，要求输出 `routine_draft_path`。调用时必须在 goal 中明确要求专家 Agent 先阅读 `backend/docs/skills/routine_monitoring_analysis_expert.md`，并按 Skill 中的"运城告警溯源场景资产要求"表读取和分析所有图片资产，将分析结果和图片引用写入草稿。
 7. 读取两个专家草稿，检查是否存在越界结论、AQI 口径错误、缺失资产未说明、驻场建议不可执行等问题。
@@ -69,7 +69,7 @@
 9. 使用标准报告包能力导出 Word：读取 `backend/app/tools/report/report_package/references/index.md`，调用 `create_report_package` 保存报告包，调用 `render_report_package(format="docx")` 导出 Word，并用 `validate_report_package(require_docx=true)` 验收。
 10. 验收 `report_docx_path` 必须存在；不存在时返回失败 JSON，不允许返回成功。
 11. 生成 500 字以内微信摘要。
-12. 返回“助手模式返回要求”中的 JSON，由社交模式负责推送微信正文和 Word 附件。
+12. 返回“助手模式返回要求”中的事件广播 JSON，由事件任务服务负责推送微信正文和 Word 附件。
 
 ## 专家子 Agent 调度
 
@@ -79,7 +79,7 @@
 
 - 必须使用同步 `call_sub_agent` 调用专家子 Agent，且 `target_mode` 必须为 `expert`。
 - 禁止使用 `spawn`、`wait_task` 或任何后台任务方式调用专家子 Agent。
-- 禁止使用 `spawn` 后先向社交模式返回“专家正在后台并行执行”等中间状态。
+- 禁止使用 `spawn` 后先向事件任务服务返回“专家正在后台并行执行”等中间状态。
 - 助手模式必须等待两个 `call_sub_agent` 调用均完成、两个草稿文件均存在并通过读取校验后，才能继续生成最终 `report.qmd`、导出 `report.docx` 并返回结果。
 - 助手模式在任务完成前不得返回中间状态；只能在最终报告和 Word 均完成后返回“助手模式返回要求”中的 JSON。
 
@@ -230,17 +230,15 @@
 
 ## 助手模式返回要求
 
-助手模式不直接推送微信。完成报告后必须向社交模式返回：
+助手模式不直接调用微信、广播或通知工具。确认 Word 文件存在后，必须只向事件任务服务返回以下 JSON；`media` 必须只包含 `report.docx` 的绝对路径：
 
 ```json
 {
   "success": true,
-  "evidence_dir": "{evidence_dir}",
-  "alert_json_path": "{evidence_dir}/{YYYYMMDD_HHMMSS}_alert.json",
-  "tracing_context_manifest_path": "{evidence_dir}/tracing_context_manifest.json",
-  "report_qmd_path": "{report_dir}/report.qmd",
-  "report_docx_path": "{report_dir}/report.docx",
-  "wechat_summary": "500字以内微信摘要"
+  "broadcast": {
+    "message": "500字以内微信摘要",
+    "media": ["/absolute/path/to/report.docx"]
+  }
 }
 ```
 
@@ -249,7 +247,6 @@
 ```json
 {
   "success": false,
-  "evidence_dir": "{evidence_dir}",
   "error": "失败原因"
 }
 ```
