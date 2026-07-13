@@ -148,17 +148,21 @@ def test_yuncheng_task_prompt_keeps_wechat_push_in_social_mode():
 
 
 @pytest.mark.asyncio
-async def test_yuncheng_skill_defines_social_assistant_expert_responsibilities():
+async def test_yuncheng_skill_defines_direct_assistant_event_contract():
     viewed = await ViewSkillTool().execute(name="yuncheng_alert_tracing_skill")
     content = viewed["data"]["content"]
 
-    assert "社交模式定时任务" in content
+    assert "事件任务使用助手模式直接执行本 skill" in content
     assert "告警状态为 `has_alert=true` 且 `status=pending_trace`" in content
-    assert "调用助手模式执行本 skill" in content
     assert "调用专家子 Agent 分析" in content
     assert "生成报告、Word 文件和微信摘要" in content
-    assert "社交模式收到回复后推送报告给微信用户" in content
-    assert "助手模式不直接推送微信" in content
+    assert '"broadcast"' in content
+    assert '"message"' in content
+    assert '"media"' in content
+    assert "事件任务服务负责广播" in content
+    assert "不直接调用微信、广播或通知工具" in content
+    assert "社交模式收到回复后推送" not in content
+    assert "调用助手模式执行本 skill" not in content
 
 
 @pytest.mark.asyncio
