@@ -12,7 +12,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.base import BaseScheduler
 
-from ..models.task import ScheduledTask, ScheduleType
+from ..models.task import ScheduledTask, ScheduleType, TriggerType
 from ..storage import TaskStorage
 
 logger = structlog.get_logger()
@@ -64,6 +64,14 @@ class SimpleScheduler:
 
     def _schedule_task(self, task: ScheduledTask):
         """调度单个任务"""
+        if task.trigger_type == TriggerType.EVENT:
+            logger.info(
+                "event_task_not_scheduled",
+                task_id=task.task_id,
+                event_type=task.event_type,
+            )
+            return
+
         trigger = None
 
         # 根据调度类型选择触发器
@@ -172,7 +180,7 @@ class SimpleScheduler:
 
     def add_task(self, task: ScheduledTask):
         """添加新任务到调度器"""
-        if task.enabled:
+        if task.enabled and task.trigger_type == TriggerType.SCHEDULE:
             self._schedule_task(task)
             logger.info(f"Added task to scheduler: {task.name}")
 
@@ -180,7 +188,7 @@ class SimpleScheduler:
         """从调度器移除任务"""
         try:
             self.scheduler.remove_job(task_id)
-            logger.info(f"Removed task from scheduler: {task.task_id}")
+            logger.info(f"Removed task from scheduler: {task_id}")
         except Exception as e:
             logger.warning(f"Failed to remove task {task_id}: {e}")
 
@@ -190,7 +198,7 @@ class SimpleScheduler:
         self.remove_task(task.task_id)
 
         # 如果启用，重新添加
-        if task.enabled:
+        if task.enabled and task.trigger_type == TriggerType.SCHEDULE:
             self._schedule_task(task)
             logger.info(f"Updated task in scheduler: {task.name}")
 

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:event-tasks": "node --test src/components/management/scheduledTaskForm.test.js"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",

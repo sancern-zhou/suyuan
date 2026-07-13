@@ -28,10 +28,9 @@ async def start_scheduled_task_service() -> None:
 async def stop_scheduled_task_service() -> None:
     """Stop scheduled task service."""
     try:
-        from app.scheduled_tasks import stop_service
+        from app.scheduled_tasks import stop_service_async
 
-        stop_service()
+        await stop_service_async()
         logger.info("scheduled_task_service_stopped")
     except Exception as e:
         logger.warning("scheduled_task_service_stop_failed", error=str(e))
-

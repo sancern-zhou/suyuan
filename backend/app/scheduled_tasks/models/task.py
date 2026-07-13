@@ -4,7 +4,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ScheduleType(str, Enum):
@@ -18,6 +18,13 @@ class ScheduleType(str, Enum):
     ONCE = "once"                # 一次性任务（需指定run_at）
     INTERVAL = "interval"        # 自定义间隔（需指定interval_minutes）
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
+
+
+class TriggerType(str, Enum):
+    """任务触发方式。"""
+
+    SCHEDULE = "schedule"
+    EVENT = "event"
 
 
 class TaskStep(BaseModel):
@@ -50,8 +57,13 @@ class ScheduledTask(BaseModel):
         description="执行模式（assistant/expert/query/social）"
     )
 
-    # 调度配置
-    schedule_type: ScheduleType = Field(..., description="调度类型")
+    # 触发配置
+    trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
+    schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
+    event_type: Optional[str] = Field(default=None, description="事件类型")
+    event_filters: Dict[str, Any] = Field(default_factory=dict, description="事件属性过滤条件")
+    target_user_ids: List[str] = Field(default_factory=list, description="后台社交用户ID")
+    broadcast_enabled: bool = Field(default=False, description="是否广播执行结果")
     enabled: bool = Field(default=True, description="是否启用")
 
     # 灵活调度参数（根据schedule_type使用）
@@ -77,6 +89,16 @@ class ScheduledTask(BaseModel):
     # 创建者信息
     created_by: str = Field(default="user", description="创建者")
     tags: List[str] = Field(default_factory=list, description="标签")
+
+    @model_validator(mode="after")
+    def validate_trigger(self):
+        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type is None:
+            raise ValueError("schedule_type is required for schedule tasks")
+        if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():
+            raise ValueError("event_type is required for event tasks")
+        if self.broadcast_enabled and not self.target_user_ids:
+            raise ValueError("target_user_ids is required when broadcast_enabled=true")
+        return self
 
     class Config:
         json_schema_extra = {
