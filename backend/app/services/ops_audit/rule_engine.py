@@ -35,15 +35,19 @@ def run_rule_engine(
 ) -> dict[str, Any]:
     """Run deterministic rules, classify issues, and persist audit outputs."""
 
-    audit = audit_dataset(dataset, enable_visual=enable_visual)
+    output_dir = (output_dir or OUTPUT_DIR).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit = audit_dataset(
+        dataset,
+        enable_visual=enable_visual,
+        visual_evidence_dir=output_dir / "visual_evidence" / "multipoint_curves",
+    )
     audit["evidence"] = build_dataset_evidence(dataset, evidence_level=evidence_level)
     semantic_candidates = build_semantic_candidates(audit)
     semantic_review_tasks = build_semantic_review_tasks(audit)
     semantic_review_results = build_semantic_review_results(audit, dataset)
     final_issue_list = build_final_issue_list(audit, semantic_review_results)
 
-    output_dir = (output_dir or OUTPUT_DIR).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     audit_path = output_dir / "latest_finished_work_orders_deterministic_audit.json"
     candidates_path = output_dir / "latest_finished_work_orders_semantic_candidates.json"
     semantic_review_path = output_dir / "latest_finished_work_orders_semantic_review_tasks.json"
