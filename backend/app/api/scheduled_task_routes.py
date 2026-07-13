@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.scheduled_tasks import (
     get_scheduled_task_service,
@@ -175,6 +175,8 @@ async def create_task(request: CreateTaskRequest):
 
     except HTTPException:
         raise
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -260,6 +262,8 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
 
     except HTTPException:
         raise
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -330,6 +334,7 @@ async def execute_task_now(task_id: str):
                 event,
                 wait=True,
                 force_retry=True,
+                target_task_id=task_id,
             )
             if not dispatch.execution_ids:
                 raise HTTPException(

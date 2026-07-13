@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 from app.scheduled_tasks.models import TaskEvent
 from app.scheduled_tasks.storage import EventClaimStorage
@@ -57,3 +58,35 @@ def test_latest_event_snapshot_can_drive_manual_execution(tmp_path):
     latest = storage.latest_event("yuncheng.alert.created")
 
     assert latest.event_id == "event-2"
+
+
+def test_stale_running_claim_can_be_failed_for_manual_retry(tmp_path):
+    storage = EventClaimStorage(tmp_path)
+    claim = storage.try_claim("task-1", _event())
+    running = storage.mark_status(claim.claim_id, "running")
+
+    recovered = storage.fail_stale_running(
+        "task-1",
+        "event-1",
+        timeout_seconds=300,
+        now=running.updated_at + timedelta(seconds=301),
+    )
+
+    assert recovered is not None
+    assert recovered.status == "failed"
+
+
+def test_fresh_running_claim_is_not_failed(tmp_path):
+    storage = EventClaimStorage(tmp_path)
+    claim = storage.try_claim("task-1", _event())
+    running = storage.mark_status(claim.claim_id, "running")
+
+    recovered = storage.fail_stale_running(
+        "task-1",
+        "event-1",
+        timeout_seconds=300,
+        now=running.updated_at + timedelta(seconds=299),
+    )
+
+    assert recovered is None
+    assert storage.get("task-1", "event-1").status == "running"
