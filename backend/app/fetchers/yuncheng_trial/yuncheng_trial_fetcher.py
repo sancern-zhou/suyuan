@@ -20,6 +20,13 @@ from app.scenarios.yuncheng_trial.fetch_and_alert import (
 logger = structlog.get_logger()
 
 
+async def publish_task_event(event) -> None:
+    """Publish through the task service without importing it on silent runs."""
+    from app.scheduled_tasks import get_scheduled_task_service
+
+    await get_scheduled_task_service().publish_event(event)
+
+
 class YunchengTrialFetcher(DataFetcher):
     """Run Yuncheng city-level watch alerts and collect tracing context on alert."""
 
@@ -48,6 +55,24 @@ class YunchengTrialFetcher(DataFetcher):
         manifest_path = None
         if state.get("has_alert") is True and state.get("status") == "pending_trace":
             manifest_path = await collect_from_alert_file(alert_path=alert_path, output_dir=alert_path.parent)
+            if manifest_path and Path(manifest_path).is_file():
+                from app.scheduled_tasks.models.event import TaskEvent
+
+                await publish_task_event(TaskEvent(
+                    event_id=str(state["alert_id"]),
+                    event_type="yuncheng.alert.created",
+                    occurred_at=state["checked_at"],
+                    attributes={
+                        "city": state["city"],
+                        "alert_level": state.get("alert_level"),
+                        "target_pollutant": state.get("target_pollutant"),
+                    },
+                    payload={
+                        "alert_json_path": str(alert_path),
+                        "tracing_context_manifest_path": str(manifest_path),
+                        "evidence_dir": str(alert_path.parent),
+                    },
+                ))
 
         logger.info(
             "yuncheng_trial_fetcher_completed",

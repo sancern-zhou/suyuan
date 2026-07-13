@@ -10,6 +10,8 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       running: 0,
       successRate: 0
     },
+    eventTypes: [],
+    socialUsers: [],
     ws: null,
     wsConnected: false
   }),
@@ -22,11 +24,30 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         const data = await response.json();
         // API返回的是 [{task: {...}, next_run_time: ...}, ...]
         // 提取task对象
-        this.tasks = Array.isArray(data) ? data.map(item => item.task || item) : [];
+        this.tasks = Array.isArray(data)
+          ? data.map(item => ({
+              ...(item.task || item),
+              next_run_at: item.next_run_time || item.task?.next_run_at || item.next_run_at || null
+            }))
+          : [];
       } catch (error) {
         console.error('Failed to fetch tasks:', error);
         this.tasks = [];
       }
+    },
+
+    async fetchEventTypes() {
+      const response = await fetch(`${API_BASE}/event-types`);
+      if (!response.ok) throw new Error('Failed to fetch event types');
+      this.eventTypes = await response.json();
+      return this.eventTypes;
+    },
+
+    async fetchSocialUsers() {
+      const response = await fetch('/api/social/users');
+      if (!response.ok) throw new Error('Failed to fetch social users');
+      this.socialUsers = await response.json();
+      return this.socialUsers;
     },
 
     async fetchStats() {
