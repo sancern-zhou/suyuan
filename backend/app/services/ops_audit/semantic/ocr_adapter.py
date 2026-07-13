@@ -21,8 +21,10 @@ from config.settings import settings
 QWEN_VL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 MIMO_VL_BASE_URL = "https://api.xiaomimimo.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS = 90
 DEFAULT_PROMPT = "请识别图片中的所有文字内容，按原文输出，不要添加任何解释。"
 DEFAULT_MODEL = "qwen-vl-ocr"
+DEFAULT_VISION_MODEL = "qwen3.7-plus"
 DEFAULT_MIMO_MODEL = "mimo-v2.5"
 PDF_FIRST_PAGE_RENDER_DPI = 180
 _OCR_CACHE: dict[tuple[str, str, int, int], dict[str, Any]] = {}
@@ -114,7 +116,7 @@ def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt
             f"{api_url}/chat/completions",
             headers=headers,
             json=payload,
-            timeout=DEFAULT_TIMEOUT_SECONDS,
+            timeout=_request_timeout_seconds(mode),
         )
         response.raise_for_status()
         raw_response = response.json()
@@ -242,8 +244,7 @@ def _resolve_qwen_model(mode: str) -> str:
             os.getenv("QWEN_VISION_MODEL")
             or os.getenv("OPS_AUDIT_FLOW_VISUAL_QWEN_MODEL")
             or getattr(settings, "qwen_vision_model", "")
-            or getattr(settings, "qwen_vl_model", "")
-            or DEFAULT_MODEL
+            or DEFAULT_VISION_MODEL
         ).strip()
     if mode == "document":
         return str(os.getenv("OCR_DOCUMENT_MODEL") or os.getenv("OCR_MODEL") or DEFAULT_MODEL).strip()
@@ -255,6 +256,16 @@ def _resolve_qwen_model(mode: str) -> str:
         or getattr(settings, "qwen_vl_model", "")
         or DEFAULT_MODEL
     ).strip()
+
+
+def _request_timeout_seconds(mode: str) -> int:
+    if mode != "flow_visual":
+        return DEFAULT_TIMEOUT_SECONDS
+    raw = os.getenv("OPS_AUDIT_FLOW_VISUAL_TIMEOUT_SECONDS")
+    try:
+        return max(1, int(raw)) if raw else DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        return DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS
 
 
 def _resolve_qwen_base_url() -> str:
