@@ -124,6 +124,7 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
         "attachment_local_path",
         "attachment_original_path",
         "attachment_url",
+        "model_result_path",
         "reason_code",
         "reason",
         "observed_summary",

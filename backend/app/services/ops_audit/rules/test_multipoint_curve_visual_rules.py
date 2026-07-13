@@ -71,6 +71,20 @@ def test_build_tasks_ignores_non_multipoint_forms(tmp_path):
     assert tasks == []
 
 
+def test_build_tasks_respects_visual_rule_enablement(monkeypatch, tmp_path):
+    monkeypatch.setattr(rules, "load_semantic_review_profiles", lambda: {"flow_visual_enabled_rule_ids": []})
+
+    tasks = build_multipoint_curve_visual_tasks(
+        {"WORKINGORDERCODE": "CH1"},
+        [("RF_Q_GASEOUSMULTIPOINT_O3", _form())],
+        [_attachment("O3多点曲线.jpg")],
+        [],
+        evidence_dir=tmp_path,
+    )
+
+    assert tasks == []
+
+
 def test_build_tasks_deduplicates_repeated_join_rows(tmp_path):
     repeated = _form(RFQGASEOUSCHECKID=3346)
     tasks = build_multipoint_curve_visual_tasks(
@@ -141,6 +155,7 @@ def test_issue_review_persists_image_and_emits_report_evidence(monkeypatch, tmp_
         return {
             "status": "success",
             "text": "raw model output",
+            "raw_response": {"id": "vision-response-1"},
             "data": {
                 "result": "ISSUE_REVIEW",
                 "reason_code": "POINT_COUNT_MISMATCH",
@@ -162,6 +177,9 @@ def test_issue_review_persists_image_and_emits_report_evidence(monkeypatch, tmp_
     assert evidence["attachment_url"] == "http://example.test/O3多点曲线.jpg"
     assert evidence["attachment_local_path"].startswith(str(tmp_path.resolve()))
     assert rules.Path(evidence["attachment_local_path"]).read_bytes() == b"image-bytes"
+    assert rules.Path(evidence["model_result_path"]).is_file()
+    saved_model_result = json.loads(rules.Path(evidence["model_result_path"]).read_text())
+    assert saved_model_result["raw_response"]["id"] == "vision-response-1"
 
 
 def test_pass_and_insufficient_evidence_do_not_emit_issue(monkeypatch, tmp_path):
