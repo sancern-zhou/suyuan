@@ -9,6 +9,7 @@ from typing import Optional
 from uuid import uuid4
 
 from ..models.task import ScheduledTask
+from ..models.event import TaskEvent
 from ..models.execution import (
     TaskExecution,
     StepExecution,
@@ -32,7 +33,11 @@ class ScheduledTaskExecutor:
         self.execution_storage = execution_storage
         self.agent_factory = agent_factory  # 用于创建ReAct Agent实例
 
-    async def execute_task(self, task: ScheduledTask) -> TaskExecution:
+    async def execute_task(
+        self,
+        task: ScheduledTask,
+        event: TaskEvent | None = None,
+    ) -> TaskExecution:
         """执行任务"""
         # 为整个任务创建统一的 session_id（保持所有步骤的上下文连续）
         task_session_id = self._generate_session_id(task.task_id)
@@ -46,7 +51,11 @@ class ScheduledTaskExecutor:
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
             total_steps=len(task.steps),
-            scheduled_time=task.next_run_at
+            scheduled_time=task.next_run_at if event is None else None,
+            trigger_type="event" if event else "scheduled",
+            event_id=event.event_id if event else None,
+            event_type=event.event_type if event else None,
+            event_attributes=event.attributes if event else {},
         )
 
         # 保存执行记录
@@ -67,7 +76,12 @@ class ScheduledTaskExecutor:
                     step,
                     execution,
                     task_session_id,
-                    task.execution_mode
+                    task.execution_mode,
+                    prompt=(
+                        self._build_event_prompt(step.agent_prompt, event)
+                        if event
+                        else step.agent_prompt
+                    ),
                 )
                 execution.steps.append(step_result)
 
@@ -129,14 +143,15 @@ class ScheduledTaskExecutor:
         step,
         execution: TaskExecution,
         session_id: str,  # ✅ 接收 session_id 参数
-        manual_mode: str
+        manual_mode: str,
+        prompt: str,
     ) -> StepExecution:
         """执行单个步骤"""
         step_exec = StepExecution(
             step_id=step.step_id,
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
-            agent_prompt=step.agent_prompt
+            agent_prompt=prompt
         )
 
         logger.info(
@@ -147,7 +162,7 @@ class ScheduledTaskExecutor:
         try:
             # 执行步骤（带超时，并传入 session_id）
             result = await asyncio.wait_for(
-                self._run_agent_step(step.agent_prompt, session_id, manual_mode=manual_mode),
+                self._run_agent_step(prompt, session_id, manual_mode=manual_mode),
                 timeout=step.timeout_seconds
             )
 
@@ -273,6 +288,21 @@ class ScheduledTaskExecutor:
             "tool_calls": tool_calls,
             "iterations": iterations
         }
+
+    @staticmethod
+    def _build_event_prompt(prompt: str, event: TaskEvent) -> str:
+        event_json = event.model_dump_json(indent=2)
+        return f"""{prompt}
+
+## 可信事件上下文
+{event_json}
+
+## 输出与投递约束
+- 完成任务，但不要直接发送通知或调用广播工具。
+- 最终只返回 JSON：
+  {{"success":true,"broadcast":{{"message":"广播正文","media":["绝对附件路径"]}}}}
+- 失败时只返回：{{"success":false,"error":"失败原因"}}
+"""
 
     def _generate_execution_id(self, task_id: str) -> str:
         """生成执行ID"""
