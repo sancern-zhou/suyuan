@@ -33,6 +33,13 @@ class FakeService:
         self.tasks[task.task_id] = task
         return task
 
+    def get_task(self, task_id):
+        return self.tasks.get(task_id)
+
+    def update_task(self, task):
+        self.tasks[task.task_id] = task
+        return task
+
     def get_scheduler_status(self):
         return {"scheduled_tasks": []}
 
@@ -118,6 +125,30 @@ def test_create_rejects_non_wechat_recipient(monkeypatch):
 
     assert response.status_code == 400
     assert "active bound WeChat user" in response.json()["detail"]
+
+
+def test_create_rejects_empty_broadcast_recipient_list_as_bad_request(monkeypatch):
+    client, _ = _client(monkeypatch)
+    payload = _event_payload()
+    payload["target_user_ids"] = []
+
+    response = client.post("/api/scheduled-tasks", json=payload)
+
+    assert response.status_code == 400
+    assert "target_user_ids is required" in response.json()["detail"]
+
+
+def test_update_rejects_empty_broadcast_recipient_list_as_bad_request(monkeypatch):
+    client, service = _client(monkeypatch)
+    created = client.post("/api/scheduled-tasks", json=_event_payload())
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.put(
+        f"/api/scheduled-tasks/{task_id}",
+        json={"target_user_ids": []},
+    )
+
+    assert response.status_code == 400
 
 
 def test_retry_delivery_endpoint_uses_existing_execution(monkeypatch):

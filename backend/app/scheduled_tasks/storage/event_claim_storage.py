@@ -133,6 +133,29 @@ class EventClaimStorage:
             self._atomic_write(path, claim.model_dump(mode="json"))
             return claim
 
+    def fail_stale_running(
+        self,
+        task_id: str,
+        event_id: str,
+        *,
+        timeout_seconds: int,
+        now: datetime | None = None,
+    ) -> EventClaim | None:
+        """Atomically fail a running claim only after its execution timeout."""
+        path = self._claim_path(task_id, event_id)
+        with self._locked():
+            if not path.exists():
+                return None
+            claim = self._read(path)
+            current_time = now or datetime.now().astimezone()
+            elapsed = (current_time - claim.updated_at).total_seconds()
+            if claim.status != "running" or elapsed <= max(timeout_seconds, 0):
+                return None
+            claim.status = "failed"
+            claim.updated_at = current_time
+            self._atomic_write(path, claim.model_dump(mode="json"))
+            return claim
+
     def latest_event(self, event_type: str) -> TaskEvent | None:
         with self._locked():
             claims = [self._read(path) for path in self.claims_dir.glob("*.json")]

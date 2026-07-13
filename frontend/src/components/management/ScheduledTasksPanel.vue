@@ -121,12 +121,12 @@
                 <button
                   type="button"
                   :class="{ active: createForm.trigger_type === 'schedule' }"
-                  @click="createForm.trigger_type = 'schedule'"
+                  @click="setTriggerType('schedule')"
                 >定时触发</button>
                 <button
                   type="button"
                   :class="{ active: createForm.trigger_type === 'event' }"
-                  @click="createForm.trigger_type = 'event'"
+                  @click="setTriggerType('event')"
                 >事件触发</button>
               </div>
             </div>
@@ -143,6 +143,15 @@
             <label class="form-field form-wide">
               <span>任务描述</span>
               <textarea v-model="createForm.description" rows="4" placeholder="描述广播主题、语气、目标人群"></textarea>
+            </label>
+
+            <label v-if="createForm.trigger_type === 'event'" class="form-field form-wide">
+              <span>Agent 执行指令</span>
+              <textarea
+                v-model="createForm.agent_prompt"
+                rows="5"
+                placeholder="描述事件发生后 Agent 要执行的具体步骤、技能和产物要求"
+              ></textarea>
             </label>
 
             <label v-if="createForm.trigger_type === 'schedule'" class="form-field">
@@ -265,7 +274,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
-import { buildTaskPayload, selectableWeixinUsers } from './scheduledTaskForm.js'
+import {
+  applyTriggerDefaults,
+  buildTaskPayload,
+  selectableWeixinUsers
+} from './scheduledTaskForm.js'
 
 // Props
 defineProps({
@@ -333,6 +346,10 @@ const defaultForm = () => ({
 })
 
 const createForm = ref(defaultForm())
+
+const setTriggerType = (triggerType) => {
+  applyTriggerDefaults(createForm.value, triggerType, eventTypes.value)
+}
 
 // Methods
 const getScheduledTaskLabel = (type) => {
@@ -414,6 +431,9 @@ const loadConfigurationOptions = async () => {
   ])
   if (results.some(result => result.status === 'rejected')) {
     formError.value = '部分配置项加载失败，请关闭后重试'
+  }
+  if (createForm.value.trigger_type === 'event') {
+    applyTriggerDefaults(createForm.value, 'event', eventTypes.value)
   }
 }
 

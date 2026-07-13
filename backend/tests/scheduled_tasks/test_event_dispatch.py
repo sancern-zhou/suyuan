@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 
 import pytest
 
@@ -156,6 +157,58 @@ async def test_matching_event_runs_agent_once_and_broadcasts_to_two_users(
 
 
 @pytest.mark.asyncio
+async def test_manual_event_dispatch_can_be_limited_to_one_task(
+    service,
+    event_task,
+    agent_factory,
+):
+    service.create_task(event_task)
+    other = event_task.model_copy(update={
+        "task_id": "other-event-task",
+        "name": "other event task",
+    })
+    service.create_task(other)
+
+    result = await service.publish_event(
+        _event("manual-one"),
+        wait=True,
+        target_task_id=event_task.task_id,
+    )
+
+    assert result.matched_task_ids == [event_task.task_id]
+    assert agent_factory.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_force_retry_recovers_stale_running_claim(
+    service,
+    event_task,
+    agent_factory,
+):
+    service.create_task(event_task)
+    claim = service.claim_storage.try_claim(event_task.task_id, _event("stale"))
+    running = service.claim_storage.mark_status(claim.claim_id, "running")
+    fail_stale_running = service.claim_storage.fail_stale_running
+    service.claim_storage.fail_stale_running = lambda *args, **kwargs: (
+        fail_stale_running(
+            *args,
+            **kwargs,
+            now=running.updated_at + timedelta(seconds=301),
+        )
+    )
+
+    result = await service.publish_event(
+        _event("stale"),
+        wait=True,
+        force_retry=True,
+    )
+
+    assert result.accepted_task_ids == [event_task.task_id]
+    assert agent_factory.call_count == 1
+    assert service.claim_storage.get(event_task.task_id, "stale").attempt == 2
+
+
+@pytest.mark.asyncio
 async def test_no_valid_recipients_fails_before_agent(
     service,
     event_task,
@@ -194,3 +247,40 @@ async def test_retry_delivery_does_not_rerun_agent(
     assert result["retried_user_ids"] == ["admin-2"]
     assert fake_delivery.target_batches[-1] == ["admin-2"]
     assert agent_factory.call_count == initial_agent_calls
+
+
+@pytest.mark.asyncio
+async def test_total_delivery_failure_keeps_agent_claim_succeeded_for_delivery_retry(
+    service,
+    event_task,
+    agent_factory,
+    fake_delivery,
+):
+    fake_delivery.fail_user_ids = {"admin-1", "admin-2"}
+    service.create_task(event_task)
+
+    dispatched = await service.publish_event(_event("total-delivery-failure"), wait=True)
+
+    execution = service.execution_storage.get(dispatched.execution_ids[0])
+    claim = service.claim_storage.get(event_task.task_id, "total-delivery-failure")
+    assert execution.status.value == "success"
+    assert claim.status == "succeeded"
+    assert agent_factory.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_delivery_with_no_longer_valid_recipient_reports_failure(
+    service,
+    event_task,
+    fake_delivery,
+):
+    fake_delivery.fail_user_ids = {"admin-2"}
+    service.create_task(event_task)
+    dispatched = await service.publish_event(_event("recipient-disabled"), wait=True)
+    fake_delivery.valid = False
+
+    result = await service.retry_failed_delivery(dispatched.execution_ids[0])
+
+    assert result["success"] is False
+    assert result["retried_user_ids"] == ["admin-2"]
+    assert result["delivery_results"] == []

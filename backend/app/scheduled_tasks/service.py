@@ -245,13 +245,15 @@ class ScheduledTaskService:
         *,
         wait: bool = False,
         force_retry: bool = False,
+        target_task_id: str | None = None,
     ) -> EventDispatchResult:
         """Match and execute enabled event tasks exactly once per event."""
         event = TaskEvent.model_validate(event)
         matching_tasks = [
             task
             for task in self.task_storage.get_enabled_tasks()
-            if task.trigger_type == TriggerType.EVENT
+            if (target_task_id is None or task.task_id == target_task_id)
+            and task.trigger_type == TriggerType.EVENT
             and task.event_type == event.event_type
             and event.matches(task.event_filters)
         ]
@@ -261,6 +263,15 @@ class ScheduledTaskService:
 
         for task in matching_tasks:
             existing = self.claim_storage.get(task.task_id, event.event_id)
+            if existing and force_retry and existing.status == "running":
+                timeout_seconds = sum(step.timeout_seconds for step in task.steps)
+                recovered = self.claim_storage.fail_stale_running(
+                    task.task_id,
+                    event.event_id,
+                    timeout_seconds=timeout_seconds,
+                )
+                if recovered:
+                    existing = recovered
             if existing and force_retry and existing.status == "failed":
                 claim = self.claim_storage.retry_failed(task.task_id, event.event_id)
             elif existing:
@@ -366,7 +377,9 @@ class ScheduledTaskService:
                 if execution.delivery_results and not any(
                     row.get("sent") for row in execution.delivery_results
                 ):
-                    raise ValueError("event broadcast failed for every recipient")
+                    execution.error_message = (
+                        "Agent completed, but delivery failed for every recipient"
+                    )
                 self.execution_storage.update(execution)
 
             self.task_storage.update_run_stats(task.task_id, success=True)
@@ -415,6 +428,12 @@ class ScheduledTaskService:
             return {"success": True, "retried_user_ids": [], "delivery_results": []}
 
         recipients = await self.event_delivery.resolve_recipients(failed_user_ids)
+        if not recipients:
+            return {
+                "success": False,
+                "retried_user_ids": failed_user_ids,
+                "delivery_results": [],
+            }
         event = TaskEvent.model_validate(claim.event_snapshot)
         response = execution.steps[-1].agent_response if execution.steps else ""
         output = parse_event_task_output(response or "")

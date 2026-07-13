@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  applyTriggerDefaults,
   buildTaskPayload,
   selectableWeixinUsers
 } from './scheduledTaskForm.js'
@@ -76,4 +77,23 @@ test('keeps schedule fields for schedule tasks', () => {
   assert.equal(payload.hour, 9)
   assert.equal(payload.minute, 10)
   assert.equal(payload.event_type, null)
+})
+
+
+test('event trigger defaults to social execution and broadcasting', () => {
+  const form = {
+    trigger_type: 'schedule',
+    execution_mode: 'assistant',
+    broadcast_enabled: false,
+    event_type: ''
+  }
+
+  applyTriggerDefaults(form, 'event', [
+    { event_type: 'yuncheng.alert.created' }
+  ])
+
+  assert.equal(form.trigger_type, 'event')
+  assert.equal(form.execution_mode, 'social')
+  assert.equal(form.broadcast_enabled, true)
+  assert.equal(form.event_type, 'yuncheng.alert.created')
 })

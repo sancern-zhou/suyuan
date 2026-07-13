@@ -5,6 +5,19 @@ export const selectableWeixinUsers = (users = []) => users.filter(user =>
 )
 
 
+export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
+  form.trigger_type = triggerType
+  if (triggerType === 'event') {
+    form.execution_mode = 'social'
+    form.broadcast_enabled = true
+    if (!form.event_type && eventTypes.length > 0) {
+      form.event_type = eventTypes[0].event_type
+    }
+  }
+  return form
+}
+
+
 export const buildTaskPayload = (form) => {
   const isEvent = form.trigger_type === 'event'
   const payload = {
