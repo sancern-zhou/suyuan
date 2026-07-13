@@ -135,6 +135,12 @@ import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import {
+  deleteScheduledTask as deleteScheduledTaskAction,
+  executeScheduledTask as executeScheduledTaskAction,
+  refreshScheduledTaskManagement,
+  toggleScheduledTask
+} from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
 import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 
@@ -547,18 +553,18 @@ const viewKbChunksRetry = async () => {
 const refreshScheduledTasks = async () => {
   scheduledTasksRefreshing.value = true
   try {
-    await scheduledTasksStore.fetchTasks()
+    await refreshScheduledTaskManagement(scheduledTasksStore)
   } finally {
     scheduledTasksRefreshing.value = false
   }
 }
 
 const handleScheduledTaskToggle = async (task) => {
-  await scheduledTasksStore.toggleTask(task.id)
+  await toggleScheduledTask(scheduledTasksStore, task)
 }
 
 const executeScheduledTask = async (task) => {
-  await scheduledTasksStore.executeTask(task.id)
+  await executeScheduledTaskAction(scheduledTasksStore, task)
 }
 
 const editScheduledTask = (task) => {
@@ -566,7 +572,7 @@ const editScheduledTask = (task) => {
 }
 
 const deleteScheduledTask = async (task) => {
-  await scheduledTasksStore.deleteTask(task.id)
+  await deleteScheduledTaskAction(scheduledTasksStore, task)
 }
 
 // ========== 生命周期 ==========
