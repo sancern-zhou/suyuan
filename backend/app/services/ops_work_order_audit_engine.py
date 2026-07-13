@@ -58,7 +58,10 @@ from app.services.ops_audit.rules.multipoint_curve_visual_rules import (  # noqa
 from app.services.ops_audit.semantic.ocr_adapter import flow_visual_provider_summary  # noqa: E402
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure as check_modular_lifecycle_closure  # noqa: E402
 from app.services.ops_audit.rules.o3_transfer_quality_rules import check_o3_transfer_quality_values  # noqa: E402
-from app.services.ops_audit.rules.o3_value_pass_xls_rules import check_o3_value_pass_xls_values  # noqa: E402
+from app.services.ops_audit.rules.o3_value_pass_xls_rules import (  # noqa: E402
+    build_o3_upper_standard_history_conflicts,
+    check_o3_value_pass_xls_values,
+)
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks  # noqa: E402
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates  # noqa: E402
 from app.services.ops_audit.rules.rf_enum_rules import check_rf_enum_values  # noqa: E402
@@ -1658,6 +1661,15 @@ def audit_dataset(
     attachments_by_code = _group_records_by_order_code(dataset.get("attachments", []), ["refid", "REFID", "remark", "REMARK"])
     wo_commonfile_by_code = _group_records_by_order_code(dataset.get("wo_commonfile", []), ["REFID", "refid"])
     all_orders_for_device_consistency, all_forms_by_code = merge_device_history(dataset)
+    current_order_codes = {
+        str(order.get("WORKINGORDERCODE"))
+        for order in dataset.get("orders", [])
+        if order.get("WORKINGORDERCODE")
+    }
+    o3_history_conflicts_by_code = build_o3_upper_standard_history_conflicts(
+        all_forms_by_code,
+        current_order_codes,
+    )
 
     records = []
     record_issues_by_code: dict[str, list[Issue]] = {}
@@ -1665,7 +1677,7 @@ def audit_dataset(
     for order in dataset.get("orders", []):
         code = order.get("WORKINGORDERCODE")
         station_meta = station_meta_by_id.get(str(order.get("STATIONID") or ""), {})
-        issues: list[Issue] = []
+        issues: list[Issue] = list(o3_history_conflicts_by_code.get(str(code), []))
         forms = forms_by_code.get(code, [])
         details = details_by_code.get(code, [])
         attachment_rf_typecodes = _rf_attachment_typecodes(attachments_by_code.get(str(code), [])) + _rf_attachment_typecodes(
