@@ -103,3 +103,22 @@ def test_update_event_task_removes_old_job_without_rescheduling(tmp_path):
 
     scheduler.remove_task.assert_called_once_with("event")
     scheduler._schedule_task.assert_not_called()
+
+
+def test_scheduler_can_calculate_next_run_for_cron_task(tmp_path):
+    storage = TaskStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="daily-task",
+        name="daily task",
+        description="daily task",
+        schedule_type="daily_8am",
+        steps=[_step()],
+    )
+    storage.create(task)
+    scheduler = SimpleScheduler(storage)
+
+    scheduler._schedule_task(task)
+
+    stored = storage.get(task.task_id)
+    assert stored.next_run_at is not None
+    assert scheduler.scheduler.get_job(task.task_id) is not None

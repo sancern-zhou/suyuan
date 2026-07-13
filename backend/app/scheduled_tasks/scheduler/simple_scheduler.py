@@ -123,8 +123,9 @@ class SimpleScheduler:
             misfire_grace_time=60  # 允许1分钟的延迟
         )
 
-        # 计算下次运行时间（传入None让APScheduler自动使用当前时区时间）
-        next_run = trigger.get_next_fire_time(None, None)
+        # APScheduler 3.x requires an explicit current time for unscheduled triggers.
+        now = datetime.now(self.scheduler.timezone)
+        next_run = trigger.get_next_fire_time(None, now)
         if next_run:
             task.next_run_at = next_run
             self.task_storage.update(task)
