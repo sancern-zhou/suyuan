@@ -244,7 +244,19 @@ rules:
     category: 附件读数一致性
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
-    rationale: 臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应分别与 XLS 附件第一个 sheet 的候选单元格一致；斜率比对 F25/F24，截距比对 F26/F25，改变率比对 F28/F27，任一候选单元格匹配即视为一致。
+    rationale: O3量值传递表的斜率、截距、改变率及上级标准型号、设备号、序列号、传递日期、公式和有效期应与XLS附件按标签提取的值一致。
+  - rule_id: ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW
+    name: O3量值传递缺少XLS计算附件待复核
+    category: 附件证据复核
+    default_severity: 中
+    scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
+    rationale: 缺少XLS/XLSX时无法确定复核当前传递斜率和上级标准身份，只进入人工复核，不直接判定数值错误。
+  - rule_id: RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW
+    name: O3上级标准历史身份冲突待复核
+    category: 跨工单证据复核
+    default_severity: 中
+    scope: RF_HY_O3VALUEPASS/device_history
+    rationale: 相同序列号、传递日期、公式和有效期的上级标准出现不同型号或设备号填法时，需要结合证书人工确认，不能按历史多数值自动判错。
   - rule_id: RF_O3_VALUE_PASS_FLOW_VALUE_MISSING
     name: O3量值传递传递流量未填写
     category: 表单完整性

@@ -7,6 +7,8 @@ import os
 import re
 import subprocess
 import tempfile
+from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -16,8 +18,9 @@ import requests
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
 
-
 RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
+MISSING_XLS_REVIEW_RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW"
+HISTORY_CONFLICT_REVIEW_RULE_ID = "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW"
 FLOW_MISSING_RULE_ID = "RF_O3_VALUE_PASS_FLOW_VALUE_MISSING"
 FIELD_POSITION_RULE_ID = "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT"
 RF_TABLE = "RF_HY_O3VALUEPASS"
@@ -27,6 +30,28 @@ COMPARISONS = [
     {"field": "DELIVERFC", "label": "截距(ppb)", "cell": "F"},
     {"field": "DENSITY1VALUE", "label": "相对于前一次传递的改变(%)", "cell": "F"},
 ]
+
+UPPER_STANDARD_COMPARISONS = (
+    {"field": "DELIVER6VALUE", "label": "上级标准型号", "comparison_type": "text"},
+    {"field": "DELIVERFROM6VALUE", "label": "上级标准设备号", "comparison_type": "text"},
+    {"field": "AVALUE", "label": "上级标准序列号", "comparison_type": "text"},
+    {"field": "WORKDENSITY6VALUE", "label": "上级标准传递日期", "comparison_type": "date"},
+    {"field": "DELIVERTO6VALUE", "label": "上级标准传递公式", "comparison_type": "formula"},
+    {"field": "BVALUE", "label": "上级标准有效期", "comparison_type": "date"},
+)
+
+UPPER_STANDARD_SECTION_LABELS = ("上级臭氧传递标准", "参考光电仪")
+UPPER_STANDARD_LABEL_FIELDS = {
+    "型号": "DELIVER6VALUE",
+    "设备号": "DELIVERFROM6VALUE",
+    "序列号": "AVALUE",
+    "传递日期": "WORKDENSITY6VALUE",
+    "认证日期": "WORKDENSITY6VALUE",
+    "传递公式": "DELIVERTO6VALUE",
+    "认证公式": "DELIVERTO6VALUE",
+    "传递有效期限": "BVALUE",
+    "认证有效期限": "BVALUE",
+}
 
 
 def check_o3_value_pass_xls_values(
@@ -47,6 +72,8 @@ def check_o3_value_pass_xls_values(
     pdf_items = _pdf_items(records)
     for form in relevant_forms:
         _check_o3_value_pass_form_fields(order, form, issues)
+        if not xls_items:
+            _add_missing_xls_review_issue(order, form, records, issues)
         selected_items = [item for item in (_select_item(xls_items), _select_item(pdf_items)) if item]
         if not selected_items:
             continue
@@ -62,6 +89,155 @@ def check_o3_value_pass_xls_values(
             failed = [comparison for comparison in comparisons if comparison["status"] != "match"]
             if failed:
                 _add_issue(order, form, item, failed, issues)
+
+
+def build_o3_upper_standard_history_conflicts(
+    forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]],
+    current_codes: set[str],
+) -> dict[str, list[Issue]]:
+    grouped: dict[
+        tuple[Any, ...],
+        dict[tuple[str, str], list[dict[str, Any]]],
+    ] = defaultdict(lambda: defaultdict(list))
+
+    for code, forms in forms_by_code.items():
+        for table, form in forms:
+            if table != RF_TABLE or form.get("_query_error"):
+                continue
+            fingerprint = _upper_standard_fingerprint(form)
+            identity = _upper_standard_identity_pair(form)
+            if fingerprint is None or identity is None:
+                continue
+            grouped[fingerprint][identity].append(
+                {
+                    "working_order_code": str(code),
+                    "model": form.get("DELIVER6VALUE"),
+                    "device_number": form.get("DELIVERFROM6VALUE"),
+                    "serial_number": form.get("AVALUE"),
+                    "transfer_date": form.get("WORKDENSITY6VALUE"),
+                    "transfer_formula": form.get("DELIVERTO6VALUE"),
+                    "expiry_date": form.get("BVALUE"),
+                }
+            )
+
+    issues_by_code: dict[str, list[Issue]] = defaultdict(list)
+    for fingerprint, alternatives_by_identity in grouped.items():
+        if len(alternatives_by_identity) < 2:
+            continue
+        alternatives = []
+        affected_codes = set()
+        for records in alternatives_by_identity.values():
+            order_codes = sorted({record["working_order_code"] for record in records})
+            affected_codes.update(order_codes)
+            alternatives.append(
+                {
+                    "model": records[0]["model"],
+                    "device_number": records[0]["device_number"],
+                    "order_codes": order_codes,
+                }
+            )
+        alternatives.sort(key=lambda item: (str(item.get("model") or ""), str(item.get("device_number") or "")))
+        sample_records = next(iter(alternatives_by_identity.values()))
+        sample = sample_records[0]
+        for code in sorted(affected_codes & current_codes):
+            evidence = {
+                "current_working_order_code": code,
+                "rf_table": RF_TABLE,
+                "needs_manual_review": True,
+                "review_reason": "same_upper_standard_batch_has_conflicting_identity",
+                "fingerprint": {
+                    "serial_number": sample["serial_number"],
+                    "transfer_date": sample["transfer_date"],
+                    "transfer_formula": sample["transfer_formula"],
+                    "expiry_date": sample["expiry_date"],
+                    "normalized": list(fingerprint),
+                },
+                "alternatives": alternatives,
+            }
+            issue_list: list[Issue] = []
+            add_issue(
+                issue_list,
+                HISTORY_CONFLICT_REVIEW_RULE_ID,
+                "跨工单证据复核",
+                "中",
+                "rf.RF_HY_O3VALUEPASS.upper_standard_identity",
+                "同一O3上级标准批次存在不同型号/设备号填法，需结合证书人工确认",
+                json.dumps(evidence, ensure_ascii=False, default=str),
+            )
+            issues_by_code[code].extend(issue_list)
+    return dict(issues_by_code)
+
+
+def _upper_standard_fingerprint(form: dict[str, Any]) -> tuple[Any, ...] | None:
+    serial_number = _normalize_identity_text(form.get("AVALUE"))
+    if serial_number in {"", "NA", "NONE", "NULL"}:
+        return None
+    transfer_formula = _parse_linear_formula(form.get("DELIVERTO6VALUE"))
+    transfer_date = _normalize_date_value(form.get("WORKDENSITY6VALUE"))
+    expiry_date = _normalize_date_value(form.get("BVALUE"))
+    if transfer_formula is None or len(transfer_date) < 3 or len(expiry_date) < 3:
+        return None
+    return (
+        serial_number,
+        round(transfer_formula[0], 8),
+        round(transfer_formula[1], 8),
+        transfer_date,
+        expiry_date,
+    )
+
+
+def _upper_standard_identity_pair(form: dict[str, Any]) -> tuple[str, str] | None:
+    model = _normalize_identity_text(form.get("DELIVER6VALUE"))
+    if not model:
+        return None
+    raw_device = str(form.get("DELIVERFROM6VALUE") or "").strip()
+    device = _normalize_identity_text(raw_device)
+    if raw_device in {"", "/", "-", "\\"} or device in {"", "NA", "NONE", "NULL"}:
+        device = "NO_DEVICE_NUMBER"
+    return model, device
+
+
+def _add_missing_xls_review_issue(
+    order: dict[str, Any],
+    form: dict[str, Any],
+    records: list[dict[str, Any]],
+    issues: list[Issue],
+) -> None:
+    upper_standard = {
+        "model": form.get("DELIVER6VALUE"),
+        "device_number": form.get("DELIVERFROM6VALUE"),
+        "serial_number": form.get("AVALUE"),
+        "transfer_date": form.get("WORKDENSITY6VALUE"),
+        "transfer_formula": form.get("DELIVERTO6VALUE"),
+        "expiry_date": form.get("BVALUE"),
+    }
+    available_attachments = []
+    for record in records:
+        sources = _source_candidates(record)
+        available_attachments.append(
+            {
+                "filename": _first_present(record, ["FILENAME", "filename", "FileName", "NAME", "name"]),
+                "source_path": sources[0] if sources else None,
+                "source_paths": sources,
+            }
+        )
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE") or form.get("WORKINGORDERCODE"),
+        "rf_table": RF_TABLE,
+        "needs_manual_review": True,
+        "review_reason": "missing_o3_transfer_workbook",
+        "upper_standard": upper_standard,
+        "available_attachments": available_attachments,
+    }
+    add_issue(
+        issues,
+        MISSING_XLS_REVIEW_RULE_ID,
+        "附件证据复核",
+        "中",
+        f"attachment.{RF_TABLE}.xls",
+        "O3量值传递工单缺少XLS/XLSX计算附件，当前传递斜率及上级标准身份需人工复核",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _check_o3_value_pass_form_fields(
@@ -347,7 +523,7 @@ def _source_candidates(record: dict[str, Any]) -> list[str]:
 
 def _worksheet_dynamic_cells(ws: Any) -> dict[str, list[dict[str, Any]]]:
     slope_row, intercept_row = _find_o3_value_pass_rows(
-        ((row_index, ws[f"D{row_index}"].value) for row_index in range(1, ws.max_row + 1))
+        (row_index, ws[f"D{row_index}"].value) for row_index in range(1, ws.max_row + 1)
     )
     cells = _dynamic_value_cells(
         slope_row,
@@ -357,12 +533,19 @@ def _worksheet_dynamic_cells(ws: Any) -> dict[str, list[dict[str, Any]]]:
     formula_row = _find_formula_row((row_index, ws[f"D{row_index}"].value) for row_index in range(1, ws.max_row + 1))
     if formula_row is not None:
         cells["TRANSFER_FORMULA"] = [{"cell": f"F{formula_row}", "value": ws[f"F{formula_row}"].value}]
+    cells.update(
+        _upper_standard_cells(
+            ws.max_row,
+            8,
+            lambda row_index, column_index: ws.cell(row=row_index, column=column_index).value,
+        )
+    )
     return cells
 
 
 def _xls_sheet_dynamic_cells(sheet: Any) -> dict[str, list[dict[str, Any]]]:
     slope_row, intercept_row = _find_o3_value_pass_rows(
-        ((row_index + 1, sheet.cell_value(row_index, 3)) for row_index in range(sheet.nrows))
+        (row_index + 1, sheet.cell_value(row_index, 3)) for row_index in range(sheet.nrows)
     )
     cells = _dynamic_value_cells(
         slope_row,
@@ -374,7 +557,67 @@ def _xls_sheet_dynamic_cells(sheet: Any) -> dict[str, list[dict[str, Any]]]:
         cells["TRANSFER_FORMULA"] = [
             {"cell": f"F{formula_row}", "value": sheet.cell_value(formula_row - 1, 5) if formula_row <= sheet.nrows else None}
         ]
+    cells.update(
+        _upper_standard_cells(
+            sheet.nrows,
+            min(sheet.ncols, 8),
+            lambda row_index, column_index: sheet.cell_value(row_index - 1, column_index - 1),
+        )
+    )
     return cells
+
+
+def _upper_standard_cells(row_count: int, column_count: int, value_at: Any) -> dict[str, list[dict[str, Any]]]:
+    cells = {comparison["field"]: [] for comparison in UPPER_STANDARD_COMPARISONS}
+    anchor_row = None
+    for row_index in range(1, row_count + 1):
+        row_text = "".join(_normalize_label(value_at(row_index, column_index)) for column_index in range(1, column_count + 1))
+        if any(section_label in row_text for section_label in UPPER_STANDARD_SECTION_LABELS):
+            anchor_row = row_index
+    if anchor_row is None:
+        return cells
+
+    last_row = min(row_count, anchor_row + 10)
+    for row_index in range(anchor_row + 1, last_row + 1):
+        for column_index in range(1, column_count + 1):
+            label = _normalize_label(value_at(row_index, column_index)).rstrip(":：")
+            field = UPPER_STANDARD_LABEL_FIELDS.get(label)
+            if field is None:
+                continue
+            value_column, value = _next_nonempty_cell(value_at, row_index, column_index + 1, column_count)
+            if value_column is None:
+                continue
+            cells[field].append(
+                {
+                    "cell": f"{_column_letter(value_column)}{row_index}",
+                    "value": value,
+                }
+            )
+    return cells
+
+
+def _next_nonempty_cell(
+    value_at: Any,
+    row_index: int,
+    first_column: int,
+    column_count: int,
+) -> tuple[int | None, Any]:
+    for column_index in range(first_column, column_count + 1):
+        value = value_at(row_index, column_index)
+        if not _is_blank(value):
+            if _normalize_label(value).rstrip(":：") in UPPER_STANDARD_LABEL_FIELDS:
+                return None, None
+            return column_index, value
+    return None, None
+
+
+def _column_letter(column_index: int) -> str:
+    result = ""
+    value = column_index
+    while value:
+        value, remainder = divmod(value - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
 
 
 def _find_o3_value_pass_rows(labels: Any) -> tuple[int | None, int | None]:
@@ -517,7 +760,79 @@ def _compare_values(form: dict[str, Any], cells: dict[str, Any]) -> list[dict[st
             }
         )
     comparisons.extend(_compare_transfer_formula(form, cells.get("TRANSFER_FORMULA")))
+    comparisons.extend(_compare_upper_standard_values(form, cells))
     return comparisons
+
+
+def _compare_upper_standard_values(form: dict[str, Any], cells: dict[str, Any]) -> list[dict[str, Any]]:
+    results = []
+    for comparison in UPPER_STANDARD_COMPARISONS:
+        field = comparison["field"]
+        candidates = cells.get(field) or []
+        if not candidates:
+            continue
+        candidate = next((item for item in candidates if not _is_blank(item.get("value"))), candidates[0])
+        form_value = form.get(field)
+        xls_value = candidate.get("value")
+        if _is_blank(form_value):
+            status = "missing_form_value"
+        elif _upper_standard_values_match(form_value, xls_value, comparison["comparison_type"]):
+            status = "match"
+        else:
+            status = "mismatch"
+        results.append(
+            {
+                **comparison,
+                "configured_cell": candidate.get("cell"),
+                "candidate_cells": [item.get("cell") for item in candidates],
+                "cell_candidates": candidates,
+                "cell": candidate.get("cell"),
+                "form_value": form_value,
+                "xls_value": xls_value,
+                "status": status,
+            }
+        )
+    return results
+
+
+def _upper_standard_values_match(form_value: Any, xls_value: Any, comparison_type: str) -> bool:
+    if comparison_type == "formula":
+        form_formula = _parse_linear_formula(form_value)
+        xls_formula = _parse_linear_formula(xls_value)
+        return form_formula is not None and xls_formula is not None and all(
+            abs(left - right) <= 1e-9 for left, right in zip(form_formula, xls_formula, strict=True)
+        )
+    if comparison_type == "date":
+        form_date = _normalize_date_value(form_value)
+        xls_date = _normalize_date_value(xls_value)
+        return bool(form_date and xls_date and form_date == xls_date)
+    return _normalize_identity_text(form_value) == _normalize_identity_text(xls_value)
+
+
+def _normalize_identity_text(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+
+
+def _normalize_date_value(value: Any) -> tuple[int, ...]:
+    if isinstance(value, datetime):
+        return value.year, value.month, value.day
+    if isinstance(value, (int, float)) and 20000 <= float(value) <= 80000:
+        date_value = datetime(1899, 12, 30) + timedelta(days=float(value))
+        return date_value.year, date_value.month, date_value.day
+    numbers = [int(item) for item in re.findall(r"\d+", str(value or ""))]
+    if len(numbers) >= 6 and numbers[0] >= 1900 and numbers[3] >= 1900:
+        return tuple(numbers[:6])
+    if len(numbers) == 4 and numbers[0] >= 1900:
+        year, month, start_day, end_day = numbers
+        return year, month, start_day, year, month, end_day
+    if len(numbers) >= 3 and numbers[0] >= 1900:
+        return tuple(numbers[:3])
+    if len(numbers) >= 3 and numbers[2] >= 1900:
+        first, second, year = numbers[:3]
+        if first > 12:
+            return year, second, first
+        return year, first, second
+    return tuple(numbers)
 
 
 def _compare_transfer_formula(form: dict[str, Any], cell_data: Any) -> list[dict[str, Any]]:
@@ -566,7 +881,7 @@ def _parse_linear_formula(value: Any) -> tuple[float, float] | None:
     text = str(value or "").strip()
     if not text:
         return None
-    match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*\*?\s*[xXｘＸ]", text)
+    match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*\*?\s*\(?\s*[xXｘＸ]\s*\)?", text)
     if not match:
         return None
     slope = float(match.group(1))
