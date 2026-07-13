@@ -27,4 +27,3 @@ export const executeScheduledTask = (store, task) => (
 export const deleteScheduledTask = (store, task) => (
   store.deleteTask(requireTaskId(task))
 )
-

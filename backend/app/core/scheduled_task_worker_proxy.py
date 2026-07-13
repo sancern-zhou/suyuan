@@ -100,4 +100,3 @@ class ScheduledTaskWorkerProxyMiddleware:
             media_type=worker_response.headers.get("content-type"),
         )
         await response(scope, receive, send)
-
