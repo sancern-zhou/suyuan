@@ -4,24 +4,51 @@
 """
 import structlog
 import asyncio
+from datetime import datetime
 from typing import Optional
 
-from .models import ScheduledTask
-from .storage import TaskStorage, ExecutionStorage
+from pydantic import BaseModel, Field
+
+from .models import (
+    ExecutionStatus,
+    ScheduledTask,
+    TaskEvent,
+    TaskExecution,
+    TriggerType,
+)
+from .storage import EventClaimStorage, TaskStorage, ExecutionStorage
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
+from .event_delivery import EventTaskDelivery
+from .event_output import parse_event_task_output
 from .event_bus import get_event_bus  # ✅ 导入EventBus
 
 logger = structlog.get_logger()
 
 
+class EventDispatchResult(BaseModel):
+    matched_task_ids: list[str] = Field(default_factory=list)
+    accepted_task_ids: list[str] = Field(default_factory=list)
+    duplicate_task_ids: list[str] = Field(default_factory=list)
+    execution_ids: list[str] = Field(default_factory=list)
+
+
 class ScheduledTaskService:
     """定时任务服务"""
 
-    def __init__(self, agent_factory: Optional[callable] = None):
+    def __init__(
+        self,
+        agent_factory: Optional[callable] = None,
+        task_storage: TaskStorage | None = None,
+        execution_storage: ExecutionStorage | None = None,
+        claim_storage: EventClaimStorage | None = None,
+        event_delivery: EventTaskDelivery | None = None,
+    ):
         # 初始化存储层
-        self.task_storage = TaskStorage()
-        self.execution_storage = ExecutionStorage()
+        self.task_storage = task_storage or TaskStorage()
+        self.execution_storage = execution_storage or ExecutionStorage()
+        self.claim_storage = claim_storage or EventClaimStorage()
+        self.event_delivery = event_delivery or EventTaskDelivery()
 
         # 初始化执行器
         self.executor = ScheduledTaskExecutor(
@@ -38,6 +65,7 @@ class ScheduledTaskService:
         self.event_bus = get_event_bus()  # ✅ 获取EventBus实例
 
         self._started = False
+        self._event_tasks: set[asyncio.Task] = set()
 
     def _emit_event_background(self, coro):
         """在后台运行异步事件发送（不阻塞）"""
@@ -79,6 +107,18 @@ class ScheduledTaskService:
         self.scheduler.stop()
         self._started = False
         logger.info("ScheduledTaskService stopped")
+
+    async def stop_async(self):
+        """Stop time scheduling and wait for tracked event executions."""
+        self.stop()
+        if self._event_tasks:
+            await asyncio.gather(*list(self._event_tasks), return_exceptions=True)
+
+    def _track_event_task(self, coroutine) -> asyncio.Task:
+        task = asyncio.create_task(coroutine)
+        self._event_tasks.add(task)
+        task.add_done_callback(self._event_tasks.discard)
+        return task
 
     def create_task(self, task: ScheduledTask) -> ScheduledTask:
         """创建任务"""
@@ -199,6 +239,204 @@ class ScheduledTaskService:
 
         return execution
 
+    async def publish_event(
+        self,
+        event: TaskEvent,
+        *,
+        wait: bool = False,
+        force_retry: bool = False,
+    ) -> EventDispatchResult:
+        """Match and execute enabled event tasks exactly once per event."""
+        event = TaskEvent.model_validate(event)
+        matching_tasks = [
+            task
+            for task in self.task_storage.get_enabled_tasks()
+            if task.trigger_type == TriggerType.EVENT
+            and task.event_type == event.event_type
+            and event.matches(task.event_filters)
+        ]
+        result = EventDispatchResult(
+            matched_task_ids=[task.task_id for task in matching_tasks]
+        )
+
+        for task in matching_tasks:
+            existing = self.claim_storage.get(task.task_id, event.event_id)
+            if existing and force_retry and existing.status == "failed":
+                claim = self.claim_storage.retry_failed(task.task_id, event.event_id)
+            elif existing:
+                result.duplicate_task_ids.append(task.task_id)
+                continue
+            else:
+                claim = self.claim_storage.try_claim(task.task_id, event)
+                if claim is None:
+                    result.duplicate_task_ids.append(task.task_id)
+                    continue
+
+            result.accepted_task_ids.append(task.task_id)
+            coroutine = self._execute_event_task(task, event, claim.claim_id)
+            if wait:
+                execution = await coroutine
+                result.execution_ids.append(execution.execution_id)
+            else:
+                self._track_event_task(coroutine)
+
+        return result
+
+    def _create_failed_event_execution(
+        self,
+        task: ScheduledTask,
+        event: TaskEvent,
+        error: str,
+    ) -> TaskExecution:
+        now = datetime.now()
+        execution = TaskExecution(
+            execution_id=self.executor._generate_execution_id(task.task_id),
+            task_id=task.task_id,
+            task_name=task.name,
+            session_id=self.executor._generate_session_id(task.task_id),
+            status=ExecutionStatus.FAILED,
+            started_at=now,
+            completed_at=now,
+            duration_seconds=0,
+            total_steps=len(task.steps),
+            trigger_type="event",
+            event_id=event.event_id,
+            event_type=event.event_type,
+            event_attributes=event.attributes,
+            error_message=error,
+        )
+        self.execution_storage.create(execution)
+        return execution
+
+    async def _execute_event_task(
+        self,
+        task: ScheduledTask,
+        event: TaskEvent,
+        claim_id: str,
+    ) -> TaskExecution:
+        self.claim_storage.mark_status(claim_id, "running")
+        execution: TaskExecution | None = None
+        try:
+            recipients: list[dict[str, str]] = []
+            if task.broadcast_enabled:
+                recipients = await self.event_delivery.resolve_recipients(
+                    task.target_user_ids
+                )
+                if not recipients:
+                    execution = self._create_failed_event_execution(
+                        task,
+                        event,
+                        "no active bound WeChat recipients",
+                    )
+                    self.task_storage.update_run_stats(task.task_id, success=False)
+                    self.claim_storage.mark_status(
+                        claim_id,
+                        "failed",
+                        execution_id=execution.execution_id,
+                    )
+                    return execution
+
+            execution = await self.executor.execute_task(
+                task,
+                event=event,
+                update_stats=False,
+            )
+            self.claim_storage.mark_status(
+                claim_id,
+                "running",
+                execution_id=execution.execution_id,
+            )
+            if execution.status != ExecutionStatus.SUCCESS:
+                self.task_storage.update_run_stats(task.task_id, success=False)
+                self.claim_storage.mark_status(claim_id, "failed")
+                return execution
+
+            if task.broadcast_enabled:
+                response = execution.steps[-1].agent_response if execution.steps else ""
+                output = parse_event_task_output(response or "")
+                if not output.success:
+                    raise ValueError(output.error or "event Agent returned failure")
+                execution.delivery_results = await self.event_delivery.deliver(
+                    task=task,
+                    event=event,
+                    execution=execution,
+                    output=output,
+                    recipients=recipients,
+                )
+                if execution.delivery_results and not any(
+                    row.get("sent") for row in execution.delivery_results
+                ):
+                    raise ValueError("event broadcast failed for every recipient")
+                self.execution_storage.update(execution)
+
+            self.task_storage.update_run_stats(task.task_id, success=True)
+            self.claim_storage.mark_status(claim_id, "succeeded")
+            return execution
+        except Exception as exc:
+            logger.error(
+                "event_task_execution_failed",
+                task_id=task.task_id,
+                event_id=event.event_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            if execution is None:
+                execution = self._create_failed_event_execution(task, event, str(exc))
+            else:
+                execution.status = ExecutionStatus.FAILED
+                execution.error_message = str(exc)
+                self.execution_storage.update(execution)
+            self.task_storage.update_run_stats(task.task_id, success=False)
+            self.claim_storage.mark_status(
+                claim_id,
+                "failed",
+                execution_id=execution.execution_id,
+            )
+            return execution
+
+    async def retry_failed_delivery(self, execution_id: str) -> dict:
+        """Retry only failed recipients using the stored Agent result."""
+        execution = self.execution_storage.get(execution_id)
+        if not execution:
+            raise ValueError(f"Execution {execution_id} not found")
+        task = self.task_storage.get(execution.task_id)
+        if not task or not execution.event_id:
+            raise ValueError("Execution is not an event task delivery")
+        claim = self.claim_storage.get(task.task_id, execution.event_id)
+        if not claim:
+            raise ValueError("Event claim not found")
+
+        failed_user_ids = [
+            row.get("user_id")
+            for row in execution.delivery_results
+            if not row.get("sent") and row.get("user_id")
+        ]
+        if not failed_user_ids:
+            return {"success": True, "retried_user_ids": [], "delivery_results": []}
+
+        recipients = await self.event_delivery.resolve_recipients(failed_user_ids)
+        event = TaskEvent.model_validate(claim.event_snapshot)
+        response = execution.steps[-1].agent_response if execution.steps else ""
+        output = parse_event_task_output(response or "")
+        retried = await self.event_delivery.deliver(
+            task=task,
+            event=event,
+            execution=execution,
+            output=output,
+            recipients=recipients,
+        )
+        retried_by_user = {row.get("user_id"): row for row in retried}
+        execution.delivery_results = [
+            retried_by_user.get(row.get("user_id"), row)
+            for row in execution.delivery_results
+        ]
+        self.execution_storage.update(execution)
+        return {
+            "success": all(row.get("sent") for row in retried),
+            "retried_user_ids": failed_user_ids,
+            "delivery_results": retried,
+        }
+
     def get_execution(self, execution_id: str):
         """获取执行记录"""
         return self.execution_storage.get(execution_id)
@@ -258,3 +496,9 @@ def stop_service():
     """停止服务"""
     service = get_scheduled_task_service()
     service.stop()
+
+
+async def stop_service_async():
+    """Stop scheduling and wait for in-flight event tasks."""
+    service = get_scheduled_task_service()
+    await service.stop_async()

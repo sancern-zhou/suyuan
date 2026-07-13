@@ -37,6 +37,7 @@ class ScheduledTaskExecutor:
         self,
         task: ScheduledTask,
         event: TaskEvent | None = None,
+        update_stats: bool = True,
     ) -> TaskExecution:
         """执行任务"""
         # 为整个任务创建统一的 session_id（保持所有步骤的上下文连续）
@@ -124,11 +125,12 @@ class ScheduledTaskExecutor:
             self.execution_storage.update(execution)
 
             # 更新任务统计
-            self.task_storage.update_run_stats(
-                task_id=task.task_id,
-                success=(execution.status == ExecutionStatus.SUCCESS),
-                next_run_at=None  # 由调度器更新
-            )
+            if update_stats:
+                self.task_storage.update_run_stats(
+                    task_id=task.task_id,
+                    success=(execution.status == ExecutionStatus.SUCCESS),
+                    next_run_at=None  # 由调度器更新
+                )
 
             logger.info(
                 f"Execution completed: {execution.execution_id}, "

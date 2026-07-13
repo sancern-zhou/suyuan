@@ -10,7 +10,8 @@ from .service import (
     get_scheduled_task_service,
     init_service,
     start_service,
-    stop_service
+    stop_service,
+    stop_service_async,
 )
 from .models import (
     ScheduledTask,
@@ -28,6 +29,7 @@ __all__ = [
     "init_service",
     "start_service",
     "stop_service",
+    "stop_service_async",
     "ScheduledTask",
     "TaskStep",
     "ScheduleType",
