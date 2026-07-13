@@ -13,6 +13,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from app.services.ops_audit.config import load_semantic_review_profiles
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
 from app.services.ops_audit.semantic.ocr_adapter import extract_attachment_json
@@ -53,6 +54,9 @@ def build_multipoint_curve_visual_tasks(
 ) -> list[dict[str, Any]]:
     """Build one visual-review task for each quarterly gas multipoint form."""
 
+    enabled_rule_ids = load_semantic_review_profiles().get("flow_visual_enabled_rule_ids", [])
+    if RULE_ID not in {str(rule_id) for rule_id in enabled_rule_ids}:
+        return []
     items = _attachment_items(attachments, wo_commonfiles)
     tasks = []
     seen_forms: set[tuple[Any, ...]] = set()
@@ -220,6 +224,7 @@ def _review_candidate(task: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         task="multipoint_curve_gradient_review",
         prompt=_review_prompt(task, item),
     )
+    model_result_path = _persist_model_result(evidence["attachment_local_path"], result)
     if result.get("status") != "success":
         return {
             **_insufficient_result(
@@ -229,6 +234,7 @@ def _review_candidate(task: dict[str, Any], item: dict[str, Any]) -> dict[str, A
             **evidence,
             "model_status": result.get("status"),
             "model_error": result.get("error"),
+            "model_result_path": model_result_path,
         }
     data = result.get("data")
     normalized = _normalize_model_result(data)
@@ -237,6 +243,7 @@ def _review_candidate(task: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         **evidence,
         "model_status": result.get("status"),
         "model_text": result.get("text"),
+        "model_result_path": model_result_path,
     }
 
 
@@ -346,6 +353,16 @@ def _relative_source_url(source: str) -> str:
     return urljoin(base_url.rstrip("/") + "/", source.lstrip("/"))
 
 
+def _persist_model_result(attachment_local_path: str, result: dict[str, Any]) -> str:
+    attachment_path = Path(attachment_local_path)
+    result_path = attachment_path.with_suffix(f"{attachment_path.suffix}.review.json")
+    result_path.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return str(result_path.resolve())
+
+
 def _attachment_evidence(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "attachment_filename": item.get("filename"),
@@ -401,6 +418,7 @@ def _add_review_issue(task: dict[str, Any], result: dict[str, Any], issues: list
         "attachment_local_path": result.get("attachment_local_path"),
         "attachment_original_path": result.get("attachment_original_path"),
         "attachment_url": result.get("attachment_url"),
+        "model_result_path": result.get("model_result_path"),
         "reviewed_images": result.get("reviewed_images", []),
     }
     add_issue(
