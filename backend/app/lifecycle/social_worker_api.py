@@ -14,6 +14,7 @@ from app.api.social_account_routes import router as social_account_router
 from app.api.social_account_routes import set_channel_manager_override
 from app.api.fetcher_worker_routes import router as fetcher_worker_router
 from app.api.scheduled_task_routes import router as scheduled_task_router
+from app.api.social_broadcast_worker_routes import router as social_broadcast_worker_router
 from config.settings import settings
 
 logger = structlog.get_logger()
@@ -31,6 +32,11 @@ def create_social_worker_api_app(
 
     @app.middleware("http")
     async def require_internal_token(request: Request, call_next):
+        if request.url.path == "/internal/social/broadcast" and not internal_token:
+            return JSONResponse(
+                {"detail": "Social worker token is not configured"},
+                status_code=503,
+            )
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
         return await call_next(request)
@@ -38,6 +44,7 @@ def create_social_worker_api_app(
     app.include_router(social_account_router)
     app.include_router(fetcher_worker_router)
     app.include_router(scheduled_task_router)
+    app.include_router(social_broadcast_worker_router)
     return app
 
 
