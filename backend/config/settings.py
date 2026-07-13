@@ -342,7 +342,7 @@ class Settings(BaseSettings):
         description="Qwen VL OpenAI-compatible API base URL"
     )
     qwen_vl_model: str = Field(default="qwen-vl-ocr", description="Qwen OCR model name")
-    qwen_vision_model: str = Field(default="qwen-vl-max", description="Qwen model for visual understanding tasks")
+    qwen_vision_model: str = Field(default="qwen3.7-plus", description="Qwen model for visual understanding tasks")
     mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
     mimo_vl_base_url: Optional[str] = Field(
         default=None,

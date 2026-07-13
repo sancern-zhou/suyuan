@@ -2,6 +2,7 @@ import json
 
 from app.services.ops_audit.rules import multipoint_curve_visual_rules as rules
 from app.services import ops_work_order_audit_engine as audit_engine
+from app.services.ops_audit.semantic import ocr_adapter
 from app.services.ops_audit.config import (
     load_rule_catalog,
     load_scoring_config,
@@ -332,3 +333,21 @@ def test_multipoint_review_rule_is_enabled_cataloged_and_not_hard_error():
     assert review_stage_for_rule(rules.RULE_ID) == "manual_visual_review"
     assert rules.RULE_ID not in scoring["hard_error_rules"]
     assert rules.RULE_ID not in scoring["critical_hard_error_rules"]
+
+
+def test_flow_visual_defaults_to_qwen37_plus_not_ocr(monkeypatch):
+    monkeypatch.delenv("QWEN_VISION_MODEL", raising=False)
+    monkeypatch.delenv("OPS_AUDIT_FLOW_VISUAL_QWEN_MODEL", raising=False)
+    monkeypatch.setattr(ocr_adapter.settings, "qwen_vision_model", "")
+    monkeypatch.setattr(ocr_adapter.settings, "qwen_vl_model", "qwen-vl-ocr")
+
+    assert ocr_adapter._resolve_qwen_model("flow_visual") == "qwen3.7-plus"
+
+
+def test_flow_visual_uses_longer_configurable_timeout(monkeypatch):
+    monkeypatch.delenv("OPS_AUDIT_FLOW_VISUAL_TIMEOUT_SECONDS", raising=False)
+    assert ocr_adapter._request_timeout_seconds("flow_visual") == 90
+    assert ocr_adapter._request_timeout_seconds("document") == 30
+
+    monkeypatch.setenv("OPS_AUDIT_FLOW_VISUAL_TIMEOUT_SECONDS", "120")
+    assert ocr_adapter._request_timeout_seconds("flow_visual") == 120
