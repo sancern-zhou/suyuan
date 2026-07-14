@@ -1,9 +1,9 @@
 """
 Application settings and configuration management.
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, model_validator
 import yaml
 from pathlib import Path
 
@@ -102,6 +102,128 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    # Company Gateway Authentication
+    auth_mode: Literal["company", "mock"] = Field(
+        default="company",
+        description="Authentication mode; mock is restricted to non-production development",
+    )
+    auth_sys_code: str = Field(default="SUYUAN", description="Company system code")
+    auth_service_url: str = Field(
+        default="",
+        description="Internal or gateway base URL for the company authentication service",
+    )
+    auth_login_path: str = Field(
+        default="/auth/token/authentication",
+        description="Company username/password authentication path",
+    )
+    auth_current_user_path: str = Field(
+        default="/auth/account/getCurrentUser",
+        description="Company current-user lookup path",
+    )
+    auth_logout_path: str = Field(
+        default="/auth/token/logout",
+        description="Company logout path",
+    )
+    auth_admin_role_codes: str = Field(
+        default="",
+        description="Comma-separated company role codes treated as Suyuan administrators",
+    )
+    auth_identity_cache_ttl_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        description="Maximum Redis lifetime for resolved company identities",
+    )
+    auth_identity_cache_key_prefix: str = Field(
+        default="suyuan:auth:",
+        description="Redis prefix for authentication state",
+    )
+    auth_ws_ticket_ttl_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        description="Single-use WebSocket ticket lifetime",
+    )
+    auth_share_grant_ttl_seconds: int = Field(
+        default=600,
+        ge=30,
+        le=86400,
+        description="Signed anonymous share grant lifetime",
+    )
+    auth_docs_public: bool = Field(
+        default=False,
+        description="Allow anonymous Swagger/OpenAPI access",
+    )
+    auth_mock_enabled: bool = Field(
+        default=False,
+        description="Explicit non-production switch for a fixed mock identity",
+    )
+    auth_mock_user_id: str = Field(default="local-developer")
+    auth_mock_username: str = Field(default="local-developer")
+    auth_mock_display_name: str = Field(default="本地开发用户")
+    auth_mock_role_codes: str = Field(default="")
+
+    # Gateway routing and trust boundary
+    gateway_api_prefix: str = Field(default="/api/suyuan")
+    trusted_gateway_networks: str = Field(
+        default="127.0.0.1/32,::1/128,10.10.204.0/24",
+        description="Immediate socket-peer networks allowed to call company-auth mode",
+    )
+
+    # Nacos service registration
+    nacos_server_addresses: str = Field(default="http://10.10.204.80:8848")
+    nacos_namespace: str = Field(default="normcraft-ai")
+    nacos_group: str = Field(default="DEFAULT_GROUP")
+    nacos_service_name: str = Field(default="suyuan-agent")
+    nacos_cluster_name: str = Field(default="DEFAULT")
+    nacos_register_enabled: bool = Field(default=True)
+    nacos_instance_enabled: bool = Field(default=True)
+    nacos_instance_ip: str = Field(default="127.0.0.1")
+    nacos_instance_port: int = Field(default=8000, ge=1, le=65535)
+    nacos_username: str = Field(default="nacos")
+    nacos_password: str = Field(default="")
+    nacos_access_key: str = Field(default="")
+    nacos_secret_key: str = Field(default="")
+
+    @staticmethod
+    def _split_unique_csv(value: str) -> List[str]:
+        return list(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+
+    @property
+    def auth_admin_role_codes_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_admin_role_codes))
+
+    @property
+    def auth_mock_role_codes_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_mock_role_codes))
+
+    @property
+    def trusted_gateway_networks_list(self) -> List[str]:
+        return self._split_unique_csv(self.trusted_gateway_networks)
+
+    @property
+    def nacos_server_addresses_list(self) -> List[str]:
+        return self._split_unique_csv(self.nacos_server_addresses)
+
+    @model_validator(mode="after")
+    def validate_authentication_safety(self):
+        if self.environment.strip().lower() != "production":
+            return self
+
+        if self.auth_mode == "mock" or self.auth_mock_enabled:
+            raise ValueError("production cannot enable mock authentication")
+        if not self.nacos_register_enabled:
+            raise ValueError("production requires Nacos registration")
+        if not self.auth_service_url.strip():
+            raise ValueError("production requires AUTH_SERVICE_URL")
+        if not (self.signed_media_secret or "").strip():
+            raise ValueError("production requires a share-signing secret")
+
+        networks = set(self.trusted_gateway_networks_list)
+        if not networks or networks.intersection({"*", "0.0.0.0/0", "::/0"}):
+            raise ValueError("production requires a restricted trusted gateway network")
+        return self
 
     # External API Endpoints
     station_api_base_url: str = Field(

@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 // ReAct Agent API客户端
 // 处理与ReAct Agent的SSE流式通信
 
@@ -118,7 +119,7 @@ class ReactAgentAPI {
     this.controller = controller
 
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -199,7 +200,7 @@ class ReactAgentAPI {
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -223,7 +224,7 @@ class ReactAgentAPI {
     const url = `${API_BASE_URL}/agent/tools`
 
     try {
-      const response = await fetch(url)
+      const response = await authFetch(url)
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
@@ -238,7 +239,7 @@ class ReactAgentAPI {
 
   async steer(sessionId, message) {
     const url = `${API_BASE_URL}/agent/${encodeURIComponent(sessionId)}/steer`
-    const response = await fetch(url, {
+    const response = await authFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -264,7 +265,7 @@ class ReactAgentAPI {
       if (this.controller === controller) {
         this.controller = null
       }
-      const backendCancelPromise = fetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
+      const backendCancelPromise = authFetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
         method: 'POST'
       }).catch((error) => {
         console.warn('Failed to cancel backend analysis:', error)

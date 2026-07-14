@@ -36,14 +36,9 @@
           </select>
         </div>
 
-        <div class="form-group" v-if="formData.kb_type === 'public'">
-          <label>公共知识库权限</label>
-          <label class="checkbox-inline">
-            <input type="checkbox" v-model="adminConfirm" />
-            以管理员身份创建（自动携带 X-Is-Admin: true）
-          </label>
-          <p class="form-hint danger">提醒：公共知识库必须以管理员身份创建，否则会返回 403。</p>
-        </div>
+        <p v-if="formData.kb_type === 'public'" class="form-hint">
+          公共知识库仅限管理员创建，权限以公司统一身份为准。
+        </p>
 
         <div class="form-group">
           <label>分块策略</label>
@@ -132,7 +127,6 @@ const formData = reactive({
   chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
 })
 
-const adminConfirm = ref(localStorage.getItem('isAdmin') === 'true')
 const errors = reactive({})
 const isSubmitting = ref(false)
 
@@ -148,7 +142,6 @@ watch(() => props.visible, (visible) => {
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
     })
-    adminConfirm.value = localStorage.getItem('isAdmin') === 'true'
     Object.keys(errors).forEach(key => delete errors[key])
 
     // 应用初始数据
@@ -220,12 +213,6 @@ const getStrategyDescription = (strategy) => {
 
 // 处理确认
 const handleConfirm = async () => {
-  // 公共知识库需要管理员确认
-  if (formData.kb_type === 'public' && !adminConfirm.value) {
-    alert('创建公共知识库需要管理员权限，请勾选确认。')
-    return
-  }
-
   // 验证表单
   if (!validateForm()) {
     return
@@ -234,18 +221,8 @@ const handleConfirm = async () => {
   isSubmitting.value = true
 
   try {
-    // 同步管理员标识到 localStorage
-    if (formData.kb_type === 'public' && adminConfirm.value) {
-      localStorage.setItem('isAdmin', 'true')
-    } else if (!adminConfirm.value) {
-      localStorage.removeItem('isAdmin')
-    }
-
     // 发送确认事件
-    emit('confirm', {
-      ...formData,
-      adminConfirm: adminConfirm.value
-    })
+    emit('confirm', { ...formData })
 
     handleClose()
   } catch (error) {

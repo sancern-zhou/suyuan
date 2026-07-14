@@ -12,6 +12,7 @@ from urllib.parse import quote, urlencode
 import structlog
 
 from config.settings import settings
+from app.auth.share_access import external_api_path
 
 logger = structlog.get_logger(__name__)
 
@@ -25,11 +26,13 @@ class SignedMediaService:
         secret: str,
         base_url: str,
         ttl_seconds: int = 600,
+        gateway_api_prefix: str = "/api",
     ) -> None:
         self.media_roots = [Path(root).resolve() for root in media_roots]
         self.secret = secret
         self.base_url = base_url.rstrip("/")
         self.ttl_seconds = ttl_seconds
+        self.gateway_api_prefix = gateway_api_prefix
 
     def create_url(self, file_path: str | Path) -> Optional[str]:
         path = Path(file_path).resolve()
@@ -45,7 +48,10 @@ class SignedMediaService:
         signature = self._sign(relative_path, expires)
         encoded_path = quote(relative_path, safe="/")
         query = urlencode({"expires": expires, "signature": signature})
-        return f"{self.base_url}/api/signed-media/{encoded_path}?{query}"
+        path = external_api_path(
+            f"/api/signed-media/{encoded_path}", self.gateway_api_prefix
+        )
+        return f"{self.base_url}{path}?{query}"
 
     def resolve(self, relative_path: str, expires: int, signature: str) -> Path:
         if int(expires) < int(time.time()):
@@ -101,5 +107,6 @@ def get_signed_media_service() -> SignedMediaService:
             secret=secret,
             base_url=base_url,
             ttl_seconds=settings.signed_media_ttl_seconds,
+            gateway_api_prefix=settings.gateway_api_prefix,
         )
     return _service

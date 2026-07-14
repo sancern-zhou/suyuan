@@ -7,10 +7,17 @@ import SkillsManagementView from '@/views/SkillsManagementView.vue'
 import SocialAccountsView from '@/views/SocialAccountsView.vue'
 import ExpertDeliberationView from '@/views/ExpertDeliberationView.vue'
 import DemoShowcase from '@/views/DemoShowcase.vue'
+import LoginView from '@/views/LoginView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: LoginView,
+      meta: { public: true, title: '登录' }
+    },
     {
       path: '/',
       name: 'analysis',

@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test:auth": "node --test src/auth/*.test.mjs",
     "test:event-tasks": "node --test src/components/management/*.test.js"
   },
   "dependencies": {
@@ -16,11 +17,14 @@
     "axios": "^1.13.6",
     "echarts": "^5.5.1",
     "echarts-gl": "^2.0.9",
+    "gm-crypt": "^0.0.2",
     "html2canvas": "^1.4.1",
     "katex": "^0.16.9",
     "markdown-it": "^14.1.0",
     "markdown-it-multimd-table": "^4.2.3",
     "pinia": "^2.2.4",
+    "sm-crypto": "^0.3.11",
+    "uuid": "^9.0.1",
     "vue": "^3.5.12",
     "vue-router": "^4.4.5",
     "xlsx": "^0.18.5"

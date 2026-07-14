@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 工具/技能管理 API
  */
@@ -8,7 +9,7 @@ const API_BASE = '/api'
  * @returns {Promise<Object>}
  */
 export async function getToolsList() {
-  const response = await fetch(`${API_BASE}/tools`)
+  const response = await authFetch(`${API_BASE}/tools`)
   if (!response.ok) {
     throw new Error(`获取工具列表失败: ${response.statusText}`)
   }
@@ -21,7 +22,7 @@ export async function getToolsList() {
  * @returns {Promise<Object>}
  */
 export async function getToolDetail(toolName) {
-  const response = await fetch(`${API_BASE}/tools/${encodeURIComponent(toolName)}`)
+  const response = await authFetch(`${API_BASE}/tools/${encodeURIComponent(toolName)}`)
   if (!response.ok) {
     throw new Error(`获取工具详情失败: ${response.statusText}`)
   }
@@ -35,7 +36,7 @@ export async function getToolDetail(toolName) {
  * @returns {Promise<Object>}
  */
 export async function updateToolStatus(toolName, enabled) {
-  const response = await fetch(`${API_BASE}/tools/${encodeURIComponent(toolName)}`, {
+  const response = await authFetch(`${API_BASE}/tools/${encodeURIComponent(toolName)}`, {
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json'
@@ -53,7 +54,7 @@ export async function updateToolStatus(toolName, enabled) {
  * @returns {Promise<Object>}
  */
 export async function getToolsCategories() {
-  const response = await fetch(`${API_BASE}/tools/categories`)
+  const response = await authFetch(`${API_BASE}/tools/categories`)
   if (!response.ok) {
     throw new Error(`获取工具类别失败: ${response.statusText}`)
   }

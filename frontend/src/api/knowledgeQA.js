@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 知识问答API模块
  *
@@ -39,19 +40,12 @@ export async function knowledgeQAStream(query, options = {}, onMessage, onError,
     use_reranker
   }
 
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-User-Id': userId
-  }
-
   return new Promise((resolve, reject) => {
     // 使用 fetch + ReadableStream 实现 POST 请求的 SSE
-    fetch(`${BASE_URL}/stream`, {
+    authFetch(`${BASE_URL}/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-User-Id': userId
       },
       body: JSON.stringify(requestBody)
     })
@@ -152,13 +146,11 @@ export async function knowledgeQA(query, options = {}) {
     use_reranker
   }
 
-  const userId = localStorage.getItem('userId') || 'anonymous'
 
-  const response = await fetch(BASE_URL, {
+  const response = await authFetch(BASE_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-User-Id': userId
     },
     body: JSON.stringify(requestBody)
   })
@@ -175,7 +167,7 @@ export async function knowledgeQA(query, options = {}) {
  * 知识问答健康检查
  */
 export async function knowledgeQAHealth() {
-  const response = await fetch(`${BASE_URL}/health`)
+  const response = await authFetch(`${BASE_URL}/health`)
 
   if (!response.ok) {
     throw new Error('Knowledge QA service unhealthy')
@@ -190,10 +182,8 @@ export async function knowledgeQAHealth() {
  * @returns {Promise<Object>} 对话历史
  */
 export async function getConversationHistory(sessionId) {
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  const response = await fetch(`${BASE_URL}/history/${sessionId}`, {
+  const response = await authFetch(`${BASE_URL}/history/${sessionId}`, {
     headers: {
-      'X-User-Id': userId
     }
   })
 
@@ -212,10 +202,8 @@ export async function getConversationHistory(sessionId) {
  * @returns {Promise<Object>} 最近轮次
  */
 export async function getRecentTurns(sessionId, limit = 10) {
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  const response = await fetch(`${BASE_URL}/history/${sessionId}/recent?limit=${limit}`, {
+  const response = await authFetch(`${BASE_URL}/history/${sessionId}/recent?limit=${limit}`, {
     headers: {
-      'X-User-Id': userId
     }
   })
 
@@ -232,11 +220,9 @@ export async function getRecentTurns(sessionId, limit = 10) {
  * @returns {Promise<Object>} 删除结果
  */
 export async function deleteConversationSession(sessionId) {
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  const response = await fetch(`${BASE_URL}/history/${sessionId}`, {
+  const response = await authFetch(`${BASE_URL}/history/${sessionId}`, {
     method: 'DELETE',
     headers: {
-      'X-User-Id': userId
     }
   })
 
@@ -253,11 +239,9 @@ export async function deleteConversationSession(sessionId) {
  * @returns {Promise<Object>} 归档结果
  */
 export async function archiveConversationSession(sessionId) {
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  const response = await fetch(`${BASE_URL}/history/${sessionId}/archive`, {
+  const response = await authFetch(`${BASE_URL}/history/${sessionId}/archive`, {
     method: 'POST',
     headers: {
-      'X-User-Id': userId
     }
   })
 
@@ -278,16 +262,14 @@ export async function archiveConversationSession(sessionId) {
  */
 export async function listUserSessions(options = {}) {
   const { status, limit = 20, offset = 0 } = options
-  const userId = localStorage.getItem('userId') || 'anonymous'
 
   const params = new URLSearchParams()
   if (status) params.append('status', status)
   params.append('limit', limit)
   params.append('offset', offset)
 
-  const response = await fetch(`${BASE_URL}/history/list?${params}`, {
+  const response = await authFetch(`${BASE_URL}/history/list?${params}`, {
     headers: {
-      'X-User-Id': userId
     }
   })
 

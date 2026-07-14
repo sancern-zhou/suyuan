@@ -130,6 +130,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
@@ -434,7 +435,7 @@ const handleChatAreaDrop = async (e) => {
 
 const handleOfficeEditSubmit = async (editData) => {
   try {
-    const response = await fetch('/api/office/apply-edit', {
+    const response = await authFetch('/api/office/apply-edit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -501,13 +502,6 @@ const handleMapEvent = (event) => {
 const handleKbCreateConfirm = async (formData) => {
   // 使用知识库composable的创建方法
   try {
-    // 同步管理员标识到 localStorage
-    if (formData.kb_type === 'public' && formData.adminConfirm) {
-      localStorage.setItem('isAdmin', 'true')
-    } else if (!formData.adminConfirm) {
-      localStorage.removeItem('isAdmin')
-    }
-
     await kbStore.createKnowledgeBase(formData)
     closeDialog('kbCreate')
   } catch (e) {
