@@ -6,11 +6,12 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import async_session, get_db
+from app.auth.dependencies import current_user_id, current_user_is_admin
 from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
 from app.knowledge_base.graph_build_service import GraphBuildService
 from app.knowledge_base.graph_models import (
@@ -231,7 +232,7 @@ async def _index_relation(db: AsyncSession, relation: KnowledgeGraphRelation) ->
 async def graph_status(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     kb = await _readable_kb(db, kb_id, user_id)
     entity_count = await db.scalar(
@@ -267,8 +268,8 @@ async def create_graph_build(
     kb_id: str,
     request: GraphBuildCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     kb = await _manageable_kb(db, kb_id, user_id, is_admin)
     if kb.scene_status != "ready":
@@ -288,7 +289,7 @@ async def get_graph_build(
     kb_id: str,
     task_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     task = await GraphBuildService(async_session).get_status(kb_id=kb_id, task_id=task_id)
@@ -304,8 +305,8 @@ async def cancel_graph_build(
     kb_id: str,
     task_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     service = GraphBuildService(async_session)
@@ -325,8 +326,8 @@ async def retry_graph_build(
     kb_id: str,
     task_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     service = GraphBuildService(async_session)
@@ -345,8 +346,8 @@ async def retry_graph_build(
 async def recover_expired_graph_builds(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     service = GraphBuildService(async_session)
@@ -364,7 +365,7 @@ async def recover_expired_graph_builds(
 async def get_graph_schema(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     kb = await _readable_kb(db, kb_id, user_id)
     return {
@@ -379,8 +380,8 @@ async def update_graph_schema(
     kb_id: str,
     request: GraphSchemaUpdate,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     kb = await _manageable_kb(db, kb_id, user_id, is_admin)
     if request.graph_enabled is not None:
@@ -397,7 +398,7 @@ async def query_graph(
     kb_id: str,
     request: GraphQueryRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     repository = KnowledgeGraphRepository(db)
@@ -429,7 +430,7 @@ async def get_graph_snapshot(
     snapshot_version: int | None = Query(default=None),
     page_size: int = Query(default=1000, ge=100, le=2000),
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     try:
@@ -461,7 +462,7 @@ async def list_entities(
     review_statuses: list[str] = Query(default=["candidate", "confirmed", "published"]),
     limit: int = Query(default=100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     entities = await KnowledgeGraphRepository(db).query_entities(
@@ -478,8 +479,8 @@ async def create_entity(
     kb_id: str,
     request: GraphEntityCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     normalized = KnowledgeGraphRepository.normalize_entity_name(
@@ -520,8 +521,8 @@ async def update_entity(
     entity_id: str,
     request: GraphEntityUpdate,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     entity = await db.get(KnowledgeGraphEntity, entity_id)
@@ -559,8 +560,8 @@ async def delete_entity(
     kb_id: str,
     entity_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     entity = await db.get(KnowledgeGraphEntity, entity_id)
@@ -577,7 +578,7 @@ async def list_entity_mentions(
     kb_id: str,
     entity_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     entity = await db.get(KnowledgeGraphEntity, entity_id)
@@ -618,7 +619,7 @@ async def list_relations(
     review_statuses: list[str] = Query(default=["candidate", "confirmed", "published"]),
     limit: int = Query(default=100, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     result = await db.execute(
@@ -637,8 +638,8 @@ async def create_relation(
     kb_id: str,
     request: GraphRelationCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     source = await db.get(KnowledgeGraphEntity, request.source_entity_id)
@@ -671,8 +672,8 @@ async def update_relation(
     relation_id: str,
     request: GraphRelationUpdate,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     relation = await db.get(KnowledgeGraphRelation, relation_id)
@@ -696,8 +697,8 @@ async def delete_relation(
     kb_id: str,
     relation_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     relation = await db.get(KnowledgeGraphRelation, relation_id)
@@ -714,7 +715,7 @@ async def list_relation_mentions(
     kb_id: str,
     relation_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
     relation = await db.get(KnowledgeGraphRelation, relation_id)
@@ -754,8 +755,8 @@ async def merge_entities(
     kb_id: str,
     request: GraphMergeRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     repository = KnowledgeGraphRepository(db)
@@ -785,8 +786,8 @@ async def merge_entities(
 async def retry_failed_graphs(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     documents = list(
@@ -810,8 +811,8 @@ async def retry_failed_graphs(
 async def reindex_graph(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     kb = await _manageable_kb(db, kb_id, user_id, is_admin)
     entities = list(
