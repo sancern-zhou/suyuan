@@ -10,11 +10,13 @@ import shutil
 import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Header
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.db.database import get_db
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 from app.knowledge_base.service import KnowledgeBaseService
 from app.knowledge_base.schemas import (
     KnowledgeBaseCreate,
@@ -59,14 +61,14 @@ def _build_content_disposition(filename: str) -> str:
         return f"attachment; filename*=UTF-8''{encoded}"
 
 
-def get_user_id(x_user_id: Optional[str] = Header(None)) -> Optional[str]:
-    """从请求头获取用户ID"""
-    return x_user_id
+def get_user_id(user: CurrentUser = Depends(require_current_user)) -> str:
+    """Return the gateway-resolved user ID."""
+    return user.id
 
 
-def get_is_admin(x_is_admin: Optional[str] = Header(None)) -> bool:
-    """从请求头获取管理员标识"""
-    return x_is_admin == "true"
+def get_is_admin(user: CurrentUser = Depends(require_current_user)) -> bool:
+    """Return only the server-derived administrator flag."""
+    return user.is_admin
 
 
 # ============ 知识库管理 ============

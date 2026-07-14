@@ -18,13 +18,15 @@ import asyncio
 import time
 from typing import Optional, List
 from collections import OrderedDict
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 from app.knowledge_base.conversation_store import ConversationStore, get_conversation_store
 from app.knowledge_base.models import ConversationSessionStatus
 
@@ -669,7 +671,8 @@ async def generate_streaming_answer(
 @router.post("/stream")
 async def knowledge_qa_stream(
     request: KnowledgeQARequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
 ):
     """
     知识问答流式接口（推荐使用）
@@ -690,8 +693,7 @@ async def knowledge_qa_stream(
     """
     start_time = time.time()
 
-    # 获取用户ID（从请求头）
-    user_id = None  # 实际应从请求头获取，如：x-user-id
+    user_id = user.id
 
     # 获取或创建会话
     conversation_store = await get_conversation_store(db)
@@ -776,7 +778,10 @@ async def knowledge_qa_stream(
 
 
 @router.post("", response_model=KnowledgeQAResponse)
-async def knowledge_qa_non_stream(request: KnowledgeQARequest):
+async def knowledge_qa_non_stream(
+    request: KnowledgeQARequest,
+    user: CurrentUser = Depends(require_current_user),
+):
     """
     知识问答非流式接口（简化版）
 
@@ -787,8 +792,7 @@ async def knowledge_qa_non_stream(request: KnowledgeQARequest):
     """
     start_time = time.time()
 
-    # 获取用户ID
-    user_id = None
+    user_id = user.id
 
     # 生成会话ID
     session_id = request.session_id or f"kqa_{int(time.time() * 1000)}"
@@ -817,7 +821,7 @@ async def knowledge_qa_non_stream(request: KnowledgeQARequest):
             max_tokens=4096
         )
 
-        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+        elapsed_ms = round((time.time() - start_time) * 1000)
 
         # 格式化来源
         sources = []
