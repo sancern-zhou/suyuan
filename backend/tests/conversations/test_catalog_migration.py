@@ -13,6 +13,7 @@ def test_catalog_migration_is_idempotent_and_backfills_required_sources():
     assert "FROM knowledge_conversation_sessions" in sql
     assert "'1', 'ScGuanLy', '超级管理员'" in sql
     assert "WHERE user_id IS NULL" in sql
+    assert "BTRIM(user_id) = ''" in sql
     assert "social_session_mappings" not in sql
 
 
