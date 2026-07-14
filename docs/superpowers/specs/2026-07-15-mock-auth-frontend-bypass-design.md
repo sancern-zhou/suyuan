@@ -11,13 +11,17 @@ Bearer Token，后端会为每个受保护请求注入固定开发用户。但�
 后端后，前端自动识别该模式、初始化固定开发用户并直接进入业务页面。公司认证模式
 的登录、会话恢复、退出和请求头行为保持不变。
 
+Mock 模式统一使用现有稳定用户 ID `local-developer`，并默认赋予管理员身份。所有
+开发人员和历史会话继续归属于同一个本地用户，避免因为自动生成用户或切换管理员
+账号造成会话列表、资源所有者和用户管理数据分叉。
+
 ## 范围
 
 包含：
 
 - 提供不含敏感信息的公开鉴权运行时配置接口。
 - 前端挂载路由守卫前加载运行时配置。
-- Mock 模式下建立仅存在于内存中的开发用户会话。
+- Mock 模式下建立仅存在于内存中的固定管理员会话。
 - 保持公司模式和生产环境的现有安全校验。
 - 为后端接口、前端会话和路由行为增加回归测试。
 
@@ -71,16 +75,22 @@ Mock 模式响应：
     "id": "local-developer",
     "userName": "local-developer",
     "name": "本地开发用户",
-    "roleCodes": [],
-    "isAdmin": false,
+    "roleCodes": ["SUYUAN_ADMIN"],
+    "isAdmin": true,
     "sysCode": "SUYUAN",
     "authSource": "mock"
   }
 }
 ```
 
-`roleCodes` 和 `isAdmin` 使用与后端 `AuthenticationService` 相同的配置和管理员
-角色交集规则生成，避免运行时配置展示的身份与业务后端实际注入身份不一致。
+Mock 模式的用户 ID 默认并持续使用 `local-developer`；不生成随机用户，也不因为
+浏览器或进程变化创建新身份。Mock 身份始终包含保留角色 `SUYUAN_ADMIN`，并设置
+`isAdmin=true`。`AUTH_MOCK_ROLE_CODES` 可以追加其他测试角色，但不能移除 Mock
+管理员身份。运行时配置与后端 `AuthenticationService` 复用同一个 Mock 用户构造
+逻辑，避免前端展示身份与业务后端实际注入身份不一致。
+
+`AUTH_MOCK_USER_ID` 仍保留为显式覆盖能力，但默认值不改。部署者只有在接受历史
+会话和资源归属切换到新用户的情况下才应覆盖它。
 
 接口不返回认证服务地址、Token、密钥、可信网段或其他部署配置。现有生产配置校验
 继续拒绝 `AUTH_MODE=mock` 或 `AUTH_MOCK_ENABLED=true`。
@@ -103,7 +113,8 @@ Mock 模式响应：
 
 - `company`：保持现有行为，Token 与用户从浏览器存储恢复，并通过公司接口校验。
 - `mock`：启动时清除遗留的公司会话存储，以免后续业务请求意外携带旧 Token；
-  `bootstrap()` 直接使用运行时配置中的 `mockUser`，不调用公司认证 API。
+  `bootstrap()` 直接使用运行时配置中的固定管理员 `mockUser`，不调用公司认证
+  API。
 - Mock 用户和 Mock 状态只保存在 Pinia/会话内存中，不写入 `localStorage`。
 - `isAuthenticated` 在公司模式要求 `token + user`，在 Mock 模式只要求有效的
   `mockUser`。
@@ -140,6 +151,8 @@ Mock 模式响应：
 
 - 公司模式只返回 `authMode` 与 `sysCode`。
 - Mock 模式返回与认证服务一致的固定用户、角色和管理员标志。
+- Mock 模式在未额外配置角色时仍返回用户 ID `local-developer`、角色
+  `SUYUAN_ADMIN` 和 `isAdmin=true`。
 - 运行时配置路径不需要 Bearer Token。
 - 响应不包含认证服务地址、Token 或密钥，并带有 `Cache-Control: no-store`。
 
@@ -167,6 +180,9 @@ cd /home/xckj/suyuan/backend
 
 - 开发环境只设置后端 `AUTH_MODE=mock`、`AUTH_MOCK_ENABLED=true` 并重启相关服务后，
   浏览器访问任意业务页面不显示登录页，也不请求公司登录或当前用户接口。
-- 业务后端收到的当前用户与 Mock 配置一致。
+- 业务后端收到的当前用户与 Mock 配置一致，默认用户 ID 为 `local-developer`，角色
+  包含 `SUYUAN_ADMIN` 且 `is_admin=true`。
+- 同一 Mock 环境重启或浏览器重新访问后仍使用相同用户 ID，已有会话和资源归属不
+  产生新的用户分支。
 - 切回 `AUTH_MODE=company` 后，现有公司登录流程恢复且无行为回归。
 - 生产环境无法启用 Mock 鉴权。
