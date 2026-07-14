@@ -63,6 +63,32 @@ async def test_qa_stream_stores_authenticated_user_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qa_stream_hides_foreign_session_as_not_found(monkeypatch):
+    from fastapi import HTTPException
+    from app.knowledge_base.conversation_store import ConversationAccessDenied
+    from app.routers import knowledge_qa
+
+    class Store:
+        async def get_or_create_session(self, **kwargs):
+            raise ConversationAccessDenied("foreign")
+
+    async def fake_store(db):
+        return Store()
+
+    monkeypatch.setattr(knowledge_qa, "get_conversation_store", fake_store)
+    user = CurrentUser(id="authenticated", username="u", display_name="U")
+
+    with pytest.raises(HTTPException) as exc:
+        await knowledge_qa.knowledge_qa_stream(
+            knowledge_qa.KnowledgeQARequest(query="问题", session_id="foreign"),
+            db=object(),
+            user=user,
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_non_stream_qa_search_uses_authenticated_user_id(monkeypatch):
     from app.routers import knowledge_qa
     from app.services.llm_service import llm_service
@@ -87,3 +113,61 @@ async def test_non_stream_qa_search_uses_authenticated_user_id(monkeypatch):
 
     assert response.answer == "回答"
     assert seen["user_id"] == "authenticated"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_history_requires_catalog_ownership():
+    from fastapi import HTTPException
+    from app.routers import knowledge_qa
+
+    class DenyingCatalog:
+        async def require_read(self, session_id, user):
+            raise HTTPException(status_code=404, detail="session_not_found")
+
+    user = CurrentUser(id="intruder", username="u", display_name="U")
+
+    with pytest.raises(HTTPException) as exc:
+        await knowledge_qa.get_conversation_history(
+            "owned-by-someone-else",
+            db=object(),
+            user=user,
+            catalog=DenyingCatalog(),
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_knowledge_history_list_ignores_client_user_id(monkeypatch):
+    from app.routers import knowledge_qa
+
+    seen = {}
+
+    class Store:
+        async def list_user_sessions(self, **kwargs):
+            seen.update(kwargs)
+            return []
+
+    async def fake_store(db):
+        return Store()
+
+    monkeypatch.setattr(knowledge_qa, "get_conversation_store", fake_store)
+    user = CurrentUser(id="authenticated", username="u", display_name="U")
+
+    response = await knowledge_qa.list_user_sessions(
+        user_id="forged-owner",
+        db=object(),
+        user=user,
+    )
+
+    assert response == {"sessions": [], "total": 0}
+    assert seen["user_id"] == "authenticated"
+
+
+def test_knowledge_history_static_list_route_precedes_dynamic_session_route():
+    from app.routers import knowledge_qa
+
+    paths = [route.path for route in knowledge_qa.router.routes]
+    assert paths.index("/api/knowledge-qa/history/list") < paths.index(
+        "/api/knowledge-qa/history/{session_id}"
+    )
