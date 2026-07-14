@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.services.ops_audit import rule_engine
+from app.services.ops_audit.final_issue_list import build_final_issue_list
+from app.services.ops_audit.rule_engine import run_rule_engine
 from app.services.ops_audit.visual_evidence import archive_visual_evidence
 
 
@@ -147,3 +150,100 @@ def test_archive_visual_evidence_records_failure_without_aborting(tmp_path: Path
     evidence = json.loads(audit["records"][0]["scoring_issues"][0]["evidence"])
     assert evidence["evidence_images"][0]["status"] == "failed"
     assert evidence["evidence_images"][0]["error"]
+
+
+def test_final_issue_list_exposes_archived_visual_evidence() -> None:
+    evidence_images = [
+        {
+            "source": "/WebFiles/photo.jpg",
+            "filename": "photo.jpg",
+            "status": "success",
+            "local_path": "/audit/visual_evidence/WO-1/RULE/photo.jpg",
+            "relative_path": "visual_evidence/WO-1/RULE/photo.jpg",
+        }
+    ]
+    evidence = {
+        "working_order_code": "WO-1",
+        "rf_table": "RF_TW_PmFlowCalibrate",
+        "vision_confidence": 0.95,
+        "comparisons": [
+            {
+                "field": "Prev_S",
+                "visual_value": 15.8,
+                "visual_unit": "L/min",
+                "form_value": 16.7,
+                "status": "mismatch",
+            }
+        ],
+        "evidence_images": evidence_images,
+    }
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-1",
+                "scoring_issues": [
+                    _visual_issue(
+                        "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+                        evidence,
+                    )
+                ],
+            }
+        ]
+    }
+
+    result = build_final_issue_list(audit)
+
+    assert result["items"][0]["evidence_images"] == evidence_images
+
+
+def test_rule_engine_persists_and_returns_visual_evidence_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    photo = tmp_path / "source.jpg"
+    photo.write_bytes(b"visual")
+    issue = _visual_issue(
+        "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+        {
+            "source": str(photo),
+            "needs_visual_review": True,
+            "vision_confidence": 0.95,
+            "comparisons": [
+                {
+                    "field": "Prev_S",
+                    "visual_value": 15.8,
+                    "visual_unit": "L/min",
+                    "form_value": 16.7,
+                    "status": "mismatch",
+                }
+            ],
+        },
+    )
+    audit = {
+        "audit_info": {"generated_at": "2026-07-14", "order_count": 1},
+        "summary": {},
+        "records": [
+            {
+                "working_order_code": "WO-ENGINE",
+                "scoring_issues": [issue],
+                "deterministic_issues": [issue],
+            }
+        ],
+    }
+    monkeypatch.setattr(rule_engine, "audit_dataset", lambda *args, **kwargs: audit)
+    monkeypatch.setattr(rule_engine, "build_semantic_candidates", lambda value: {"candidate_count": 0})
+    monkeypatch.setattr(rule_engine, "build_semantic_review_tasks", lambda value: {"task_count": 0})
+    monkeypatch.setattr(
+        rule_engine,
+        "build_semantic_review_results",
+        lambda current_audit, dataset: {"result_count": 0, "results": []},
+    )
+
+    result = run_rule_engine({}, output_dir=tmp_path / "output", persist_outputs=True)
+
+    assert Path(result["visual_evidence_manifest_path"]).is_file()
+    assert result["visual_evidence_success_count"] == 1
+    persisted = json.loads(Path(result["audit_result_path"]).read_text(encoding="utf-8"))
+    persisted_evidence = json.loads(
+        persisted["records"][0]["scoring_issues"][0]["evidence"]
+    )
+    assert Path(persisted_evidence["evidence_images"][0]["local_path"]).is_file()
