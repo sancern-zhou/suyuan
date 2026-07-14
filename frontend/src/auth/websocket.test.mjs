@@ -33,8 +33,8 @@ test('scheduled-task sockets use wss, gateway path, and a fresh one-time ticket'
   })
 
   assert.deepEqual(requests.map(item => item[0]), [
-    '/api/auth/ws-ticket',
-    '/api/auth/ws-ticket'
+    '/api/suyuan/auth/ws-ticket',
+    '/api/suyuan/auth/ws-ticket'
   ])
   assert.deepEqual(urls, [
     'wss://platform.example/api/suyuan/ws/scheduled-tasks?ticket=ticket-one',
