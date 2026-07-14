@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from app.agent.session import get_session_manager
 from app.db.database import async_session
 from app.knowledge_base.models import ConversationSession
+from app.agent.session.session_resolver import load_session_for_mode
 
 from .schemas import ConversationCatalogRecord, ConversationSource
 
@@ -110,11 +111,52 @@ class KnowledgeQAConversationAdapter:
             return True
 
 
+class SocialConversationAdapter:
+    """Read-only adapter for file-backed social transcripts."""
+
+    async def _load(self, session_id: str):
+        return await load_session_for_mode(session_id, mode="social")
+
+    @staticmethod
+    def _payload(session, row: ConversationCatalogRecord, message_limit: int | None = None):
+        payload = session.model_dump(mode="json")
+        all_messages = list(payload.get("conversation_history") or [])
+        messages = all_messages[-message_limit:] if message_limit and message_limit > 0 else all_messages
+        payload.update(row.model_dump(mode="json"))
+        payload["conversation_history"] = messages
+        payload["source"] = ConversationSource.SOCIAL.value
+        payload["read_only_on_web"] = True
+        payload["has_more_messages"] = len(all_messages) > len(messages)
+        payload["total_message_count"] = len(all_messages)
+        payload["oldest_sequence"] = None
+        payload["has_lazy_visualizations"] = False
+        payload["has_lazy_office_documents"] = False
+        payload["has_lazy_drawio_board"] = False
+        return payload
+
+    async def get(self, row: ConversationCatalogRecord) -> dict | None:
+        session = await self._load(row.session_id)
+        return self._payload(session, row) if session else None
+
+    async def restore(
+        self,
+        row: ConversationCatalogRecord,
+        *,
+        message_limit: int,
+        lazy_artifacts: bool,
+    ):
+        session = await self._load(row.session_id)
+        if not session:
+            return None
+        return {"normalized_session": self._payload(session, row, message_limit)}
+
+
 class ConversationAdapterRegistry:
     def __init__(self):
         self._adapters = {
             ConversationSource.WEB: WebConversationAdapter(),
             ConversationSource.KNOWLEDGE_QA: KnowledgeQAConversationAdapter(),
+            ConversationSource.SOCIAL: SocialConversationAdapter(),
         }
 
     def get(self, source: ConversationSource):
