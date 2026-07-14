@@ -203,6 +203,31 @@ async def test_mock_mode_returns_fixed_non_production_identity():
 
 
 @pytest.mark.asyncio
+async def test_mock_mode_defaults_to_stable_local_administrator():
+    service = AuthenticationService(
+        settings=_settings(
+            auth_mode="mock",
+            auth_mock_enabled=True,
+            auth_mock_user_id="local-developer",
+            auth_mock_username="local-developer",
+            auth_mock_display_name="本地开发用户",
+            auth_mock_role_codes="",
+            auth_admin_role_codes="",
+        ),
+        cache=IdentityCache(FakeRedis(), key_prefix="suyuan:auth:", max_ttl_seconds=60),
+        platform_client=FakePlatformClient(error=AssertionError("must not call platform")),
+    )
+
+    user = await service.authenticate("ignored", "SUYUAN")
+
+    assert user.id == "local-developer"
+    assert user.username == "local-developer"
+    assert user.auth_source == "mock"
+    assert user.role_codes == ("SUYUAN_ADMIN",)
+    assert user.is_admin is True
+
+
+@pytest.mark.asyncio
 async def test_jwt_exp_clamps_cache_ttl():
     redis = FakeRedis()
     cache = IdentityCache(redis, key_prefix="suyuan:auth:", max_ttl_seconds=60)
