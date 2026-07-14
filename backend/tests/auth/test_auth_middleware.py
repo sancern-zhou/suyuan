@@ -58,6 +58,10 @@ def _app(service=None, **setting_overrides):
     async def api_ready():
         return {"ok": True}
 
+    @app.get("/api/auth/runtime-config")
+    async def auth_runtime_config():
+        return {"authMode": "company", "sysCode": "SUYUAN"}
+
     @app.get("/login")
     @app.get("/knowledge-base")
     @app.get("/session/{session_id}")
@@ -106,6 +110,7 @@ async def _get(app, path, *, client_host="127.0.0.1", headers=None):
         "/ready",
         "/api/health",
         "/api/ready",
+        "/api/auth/runtime-config",
         "/login",
         "/knowledge-base",
         "/session/session-1",
@@ -135,6 +140,7 @@ async def test_exact_public_routes_do_not_authenticate(path):
         "/api/reports/share/grant/private",
         "/api/html-artifacts/share/grant/private",
         "/api/signed-media",
+        "/api/auth/runtime-config/private",
     ],
 )
 async def test_similarly_named_routes_remain_private(path):
