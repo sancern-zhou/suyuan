@@ -46,18 +46,24 @@ export function normalizeAuthRuntimeConfig(value) {
 
 export async function loadAuthRuntimeConfig({
   fetchImpl = globalThis.fetch,
-  apiBaseUrl = configuredApiBase()
+  apiBaseUrl = configuredApiBase(),
+  timeoutMs = 5000
 } = {}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const base = apiBaseUrl.replace(/\/$/, '')
     const response = await fetchImpl(`${base}/auth/runtime-config`, {
       cache: 'no-store',
-      credentials: 'same-origin'
+      credentials: 'same-origin',
+      signal: controller.signal
     })
     if (!response.ok) return companyRuntimeConfig()
     return normalizeAuthRuntimeConfig(await response.json())
   } catch {
     return companyRuntimeConfig()
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
