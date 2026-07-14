@@ -3,7 +3,7 @@
     <div class="panel-header">
       <h3>会话历史</h3>
       <div class="panel-actions">
-        <button class="panel-btn small" @click="$emit('cleanup-sessions')">清理过期</button>
+        <button v-if="isAdmin" class="panel-btn small" @click="$emit('cleanup-sessions')">清理过期</button>
         <button
           class="panel-btn small danger"
           :disabled="selectedSessionIds.length === 0"
@@ -86,7 +86,7 @@
             class="session-item"
             @click="$emit('restore-session', session.session_id)"
           >
-            <label class="session-select-box" @click.stop>
+            <label v-if="!rowLabels(session).readOnly" class="session-select-box" @click.stop>
               <input
                 v-model="selectedSessionIds"
                 type="checkbox"
@@ -98,6 +98,11 @@
               <div class="session-query">{{ truncateQuery(session.query) }}</div>
               <div class="session-meta">
                 <span class="session-id">{{ getShortId(session.session_id) }}</span>
+                <span class="session-source-badge">{{ rowLabels(session).source }}</span>
+                <span v-if="rowLabels(session).owner" class="session-owner">
+                  {{ rowLabels(session).owner }}
+                </span>
+                <span v-if="rowLabels(session).readOnly" class="session-readonly-badge">只读</span>
                 <span v-if="isSessionCase(session)" class="session-case-badge">案例</span>
                 <span class="session-status" :class="`status-${getSessionStatus(session).key}`">
                   {{ getSessionStatus(session).label }}
@@ -107,6 +112,7 @@
             </div>
             <div class="session-actions">
               <button
+                v-if="!rowLabels(session).readOnly"
                 class="session-case-action"
                 type="button"
                 @click.stop="$emit('toggle-session-case', session)"
@@ -114,6 +120,7 @@
                 {{ isSessionCase(session) ? '取消案例' : '标记案例' }}
               </button>
               <button
+                v-if="!rowLabels(session).readOnly"
                 class="session-delete-action"
                 type="button"
                 @click.stop="emitDeleteSession(session.session_id)"
@@ -130,6 +137,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { historyRowLabels } from './sessionHistoryAccess.js'
 
 // Props
 const props = defineProps({
@@ -142,6 +150,10 @@ const props = defineProps({
     default: null
   },
   sessionHistoryLoading: {
+    type: Boolean,
+    default: false
+  },
+  isAdmin: {
     type: Boolean,
     default: false
   }
@@ -158,7 +170,10 @@ const emit = defineEmits([
 
 const selectedSessionIds = ref([])
 
-const sessionIds = computed(() => props.sessions.map(session => session.session_id).filter(Boolean))
+const sessionIds = computed(() => props.sessions
+  .filter(session => !historyRowLabels(session, props.isAdmin).readOnly)
+  .map(session => session.session_id)
+  .filter(Boolean))
 const allSessionsSelected = computed(() => sessionIds.value.length > 0 && selectedSessionIds.value.length === sessionIds.value.length)
 const someSessionsSelected = computed(() => selectedSessionIds.value.length > 0 && !allSessionsSelected.value)
 
@@ -213,6 +228,7 @@ const getSessionStatus = (session) => {
 }
 
 const isSessionCase = (session) => session?.metadata?.is_case === true
+const rowLabels = (session) => historyRowLabels(session, props.isAdmin)
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '未知'
@@ -537,6 +553,26 @@ const formatFullTime = (timestamp) => {
   font-size: 11px;
   line-height: 1.4;
   border: 1px solid transparent;
+}
+
+.session-source-badge,
+.session-readonly-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #31507a;
+  white-space: nowrap;
+}
+
+.session-readonly-badge {
+  background: #fff6df;
+  color: #8a5a00;
+}
+
+.session-owner {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-running {

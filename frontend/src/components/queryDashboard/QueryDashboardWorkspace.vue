@@ -55,6 +55,10 @@
         :hide-welcome="true"
         @load-more="$emit('load-more')"
       />
+      <div v-if="readOnly" class="read-only-notice">
+        <span>{{ readOnlyNotice }}</span>
+        <button type="button" @click="$emit('new-web-conversation')">新建 Web 对话</button>
+      </div>
       <InputBox
         v-model="inputValue"
         :pending-steering-inputs="pendingSteeringInputs"
@@ -110,7 +114,9 @@ const props = defineProps({
   dragOver: { type: Boolean, default: false },
   rightPanelExpanded: { type: Boolean, default: false },
   hasVizContent: { type: Boolean, default: false },
-  showManagementPanel: { type: Boolean, default: false }
+  showManagementPanel: { type: Boolean, default: false },
+  readOnly: { type: Boolean, default: false },
+  readOnlyNotice: { type: String, default: '' }
 })
 
 const emit = defineEmits([
@@ -124,7 +130,8 @@ const emit = defineEmits([
   'drag-leave',
   'drop',
   'toggle-viz-panel',
-  'map-event'
+  'map-event',
+  'new-web-conversation'
 ])
 
 const overview = ref(null)

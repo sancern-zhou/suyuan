@@ -47,12 +47,14 @@ class CurrentUser(BaseModel):
             or username
         ).strip()
         role_codes = _role_codes(payload)
+        platform_admin = payload.get("admin") is True
         return cls(
             id=user_id,
             username=username,
             display_name=display_name,
             role_codes=role_codes,
-            is_admin=bool(set(role_codes).intersection(admin_role_codes)),
+            is_admin=platform_admin
+            or bool(set(role_codes).intersection(admin_role_codes)),
             sys_code=sys_code,
             auth_source="company",
         )
@@ -64,6 +66,8 @@ def _role_codes(payload: dict[str, Any]) -> tuple[str, ...]:
         raw_roles = payload.get("roles")
     if raw_roles is None:
         raw_roles = payload.get("roleList")
+    if raw_roles is None:
+        raw_roles = payload.get("roleCodeList")
     if not isinstance(raw_roles, (list, tuple, set)):
         return ()
 

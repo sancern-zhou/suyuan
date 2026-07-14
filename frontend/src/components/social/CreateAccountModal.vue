@@ -1,777 +1,228 @@
 <template>
   <div class="create-modal-overlay" @click="close">
     <div class="create-modal" @click.stop>
-      <div class="modal-header">
+      <header class="modal-header">
         <h3>添加微信账号</h3>
-        <button @click="close" class="close-btn">&times;</button>
-      </div>
+        <button class="close-btn" type="button" @click="close">&times;</button>
+      </header>
 
-      <div class="modal-body">
-        <form v-if="currentStep === 'profile'" class="profile-form" @submit.prevent="submitProfile">
+      <main class="modal-body">
+        <div v-if="currentStep === 'starting'" class="center-state">
+          <div v-if="creating" class="spinner" />
+          <p>{{ creating ? '正在生成专属二维码...' : '微信扫码初始化失败' }}</p>
+          <p v-if="errorMessage" class="inline-error">{{ errorMessage }}</p>
+          <button v-if="!creating" class="btn-primary" type="button" @click="startScan">重试</button>
+        </div>
+
+        <section v-else-if="currentStep === 'qrcode'" class="qrcode-container">
           <div class="instruction-text">
-            <p class="step">第1步：填写用户资料</p>
-            <p class="hint">资料会生成一个绑定码，用于把微信联系人和系统用户关联起来</p>
+            <p class="step">使用微信扫描下方二维码</p>
+            <p class="hint">当前登录用户：{{ ownerLabel }}</p>
+            <p class="hint">扫码后在手机上确认即可，无需发送验证码</p>
           </div>
 
-          <label class="form-field">
-            <span>姓名</span>
-            <input
-              v-model.trim="profileForm.name"
-              type="text"
-              maxlength="100"
-              placeholder="请输入姓名"
-              :disabled="profileSubmitting"
-              required
-            />
-          </label>
+          <div v-if="qrLoading" class="center-state">
+            <div class="spinner" />
+            <p>正在加载二维码...</p>
+          </div>
+          <img v-else-if="qrCodeUrl" :src="qrCodeUrl" alt="微信登录二维码" class="qrcode-image">
 
-          <label class="form-field">
-            <span>邮箱</span>
-            <input
-              v-model.trim="profileForm.email"
-              type="email"
-              maxlength="255"
-              placeholder="可选"
-              :disabled="profileSubmitting"
-            />
-          </label>
-
-          <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
-
-          <button class="btn-primary" type="submit" :disabled="profileSubmitting || !profileForm.name">
-            {{ profileSubmitting ? '创建中...' : '生成绑定码并继续' }}
+          <p class="status">{{ statusText }}</p>
+          <p v-if="errorMessage" class="inline-error">{{ errorMessage }}</p>
+          <button class="btn-primary" type="button" :disabled="refreshing" @click="refreshQRCode">
+            {{ refreshing ? '刷新中...' : '刷新二维码' }}
           </button>
-        </form>
+        </section>
 
-        <div v-else-if="accountCreating" class="loading">
-          <div class="spinner"></div>
-          <p>正在初始化微信账号...</p>
-        </div>
-
-        <div v-else-if="currentStep === 'qrcode'" class="qrcode-container">
-          <div class="instruction-text">
-            <p class="step">第2步：使用微信扫描下方二维码</p>
-            <p class="hint">扫描后请在手机上确认登录</p>
-          </div>
-
-          <div v-if="qrLoading" class="qr-loading">
-            <div class="spinner"></div>
-            <p>正在生成二维码...</p>
-          </div>
-
-          <img
-            v-else-if="qrCodeUrl"
-            :src="qrCodeUrl"
-            alt="微信登录二维码"
-            class="qrcode-image"
-          />
-
-          <div v-if="statusText" :class="['status', statusClass]">
-            {{ statusText }}
-          </div>
-
-          <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
-
-          <div class="actions">
-            <button
-              @click="refreshQRCode"
-              class="btn-refresh"
-              :disabled="refreshing"
-            >
-              {{ refreshing ? '刷新中...' : '刷新二维码' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-else-if="currentStep === 'binding'" class="binding-container">
-          <div class="instruction-text">
-            <p class="step">第3步：发送绑定码</p>
-            <p class="hint">请在微信里直接发送下面 4 位数字</p>
-          </div>
-
-          <div class="bind-code">{{ bindInstruction }}</div>
-
-          <div class="account-info">
-            <p><strong>账号ID：</strong>{{ createdAccountId }}</p>
-            <p><strong>显示名称：</strong>{{ accountName }}</p>
-            <p><strong>用户：</strong>{{ pendingUser?.name }}</p>
-          </div>
-
-          <div class="status status-waiting">{{ bindingStatusText }}</div>
-          <div v-if="errorMessage" class="inline-error">{{ errorMessage }}</div>
-
-          <div class="actions">
-            <button class="btn-refresh" @click="checkBindStatus" :disabled="bindChecking">
-              {{ bindChecking ? '检查中...' : '检查绑定状态' }}
-            </button>
-          </div>
-        </div>
-
-        <div v-else-if="currentStep === 'complete'" class="success-container">
+        <section v-else class="success-container">
           <div class="success-icon">✓</div>
           <h3>绑定成功</h3>
-          <p>{{ pendingUser?.name }} 已可以通过微信正常使用</p>
+          <p>{{ ownerLabel }} 已绑定当前扫码微信</p>
           <div class="account-info">
-            <p><strong>账号ID：</strong>{{ createdAccountId }}</p>
-            <p><strong>显示名称：</strong>{{ accountName }}</p>
-            <p><strong>绑定用户：</strong>{{ pendingUser?.name }}</p>
+            <p><strong>账号 ID：</strong>{{ scan.account_id }}</p>
+            <p><strong>平台用户：</strong>{{ ownerLabel }}</p>
           </div>
-          <button @click="close" class="btn-done">完成</button>
-        </div>
-
-        <div v-else-if="errorMessage" class="error">
-          <p class="error-title">添加失败</p>
-          <p class="error-message">{{ errorMessage }}</p>
-          <button @click="reset" class="btn-retry">重试</button>
-        </div>
-      </div>
+          <button class="btn-done" type="button" @click="close">完成</button>
+        </section>
+      </main>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { authAxios } from '@/auth/http.js'
-import {
-  buildBindInstruction,
-  getOnboardingStep,
-  isUserBound,
-} from './createAccountFlow'
+import { getOnboardingStep, scanOwnerLabel } from './createAccountFlow.js'
 
 const emit = defineEmits(['close', 'created'])
 
-const profileSubmitting = ref(false)
-const accountCreating = ref(false)
-const tempAccountId = ref('')
-const qrCodeUrl = ref('')
-const qrLoading = ref(true)
+const scan = ref(null)
+const scanConfirmed = ref(false)
+const creating = ref(false)
+const qrLoading = ref(false)
 const refreshing = ref(false)
+const qrCodeUrl = ref('')
 const loginStatus = ref('waiting')
-const loginSuccess = ref(false)
 const errorMessage = ref('')
-const createdAccountId = ref('')
-const accountName = ref('')
-const pendingUser = ref(null)
-const bindInstruction = ref('')
-const bound = ref(false)
-const bindChecking = ref(false)
-const bindingStatusText = ref('等待用户发送绑定码...')
-const profileForm = ref({
-  name: '',
-  email: ''
-})
-
-let statusCheckInterval = null
-let bindStatusInterval = null
+let statusTimer = null
 
 const currentStep = computed(() => getOnboardingStep({
-  pendingUser: pendingUser.value,
-  loginSuccess: loginSuccess.value,
-  bound: bound.value
+  scanCreated: Boolean(scan.value),
+  scanConfirmed: scanConfirmed.value
 }))
+const ownerLabel = computed(() => scanOwnerLabel(scan.value))
+const statusText = computed(() => ({
+  waiting: '等待扫描...',
+  scanned: '已扫描，请在手机上确认',
+  logging_in: '正在完成绑定...'
+}[loginStatus.value] || '等待扫描...'))
 
-const statusText = computed(() => {
-  switch (loginStatus.value) {
-    case 'waiting':
-      return '等待扫描...'
-    case 'scanned':
-      return '已扫描，请在手机上确认登录'
-    case 'logging_in':
-      return '登录中，请稍候...'
-    default:
-      return ''
-  }
-})
-
-const statusClass = computed(() => {
-  switch (loginStatus.value) {
-    case 'waiting':
-      return 'status-waiting'
-    case 'scanned':
-      return 'status-scanned'
-    case 'logging_in':
-      return 'status-logging'
-    default:
-      return ''
-  }
-})
-
-// 生成临时账号ID
-const generateTempAccountId = () => {
-  const timestamp = Date.now().toString(36)
-  return `auto_${timestamp}`
+function revokeQrUrl() {
+  if (qrCodeUrl.value.startsWith('blob:')) URL.revokeObjectURL(qrCodeUrl.value)
+  qrCodeUrl.value = ''
 }
 
-const submitProfile = async () => {
-  profileSubmitting.value = true
-  errorMessage.value = ''
-
-  try {
-    const payload = {
-      name: profileForm.value.name,
-      email: profileForm.value.email || null
-    }
-    const response = await authAxios.post('/api/social/users', payload)
-    pendingUser.value = response.data
-    bindInstruction.value = buildBindInstruction(response.data)
-
-    await initializeTempAccount()
-  } catch (error) {
-    console.error('[ERROR] 创建社交用户失败:', error)
-    errorMessage.value = error.response?.data?.detail || error.message || '创建用户失败，请重试'
-  } finally {
-    profileSubmitting.value = false
-  }
+function stopPolling() {
+  if (statusTimer) clearInterval(statusTimer)
+  statusTimer = null
 }
 
-// 初始化临时账号并获取二维码
-const initializeTempAccount = async () => {
-  accountCreating.value = true
+async function startScan() {
+  creating.value = true
   errorMessage.value = ''
-
   try {
-    // 生成临时ID
-    tempAccountId.value = generateTempAccountId()
-    console.log('[DEBUG] 生成临时账号ID:', tempAccountId.value)
-
-    // 创建临时账号（自动启动）
-    console.log('[DEBUG] 调用 auto-create API...')
-    const response = await authAxios.post('/api/social/accounts/weixin/auto-create', {
-      temp_id: tempAccountId.value
-    })
-
-    console.log('[DEBUG] auto-create 响应:', response.data)
-
-    if (response.status === 200) {
-      // 创建成功，获取二维码
-      console.log('[DEBUG] 账号创建成功，开始获取二维码...')
-      await fetchQRCode()
-    } else {
-      throw new Error(response.data?.detail || '创建失败')
-    }
+    const response = await authAxios.post('/api/social/accounts/weixin/auto-create', {})
+    scan.value = response.data
+    await fetchQRCode()
   } catch (error) {
-    console.error('[ERROR] 创建临时账号失败:', error)
-    console.error('[ERROR] 错误详情:', {
-      message: error.message,
-      response: error.response?.data
-    })
     errorMessage.value = error.response?.data?.detail || error.message || '创建失败，请重试'
   } finally {
-    accountCreating.value = false
+    creating.value = false
   }
 }
 
-// 获取二维码
-const fetchQRCode = async () => {
+async function fetchQRCode() {
+  if (!scan.value?.task_id) return
   qrLoading.value = true
   errorMessage.value = ''
-
   try {
-    const url = `/api/social/accounts/weixin/${tempAccountId.value}/qrcode`
-    console.log('[DEBUG] 开始获取二维码:', { url, accountId: tempAccountId.value })
-
-    const response = await authAxios.get(url, { responseType: 'blob' })
-    console.log('[DEBUG] 二维码响应:', {
-      status: response.status,
-      dataType: response.data?.type,
-      dataSize: response.data?.size
-    })
-
+    const response = await authAxios.get(
+      `/api/social/accounts/weixin/${scan.value.task_id}/qrcode`,
+      { responseType: 'blob' }
+    )
+    revokeQrUrl()
     qrCodeUrl.value = URL.createObjectURL(response.data)
-    console.log('[DEBUG] Blob URL创建成功:', qrCodeUrl.value)
-
-    loginStatus.value = 'waiting'
-
-    // 开始检查登录状态
-    startStatusCheck()
+    stopPolling()
+    statusTimer = setInterval(checkLoginStatus, 3000)
   } catch (error) {
-    console.error('[ERROR] 获取二维码失败:', error)
-    console.error('[ERROR] 错误详情:', {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status
-    })
     errorMessage.value = error.response?.data?.detail || error.message || '获取二维码失败'
   } finally {
     qrLoading.value = false
   }
 }
 
-// 开始检查登录状态
-const startStatusCheck = () => {
-  stopStatusCheck()
-  statusCheckInterval = setInterval(checkLoginStatus, 3000)
-}
-
-// 停止检查登录状态
-const stopStatusCheck = () => {
-  if (statusCheckInterval) {
-    clearInterval(statusCheckInterval)
-    statusCheckInterval = null
-  }
-}
-
-const startBindStatusCheck = () => {
-  stopBindStatusCheck()
-  checkBindStatus()
-  bindStatusInterval = setInterval(checkBindStatus, 3000)
-}
-
-const stopBindStatusCheck = () => {
-  if (bindStatusInterval) {
-    clearInterval(bindStatusInterval)
-    bindStatusInterval = null
-  }
-}
-
-// 检查登录状态
-const checkLoginStatus = async () => {
+async function checkLoginStatus() {
+  if (!scan.value?.task_id) return
   try {
     const response = await authAxios.get(
-      `/api/social/accounts/weixin/${tempAccountId.value}/status`
+      `/api/social/accounts/weixin/${scan.value.task_id}/status`
     )
+    if (!response.data.logged_in) return
 
-    const data = response.data
-
-    if (data.logged_in) {
-      // 登录成功！
-      loginStatus.value = 'logging_in'
-      stopStatusCheck()
-
-      // 等待一小段时间让账号完全初始化
-      await new Promise(resolve => setTimeout(resolve, 1000))
-
-      // 获取账号信息
-      await finalizeAccount(data)
-    }
+    loginStatus.value = 'logging_in'
+    stopPolling()
+    const finalized = await authAxios.post(
+      `/api/social/accounts/weixin/${scan.value.task_id}/finalize`,
+      {}
+    )
+    scan.value = { ...scan.value, ...finalized.data }
+    scanConfirmed.value = true
+    emit('created')
   } catch (error) {
-    console.error('Failed to check status:', error)
+    errorMessage.value = error.response?.data?.detail || error.message || '绑定失败'
   }
 }
 
-// 完成账号创建
-const finalizeAccount = async (statusData) => {
-  try {
-    // 使用微信昵称或bot_account作为显示名称
-    const botAccount = statusData.bot_account || tempAccountId.value
-    accountName.value = botAccount.replace(/^weixin_/, '微信账号-')
-
-    // 将临时账号转为正式账号
-    await authAxios.post(`/api/social/accounts/weixin/${tempAccountId.value}/finalize`, {
-      name: accountName.value
-    })
-
-    createdAccountId.value = tempAccountId.value
-    loginSuccess.value = true
-
-    startBindStatusCheck()
-  } catch (error) {
-    console.error('Failed to finalize account:', error)
-    errorMessage.value = error.response?.data?.detail || error.message || '账号创建失败'
-  }
-}
-
-const checkBindStatus = async () => {
-  if (!pendingUser.value?.id || bindChecking.value) return
-
-  bindChecking.value = true
-  try {
-    const response = await authAxios.get(`/api/social/users/${pendingUser.value.id}`)
-    pendingUser.value = response.data
-
-    if (isUserBound(response.data)) {
-      bound.value = true
-      bindingStatusText.value = '绑定成功'
-      stopBindStatusCheck()
-      emit('created')
-    } else {
-      bindingStatusText.value = '等待用户发送绑定码...'
-    }
-  } catch (error) {
-    console.error('Failed to check bind status:', error)
-    errorMessage.value = error.response?.data?.detail || error.message || '绑定状态检查失败'
-  } finally {
-    bindChecking.value = false
-  }
-}
-
-// 刷新二维码
-const refreshQRCode = async () => {
+async function refreshQRCode() {
+  if (!scan.value?.task_id) return
   refreshing.value = true
+  errorMessage.value = ''
   try {
-    await authAxios.post(`/api/social/accounts/weixin/${tempAccountId.value}/refresh-qrcode`)
+    await authAxios.post(
+      `/api/social/accounts/weixin/${scan.value.task_id}/refresh-qrcode`,
+      {}
+    )
     await fetchQRCode()
   } catch (error) {
-    console.error('Failed to refresh QR code:', error)
     errorMessage.value = error.response?.data?.detail || error.message || '刷新失败'
   } finally {
     refreshing.value = false
   }
 }
 
-// 重置
-const reset = () => {
-  stopStatusCheck()
-  stopBindStatusCheck()
-  if (qrCodeUrl.value && qrCodeUrl.value.startsWith('blob:')) {
-    URL.revokeObjectURL(qrCodeUrl.value)
+async function close() {
+  stopPolling()
+  revokeQrUrl()
+  if (scan.value?.task_id && !scanConfirmed.value) {
+    try {
+      await authAxios.delete(`/api/social/accounts/weixin/${scan.value.task_id}`)
+    } catch (error) {
+      console.warn('Failed to clean unfinished WeChat scan:', error)
+    }
   }
-
-  tempAccountId.value = ''
-  qrCodeUrl.value = ''
-  loginStatus.value = 'waiting'
-  loginSuccess.value = false
-  errorMessage.value = ''
-  createdAccountId.value = ''
-  accountName.value = ''
-  pendingUser.value = null
-  bindInstruction.value = ''
-  bound.value = false
-  bindingStatusText.value = '等待用户发送绑定码...'
-  profileForm.value = {
-    name: '',
-    email: ''
-  }
-
-  // 回到资料填写步骤
-}
-
-const close = () => {
-  stopStatusCheck()
-  stopBindStatusCheck()
   emit('close')
 }
 
+onMounted(startScan)
 onUnmounted(() => {
-  stopStatusCheck()
-  stopBindStatusCheck()
-
-  // 释放blob URL
-  if (qrCodeUrl.value && qrCodeUrl.value.startsWith('blob:')) {
-    URL.revokeObjectURL(qrCodeUrl.value)
-  }
+  stopPolling()
+  revokeQrUrl()
 })
 </script>
 
 <style scoped>
 .create-modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  inset: 0;
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .create-modal {
-  background: white;
+  width: min(450px, 90vw);
+  min-height: 460px;
+  padding: 28px;
   border-radius: 12px;
-  padding: 30px;
-  min-width: 450px;
-  max-width: 90vw;
-  max-height: 90vh;
-  overflow-y: auto;
+  background: #fff;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
 .modal-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
 }
 
-.modal-header h3 {
-  margin: 0;
-  font-size: 20px;
-  color: #333;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 28px;
-  cursor: pointer;
-  color: #999;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.close-btn:hover {
-  background: #f5f5f5;
-  color: #333;
-}
-
-.modal-body {
-  min-height: 400px;
-}
-
-.loading {
-  text-align: center;
-  padding: 80px 20px;
-  color: #666;
-}
-
-.spinner {
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #2196f3;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 20px;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.qrcode-container {
-  text-align: center;
-}
-
-.profile-form,
-.binding-container {
-  text-align: center;
-}
-
-.instruction-text {
-  margin-bottom: 20px;
-}
-
-.instruction-text .step {
-  font-size: 18px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 8px;
-}
-
-.instruction-text .hint {
-  font-size: 14px;
-  color: #999;
-}
-
-.qr-loading {
-  padding: 60px 20px;
-}
-
-.form-field {
-  display: block;
-  text-align: left;
-  margin: 0 auto 16px;
-  max-width: 320px;
-}
-
-.form-field span {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-}
-
-.form-field input {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  padding: 10px 12px;
-  font-size: 15px;
-}
-
-.form-field input:focus {
-  outline: none;
-  border-color: #2196f3;
-}
-
-.inline-error {
-  max-width: 320px;
-  margin: 12px auto;
-  color: #f44336;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.btn-primary {
-  padding: 12px 24px;
-  background: #2196f3;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #0b7dda;
-}
-
-.btn-primary:disabled {
-  background: #ccc;
-  cursor: not-allowed;
-}
-
-.qrcode-image {
-  width: 280px;
-  height: 280px;
-  margin: 20px auto;
-  display: block;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 10px;
-  background: white;
-}
-
-.status {
-  font-size: 16px;
-  font-weight: bold;
-  margin: 20px 0;
-  min-height: 24px;
-}
-
-.status-waiting {
-  color: #ff9800;
-}
-
-.status-scanned {
-  color: #2196f3;
-}
-
-.status-logging {
-  color: #4caf50;
-}
-
-.actions {
-  margin-top: 20px;
-}
-
-.btn-refresh {
-  padding: 10px 20px;
-  background: #2196f3;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s;
-}
-
-.btn-refresh:hover:not(:disabled) {
-  background: #0b7dda;
-}
-
-.btn-refresh:disabled {
-  background: #ccc;
-  cursor: not-allowed;
-}
-
-.success-container {
-  text-align: center;
-  padding: 40px 20px;
-}
-
-.success-icon {
-  font-size: 64px;
-  margin-bottom: 20px;
-}
-
-.success-container h3 {
-  margin: 0 0 10px 0;
-  font-size: 24px;
-  color: #4caf50;
-}
-
-.success-container p {
-  margin: 10px 0;
-  color: #666;
-}
-
-.account-info {
-  background: #f5f5f5;
-  border-radius: 8px;
-  padding: 15px;
-  margin: 20px auto;
-  max-width: 300px;
-  text-align: left;
-}
-
-.account-info p {
-  margin: 8px 0;
-  font-size: 14px;
-}
-
-.account-info strong {
-  color: #333;
-}
-
-.bind-code {
-  display: inline-block;
-  padding: 14px 20px;
-  margin: 8px auto 16px;
-  border: 1px solid #b7d8ff;
-  border-radius: 6px;
-  background: #f2f8ff;
-  color: #0b5cad;
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.btn-done {
-  padding: 12px 30px;
-  background: #4caf50;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-  margin-top: 20px;
-  transition: all 0.2s;
-}
-
-.btn-done:hover {
-  background: #45a049;
-}
-
-.error {
-  text-align: center;
-  padding: 60px 20px;
-}
-
-.error-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #f44336;
-  margin-bottom: 10px;
-}
-
-.error-message {
-  color: #666;
-  margin-bottom: 20px;
-}
-
-.btn-retry {
-  padding: 10px 20px;
-  background: #2196f3;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 16px;
-}
-
-.btn-retry:hover {
-  background: #0b7dda;
-}
+.modal-header h3 { margin: 0; }
+.modal-body { padding-top: 26px; }
+.close-btn { border: 0; background: transparent; color: #777; font-size: 28px; cursor: pointer; }
+.center-state, .qrcode-container, .success-container { padding: 35px 10px; text-align: center; }
+.instruction-text { margin-bottom: 18px; }
+.step { margin: 0 0 8px; color: #333; font-size: 18px; font-weight: 700; }
+.hint { margin: 5px 0; color: #777; font-size: 14px; }
+.qrcode-image { display: block; width: 280px; height: 280px; margin: 10px auto; padding: 8px; border: 1px solid #ddd; border-radius: 8px; }
+.status { min-height: 24px; color: #e48a00; font-weight: 600; }
+.inline-error { color: #d93025; }
+.spinner { width: 38px; height: 38px; margin: 20px auto; border: 4px solid #eee; border-top-color: #1976d2; border-radius: 50%; animation: spin 1s linear infinite; }
+.btn-primary, .btn-done { padding: 10px 22px; border: 0; border-radius: 5px; color: #fff; background: #1976d2; cursor: pointer; }
+.btn-primary:disabled { background: #aaa; }
+.btn-done { background: #43a047; }
+.success-icon { color: #43a047; font-size: 64px; }
+.success-container h3 { color: #43a047; }
+.account-info { margin: 20px auto; padding: 12px; border-radius: 8px; background: #f5f5f5; text-align: left; }
+.account-info p { margin: 7px 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
