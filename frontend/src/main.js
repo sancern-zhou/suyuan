@@ -4,13 +4,20 @@ import App from './App.vue'
 import router from './router/index'
 import { useAuthStore } from './auth/authStore.js'
 import { installAuthGuard } from './auth/routerGuard.js'
+import { initializeAuthStore } from './auth/runtimeConfig.js'
 import './styles/main.scss'
 
-const app = createApp(App)
-const pinia = createPinia()
+async function bootstrapApplication() {
+  const app = createApp(App)
+  const pinia = createPinia()
 
-app.use(pinia)
-installAuthGuard(router, useAuthStore(pinia))
-app.use(router)
+  app.use(pinia)
+  const authStore = useAuthStore(pinia)
+  await initializeAuthStore(authStore)
+  installAuthGuard(router, authStore)
+  app.use(router)
+  app.mount('#app')
+}
 
-app.mount('#app')
+
+bootstrapApplication()

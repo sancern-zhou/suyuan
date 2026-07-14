@@ -4,17 +4,32 @@ import { createAuthApi } from './authApi.js'
 import { browserAuthStorage } from './storage.js'
 
 
-export function createAuthSession({ api, storage, sysCode = 'SUYUAN' }) {
+export function createAuthSession({
+  api,
+  storage,
+  sysCode = 'SUYUAN',
+  authMode = 'company',
+  mockUser = null
+}) {
   const persisted = storage.readSession()
+  const isMock = authMode === 'mock' && Boolean(mockUser?.id)
+  if (isMock) storage.clear()
   const session = {
-    token: persisted.sysCode === sysCode ? persisted.token : '',
-    user: persisted.sysCode === sysCode ? persisted.user : null,
+    authMode: isMock ? 'mock' : 'company',
+    mockUser: isMock ? mockUser : null,
+    token: !isMock && persisted.sysCode === sysCode ? persisted.token : '',
+    user: !isMock && persisted.sysCode === sysCode ? persisted.user : null,
     sysCode,
     loading: false,
     initialized: false,
 
     async bootstrap() {
       if (this.initialized) return this.user
+      if (this.authMode === 'mock') {
+        this.initialized = true
+        this.user = this.mockUser
+        return this.user
+      }
       this.initialized = true
       if (!this.token) return null
       this.loading = true
@@ -32,6 +47,11 @@ export function createAuthSession({ api, storage, sysCode = 'SUYUAN' }) {
     },
 
     async login(credentials) {
+      if (this.authMode === 'mock') {
+        this.initialized = true
+        this.user = this.mockUser
+        return this.user
+      }
       this.loading = true
       try {
         const response = await api.login(credentials)
@@ -48,6 +68,13 @@ export function createAuthSession({ api, storage, sysCode = 'SUYUAN' }) {
     },
 
     async logout() {
+      if (this.authMode === 'mock') {
+        storage.clear()
+        this.token = ''
+        this.user = this.mockUser
+        this.initialized = true
+        return
+      }
       const token = this.token
       try {
         if (token) await api.logout(token)
@@ -69,6 +96,17 @@ export function createAuthSession({ api, storage, sysCode = 'SUYUAN' }) {
 
 
 let browserSession
+let browserRuntimeConfig = {
+  authMode: 'company',
+  sysCode: 'SUYUAN',
+  mockUser: null
+}
+
+
+function configureBrowserSession(runtimeConfig) {
+  browserRuntimeConfig = runtimeConfig
+  browserSession = undefined
+}
 
 function getBrowserSession() {
   if (!browserSession) {
@@ -76,7 +114,9 @@ function getBrowserSession() {
     browserSession = createAuthSession({
       storage,
       api: createAuthApi({ storage }),
-      sysCode: 'SUYUAN'
+      sysCode: browserRuntimeConfig.sysCode || 'SUYUAN',
+      authMode: browserRuntimeConfig.authMode,
+      mockUser: browserRuntimeConfig.mockUser
     })
   }
   return browserSession
@@ -84,16 +124,29 @@ function getBrowserSession() {
 
 
 export const useAuthStore = defineStore('suyuan-auth', {
-  state: () => ({ token: '', user: null, loading: false, initialized: false }),
+  state: () => ({
+    authMode: 'company',
+    token: '',
+    user: null,
+    loading: false,
+    initialized: false
+  }),
   getters: {
-    isAuthenticated: state => Boolean(state.token && state.user)
+    isAuthenticated: state => Boolean(
+      state.user && (state.authMode === 'mock' || state.token)
+    )
   },
   actions: {
     _sync(session) {
+      this.authMode = session.authMode
       this.token = session.token
       this.user = session.user
       this.loading = session.loading
       this.initialized = session.initialized
+    },
+    configure(runtimeConfig) {
+      configureBrowserSession(runtimeConfig)
+      this._sync(getBrowserSession())
     },
     async bootstrap() {
       const session = getBrowserSession()
