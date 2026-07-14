@@ -19,13 +19,23 @@ _PUBLIC_EXACT_PATHS = {
     "/",
     "/health",
     "/ready",
+    "/api/health",
+    "/api/ready",
     "/index.html",
     "/favicon.ico",
     "/wechat-screenshot.png",
     "/suyuan-runtime-config.js",
+    "/login",
+    "/fetchers",
+    "/knowledge-base",
+    "/tools-management",
+    "/skills-management",
+    "/social-accounts",
+    "/expert-deliberation",
 }
 _PUBLIC_STATIC_PREFIXES = ("/assets/", "/static/", "/dist/")
 _PUBLIC_SHARE_PATTERNS = (
+    re.compile(r"^/session/[^/]+$"),
     re.compile(r"^/api/signed-media/.+$"),
     re.compile(r"^/api/reports/share/[^/]+$"),
     re.compile(r"^/api/html-artifacts/share/[^/]+$"),

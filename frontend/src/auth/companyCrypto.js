@@ -83,7 +83,7 @@ export function runtimeAuthConfig() {
   return {
     sysCode: 'SUYUAN',
     encryptType: 'SM2',
-    authBaseUrl: '',
+    authBaseUrl: '/api',
     ...(globalThis.window?.__SUYUAN_AUTH_CONFIG__ || {})
   }
 }

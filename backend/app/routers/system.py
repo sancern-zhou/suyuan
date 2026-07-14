@@ -66,6 +66,7 @@ async def api_info():
 
 
 @router.get("/session/{session_id}", include_in_schema=False)
+@router.get("/login", include_in_schema=False)
 @router.get("/fetchers", include_in_schema=False)
 @router.get("/knowledge-base", include_in_schema=False)
 @router.get("/tools-management", include_in_schema=False)
@@ -93,6 +94,7 @@ async def health_check():
 
 
 @router.get("/ready")
+@router.get("/api/ready")
 async def readiness_check(request: Request):
     """Report gateway-facing dependency readiness without exposing secrets."""
     auth_ready = bool(settings.auth_service_url.strip()) or settings.auth_mode == "mock"
