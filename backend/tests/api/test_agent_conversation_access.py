@@ -17,6 +17,9 @@ class DenyingCatalog:
     def __init__(self):
         self.write_checks = []
 
+    async def find(self, session_id):
+        return object()
+
     async def require_write(self, session_id, user):
         self.write_checks.append((session_id, user.id))
         raise HTTPException(status_code=404, detail="session_not_found")
@@ -31,6 +34,29 @@ class RecordingCatalog:
         self.registrations.append(values)
         if self.fail:
             raise RuntimeError("catalog unavailable")
+
+
+class LookupCatalog:
+    def __init__(self, record=None):
+        self.record = record
+        self.write_checks = []
+
+    async def find(self, session_id):
+        return self.record
+
+    async def require_write(self, session_id, user):
+        self.write_checks.append((session_id, user.id))
+        raise AssertionError("new sessions must not require an existing catalog row")
+
+
+class LookupSessionManager:
+    def __init__(self, session=None):
+        self.session = session
+        self.lookups = []
+
+    async def load_session_light(self, session_id):
+        self.lookups.append(session_id)
+        return self.session
 
 
 class RecordingSessionManager:
@@ -50,6 +76,11 @@ class UnusedRequest:
         raise AssertionError("denied sessions must be rejected before body processing")
 
 
+class EmptyRequest:
+    async def json(self):
+        return {}
+
+
 ordinary_user = CurrentUser(id="u1", username="u1", display_name="U1")
 
 
@@ -67,6 +98,43 @@ async def test_reusing_session_requires_write_access_before_body_processing():
 
     assert exc.value.status_code == 404
     assert catalog.write_checks == [("other-session", "u1")]
+
+
+@pytest.mark.asyncio
+async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_absent(monkeypatch):
+    catalog = LookupCatalog()
+    manager = LookupSessionManager()
+    monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
+
+    response = await analyze_stream(
+        AgentAnalyzeRequest(query="first message", session_id="new-session"),
+        EmptyRequest(),
+        user=ordinary_user,
+        catalog=catalog,
+    )
+
+    assert response.media_type == "text/event-stream"
+    assert manager.lookups == ["new-session"]
+    assert catalog.write_checks == []
+
+
+@pytest.mark.asyncio
+async def test_uncataloged_existing_source_session_cannot_be_claimed(monkeypatch):
+    catalog = LookupCatalog()
+    manager = LookupSessionManager(session=object())
+    monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
+
+    with pytest.raises(HTTPException) as exc:
+        await analyze_stream(
+            AgentAnalyzeRequest(query="continue", session_id="legacy-session"),
+            UnusedRequest(),
+            user=ordinary_user,
+            catalog=catalog,
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "session_not_found"
+    assert manager.lookups == ["legacy-session"]
 
 
 @pytest.mark.asyncio
