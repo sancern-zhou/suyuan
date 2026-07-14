@@ -48,12 +48,16 @@ export function createCompanyCrypto(config, dependencies = {}) {
 
   return {
     requestHeaders,
-    loginRequest(username, plainPassword, token = '') {
+    loginRequest(username, plainPassword, token = '', loginMetadata = {}) {
       return {
         body: {
           secretName: encryptSm2(username),
           secretCode: password(plainPassword),
-          isEncry: true
+          isEncry: true,
+          verifyCode: loginMetadata.verifyCode,
+          captchaKey: loginMetadata.captchaKey,
+          isLog: '1',
+          logType: '5'
         },
         headers: requestHeaders('/auth/token/authentication', token)
       }

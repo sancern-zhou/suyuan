@@ -20,12 +20,19 @@ test('company login matches the 2.1.4 SM2/SM3/SM4 protocol layout', () => {
     }
   )
 
-  const request = crypto.loginRequest('zhangsan', 'password', 'existing-token')
+  const request = crypto.loginRequest('zhangsan', 'password', 'existing-token', {
+    verifyCode: '1234',
+    captchaKey: 'captcha-key'
+  })
 
   assert.deepEqual(request.body, {
     secretName: 'sm2(zhangsan)',
     secretCode: 'sm2(password)',
-    isEncry: true
+    isEncry: true,
+    verifyCode: '1234',
+    captchaKey: 'captcha-key',
+    isLog: '1',
+    logType: '5'
   })
   assert.equal(
     request.headers.Sign,
@@ -52,4 +59,33 @@ test('company crypto delegates SM2 encryption to the approved module adapter', (
   crypto.loginRequest('user', 'password', '')
 
   assert.deepEqual(encryptedValues, ['user', 'password'])
+})
+
+
+test('company login includes captcha and login audit fields', () => {
+  const crypto = createCompanyCrypto(
+    { encryptType: 'SM2' },
+    {
+      sm2Encrypt: value => `sm2:${value}`,
+      sm3Hash: value => `sm3:${value}`,
+      sm4Encrypt: value => `sm4:${value}`,
+      now: () => 1,
+      uuid: () => 'uuid'
+    }
+  )
+
+  const request = crypto.loginRequest('user', 'password', '', {
+    verifyCode: '2468',
+    captchaKey: 'captcha-key'
+  })
+
+  assert.deepEqual(request.body, {
+    secretName: 'sm2:user',
+    secretCode: 'sm2:password',
+    isEncry: true,
+    verifyCode: '2468',
+    captchaKey: 'captcha-key',
+    isLog: '1',
+    logType: '5'
+  })
 })
