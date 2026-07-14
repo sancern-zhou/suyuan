@@ -25,6 +25,9 @@ class FakeRepository:
             records = [row for row in records if row.source == source]
         return records[offset : offset + limit]
 
+    async def delete(self, session_id):
+        return self.records.pop(session_id, None) is not None
+
 
 def row(owner="u1", source=ConversationSource.WEB, read_only=False):
     return ConversationCatalogRecord(
@@ -109,3 +112,12 @@ async def test_ordinary_lists_only_self_while_admin_lists_all():
         "s1",
         "s2",
     }
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_catalog_record_through_service_boundary():
+    repository = FakeRepository([row()])
+    service = ConversationCatalogService(repository)
+
+    assert await service.delete("s1") is True
+    assert await repository.get("s1") is None

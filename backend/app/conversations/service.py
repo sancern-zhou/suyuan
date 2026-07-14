@@ -86,3 +86,6 @@ class ConversationCatalogService:
             limit=limit,
             offset=offset,
         )
+
+    async def delete(self, session_id: str) -> bool:
+        return await self.repository.delete(session_id)

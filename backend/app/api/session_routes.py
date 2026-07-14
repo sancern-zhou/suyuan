@@ -4,12 +4,21 @@
 提供会话保存、恢复、列表、删除等API端点。
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Optional, Any, Dict, List
 from datetime import datetime
 import structlog
 
 from app.agent.session import get_session_manager
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.conversations import ConversationSource
+from app.conversations.adapters import (
+    ConversationAdapterRegistry,
+    get_conversation_adapters,
+)
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.service import ConversationCatalogService
 
 logger = structlog.get_logger()
 
@@ -185,7 +194,9 @@ async def _get_session_artifacts(
 @router.get("/")
 @router.get("")  # 同时支持不带斜杠的请求
 async def list_sessions(
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     列出所有会话
@@ -198,31 +209,53 @@ async def list_sessions(
     """
     effective_limit = min(limit or SESSION_LIST_DEFAULT_LIMIT, SESSION_LIST_MAX_LIMIT)
 
-    session_manager = get_session_manager()
-    sessions = await session_manager.list_sessions(limit=effective_limit)
+    rows = await catalog.list_visible(user, limit=effective_limit)
+    sessions = [
+        {
+            "session_id": row.session_id,
+            "query": row.title or "",
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+            "data_count": 0,
+            "visual_count": 0,
+            "has_error": False,
+            "metadata": {"mode": row.mode} if row.mode else {},
+            **row.model_dump(mode="json"),
+        }
+        for row in rows
+    ]
 
     return {
-        "sessions": [s.model_dump(mode='json') for s in sessions],
+        "sessions": sessions,
         "total": len(sessions)
     }
 
 
 @router.get("/stats")
-async def get_session_stats():
+async def get_session_stats(
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     获取会话统计信息
 
     Returns:
         统计信息
     """
-    session_manager = get_session_manager()
-    stats = await session_manager.get_session_stats()
-
-    return stats
+    rows = await catalog.list_visible(user, limit=10000)
+    return {
+        "total": len(rows),
+        "total_data_count": 0,
+        "total_visual_count": 0,
+        "error_count": 0,
+    }
 
 
 @router.get("/active")
-async def get_active_sessions():
+async def get_active_sessions(
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     获取所有活跃会话
 
@@ -231,15 +264,31 @@ async def get_active_sessions():
     """
     session_manager = get_session_manager()
     sessions = await session_manager.get_active_sessions()
+    visible = {
+        row.session_id: row
+        for row in await catalog.list_visible(user, limit=10000)
+    }
+    sessions = [session for session in sessions if session.session_id in visible]
 
     return {
-        "sessions": [s.model_dump(mode='json') for s in sessions],
+        "sessions": [
+            {
+                **session.model_dump(mode="json"),
+                **visible[session.session_id].model_dump(mode="json"),
+            }
+            for session in sessions
+        ],
         "total": len(sessions)
     }
 
 
 @router.get("/{session_id}")
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+    adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
+):
     """
     获取会话详情
 
@@ -249,17 +298,21 @@ async def get_session(session_id: str):
     Returns:
         会话详情
     """
-    session_manager = get_session_manager()
-    session = await session_manager.get_session(session_id)
+    row = await catalog.require_read(session_id, user)
+    session = await adapters.get(row.source).get(row)
 
     if not session:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        raise HTTPException(status_code=404, detail="session_not_found")
 
-    return session.model_dump(mode='json')
+    return session
 
 
 @router.post("/{session_id}/save")
-async def save_session(session_id: str):
+async def save_session(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     手动保存会话
 
@@ -269,6 +322,7 @@ async def save_session(session_id: str):
     Returns:
         保存结果
     """
+    await catalog.require_write(session_id, user)
     session_manager = get_session_manager()
     session = await session_manager.get_session(session_id)
 
@@ -284,8 +338,13 @@ async def save_session(session_id: str):
 
 
 @router.post("/{session_id}/case")
-async def mark_session_case(session_id: str):
+async def mark_session_case(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """Mark a session as a demo case."""
+    await catalog.require_write(session_id, user)
     session_manager = get_session_manager()
     session = await session_manager.load_session(session_id, include_messages=False)
 
@@ -310,8 +369,13 @@ async def mark_session_case(session_id: str):
 
 
 @router.delete("/{session_id}/case")
-async def unmark_session_case(session_id: str):
+async def unmark_session_case(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """Remove a session from the demo case library."""
+    await catalog.require_write(session_id, user)
     session_manager = get_session_manager()
     session = await session_manager.load_session(session_id, include_messages=False)
 
@@ -338,7 +402,9 @@ async def unmark_session_case(session_id: str):
 async def get_session_messages(
     session_id: str,
     before: Optional[int] = None,
-    limit: int = 30
+    limit: int = 30,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     分页获取会话消息
@@ -351,6 +417,7 @@ async def get_session_messages(
     Returns:
         消息列表、是否还有更多、总消息数
     """
+    await catalog.require_read(session_id, user)
     from app.db.session_repository import get_session_repository
 
     repo = get_session_repository()
@@ -370,12 +437,17 @@ async def get_session_messages(
 
 
 @router.get("/{session_id}/visualizations")
-async def get_session_visualizations(session_id: str):
+async def get_session_visualizations(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     按需获取会话可视化数据。
 
     restore 接口默认只返回聊天首屏，图表数据由前端在首屏渲染后自动加载。
     """
+    await catalog.require_read(session_id, user)
     artifacts = await _get_session_artifacts(
         session_id,
         load_visualizations=True,
@@ -391,12 +463,17 @@ async def get_session_visualizations(session_id: str):
 
 
 @router.get("/{session_id}/office-documents")
-async def get_session_office_documents(session_id: str):
+async def get_session_office_documents(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     按需获取会话文档/报告预览元数据。
 
     restore 接口默认不返回这些预览，避免首屏触发 iframe 加载报告 HTML。
     """
+    await catalog.require_read(session_id, user)
     artifacts = await _get_session_artifacts(
         session_id,
         load_visualizations=False,
@@ -412,12 +489,17 @@ async def get_session_office_documents(session_id: str):
 
 
 @router.get("/{session_id}/drawio-board")
-async def get_session_drawio_board(session_id: str):
+async def get_session_drawio_board(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     按需获取会话 Draw.io 画板状态。
 
     restore 接口默认不返回画板 XML，避免首屏携带大块可编辑画布数据。
     """
+    await catalog.require_read(session_id, user)
     from app.db.session_repository import get_session_repository
 
     repo = get_session_repository()
@@ -462,7 +544,10 @@ def _sanitize_floats(obj):
 async def restore_session(
     session_id: str,
     message_limit: int = 100,
-    lazy_artifacts: bool = False
+    lazy_artifacts: bool = False,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+    adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
 ):
     """
     恢复会话（数据库层分页加载：只返回最新N条消息）
@@ -474,6 +559,7 @@ async def restore_session(
     Returns:
         会话元数据 + 最新N条消息 + 分页状态
     """
+    row = await catalog.require_read(session_id, user)
     logger.info(
         "[会话恢复] 开始恢复会话",
         session_id=session_id,
@@ -481,18 +567,22 @@ async def restore_session(
         lazy_artifacts=lazy_artifacts
     )
 
-    session_manager = get_session_manager()
-
-    # ✅ 使用数据库层分页方法，不加载全部消息到内存
-    result = await session_manager.load_session_with_pagination(
-        session_id,
-        message_limit,
-        include_artifacts=not lazy_artifacts
+    result = await adapters.get(row.source).restore(
+        row,
+        message_limit=message_limit,
+        lazy_artifacts=lazy_artifacts,
     )
 
     if not result:
         logger.error("[会话恢复] 会话未找到", session_id=session_id)
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+        raise HTTPException(status_code=404, detail="session_not_found")
+
+    normalized_session = result.get("normalized_session")
+    if normalized_session is not None:
+        return {
+            "message": f"Session {session_id} restored successfully",
+            "session": normalized_session,
+        }
 
     session = result["session"]
     pagination = result["pagination"]
@@ -590,12 +680,16 @@ async def restore_session(
 
     return {
         "message": f"Session {session_id} restored successfully",
-        "session": session_data
+        "session": {**session_data, **row.model_dump(mode="json")}
     }
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     删除会话
 
@@ -605,6 +699,7 @@ async def delete_session(session_id: str):
     Returns:
         删除结果
     """
+    await catalog.require_write(session_id, user)
     session_manager = get_session_manager()
     success = await session_manager.delete_session(session_id)
 
@@ -615,12 +710,15 @@ async def delete_session(session_id: str):
         )
 
     logger.info("session_deleted", session_id=session_id)
+    await catalog.delete(session_id)
 
     return {"message": f"Session {session_id} deleted successfully"}
 
 
 @router.post("/cleanup")
-async def cleanup_expired_sessions():
+async def cleanup_expired_sessions(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
     清理过期会话
 
@@ -629,6 +727,8 @@ async def cleanup_expired_sessions():
     Returns:
         清理结果
     """
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="admin_required")
     session_manager = get_session_manager()
     deleted_count = await session_manager.cleanup_expired_sessions()
 
@@ -639,7 +739,11 @@ async def cleanup_expired_sessions():
 
 
 @router.post("/auto-save")
-async def auto_save_session(request: Request):
+async def auto_save_session(
+    request: Request,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     自动保存会话消息（每次AI回复完成时调用）
 
@@ -659,6 +763,8 @@ async def auto_save_session(request: Request):
 
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
+
+    await catalog.require_write(session_id, user)
 
     logger.info(
         "[autoSave] 自动保存会话",
@@ -703,7 +809,12 @@ async def auto_save_session(request: Request):
 
 
 @router.post("/{session_id}/export")
-async def export_session(session_id: str, output_path: Optional[str] = None):
+async def export_session(
+    session_id: str,
+    output_path: Optional[str] = None,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     导出会话
 
@@ -714,6 +825,7 @@ async def export_session(session_id: str, output_path: Optional[str] = None):
     Returns:
         导出结果
     """
+    await catalog.require_write(session_id, user)
     session_manager = get_session_manager()
 
     # 如果未提供路径，使用默认路径
@@ -735,7 +847,11 @@ async def export_session(session_id: str, output_path: Optional[str] = None):
 
 
 @router.post("/import")
-async def import_session(input_path: str):
+async def import_session(
+    input_path: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     导入会话
 
@@ -753,6 +869,18 @@ async def import_session(input_path: str):
             status_code=400,
             detail=f"Failed to import session from: {input_path}"
         )
+
+    try:
+        await catalog.register(
+            session_id=session.session_id,
+            user=user,
+            source=ConversationSource.WEB,
+            mode=(session.metadata or {}).get("mode") or "assistant",
+            title=session.query[:256],
+        )
+    except Exception:
+        await session_manager.delete_session(session.session_id)
+        raise
 
     return {
         "message": "Session imported successfully",
