@@ -18,6 +18,8 @@ from typing import Any, Dict
 
 import structlog
 
+from app.auth.share_access import external_api_path
+
 from app.services.report.government_docx_style import (
     ensure_government_reference_docx,
     finalize_government_docx,
@@ -286,7 +288,9 @@ class QuartoReportRenderer:
                 raise
             standalone_html = report_dir / "report_standalone.html"
             html = preview_html.read_text(encoding="utf-8")
-            html = self._inject_base_href(html, f"/api/reports/{report_id}/")
+            html = self._inject_base_href(
+                html, external_api_path(f"/api/reports/{report_id}/")
+            )
             standalone_html.write_text(html, encoding="utf-8")
 
         token = uuid.uuid4().hex
@@ -303,8 +307,8 @@ class QuartoReportRenderer:
 
         return {
             "token": token,
-            "share_url": f"/api/reports/share/{token}",
-            "html_url": f"/api/reports/{report_id}/share/html",
+            "share_url": external_api_path(f"/api/reports/share/{token}"),
+            "html_url": external_api_path(f"/api/reports/{report_id}/share/html"),
             "file_path": str(report_dir / "report_standalone.html"),
         }
 

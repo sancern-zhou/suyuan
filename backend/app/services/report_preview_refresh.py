@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional
 
 import structlog
 
+from app.auth.share_access import external_api_path
+
 from app.services.quarto_report_renderer import quarto_report_renderer
 
 logger = structlog.get_logger()
@@ -65,7 +67,7 @@ def build_html_preview(report_id: str, html_path: Path) -> Dict[str, Any]:
     )
     return {
         "html_id": report_id,
-        "html_url": f"/api/reports/{report_id}/html",
+        "html_url": external_api_path(f"/api/reports/{report_id}/html"),
         "file_type": "report",
         "schema_version": "report_package.v1",
         "preview_version": preview_version,
@@ -146,8 +148,8 @@ def record_report_update(
             "version": next_version,
             "files": files,
             "download_urls": {
-                "qmd": f"/api/reports/{report_id}/download/qmd",
-                "docx": f"/api/reports/{report_id}/download/docx",
+                "qmd": external_api_path(f"/api/reports/{report_id}/download/qmd"),
+                "docx": external_api_path(f"/api/reports/{report_id}/download/docx"),
             },
             "history": history[-20:],
         }
@@ -246,8 +248,8 @@ def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any
             "docx": str(report_dir / "report.docx"),
         },
         "download_urls": {
-            "qmd": f"/api/reports/{report_id}/download/qmd",
-            "docx": f"/api/reports/{report_id}/download/docx",
+            "qmd": external_api_path(f"/api/reports/{report_id}/download/qmd"),
+            "docx": external_api_path(f"/api/reports/{report_id}/download/docx"),
         },
     }
     write_report_meta(report_id, meta)
