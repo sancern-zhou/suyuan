@@ -160,9 +160,16 @@ async function refreshQRCode() {
   }
 }
 
-function close() {
+async function close() {
   stopPolling()
   revokeQrUrl()
+  if (scan.value?.task_id && !scanConfirmed.value) {
+    try {
+      await authAxios.delete(`/api/social/accounts/weixin/${scan.value.task_id}`)
+    } catch (error) {
+      console.warn('Failed to clean unfinished WeChat scan:', error)
+    }
+  }
   emit('close')
 }
 
