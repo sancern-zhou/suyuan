@@ -65,6 +65,9 @@ class WebConversationAdapter:
             include_artifacts=not lazy_artifacts,
         )
 
+    async def delete(self, row: ConversationCatalogRecord) -> bool:
+        return await get_session_manager().delete_session(row.session_id)
+
 
 class KnowledgeQAConversationAdapter:
     async def _load(self, session_id: str):
@@ -96,6 +99,15 @@ class KnowledgeQAConversationAdapter:
                 -message_limit:
             ]
         return {"normalized_session": payload}
+
+    async def delete(self, row: ConversationCatalogRecord) -> bool:
+        async with async_session() as db:
+            session = await db.get(ConversationSession, row.session_id)
+            if session is None:
+                return False
+            await db.delete(session)
+            await db.commit()
+            return True
 
 
 class ConversationAdapterRegistry:
