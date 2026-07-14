@@ -46,7 +46,7 @@ ON CONFLICT (session_id) DO NOTHING;
 
 UPDATE knowledge_conversation_sessions
 SET user_id = '1'
-WHERE user_id IS NULL;
+WHERE user_id IS NULL OR BTRIM(user_id) = '';
 
 INSERT INTO conversation_catalog (
     session_id,
