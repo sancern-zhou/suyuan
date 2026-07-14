@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.services.ops_audit import rule_engine
 from app.services.ops_audit.final_issue_list import build_final_issue_list
+from app.services.ops_audit.report_writer import write_report
 from app.services.ops_audit.rule_engine import run_rule_engine
 from app.services.ops_audit.visual_evidence import archive_visual_evidence
 
@@ -152,6 +153,36 @@ def test_archive_visual_evidence_records_failure_without_aborting(tmp_path: Path
     assert evidence["evidence_images"][0]["error"]
 
 
+def test_archive_visual_evidence_deduplicates_same_source_within_one_issue(
+    tmp_path: Path,
+) -> None:
+    photo = tmp_path / "curve.jpg"
+    photo.write_bytes(b"curve")
+    issue = _visual_issue(
+        "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+        {
+            "attachment_local_path": str(photo),
+            "needs_manual_review": True,
+            "reviewed_images": [
+                {
+                    "attachment_filename": photo.name,
+                    "attachment_local_path": str(photo),
+                }
+            ],
+        },
+    )
+    audit = {
+        "records": [
+            {"working_order_code": "WO-DUP", "scoring_issues": [issue]}
+        ]
+    }
+
+    archive_visual_evidence(audit, tmp_path / "output")
+
+    evidence = json.loads(issue["evidence"])
+    assert len(evidence["evidence_images"]) == 1
+
+
 def test_final_issue_list_exposes_archived_visual_evidence() -> None:
     evidence_images = [
         {
@@ -247,3 +278,120 @@ def test_rule_engine_persists_and_returns_visual_evidence_manifest(
         persisted["records"][0]["scoring_issues"][0]["evidence"]
     )
     assert Path(persisted_evidence["evidence_images"][0]["local_path"]).is_file()
+
+
+def _report_audit(scoring_issues: list[dict] | None = None) -> dict:
+    return {
+        "audit_info": {
+            "generated_at": "2026-07-14 12:00:00",
+            "rule_stage": "deterministic_and_candidate_classification",
+            "order_count": 1,
+        },
+        "summary": {},
+        "records": [
+            {
+                "working_order_code": "WO-REPORT",
+                "operation_unit": "测试运维单位",
+                "station_name": "测试站点",
+                "create_time": "2026-07-14 08:00:00",
+                "scoring_issues": scoring_issues or [],
+            }
+        ],
+    }
+
+
+def test_report_embeds_at_most_three_confirmed_visual_images(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "visual_evidence" / "WO-REPORT" / "RULE"
+    evidence_dir.mkdir(parents=True)
+    images = []
+    for index in range(4):
+        image = evidence_dir / f"photo-{index}.jpg"
+        image.write_bytes(f"photo-{index}".encode())
+        images.append(
+            {
+                "source": f"/WebFiles/photo-{index}.jpg",
+                "filename": image.name,
+                "status": "success",
+                "local_path": str(image),
+                "relative_path": str(image.relative_to(tmp_path)),
+            }
+        )
+    final_issue_list = {
+        "items": [
+            {
+                "working_order_code": "WO-REPORT",
+                "operation_unit": "测试运维单位",
+                "station_name": "测试站点",
+                "rf_form_name": "颗粒物流量校准记录表（两周）",
+                "rule_id": "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+                "field": "attachment.vision.flow",
+                "message": "照片读数与表单不一致",
+                "evidence_images": images,
+            }
+        ]
+    }
+    report_path = tmp_path / "report.md"
+
+    write_report(
+        _report_audit(),
+        report_path,
+        final_issue_list=final_issue_list,
+    )
+
+    text = report_path.read_text(encoding="utf-8")
+    assert text.count("![视觉证据：") == 3
+    assert "报告展示 3 张，证据包共保存 4 张" in text
+    assert "visual_evidence/WO-REPORT/RULE/photo-0.jpg" in text
+    assert "photo-3.jpg" not in text
+
+
+def test_report_separates_pending_visual_reviews_and_reports_image_failure(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "visual_evidence" / "WO-REPORT" / "CURVE" / "curve.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"curve")
+    pending_issue = _visual_issue(
+        "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+        {
+            "report_classification": "疑似问题待人工复核",
+            "needs_manual_review": True,
+            "evidence_images": [
+                {
+                    "source": "/WebFiles/curve.jpg",
+                    "filename": "curve.jpg",
+                    "status": "success",
+                    "local_path": str(image),
+                    "relative_path": str(image.relative_to(tmp_path)),
+                }
+            ],
+        },
+    )
+    insufficient_issue = _visual_issue(
+        "ATTACHMENT_FLOW_VISUAL_ERROR",
+        {
+            "report_classification": "资料不足待人工复核",
+            "evidence_images": [
+                {
+                    "source": "/WebFiles/missing.jpg",
+                    "filename": "missing.jpg",
+                    "status": "failed",
+                    "error": "附件服务不可用",
+                }
+            ],
+        },
+    )
+    report_path = tmp_path / "report.md"
+
+    write_report(
+        _report_audit([pending_issue, insufficient_issue]),
+        report_path,
+        final_issue_list={"items": []},
+    )
+
+    text = report_path.read_text(encoding="utf-8")
+    assert "## 视觉待人工复核" in text
+    assert "疑似问题待人工复核" in text
+    assert "资料不足待人工复核" in text
+    assert "visual_evidence/WO-REPORT/CURVE/curve.jpg" in text
+    assert "证据图片获取失败：附件服务不可用" in text
