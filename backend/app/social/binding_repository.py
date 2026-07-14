@@ -183,3 +183,18 @@ class SocialBindingRepository:
                 SocialUser.platform_user_id.is_not(None),
             ))).all()
             return [self._binding_record(row) for row in rows]
+
+    async def deactivate_account(self, account_id: str) -> bool:
+        async with async_session() as session:
+            row = await session.scalar(
+                select(SocialUser).where(
+                    SocialUser.account_id == account_id,
+                    SocialUser.status == "active",
+                ).with_for_update()
+            )
+            if row is None:
+                return False
+            row.status = "disabled"
+            row.updated_at = datetime.utcnow()
+            await session.commit()
+            return True

@@ -13,6 +13,14 @@ from typing import List, Optional
 from pathlib import Path
 import structlog
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.social.binding_service import (
+    SocialBindingConflict,
+    SocialBindingService,
+    get_social_binding_service,
+)
+
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/social/accounts", tags=["social-accounts"])
@@ -124,12 +132,34 @@ def save_config(config):
     return save_social_config(config)
 
 
+async def _owned_account_id(
+    identifier: str,
+    user: CurrentUser,
+    bindings: SocialBindingService,
+) -> str:
+    """Resolve a scan task or finalized account without exposing foreign IDs."""
+    try:
+        task = await bindings.require_scan_task(identifier, user)
+        return task.account_id
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+
+    binding = await bindings.active_for_account(identifier)
+    if binding is None or (not user.is_admin and binding.platform_user_id != user.id):
+        raise HTTPException(status_code=404, detail="weixin_account_not_found")
+    return binding.account_id
+
+
 # ============================================================================
 # API端点
 # ============================================================================
 
 @router.get("", response_model=List[AccountResponse])
-async def list_accounts():
+async def list_accounts(
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     获取所有社交账号列表
 
@@ -140,6 +170,8 @@ async def list_accounts():
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
 
+    visible_bindings = await bindings.list_visible(user)
+    visible_accounts = {binding.account_id for binding in visible_bindings}
     accounts = []
     for channel_key, channel in manager.channels.items():
         # 解析渠道类型和实例ID
@@ -147,6 +179,8 @@ async def list_accounts():
             channel_type, instance_id = channel_key.split(":", 1)
         else:
             channel_type, instance_id = channel_key, "default"
+        if instance_id not in visible_accounts:
+            continue
 
         # 获取配置
         config = getattr(channel, 'config', None)
@@ -167,7 +201,10 @@ async def list_accounts():
 
 
 @router.post("/weixin", response_model=AccountResponse)
-async def create_weixin_account(account: AccountCreate):
+async def create_weixin_account(
+    account: AccountCreate,
+    user: CurrentUser = Depends(require_current_user),
+):
     """
     创建新的微信账号
 
@@ -177,6 +214,8 @@ async def create_weixin_account(account: AccountCreate):
     Returns:
         创建的账号信息
     """
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="admin_required")
     # 1. 加载配置
     config = load_config()
 
@@ -246,8 +285,12 @@ async def create_weixin_account(account: AccountCreate):
     }
 
 
-@router.get("/weixin/{account_id}/qrcode")
-async def get_weixin_qrcode(account_id: str):
+@router.get("/weixin/{task_id}/qrcode")
+async def get_weixin_qrcode(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     获取微信账号登录QR码图片
 
@@ -257,6 +300,8 @@ async def get_weixin_qrcode(account_id: str):
     Returns:
         QR码图片文件
     """
+    task = await bindings.require_scan_task(task_id, user)
+    account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -275,8 +320,12 @@ async def get_weixin_qrcode(account_id: str):
     return FileResponse(qr_path, media_type="image/png")
 
 
-@router.get("/weixin/{account_id}/status", response_model=AccountStatus)
-async def get_weixin_status(account_id: str):
+@router.get("/weixin/{task_id}/status", response_model=AccountStatus)
+async def get_weixin_status(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     获取微信账号登录状态
 
@@ -286,6 +335,8 @@ async def get_weixin_status(account_id: str):
     Returns:
         账号状态信息
     """
+    task = await bindings.require_scan_task(task_id, user)
+    account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -310,7 +361,11 @@ async def get_weixin_status(account_id: str):
 
 
 @router.post("/weixin/{account_id}/start")
-async def start_weixin_account(account_id: str):
+async def start_weixin_account(
+    account_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     启动微信账号（执行登录流程）
 
@@ -320,6 +375,7 @@ async def start_weixin_account(account_id: str):
     Returns:
         操作结果
     """
+    account_id = await _owned_account_id(account_id, user, bindings)
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -346,7 +402,11 @@ async def start_weixin_account(account_id: str):
 
 
 @router.post("/weixin/{account_id}/stop")
-async def stop_weixin_account(account_id: str):
+async def stop_weixin_account(
+    account_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     停止微信账号
 
@@ -356,6 +416,7 @@ async def stop_weixin_account(account_id: str):
     Returns:
         操作结果
     """
+    account_id = await _owned_account_id(account_id, user, bindings)
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -378,7 +439,11 @@ async def stop_weixin_account(account_id: str):
 
 
 @router.delete("/weixin/{account_id}")
-async def delete_weixin_account(account_id: str):
+async def delete_weixin_account(
+    account_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     删除微信账号
 
@@ -388,6 +453,7 @@ async def delete_weixin_account(account_id: str):
     Returns:
         操作结果
     """
+    account_id = await _owned_account_id(account_id, user, bindings)
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -415,6 +481,8 @@ async def delete_weixin_account(account_id: str):
     if not save_config(config):
         raise HTTPException(status_code=500, detail="Failed to save configuration")
 
+    await bindings.deactivate_account(account_id)
+
     # 3. 清理状态文件
     state_dir = Path(f"backend_data_registry/social/weixin/{account_id}")
     if state_dir.exists():
@@ -429,8 +497,12 @@ async def delete_weixin_account(account_id: str):
     return {"message": "Account deleted successfully", "account_id": account_id}
 
 
-@router.post("/weixin/{account_id}/refresh-qrcode")
-async def refresh_weixin_qrcode(account_id: str):
+@router.post("/weixin/{task_id}/refresh-qrcode")
+async def refresh_weixin_qrcode(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     刷新微信账号QR码（重新获取新的QR码）
 
@@ -440,6 +512,8 @@ async def refresh_weixin_qrcode(account_id: str):
     Returns:
         操作结果
     """
+    task = await bindings.require_scan_task(task_id, user)
+    account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -472,17 +546,19 @@ async def refresh_weixin_qrcode(account_id: str):
 # ============================================================================
 
 class AutoCreateRequest(BaseModel):
-    """自动创建账号请求"""
-    temp_id: str
+    """The server derives scan ownership from the authenticated session."""
 
 
 class FinalizeRequest(BaseModel):
-    """完成账号创建请求"""
-    name: str
+    """Finalize uses only QR-confirmed server state."""
 
 
 @router.post("/weixin/auto-create")
-async def auto_create_account(request: AutoCreateRequest):
+async def auto_create_account(
+    request: AutoCreateRequest | None = None,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     自动创建临时账号并启动（用于扫码登录流程）
 
@@ -492,6 +568,8 @@ async def auto_create_account(request: AutoCreateRequest):
     Returns:
         创建的账号信息
     """
+    task = await bindings.create_scan_task(user)
+    account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -501,21 +579,25 @@ async def auto_create_account(request: AutoCreateRequest):
 
     # 2. 检查ID是否已存在
     existing_ids = [acc.id for acc in config.weixin.accounts]
-    if request.temp_id in existing_ids:
-        logger.info("temp_account_already_exists", temp_id=request.temp_id)
+    if account_id in existing_ids:
+        logger.info("temp_account_already_exists", account_id=account_id)
         # 账号已存在，直接返回
-        channel_key = f"weixin:{request.temp_id}"
+        channel_key = f"weixin:{account_id}"
         channel = manager.channels.get(channel_key)
         if channel:
             return {
-                "account_id": request.temp_id,
-                "name": getattr(channel.config, "name", f"临时账号-{request.temp_id}"),
+                "task_id": task.id,
+                "account_id": account_id,
+                "name": getattr(channel.config, "name", user.display_name),
+                "platform_user_id": user.id,
+                "platform_username": user.username,
+                "platform_display_name": user.display_name,
                 "status": "already_exists",
                 "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
             }
         else:
             # 配置中存在但渠道未启动，尝试创建并启动
-            account_config = next(acc for acc in config.weixin.accounts if acc.id == request.temp_id)
+            account_config = next(acc for acc in config.weixin.accounts if acc.id == account_id)
             channel = manager._create_weixin_channel(account_config)
             manager.channels[channel_key] = channel
 
@@ -532,8 +614,12 @@ async def auto_create_account(request: AutoCreateRequest):
 
             await channel.start()
             return {
-                "account_id": request.temp_id,
+                "task_id": task.id,
+                "account_id": account_id,
                 "name": account_config.name,
+                "platform_user_id": user.id,
+                "platform_username": user.username,
+                "platform_display_name": user.display_name,
                 "status": "restarted",
                 "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
             }
@@ -541,8 +627,8 @@ async def auto_create_account(request: AutoCreateRequest):
     # 3. 创建临时账号配置
     from config.social_config import WeixinAccountConfig
     temp_account = WeixinAccountConfig(
-        id=request.temp_id,
-        name=f"临时账号-{request.temp_id}",  # 临时名称，稍后更新
+        id=account_id,
+        name=user.display_name or user.username,
         base_url="https://ilinkai.weixin.qq.com",
         token="",
         enabled=True,
@@ -553,14 +639,14 @@ async def auto_create_account(request: AutoCreateRequest):
     # 4. 添加到配置（临时）
     config.weixin.accounts.append(temp_account)
     if not save_config(config):
-        logger.error("failed_to_save_config", temp_id=request.temp_id)
+        logger.error("failed_to_save_config", account_id=account_id)
         raise HTTPException(status_code=500, detail="Failed to save configuration")
 
     # 5. 创建并启动渠道
     try:
-        logger.info("creating_weixin_channel", temp_id=request.temp_id)
+        logger.info("creating_weixin_channel", account_id=account_id)
         channel = manager._create_weixin_channel(temp_account)
-        channel_key = f"weixin:{request.temp_id}"
+        channel_key = f"weixin:{account_id}"
         manager.channels[channel_key] = channel
 
         # ✅ 注册到 AgentBridge（用于获取机器人账号）
@@ -568,12 +654,12 @@ async def auto_create_account(request: AutoCreateRequest):
             manager.agent_bridge.register_channel(channel)
             logger.info("channel_registered_to_agent_bridge", channel_name=channel_key)
 
-        logger.info("channel_created", temp_id=request.temp_id, channel_key=channel_key)
+        logger.info("channel_created", account_id=account_id, channel_key=channel_key)
 
         # ✅ 异步任务：生成二维码并等待登录
         async def login_and_start():
             try:
-                logger.info("starting_login_async", temp_id=request.temp_id)
+                logger.info("starting_login_async", account_id=account_id)
 
                 # 初始化HTTP客户端
                 channel._client = httpx.AsyncClient(
@@ -585,44 +671,48 @@ async def auto_create_account(request: AutoCreateRequest):
                 # 只生成二维码，不等待扫码完成
                 try:
                     qrcode_id = await channel._init_qr_login()
-                    logger.info("qrcode_generated", temp_id=request.temp_id, qrcode_id=qrcode_id)
+                    logger.info("qrcode_generated", account_id=account_id, qrcode_id=qrcode_id)
                 except Exception as e:
-                    logger.error("qrcode_generation_failed", temp_id=request.temp_id, error=str(e), exc_info=True)
+                    logger.error("qrcode_generation_failed", account_id=account_id, error=str(e), exc_info=True)
 
                 # 启动轮询（start方法会继续等待扫码并完成登录）
                 await channel.start()
 
             except Exception as e:
-                logger.error("login_async_failed", temp_id=request.temp_id, error=str(e), exc_info=True)
+                logger.error("login_async_failed", account_id=account_id, error=str(e), exc_info=True)
 
         # 立即创建异步任务，不等待
         asyncio.create_task(login_and_start())
 
         # 等待二维码就绪（最多5秒）
         try:
-            logger.info("waiting_for_qrcode", temp_id=request.temp_id)
+            logger.info("waiting_for_qrcode", account_id=account_id)
             await asyncio.wait_for(channel._qr_code_ready.wait(), timeout=5.0)
             logger.info(
                 "qrcode_ready",
-                temp_id=request.temp_id,
+                account_id=account_id,
                 qr_path=str(getattr(channel, "_current_qr_code_path", None))
             )
         except asyncio.TimeoutError:
             logger.warning(
                 "qrcode_ready_timeout",
-                temp_id=request.temp_id,
+                account_id=account_id,
                 timeout_seconds=5.0
             )
 
         logger.info(
             "temp_account_auto_created",
-            temp_id=request.temp_id,
+            account_id=account_id,
             channel_key=channel_key
         )
 
         return {
-            "account_id": request.temp_id,
+            "task_id": task.id,
+            "account_id": account_id,
             "name": temp_account.name,
+            "platform_user_id": user.id,
+            "platform_username": user.username,
+            "platform_display_name": user.display_name,
             "status": "created",
             "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
         }
@@ -630,15 +720,20 @@ async def auto_create_account(request: AutoCreateRequest):
     except Exception as e:
         logger.error(
             "failed_to_auto_create_account",
-            temp_id=request.temp_id,
+            account_id=account_id,
             error=str(e),
             exc_info=True
         )
         raise HTTPException(status_code=500, detail=f"Failed to auto-create account: {str(e)}")
 
 
-@router.post("/weixin/{account_id}/finalize")
-async def finalize_account(account_id: str, request: FinalizeRequest):
+@router.post("/weixin/{task_id}/finalize")
+async def finalize_account(
+    task_id: str,
+    request: FinalizeRequest | None = None,
+    user: CurrentUser = Depends(require_current_user),
+    bindings: SocialBindingService = Depends(get_social_binding_service),
+):
     """
     完成账号创建（扫码登录成功后调用）
 
@@ -649,6 +744,8 @@ async def finalize_account(account_id: str, request: FinalizeRequest):
     Returns:
         操作结果
     """
+    task = await bindings.require_scan_task(task_id, user)
+    account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -659,49 +756,60 @@ async def finalize_account(account_id: str, request: FinalizeRequest):
     if not channel:
         raise HTTPException(status_code=404, detail=f"Account '{account_id}' not found")
 
-    # 1. 获取 bot_account 和 token
     bot_account = getattr(channel, "bot_account", None)
-    if not bot_account:
-        logger.warning("bot_account_not_found", account_id=account_id)
-        bot_account = f"weixin_{account_id}"
+    scanner_user_id = getattr(channel, "scanner_user_id", "")
+    if not scanner_user_id or not bot_account:
+        raise HTTPException(status_code=409, detail="weixin_scan_not_confirmed")
 
-    # ✅ 获取 token 并保存到配置文件
+    previous = await bindings.active_for_platform_user(user.id)
+    try:
+        binding = await bindings.activate(
+            task_id=task.id,
+            user=user,
+            account_id=account_id,
+            ilink_user_id=scanner_user_id,
+            bot_account=bot_account,
+        )
+    except SocialBindingConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     token = getattr(channel, "_token", None)
-    if token:
-        logger.info("Saving token to config file", account_id=account_id, token_preview=token[:20])
-
-    # 2. 更新配置中的账号名称和 token
     config = load_config()
     for acc in config.weixin.accounts:
         if acc.id == account_id:
-            acc.name = request.name
-            if token:  # ✅ 保存 token
+            acc.name = user.display_name or user.username
+            if token:
                 acc.token = token
-            break
+        elif previous and acc.id == previous.account_id and previous.account_id != account_id:
+            acc.enabled = False
 
     save_config(config)
 
-    # 3. 更新渠道配置
-    channel.config.name = request.name
-    channel.display_name = request.name
+    if previous and previous.account_id != account_id:
+        old_channel = manager.channels.get(f"weixin:{previous.account_id}")
+        if old_channel:
+            await old_channel.stop()
+
+    channel.config.name = user.display_name or user.username
+    channel.display_name = user.display_name or user.username
 
     logger.info(
         "account_finalized",
         account_id=account_id,
-        name=request.name,
+        platform_user_id=user.id,
         bot_account=bot_account
     )
 
     return {
         "message": "Account finalized successfully",
-        "account_id": account_id,
-        "name": request.name,
-        "bot_account": bot_account
+        **binding.model_dump(mode="json"),
     }
 
 
 @router.post("/reload")
-async def reload_channels():
+async def reload_channels(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
     重新加载所有渠道配置（支持动态增删账户）
 
@@ -713,6 +821,8 @@ async def reload_channels():
     Returns:
         操作结果
     """
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="admin_required")
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
