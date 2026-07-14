@@ -6,6 +6,7 @@
 
 import asyncio
 import httpx
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -149,6 +150,41 @@ async def _owned_account_id(
     if binding is None or (not user.is_admin and binding.platform_user_id != user.id):
         raise HTTPException(status_code=404, detail="weixin_account_not_found")
     return binding.account_id
+
+
+async def _cleanup_temporary_account(
+    account_id: str,
+    bindings: SocialBindingService,
+) -> None:
+    manager = get_channel_manager()
+    if manager:
+        channel_key = f"weixin:{account_id}"
+        channel = manager.channels.pop(channel_key, None)
+        if channel:
+            try:
+                await channel.stop()
+            except Exception as exc:
+                logger.warning("temporary_channel_stop_failed", account_id=account_id, error=str(exc))
+
+    config = load_config()
+    original_count = len(config.weixin.accounts)
+    config.weixin.accounts = [acc for acc in config.weixin.accounts if acc.id != account_id]
+    if len(config.weixin.accounts) != original_count:
+        save_config(config)
+    await bindings.deactivate_account(account_id)
+
+
+async def _require_active_scan_task(
+    task_id: str,
+    user: CurrentUser,
+    bindings: SocialBindingService,
+):
+    task = await bindings.require_scan_task(task_id, user)
+    if task.status != "confirmed" and task.expires_at < datetime.utcnow():
+        await bindings.mark_scan_status(task_id, user, "expired")
+        await _cleanup_temporary_account(task.account_id, bindings)
+        raise HTTPException(status_code=410, detail="weixin_scan_expired")
+    return task
 
 
 # ============================================================================
@@ -300,7 +336,7 @@ async def get_weixin_qrcode(
     Returns:
         QR码图片文件
     """
-    task = await bindings.require_scan_task(task_id, user)
+    task = await _require_active_scan_task(task_id, user, bindings)
     account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
@@ -335,7 +371,7 @@ async def get_weixin_status(
     Returns:
         账号状态信息
     """
-    task = await bindings.require_scan_task(task_id, user)
+    task = await _require_active_scan_task(task_id, user, bindings)
     account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
@@ -512,7 +548,7 @@ async def refresh_weixin_qrcode(
     Returns:
         操作结果
     """
-    task = await bindings.require_scan_task(task_id, user)
+    task = await _require_active_scan_task(task_id, user, bindings)
     account_id = task.account_id
     manager = get_channel_manager()
     if not manager:
@@ -744,7 +780,7 @@ async def finalize_account(
     Returns:
         操作结果
     """
-    task = await bindings.require_scan_task(task_id, user)
+    task = await _require_active_scan_task(task_id, user, bindings)
     account_id = task.account_id
     manager = get_channel_manager()
     if not manager:

@@ -27,9 +27,6 @@ class SocialBindingService:
         task = await self.repository.get_scan_task(task_id)
         if task is None or (not user.is_admin and task.owner_user_id != user.id):
             raise HTTPException(status_code=404, detail="weixin_scan_not_found")
-        if task.status != "confirmed" and task.expires_at < datetime.utcnow():
-            await self.repository.set_scan_status(task_id, "expired")
-            raise HTTPException(status_code=410, detail="weixin_scan_expired")
         return task
 
     async def mark_scan_status(
@@ -48,6 +45,9 @@ class SocialBindingService:
         bot_account: str,
     ) -> SocialBindingRecord:
         task = await self.require_scan_task(task_id, user)
+        if task.status != "confirmed" and task.expires_at < datetime.utcnow():
+            await self.repository.set_scan_status(task_id, "expired")
+            raise HTTPException(status_code=410, detail="weixin_scan_expired")
         if task.account_id != account_id:
             raise HTTPException(status_code=404, detail="weixin_scan_not_found")
         try:

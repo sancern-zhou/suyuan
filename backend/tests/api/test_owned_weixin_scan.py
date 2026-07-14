@@ -98,6 +98,15 @@ class FakeBindings:
         self.bindings.append(record)
         return record
 
+    async def mark_scan_status(self, task_id, user, status):
+        task = await self.require_scan_task(task_id, user)
+        task = task.model_copy(update={"status": status})
+        self.tasks[task_id] = task
+        return task
+
+    async def deactivate_account(self, account_id):
+        return False
+
 
 @pytest.fixture
 def route_environment(monkeypatch):
@@ -198,3 +207,23 @@ def test_finalize_uses_confirmed_scanner_identity(route_environment):
     assert response.json()["platform_user_id"] == "u1"
     assert response.json()["ilink_user_id"] == "wx-u1"
     assert "token" not in response.json()
+
+
+def test_expired_scan_cleans_temporary_channel_and_configuration(route_environment):
+    manager, bindings, config = route_environment
+    user = _user("u1", "alice")
+    task = asyncio.run(bindings.create_scan_task(user)).model_copy(
+        update={"expires_at": datetime.utcnow() - timedelta(seconds=1)}
+    )
+    bindings.tasks[task.id] = task
+    account_config = SimpleNamespace(id=task.account_id, name="temporary", enabled=True)
+    config.weixin.accounts.append(account_config)
+    manager.channels[f"weixin:{task.account_id}"] = FakeChannel(account_config)
+
+    response = _client(user, bindings).get(
+        f"/api/social/accounts/weixin/{task.id}/status"
+    )
+
+    assert response.status_code == 410
+    assert f"weixin:{task.account_id}" not in manager.channels
+    assert config.weixin.accounts == []
