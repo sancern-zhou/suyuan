@@ -93,6 +93,7 @@
             :sessions="sessionHistoryData"
             :session-history-stats="sessionHistoryStats"
             :session-history-loading="sessionHistoryLoading"
+            :is-admin="auth.user?.admin === true"
             @close="$emit('close-management-panel')"
             @refresh-sessions="$emit('refresh-session-history')"
             @cleanup-sessions="$emit('cleanup-sessions')"
@@ -200,6 +201,7 @@
             :sessions="sessionHistoryData"
             :session-history-stats="sessionHistoryStats"
             :session-history-loading="sessionHistoryLoading"
+            :is-admin="auth.user?.admin === true"
             @close="$emit('close-management-panel')"
             @refresh-sessions="$emit('refresh-session-history')"
             @cleanup-sessions="$emit('cleanup-sessions')"
@@ -283,6 +285,9 @@ import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
 import FileManagerPanel from '@/components/FileManagerPanel.vue'
+import { useAuthStore } from '@/auth/authStore.js'
+
+const auth = useAuthStore()
 
 const props = defineProps({
   // Store状态

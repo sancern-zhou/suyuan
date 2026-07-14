@@ -4,6 +4,7 @@ import { authFetch } from '@/auth/http.js'
  * 处理会话的创建、恢复、清理等操作
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
 import {
   listSessions,
   restoreSession,
@@ -166,16 +167,16 @@ export function useSessionManagement(store) {
   const sessionHistoryData = computed(() => {
     const byId = new Map()
     for (const session of persistedSessionHistoryData.value) {
-      byId.set(session.session_id, {
+      byId.set(session.session_id, preserveCatalogFields({}, {
         ...session,
         status: session.status || session.state || (session.has_error ? 'error' : 'completed')
-      })
+      }))
     }
     for (const session of localSessionHistoryData.value) {
-      byId.set(session.session_id, {
-        ...(byId.get(session.session_id) || {}),
-        ...session
-      })
+      byId.set(
+        session.session_id,
+        preserveCatalogFields(byId.get(session.session_id) || {}, session)
+      )
     }
 
     return Array.from(byId.values()).sort((a, b) => {
