@@ -8,6 +8,7 @@ from app.auth.identity_cache import IdentityCache
 from app.auth.middleware import GatewayAuthenticationMiddleware
 from app.auth.platform_client import PlatformAuthClient
 from app.auth.service import AuthenticationService
+from app.auth.ws_tickets import WebSocketTicketService
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
 from app.core.scheduled_task_worker_proxy import ScheduledTaskWorkerProxyMiddleware
 from app.core.social_account_worker_proxy import SocialAccountWorkerProxyMiddleware
@@ -51,6 +52,11 @@ def configure_middleware(app: FastAPI) -> None:
     )
     app.state.auth_redis = auth_redis
     app.state.auth_service = auth_service
+    app.state.ws_ticket_service = WebSocketTicketService(
+        auth_redis,
+        key_prefix=settings.auth_identity_cache_key_prefix,
+        ttl_seconds=settings.auth_ws_ticket_ttl_seconds,
+    )
     app.add_middleware(
         GatewayAuthenticationMiddleware,
         settings=settings,
