@@ -53,8 +53,6 @@ class AuthenticationService:
             raise AuthenticationRejected("invalid SysCode")
 
         if self._settings.auth_mode == "mock":
-            if not self._settings.auth_mock_enabled:
-                raise AuthenticationRejected("mock authentication is disabled")
             return build_mock_user(self._settings, sys_code)
 
         cached = await self._cache.get(token)

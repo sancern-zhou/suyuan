@@ -31,7 +31,6 @@ def test_mock_runtime_config_returns_the_stable_administrator():
     settings = Settings(
         _env_file=None,
         auth_mode="mock",
-        auth_mock_enabled=True,
         auth_mock_user_id="local-developer",
         auth_mock_username="local-developer",
         auth_mock_display_name="本地开发用户",
@@ -54,15 +53,3 @@ def test_mock_runtime_config_returns_the_stable_administrator():
             "authSource": "mock",
         },
     }
-
-
-def test_disabled_mock_mode_falls_back_to_company_runtime_behavior():
-    settings = Settings(
-        _env_file=None,
-        auth_mode="mock",
-        auth_mock_enabled=False,
-    )
-
-    response = _client(settings).get("/api/auth/runtime-config")
-
-    assert response.json() == {"authMode": "company", "sysCode": "SUYUAN"}
