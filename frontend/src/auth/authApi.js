@@ -13,6 +13,7 @@ async function responseBody(response) {
 export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } = {}) {
   const runtime = config || runtimeAuthConfig()
   const crypto = createCompanyCrypto(runtime)
+  const authPlatformSysCode = runtime.authPlatformSysCode || 'JCXT'
   const url = path => `${runtime.authBaseUrl || ''}${path}`
   const session = () => storage?.readSession?.() || { token: '', sysCode: runtime.sysCode }
 
@@ -25,7 +26,7 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
       })
       return responseBody(await fetchImpl(url('/auth/token/authentication'), {
         method: 'POST',
-        headers: { ...request.headers, SysCode: runtime.sysCode },
+        headers: { ...request.headers, SysCode: authPlatformSysCode },
         body: JSON.stringify(request.body)
       }))
     },
@@ -36,7 +37,7 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
         headers: {
           ...crypto.requestHeaders(path, token),
           Authorization: `Bearer ${token}`,
-          SysCode: runtime.sysCode
+          SysCode: authPlatformSysCode
         }
       }))
     },
@@ -48,7 +49,7 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
         headers: {
           ...crypto.requestHeaders(path, token),
           Authorization: `Bearer ${token}`,
-          SysCode: runtime.sysCode
+          SysCode: authPlatformSysCode
         },
         body: JSON.stringify({ isLog: '1', logType: '6' })
       }))

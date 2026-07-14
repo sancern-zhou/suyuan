@@ -43,6 +43,7 @@ async def test_current_user_forwards_company_headers_and_maps_admin_role():
         base_url="http://platform-gateway/api",
         current_user_path="/auth/account/getCurrentUser",
         admin_role_codes={"SUYUAN_ADMIN"},
+        platform_sys_code="JCXT",
         transport=httpx.MockTransport(handler),
     )
 
@@ -50,7 +51,7 @@ async def test_current_user_forwards_company_headers_and_maps_admin_role():
     await client.close()
 
     assert seen["headers"]["authorization"] == "Bearer company-token"
-    assert seen["headers"]["syscode"] == "SUYUAN"
+    assert seen["headers"]["syscode"] == "JCXT"
     assert seen["params"] == {"isLog": "1", "logType": "4"}
     assert user.id == "user-1"
     assert user.username == "zhangsan"
@@ -58,6 +59,7 @@ async def test_current_user_forwards_company_headers_and_maps_admin_role():
     assert user.role_codes == ("SUYUAN_ADMIN", "viewer")
     assert user.is_admin is True
     assert user.auth_source == "company"
+    assert user.sys_code == "SUYUAN"
 
 
 @pytest.mark.asyncio

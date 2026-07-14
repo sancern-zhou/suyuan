@@ -49,6 +49,7 @@ def configure_middleware(app: FastAPI) -> None:
             base_url=settings.auth_service_url,
             current_user_path=settings.auth_current_user_path,
             admin_role_codes=settings.auth_admin_role_codes_set,
+            platform_sys_code=settings.auth_platform_sys_code,
         ),
     )
     app.state.auth_redis = auth_redis

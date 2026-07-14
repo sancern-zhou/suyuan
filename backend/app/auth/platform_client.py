@@ -25,12 +25,14 @@ class PlatformAuthClient:
         base_url: str,
         current_user_path: str,
         admin_role_codes: set[str],
+        platform_sys_code: str = "JCXT",
         timeout_seconds: float = 5.0,
         transport: httpx.AsyncBaseTransport | None = None,
         logger: Any | None = None,
     ) -> None:
         self._url = f"{base_url.rstrip('/')}/{current_user_path.lstrip('/')}"
         self._admin_role_codes = set(admin_role_codes)
+        self._platform_sys_code = platform_sys_code
         self._client = httpx.AsyncClient(timeout=timeout_seconds, transport=transport)
         self._logger = logger or structlog.get_logger(__name__)
 
@@ -39,7 +41,7 @@ class PlatformAuthClient:
         self._logger.info(
             "company_auth_lookup_started",
             token_fingerprint=fingerprint,
-            sys_code=sys_code,
+            sys_code=self._platform_sys_code,
         )
         try:
             response = await self._client.get(
@@ -47,7 +49,7 @@ class PlatformAuthClient:
                 params={"isLog": "1", "logType": "4"},
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "SysCode": sys_code,
+                    "SysCode": self._platform_sys_code,
                 },
             )
         except httpx.HTTPError as exc:

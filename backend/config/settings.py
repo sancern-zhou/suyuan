@@ -109,6 +109,10 @@ class Settings(BaseSettings):
         description="Authentication mode; mock is restricted to non-production development",
     )
     auth_sys_code: str = Field(default="SUYUAN", description="Company system code")
+    auth_platform_sys_code: str = Field(
+        default="JCXT",
+        description="Application code sent to the company authentication service",
+    )
     auth_service_url: str = Field(
         default="",
         description="Internal or gateway base URL for the company authentication service",

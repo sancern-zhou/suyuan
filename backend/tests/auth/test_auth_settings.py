@@ -9,6 +9,7 @@ def test_company_auth_contract_defaults():
 
     assert value.auth_mode == "company"
     assert value.auth_sys_code == "SUYUAN"
+    assert value.auth_platform_sys_code == "JCXT"
     assert value.gateway_api_prefix == "/api/suyuan"
     assert value.auth_identity_cache_key_prefix == "suyuan:auth:"
     assert value.nacos_namespace == "normcraft-ai"
