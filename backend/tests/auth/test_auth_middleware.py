@@ -50,6 +50,20 @@ def _app(service=None, **setting_overrides):
     async def ready():
         return {"ok": True}
 
+    @app.get("/api/health")
+    async def api_health():
+        return {"ok": True}
+
+    @app.get("/api/ready")
+    async def api_ready():
+        return {"ok": True}
+
+    @app.get("/login")
+    @app.get("/knowledge-base")
+    @app.get("/session/{session_id}")
+    async def frontend_entry(session_id: str | None = None):
+        return {"entry": True}
+
     @app.get("/assets/{path:path}")
     async def asset(path: str):
         return {"path": path}
@@ -90,6 +104,11 @@ async def _get(app, path, *, client_host="127.0.0.1", headers=None):
     [
         "/health",
         "/ready",
+        "/api/health",
+        "/api/ready",
+        "/login",
+        "/knowledge-base",
+        "/session/session-1",
         "/assets/app.js",
         "/api/signed-media/a/b.png?expires=1&signature=x",
         "/api/reports/share/grant",
@@ -110,6 +129,8 @@ async def test_exact_public_routes_do_not_authenticate(path):
     "path",
     [
         "/health/private",
+        "/login/private",
+        "/session",
         "/api/reports/share",
         "/api/reports/share/grant/private",
         "/api/html-artifacts/share/grant/private",

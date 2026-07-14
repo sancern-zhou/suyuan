@@ -16,6 +16,11 @@ export default defineConfig(({ mode }) => {
       port: 5174,
       host: '0.0.0.0',
       proxy: {
+        '/api/auth': {
+          target: env.VITE_AUTH_PROXY_TARGET || 'http://10.10.204.80:8025',
+          changeOrigin: true,
+          secure: false
+        },
         '/api/suyuan/ws': {
           target: 'http://localhost:8000',
           changeOrigin: true,
