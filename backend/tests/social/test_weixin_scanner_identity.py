@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -51,3 +52,9 @@ def test_scanner_identity_survives_channel_restart(tmp_path):
     restarted = _channel(tmp_path)
 
     assert restarted.scanner_user_id == "wx-user-1"
+
+
+def test_weixin_channel_never_logs_token_previews():
+    source = Path("backend/app/channels/weixin.py").read_text()
+
+    assert "token_preview" not in source
