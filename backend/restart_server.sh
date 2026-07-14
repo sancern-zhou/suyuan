@@ -23,7 +23,8 @@ cd "${SCRIPT_DIR}"
 
 # 3. 启动服务器
 echo "启动服务器..."
-nohup "${PYTHON_BIN}" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --env-file .env > /tmp/backend.log 2>&1 &
+# Authentication must see the raw TCP peer; Nginx owns public-client-IP logging.
+nohup "${PYTHON_BIN}" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --env-file .env --no-proxy-headers > /tmp/backend.log 2>&1 &
 NEW_PID=$!
 
 # 4. 等待启动
