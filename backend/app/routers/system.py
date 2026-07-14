@@ -10,12 +10,12 @@ Paths are intentionally preserved:
 
 import os
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 import structlog
 
 from app.core.static_files import get_frontend_dist_path
-from app.models.schemas import ConfigResponse
+from app.api.routes import ConfigResponse
 from app.services.lifecycle_manager import get_fetcher_scheduler, get_tool_registry
 from config.settings import settings
 
@@ -90,6 +90,23 @@ async def health_check():
         "environment": settings.environment,
         "llm_provider": settings.llm_provider,
     }
+
+
+@router.get("/ready")
+async def readiness_check(request: Request):
+    """Report gateway-facing dependency readiness without exposing secrets."""
+    auth_ready = bool(settings.auth_service_url.strip()) or settings.auth_mode == "mock"
+    nacos_ready = bool(getattr(request.app.state, "nacos_ready", False))
+    components = {
+        "authentication": "ready" if auth_ready else "not_configured",
+        "nacos": "ready" if nacos_ready else "not_ready",
+    }
+    production = settings.environment.strip().lower() == "production"
+    ready = not production or (auth_ready and nacos_ready)
+    return JSONResponse(
+        {"status": "ready" if ready else "not_ready", "components": components},
+        status_code=200 if ready else 503,
+    )
 
 
 @router.get("/api/system/status")
