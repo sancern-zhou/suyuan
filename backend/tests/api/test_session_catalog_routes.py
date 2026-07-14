@@ -88,6 +88,12 @@ def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
         async def require_read(self, session_id, user):
             return row
 
+        async def require_write(self, session_id, user):
+            return row
+
+        async def delete(self, session_id):
+            return True
+
     class Adapter:
         async def get(self, catalog_row):
             return {"session_id": catalog_row.session_id, "source": "knowledge_qa"}
@@ -99,6 +105,10 @@ def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
                     "source": "knowledge_qa",
                 }
             }
+
+        async def delete(self, catalog_row):
+            assert catalog_row.source == ConversationSource.KNOWLEDGE_QA
+            return True
 
     class Adapters:
         def get(self, source):
@@ -112,3 +122,4 @@ def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
         client.post("/api/sessions/kqa-1/restore").json()["session"]["source"]
         == "knowledge_qa"
     )
+    assert client.delete("/api/sessions/kqa-1").status_code == 200

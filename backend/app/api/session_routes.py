@@ -689,6 +689,7 @@ async def delete_session(
     session_id: str,
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+    adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
 ):
     """
     删除会话
@@ -699,9 +700,8 @@ async def delete_session(
     Returns:
         删除结果
     """
-    await catalog.require_write(session_id, user)
-    session_manager = get_session_manager()
-    success = await session_manager.delete_session(session_id)
+    row = await catalog.require_write(session_id, user)
+    success = await adapters.get(row.source).delete(row)
 
     if not success:
         raise HTTPException(
