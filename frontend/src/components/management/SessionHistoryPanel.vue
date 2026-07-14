@@ -98,6 +98,11 @@
               <div class="session-query">{{ truncateQuery(session.query) }}</div>
               <div class="session-meta">
                 <span class="session-id">{{ getShortId(session.session_id) }}</span>
+                <span class="session-source-badge">{{ rowLabels(session).source }}</span>
+                <span v-if="rowLabels(session).owner" class="session-owner">
+                  {{ rowLabels(session).owner }}
+                </span>
+                <span v-if="rowLabels(session).readOnly" class="session-readonly-badge">只读</span>
                 <span v-if="isSessionCase(session)" class="session-case-badge">案例</span>
                 <span class="session-status" :class="`status-${getSessionStatus(session).key}`">
                   {{ getSessionStatus(session).label }}
@@ -130,6 +135,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { historyRowLabels } from './sessionHistoryAccess.js'
 
 // Props
 const props = defineProps({
@@ -142,6 +148,10 @@ const props = defineProps({
     default: null
   },
   sessionHistoryLoading: {
+    type: Boolean,
+    default: false
+  },
+  isAdmin: {
     type: Boolean,
     default: false
   }
@@ -213,6 +223,7 @@ const getSessionStatus = (session) => {
 }
 
 const isSessionCase = (session) => session?.metadata?.is_case === true
+const rowLabels = (session) => historyRowLabels(session, props.isAdmin)
 
 const formatTime = (timestamp) => {
   if (!timestamp) return '未知'
@@ -537,6 +548,26 @@ const formatFullTime = (timestamp) => {
   font-size: 11px;
   line-height: 1.4;
   border: 1px solid transparent;
+}
+
+.session-source-badge,
+.session-readonly-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #31507a;
+  white-space: nowrap;
+}
+
+.session-readonly-badge {
+  background: #fff6df;
+  color: #8a5a00;
+}
+
+.session-owner {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-running {
