@@ -149,9 +149,8 @@ class SessionMapper:
                 ]
 
                 # Bulk upsert using PostgreSQL ON CONFLICT
-                stmt = insert(SocialSessionMapping).__class__
                 for record in records:
-                    stmt = stmt.values(**record)
+                    stmt = insert(SocialSessionMapping).values(**record)
                     stmt = stmt.on_conflict_do_update(
                         index_elements=['social_user_id'],
                         set_=dict(
@@ -167,6 +166,19 @@ class SessionMapper:
         except Exception as e:
             logger.warning("Failed to save to database, falling back to JSON", error=str(e))
             await self._save_to_file()
+
+    def new_session_id(self, mode: str = "assistant") -> str:
+        """Generate a session identifier without exposing it in the mapping yet."""
+        timestamp = int(datetime.now().timestamp() * 1000)
+        random_str = secrets.token_hex(6)
+        return f"{mode}_session_{timestamp}_{random_str}"
+
+    async def save_mapping(self, social_user_id: str, session_id: str) -> None:
+        """Persist a mapping after external ownership registration succeeds."""
+        async with self._lock:
+            self._mappings[social_user_id] = session_id
+            self._timestamp_cache[social_user_id] = datetime.now()
+        await self.save()
 
     async def _save_to_file(self) -> None:
         """Save mappings to JSON file."""
@@ -218,9 +230,7 @@ class SessionMapper:
 
             # 【修复】使用标准 sessionId 格式：${mode}_session_${timestamp}_${random}
             # 避免使用 social_user_id（包含特殊字符），改用随机字符串
-            timestamp = int(datetime.now().timestamp() * 1000)
-            random_str = secrets.token_hex(6)  # 12字符随机字符串
-            session_id = f"{mode}_session_{timestamp}_{random_str}"
+            session_id = self.new_session_id(mode)
 
             self._mappings[social_user_id] = session_id
             self._timestamp_cache[social_user_id] = datetime.now()
@@ -245,6 +255,7 @@ class SessionMapper:
         Returns:
             Agent session ID or None if not found or expired
         """
+        expired = False
         async with self._lock:
             if social_user_id not in self._mappings:
                 return None
@@ -254,10 +265,13 @@ class SessionMapper:
                 # Expired mapping
                 del self._mappings[social_user_id]
                 del self._timestamp_cache[social_user_id]
-                await self.save()
-                return None
+                expired = True
+            else:
+                return self._mappings[social_user_id]
 
-            return self._mappings[social_user_id]
+        if expired:
+            await self.save()
+        return None
 
     async def delete_mapping(self, social_user_id: str) -> bool:
         """
@@ -277,9 +291,9 @@ class SessionMapper:
             if social_user_id in self._timestamp_cache:
                 del self._timestamp_cache[social_user_id]
 
-            await self.save()
-            logger.info("Deleted session mapping", social_user_id=social_user_id)
-            return True
+        await self.save()
+        logger.info("Deleted session mapping", social_user_id=social_user_id)
+        return True
 
     async def cleanup_expired(self, ttl_hours: int = 24) -> int:
         """
@@ -303,11 +317,11 @@ class SessionMapper:
                 del self._mappings[social_user_id]
                 del self._timestamp_cache[social_user_id]
 
-            if expired:
-                await self.save()
-                logger.info("Cleaned up expired mappings", count=len(expired))
+        if expired:
+            await self.save()
+            logger.info("Cleaned up expired mappings", count=len(expired))
 
-            return len(expired)
+        return len(expired)
 
     @property
     def mapping_count(self) -> int:
