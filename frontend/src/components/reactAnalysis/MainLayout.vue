@@ -18,7 +18,9 @@
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
-        :input-disabled="inputDisabled"
+        :input-disabled="inputDisabled || conversationReadOnly"
+        :read-only="conversationReadOnly"
+        :read-only-notice="conversationReadOnlyNotice"
         :current-message="currentMessage"
         :session-id="sessionId"
         :selected-message-id="selectedMessageId"
@@ -45,6 +47,7 @@
         @drop="handleChatAreaDrop"
         @toggle-viz-panel="handleToggleVizPanel"
         @map-event="$emit('map-event', $event)"
+        @new-web-conversation="$emit('new-web-conversation')"
       >
         <template #management-panels>
           <!-- 管理面板插槽 -->
@@ -128,7 +131,9 @@
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
-        :input-disabled="inputDisabled"
+        :input-disabled="inputDisabled || conversationReadOnly"
+        :read-only="conversationReadOnly"
+        :read-only-notice="conversationReadOnlyNotice"
         :current-message="currentMessage"
         :session-id="sessionId"
         :drag-over="chatAreaDragOver"
@@ -153,6 +158,7 @@
         @select-message="handleSelectMessage"
         @load-more="handleLoadMore"
         @toggle-viz-panel="handleToggleVizPanel"
+        @new-web-conversation="$emit('new-web-conversation')"
       >
         <template #management-panels>
           <!-- 管理面板插槽 -->
@@ -466,6 +472,14 @@ const props = defineProps({
   sessionHistoryLoading: {
     type: Boolean,
     default: false
+  },
+  conversationReadOnly: {
+    type: Boolean,
+    default: false
+  },
+  conversationReadOnlyNotice: {
+    type: String,
+    default: ''
   }
 })
 
@@ -517,7 +531,8 @@ const emit = defineEmits([
   'cleanup-sessions',
   'restore-session',
   'toggle-session-case',
-  'delete-sessions'
+  'delete-sessions',
+  'new-web-conversation'
 ])
 
 const layoutRef = ref(null)

@@ -39,6 +39,11 @@
       @load-more="$emit('load-more')"
     />
 
+    <div v-if="readOnly && !showManagementPanel" class="read-only-notice">
+      <span>{{ readOnlyNotice }}</span>
+      <button type="button" @click="$emit('new-web-conversation')">新建 Web 对话</button>
+    </div>
+
     <!-- 输入框 -->
     <InputBox
       v-show="!showManagementPanel"
@@ -46,7 +51,7 @@
       v-model="inputValue"
       :pending-steering-inputs="pendingSteeringInputs"
       :session-id="sessionId"
-      :disabled="inputDisabled"
+      :disabled="inputDisabled || readOnly"
       :is-analyzing="isAnalyzing"
       :placeholder="inputPlaceholder"
       :assistant-mode="assistantMode"
@@ -136,6 +141,14 @@ const props = defineProps({
   showManagementPanel: {
     type: Boolean,
     default: false
+  },
+  readOnly: {
+    type: Boolean,
+    default: false
+  },
+  readOnlyNotice: {
+    type: String,
+    default: ''
   }
 })
 
@@ -149,7 +162,8 @@ const emit = defineEmits([
   'toggle-viz-panel',
   'drag-over',
   'drag-leave',
-  'drop'
+  'drop',
+  'new-web-conversation'
 ])
 
 const inputBoxRef = ref(null)
@@ -183,6 +197,7 @@ const handleToggleVizPanel = () => {
 }
 
 const handleDragOver = (e) => {
+  if (props.readOnly) return
   emit('drag-over', e)
 }
 
@@ -191,6 +206,7 @@ const handleDragLeave = (e) => {
 }
 
 const handleDrop = (e) => {
+  if (props.readOnly) return
   emit('drop', e)
 }
 
@@ -202,6 +218,7 @@ const focusInput = () => {
 }
 
 const handleFilesDrop = async (files) => {
+  if (props.readOnly) return
   if (inputBoxRef.value && typeof inputBoxRef.value.handleFilesDrop === 'function') {
     await inputBoxRef.value.handleFilesDrop(files)
   }
@@ -276,5 +293,25 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+}
+
+.read-only-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 9px 14px;
+  color: #8a5a00;
+  background: #fff6df;
+  border-top: 1px solid #f1d48a;
+}
+
+.read-only-notice button {
+  padding: 5px 10px;
+  border: 1px solid #1976d2;
+  border-radius: 4px;
+  color: #1976d2;
+  background: #fff;
+  cursor: pointer;
 }
 </style>
