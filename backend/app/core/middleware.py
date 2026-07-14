@@ -2,7 +2,12 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import redis.asyncio as redis
 
+from app.auth.identity_cache import IdentityCache
+from app.auth.middleware import GatewayAuthenticationMiddleware
+from app.auth.platform_client import PlatformAuthClient
+from app.auth.service import AuthenticationService
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
 from app.core.scheduled_task_worker_proxy import ScheduledTaskWorkerProxyMiddleware
 from app.core.social_account_worker_proxy import SocialAccountWorkerProxyMiddleware
@@ -28,6 +33,28 @@ def configure_middleware(app: FastAPI) -> None:
         app_role=settings.app_role,
         worker_base_url=settings.social_worker_internal_url,
         worker_token=settings.social_worker_internal_token,
+    )
+
+    auth_redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    auth_service = AuthenticationService(
+        settings=settings,
+        cache=IdentityCache(
+            auth_redis,
+            key_prefix=settings.auth_identity_cache_key_prefix,
+            max_ttl_seconds=settings.auth_identity_cache_ttl_seconds,
+        ),
+        platform_client=PlatformAuthClient(
+            base_url=settings.auth_service_url,
+            current_user_path=settings.auth_current_user_path,
+            admin_role_codes=settings.auth_admin_role_codes_set,
+        ),
+    )
+    app.state.auth_redis = auth_redis
+    app.state.auth_service = auth_service
+    app.add_middleware(
+        GatewayAuthenticationMiddleware,
+        settings=settings,
+        auth_service=auth_service,
     )
     app.add_middleware(
         CORSMiddleware,
