@@ -273,19 +273,9 @@
               <option value="public">公共知识库</option>
             </select>
           </div>
-          <div
-            class="form-group warning"
-            v-if="createForm.kb_type === 'public'"
-          >
-            <label>公共知识库权限</label>
-            <label class="checkbox-inline">
-              <input type="checkbox" v-model="adminConfirm" />
-              以管理员身份创建（自动携带 X-Is-Admin: true）
-            </label>
-            <p class="form-hint danger">
-              提醒：公共知识库必须以管理员身份创建，否则会返回 403。
-            </p>
-          </div>
+          <p v-if="createForm.kb_type === 'public'" class="form-hint">
+            公共知识库仅限管理员创建，权限以公司统一身份为准。
+          </p>
           <div class="form-group">
             <label>分块策略</label>
             <select v-model="createForm.chunking_strategy">
@@ -498,7 +488,6 @@ const createForm = ref({
   chunk_size: 800,
   chunk_overlap: 100
 })
-const adminConfirm = ref(localStorage.getItem('isAdmin') === 'true')
 
 const editForm = ref({
   name: '',
@@ -603,20 +592,7 @@ const selectKb = (kb) => {
 const handleCreate = async () => {
   if (!createForm.value.name) return
 
-  // 公共知识库需要管理员确认，否则后端会返回403
-  if (createForm.value.kb_type === 'public' && !adminConfirm.value) {
-    alert('创建公共知识库需要管理员权限，请勾选确认。')
-    return
-  }
-
   try {
-    // 同步管理员标识到 localStorage，供 API 请求头使用
-    if (createForm.value.kb_type === 'public' && adminConfirm.value) {
-      localStorage.setItem('isAdmin', 'true')
-    } else if (!adminConfirm.value) {
-      localStorage.removeItem('isAdmin')
-    }
-
     await store.createKnowledgeBase(createForm.value)
     showCreateDialog.value = false
     createForm.value = {
@@ -627,7 +603,6 @@ const handleCreate = async () => {
       chunk_size: 800,
       chunk_overlap: 100
     }
-    adminConfirm.value = localStorage.getItem('isAdmin') === 'true'
     await store.fetchStats()
   } catch (e) {
     alert('创建失败: ' + e.message)

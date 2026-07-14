@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 文件上传API服务
  * 用于对话中的文件和图片上传
@@ -25,7 +26,7 @@ export async function uploadChatFile(file, sessionId = null) {
     console.log('[uploadChatFile] 上传文件:', file.name, '大小:', file.size, '类型:', file.type);
     console.log('[uploadChatFile] sessionId:', sessionId);
 
-    const response = await fetch('/api/upload/chat', {
+    const response = await authFetch('/api/upload/chat', {
       method: 'POST',
       body: formData,
       // 不设置Content-Type，让浏览器自动处理multipart/form-data边界
@@ -74,7 +75,7 @@ export async function uploadChatFile(file, sessionId = null) {
  * @returns {Promise<Object>} 文件信息
  */
 export async function getFileInfo(fileId) {
-  const response = await fetch(`/api/upload/${fileId}/info`);
+  const response = await authFetch(`/api/upload/${fileId}/info`);
 
   if (!response.ok) {
     throw new Error('获取文件信息失败');
@@ -89,7 +90,7 @@ export async function getFileInfo(fileId) {
  * @returns {Promise<Object>} 删除结果
  */
 export async function deleteChatFile(fileId) {
-  const response = await fetch(`/api/upload/${fileId}`, {
+  const response = await authFetch(`/api/upload/${fileId}`, {
     method: 'DELETE',
   });
 

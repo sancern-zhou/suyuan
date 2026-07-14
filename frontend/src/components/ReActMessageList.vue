@@ -294,6 +294,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MarkdownRenderer from './MarkdownRenderer.vue'
@@ -1226,7 +1227,7 @@ const fetchImageFromApi = async (imageId) => {
   try {
     const apiUrl = `/api/image/${imageId}`
     console.log(`[ReActMessageList] 从API获取图片: ${apiUrl}`)
-    const response = await fetch(apiUrl)
+    const response = await authFetch(apiUrl)
     if (response.ok) {
       const data = await response.json()
       if (data.data) {

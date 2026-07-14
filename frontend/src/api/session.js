@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 会话管理API模块
  */
@@ -23,7 +24,7 @@ async function request(url, options = {}) {
     headers
   }
 
-  const response = await fetch(url, config)
+  const response = await authFetch(url, config)
 
   if (!response.ok) {
     const errorText = await response.text()
