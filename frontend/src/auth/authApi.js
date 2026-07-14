@@ -17,9 +17,12 @@ export function createAuthApi({ fetchImpl = globalThis.fetch, storage, config } 
   const session = () => storage?.readSession?.() || { token: '', sysCode: runtime.sysCode }
 
   return {
-    async login({ username, password }) {
+    async login({ username, password, verifyCode, captchaKey }) {
       const existing = session()
-      const request = crypto.loginRequest(username, password, existing.token)
+      const request = crypto.loginRequest(username, password, existing.token, {
+        verifyCode,
+        captchaKey
+      })
       return responseBody(await fetchImpl(url('/auth/token/authentication'), {
         method: 'POST',
         headers: { ...request.headers, SysCode: runtime.sysCode },

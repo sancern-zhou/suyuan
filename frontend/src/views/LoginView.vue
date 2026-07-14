@@ -30,8 +30,31 @@
           :disabled="auth.loading"
         />
 
+        <label for="verify-code">验证码</label>
+        <div class="captcha-row">
+          <input
+            id="verify-code"
+            v-model.trim="verifyCode"
+            autocomplete="off"
+            maxlength="4"
+            required
+            :disabled="auth.loading"
+          />
+          <button
+            class="captcha-refresh"
+            type="button"
+            title="看不清，换一张"
+            aria-label="刷新验证码"
+            :disabled="auth.loading"
+            @click="refreshCaptcha"
+          >
+            <img v-if="captchaUrl" :src="captchaUrl" alt="验证码图片" />
+            <span v-else>刷新验证码</span>
+          </button>
+        </div>
+
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <button type="submit" :disabled="auth.loading || !username || !password">
+        <button type="submit" :disabled="auth.loading || !username || !password || !verifyCode">
           {{ auth.loading ? '正在验证…' : '登录' }}
         </button>
       </form>
@@ -40,10 +63,11 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/auth/authStore.js'
+import { createCaptchaChallenge } from '@/auth/captcha.js'
 import { safeRedirect } from '@/auth/routerGuard.js'
 
 const auth = useAuthStore()
@@ -51,19 +75,40 @@ const route = useRoute()
 const router = useRouter()
 const username = ref('')
 const password = ref('')
+const verifyCode = ref('')
+const captchaKey = ref('')
+const captchaUrl = ref('')
 const error = ref('')
+
+function refreshCaptcha() {
+  const challenge = createCaptchaChallenge({
+    previousKey: captchaKey.value,
+    authBaseUrl: '/api'
+  })
+  captchaKey.value = challenge.key
+  captchaUrl.value = challenge.url
+  verifyCode.value = ''
+}
 
 async function submit() {
   error.value = ''
   try {
-    await auth.login({ username: username.value, password: password.value })
+    await auth.login({
+      username: username.value,
+      password: password.value,
+      verifyCode: verifyCode.value,
+      captchaKey: captchaKey.value
+    })
     await router.replace(safeRedirect(route.query.redirect))
   } catch (reason) {
     error.value = reason?.message || '登录失败，请检查账号和密码'
+    refreshCaptcha()
   } finally {
     password.value = ''
   }
 }
+
+onMounted(refreshCaptcha)
 </script>
 
 <style scoped>
@@ -112,6 +157,18 @@ input {
   font: inherit;
 }
 input:focus { border-color: #009a9e; box-shadow: 0 0 0 3px rgba(0, 154, 158, 0.12); }
+.captcha-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 10px; }
+.captcha-refresh {
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #c8d9dc;
+  border-radius: 10px;
+  color: #31565e;
+  background: #f4f9fa;
+}
+.captcha-refresh img { display: block; width: 100%; height: 100%; object-fit: cover; }
 button {
   margin-top: 14px;
   padding: 14px;
