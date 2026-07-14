@@ -567,6 +567,7 @@ class WeixinChannel(BaseChannel):
         self._state_dir: Path | None = None
         self._token: str = ""
         self._bot_id: str = ""  # ✅ 新增：机器人账号ID
+        self._scanner_user_id: str = ""
         self._poll_task: asyncio.Task | None = None
         self._next_poll_timeout_s: int = DEFAULT_LONG_POLL_TIMEOUT_S
         self._session_pause_until: float = 0.0
@@ -628,6 +629,7 @@ class WeixinChannel(BaseChannel):
             data = json.loads(state_file.read_text())
             self._token = data.get("token", "")
             self._bot_id = data.get("bot_id", "")  # ✅ 新增：加载机器人账号
+            self._scanner_user_id = str(data.get("scanner_user_id") or "")
             self._get_updates_buf = data.get("get_updates_buf", "")
             context_tokens = data.get("context_tokens", {})
             if isinstance(context_tokens, dict):
@@ -672,6 +674,7 @@ class WeixinChannel(BaseChannel):
             data = {
                 "token": self._token,
                 "bot_id": self._bot_id,  # ✅ 新增：保存机器人账号
+                "scanner_user_id": self._scanner_user_id,
                 "get_updates_buf": self._get_updates_buf,
                 "context_tokens": self._context_tokens,
                 "base_url": getattr(self.config, 'base_url', 'https://ilinkai.weixin.qq.com'),
@@ -836,6 +839,7 @@ class WeixinChannel(BaseChannel):
                 if token:
                     self._token = token
                     self._bot_id = bot_id
+                    self._scanner_user_id = str(user_id or "")
                     if base_url:
                         self.config.base_url = base_url
                     self._save_state()
@@ -913,6 +917,7 @@ class WeixinChannel(BaseChannel):
                     if token:
                         self._token = token
                         self._bot_id = bot_id  # ✅ 新增：保存机器人账号
+                        self._scanner_user_id = str(user_id or "")
                         if base_url:
                             self.config.base_url = base_url
                         self._save_state()
@@ -1011,6 +1016,7 @@ class WeixinChannel(BaseChannel):
         """Perform QR code login and save token. Returns True on success."""
         if force:
             self._token = ""
+            self._scanner_user_id = ""
             self._get_updates_buf = ""
             state_file = self._get_state_dir() / "account.json"
             if state_file.exists():
@@ -1157,6 +1163,11 @@ class WeixinChannel(BaseChannel):
             return self._bot_id
         # 返回带实例ID的默认标识
         return f"weixin_{self.instance_id}"
+
+    @property
+    def scanner_user_id(self) -> str:
+        """WeChat identity that confirmed the current QR login."""
+        return self._scanner_user_id
 
     # ------------------------------------------------------------------
     # Polling
