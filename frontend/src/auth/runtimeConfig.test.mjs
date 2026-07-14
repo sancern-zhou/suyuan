@@ -46,11 +46,21 @@ test('loads mock mode from the public business-gateway endpoint without credenti
 
 
 test('invalid, unknown, and unavailable runtime config fail closed to company mode', async () => {
+  const invalidMockPayloads = [
+    { authMode: 'mock', sysCode: 'SUYUAN', mockUser: { id: 'x', isAdmin: true } },
+    { ...mockPayload, sysCode: '' },
+    { ...mockPayload, mockUser: { ...mockPayload.mockUser, userName: '' } },
+    { ...mockPayload, mockUser: { ...mockPayload.mockUser, name: '  ' } },
+    { ...mockPayload, mockUser: { ...mockPayload.mockUser, roleCodes: ['viewer'] } },
+    { ...mockPayload, mockUser: { ...mockPayload.mockUser, roleCodes: ['SUYUAN_ADMIN', 1] } },
+    { ...mockPayload, mockUser: { ...mockPayload.mockUser, authSource: 'company' } },
+    { ...mockPayload, mockUser: { ...mockPayload.mockUser, sysCode: 'OTHER' } }
+  ]
+
   assert.deepEqual(normalizeAuthRuntimeConfig({ authMode: 'disabled' }), companyRuntimeConfig())
-  assert.deepEqual(
-    normalizeAuthRuntimeConfig({ authMode: 'mock', mockUser: { id: '' } }),
-    companyRuntimeConfig()
-  )
+  for (const payload of invalidMockPayloads) {
+    assert.deepEqual(normalizeAuthRuntimeConfig(payload), companyRuntimeConfig())
+  }
   assert.deepEqual(
     await loadAuthRuntimeConfig({ fetchImpl: async () => { throw new Error('offline') } }),
     companyRuntimeConfig()
