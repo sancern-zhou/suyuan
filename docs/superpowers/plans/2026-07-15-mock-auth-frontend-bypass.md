@@ -82,6 +82,9 @@ MOCK_ADMIN_ROLE_CODE = "SUYUAN_ADMIN"
 
 
 def build_mock_user(settings: Settings, sys_code: str | None = None) -> CurrentUser:
+    user_id = settings.auth_mock_user_id.strip() or "local-developer"
+    username = settings.auth_mock_username.strip() or user_id
+    display_name = settings.auth_mock_display_name.strip() or "本地开发用户"
     roles = [
         role.strip()
         for role in settings.auth_mock_role_codes.split(",")
@@ -90,9 +93,9 @@ def build_mock_user(settings: Settings, sys_code: str | None = None) -> CurrentU
     if MOCK_ADMIN_ROLE_CODE not in roles:
         roles.insert(0, MOCK_ADMIN_ROLE_CODE)
     return CurrentUser(
-        id=settings.auth_mock_user_id,
-        username=settings.auth_mock_username,
-        display_name=settings.auth_mock_display_name,
+        id=user_id,
+        username=username,
+        display_name=display_name,
         role_codes=tuple(roles),
         is_admin=True,
         sys_code=sys_code or settings.auth_sys_code,
@@ -420,11 +423,15 @@ export function companyRuntimeConfig() {
 }
 
 
+function nonEmptyString(value) {
+  return typeof value === 'string' && Boolean(value.trim())
+}
+
+
 export function normalizeAuthRuntimeConfig(value) {
   if (!value || typeof value !== 'object') return companyRuntimeConfig()
-  const sysCode = typeof value.sysCode === 'string' && value.sysCode
-    ? value.sysCode
-    : 'SUYUAN'
+  if (!nonEmptyString(value.sysCode)) return companyRuntimeConfig()
+  const sysCode = value.sysCode.trim()
   if (value.authMode === 'company') {
     return { authMode: 'company', sysCode, mockUser: null }
   }
@@ -432,30 +439,46 @@ export function normalizeAuthRuntimeConfig(value) {
   if (
     value.authMode !== 'mock' ||
     !user ||
-    typeof user.id !== 'string' ||
-    !user.id ||
-    user.isAdmin !== true
+    !nonEmptyString(user.id) ||
+    !nonEmptyString(user.userName) ||
+    !nonEmptyString(user.name) ||
+    !Array.isArray(user.roleCodes) ||
+    !user.roleCodes.every(nonEmptyString) ||
+    !user.roleCodes.includes('SUYUAN_ADMIN') ||
+    user.isAdmin !== true ||
+    user.authSource !== 'mock' ||
+    user.sysCode !== sysCode
   ) {
     return companyRuntimeConfig()
   }
-  return { authMode: 'mock', sysCode, mockUser: { ...user } }
+  return {
+    authMode: 'mock',
+    sysCode,
+    mockUser: { ...user, roleCodes: [...user.roleCodes] }
+  }
 }
 
 
 export async function loadAuthRuntimeConfig({
   fetchImpl = globalThis.fetch,
-  apiBaseUrl = configuredApiBase()
+  apiBaseUrl = configuredApiBase(),
+  timeoutMs = 5000
 } = {}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const base = apiBaseUrl.replace(/\/$/, '')
     const response = await fetchImpl(`${base}/auth/runtime-config`, {
       cache: 'no-store',
-      credentials: 'same-origin'
+      credentials: 'same-origin',
+      signal: controller.signal
     })
     if (!response.ok) return companyRuntimeConfig()
     return normalizeAuthRuntimeConfig(await response.json())
   } catch {
     return companyRuntimeConfig()
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
