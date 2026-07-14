@@ -14,7 +14,7 @@
 cd /home/xckj/suyuan/frontend
 npm run test:auth
 npm run test:event-tasks
-npm run build
+npm run build:standalone
 
 cd /home/xckj/suyuan
 docker compose -f deploy/nginx/docker-compose.yml config
@@ -61,7 +61,7 @@ docker compose -p suyuan-nginx -f deploy/nginx/docker-compose.yml up -d
 
 ```bash
 cd /home/xckj/suyuan/frontend
-npm run build
+npm run build:standalone
 cd ..
 docker compose -p suyuan-nginx -f deploy/nginx/docker-compose.yml restart nginx
 ```

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:standalone": "vite build --mode standalone",
     "preview": "vite preview",
     "test:auth": "node --test src/auth/*.test.mjs",
     "test:event-tasks": "node --test src/components/management/*.test.js"
