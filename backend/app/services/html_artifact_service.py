@@ -11,6 +11,8 @@ from typing import Any, Dict, Iterable, Optional
 
 import structlog
 
+from app.auth.share_access import external_api_path
+
 from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
@@ -133,7 +135,7 @@ class HtmlArtifactService:
         fingerprint = _file_fingerprint(index_path)
         return {
             "html_id": artifact_id,
-            "html_url": f"/api/html-artifacts/{artifact_id}/html",
+            "html_url": external_api_path(f"/api/html-artifacts/{artifact_id}/html"),
             "file_type": "html_artifact",
             "schema_version": "html_artifact.v1",
             "preview_version": fingerprint["preview_version"],
@@ -165,8 +167,8 @@ class HtmlArtifactService:
                 "version": previous_version + 1,
                 "files": {"html": str(index_path)},
                 "preview_version": fingerprint["preview_version"],
-                "html_url": f"/api/html-artifacts/{artifact_id}/html",
-                "download_url": f"/api/html-artifacts/{artifact_id}/download/html",
+                "html_url": external_api_path(f"/api/html-artifacts/{artifact_id}/html"),
+                "download_url": external_api_path(f"/api/html-artifacts/{artifact_id}/download/html"),
                 "history": history[-20:],
             }
         )
@@ -209,8 +211,8 @@ class HtmlArtifactService:
             "files": {"html": str(index_path)},
             "assets": copied_assets,
             "version": int(existing_meta.get("version") or 0) + 1,
-            "html_url": f"/api/html-artifacts/{safe_id}/html",
-            "download_url": f"/api/html-artifacts/{safe_id}/download/html",
+            "html_url": external_api_path(f"/api/html-artifacts/{safe_id}/html"),
+            "download_url": external_api_path(f"/api/html-artifacts/{safe_id}/download/html"),
         }
         fingerprint = _file_fingerprint(index_path)
         meta["preview_version"] = fingerprint["preview_version"]
@@ -238,8 +240,8 @@ class HtmlArtifactService:
             "artifact_dir": str(artifact_dir),
             "file_type": "html_artifact",
             "html_preview": self.build_html_preview(safe_id),
-            "download_url": f"/api/html-artifacts/{safe_id}/download/html",
-            "share_endpoint": f"/api/html-artifacts/{safe_id}/share",
+            "download_url": external_api_path(f"/api/html-artifacts/{safe_id}/download/html"),
+            "share_endpoint": external_api_path(f"/api/html-artifacts/{safe_id}/share"),
             "copied_assets": copied_assets,
         }
 
@@ -257,8 +259,8 @@ class HtmlArtifactService:
         return {
             "artifact_id": artifact_id,
             "share_token": token,
-            "share_url": f"/api/html-artifacts/share/{token}",
-            "html_url": f"/api/html-artifacts/{artifact_id}/html",
+            "share_url": external_api_path(f"/api/html-artifacts/share/{token}"),
+            "html_url": external_api_path(f"/api/html-artifacts/{artifact_id}/html"),
         }
 
     def find_by_share_token(self, token: str) -> Optional[Path]:
