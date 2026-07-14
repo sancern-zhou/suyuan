@@ -62,6 +62,10 @@ class ConversationCatalogService:
             )
         )
 
+    async def find(self, session_id: str) -> ConversationCatalogRecord | None:
+        """Return a catalog record without applying visibility policy."""
+        return await self.repository.get(session_id)
+
     async def require_read(
         self, session_id: str, user: CurrentUser
     ) -> ConversationCatalogRecord:

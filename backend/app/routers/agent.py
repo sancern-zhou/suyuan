@@ -531,8 +531,21 @@ async def analyze_stream(
     - `error`: 迭代错误
     - `fatal_error`: 致命错误
     """
+    # The frontend assigns an ID before the first analyze request. An absent ID
+    # is therefore a creation request, while a cataloged ID is a continuation
+    # and must pass the normal ownership check. Never let an uncataloged source
+    # session be claimed through the creation path.
+    session_manager = get_session_manager()
     if request.session_id:
-        await catalog.require_write(request.session_id, user)
+        catalog_record = await catalog.find(request.session_id)
+        if catalog_record is not None:
+            await catalog.require_write(request.session_id, user)
+        else:
+            load_session = getattr(session_manager, "load_session_light", None)
+            if load_session is None:
+                load_session = session_manager.load_session
+            if await load_session(request.session_id) is not None:
+                raise HTTPException(status_code=404, detail="session_not_found")
 
     raw_body = await raw_request.json()
     if request.model_tier is None and isinstance(raw_body, dict):
@@ -655,7 +668,6 @@ async def analyze_stream(
         drawio_board_context = request.board_context if request.mode == "chart" else None
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
-        session_manager = get_session_manager()
         persistence = ConversationPersistenceService()
         actual_session_id = request.session_id
         conversation_history = []
