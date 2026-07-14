@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createPinia } from 'pinia'
 
+import { useAuthStore } from './authStore.js'
 import { createAuthGuard, safeRedirect } from './routerGuard.js'
 
 
@@ -67,4 +69,17 @@ test('safeRedirect permits only local absolute paths', () => {
   assert.equal(safeRedirect('//evil.test'), '/')
   assert.equal(safeRedirect('https://evil.test'), '/')
   assert.equal(safeRedirect('\\evil.test'), '/')
+})
+
+
+test('mock administrator enters protected routes without a company token', async () => {
+  const auth = useAuthStore(createPinia())
+  auth.authMode = 'mock'
+  auth.user = { id: 'local-developer', isAdmin: true }
+  auth.initialized = true
+
+  assert.equal(
+    await createAuthGuard(auth)({ path: '/knowledge-base', fullPath: '/knowledge-base' }),
+    true
+  )
 })

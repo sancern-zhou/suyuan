@@ -66,3 +66,42 @@ test('bootstrap reuses a same-origin platform token and logout clears local stat
   assert.equal(session.user, null)
   assert.deepEqual(raw.dump(), {})
 })
+
+
+test('mock mode clears persisted company state and bootstraps the in-memory administrator', async () => {
+  const raw = memoryStorage()
+  const storage = createAuthStorage(raw)
+  storage.writeSession({
+    token: 'old-company-token',
+    sysCode: 'SUYUAN',
+    user: { id: 'old-user' }
+  })
+  const calls = []
+  const mockUser = {
+    id: 'local-developer',
+    roleCodes: ['SUYUAN_ADMIN'],
+    isAdmin: true
+  }
+  const api = {
+    login: async () => calls.push('login'),
+    currentUser: async () => calls.push('currentUser'),
+    logout: async () => calls.push('logout')
+  }
+  const session = createAuthSession({
+    api,
+    storage,
+    sysCode: 'SUYUAN',
+    authMode: 'mock',
+    mockUser
+  })
+
+  assert.deepEqual(raw.dump(), {})
+  assert.equal(await session.bootstrap(), mockUser)
+  assert.equal(session.token, '')
+  assert.equal(session.user, mockUser)
+  assert.deepEqual(await session.login({}), mockUser)
+  await session.logout()
+  assert.equal(session.user, mockUser)
+  assert.deepEqual(calls, [])
+  assert.deepEqual(raw.dump(), {})
+})
