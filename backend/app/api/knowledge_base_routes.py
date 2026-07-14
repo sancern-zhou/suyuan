@@ -282,7 +282,6 @@ async def upload_document(
     - hybrid: 混合分块
 
     LLM模式 (llm_mode，仅chunking_strategy=llm时有效):
-    - local: 本地千问3（默认，25000字符分段阈值）
     - online: 线上API（60000字符分段阈值，使用DeepSeek/MiniMax/Mimo等，根据LLM_PROVIDER环境变量自动选择）
 
     注意：上传文档到公共知识库不需要管理员权限
@@ -324,7 +323,7 @@ async def upload_document(
         )
     
     # 验证LLM模式
-    valid_llm_modes = ["local", "online"]
+    valid_llm_modes = ["online"]
     if llm_mode not in valid_llm_modes:
         os.remove(tmp_path)
         raise HTTPException(

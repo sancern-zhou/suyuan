@@ -32,6 +32,14 @@ def parse_event_task_output(text: str) -> EventTaskOutput:
     fence_match = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", stripped)
     if fence_match:
         stripped = fence_match.group(1).strip()
+    else:
+        prefaced_fence = re.fullmatch(
+            r"[^`]{1,200}?\s*```json\s*([\s\S]*?)\s*```",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if prefaced_fence:
+            stripped = prefaced_fence.group(1).strip()
 
     try:
         payload = json.loads(stripped)

@@ -7,12 +7,14 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from app.scenarios.yuncheng_trial.city_pollutant_choropleth import render_city_pollutant_choropleth
 from app.scenarios.yuncheng_trial.config import YUNCHENG_TRIAL_CONFIG
 from app.scenarios.yuncheng_trial.fire_hotspot_assets import build_fire_hotspot_summary, render_fire_hotspot_map
 
 REQUIRED_ASSETS: dict[str, str] = {
     "target_city_pollutants": "target_city_pollutants.json",
     "nearby_city_pollutants": "nearby_city_pollutants.json",
+    "city_pollutant_choropleth_image": "city_pollutant_choropleth.png",
     "meteorology_history": "meteorology_history.json",
     "trajectory_analysis": "trajectory_analysis.json",
     "trajectory_image": "trajectory.png",
@@ -104,6 +106,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
     radar_date, radar_time = _platform_radar_mosaic_slot(end)
     precip_date, precip_forecast_hour = _platform_precip_forecast_slot(end)
     forecast_image_date = _platform_forecast_image_run_date(end)
+    hourly_precip_date = _platform_hourly_precip_forecast_date(end)
     fire_start = end - timedelta(hours=6)
     return {
         "target_city_pollutants": {
@@ -121,6 +124,11 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
             "data_type": "hour",
             "start_time": _format_time(start),
             "end_time": _format_time(end),
+        },
+        "city_pollutant_choropleth_image": {
+            "kind": "sidecar",
+            "source_assets": ["target_city_pollutants", "nearby_city_pollutants"],
+            "interval_hours": 2,
         },
         "meteorology_history": {
             "kind": "json",
@@ -256,7 +264,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
             "tool": "get_platform_weather_image",
             "product": "radar_composite_reflectivity",
             "date": forecast_image_date,
-            "time": "003",
+            "time": precip_forecast_hour,
             "download": True,
         },
         "precipitable_water_image": {
@@ -264,14 +272,14 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
             "tool": "get_platform_weather_image",
             "product": "precipitable_water",
             "date": forecast_image_date,
-            "time": "000",
+            "time": precip_forecast_hour,
             "download": True,
         },
         "hourly_precipitation_forecast_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
             "product": "hourly_precip_forecast",
-            "date": forecast_image_date,
+            "date": hourly_precip_date,
             "time": _platform_hourly_precip_forecast_time(end),
             "download": True,
         },
@@ -423,6 +431,11 @@ def _platform_hourly_precip_forecast_time(alert_time: datetime) -> str:
         if event_utc.hour <= forecast_hour:
             return f"{forecast_hour:02d}"
     return "24"
+
+
+def _platform_hourly_precip_forecast_date(alert_time: datetime) -> str:
+    event_utc = alert_time - timedelta(hours=8)
+    return event_utc.strftime("%Y%m%d")
 
 
 def _platform_forecast_image_run_date(alert_time: datetime) -> str:
@@ -666,6 +679,8 @@ async def collect_required_assets(
                     request=request,
                 )
 
+    _write_city_pollutant_choropleth_sidecar(manifest=manifest, output_dir=output_dir)
+
     manifest_path = output_dir / "tracing_context_manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=_json_default),
@@ -699,6 +714,33 @@ def _write_fire_hotspot_sidecars(
     except Exception as exc:
         _record_missing(manifest, "fire_hotspots_summary", str(exc))
         _record_missing(manifest, "fire_hotspots_map_image", str(exc))
+
+
+def _write_city_pollutant_choropleth_sidecar(*, manifest: dict[str, Any], output_dir: Path) -> None:
+    assets = manifest.get("assets") if isinstance(manifest.get("assets"), dict) else {}
+    if "city_pollutant_choropleth_image" not in assets:
+        return
+
+    try:
+        target_filename = assets.get("target_city_pollutants", "target_city_pollutants.json")
+        nearby_filename = assets.get("nearby_city_pollutants", "nearby_city_pollutants.json")
+        target_path = output_dir / target_filename
+        nearby_path = output_dir / nearby_filename
+        if not target_path.exists() or not nearby_path.exists():
+            _record_missing(manifest, "city_pollutant_choropleth_image", "source city pollutant JSON is missing")
+            return
+
+        request = (manifest.get("asset_requests") or {}).get("city_pollutant_choropleth_image") or {}
+        render_city_pollutant_choropleth(
+            target_payload=json.loads(target_path.read_text(encoding="utf-8")),
+            nearby_payload=json.loads(nearby_path.read_text(encoding="utf-8")),
+            pollutant=str(manifest.get("target_pollutant") or "AQI"),
+            analysis_window=manifest.get("analysis_window") or {},
+            output_path=output_dir / assets.get("city_pollutant_choropleth_image", "city_pollutant_choropleth.png"),
+            interval_hours=int(request.get("interval_hours") or 2),
+        )
+    except Exception as exc:
+        _record_missing(manifest, "city_pollutant_choropleth_image", str(exc))
 
 
 def create_air_quality_24h_forecast_payload(

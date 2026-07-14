@@ -29,6 +29,29 @@ class FakeMessageBus:
 
 
 @pytest.mark.asyncio
+async def test_broadcast_refreshes_message_bus_initialized_after_service(monkeypatch):
+    bus = FakeMessageBus()
+    mapper = FakeSessionMapper()
+    monkeypatch.setattr(
+        "app.social.broadcast_service.get_message_bus",
+        lambda: None,
+    )
+    service = SocialBroadcastService(session_mapper=mapper)
+    monkeypatch.setattr(
+        "app.social.broadcast_service.get_message_bus",
+        lambda: bus,
+    )
+
+    result = await service.broadcast(
+        message="告警摘要",
+        target_user_ids=["weixin:bot:one"],
+    )
+
+    assert result["success"] is True
+    assert len(bus.messages) == 1
+
+
+@pytest.mark.asyncio
 async def test_broadcast_is_appended_as_assistant_message_with_attachment(
     monkeypatch, tmp_path
 ):

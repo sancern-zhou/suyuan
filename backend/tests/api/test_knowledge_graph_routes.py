@@ -11,7 +11,7 @@ from app.knowledge_base.graph_models import (
     KnowledgeGraphRelation,
     KnowledgeGraphRelationMention,
 )
-from app.knowledge_base.models import Document, KnowledgeBase
+from app.knowledge_base.models import Document, KnowledgeBase, KnowledgeBaseType
 
 
 @pytest.fixture
@@ -201,3 +201,35 @@ def test_default_manage_permission_requires_owner_or_admin():
     assert KnowledgeBasePermissions.can_manage(kb, "other") is False
     assert KnowledgeBasePermissions.can_manage(kb, "anonymous") is False
     assert KnowledgeBasePermissions.can_manage(kb, "other", is_admin=True) is True
+
+
+def test_public_document_management_allows_users_identified_by_request_header():
+    from app.knowledge_base.permissions import KnowledgeBasePermissions
+
+    public_kb = KnowledgeBase(
+        id="public",
+        name="公共库",
+        kb_type=KnowledgeBaseType.PUBLIC,
+        owner_id=None,
+    )
+
+    assert KnowledgeBasePermissions.can_manage_documents(public_kb, "user-1") is True
+    assert KnowledgeBasePermissions.can_manage_documents(public_kb, "anonymous") is True
+    assert KnowledgeBasePermissions.can_manage_documents(public_kb, "") is False
+
+
+def test_private_document_management_still_requires_owner_or_admin():
+    from app.knowledge_base.permissions import KnowledgeBasePermissions
+
+    private_kb = KnowledgeBase(
+        id="private",
+        name="私有库",
+        kb_type=KnowledgeBaseType.PRIVATE,
+        owner_id="owner",
+    )
+
+    assert KnowledgeBasePermissions.can_manage_documents(private_kb, "owner") is True
+    assert KnowledgeBasePermissions.can_manage_documents(private_kb, "other") is False
+    assert KnowledgeBasePermissions.can_manage_documents(
+        private_kb, "other", is_admin=True
+    ) is True

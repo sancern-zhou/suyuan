@@ -2,7 +2,7 @@
 LLM Service
 
 提供LLM调用服务，支持JSON格式响应解析。
-支持多种LLM provider: deepseek, minimax, openai, agnes, qwen, glm
+支持多种LLM provider: deepseek, minimax, openai, agnes, glm
 """
 import asyncio
 import json
@@ -1008,14 +1008,6 @@ class LLMService:
             "model_env": "AGNES_MODEL",
             "model_default": "agnes-2.0-flash",
         },
-        # 千问3本地部署（OpenAI 兼容协议）
-        "qwen": {
-            "url_env": "QWEN_BASE_URL",
-            "url_default": "http://172.16.9.87:8000/v1",
-            "key_env": "QWEN_API_KEY",
-            "model_env": "QWEN_MODEL",
-            "model_default": "/qwen/Qwen3-30B-A3B-Instruct-2507-AWQ/",
-        },
         # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
         "glm": {
             "url_env": "GLM_BASE_URL",
@@ -1035,8 +1027,6 @@ class LLMService:
         logger.debug(
             "llm_provider_config_check",
             provider_from_settings=self.provider,
-            qwen_base_url=settings.qwen_base_url,
-            qwen_model=settings.qwen_model,
             temperature=self.temperature
         )
 
@@ -1255,6 +1245,9 @@ class LLMService:
 
     def _load_provider_config(self):
         """根据provider加载对应配置"""
+        if self.provider == "qwen":
+            raise ValueError("Unsupported LLM provider: qwen")
+
         config = self.PROVIDER_CONFIG.get(self.provider)
 
         if not config:
@@ -1276,27 +1269,7 @@ class LLMService:
         )
 
         # 优先从 settings 读取，如果没有则从环境变量读取
-        if self.provider == "qwen":
-            self.api_mode = getattr(settings, "qwen_api_mode", "chat_completions")
-            self.base_url = settings.qwen_base_url
-            self.api_key = settings.qwen_api_key or ""
-            self.model = settings.qwen_model
-            # 🔍 调试日志：检查 settings 值
-            logger.debug(
-                "llm_qwen_config_from_settings",
-                base_url=self.base_url,
-                model=self.model,
-                has_api_key=bool(self.api_key)
-            )
-            # 回退到环境变量
-            if not self.base_url:
-                self.base_url = os.getenv(config["url_env"], config["url_default"])
-                logger.debug("llm_qwen_base_url_fallback_to_env", base_url=self.base_url)
-            if not self.model:
-                self.model = os.getenv(config["model_env"], config["model_default"])
-                logger.debug("llm_qwen_model_fallback_to_env", model=self.model)
-
-        elif self.provider == "deepseek":
+        if self.provider == "deepseek":
             self.api_mode = getattr(settings, "deepseek_api_mode", "anthropic_messages")
             self.base_url = settings.deepseek_base_url
             self.api_key = settings.deepseek_api_key or ""
@@ -1440,7 +1413,7 @@ class LLMService:
             has_api_key=bool(self.api_key)
         )
 
-        if not self.api_key and self.provider not in ["qwen"]:  # qwen 本地部署通常不需要 API key
+        if not self.api_key:
             logger.warning("llm_api_key_not_configured", provider=self.provider)
 
         # Anthropic Native Client (always initialized for V3 architecture)
@@ -1511,13 +1484,14 @@ class LLMService:
 
                 request_timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
                 if self.provider == "mimo":
-                    # Mimo 使用 api-key 头，不是 x-api-key
-                    # 使用空 api_key 禁用默认认证，通过 default_headers 添加 api-key
+                    # MiMo's Anthropic-compatible endpoint accepts the SDK's
+                    # standard API-key authentication. Passing api_key=None and
+                    # injecting only a default header fails the SDK's local
+                    # authentication validation before any request is sent.
                     self.anthropic_client = AsyncAnthropic(
-                        api_key=None,  # 禁用默认的 x-api-key 头
-                        auth_token=None,  # 禁用 Authorization 头
+                        api_key=self.api_key,
+                        auth_token=None,
                         base_url=anthropic_base_url,
-                        default_headers={"api-key": self.api_key},
                         timeout=request_timeout,
                         max_retries=2
                     )
@@ -1675,10 +1649,6 @@ class LLMService:
             "stream": True,  # 🔥 启用流式模式
         }
 
-        # 千问3特殊处理：禁用思考模式
-        if self.provider == "qwen":
-            payload["enable_thinking"] = False
-
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
@@ -1802,10 +1772,6 @@ class LLMService:
             "stream": True,
         }
 
-        # 千问3特殊处理：禁用思考模式
-        if self.provider == "qwen":
-            payload["enable_thinking"] = False
-
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
@@ -1907,10 +1873,6 @@ class LLMService:
             "temperature": temperature,
             "stream": True,
         }
-
-        # 千问3特殊处理：禁用思考模式
-        if self.provider == "qwen":
-            payload["enable_thinking"] = False
 
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
@@ -2147,10 +2109,6 @@ class LLMService:
 
         if self.provider in {"deepseek", "openai"}:
             payload["response_format"] = {"type": "json_object"}
-
-        # 千问3特殊处理：禁用思考模式
-        if self.provider == "qwen":
-            payload["enable_thinking"] = False
 
         # Mimo特殊处理：禁用思考模式
         if self.provider == "mimo":
@@ -2453,10 +2411,6 @@ class LLMService:
             "temperature": temperature
         }
 
-        # 千问3特殊处理：禁用思考模式
-        if self.provider == "qwen":
-            payload["enable_thinking"] = False
-
         # Mimo特殊处理：禁用思考模式
         if self.provider == "mimo":
             payload["thinking"] = {"type": "disabled"}
@@ -2711,17 +2665,16 @@ class LLMService:
                 system=system,
             ),
             "temperature": temperature,
+            "stream": stream,
         }
-        if stream:
-            payload["stream"] = True
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
             payload["tools"] = converted_tools
             payload["tool_choice"] = tool_choice or "auto"
-        if self.provider in {"deepseek", "qwen"}:
+        if self.provider == "deepseek":
             payload["enable_thinking"] = False
-            if self.provider == "deepseek" and stream:
+            if stream:
                 payload["stream_options"] = {"include_usage": True}
         return payload
 

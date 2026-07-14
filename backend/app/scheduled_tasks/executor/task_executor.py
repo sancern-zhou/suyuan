@@ -280,7 +280,17 @@ class ScheduledTaskExecutor:
                     visuals.append(visual)
 
             elif event_type == "final_response":
-                summary_parts.append(event.get("content", ""))
+                summary_parts[:] = [event.get("content", "")]
+
+            # Current AgentRuntime emits the final answer as agent_finish and
+            # then complete. Keep the latest value instead of concatenating
+            # both copies into invalid output.
+            elif event_type == "agent_finish":
+                summary_parts[:] = [event.get("answer", "")]
+
+            elif event_type == "complete":
+                data = event.get("data") or {}
+                summary_parts[:] = [data.get("answer") or data.get("response") or ""]
 
         return {
             "summary": "\n".join(summary_parts),

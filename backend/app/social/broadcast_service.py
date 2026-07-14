@@ -111,6 +111,8 @@ class SocialBroadcastService:
             }
 
         if not self.message_bus:
+            self.message_bus = get_message_bus()
+        if not self.message_bus:
             return {
                 "status": "failed",
                 "success": False,

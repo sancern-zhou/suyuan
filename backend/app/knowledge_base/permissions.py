@@ -73,6 +73,20 @@ class KnowledgeBasePermissions:
         return bool(is_admin or (user_id and kb.owner_id == user_id))
 
     @staticmethod
+    def can_manage_documents(
+        kb: KnowledgeBase, user_id: str | None, is_admin: bool = False
+    ) -> bool:
+        """Check whether a user may delete or replace documents in a knowledge base.
+
+        Any authenticated user may manage documents in a public knowledge base.
+        Private knowledge bases remain restricted to their owner or an administrator.
+        """
+        is_authenticated = bool(user_id)
+        if kb.is_public:
+            return is_authenticated
+        return bool(is_admin or (is_authenticated and kb.owner_id == user_id))
+
+    @staticmethod
     def can_search(kb: KnowledgeBase, user_id: str | None = None) -> bool:
         """
         检查用户是否有检索权限

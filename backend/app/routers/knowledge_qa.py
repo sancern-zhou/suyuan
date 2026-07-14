@@ -584,10 +584,6 @@ async def generate_streaming_answer(
             "stream": True
         }
 
-        # 千问3特殊处理：禁用思考模式
-        if llm_service.provider == "qwen":
-            payload["enable_thinking"] = False
-
         full_answer = ""
 
         async with httpx.AsyncClient(timeout=600.0) as client:

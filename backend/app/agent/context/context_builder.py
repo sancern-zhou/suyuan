@@ -633,11 +633,7 @@ class SimplifiedContextBuilder:
 
         if conversation_history:
             # 已有对话历史：结构化 history 已通过 messages 单独传递。
-            # 此处只放当前轮状态，不重复展开工具调用、工具结果或通用控制规则。
-            status_section = (
-                "## 当前状态"
-            )
-            sections.append(status_section)
+            # 此处不重复展开工具调用、工具结果或通用控制规则。
 
             board_selection_summary = self._build_board_selection_user_summary()
             if board_selection_summary:

@@ -285,7 +285,7 @@ class TenderPipeline:
         initial_decisions: dict[str, TenderFilterDecision],
         result: PipelineRunResult,
     ) -> None:
-        timeout_seconds = float(os.getenv("TENDER_DETAIL_TASK_TIMEOUT_SECONDS", "120"))
+        timeout_seconds = float(os.getenv("TENDER_DETAIL_TASK_TIMEOUT_SECONDS", "240"))
         try:
             await asyncio.wait_for(
                 self._process_candidate_inner(candidate, initial_decisions, result),

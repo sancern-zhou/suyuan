@@ -3,13 +3,89 @@ from pathlib import Path
 
 import httpx
 import pytest
+import anthropic
 
 from app.services.llm_service import LLMService
 from config.settings import settings
 
 
+def test_mimo_anthropic_client_uses_sdk_api_key_authentication(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "mimo")
+    monkeypatch.setattr(settings, "mimo_api_mode", "anthropic_messages")
+    monkeypatch.setattr(
+        settings,
+        "mimo_base_url",
+        "https://api.xiaomimimo.com/anthropic",
+    )
+    monkeypatch.setattr(settings, "mimo_api_key", "mimo-key")
+    monkeypatch.setattr(settings, "mimo_model", "mimo-v2.5")
+
+    captured = {}
+
+    class FakeAsyncAnthropic:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAsyncAnthropic)
+
+    service = LLMService()
+
+    assert service.anthropic_client is not None
+    assert captured["api_key"] == "mimo-key"
+    assert captured["auth_token"] is None
+    assert captured["base_url"] == "https://api.xiaomimimo.com/anthropic"
+    assert "default_headers" not in captured
+
+
 def test_deepseek_api_mode_setting_exists():
     assert settings.deepseek_api_mode in {"anthropic_messages", "chat_completions"}
+
+
+def test_text_qwen_settings_are_removed_but_visual_settings_remain():
+    assert not hasattr(settings, "qwen_api_key")
+    assert not hasattr(settings, "qwen_base_url")
+    assert not hasattr(settings, "qwen_model")
+    assert not hasattr(settings, "qwen_api_mode")
+    assert settings.qwen_vl_model
+    assert settings.qwen_vision_model
+
+
+def test_llm_service_rejects_retired_qwen_provider(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "qwen")
+
+    with pytest.raises(ValueError, match="Unsupported LLM provider: qwen"):
+        LLMService()
+
+
+def test_ocr_configuration_uses_only_visual_qwen_settings(monkeypatch):
+    import inspect
+
+    from app.services.ops_audit.semantic import ocr_adapter
+
+    monkeypatch.setenv("QWEN_API_KEY", "retired-text-key")
+    monkeypatch.setenv("QWEN_VL_API_KEY", "vision-key")
+    monkeypatch.setenv("QWEN_VISION_MODEL", "qwen3.7-plus")
+
+    resolver_source = inspect.getsource(ocr_adapter._resolve_qwen_api_key)
+    assert 'getattr(settings, "qwen_api_key", "")' not in resolver_source
+    assert ocr_adapter._resolve_qwen_api_key() == "vision-key"
+    assert ocr_adapter._resolve_qwen_model("flow_visual") == "qwen3.7-plus"
+
+
+def test_legacy_text_qwen_runtime_branches_are_removed():
+    backend_root = Path(__file__).resolve().parents[1]
+    for relative_path in [
+        "app/routers/knowledge_qa.py",
+        "app/agent/core/planner.py",
+    ]:
+        source = (backend_root / relative_path).read_text(encoding="utf-8")
+        assert 'provider == "qwen"' not in source
+
+    proxy_source = (backend_root / "app/proxy_server.py").read_text(
+        encoding="utf-8"
+    )
+    assert "API_BASE_URL" not in proxy_source
+    assert "chat/completions" not in proxy_source
 
 
 def test_llm_service_loads_deepseek_api_mode(monkeypatch):

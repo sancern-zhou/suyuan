@@ -100,7 +100,11 @@ class ReActPlanner:
     @staticmethod
     def _is_fetch_url_failure(exc: Exception) -> bool:
         message = str(exc).lower()
-        return "fetch url failed" in message or "fetch_url_failed" in message
+        return (
+            "fetch url failed" in message
+            or "fetch_url_failed" in message
+            or "failed to download url data" in message
+        )
 
     @staticmethod
     def _base64_retry_content(user_content: Any, attachments: Optional[List[Dict[str, Any]]]) -> Any:
@@ -541,6 +545,7 @@ class ReActPlanner:
                 attachments=attachments,
                 llm_provider=llm_provider,
                 llm_model=llm_model,
+                auto_profile=auto_profile,
             )
             yield {
                 "type": "streaming_text",
@@ -831,9 +836,6 @@ class ReActPlanner:
             "temperature": 0.7,
             "stream": True,
         }
-        if self.llm_service.provider == "qwen":
-            payload["enable_thinking"] = False
-
         try:
             async with httpx.AsyncClient(timeout=600.0) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:

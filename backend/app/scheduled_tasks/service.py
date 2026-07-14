@@ -374,6 +374,8 @@ class ScheduledTaskService:
                     output=output,
                     recipients=recipients,
                 )
+                if not execution.delivery_results:
+                    raise ValueError("delivery returned no recipient results")
                 if execution.delivery_results and not any(
                     row.get("sent") for row in execution.delivery_results
                 ):

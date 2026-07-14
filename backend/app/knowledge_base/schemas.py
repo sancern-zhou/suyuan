@@ -27,7 +27,6 @@ class ChunkingStrategyEnum(str, Enum):
 
 class LLMModeEnum(str, Enum):
     """LLM分块模式枚举"""
-    LOCAL = "local"    # 本地千问3（默认，25000字符阈值）
     ONLINE = "online"  # 线上API（60000字符阈值）
 
 

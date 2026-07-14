@@ -32,6 +32,8 @@ MONITORING_SQL_TABLES = [
     'CityDayAQIPublishHistory',
     'CityAQIPublishHistory',
     'CurrentAirQuality',
+    'OpenMeteoAirQualityForecast72h',
+    'dbo.OpenMeteoAirQualityForecast72h',
     'dat_station_day',
     'dat_station_hour',
     'dat_weather_hour',
@@ -786,6 +788,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n\n常用表说明（按数据库分类）："
             "\n【XcAiDb数据库-空气质量】"
             "\n- WeatherForecast7Day：7天空气质量预报（全国319城，含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint）"
+            "\n- OpenMeteoAirQualityForecast72h：Open-Meteo未来72小时空气质量预报明细"
             "\n- CityDayAQIPublishHistory：城市日空气质量历史数据（24小时均值）"
             "\n- CityAQIPublishHistory：城市小时空气质量历史数据"
             "\n- CurrentAirQuality：当前空气质量"

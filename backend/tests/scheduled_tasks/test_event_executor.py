@@ -23,6 +23,33 @@ def test_parser_accepts_fenced_broadcast_json(tmp_path):
     assert output.broadcast.media == [str(report)]
 
 
+def test_parser_accepts_single_json_fence_with_brief_model_preamble(tmp_path):
+    report = tmp_path / "report.docx"
+    report.write_bytes(b"docx")
+    payload = {
+        "success": True,
+        "broadcast": {"message": "告警摘要", "media": [str(report)]},
+    }
+
+    output = parse_event_task_output(
+        "报告验收通过，现在返回结果。\n\n"
+        f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```"
+    )
+
+    assert output.success is True
+    assert output.broadcast.media == [str(report)]
+
+
+@pytest.mark.parametrize("text", [
+    '```json\n{"success":false,"error":"失败"}\n```\n尾随说明',
+    f'{"前言" * 101}\n```json\n{{"success":false,"error":"失败"}}\n```',
+    '```text\n其他内容\n```\n```json\n{"success":false,"error":"失败"}\n```',
+])
+def test_parser_rejects_ambiguous_content_around_json_fence(text):
+    with pytest.raises(ValueError, match="not valid JSON"):
+        parse_event_task_output(text)
+
+
 def test_parser_rejects_missing_attachment(tmp_path):
     missing = tmp_path / "missing.docx"
 
@@ -51,6 +78,38 @@ class FakeAgent:
             "type": "final_response",
             "content": json.dumps(payload, ensure_ascii=False),
         }
+
+
+class CurrentRuntimeAgent:
+    async def analyze(self, prompt, **kwargs):
+        payload = json.dumps({
+            "success": True,
+            "broadcast": {"message": "告警摘要", "media": []},
+        }, ensure_ascii=False)
+        yield {"type": "agent_finish", "answer": payload, "data": {}}
+        yield {
+            "type": "complete",
+            "data": {"answer": payload, "response": payload},
+        }
+
+
+@pytest.mark.asyncio
+async def test_executor_collects_current_runtime_complete_response(tmp_path):
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=CurrentRuntimeAgent,
+    )
+
+    result = await executor._run_agent_step(
+        "处理告警",
+        "scheduled-task-session",
+        manual_mode="assistant",
+    )
+
+    output = parse_event_task_output(result["summary"])
+    assert output.success is True
+    assert output.broadcast.message == "告警摘要"
 
 
 @pytest.mark.asyncio
