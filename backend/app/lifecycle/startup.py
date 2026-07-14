@@ -17,6 +17,7 @@ import structlog
 
 from app.lifecycle.database import init_database, init_database_and_fetchers
 from app.lifecycle.knowledge_base import start_knowledge_base_services
+from app.lifecycle.nacos import start_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import start_scheduled_task_service
 from app.lifecycle.social import start_social_platform_service
@@ -47,6 +48,8 @@ async def run_startup(app: FastAPI) -> None:
         llm_provider=settings.llm_provider,
         app_role=app_role,
     )
+
+    await start_nacos(app)
 
     await initialize_tools_and_agents()
 
