@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import knowledge_base_routes
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 from app.db.database import get_db
 from app.knowledge_base.models import DocumentStatus
 
@@ -43,12 +45,14 @@ def test_replace_document_content_route(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(knowledge_base_routes.router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: object()
+    app.dependency_overrides[require_current_user] = lambda: CurrentUser(
+        id="owner", username="owner", display_name="Owner"
+    )
     client = TestClient(app)
 
     response = client.put(
         "/api/knowledge-base/kb1/documents/doc1/content",
         files={"file": ("replacement.md", b"new content", "text/markdown")},
-        headers={"X-User-Id": "owner"},
     )
 
     assert response.status_code == 200
