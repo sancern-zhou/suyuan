@@ -21,12 +21,18 @@ from app.knowledge_base.models import (
     ConversationTurn,
     ConversationSessionStatus
 )
+from app.conversations.models import ConversationCatalogDB
+from app.conversations.schemas import ConversationSource
 
 logger = structlog.get_logger()
 
 # 配置
 DEFAULT_SESSION_TTL_HOURS = 12  # 默认会话过期时间（小时）
 MAX_TURNS_PER_SESSION = 50      # 每会话最大轮次数
+
+
+class ConversationAccessDenied(Exception):
+    """The authenticated user does not own the requested conversation."""
 
 
 class ConversationStore:
@@ -59,7 +65,9 @@ class ConversationStore:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         knowledge_base_ids: Optional[List[str]] = None,
-        first_query: str = ""
+        first_query: str = "",
+        owner_username: Optional[str] = None,
+        owner_display_name: Optional[str] = None,
     ) -> Tuple[str, List[ConversationTurn], bool]:
         """
         获取或创建会话
@@ -88,6 +96,8 @@ class ConversationStore:
             existing_session = result.scalar_one_or_none()
 
             if existing_session:
+                if not user_id or str(existing_session.user_id) != str(user_id):
+                    raise ConversationAccessDenied(session_id)
                 # 更新会话状态为活跃
                 existing_session.status = ConversationSessionStatus.ACTIVE
                 existing_session.updated_at = datetime.utcnow()
@@ -101,7 +111,9 @@ class ConversationStore:
                     return await self._create_new_session(
                         user_id=user_id,
                         knowledge_base_ids=knowledge_base_ids,
-                        first_query=first_query
+                        first_query=first_query,
+                        owner_username=owner_username,
+                        owner_display_name=owner_display_name,
                     )
 
                 # 返回现有会话
@@ -113,14 +125,18 @@ class ConversationStore:
                     session_id=session_id,
                     user_id=user_id,
                     knowledge_base_ids=knowledge_base_ids,
-                    first_query=first_query
+                    first_query=first_query,
+                    owner_username=owner_username,
+                    owner_display_name=owner_display_name,
                 )
         else:
             # 没有提供session_id，创建新会话
             return await self._create_new_session(
                 user_id=user_id,
                 knowledge_base_ids=knowledge_base_ids,
-                first_query=first_query
+                first_query=first_query,
+                owner_username=owner_username,
+                owner_display_name=owner_display_name,
             )
 
     async def _create_new_session(
@@ -128,7 +144,9 @@ class ConversationStore:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         knowledge_base_ids: Optional[List[str]] = None,
-        first_query: str = ""
+        first_query: str = "",
+        owner_username: Optional[str] = None,
+        owner_display_name: Optional[str] = None,
     ) -> Tuple[str, List[ConversationTurn], bool]:
         """创建新会话"""
         # 生成会话ID
@@ -153,6 +171,16 @@ class ConversationStore:
             expires_at=expires_at
         )
         self.db.add(session)
+        self.db.add(ConversationCatalogDB(
+            session_id=session_id,
+            owner_user_id=str(user_id or ""),
+            owner_username=owner_username or str(user_id or ""),
+            owner_display_name=owner_display_name or owner_username or str(user_id or ""),
+            source=ConversationSource.KNOWLEDGE_QA.value,
+            mode="knowledge_qa",
+            title=title,
+            read_only_on_web=False,
+        ))
         await self.db.commit()
         await self.db.refresh(session)
 
@@ -202,6 +230,20 @@ class ConversationStore:
 
         query = query.order_by(ConversationSession.updated_at.desc()).limit(limit).offset(offset)
 
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def list_all_sessions(
+        self,
+        status: Optional[ConversationSessionStatus] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[ConversationSession]:
+        """List all knowledge conversations for an administrator."""
+        query = select(ConversationSession)
+        if status:
+            query = query.where(ConversationSession.status == status)
+        query = query.order_by(ConversationSession.updated_at.desc()).limit(limit).offset(offset)
         result = await self.db.execute(query)
         return list(result.scalars().all())
 

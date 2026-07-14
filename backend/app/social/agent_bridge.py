@@ -26,6 +26,10 @@ from app.agent.session.session_resolver import (
     append_session_transcript_for_mode,
     load_session_for_mode,
 )
+from app.auth.models import CurrentUser
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.schemas import ConversationSource
+from app.social.binding_service import get_social_binding_service
 
 logger = structlog.get_logger(__name__)
 
@@ -89,7 +93,9 @@ class AgentBridge:
         session_mapper: SessionMapper,
         mode: str = "social",  
         enable_heartbeat: bool = True,  
-        enable_memory: bool = True  
+        enable_memory: bool = True,
+        binding_service=None,
+        catalog=None,
     ):
         """初始化 AgentBridge 及社交模式需要的心跳、记忆和子 Agent 管理器。"""
         self.message_bus = message_bus
@@ -98,6 +104,8 @@ class AgentBridge:
         self.mode = mode
         self.enable_heartbeat = enable_heartbeat
         self.enable_memory = enable_memory
+        self.binding_service = binding_service or get_social_binding_service()
+        self.catalog = catalog or get_conversation_catalog()
 
         self._running = False
         self._consume_task: Optional[asyncio.Task] = None
@@ -393,8 +401,69 @@ class AgentBridge:
     async def _route_message(self, msg: InboundMessage) -> None:
         bot_account = await self._get_bot_account(msg.channel)
         social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+        is_weixin = msg.channel == "weixin" or msg.channel.startswith("weixin:")
 
-        if self.mode == "social":
+        if self.mode == "social" and is_weixin:
+            binding = await self.binding_service.resolve_sender(
+                channel=msg.channel,
+                bot_account=bot_account,
+                sender_id=msg.sender_id,
+            )
+            if binding is None:
+                await self.message_bus.publish_outbound(OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content="请先登录 Web 端，在微信账号管理中完成扫码绑定。",
+                    reply_to=msg.sender_id,
+                ))
+                return
+
+            session_id = await self.session_mapper.get_session(social_user_id)
+            catalog_user = CurrentUser(
+                id=binding.platform_user_id,
+                username=binding.platform_username,
+                display_name=binding.platform_display_name,
+            )
+            if session_id:
+                try:
+                    row = await self.catalog.require_read(session_id, catalog_user)
+                    if row.source != ConversationSource.SOCIAL:
+                        session_id = None
+                except Exception:
+                    session_id = None
+
+            if session_id is None:
+                session_id = self.session_mapper.new_session_id(self.mode)
+                registered = False
+                try:
+                    await self.catalog.register_identity(
+                        session_id=session_id,
+                        owner_user_id=binding.platform_user_id,
+                        owner_username=binding.platform_username,
+                        owner_display_name=binding.platform_display_name,
+                        source=ConversationSource.SOCIAL,
+                        mode=self.mode,
+                        title=(msg.content or "微信会话")[:256],
+                        read_only_on_web=True,
+                    )
+                    registered = True
+                    await self.session_mapper.save_mapping(social_user_id, session_id)
+                except Exception:
+                    if registered:
+                        await self.catalog.delete(session_id)
+                    logger.exception(
+                        "social_session_registration_failed",
+                        social_user_id=social_user_id,
+                    )
+                    await self.message_bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="会话初始化失败，请稍后重试。",
+                        reply_to=msg.sender_id,
+                    ))
+                    return
+
+        elif self.mode == "social":
             from app.social.user_registry import BIND_CODE_PATTERN, get_social_user_registry
 
             registry = get_social_user_registry()
@@ -448,7 +517,15 @@ class AgentBridge:
                 )
                 return
 
-        session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+        else:
+            session_id = await self.session_mapper.get_or_create_session(
+                social_user_id, mode=self.mode
+            )
+
+        if self.mode == "social" and not is_weixin:
+            session_id = await self.session_mapper.get_or_create_session(
+                social_user_id, mode=self.mode
+            )
 
         if self.mode == "social" and session_id in self._active_social_sessions:
             agent_attachments = self._build_agent_attachments(msg.media)

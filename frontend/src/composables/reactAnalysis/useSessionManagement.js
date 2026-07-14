@@ -4,6 +4,8 @@ import { authFetch } from '@/auth/http.js'
  * 处理会话的创建、恢复、清理等操作
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
+import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
 import {
   listSessions,
   restoreSession,
@@ -166,16 +168,16 @@ export function useSessionManagement(store) {
   const sessionHistoryData = computed(() => {
     const byId = new Map()
     for (const session of persistedSessionHistoryData.value) {
-      byId.set(session.session_id, {
+      byId.set(session.session_id, preserveCatalogFields({}, {
         ...session,
         status: session.status || session.state || (session.has_error ? 'error' : 'completed')
-      })
+      }))
     }
     for (const session of localSessionHistoryData.value) {
-      byId.set(session.session_id, {
-        ...(byId.get(session.session_id) || {}),
-        ...session
-      })
+      byId.set(
+        session.session_id,
+        preserveCatalogFields(byId.get(session.session_id) || {}, session)
+      )
     }
 
     return Array.from(byId.values()).sort((a, b) => {
@@ -229,6 +231,9 @@ export function useSessionManagement(store) {
    * 是否可以输入
    */
   const canInput = computed(() => store.canInput)
+  const currentConversationPolicy = computed(() => restoredConversationPolicy(
+    store.currentState?.conversationAccess || {}
+  ))
 
   // ========== 会话操作方法 ==========
 
@@ -237,6 +242,7 @@ export function useSessionManagement(store) {
    * @param {string|object} payload - 消息内容或包含选项的对象
    */
   const handleSend = async (payload) => {
+    if (currentConversationPolicy.value.readOnly) return false
     // 处理新的输入格式：可能是字符串（向后兼容）或对象
     const query = typeof payload === 'string' ? payload : payload.query
     const knowledgeBaseIds = typeof payload === 'object' ? payload.knowledgeBaseIds || [] : []
@@ -414,6 +420,10 @@ export function useSessionManagement(store) {
       // 3. 更新store
       store.reset()
       store.setSessionId(sessionId)
+      store.currentState.conversationAccess = {
+        source: sessionData.source || 'web',
+        read_only_on_web: sessionData.read_only_on_web === true
+      }
       store.setMessages(messages)
       if (typeof store.restoreDrawioBoardFromSession === 'function') {
         store.restoreDrawioBoardFromSession(sessionData)
@@ -468,7 +478,7 @@ export function useSessionManagement(store) {
         }
       }
 
-      if (lazyArtifacts) {
+      if (lazyArtifacts && !currentConversationPolicy.value.readOnly) {
         console.log('[会话恢复] 首屏消息已恢复，准备调度延迟资源自动加载:', sessionId)
         runAfterFirstPaint(() => {
           loadLazyArtifacts(sessionId, {
@@ -664,6 +674,14 @@ export function useSessionManagement(store) {
     return result.success
   }
 
+  const startNewWebConversation = () => {
+    store.reset()
+    store.currentState.conversationAccess = {
+      source: 'web',
+      read_only_on_web: false
+    }
+  }
+
   // ========== 会话历史管理 ==========
 
   /**
@@ -817,6 +835,7 @@ export function useSessionManagement(store) {
     currentMessageCount,
     isAnalyzing,
     canInput,
+    currentConversationPolicy,
 
     // 会话操作
     handleSend,
@@ -828,6 +847,7 @@ export function useSessionManagement(store) {
     handleSessionRestore,
     handleLoadSession,
     doRestoreSession,
+    startNewWebConversation,
 
     // 会话历史
     refreshSessionHistory,

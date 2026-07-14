@@ -49,6 +49,8 @@
       :session-history-data="sessionHistoryData"
       :session-history-stats="sessionHistoryStats"
       :session-history-loading="sessionHistoryLoading"
+      :conversation-read-only="currentConversationPolicy.readOnly"
+      :conversation-read-only-notice="currentConversationPolicy.notice"
       @update:active-module="handleAssistantSelect"
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="setLayoutRef"
@@ -95,6 +97,7 @@
       @restore-session="handleSessionRestore"
       @toggle-session-case="handleToggleSessionCase"
       @delete-sessions="deleteSessions"
+      @new-web-conversation="startNewWebConversation"
       @map-event="handleMapEvent"
     />
 
@@ -206,7 +209,9 @@ const {
   refreshSessionHistory,
   handleSessionCleanup,
   deleteSessions,
-  handleToggleSessionCase
+  handleToggleSessionCase,
+  currentConversationPolicy,
+  startNewWebConversation
 } = useSessionManagement(store)
 
 // 知识库操作

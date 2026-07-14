@@ -4,7 +4,7 @@ ReAct Agent API Routes
 ReAct Agent 的 REST API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Body, Request
+from fastapi import APIRouter, HTTPException, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -20,6 +20,11 @@ from app.agent.session.conversation_persistence import ConversationPersistenceSe
 from app.agent.runtime.cancellation import cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.conversations import ConversationSource
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.service import ConversationCatalogService
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -393,6 +398,31 @@ class AgentSteerRequest(BaseModel):
     message: str = Field(..., description="追加到当前 active run 的用户输入")
 
 
+async def persist_new_web_session(
+    *,
+    manager,
+    session: Session,
+    catalog: ConversationCatalogService,
+    user: CurrentUser,
+    mode: str,
+) -> None:
+    """Persist a new source session and roll it back if cataloging fails."""
+    saved = await manager.save_session_metadata(session)
+    if not saved:
+        raise RuntimeError("session_create_failed")
+    try:
+        await catalog.register(
+            session_id=session.session_id,
+            user=user,
+            source=ConversationSource.WEB,
+            mode=mode,
+            title=session.query[:256],
+        )
+    except Exception:
+        await manager.delete_session(session.session_id)
+        raise
+
+
 class AgentQueryResponse(BaseModel):
     """Agent 查询响应"""
     answer: str = Field(..., description="分析答案")
@@ -459,7 +489,12 @@ logger.info(
 # ========================================
 
 @router.post("/analyze")
-async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
+async def analyze_stream(
+    request: AgentAnalyzeRequest,
+    raw_request: Request,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     流式分析接口（Server-Sent Events）
 
@@ -496,6 +531,9 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
     - `error`: 迭代错误
     - `fatal_error`: 致命错误
     """
+    if request.session_id:
+        await catalog.require_write(request.session_id, user)
+
     raw_body = await raw_request.json()
     if request.model_tier is None and isinstance(raw_body, dict):
         raw_model_tier = raw_body.get("model_tier") or raw_body.get("modelTier")
@@ -735,7 +773,13 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
                 asyncio.create_task(_save_initial_session_metadata())
             else:
-                await session_manager.save_session_metadata(session)
+                await persist_new_web_session(
+                    manager=session_manager,
+                    session=session,
+                    catalog=catalog,
+                    user=user,
+                    mode=request.mode or "assistant",
+                )
 
             # ✅ 添加用户消息到对话历史
             user_message = {
@@ -1103,8 +1147,13 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
 
 @router.post("/{session_id}/cancel")
-async def cancel_analysis(session_id: str):
+async def cancel_analysis(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """Cancel an in-flight streaming analysis for a session."""
+    await catalog.require_write(session_id, user)
     active_run_id = await run_ownership_registry.current_run_id(session_id)
     cancelled = await cancellation_registry.cancel(session_id)
     return {
@@ -1117,8 +1166,14 @@ async def cancel_analysis(session_id: str):
 
 
 @router.post("/{session_id}/steer")
-async def steer_analysis(session_id: str, request: AgentSteerRequest):
+async def steer_analysis(
+    session_id: str,
+    request: AgentSteerRequest,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """Append user steering input to an active steerable run."""
+    await catalog.require_write(session_id, user)
     accepted = await steering_registry.add_input(session_id, request.message)
     return {
         "success": True,

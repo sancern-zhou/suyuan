@@ -314,6 +314,10 @@ const getOfficeDocumentIdentity = (doc = {}) => {
 const createEmptyModeState = () => ({
   // 基础状态
   sessionId: null,
+  conversationAccess: {
+    source: 'web',
+    read_only_on_web: false
+  },
   activeRunId: null,
   ignoredRunIds: [],
   isAnalyzing: false,
