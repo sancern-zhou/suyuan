@@ -1,5 +1,7 @@
 """Authorization policy for authenticated QR scans and social bindings."""
 
+from datetime import datetime
+
 from fastapi import HTTPException
 
 from app.auth.models import CurrentUser
@@ -25,6 +27,9 @@ class SocialBindingService:
         task = await self.repository.get_scan_task(task_id)
         if task is None or (not user.is_admin and task.owner_user_id != user.id):
             raise HTTPException(status_code=404, detail="weixin_scan_not_found")
+        if task.status != "confirmed" and task.expires_at < datetime.utcnow():
+            await self.repository.set_scan_status(task_id, "expired")
+            raise HTTPException(status_code=410, detail="weixin_scan_expired")
         return task
 
     async def mark_scan_status(
@@ -67,9 +72,17 @@ class SocialBindingService:
     async def active_for_account(self, account_id: str) -> SocialBindingRecord | None:
         return await self.repository.active_for_account(account_id)
 
+    async def active_for_platform_user(
+        self, platform_user_id: str
+    ) -> SocialBindingRecord | None:
+        return await self.repository.active_for_platform_user(platform_user_id)
+
     async def list_visible(self, user: CurrentUser) -> list[SocialBindingRecord]:
         rows = await self.repository.list_active()
         return rows if user.is_admin else [row for row in rows if row.platform_user_id == user.id]
+
+    async def deactivate_account(self, account_id: str) -> bool:
+        return await self.repository.deactivate_account(account_id)
 
 
 _service = SocialBindingService(SocialBindingRepository())
