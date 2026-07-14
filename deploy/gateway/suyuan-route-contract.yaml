@@ -1,0 +1,24 @@
+sysCode: SUYUAN
+namespace: normcraft-ai
+group: DEFAULT_GROUP
+serviceName: suyuan-agent
+routes:
+  - external: /api/suyuan/ws/**
+    upstream: /ws/**
+    websocket: true
+  - external: /api/suyuan/**
+    upstream: /api/**
+    websocket: false
+authenticationRoutesRequired:
+  - external: /api/auth/token/authentication
+    serviceName: platform-authentication
+  - external: /api/auth/account/getCurrentUser
+    serviceName: platform-authentication
+  - external: /api/auth/token/logout
+    serviceName: platform-authentication
+stripClientHeaders:
+  - X-User-Id
+  - X-Is-Admin
+preserveHeaders:
+  - Authorization
+  - SysCode
