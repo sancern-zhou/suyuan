@@ -30,7 +30,7 @@ async def runtime_auth_config(
         "authMode": "company",
         "sysCode": auth_settings.auth_sys_code,
     }
-    if auth_settings.auth_mode == "mock" and auth_settings.auth_mock_enabled:
+    if auth_settings.auth_mode == "mock":
         user = build_mock_user(auth_settings)
         payload = {
             "authMode": "mock",

@@ -65,7 +65,6 @@ def _settings(**overrides):
     values = {
         "_env_file": None,
         "auth_mode": "company",
-        "auth_mock_enabled": False,
         "auth_sys_code": "SUYUAN",
         "auth_identity_cache_ttl_seconds": 60,
     }
@@ -183,7 +182,6 @@ async def test_mock_mode_returns_fixed_non_production_identity():
     service = AuthenticationService(
         settings=_settings(
             auth_mode="mock",
-            auth_mock_enabled=True,
             auth_mock_user_id="developer",
             auth_mock_username="dev",
             auth_mock_display_name="开发用户",
@@ -207,7 +205,6 @@ async def test_mock_mode_defaults_to_stable_local_administrator():
     service = AuthenticationService(
         settings=_settings(
             auth_mode="mock",
-            auth_mock_enabled=True,
             auth_mock_user_id="local-developer",
             auth_mock_username="local-developer",
             auth_mock_display_name="本地开发用户",
@@ -232,7 +229,6 @@ async def test_mock_mode_normalizes_blank_identity_overrides_to_stable_defaults(
     service = AuthenticationService(
         settings=_settings(
             auth_mode="mock",
-            auth_mock_enabled=True,
             auth_mock_user_id="  ",
             auth_mock_username="",
             auth_mock_display_name="  ",

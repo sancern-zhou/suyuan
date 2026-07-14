@@ -159,10 +159,6 @@ class Settings(BaseSettings):
         default=False,
         description="Allow anonymous Swagger/OpenAPI access",
     )
-    auth_mock_enabled: bool = Field(
-        default=False,
-        description="Explicit non-production switch for a fixed mock identity",
-    )
     auth_mock_user_id: str = Field(default="local-developer")
     auth_mock_username: str = Field(default="local-developer")
     auth_mock_display_name: str = Field(default="本地开发用户")
@@ -215,7 +211,7 @@ class Settings(BaseSettings):
         if self.environment.strip().lower() != "production":
             return self
 
-        if self.auth_mode == "mock" or self.auth_mock_enabled:
+        if self.auth_mode == "mock":
             raise ValueError("production cannot enable mock authentication")
         if not self.nacos_register_enabled:
             raise ValueError("production requires Nacos registration")

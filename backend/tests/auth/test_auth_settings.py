@@ -18,6 +18,12 @@ def test_company_auth_contract_defaults():
     assert value.nacos_register_enabled is True
 
 
+def test_mock_authentication_has_no_redundant_enable_switch():
+    value = Settings(_env_file=None, environment="development", auth_mode="mock")
+
+    assert not hasattr(value, "auth_mock_enabled")
+
+
 def test_auth_list_properties_trim_and_deduplicate_values():
     value = Settings(
         _env_file=None,
@@ -40,7 +46,6 @@ def test_production_rejects_mock_authentication():
             _env_file=None,
             environment="production",
             auth_mode="mock",
-            auth_mock_enabled=True,
             auth_service_url="http://platform-gateway/api",
             signed_media_secret="share-secret",
         )
@@ -60,7 +65,6 @@ def test_production_fails_closed_for_insecure_configuration(overrides, message):
         "_env_file": None,
         "environment": "production",
         "auth_mode": "company",
-        "auth_mock_enabled": False,
         "auth_service_url": "http://platform-gateway/api",
         "signed_media_secret": "share-secret",
         "nacos_register_enabled": True,
