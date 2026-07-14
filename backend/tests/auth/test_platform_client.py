@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.auth.errors import AuthenticationRejected, AuthenticationUnavailable
+from app.auth.models import CurrentUser
 from app.auth.platform_client import PlatformAuthClient
 
 
@@ -16,6 +17,35 @@ class RecordingLogger:
 
     def warning(self, event, **values):
         self.events.append(("warning", event, values))
+
+
+def test_company_admin_boolean_and_role_code_list_are_normalized():
+    user = CurrentUser.from_company_payload(
+        {
+            "id": 1,
+            "userName": "ScGuanLy",
+            "name": "超级管理员",
+            "admin": True,
+            "roleCodeList": [{"roleCode": "OPS"}],
+        },
+        admin_role_codes=set(),
+        sys_code="SUYUAN",
+    )
+
+    assert user.id == "1"
+    assert user.role_codes == ("OPS",)
+    assert user.is_admin is True
+
+
+@pytest.mark.parametrize("value", [None, False, "true", 1, [], {}])
+def test_company_admin_requires_literal_true(value):
+    user = CurrentUser.from_company_payload(
+        {"id": "u1", "userName": "user", "admin": value},
+        admin_role_codes=set(),
+        sys_code="SUYUAN",
+    )
+
+    assert user.is_admin is False
 
 
 @pytest.mark.asyncio
