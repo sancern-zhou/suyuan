@@ -395,3 +395,74 @@ def test_report_separates_pending_visual_reviews_and_reports_image_failure(
     assert "资料不足待人工复核" in text
     assert "visual_evidence/WO-REPORT/CURVE/curve.jpg" in text
     assert "证据图片获取失败：附件服务不可用" in text
+
+
+def test_visual_evidence_pipeline_archives_all_and_reports_three(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sources = []
+    for index in range(4):
+        source = tmp_path / f"curve-{index}.jpg"
+        source.write_bytes(f"curve-{index}".encode())
+        sources.append(source)
+    issue = _visual_issue(
+        "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+        {
+            "report_classification": "疑似问题待人工复核",
+            "needs_manual_review": True,
+            "reviewed_images": [
+                {
+                    "attachment_filename": source.name,
+                    "attachment_local_path": str(source),
+                }
+                for source in sources
+            ],
+        },
+    )
+    audit = {
+        "audit_info": {
+            "generated_at": "2026-07-14 12:00:00",
+            "rule_stage": "deterministic_and_candidate_classification",
+            "order_count": 1,
+        },
+        "summary": {},
+        "records": [
+            {
+                "working_order_code": "WO-E2E",
+                "operation_unit": "测试运维单位",
+                "station_name": "测试站点",
+                "create_time": "2026-07-14 08:00:00",
+                "scoring_issues": [issue],
+                "deterministic_issues": [issue],
+            }
+        ],
+    }
+    monkeypatch.setattr(rule_engine, "audit_dataset", lambda *args, **kwargs: audit)
+    monkeypatch.setattr(rule_engine, "build_semantic_candidates", lambda value: {"candidate_count": 0})
+    monkeypatch.setattr(rule_engine, "build_semantic_review_tasks", lambda value: {"task_count": 0})
+    monkeypatch.setattr(
+        rule_engine,
+        "build_semantic_review_results",
+        lambda current_audit, dataset: {"result_count": 0, "results": []},
+    )
+    output_dir = tmp_path / "audit-output"
+
+    result = run_rule_engine({}, output_dir=output_dir, persist_outputs=True)
+    persisted_audit = json.loads(
+        Path(result["audit_result_path"]).read_text(encoding="utf-8")
+    )
+    final_issue_list = json.loads(
+        Path(result["final_issue_list_path"]).read_text(encoding="utf-8")
+    )
+    report_path = output_dir / "report.md"
+    write_report(persisted_audit, report_path, final_issue_list=final_issue_list)
+
+    manifest = json.loads(
+        Path(result["visual_evidence_manifest_path"]).read_text(encoding="utf-8")
+    )
+    text = report_path.read_text(encoding="utf-8")
+    assert manifest["unique_file_count"] == 4
+    assert all(Path(item["local_path"]).is_file() for item in manifest["items"])
+    assert len(final_issue_list["items"][0]["evidence_images"]) == 4
+    assert text.count("![视觉证据：") == 3
+    assert "报告展示 3 张，证据包共保存 4 张" in text
