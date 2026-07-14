@@ -38,10 +38,10 @@ test('loads mock mode from the public business-gateway endpoint without credenti
   })
 
   assert.deepEqual(config, mockPayload)
-  assert.deepEqual(calls, [{
-    url: '/api/suyuan/auth/runtime-config',
-    options: { cache: 'no-store', credentials: 'same-origin' }
-  }])
+  assert.equal(calls[0].url, '/api/suyuan/auth/runtime-config')
+  assert.equal(calls[0].options.cache, 'no-store')
+  assert.equal(calls[0].options.credentials, 'same-origin')
+  assert.equal(calls[0].options.signal instanceof AbortSignal, true)
 })
 
 
@@ -78,4 +78,21 @@ test('initializes the auth store with the loaded runtime config', async () => {
 
   assert.deepEqual(config, mockPayload)
   assert.deepEqual(seen, [mockPayload])
+})
+
+
+test('aborts a stalled runtime config request and fails closed to company mode', async () => {
+  let aborted = false
+  const config = await loadAuthRuntimeConfig({
+    timeoutMs: 5,
+    fetchImpl: async (url, options) => new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        aborted = true
+        reject(options.signal.reason)
+      }, { once: true })
+    })
+  })
+
+  assert.equal(aborted, true)
+  assert.deepEqual(config, companyRuntimeConfig())
 })
