@@ -405,6 +405,7 @@ async def get_session_messages(
     limit: int = 30,
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+    adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
 ):
     """
     分页获取会话消息
@@ -417,7 +418,21 @@ async def get_session_messages(
     Returns:
         消息列表、是否还有更多、总消息数
     """
-    await catalog.require_read(session_id, user)
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.WEB:
+        restored = await adapters.get(row.source).restore(
+            row, message_limit=limit, lazy_artifacts=True
+        )
+        if not restored:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        payload = restored.get("normalized_session") or {}
+        messages = payload.get("conversation_history") or []
+        return {
+            "messages": messages,
+            "has_more": bool(payload.get("has_more_messages")),
+            "total_count": payload.get("total_message_count", len(messages)),
+            "oldest_sequence": payload.get("oldest_sequence"),
+        }
     from app.db.session_repository import get_session_repository
 
     repo = get_session_repository()
@@ -447,7 +462,9 @@ async def get_session_visualizations(
 
     restore 接口默认只返回聊天首屏，图表数据由前端在首屏渲染后自动加载。
     """
-    await catalog.require_read(session_id, user)
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.WEB:
+        return {"session_id": session_id, "visualizations": [], "total": 0}
     artifacts = await _get_session_artifacts(
         session_id,
         load_visualizations=True,
@@ -473,7 +490,9 @@ async def get_session_office_documents(
 
     restore 接口默认不返回这些预览，避免首屏触发 iframe 加载报告 HTML。
     """
-    await catalog.require_read(session_id, user)
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.WEB:
+        return {"session_id": session_id, "office_documents": [], "total": 0}
     artifacts = await _get_session_artifacts(
         session_id,
         load_visualizations=False,
@@ -499,7 +518,13 @@ async def get_session_drawio_board(
 
     restore 接口默认不返回画板 XML，避免首屏携带大块可编辑画布数据。
     """
-    await catalog.require_read(session_id, user)
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.WEB:
+        return {
+            "session_id": session_id,
+            "drawio_board": None,
+            "has_drawio_board": False,
+        }
     from app.db.session_repository import get_session_repository
 
     repo = get_session_repository()
