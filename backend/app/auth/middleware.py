@@ -21,6 +21,7 @@ _PUBLIC_EXACT_PATHS = {
     "/ready",
     "/api/health",
     "/api/ready",
+    "/api/auth/runtime-config",
     "/index.html",
     "/favicon.ico",
     "/wechat-screenshot.png",
