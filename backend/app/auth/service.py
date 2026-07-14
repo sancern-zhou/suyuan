@@ -15,6 +15,9 @@ MOCK_ADMIN_ROLE_CODE = "SUYUAN_ADMIN"
 
 
 def build_mock_user(settings: Settings, sys_code: str | None = None) -> CurrentUser:
+    user_id = settings.auth_mock_user_id.strip() or "local-developer"
+    username = settings.auth_mock_username.strip() or user_id
+    display_name = settings.auth_mock_display_name.strip() or "本地开发用户"
     roles = [
         role.strip()
         for role in settings.auth_mock_role_codes.split(",")
@@ -23,9 +26,9 @@ def build_mock_user(settings: Settings, sys_code: str | None = None) -> CurrentU
     if MOCK_ADMIN_ROLE_CODE not in roles:
         roles.insert(0, MOCK_ADMIN_ROLE_CODE)
     return CurrentUser(
-        id=settings.auth_mock_user_id,
-        username=settings.auth_mock_username,
-        display_name=settings.auth_mock_display_name,
+        id=user_id,
+        username=username,
+        display_name=display_name,
         role_codes=tuple(roles),
         is_admin=True,
         sys_code=sys_code or settings.auth_sys_code,
