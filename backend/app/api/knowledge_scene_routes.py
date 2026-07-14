@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
+from app.auth.dependencies import current_user_id, current_user_is_admin
 from app.knowledge_base.business_rule_service import BusinessRuleService
 from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
 from app.knowledge_base.entity_linker import EntityLinker
@@ -81,8 +82,8 @@ def _scene_data(kb: KnowledgeBase, profile=None) -> dict:
 async def get_scene(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     kb = await _manageable_kb(db, kb_id, user_id, is_admin)
     profile = await SceneRepository(db).get_current_profile(kb_id)
@@ -94,8 +95,8 @@ async def discover_scene(
     kb_id: str,
     request: SceneDiscoveryRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     repository = SceneRepository(db)
@@ -125,8 +126,8 @@ async def discover_scene(
 async def get_current_profile(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     profile = await SceneRepository(db).get_current_profile(kb_id)
@@ -141,8 +142,8 @@ async def confirm_scene(
     profile_id: str,
     request: SceneConfirmationRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     kb = await _manageable_kb(db, kb_id, user_id, is_admin)
     repository = SceneRepository(db)
@@ -171,8 +172,8 @@ async def confirm_scene(
 async def list_suggestions(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     suggestions = await SceneRepository(db).list_suggestions(kb_id)
@@ -195,8 +196,8 @@ async def accept_suggestion(
     kb_id: str,
     suggestion_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     try:
@@ -213,8 +214,8 @@ async def reject_suggestion(
     kb_id: str,
     suggestion_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     try:
@@ -243,8 +244,8 @@ async def list_rules(
     kb_id: str,
     include_archived: bool = False,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     from app.services.llm_service import llm_service
@@ -260,8 +261,8 @@ async def parse_rule(
     kb_id: str,
     request: BusinessRuleParseRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     from app.services.llm_service import llm_service
@@ -281,8 +282,8 @@ async def confirm_rule(
     rule_id: str,
     request: BusinessRuleConfirmRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     from app.services.llm_service import llm_service
@@ -303,8 +304,8 @@ async def archive_rule(
     kb_id: str,
     rule_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     from app.services.llm_service import llm_service
@@ -343,8 +344,8 @@ def _fact_service(db: AsyncSession):
 async def list_facts(
     kb_id: str,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     facts = await _fact_service(db).list_facts(kb_id)
@@ -356,8 +357,8 @@ async def parse_fact(
     kb_id: str,
     request: UserFactParseRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     try:
@@ -375,8 +376,8 @@ async def confirm_fact(
     fact_id: str,
     request: UserFactConfirmRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Header(default=None, alias="X-User-Id"),
-    is_admin: bool = Header(default=False, alias="X-Is-Admin"),
+    user_id: str = Depends(current_user_id),
+    is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
     try:

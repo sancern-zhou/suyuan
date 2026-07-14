@@ -1,3 +1,5 @@
+import { authFetch } from '@/auth/http.js'
+import { connectScheduledTaskWebSocket } from '@/auth/websocket.js'
 import { defineStore } from 'pinia';
 
 const API_BASE = '/api/scheduled-tasks';
@@ -13,13 +15,15 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     eventTypes: [],
     socialUsers: [],
     ws: null,
-    wsConnected: false
+    wsConnected: false,
+    wsConnecting: false,
+    wsReconnectEnabled: true
   }),
 
   actions: {
     async fetchTasks() {
       try {
-        const response = await fetch(API_BASE);
+        const response = await authFetch(API_BASE);
         if (!response.ok) throw new Error('Failed to fetch tasks');
         const data = await response.json();
         // API返回的是 [{task: {...}, next_run_time: ...}, ...]
@@ -37,14 +41,14 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async fetchEventTypes() {
-      const response = await fetch(`${API_BASE}/event-types`);
+      const response = await authFetch(`${API_BASE}/event-types`);
       if (!response.ok) throw new Error('Failed to fetch event types');
       this.eventTypes = await response.json();
       return this.eventTypes;
     },
 
     async fetchSocialUsers() {
-      const response = await fetch('/api/social/users');
+      const response = await authFetch('/api/social/users');
       if (!response.ok) throw new Error('Failed to fetch social users');
       this.socialUsers = await response.json();
       return this.socialUsers;
@@ -52,7 +56,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
 
     async fetchStats() {
       try {
-        const response = await fetch(`${API_BASE}/statistics/summary`);
+        const response = await authFetch(`${API_BASE}/statistics/summary`);
         if (!response.ok) throw new Error('Failed to fetch stats');
         const data = await response.json();
         this.stats = {
@@ -66,7 +70,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async createTask(data) {
-      const response = await fetch(API_BASE, {
+      const response = await authFetch(API_BASE, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -81,15 +85,22 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     // WebSocket连接
-    connectWebSocket() {
-      if (this.ws && this.wsConnected) return;
-
-      const wsUrl = `ws://${window.location.host}/ws/scheduled-tasks`;
-      this.ws = new WebSocket(wsUrl);
+    async connectWebSocket() {
+      if ((this.ws && this.wsConnected) || this.wsConnecting) return;
+      this.wsConnecting = true;
+      this.wsReconnectEnabled = true;
+      try {
+        this.ws = await connectScheduledTaskWebSocket();
+      } catch (error) {
+        this.wsConnecting = false;
+        console.error('Failed to obtain WebSocket ticket:', error);
+        return;
+      }
 
       this.ws.onopen = () => {
         console.log('WebSocket connected to scheduled tasks');
         this.wsConnected = true;
+        this.wsConnecting = false;
       };
 
       this.ws.onmessage = (event) => {
@@ -115,29 +126,34 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       this.ws.onerror = (error) => {
         console.error('WebSocket error:', error);
         this.wsConnected = false;
+        this.wsConnecting = false;
       };
 
       this.ws.onclose = () => {
         console.log('WebSocket disconnected');
         this.wsConnected = false;
-        // 5秒后重连
-        setTimeout(() => {
-          this.connectWebSocket();
-        }, 5000);
+        this.wsConnecting = false;
+        this.ws = null;
+        if (this.wsReconnectEnabled) {
+          // Every reconnect obtains a fresh single-use ticket.
+          setTimeout(() => this.connectWebSocket(), 5000);
+        }
       };
     },
 
     // 断开WebSocket
     disconnectWebSocket() {
+      this.wsReconnectEnabled = false;
       if (this.ws) {
         this.ws.close();
         this.ws = null;
         this.wsConnected = false;
+        this.wsConnecting = false;
       }
     },
 
     async enableTask(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}/enable`, {
+      const response = await authFetch(`${API_BASE}/${taskId}/enable`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to enable task');
@@ -145,7 +161,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async disableTask(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}/disable`, {
+      const response = await authFetch(`${API_BASE}/${taskId}/disable`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to disable task');
@@ -153,7 +169,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async updateTask(taskId, data) {
-      const response = await fetch(`${API_BASE}/${taskId}`, {
+      const response = await authFetch(`${API_BASE}/${taskId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -165,7 +181,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async deleteTask(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}`, {
+      const response = await authFetch(`${API_BASE}/${taskId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete task');
@@ -173,7 +189,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async executeTaskNow(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}/execute`, {
+      const response = await authFetch(`${API_BASE}/${taskId}/execute`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to execute task');

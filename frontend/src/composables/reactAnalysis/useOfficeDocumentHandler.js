@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * Office文档处理 Composable
  * 处理Office文档的预览、编辑和提交
@@ -118,7 +119,7 @@ export function useOfficeDocumentHandler(store, options = {}) {
     isSubmitting.value = true
 
     try {
-      const response = await fetch('/api/office/apply-edit', {
+      const response = await authFetch('/api/office/apply-edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -166,7 +167,7 @@ export function useOfficeDocumentHandler(store, options = {}) {
    */
   const downloadDocument = async (filePath) => {
     try {
-      const response = await fetch(`/api/office/download?path=${encodeURIComponent(filePath)}`)
+      const response = await authFetch(`/api/office/download?path=${encodeURIComponent(filePath)}`)
 
       if (!response.ok) {
         throw new Error('下载失败')

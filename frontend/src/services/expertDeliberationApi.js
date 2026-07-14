@@ -1,7 +1,8 @@
+import { authFetch } from '@/auth/http.js'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 export async function runExpertDeliberation(payload) {
-  const response = await fetch(`${API_BASE_URL}/expert-deliberation/run`, {
+  const response = await authFetch(`${API_BASE_URL}/expert-deliberation/run`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -18,7 +19,7 @@ export async function runExpertDeliberation(payload) {
 }
 
 export async function runExpertDeliberationStream(payload, { onEvent, signal } = {}) {
-  const response = await fetch(`${API_BASE_URL}/expert-deliberation/run-stream`, {
+  const response = await authFetch(`${API_BASE_URL}/expert-deliberation/run-stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -79,7 +80,7 @@ export async function parseExpertDeliberationInputFiles(files) {
     formData.append('stage5_report_file', files.stage5ReportFile)
   }
 
-  const response = await fetch(`${API_BASE_URL}/expert-deliberation/parse-input-files`, {
+  const response = await authFetch(`${API_BASE_URL}/expert-deliberation/parse-input-files`, {
     method: 'POST',
     body: formData
   })
@@ -93,7 +94,7 @@ export async function parseExpertDeliberationInputFiles(files) {
 }
 
 export async function loadDefaultExpertDeliberationInputFiles() {
-  const response = await fetch(`${API_BASE_URL}/expert-deliberation/default-input-files`)
+  const response = await authFetch(`${API_BASE_URL}/expert-deliberation/default-input-files`)
 
   if (!response.ok) {
     const text = await response.text()
@@ -104,7 +105,7 @@ export async function loadDefaultExpertDeliberationInputFiles() {
 }
 
 export async function listExpertDeliberationRuns(limit = 30) {
-  const response = await fetch(`${API_BASE_URL}/expert-deliberation/runs?limit=${encodeURIComponent(limit)}`)
+  const response = await authFetch(`${API_BASE_URL}/expert-deliberation/runs?limit=${encodeURIComponent(limit)}`)
 
   if (!response.ok) {
     const text = await response.text()
@@ -115,7 +116,7 @@ export async function listExpertDeliberationRuns(limit = 30) {
 }
 
 export async function getExpertDeliberationRun(runId) {
-  const response = await fetch(`${API_BASE_URL}/expert-deliberation/runs/${encodeURIComponent(runId)}`)
+  const response = await authFetch(`${API_BASE_URL}/expert-deliberation/runs/${encodeURIComponent(runId)}`)
 
   if (!response.ok) {
     const text = await response.text()

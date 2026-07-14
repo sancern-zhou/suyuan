@@ -9,11 +9,17 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 import yaml
 
 from app.services.quarto_report_renderer import ReportRenderError, quarto_report_renderer
 from app.services.report_preview_refresh import build_html_preview, record_report_update
+from app.auth.share_access import (
+    SHARE_GRANT_COOKIE,
+    external_api_path,
+    get_share_access_service,
+)
+from config.settings import settings
 
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -134,7 +140,7 @@ async def render_report_docx(report_id: str):
         return {
             "success": True,
             "report_id": report_id,
-            "download_url": f"/api/reports/{report_id}/download/docx",
+            "download_url": external_api_path(f"/api/reports/{report_id}/download/docx"),
             "path": str(docx_path),
         }
     except FileNotFoundError as exc:
@@ -241,7 +247,11 @@ async def download_report(report_id: str, format_name: str):
 @router.post("/{report_id}/share/html")
 async def create_share_html(report_id: str):
     try:
-        return {"success": True, **quarto_report_renderer.render_share_html(report_id)}
+        result = quarto_report_renderer.render_share_html(report_id)
+        for key in ("share_url", "html_url"):
+            if result.get(key):
+                result[key] = external_api_path(result[key])
+        return {"success": True, **result}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (ValueError, ReportRenderError) as exc:
@@ -270,9 +280,25 @@ async def get_shared_report(token: str):
     html_path = quarto_report_renderer.find_shared_html(token)
     if not html_path:
         raise HTTPException(status_code=404, detail="Share token not found")
-    return FileResponse(
-        path=str(html_path),
-        media_type="text/html",
-        filename=Path(html_path).name,
-        headers={"Content-Disposition": "inline; filename=report.html"},
+    report_id = Path(html_path).parent.name
+    resource_base = external_api_path(f"/api/reports/{report_id}/")
+    html = Path(html_path).read_text(encoding="utf-8", errors="replace")
+    html = re.sub(
+        r'<base\s+href="[^"]*"\s*/?>',
+        f'<base href="{resource_base}">',
+        html,
+        count=1,
     )
+    if "<base " not in html:
+        html = html.replace("<head>", f'<head><base href="{resource_base}">', 1)
+    response = HTMLResponse(content=html)
+    response.set_cookie(
+        SHARE_GRANT_COOKIE,
+        get_share_access_service().issue("report", report_id),
+        max_age=settings.auth_share_grant_ttl_seconds,
+        httponly=True,
+        secure=settings.environment.strip().lower() == "production",
+        samesite="lax",
+        path=resource_base,
+    )
+    return response

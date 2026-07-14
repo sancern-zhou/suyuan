@@ -225,6 +225,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import DocxOnlineEditor from '@/components/DocxOnlineEditor.vue'
@@ -540,7 +541,7 @@ async function downloadPDF(doc) {
       ? `/api/office/pdf/${encodeURIComponent(doc.pdf_id)}/download?filename=${encodeURIComponent(fileName)}`
       : doc.pdf_url
 
-    const response = await fetch(downloadUrl)
+    const response = await authFetch(downloadUrl)
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
@@ -572,7 +573,7 @@ async function downloadWord(doc) {
 
   try {
     // 调用后端API下载Word文档
-    const response = await fetch('/api/office/download-word', {
+    const response = await authFetch('/api/office/download-word', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -616,7 +617,7 @@ async function downloadPPT(doc) {
   }
 
   try {
-    const response = await fetch('/api/office/download-ppt', {
+    const response = await authFetch('/api/office/download-ppt', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -695,7 +696,7 @@ async function ensureReportFormat(reportId, format) {
     return
   }
 
-  const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/render/${format}`, {
+  const response = await authFetch(`/api/reports/${encodeURIComponent(reportId)}/render/${format}`, {
     method: 'POST'
   })
   if (!response.ok) {
@@ -721,7 +722,7 @@ async function downloadReportFormat(doc, format) {
   try {
     await ensureReportFormat(reportId, format)
 
-    const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/download/${format}`)
+    const response = await authFetch(`/api/reports/${encodeURIComponent(reportId)}/download/${format}`)
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
@@ -758,7 +759,7 @@ async function downloadHtmlArtifact(doc) {
   }
 
   try {
-    const response = await fetch(`/api/html-artifacts/${encodeURIComponent(artifactId)}/download/html`)
+    const response = await authFetch(`/api/html-artifacts/${encodeURIComponent(artifactId)}/download/html`)
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
@@ -887,7 +888,7 @@ async function downloadExcel(doc) {
   }
 
   try {
-    const response = await fetch('/api/office/download-excel', {
+    const response = await authFetch('/api/office/download-excel', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -1109,7 +1110,7 @@ async function handleReportShare(doc) {
   doc.sharing = true
 
   try {
-    const response = await fetch(`/api/reports/${encodeURIComponent(reportId)}/share/html`, {
+    const response = await authFetch(`/api/reports/${encodeURIComponent(reportId)}/share/html`, {
       method: 'POST'
     })
     const result = await response.json()
@@ -1147,7 +1148,7 @@ async function handleHtmlArtifactShare(doc) {
   doc.sharing = true
 
   try {
-    const response = await fetch(`/api/html-artifacts/${encodeURIComponent(artifactId)}/share`, {
+    const response = await authFetch(`/api/html-artifacts/${encodeURIComponent(artifactId)}/share`, {
       method: 'POST'
     })
     const result = await response.json()

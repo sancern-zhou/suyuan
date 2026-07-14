@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 // ReAct Agent状态管理
 // 多模式并行任务系统 - 按模式隔离状态
 
@@ -214,7 +215,7 @@ const readDrawioBoardXmlFromRef = async (xmlRef = {}) => {
     : directUrl
   const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
   if (!url) return ''
-  const response = await fetch(url, { cache: 'no-store' })
+  const response = await authFetch(url, { cache: 'no-store' })
   if (!response.ok) {
     throw new Error(`Failed to read drawio xml ref: ${response.status}`)
   }

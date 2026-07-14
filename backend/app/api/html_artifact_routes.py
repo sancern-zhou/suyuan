@@ -8,6 +8,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
 from app.services.html_artifact_service import html_artifact_service
+from app.auth.share_access import (
+    SHARE_GRANT_COOKIE,
+    external_api_path,
+    get_share_access_service,
+)
+from config.settings import settings
 
 
 router = APIRouter(prefix="/api/html-artifacts", tags=["html-artifacts"])
@@ -61,7 +67,11 @@ async def download_html_artifact(artifact_id: str):
 @router.post("/{artifact_id}/share")
 async def share_html_artifact(artifact_id: str):
     try:
-        return {"success": True, **html_artifact_service.create_share(artifact_id)}
+        result = html_artifact_service.create_share(artifact_id)
+        for key in ("share_url", "html_url"):
+            if result.get(key):
+                result[key] = external_api_path(result[key])
+        return {"success": True, **result}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -75,9 +85,20 @@ async def get_shared_html_artifact(token: str):
         raise HTTPException(status_code=404, detail="Share token not found")
     artifact_id = Path(index_path).parent.name
     html = Path(index_path).read_text(encoding="utf-8", errors="replace")
-    base = f'<base href="/api/html-artifacts/{artifact_id}/">'
+    resource_base = external_api_path(f"/api/html-artifacts/{artifact_id}/")
+    base = f'<base href="{resource_base}">'
     if "<head>" in html:
         html = html.replace("<head>", f"<head>{base}", 1)
     else:
         html = f"{base}\n{html}"
-    return HTMLResponse(content=html)
+    response = HTMLResponse(content=html)
+    response.set_cookie(
+        SHARE_GRANT_COOKIE,
+        get_share_access_service().issue("html-artifact", artifact_id),
+        max_age=settings.auth_share_grant_ttl_seconds,
+        httponly=True,
+        secure=settings.environment.strip().lower() == "production",
+        samesite="lax",
+        path=resource_base,
+    )
+    return response

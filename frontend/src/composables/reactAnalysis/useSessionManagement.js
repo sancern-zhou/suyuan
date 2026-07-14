@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 会话管理 Composable
  * 处理会话的创建、恢复、清理等操作
@@ -717,7 +718,7 @@ export function useSessionManagement(store) {
    */
   const handleSessionCleanup = async () => {
     try {
-      const response = await fetch('/api/sessions/cleanup', { method: 'POST' })
+      const response = await authFetch('/api/sessions/cleanup', { method: 'POST' })
       if (!response.ok) throw new Error('Failed to cleanup sessions')
 
       const data = await response.json()

@@ -47,6 +47,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, onMounted, watch, computed } from 'vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 import { createImagePanelLightboxImage } from './imagePanelLightbox.js'
@@ -143,7 +144,7 @@ const fetchImage = async (imageId) => {
   try {
     isLoading.value = true
     loadError.value = false
-    const response = await fetch(`/api/image/${imageId}`)
+    const response = await authFetch(`/api/image/${imageId}`)
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
