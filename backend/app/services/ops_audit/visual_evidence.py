@@ -145,7 +145,15 @@ def _image_sources(evidence: dict[str, Any]) -> list[dict[str, str]]:
                     ),
                 }
             )
-    return sources
+    deduplicated = []
+    seen = set()
+    for item in sources:
+        source = item["source"]
+        if source in seen:
+            continue
+        seen.add(source)
+        deduplicated.append(item)
+    return deduplicated
 
 
 def _archive_one(

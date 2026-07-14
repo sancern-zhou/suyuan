@@ -127,7 +127,8 @@ def write_report(
             lines.append(f"- {key}：{value} 条")
 
     if final_issue_list is not None:
-        lines.extend(_format_final_issue_list_by_operation_unit(final_issue_list))
+        lines.extend(_format_final_issue_list_by_operation_unit(final_issue_list, path))
+        lines.extend(_format_pending_visual_reviews(audit, final_issue_list, path))
     else:
         lines.extend(["", "## 问题工单明细", ""])
         lines.append(f"- 问题工单数：{len(visible_records)} 条")
@@ -157,7 +158,9 @@ def write_report(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _format_final_issue_list_by_operation_unit(final_issue_list: dict[str, Any]) -> list[str]:
+def _format_final_issue_list_by_operation_unit(
+    final_issue_list: dict[str, Any], report_path: Path
+) -> list[str]:
     items = [item for item in final_issue_list.get("items", []) if isinstance(item, dict)]
     affected_orders = {item.get("working_order_code") for item in items if item.get("working_order_code")}
     lines = ["", "## 问题工单明细", ""]
@@ -181,8 +184,138 @@ def _format_final_issue_list_by_operation_unit(final_issue_list: dict[str, Any])
                 f"{_issue_message(item)}、"
                 f"{_display_value(item.get('rule_id'), '未关联规则')}"
             )
+            lines.extend(_format_evidence_images(item, report_path))
         lines.append("")
     return lines
+
+
+def _format_pending_visual_reviews(
+    audit: dict[str, Any],
+    final_issue_list: dict[str, Any],
+    report_path: Path,
+) -> list[str]:
+    items = _collect_pending_visual_reviews(audit, final_issue_list)
+    if not items:
+        return []
+    lines = ["", "## 视觉待人工复核", ""]
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        operation_unit = _display_value(item.get("operation_unit"), "未关联运维单位")
+        grouped.setdefault(operation_unit, []).append(item)
+    for operation_unit in sorted(grouped):
+        lines.extend([f"### {operation_unit}", ""])
+        for index, item in enumerate(_sort_issue_items(grouped[operation_unit]), start=1):
+            classification = _display_value(
+                item.get("report_classification"), "视觉证据待人工复核"
+            )
+            lines.append(
+                f"{index}. {_issue_station_label(item)}、"
+                f"{_display_value(item.get('working_order_code'), '未关联工单号')}、"
+                f"{classification}、"
+                f"{_display_value(item.get('message'), '未填写复核说明')}、"
+                f"{_display_value(item.get('rule_id'), '未关联规则')}"
+            )
+            lines.extend(_format_evidence_images(item, report_path))
+        lines.append("")
+    return lines
+
+
+def _collect_pending_visual_reviews(
+    audit: dict[str, Any], final_issue_list: dict[str, Any]
+) -> list[dict[str, Any]]:
+    final_keys = {
+        _visual_issue_key(item)
+        for item in final_issue_list.get("items", [])
+        if isinstance(item, dict)
+    }
+    pending = []
+    for record in audit.get("records", []):
+        for issue in record.get("scoring_issues", []):
+            if not isinstance(issue, dict):
+                continue
+            evidence = _parse_evidence(issue.get("evidence"))
+            images = evidence.get("evidence_images")
+            if not isinstance(images, list) or not images:
+                continue
+            rule_id = str(issue.get("rule_id") or "")
+            if not (
+                evidence.get("needs_visual_review") is True
+                or evidence.get("needs_manual_review") is True
+                or rule_id == "ATTACHMENT_FLOW_VISUAL_ERROR"
+            ):
+                continue
+            item = {
+                "working_order_code": record.get("working_order_code"),
+                "station_id": record.get("station_id"),
+                "station_name": record.get("station_name"),
+                "operation_unit": record.get("operation_unit"),
+                "rule_id": rule_id,
+                "field": issue.get("field"),
+                "message": issue.get("message"),
+                "report_classification": evidence.get("report_classification"),
+                "evidence_images": images,
+            }
+            if _visual_issue_key(item) not in final_keys:
+                pending.append(item)
+    return pending
+
+
+def _visual_issue_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(item.get("working_order_code") or ""),
+        str(item.get("rule_id") or ""),
+        str(item.get("field") or ""),
+        str(item.get("message") or ""),
+    )
+
+
+def _format_evidence_images(
+    item: dict[str, Any], report_path: Path, limit: int = 3
+) -> list[str]:
+    images = _evidence_images(item)
+    successful: list[tuple[dict[str, Any], Path]] = []
+    path_errors = []
+    report_root = report_path.parent.resolve()
+    for image in images:
+        if image.get("status") != "success" or not image.get("local_path"):
+            continue
+        local_path = Path(str(image["local_path"])).resolve()
+        if not local_path.is_file():
+            path_errors.append(f"本地证据不存在: {local_path}")
+            continue
+        try:
+            local_path.relative_to(report_root)
+        except ValueError:
+            path_errors.append(f"证据图片不在报告目录内: {local_path}")
+            continue
+        successful.append((image, local_path))
+
+    lines = []
+    for image, local_path in successful[:limit]:
+        relative = local_path.relative_to(report_root).as_posix()
+        filename = str(image.get("filename") or local_path.name)
+        lines.extend(["", f"![视觉证据：{filename}]({relative})"])
+    if len(successful) > limit:
+        lines.extend(
+            ["", f"> 报告展示 {limit} 张，证据包共保存 {len(successful)} 张。"]
+        )
+    if not successful:
+        failed = [image for image in images if image.get("status") == "failed"]
+        if failed:
+            error = str(failed[0].get("error") or "未知原因")
+            lines.extend(["", f"> 证据图片获取失败：{error}"])
+        elif path_errors:
+            lines.extend(["", f"> 证据图片获取失败：{path_errors[0]}"])
+    return lines
+
+
+def _evidence_images(item: dict[str, Any]) -> list[dict[str, Any]]:
+    images = item.get("evidence_images")
+    if not isinstance(images, list):
+        images = _parse_evidence(item.get("evidence")).get("evidence_images")
+    if not isinstance(images, list):
+        return []
+    return [image for image in images if isinstance(image, dict)]
 
 
 def _sort_issue_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
