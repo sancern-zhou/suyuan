@@ -1,4 +1,5 @@
 import { authFetch } from '@/auth/http.js'
+import { connectScheduledTaskWebSocket } from '@/auth/websocket.js'
 import { defineStore } from 'pinia';
 
 const API_BASE = '/api/scheduled-tasks';
@@ -14,7 +15,9 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     eventTypes: [],
     socialUsers: [],
     ws: null,
-    wsConnected: false
+    wsConnected: false,
+    wsConnecting: false,
+    wsReconnectEnabled: true
   }),
 
   actions: {
@@ -82,15 +85,22 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     // WebSocket连接
-    connectWebSocket() {
-      if (this.ws && this.wsConnected) return;
-
-      const wsUrl = `ws://${window.location.host}/ws/scheduled-tasks`;
-      this.ws = new WebSocket(wsUrl);
+    async connectWebSocket() {
+      if ((this.ws && this.wsConnected) || this.wsConnecting) return;
+      this.wsConnecting = true;
+      this.wsReconnectEnabled = true;
+      try {
+        this.ws = await connectScheduledTaskWebSocket();
+      } catch (error) {
+        this.wsConnecting = false;
+        console.error('Failed to obtain WebSocket ticket:', error);
+        return;
+      }
 
       this.ws.onopen = () => {
         console.log('WebSocket connected to scheduled tasks');
         this.wsConnected = true;
+        this.wsConnecting = false;
       };
 
       this.ws.onmessage = (event) => {
@@ -116,24 +126,29 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       this.ws.onerror = (error) => {
         console.error('WebSocket error:', error);
         this.wsConnected = false;
+        this.wsConnecting = false;
       };
 
       this.ws.onclose = () => {
         console.log('WebSocket disconnected');
         this.wsConnected = false;
-        // 5秒后重连
-        setTimeout(() => {
-          this.connectWebSocket();
-        }, 5000);
+        this.wsConnecting = false;
+        this.ws = null;
+        if (this.wsReconnectEnabled) {
+          // Every reconnect obtains a fresh single-use ticket.
+          setTimeout(() => this.connectWebSocket(), 5000);
+        }
       };
     },
 
     // 断开WebSocket
     disconnectWebSocket() {
+      this.wsReconnectEnabled = false;
       if (this.ws) {
         this.ws.close();
         this.ws = null;
         this.wsConnected = false;
+        this.wsConnecting = false;
       }
     },
 
