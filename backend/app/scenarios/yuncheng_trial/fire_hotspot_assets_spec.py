@@ -59,6 +59,29 @@ def test_build_fire_hotspot_summary_adds_distance_direction_and_limits_top_point
     assert "不能单独确认具体污染源" in summary["usage_boundary"]
 
 
+def test_build_fire_hotspot_summary_treats_offset_acquisition_times_as_utc() -> None:
+    summary = build_fire_hotspot_summary(
+        {
+            "hotspots": [
+                {
+                    "lat": 35.0,
+                    "lon": 112.0,
+                    "frp": 9.0,
+                    "confidence": 70,
+                    "acquisition_time": "2026-07-09T05:50:00+00:00",
+                    "satellite": "N20",
+                }
+            ]
+        },
+        alert_time=datetime(2026, 7, 9, 16, 0, 0),
+        center_lat=35.0,
+        center_lon=111.0,
+    )
+
+    assert summary["top_hotspots"][0]["hours_before_alert"] == 2.17
+    assert summary["count_by_window"] == {"within_1h": 0, "within_3h": 1, "within_6h": 1}
+
+
 def test_render_fire_hotspot_map_writes_png(tmp_path) -> None:
     summary = build_fire_hotspot_summary(
         {

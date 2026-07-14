@@ -3,7 +3,12 @@ import json
 import sys
 import types
 
-from app.services.tenders.llm import OpenAICompatibleTenderLLMClient
+import pytest
+
+from app.services.tenders.llm import (
+    OpenAICompatibleTenderLLMClient,
+    _is_retryable_agnes_not_found,
+)
 from app.services.tenders.models import (
     NoticeType,
     TenderCandidate,
@@ -35,6 +40,30 @@ def test_tender_llm_uses_configured_glm_provider_when_selected(monkeypatch):
     assert client.api_key == "glm-valid-key"
     assert client.base_url == "https://open.bigmodel.cn/api/coding/paas/v4"
     assert client.model == "glm-4.7"
+
+
+def test_tender_llm_does_not_use_legacy_qwen_text_environment(monkeypatch):
+    for name in [
+        "TENDER_LLM_API_KEY",
+        "TENDER_LLM_BASE_URL",
+        "TENDER_LLM_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "DASHSCOPE_API_KEY",
+        "DASHSCOPE_MODEL",
+        "GLM_API_KEY",
+        "GLM_BASE_URL",
+        "GLM_MODEL",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("QWEN_API_KEY", "retired-key")
+    monkeypatch.setenv("QWEN_BASE_URL", "https://retired-qwen.invalid/v1")
+    monkeypatch.setenv("QWEN_MODEL", "qwen3")
+
+    with pytest.raises(RuntimeError, match="启用 LLM 时需要配置"):
+        OpenAICompatibleTenderLLMClient()
 
 
 def test_candidate_batch_prompt_uses_compact_keep_indexes():
@@ -105,7 +134,13 @@ def test_review_candidates_accepts_keep_index_array():
     assert decisions["https://example.test/2"].reason == "LLM初筛命中环境业务公告"
 
 
-def test_json_chat_passes_configured_timeout_to_openai_client(monkeypatch):
+@pytest.mark.parametrize(
+    ("configured_timeout", "expected_timeout"),
+    [("12.5", 12.5), (None, 120.0)],
+)
+def test_json_chat_passes_timeout_to_openai_client(
+    monkeypatch, configured_timeout, expected_timeout
+):
     captured_kwargs = {}
 
     class FakeCompletions:
@@ -133,7 +168,10 @@ def test_json_chat_passes_configured_timeout_to_openai_client(monkeypatch):
         RateLimitError=RuntimeError,
     )
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
-    monkeypatch.setenv("TENDER_LLM_TIMEOUT_SECONDS", "12.5")
+    if configured_timeout is None:
+        monkeypatch.delenv("TENDER_LLM_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("TENDER_LLM_TIMEOUT_SECONDS", configured_timeout)
 
     client = OpenAICompatibleTenderLLMClient.__new__(
         OpenAICompatibleTenderLLMClient
@@ -146,8 +184,82 @@ def test_json_chat_passes_configured_timeout_to_openai_client(monkeypatch):
     data = asyncio.run(client._json_chat("test"))
 
     assert data == {"ok": True}
-    assert captured_kwargs["timeout"] == 12.5
+    assert captured_kwargs["timeout"] == expected_timeout
     assert captured_kwargs["max_retries"] == 0
+
+
+def test_json_chat_retries_agnes_upstream_not_found_once(monkeypatch):
+    attempts = 0
+    sleep_delays = []
+
+    class FakeNotFoundError(Exception):
+        status_code = 404
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise FakeNotFoundError(
+                "upstream_error: NotFoundError: Not Found"
+            )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = types.SimpleNamespace(completions=FakeCompletions())
+
+    class FakeAPIConnectionError(Exception):
+        pass
+
+    class FakeAPITimeoutError(Exception):
+        pass
+
+    class FakeInternalServerError(Exception):
+        pass
+
+    class FakeRateLimitError(Exception):
+        pass
+
+    async def fake_sleep(delay):
+        sleep_delays.append(delay)
+
+    fake_openai = types.SimpleNamespace(
+        APIConnectionError=FakeAPIConnectionError,
+        APITimeoutError=FakeAPITimeoutError,
+        AsyncOpenAI=FakeAsyncOpenAI,
+        InternalServerError=FakeInternalServerError,
+        RateLimitError=FakeRateLimitError,
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setattr("app.services.tenders.llm.asyncio.sleep", fake_sleep)
+
+    client = OpenAICompatibleTenderLLMClient.__new__(
+        OpenAICompatibleTenderLLMClient
+    )
+    client.api_key = "test-key"
+    client.base_url = "https://apihub.agnes-ai.com/v1"
+    client.model = "agnes-2.0-flash"
+    client.temperature = 0.0
+    client.retry_rate_limits = True
+
+    with pytest.raises(FakeNotFoundError):
+        asyncio.run(client._json_chat("test"))
+
+    assert attempts == 2
+    assert sleep_delays == [1]
+
+
+def test_upstream_not_found_retry_is_limited_to_agnes():
+    class FakeNotFoundError(Exception):
+        status_code = 404
+
+    error = FakeNotFoundError("upstream_error: NotFoundError: Not Found")
+
+    assert _is_retryable_agnes_not_found(
+        error, "https://apihub.agnes-ai.com/v1"
+    )
+    assert not _is_retryable_agnes_not_found(
+        error, "https://open.bigmodel.cn/api/paas/v4"
+    )
 
 
 def test_extract_notice_uses_llm_notice_type_field():

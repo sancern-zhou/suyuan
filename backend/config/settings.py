@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="openai",
-        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, qwen, glm"
+        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, glm"
     )
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: str = Field(
@@ -322,20 +322,7 @@ class Settings(BaseSettings):
         description="Cooldown seconds for transiently failing LLM providers"
     )
 
-    # 千问3配置
-    qwen_api_key: Optional[str] = Field(default=None, description="Qwen3 API key")
-    qwen_base_url: str = Field(
-        default="https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1",
-        description="Qwen3 API base URL"
-    )
-    qwen_model: str = Field(
-        default="qwen3",
-        description="Qwen3 model name"
-    )
-    qwen_api_mode: str = Field(
-        default="chat_completions",
-        description="Qwen API protocol mode: chat_completions"
-    )
+    # Qwen 视觉与 OCR 配置
     qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
     qwen_vl_base_url: str = Field(
         default="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -659,14 +646,6 @@ class Settings(BaseSettings):
                 "base_url": self.agnes_base_url,
                 "model": self.agnes_model,
                 "api_mode": self.agnes_api_mode,
-            }
-        elif self.llm_provider == "qwen":
-            return {
-                "provider": "qwen",
-                "api_key": self.qwen_api_key,
-                "base_url": self.qwen_base_url,
-                "model": self.qwen_model,
-                "api_mode": self.qwen_api_mode,
             }
         elif self.llm_provider == "glm":
             return {

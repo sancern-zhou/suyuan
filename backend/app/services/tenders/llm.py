@@ -227,6 +227,24 @@ def _retry_after_seconds(exc: Exception) -> float | None:
     return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
 
+def _is_retryable_agnes_not_found(
+    exc: Exception, base_url: str | None
+) -> bool:
+    if "apihub.agnes-ai.com" not in (base_url or "").lower():
+        return False
+    response = getattr(exc, "response", None)
+    status_code = getattr(exc, "status_code", None) or getattr(
+        response, "status_code", None
+    )
+    if status_code != 404:
+        return False
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in ("upstream_error", "notfounderror", "not found")
+    )
+
+
 class OpenAICompatibleTenderLLMClient:
     def __init__(
         self,
@@ -243,7 +261,6 @@ class OpenAICompatibleTenderLLMClient:
                 *self._provider_key_names(provider),
                 "OPENAI_API_KEY",
                 "DASHSCOPE_API_KEY",
-                "QWEN_API_KEY",
             ]
         )
         self.base_url = self._normalize_base_url(
@@ -256,7 +273,7 @@ class OpenAICompatibleTenderLLMClient:
             model
             or os.getenv("TENDER_LLM_MODEL")
             or self._provider_model(provider)
-            or os.getenv("QWEN_MODEL")
+            or os.getenv("OPENAI_MODEL")
             or os.getenv("DASHSCOPE_MODEL")
             or self._default_model(self.base_url)
         )
@@ -264,7 +281,7 @@ class OpenAICompatibleTenderLLMClient:
         self.retry_rate_limits = True
         if not self.api_key:
             raise RuntimeError(
-                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、GLM_API_KEY、OPENAI_API_KEY、DASHSCOPE_API_KEY 或 QWEN_API_KEY"
+                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、GLM_API_KEY、OPENAI_API_KEY 或 DASHSCOPE_API_KEY"
             )
 
     async def review_candidate(
@@ -457,7 +474,7 @@ class OpenAICompatibleTenderLLMClient:
         client_kwargs = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
-        client_kwargs["timeout"] = float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "60"))
+        client_kwargs["timeout"] = float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "120"))
         client_kwargs["max_retries"] = 0
         client = AsyncOpenAI(**client_kwargs)
         max_retries = int(os.getenv("TENDER_LLM_MAX_RETRIES", "3"))
@@ -467,6 +484,8 @@ class OpenAICompatibleTenderLLMClient:
             else 1
         )
         max_attempts = max(max_retries, rate_limit_max_retries)
+        agnes_not_found_max_retries = 1
+        max_attempts = max(max_attempts, agnes_not_found_max_retries + 1)
         response = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -494,6 +513,13 @@ class OpenAICompatibleTenderLLMClient:
                 if attempt >= max_retries:
                     raise
                 await asyncio.sleep(min(2 * attempt, 8))
+            except Exception as exc:
+                if (
+                    not _is_retryable_agnes_not_found(exc, self.base_url)
+                    or attempt > agnes_not_found_max_retries
+                ):
+                    raise
+                await asyncio.sleep(attempt)
         if response is None:
             raise RuntimeError("LLM响应为空")
         content = response.choices[0].message.content or "{}"
@@ -517,10 +543,9 @@ class OpenAICompatibleTenderLLMClient:
                     "TENDER_LLM_API_KEY",
                     "OPENAI_API_KEY",
                     "DASHSCOPE_API_KEY",
-                    "QWEN_API_KEY",
                     "TENDER_LLM_BASE_URL",
                     "TENDER_LLM_MODEL",
-                    "QWEN_MODEL",
+                    "OPENAI_MODEL",
                     "DASHSCOPE_MODEL",
                 }
                 and value
@@ -548,7 +573,7 @@ class OpenAICompatibleTenderLLMClient:
         return None
 
     def _default_base_url(self) -> str | None:
-        if os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY"):
+        if os.getenv("DASHSCOPE_API_KEY"):
             return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         return None
 

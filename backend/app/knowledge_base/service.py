@@ -293,7 +293,7 @@ class KnowledgeBaseService:
             chunking_strategy: 分块策略 (llm/sentence/semantic/markdown/hybrid)
             chunk_size: 分块大小
             chunk_overlap: 分块重叠
-            llm_mode: LLM模式 - "local"(本地千问3) / "online"(线上API)
+            llm_mode: LLM模式，仅支持 "online"（线上API）
 
         Returns:
             文档对象
@@ -401,7 +401,7 @@ class KnowledgeBaseService:
         chunking_strategy: str = "llm",
         chunk_size: int = 800,
         chunk_overlap: int = 100,
-        llm_mode: str = "local",
+        llm_mode: str = "online",
     ):
         """Compatibility wrapper around the unified ingestion service."""
         return await self.ingest_document(
@@ -424,7 +424,7 @@ class KnowledgeBaseService:
         if not kb:
             raise ValueError(f"Knowledge base not found: {kb_id}")
 
-        if not KnowledgeBasePermissions.can_manage(kb, user_id, is_admin):
+        if not KnowledgeBasePermissions.can_manage_documents(kb, user_id, is_admin):
             raise PermissionError("No permission to delete document")
 
         # 获取文档
@@ -456,7 +456,7 @@ class KnowledgeBaseService:
         kb = await self.get_knowledge_base(kb_id)
         if not kb:
             raise ValueError(f"Knowledge base not found: {kb_id}")
-        if not KnowledgeBasePermissions.can_manage(kb, user_id, is_admin):
+        if not KnowledgeBasePermissions.can_manage_documents(kb, user_id, is_admin):
             raise PermissionError("No permission to replace document")
         result = await self.db.execute(
             select(Document).where(

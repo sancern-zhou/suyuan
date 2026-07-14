@@ -222,6 +222,31 @@ async def test_candidate_processing_has_task_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_candidate_processing_defaults_task_timeout_to_240(monkeypatch):
+    monkeypatch.delenv("TENDER_DETAIL_TASK_TIMEOUT_SECONDS", raising=False)
+    captured = {}
+
+    async def fake_wait_for(coro, timeout):
+        captured["timeout"] = timeout
+        coro.close()
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    pipeline = TenderPipeline(
+        client=ConcurrentDetailClient(),
+        repository=AcceptingRepository(),
+        llm_client=AcceptingLLM(),
+    )
+    candidate = TenderCandidate(
+        title="环境监测服务采购公告",
+        url="https://example.test/default-timeout",
+    )
+
+    await pipeline._process_candidate(candidate, {}, PipelineRunResult())
+
+    assert captured["timeout"] == 240
+
+
+@pytest.mark.asyncio
 async def test_pipeline_stops_detail_processing_when_qianlima_access_exhausted(
     monkeypatch,
 ):

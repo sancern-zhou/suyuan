@@ -1721,6 +1721,10 @@ class SessionMemory:
                     content = msg["content"]
                     role = msg["role"]
 
+                    if msg_type == "scheduled_task_event":
+                        skipped_count += 1
+                        continue
+
                     # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
                     if isinstance(content, list):
                         content_types = {

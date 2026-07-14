@@ -28,9 +28,6 @@ class TokenCounter:
         "minimax-m2": "cl100k_base",
         # Mimo
         "mimo-v2.5": "cl100k_base",
-        # Qwen (使用 cl100k_base 作为近似)
-        "qwen3:30b": "cl100k_base",
-        "/qwen/Qwen3-30B-A3B-Instruct-2507-AWQ/": "cl100k_base",
     }
 
     def __init__(self, model: str = "gpt-4"):
@@ -148,4 +145,3 @@ class TokenCounter:
             估算的 Token 数量
         """
         return self.count_tokens(text)
-

@@ -42,6 +42,7 @@ class FakeAgentFactory:
 class FakeDelivery:
     def __init__(self):
         self.valid = True
+        self.empty = False
         self.fail_user_ids = set()
         self.target_batches = []
 
@@ -56,6 +57,8 @@ class FakeDelivery:
     async def deliver(self, *, recipients, **kwargs):
         user_ids = [recipient["user_id"] for recipient in recipients]
         self.target_batches.append(user_ids)
+        if self.empty:
+            return []
         return [
             {
                 "user_id": recipient["user_id"],
@@ -226,6 +229,24 @@ async def test_no_valid_recipients_fails_before_agent(
     assert claim.status == "failed"
     assert execution.status.value == "failed"
     assert "no active bound WeChat recipients" in execution.error_message
+
+
+@pytest.mark.asyncio
+async def test_empty_delivery_result_fails_event_instead_of_false_success(
+    service,
+    event_task,
+    fake_delivery,
+):
+    fake_delivery.empty = True
+    service.create_task(event_task)
+
+    result = await service.publish_event(_event("empty-delivery"), wait=True)
+
+    claim = service.claim_storage.get(event_task.task_id, "empty-delivery")
+    execution = service.execution_storage.get(result.execution_ids[0])
+    assert claim.status == "failed"
+    assert execution.status.value == "failed"
+    assert "no recipient results" in execution.error_message
 
 
 @pytest.mark.asyncio

@@ -277,7 +277,6 @@ def _resolve_qwen_api_key() -> str:
         os.getenv("QWEN_VL_API_KEY")
         or os.getenv("OCR_API_KEY")
         or getattr(settings, "qwen_vl_api_key", "")
-        or getattr(settings, "qwen_api_key", "")
         or getattr(settings, "aliyun_ocr_access_key_id", "")
     )
     return str(key).strip()

@@ -55,6 +55,8 @@ class ReadDocxTool(LLMTool):
 
 参数：
 - path: DOCX 文件路径
+- offset: 非空段落起始偏移量（可选，默认0）
+- limit: 本次最多读取的非空段落数（可选）
 - max_paragraphs: 最大段落数（可选，默认100，用于控制token消耗）
 - include_tables: 是否包含表格（可选，默认true）
 """,
@@ -72,6 +74,15 @@ class ReadDocxTool(LLMTool):
                     "path": {
                         "type": "string",
                         "description": "DOCX文件路径"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "非空段落起始偏移量（从0开始）",
+                        "default": 0
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "本次最多读取的非空段落数"
                     },
                     "max_paragraphs": {
                         "type": "integer",
@@ -91,6 +102,8 @@ class ReadDocxTool(LLMTool):
     async def execute(
         self,
         path: str,
+        offset: int = 0,
+        limit: Optional[int] = None,
         max_paragraphs: int = 100,
         include_tables: bool = True,
         **kwargs
@@ -100,6 +113,8 @@ class ReadDocxTool(LLMTool):
 
         Args:
             path: DOCX文件路径
+            offset: 非空段落起始偏移量（从0开始）
+            limit: 本次最多读取的非空段落数
             max_paragraphs: 最大段落数
             include_tables: 是否包含表格
 
@@ -107,6 +122,19 @@ class ReadDocxTool(LLMTool):
             读取结果
         """
         try:
+            effective_limit = limit if limit is not None else max_paragraphs
+            if offset < 0 or effective_limit <= 0:
+                return {
+                    "success": False,
+                    "data": {
+                        "error": (
+                            "DOCX分页参数无效: offset 必须大于等于0，"
+                            "limit 必须大于0"
+                        )
+                    },
+                    "summary": "DOCX分页参数无效",
+                }
+
             file_path = Path(path)
 
             # 验证文件存在
@@ -131,39 +159,49 @@ class ReadDocxTool(LLMTool):
             except Exception as docx_error:
                 logger.warning("python_docx_failed_fallback_to_manual", error=str(docx_error))
                 # 回退方案：手动解包并提取文本
-                return await self._read_docx_fallback(file_path, max_paragraphs, include_tables)
+                return await self._read_docx_fallback(
+                    file_path,
+                    offset,
+                    effective_limit,
+                    include_tables,
+                )
 
             # 提取内容（保持段落和表格的原始顺序）
             content_parts = []
-            paragraph_count = 0  # 统计非空段落数
+            paragraph_count = 0  # 统计本页非空段落数
             table_count = 0
             image_count = 0  # 统计图片数量
+
+            total_paragraphs = sum(1 for para in doc.paragraphs if para.text.strip())
+            page_end = min(offset + effective_limit, total_paragraphs)
+            paragraph_index = 0
 
             # 使用 iter_inner_content() 按原始顺序遍历段落和表格
             from docx.table import Table
             from docx.text.paragraph import Paragraph
 
             for item in doc.iter_inner_content():
-                if paragraph_count >= max_paragraphs:
-                    break
-
                 if isinstance(item, Paragraph):
                     # 处理段落
                     text = item.text.strip()
                     if text:
-                        # 检查是否是标题
-                        if item.style and item.style.name.startswith("Heading"):
-                            level = item.style.name.replace("Heading ", "")
-                            try:
-                                level_int = int(level)
-                                content_parts.append(f"{'#' * level_int} {text}")
-                            except ValueError:
+                        if offset <= paragraph_index < page_end:
+                            # 检查是否是标题
+                            if item.style and item.style.name.startswith("Heading"):
+                                level = item.style.name.replace("Heading ", "")
+                                try:
+                                    level_int = int(level)
+                                    content_parts.append(f"{'#' * level_int} {text}")
+                                except ValueError:
+                                    content_parts.append(text)
+                            else:
                                 content_parts.append(text)
-                        else:
-                            content_parts.append(text)
-                        paragraph_count += 1
+                            paragraph_count += 1
+                        paragraph_index += 1
 
                 elif isinstance(item, Table) and include_tables:
+                    if not (offset < total_paragraphs and offset <= paragraph_index < page_end):
+                        continue
                     # 处理表格
                     if table_count >= 20:  # 限制表格数量
                         break
@@ -232,7 +270,11 @@ class ReadDocxTool(LLMTool):
                 "table_count": table_count,
                 "image_count": image_count,
                 "has_images": image_count > 0,
-                "total_paragraphs": len(doc.paragraphs),
+                "offset": offset,
+                "limit": effective_limit,
+                "next_offset": page_end if page_end < total_paragraphs else None,
+                "is_truncated": page_end < total_paragraphs,
+                "total_paragraphs": total_paragraphs,
                 "total_tables": len(doc.tables)
             }
 
@@ -332,7 +374,8 @@ class ReadDocxTool(LLMTool):
     async def _read_docx_fallback(
         self,
         file_path: Path,
-        max_paragraphs: int,
+        offset: int,
+        limit: int,
         include_tables: bool
     ) -> Dict[str, Any]:
         """
@@ -383,7 +426,10 @@ class ReadDocxTool(LLMTool):
                         if text:
                             paragraphs.append(text)
 
-                content = "\n\n".join(paragraphs[:max_paragraphs])
+                page = paragraphs[offset:offset + limit]
+                next_offset = offset + len(page)
+                is_truncated = next_offset < len(paragraphs)
+                content = "\n\n".join(page)
 
                 # 提取图片
                 image_paths = self._extract_images_fallback(temp_dir)
@@ -394,10 +440,15 @@ class ReadDocxTool(LLMTool):
                     "path": str(file_path),
                     "file_name": file_path.name,
                     "file_size": file_path.stat().st_size,
-                    "paragraph_count": min(len(paragraphs), max_paragraphs),
+                    "paragraph_count": len(page),
                     "table_count": 0,
                     "image_count": len(image_paths),
                     "has_images": len(image_paths) > 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "next_offset": next_offset if is_truncated else None,
+                    "is_truncated": is_truncated,
+                    "total_paragraphs": len(paragraphs),
                     "extraction_method": "fallback_xml",
                     "warning": "文档XML格式不规范，使用回退方案提取"
                 }
@@ -424,7 +475,7 @@ class ReadDocxTool(LLMTool):
                 return {
                     "success": True,
                     "data": result_data,
-                    "summary": f"读取成功（回退模式）: {file_path.name} ({min(len(paragraphs), max_paragraphs)}个段落)",
+                    "summary": f"读取成功（回退模式）: {file_path.name} ({len(page)}个段落)",
                     "metadata": {
                         "generator": "read_docx",
                         "tool_name": "read_docx",
@@ -447,7 +498,10 @@ class ReadDocxTool(LLMTool):
                     if text and len(text) > 1:  # 过滤单个字符
                         paragraphs.append(text)
 
-                content = "\n\n".join(paragraphs[:max_paragraphs])
+                page = paragraphs[offset:offset + limit]
+                next_offset = offset + len(page)
+                is_truncated = next_offset < len(paragraphs)
+                content = "\n\n".join(page)
 
                 # 提取图片
                 image_paths = self._extract_images_fallback(temp_dir)
@@ -458,10 +512,15 @@ class ReadDocxTool(LLMTool):
                     "path": str(file_path),
                     "file_name": file_path.name,
                     "file_size": file_path.stat().st_size,
-                    "paragraph_count": min(len(paragraphs), max_paragraphs),
+                    "paragraph_count": len(page),
                     "table_count": 0,
                     "image_count": len(image_paths),
                     "has_images": len(image_paths) > 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "next_offset": next_offset if is_truncated else None,
+                    "is_truncated": is_truncated,
+                    "total_paragraphs": len(paragraphs),
                     "extraction_method": "fallback_regex",
                     "warning": "文档严重损坏，使用正则表达式提取（可能丢失格式）"
                 }
@@ -487,7 +546,7 @@ class ReadDocxTool(LLMTool):
                 return {
                     "success": True,
                     "data": result_data,
-                    "summary": f"读取成功（正则模式）: {file_path.name} ({min(len(paragraphs), max_paragraphs)}个段落)",
+                    "summary": f"读取成功（正则模式）: {file_path.name} ({len(page)}个段落)",
                     "metadata": {
                         "generator": "read_docx",
                         "tool_name": "read_docx",

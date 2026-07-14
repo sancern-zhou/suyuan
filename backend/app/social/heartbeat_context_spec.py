@@ -60,7 +60,7 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
         loaded.conversation_history,
         session_id=main_session_id,
     )
-    assert any(
+    assert not any(
         message["role"] == "user" and "刚刚有一条非静默定时任务执行结果" in str(message["content"])
         for message in projected
     )

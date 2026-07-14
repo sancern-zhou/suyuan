@@ -9,7 +9,7 @@ from app.scenarios.yuncheng_trial.collect_tracing_context import (
     collect_required_assets,
     create_air_quality_24h_forecast_payload,
 )
-from app.scenarios.yuncheng_trial.fetch_and_alert import write_alert_evidence
+from app.scenarios.yuncheng_trial.fetch_and_alert import evaluate_alert_rules, write_alert_evidence
 from app.scenarios.yuncheng_trial.paths import build_evidence_run_paths
 from app.tools.query.get_platform_weather_image.tool import build_weather_image_url
 
@@ -39,6 +39,20 @@ def test_write_alert_evidence_writes_named_alert_json_without_global_status_file
     assert alert_path.parent.parent.name == "202607"
     assert len(list((tmp_path / "scenarios" / "yuncheng_trial").glob("*.json"))) == 0
     assert json.loads(alert_path.read_text(encoding="utf-8"))["status"] == "silent"
+
+
+def test_alert_state_uses_12_hour_default_tracing_window():
+    rows = [
+        {"time": "2026-07-09 09:00:00", "O3": 90, "PM2.5": 20, "PM10": 40, "CO": 0.8, "NO2": 20, "AQI": 50},
+        {"time": "2026-07-09 10:00:00", "O3": 100, "PM2.5": 22, "PM10": 41, "CO": 0.8, "NO2": 21, "AQI": 55},
+        {"time": "2026-07-09 11:00:00", "O3": 115, "PM2.5": 23, "PM10": 42, "CO": 0.8, "NO2": 22, "AQI": 60},
+        {"time": "2026-07-09 12:00:00", "O3": 135, "PM2.5": 24, "PM10": 43, "CO": 0.8, "NO2": 23, "AQI": 65},
+    ]
+
+    state = evaluate_alert_rules(rows)
+
+    assert state["has_alert"] is True
+    assert state["lookback_hours"] == 12
 
 
 @pytest.mark.asyncio
@@ -96,6 +110,27 @@ def test_context_manifest_adds_business_weather_images_with_valid_product_times(
             date=request["date"],
             time=request["time"],
         )
+
+
+def test_context_manifest_aligns_forecast_image_times_to_alert_hour():
+    alert = {
+        "alert_id": "yuncheng-20260709-1600-o3",
+        "city": "运城市",
+        "target_pollutant": "O3",
+        "target_time": "2026-07-09 16:00:00",
+        "lookback_hours": 6,
+    }
+
+    requests = build_context_manifest(alert)["asset_requests"]
+
+    assert requests["precipitation_forecast_image"]["date"] == "20260708"
+    assert requests["precipitation_forecast_image"]["time"] == "032"
+    assert requests["radar_composite_reflectivity_image"]["date"] == "20260708"
+    assert requests["radar_composite_reflectivity_image"]["time"] == "032"
+    assert requests["precipitable_water_image"]["date"] == "20260708"
+    assert requests["precipitable_water_image"]["time"] == "032"
+    assert requests["hourly_precipitation_forecast_image"]["date"] == "20260709"
+    assert requests["hourly_precipitation_forecast_image"]["time"] == "12"
 
 
 def test_context_manifest_includes_fire_hotspots_request():
@@ -289,3 +324,68 @@ async def test_collect_required_assets_writes_fire_hotspot_summary_and_map(tmp_p
     assert summary["count"] == 1
     assert summary["top_hotspots"][0]["direction"] == "E"
     assert (tmp_path / "fire_hotspots_map.png").stat().st_size > 10_000
+
+
+@pytest.mark.asyncio
+async def test_collect_required_assets_writes_city_pollutant_choropleth_map(tmp_path):
+    manifest = {
+        "city": "运城市",
+        "nearby_cities": ["临汾市", "渭南市"],
+        "target_pollutant": "PM2.5",
+        "analysis_window": {
+            "start": "2026-07-09 03:00:00",
+            "end": "2026-07-09 15:00:00",
+        },
+        "assets": {
+            "target_city_pollutants": "target_city_pollutants.json",
+            "nearby_city_pollutants": "nearby_city_pollutants.json",
+            "city_pollutant_choropleth_image": "city_pollutant_choropleth.png",
+        },
+        "asset_requests": {
+            "target_city_pollutants": {"kind": "json", "tool": "query_xcai_city_history"},
+            "nearby_city_pollutants": {"kind": "json", "tool": "query_xcai_city_history"},
+            "city_pollutant_choropleth_image": {
+                "kind": "sidecar",
+                "source_assets": ["target_city_pollutants", "nearby_city_pollutants"],
+            },
+        },
+        "missing_assets": [],
+        "fetch_errors": [],
+        "suggested_evidence_gaps": [],
+    }
+
+    times = [
+        "2026-07-09 03:00:00",
+        "2026-07-09 05:00:00",
+        "2026-07-09 07:00:00",
+        "2026-07-09 09:00:00",
+        "2026-07-09 11:00:00",
+        "2026-07-09 13:00:00",
+        "2026-07-09 15:00:00",
+    ]
+
+    async def tool_runner(asset_name, request):
+        if asset_name == "target_city_pollutants":
+            return {
+                "success": True,
+                "data": [
+                    {"time": time, "city": "运城市", "PM2.5": 40 + index * 8}
+                    for index, time in enumerate(times)
+                ],
+            }
+        if asset_name == "nearby_city_pollutants":
+            return {
+                "success": True,
+                "data": [
+                    {"time": time, "city": city, "PM2.5": 25 + index * 6}
+                    for index, time in enumerate(times)
+                    for city in ("临汾市", "渭南市")
+                ],
+            }
+        raise AssertionError(asset_name)
+
+    await collect_required_assets(manifest, tmp_path, tool_runner)
+
+    assert (tmp_path / "target_city_pollutants.json").exists()
+    assert (tmp_path / "nearby_city_pollutants.json").exists()
+    assert (tmp_path / "city_pollutant_choropleth.png").stat().st_size > 10_000
