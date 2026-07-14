@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 知识库API模块
  */
@@ -17,23 +18,13 @@ async function request(url, options = {}) {
     headers['Content-Type'] = 'application/json'
   }
 
-  // 添加用户ID（如果有）
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  headers['X-User-Id'] = userId
-
-  // 添加管理员标识（如果有）
-  const isAdmin = localStorage.getItem('isAdmin') === 'true'
-  if (isAdmin) {
-    headers['X-Is-Admin'] = 'true'
-  }
-
   const config = {
     ...options,
     method,
     headers
   }
 
-  const response = await fetch(url, config)
+  const response = await authFetch(url, config)
 
   if (!response.ok) {
     const errorText = await response.text()

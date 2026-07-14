@@ -115,6 +115,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MapPanel from './visualization/MapPanel.vue'
@@ -215,7 +216,8 @@ defineExpose({
     console.log('[VisualizationPanel] chartIdToViz映射:', Array.from(chartIdToViz.keys()))
 
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+    authFetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+      external: true,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -290,7 +292,8 @@ defineExpose({
           }
 
           // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+          authFetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+            external: true,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

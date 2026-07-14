@@ -91,6 +91,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
@@ -365,7 +366,7 @@ const refreshRecentSessions = async (options = {}) => {
   const { silent = false } = options
   if (!silent) refreshingSessions.value = true
   try {
-    const response = await fetch(`/api/sessions?limit=${SESSION_FETCH_LIMIT}`)
+    const response = await authFetch(`/api/sessions?limit=${SESSION_FETCH_LIMIT}`)
     if (!response.ok) throw new Error('Failed to fetch sessions')
     const data = await response.json()
     // 按更新时间排序，取最近会话

@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 报告生成API服务
  */
@@ -12,7 +13,7 @@ const API_BASE = '/api/report'
  * @returns {Promise<string>} 生成的报告内容
  */
 export async function generateFromTemplate(params) {
-  const response = await fetch(`${API_BASE}/generate-from-template`, {
+  const response = await authFetch(`${API_BASE}/generate-from-template`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -66,7 +67,7 @@ export async function generateFromTemplate(params) {
  * @returns {Promise<string>} 生成的报告内容
  */
 export async function generateFromTemplateAgent(params) {
-  const response = await fetch(`${API_BASE}/generate-from-template-agent`, {
+  const response = await authFetch(`${API_BASE}/generate-from-template-agent`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -131,7 +132,7 @@ export async function generateFromTemplateFile(file, params) {
     formData.append('display', params.display)
   }
 
-  const response = await fetch(`${API_BASE}/generate-from-template-file`, {
+  const response = await authFetch(`${API_BASE}/generate-from-template-file`, {
     method: 'POST',
     body: formData
   })
@@ -184,7 +185,7 @@ export async function generateFromTemplateFile(file, params) {
  * @returns {Promise<string>} 生成的报告内容
  */
 export async function generateFromSavedTemplate(templateId, params) {
-  const response = await fetch(`${API_BASE}/templates/${templateId}/generate`, {
+  const response = await authFetch(`${API_BASE}/templates/${templateId}/generate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -234,7 +235,7 @@ export async function generateFromSavedTemplate(templateId, params) {
  * @returns {Promise<Array>} 模板列表
  */
 export async function listTemplates() {
-  const response = await fetch(`${API_BASE}/templates`)
+  const response = await authFetch(`${API_BASE}/templates`)
 
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`)
@@ -256,7 +257,7 @@ export async function createTemplate(params) {
     formData.append('description', params.description)
   }
 
-  const response = await fetch(`${API_BASE}/templates`, {
+  const response = await authFetch(`${API_BASE}/templates`, {
     method: 'POST',
     body: formData
   })
@@ -285,7 +286,7 @@ export async function uploadTemplate(file, metadata = {}) {
     formData.append('description', metadata.description)
   }
 
-  const response = await fetch(`${API_BASE}/upload-template`, {
+  const response = await authFetch(`${API_BASE}/upload-template`, {
     method: 'POST',
     body: formData
   })

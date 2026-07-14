@@ -131,7 +131,7 @@
 
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
-import axios from 'axios'
+import { authAxios } from '@/auth/http.js'
 import {
   buildBindInstruction,
   getOnboardingStep,
@@ -211,7 +211,7 @@ const submitProfile = async () => {
       name: profileForm.value.name,
       email: profileForm.value.email || null
     }
-    const response = await axios.post('/api/social/users', payload)
+    const response = await authAxios.post('/api/social/users', payload)
     pendingUser.value = response.data
     bindInstruction.value = buildBindInstruction(response.data)
 
@@ -236,7 +236,7 @@ const initializeTempAccount = async () => {
 
     // 创建临时账号（自动启动）
     console.log('[DEBUG] 调用 auto-create API...')
-    const response = await axios.post('/api/social/accounts/weixin/auto-create', {
+    const response = await authAxios.post('/api/social/accounts/weixin/auto-create', {
       temp_id: tempAccountId.value
     })
 
@@ -270,7 +270,7 @@ const fetchQRCode = async () => {
     const url = `/api/social/accounts/weixin/${tempAccountId.value}/qrcode`
     console.log('[DEBUG] 开始获取二维码:', { url, accountId: tempAccountId.value })
 
-    const response = await axios.get(url, { responseType: 'blob' })
+    const response = await authAxios.get(url, { responseType: 'blob' })
     console.log('[DEBUG] 二维码响应:', {
       status: response.status,
       dataType: response.data?.type,
@@ -327,7 +327,7 @@ const stopBindStatusCheck = () => {
 // 检查登录状态
 const checkLoginStatus = async () => {
   try {
-    const response = await axios.get(
+    const response = await authAxios.get(
       `/api/social/accounts/weixin/${tempAccountId.value}/status`
     )
 
@@ -357,7 +357,7 @@ const finalizeAccount = async (statusData) => {
     accountName.value = botAccount.replace(/^weixin_/, '微信账号-')
 
     // 将临时账号转为正式账号
-    await axios.post(`/api/social/accounts/weixin/${tempAccountId.value}/finalize`, {
+    await authAxios.post(`/api/social/accounts/weixin/${tempAccountId.value}/finalize`, {
       name: accountName.value
     })
 
@@ -376,7 +376,7 @@ const checkBindStatus = async () => {
 
   bindChecking.value = true
   try {
-    const response = await axios.get(`/api/social/users/${pendingUser.value.id}`)
+    const response = await authAxios.get(`/api/social/users/${pendingUser.value.id}`)
     pendingUser.value = response.data
 
     if (isUserBound(response.data)) {
@@ -399,7 +399,7 @@ const checkBindStatus = async () => {
 const refreshQRCode = async () => {
   refreshing.value = true
   try {
-    await axios.post(`/api/social/accounts/weixin/${tempAccountId.value}/refresh-qrcode`)
+    await authAxios.post(`/api/social/accounts/weixin/${tempAccountId.value}/refresh-qrcode`)
     await fetchQRCode()
   } catch (error) {
     console.error('Failed to refresh QR code:', error)

@@ -85,6 +85,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, onMounted } from 'vue'
 
 const API_BASE = '/api/file-manager'
@@ -114,7 +115,7 @@ const loadDirectory = async (path = null) => {
       url.searchParams.set('path', targetPath)
     }
 
-    const response = await fetch(url)
+    const response = await authFetch(url)
     const data = await response.json()
 
     if (data.success) {

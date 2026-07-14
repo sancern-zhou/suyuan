@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 import { defineStore } from 'pinia';
 
 const API_BASE = '/api/scheduled-tasks';
@@ -19,7 +20,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
   actions: {
     async fetchTasks() {
       try {
-        const response = await fetch(API_BASE);
+        const response = await authFetch(API_BASE);
         if (!response.ok) throw new Error('Failed to fetch tasks');
         const data = await response.json();
         // API返回的是 [{task: {...}, next_run_time: ...}, ...]
@@ -37,14 +38,14 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async fetchEventTypes() {
-      const response = await fetch(`${API_BASE}/event-types`);
+      const response = await authFetch(`${API_BASE}/event-types`);
       if (!response.ok) throw new Error('Failed to fetch event types');
       this.eventTypes = await response.json();
       return this.eventTypes;
     },
 
     async fetchSocialUsers() {
-      const response = await fetch('/api/social/users');
+      const response = await authFetch('/api/social/users');
       if (!response.ok) throw new Error('Failed to fetch social users');
       this.socialUsers = await response.json();
       return this.socialUsers;
@@ -52,7 +53,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
 
     async fetchStats() {
       try {
-        const response = await fetch(`${API_BASE}/statistics/summary`);
+        const response = await authFetch(`${API_BASE}/statistics/summary`);
         if (!response.ok) throw new Error('Failed to fetch stats');
         const data = await response.json();
         this.stats = {
@@ -66,7 +67,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async createTask(data) {
-      const response = await fetch(API_BASE, {
+      const response = await authFetch(API_BASE, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -137,7 +138,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async enableTask(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}/enable`, {
+      const response = await authFetch(`${API_BASE}/${taskId}/enable`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to enable task');
@@ -145,7 +146,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async disableTask(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}/disable`, {
+      const response = await authFetch(`${API_BASE}/${taskId}/disable`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to disable task');
@@ -153,7 +154,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async updateTask(taskId, data) {
-      const response = await fetch(`${API_BASE}/${taskId}`, {
+      const response = await authFetch(`${API_BASE}/${taskId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -165,7 +166,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async deleteTask(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}`, {
+      const response = await authFetch(`${API_BASE}/${taskId}`, {
         method: 'DELETE'
       });
       if (!response.ok) throw new Error('Failed to delete task');
@@ -173,7 +174,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async executeTaskNow(taskId) {
-      const response = await fetch(`${API_BASE}/${taskId}/execute`, {
+      const response = await authFetch(`${API_BASE}/${taskId}/execute`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to execute task');
