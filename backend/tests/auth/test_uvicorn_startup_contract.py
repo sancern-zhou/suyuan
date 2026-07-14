@@ -27,8 +27,13 @@ def _uvicorn_proxy_headers_value(relative_path: str) -> object:
     raise AssertionError(f"uvicorn.run not found in {relative_path}")
 
 
-def test_shell_entrypoints_disable_proxy_header_rewrite():
-    for relative_path in ("start.sh", "restart_server.sh"):
+def test_cli_entrypoints_disable_proxy_header_rewrite():
+    for relative_path in (
+        "start.sh",
+        "restart_server.sh",
+        "clean_restart.bat",
+        "Dockerfile",
+    ):
         path = BACKEND_ROOT / relative_path
         assert path.exists(), f"missing supported entrypoint: {relative_path}"
         source = path.read_text(encoding="utf-8")
