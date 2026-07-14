@@ -69,6 +69,8 @@ export function createCompanyCrypto(config, dependencies = {}) {
 export function runtimeAuthConfig() {
   return {
     sysCode: 'SUYUAN',
+    businessSysCode: 'SUYUAN',
+    authPlatformSysCode: 'JCXT',
     encryptType: 'SM2',
     authBaseUrl: '/api',
     ...(globalThis.window?.__SUYUAN_AUTH_CONFIG__ || {})
