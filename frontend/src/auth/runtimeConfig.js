@@ -8,11 +8,15 @@ export function companyRuntimeConfig() {
 }
 
 
+function nonEmptyString(value) {
+  return typeof value === 'string' && Boolean(value.trim())
+}
+
+
 export function normalizeAuthRuntimeConfig(value) {
   if (!value || typeof value !== 'object') return companyRuntimeConfig()
-  const sysCode = typeof value.sysCode === 'string' && value.sysCode
-    ? value.sysCode
-    : 'SUYUAN'
+  if (!nonEmptyString(value.sysCode)) return companyRuntimeConfig()
+  const sysCode = value.sysCode.trim()
   if (value.authMode === 'company') {
     return { authMode: 'company', sysCode, mockUser: null }
   }
@@ -20,13 +24,23 @@ export function normalizeAuthRuntimeConfig(value) {
   if (
     value.authMode !== 'mock' ||
     !user ||
-    typeof user.id !== 'string' ||
-    !user.id ||
-    user.isAdmin !== true
+    !nonEmptyString(user.id) ||
+    !nonEmptyString(user.userName) ||
+    !nonEmptyString(user.name) ||
+    !Array.isArray(user.roleCodes) ||
+    !user.roleCodes.every(nonEmptyString) ||
+    !user.roleCodes.includes('SUYUAN_ADMIN') ||
+    user.isAdmin !== true ||
+    user.authSource !== 'mock' ||
+    user.sysCode !== sysCode
   ) {
     return companyRuntimeConfig()
   }
-  return { authMode: 'mock', sysCode, mockUser: { ...user } }
+  return {
+    authMode: 'mock',
+    sysCode,
+    mockUser: { ...user, roleCodes: [...user.roleCodes] }
+  }
 }
 
 
