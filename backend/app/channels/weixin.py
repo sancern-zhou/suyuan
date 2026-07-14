@@ -648,7 +648,6 @@ class WeixinChannel(BaseChannel):
                 "state_loaded_successfully",
                 instance_id=self.instance_id,
                 has_token=bool(self._token),
-                token_preview=self._token[:20] if self._token else "",
                 bot_id=self._bot_id,
                 context_tokens_count=len(self._context_tokens)
             )
@@ -1060,7 +1059,6 @@ class WeixinChannel(BaseChannel):
             "weixin_start_token_check",
             instance_id=self.instance_id,
             has_config_token=bool(config_token),
-            config_token_preview=config_token[:10] if config_token else ""
         )
 
         if config_token:
@@ -1075,7 +1073,6 @@ class WeixinChannel(BaseChannel):
                 instance_id=self.instance_id,
                 state_loaded=state_loaded,
                 has_token=bool(self._token),
-                token_preview=self._token[:10] if self._token else "",
                 bot_id=self._bot_id
             )
 
@@ -1662,9 +1659,7 @@ class WeixinChannel(BaseChannel):
         new_context_token = data.get("context_token", "")
         if new_context_token and new_context_token != context_token:
             logger.info("WeChat context token updated",
-                       to_user_id=to_user_id,
-                       old_token_preview=context_token[:20] if context_token else "",
-                       new_token_preview=new_context_token[:20])
+                       to_user_id=to_user_id)
             self._context_tokens[to_user_id] = new_context_token
             self._save_state()
 
@@ -1910,9 +1905,7 @@ class WeixinChannel(BaseChannel):
         new_context_token = data.get("context_token", "")
         if new_context_token and new_context_token != context_token:
             logger.info("WeChat context token updated after media send",
-                       to_user_id=to_user_id,
-                       old_token_preview=context_token[:20] if context_token else "",
-                       new_token_preview=new_context_token[:20])
+                       to_user_id=to_user_id)
             self._context_tokens[to_user_id] = new_context_token
             self._save_state()
 
