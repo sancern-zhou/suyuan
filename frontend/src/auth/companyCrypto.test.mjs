@@ -12,7 +12,7 @@ test('company login matches the 2.1.4 SM2/SM3/SM4 protocol layout', () => {
       sm4Key: '0123456789abcdef'
     },
     {
-      sm2Encrypt: (value, key, mode) => `sm2(${value},${key},${mode})`,
+      sm2Encrypt: value => `sm2(${value})`,
       sm3Hash: value => `sm3(${value})`,
       sm4Encrypt: value => `sm4(${value})`,
       now: () => 1700000000000,
@@ -23,8 +23,8 @@ test('company login matches the 2.1.4 SM2/SM3/SM4 protocol layout', () => {
   const request = crypto.loginRequest('zhangsan', 'password', 'existing-token')
 
   assert.deepEqual(request.body, {
-    secretName: 'sm2(zhangsan,public-key,1)',
-    secretCode: 'sm2(password,public-key,1)',
+    secretName: 'sm2(zhangsan)',
+    secretCode: 'sm2(password)',
     isEncry: true
   })
   assert.equal(
@@ -36,12 +36,12 @@ test('company login matches the 2.1.4 SM2/SM3/SM4 protocol layout', () => {
 })
 
 
-test('SM2 always uses C1C3C2 cipher mode 1', () => {
-  let mode
+test('company crypto delegates SM2 encryption to the approved module adapter', () => {
+  const encryptedValues = []
   const crypto = createCompanyCrypto(
     { encryptType: 'SM2', sm2PublicKey: 'key', sm4Key: '0123456789abcdef' },
     {
-      sm2Encrypt: (_value, _key, value) => { mode = value; return 'cipher' },
+      sm2Encrypt: value => { encryptedValues.push(value); return 'cipher' },
       sm3Hash: () => 'hash',
       sm4Encrypt: value => value,
       now: () => 1,
@@ -51,5 +51,5 @@ test('SM2 always uses C1C3C2 cipher mode 1', () => {
 
   crypto.loginRequest('user', 'password', '')
 
-  assert.equal(mode, 1)
+  assert.deepEqual(encryptedValues, ['user', 'password'])
 })
