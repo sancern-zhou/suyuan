@@ -130,6 +130,7 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
         "observed_summary",
         "form_concentrations",
         "concentration_unit",
+        "evidence_images",
     ):
         if key in evidence_data:
             item[key] = evidence_data[key]
