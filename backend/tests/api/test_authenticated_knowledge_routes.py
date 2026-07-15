@@ -1,9 +1,11 @@
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from sse_starlette import EventSourceResponse
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
+from config.settings import settings
 
 
 def test_knowledge_dependencies_ignore_forged_identity_headers():
@@ -58,7 +60,12 @@ async def test_qa_stream_stores_authenticated_user_id(monkeypatch):
         user=user,
     )
 
+    assert isinstance(response, EventSourceResponse)
     assert response.status_code == 200
+    assert response.media_type == "text/event-stream"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.ping_interval == settings.sse_heartbeat_interval_seconds
     assert seen["user_id"] == "authenticated"
 
 
