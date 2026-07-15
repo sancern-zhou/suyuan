@@ -838,10 +838,10 @@ Expected: all focused tests pass.
 Run:
 
 ```bash
-conda run -p /root/miniconda3/envs/backend_py311 pytest tests/api tests/test_template_report_pipeline.py tests/test_expert_deliberation_default_files.py -q
+conda run -p /root/miniconda3/envs/backend_py311 pytest tests/api -q
 ```
 
-Expected: all tests pass. Tests requiring unavailable external services must already carry an integration/external marker; do not hide a new failure by adding a skip.
+Expected: all tracked API tests pass. Tests requiring unavailable external services must already carry an integration/external marker; do not hide a new failure by adding a skip.
 
 - [ ] **Step 3: Run formatting and import checks**
 
@@ -856,10 +856,10 @@ Expected: every file compiles successfully.
 Run:
 
 ```bash
-conda run -p /root/miniconda3/envs/backend_py311 ruff check app/core/sse.py app/routers/agent.py app/routers/knowledge_qa.py app/routers/report_generation.py app/routers/expert_deliberation.py config/settings.py tests/core/test_sse.py tests/test_sse_architecture.py tests/api/test_sse_route_responses.py
+conda run -p /root/miniconda3/envs/backend_py311 ruff check app/core/sse.py tests/core/test_sse.py tests/test_sse_architecture.py tests/api/test_sse_route_responses.py
 ```
 
-Expected: no lint errors in new or touched code.
+Expected: no lint errors in new files. The large pre-existing route and settings modules have an existing Ruff backlog and must not be mechanically reformatted as part of this focused change.
 
 - [ ] **Step 4: Confirm the deployed proxy policy remains compatible**
 

@@ -3,7 +3,7 @@
 场景2：模板化报告生成
 """
 from fastapi import APIRouter, Depends, BackgroundTasks, UploadFile, File, Form, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, Response
 from typing import Optional, Dict, Any, Tuple
 import json
 import structlog
@@ -18,6 +18,7 @@ from app.services.tool_executor import ToolExecutor
 from app.services.report_formatter import ReportFormatter
 from app.routers.utils_docx import convert_docx_to_markdown, sanitize_template_time_references
 from app.agent.context.data_context_manager import DataContextManager
+from app.core.sse import create_sse_response
 from app.db.database import get_db
 from app.db.models.report_template import ReportTemplate, ReportGenerationHistory
 from sqlalchemy import select
@@ -62,7 +63,7 @@ def get_tool_executor() -> ToolExecutor:
 def _stream_template_report_agent(
     template_content: str,
     target_time_range: Dict[str, str],
-) -> StreamingResponse:
+) -> Response:
     """
     公共封装：基于模板内容 + 时间范围，走模板报告专家（Agent）生成流程。
 
@@ -149,15 +150,7 @@ def _stream_template_report_agent(
                     session_id=session_id
                 )
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
+    return create_sse_response(event_generator())
 
 
 @router.post("/generate-from-template-agent")

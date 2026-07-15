@@ -31,6 +31,16 @@ class Settings(BaseSettings):
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
     )
+    sse_heartbeat_interval_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        description="Interval between transparent SSE comment heartbeats",
+    )
+    sse_send_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Maximum duration of one SSE socket send operation",
+    )
 
     # Backend URL Configuration (用于生成图片等资源的完整URL)
     backend_host: str = Field(
