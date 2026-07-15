@@ -69,7 +69,7 @@ ReferenceNormalizer
 RunReferenceAccumulator
         |
         v
-SessionResourceManifest --atomic merge--> Session persistence
+SessionResourceManifest --atomic merge--> shared manifest store
         |
         +--> compatibility projections: data_ids / office_documents / visuals
         |
@@ -100,7 +100,9 @@ The accumulator belongs to the runtime, not to Web routes or `SocialAgentBridge`
 
 ### SessionResourceManifest
 
-The manifest is the canonical session resource state. It is stored in an explicit `resource_refs` JSON field on the session database model and a typed `resource_refs` field on the Session model. It must not be hidden inside generic session metadata.
+The manifest is the canonical session resource state. It is stored in an independent shared `session_resource_manifests` database table keyed by `session_id`. It must not be embedded in either the database-backed Web Session record, the file-backed Social Session snapshot, or generic session metadata.
+
+This storage boundary is required because Social transcripts currently use a file-backed `SessionManager` while other modes use database-backed Sessions. A mode-dependent manifest store would split one session's resources when the same session moves between Web and Social. All modes therefore use one manifest repository even though their transcript repositories remain different.
 
 The manifest is session-scoped. Mode switches within one session use the same manifest. Different session IDs, including independently generated heartbeat or consolidation sessions, do not inherit resources unless a future feature explicitly defines a parent-session relationship.
 
@@ -123,7 +125,7 @@ Resolution updates `last_used_at` and can change status to `missing` or `invalid
 
 ### SessionFinalizer
 
-All terminal outcomes use one finalizer that persists transcript state and the merged resource manifest. Web and Social must not implement separate resource finalization paths.
+All terminal outcomes use one resource finalizer that persists the merged manifest before the terminal event is reported as durable. Transcript persistence can continue through the existing mode-specific managers, but Web and Social must not implement separate resource finalization paths.
 
 ## Reference Model
 
@@ -208,7 +210,7 @@ The compatibility normalizer supports existing top-level and known nested fields
 2. The runtime normalizes references before emitting transport events.
 3. The run accumulator merges normalized references.
 4. Web SSE, Social, scheduled tasks, and other consumers receive the same normalized event and may render it without owning persistence.
-5. A common finalizer atomically merges the accumulator into the stored manifest for every terminal outcome.
+5. A common resource finalizer atomically merges the accumulator into the shared manifest table for every terminal outcome.
 6. The next request loads the manifest by session ID.
 7. The context builder calls the shared projector regardless of mode.
 8. The model receives a bounded resource summary and can query older resources through `list_session_resources`.
@@ -217,22 +219,26 @@ This flow applies to assistant, ops, report, query, chart, graph, expert/deliber
 
 ## Persistence and Concurrency
 
-The database session record gains:
+Add an independent `session_resource_manifests` table with:
 
-- `resource_refs`: JSON, defaulting to an empty list;
-- `resource_refs_version`: integer, defaulting to zero.
+- `session_id`: primary key;
+- `resource_refs`: JSONB, defaulting to an empty list;
+- `version`: integer, defaulting to zero;
+- `created_at` and `updated_at` timestamps.
 
-Manifest updates use an atomic merge with either row locking or optimistic version checks and bounded retries. The merge operates on the latest database value, never on a stale route-local list.
+The table intentionally has no foreign key to the database `sessions` table because Social session transcripts may exist only in file-backed storage. Session ownership continues to come from Conversation Catalog and the existing Social user mapping.
 
-The terminal event must not be reported as durably saved until transcript and manifest persistence completes. Persistence failures are retried and surfaced through structured terminal diagnostics instead of being silently ignored.
+All modes use the same manifest repository. Manifest updates use an atomic merge with row locking or optimistic version checks and bounded retries. The merge operates on the latest shared value, never on a stale route-local or Social file snapshot.
 
-During migration, new manifest state is projected into existing fields:
+The terminal event must not claim cross-request durability until manifest persistence completes. Persistence failures are retried and surfaced through structured terminal diagnostics instead of being silently ignored. If the shared database is unavailable, the current turn may continue using its in-memory references, including in Social, but the terminal result must state that those references were not persisted and cannot be assumed available on the next request.
+
+During migration, new manifest state may be projected into existing mode-specific compatibility fields:
 
 - active data refs derive `Session.data_ids`;
 - appropriate file/artifact refs derive `office_documents` where required by existing preview consumers;
 - active visual refs derive existing visual metadata.
 
-These are compatibility projections, not independent sources of truth. Historical values are not imported into the manifest.
+These are compatibility projections, not independent sources of truth. Historical values are not imported into the manifest, and compatibility writes never feed back into the shared table.
 
 ## Context Projection
 
@@ -265,11 +271,12 @@ The tool only lists resources belonging to the current authorized session. Exist
 
 ## Security
 
-- Session ownership is verified before loading or projecting the manifest.
+- Session ownership is verified through Conversation Catalog or the existing authorized Social mapping before loading or projecting the manifest.
 - A stored path does not bypass filesystem allowlists or tool authorization.
 - Social user mapping does not relax session ownership or path checks.
 - Invalid or unauthorized references are never projected as usable resources.
 - Different session IDs do not share manifests automatically.
+- Web and Social access the same manifest row when they operate on the same authorized session ID.
 - Reference logs avoid embedding full sensitive payloads.
 
 ## Failure Handling and Observability
@@ -289,7 +296,7 @@ Required metrics and logs include:
 
 There is no historical migration or transcript backfill.
 
-- Existing pre-deployment sessions start with an empty manifest.
+- Existing pre-deployment sessions have no manifest row until a post-deployment tool produces a reference.
 - New references generated in those sessions after deployment are captured normally.
 - Historical display tool events remain excluded from model restoration.
 - Existing `data_ids`, `office_documents`, and visual metadata are not imported into the new manifest.
@@ -298,12 +305,12 @@ This avoids ambiguous inference and keeps the rollout deterministic.
 
 ## Rollout
 
-1. Add typed models and database fields with empty defaults.
+1. Add typed models and the independent shared manifest table.
 2. Add normalization and manifest merge tests before production code.
 3. Integrate normalization at the common runtime boundary.
 4. Add the accumulator and common terminal finalizer.
 5. Add context projection and `list_session_resources`.
-6. Route Web and Social through the shared mechanism and remove their reference parsing responsibilities.
+6. Route Web and Social through the shared manifest service and remove their reference parsing responsibilities.
 7. Dual-write new compatibility fields while treating the manifest as canonical.
 8. Observe metrics before separately considering removal of legacy writes; legacy removal is outside this change.
 
@@ -326,13 +333,14 @@ This avoids ambiguous inference and keeps the rollout deterministic.
 - preserve successful references on complete, incomplete, interrupted, and fatal paths;
 - merge concurrent disjoint updates into a union;
 - retry optimistic version conflicts without losing references;
-- delete manifest state with the session.
+- delete manifest state through every public session-deletion workflow.
 
 ### Mode and transport tests
 
 - two-request Web flow;
 - two-request Social flow;
 - Web-to-Social and Social-to-Web mode switches in the same session;
+- shared-table access is independent of Web database transcript versus Social file transcript storage;
 - all registered agent modes use the shared projector and finalizer;
 - independently identified heartbeat and consolidation sessions remain isolated.
 
@@ -359,8 +367,11 @@ No operations-audit-specific persistence logic is permitted.
 - A request producing no references does not reduce the manifest.
 - References produced before interruption remain durable.
 - Concurrent requests cannot overwrite one another's references.
+- Web and Social resolve the same manifest row for the same authorized session ID even though their transcripts use different storage backends.
 - Prompt projection remains within its configured budget.
+- A shared-store outage is reported as non-durable instead of silently claiming cross-request preservation.
 - Historical tool failures are not replayed.
 - Pre-deployment conversations and references are not migrated.
 - Unauthorized users and other sessions cannot access the manifest.
+- Deleting a session through any public workflow deletes its shared manifest.
 - `final_issue_list_path` passes only through the generic file-reference contract.
