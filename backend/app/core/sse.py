@@ -3,13 +3,48 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from datetime import UTC, datetime
 from typing import TypeAlias
 
+import anyio
 from sse_starlette import EventSourceResponse, ServerSentEvent
+from sse_starlette.event import ensure_bytes
+from sse_starlette.sse import SendTimeoutError
+from starlette.types import Send
 
 from config.settings import settings
 
 SSEFrame: TypeAlias = str | bytes | bytearray | memoryview
+
+
+class SystemEventSourceResponse(EventSourceResponse):
+    """EventSourceResponse variant that also bounds heartbeat socket writes."""
+
+    async def _ping(self, send: Send) -> None:
+        while self.active:
+            await anyio.sleep(self._ping_interval)
+            ping = (
+                self.ping_message_factory()
+                if self.ping_message_factory
+                else ServerSentEvent(
+                    comment=f"ping - {datetime.now(UTC)}",
+                    sep=self.sep,
+                )
+            )
+            ping_bytes = ensure_bytes(ping, self.sep)
+            async with self._send_lock:
+                if not self.active:
+                    continue
+                with anyio.move_on_after(self.send_timeout) as cancel_scope:
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": ping_bytes,
+                            "more_body": True,
+                        }
+                    )
+                if cancel_scope.cancel_called:
+                    raise SendTimeoutError()
 
 
 async def _encode_sse_frames(source: AsyncIterable[SSEFrame]) -> AsyncIterator[bytes]:
@@ -49,7 +84,7 @@ def create_sse_response(
             "X-Accel-Buffering": "no",
         }
     )
-    return EventSourceResponse(
+    return SystemEventSourceResponse(
         _encode_sse_frames(source),
         ping=(
             settings.sse_heartbeat_interval_seconds
