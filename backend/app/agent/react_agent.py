@@ -22,6 +22,12 @@ from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
+from .resources.manifest import derive_legacy_views, project_session_resources
+from .resources.runtime import RunReferenceAccumulator, flush_resource_accumulator
+from .resources.service import (
+    ManifestPersistenceError,
+    get_session_resource_manifest_service,
+)
 
 logger = structlog.get_logger()
 
@@ -541,6 +547,9 @@ class ReActAgent:
         )
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
+        resource_manifest_service = get_session_resource_manifest_service()
+        resource_accumulator = RunReferenceAccumulator(run_id="")
+        resource_manifest_flushed = False
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
@@ -585,6 +594,33 @@ class ReActAgent:
                 attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
                 auto_profile=auto_profile,
             )
+
+            try:
+                saved_manifest = await resource_manifest_service.load(actual_session_id)
+                registry = getattr(run_executor, "tool_registry", {}) or {}
+                available_tools = set(registry.keys()) if isinstance(registry, dict) else set()
+                react_loop.context_builder.session_resource_context = project_session_resources(
+                    saved_manifest.refs,
+                    query=user_query,
+                    available_tools=available_tools,
+                    max_chars=8000,
+                ) or None
+                if react_loop.context_builder.session_resource_context:
+                    logger.info(
+                        "session_resource_context_projected",
+                        session_id=actual_session_id,
+                        mode=manual_mode or "expert",
+                        version=saved_manifest.version,
+                        resource_count=len(saved_manifest.refs),
+                        context_length=len(react_loop.context_builder.session_resource_context),
+                    )
+            except ManifestPersistenceError as exc:
+                logger.error(
+                    "session_resource_context_load_failed",
+                    session_id=actual_session_id,
+                    mode=manual_mode or "expert",
+                    error=str(exc),
+                )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
             if memory_context:
@@ -685,7 +721,46 @@ class ReActAgent:
             ):
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
                 active_run_id = event_data.get("run_id") or event.get("run_id") or active_run_id
+                resource_accumulator.run_id = str(active_run_id or resource_accumulator.run_id)
+                resource_accumulator.capture(
+                    event,
+                    turn_sequence=int(event_data.get("iteration") or 0),
+                )
                 self._capture_office_document(actual_session_id, event)
+
+                if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
+                    terminal_data = event.setdefault("data", {})
+                    manifest = await flush_resource_accumulator(
+                        resource_manifest_service,
+                        actual_session_id,
+                        resource_accumulator,
+                        terminal_data,
+                    )
+                    resource_manifest_flushed = bool(resource_accumulator.refs)
+                    if manifest is not None:
+                        views = derive_legacy_views(manifest.refs)
+                        entry = self._session_store.setdefault(actual_session_id, {})
+                        entry["collected_data_ids"] = views.data_ids
+                        entry["office_documents"] = views.office_documents
+                        entry["resource_refs_version"] = manifest.version
+                        logger.info(
+                            "session_resource_manifest_merged",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                            mode=manual_mode or "expert",
+                            version=manifest.version,
+                            resource_count=len(manifest.refs),
+                            extracted_count=len(resource_accumulator.refs),
+                            rejected_count=len(resource_accumulator.rejected),
+                        )
+                    elif terminal_data.get("resource_refs_durable") is False:
+                        logger.error(
+                            "session_resource_manifest_merge_failed",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                            mode=manual_mode or "expert",
+                            extracted_count=len(resource_accumulator.refs),
+                        )
 
                 if self._should_run_report_auto_followup(
                     manual_mode,
@@ -715,7 +790,7 @@ class ReActAgent:
                 exc_info=True
             )
 
-            yield {
+            fatal_event = {
                 "type": "fatal_error",
                 "data": {
                     "error": str(e),
@@ -723,7 +798,30 @@ class ReActAgent:
                     "timestamp": datetime.now().isoformat()
                 }
             }
+            await flush_resource_accumulator(
+                resource_manifest_service,
+                actual_session_id,
+                resource_accumulator,
+                fatal_event["data"],
+            )
+            resource_manifest_flushed = bool(resource_accumulator.refs)
+            yield fatal_event
         finally:
+            if resource_accumulator.refs and not resource_manifest_flushed:
+                try:
+                    await resource_manifest_service.merge(
+                        actual_session_id,
+                        resource_accumulator.refs,
+                    )
+                except ManifestPersistenceError as exc:
+                    logger.error(
+                        "session_resource_manifest_finally_flush_failed",
+                        session_id=actual_session_id,
+                        run_id=active_run_id,
+                        mode=manual_mode or "expert",
+                        error=str(exc),
+                    )
+
             # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
