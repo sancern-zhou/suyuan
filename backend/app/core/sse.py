@@ -9,7 +9,6 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from config.settings import settings
 
-
 SSEFrame: TypeAlias = str | bytes | bytearray | memoryview
 
 
