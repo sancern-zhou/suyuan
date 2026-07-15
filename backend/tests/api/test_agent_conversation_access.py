@@ -1,7 +1,9 @@
 import pytest
 from fastapi import HTTPException
+from sse_starlette import EventSourceResponse
 
 from app.auth.models import CurrentUser
+from config.settings import settings
 from app.conversations import ConversationSource
 from app.routers.agent import (
     AgentAnalyzeRequest,
@@ -113,7 +115,11 @@ async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_abse
         catalog=catalog,
     )
 
+    assert isinstance(response, EventSourceResponse)
     assert response.media_type == "text/event-stream"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.ping_interval == settings.sse_heartbeat_interval_seconds
     assert manager.lookups == ["new-session"]
     assert catalog.write_checks == []
 
