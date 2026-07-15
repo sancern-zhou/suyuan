@@ -11,10 +11,10 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 import structlog
 
+from app.core.sse import create_sse_response
 from app.routers.utils_docx import convert_docx_to_markdown
 from app.services.expert_deliberation import ExpertDeliberationEngine
 from app.services.expert_deliberation.schemas import (
@@ -60,7 +60,7 @@ async def run_deliberation(request: DeliberationRequest) -> DeliberationResult:
 
 
 @router.post("/run-stream")
-async def run_deliberation_stream(request: DeliberationRequest) -> StreamingResponse:
+async def run_deliberation_stream(request: DeliberationRequest) -> Response:
     """Run expert deliberation and stream progress events with SSE."""
 
     async def event_stream():
@@ -104,14 +104,7 @@ async def run_deliberation_stream(request: DeliberationRequest) -> StreamingResp
             logger.error("expert_deliberation_failed", error=str(exc), streamed=True, exc_info=True)
             yield _sse_data({"event": "error", "message": str(exc)})
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return create_sse_response(event_stream())
 
 
 def _sse_data(payload: dict[str, Any]) -> str:

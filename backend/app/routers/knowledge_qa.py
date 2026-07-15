@@ -19,7 +19,6 @@ import time
 from typing import Optional, List
 from collections import OrderedDict
 from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +35,7 @@ from app.knowledge_base.models import ConversationSessionStatus
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.conversations.service import ConversationCatalogService
+from app.core.sse import create_sse_response
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/knowledge-qa", tags=["Knowledge QA"])
@@ -771,15 +771,7 @@ async def knowledge_qa_stream(
                 }
                 yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
+        return create_sse_response(event_generator())
 
     except Exception as e:
         logger.error("knowledge_qa_failed", error=str(e), exc_info=True)
