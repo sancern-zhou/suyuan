@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -278,7 +279,8 @@ class OpsAuditRunRulesTool(LLMTool):
                     {"dataset_path": dataset_path, "latest_dataset_path": str(_latest_dataset_path()) if _latest_dataset_path() else None},
                 )
             visual_enabled = _coerce_bool(enable_visual, default=True)
-            result = run_ops_audit_rules(
+            result = await asyncio.to_thread(
+                run_ops_audit_rules,
                 resolved_dataset_path,
                 output_dir=Path(output_dir) if output_dir else None,
                 evidence_level=evidence_level,
