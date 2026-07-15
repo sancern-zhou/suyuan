@@ -23,7 +23,11 @@ from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
 from .resources.manifest import derive_legacy_views, project_session_resources
-from .resources.runtime import RunReferenceAccumulator, flush_resource_accumulator
+from .resources.runtime import (
+    RunReferenceAccumulator,
+    event_turn_sequence,
+    flush_resource_accumulator,
+)
 from .resources.service import (
     ManifestPersistenceError,
     get_session_resource_manifest_service,
@@ -724,7 +728,7 @@ class ReActAgent:
                 resource_accumulator.run_id = str(active_run_id or resource_accumulator.run_id)
                 resource_accumulator.capture(
                     event,
-                    turn_sequence=int(event_data.get("iteration") or 0),
+                    turn_sequence=event_turn_sequence(event_data),
                 )
                 self._capture_office_document(actual_session_id, event)
 
@@ -815,21 +819,38 @@ class ReActAgent:
                     "timestamp": datetime.now().isoformat()
                 }
             }
-            await flush_resource_accumulator(
-                resource_manifest_service,
-                actual_session_id,
-                resource_accumulator,
-                fatal_event["data"],
-            )
+            from app.agent.runtime.ownership import run_ownership_registry
+
+            if await run_ownership_registry.can_write(actual_session_id, active_run_id):
+                await flush_resource_accumulator(
+                    resource_manifest_service,
+                    actual_session_id,
+                    resource_accumulator,
+                    fatal_event["data"],
+                )
+            elif resource_accumulator.refs:
+                fatal_event["data"].update({
+                    "resource_refs_durable": False,
+                    "resource_refs_error": "stale_run_write_skipped",
+                })
             resource_manifest_flushed = bool(resource_accumulator.refs)
             yield fatal_event
         finally:
             if resource_accumulator.refs and not resource_manifest_flushed:
                 try:
-                    await resource_manifest_service.merge(
-                        actual_session_id,
-                        resource_accumulator.refs,
-                    )
+                    from app.agent.runtime.ownership import run_ownership_registry
+
+                    if await run_ownership_registry.can_write(actual_session_id, active_run_id):
+                        await resource_manifest_service.merge(
+                            actual_session_id,
+                            resource_accumulator.refs,
+                        )
+                    else:
+                        logger.info(
+                            "stale_run_resource_manifest_finally_flush_skipped",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                        )
                 except ManifestPersistenceError as exc:
                     logger.error(
                         "session_resource_manifest_finally_flush_failed",

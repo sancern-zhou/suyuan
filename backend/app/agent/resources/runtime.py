@@ -9,6 +9,13 @@ from .normalizer import normalize_tool_result_refs
 from .service import ManifestPersistenceError, SessionResourceManifest
 
 
+def event_turn_sequence(event_data: dict[str, Any]) -> int:
+    try:
+        return int(event_data.get("iteration") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class RunReferenceAccumulator:
     def __init__(self, *, run_id: str) -> None:
         self.run_id = run_id
