@@ -144,6 +144,7 @@ async def test_business_frames_are_sent_once_and_in_order():
 
     async def source():
         yield 'data: {"type":"start"}\n\n'
+        await asyncio.sleep(0.03)
         yield 'data: {"type":"complete"}\n\n'
 
     async def receive():
@@ -154,7 +155,7 @@ async def test_business_frames_are_sent_once_and_in_order():
 
     response = create_sse_response(
         source(),
-        heartbeat_interval_seconds=10,
+        heartbeat_interval_seconds=0.01,
         send_timeout_seconds=0.25,
     )
     await asyncio.wait_for(response(_http_scope(), receive, send), timeout=1)
@@ -164,10 +165,14 @@ async def test_business_frames_are_sent_once_and_in_order():
         for message in sent
         if message["type"] == "http.response.body" and message.get("body")
     ]
-    assert bodies == [
+    business_bodies = [body for body in bodies if body.startswith(b"data: ")]
+    assert business_bodies == [
         b'data: {"type":"start"}\n\n',
         b'data: {"type":"complete"}\n\n',
     ]
+    first_index = bodies.index(business_bodies[0])
+    final_index = bodies.index(business_bodies[1])
+    assert any(body.startswith(b": keepalive") for body in bodies[first_index + 1 : final_index])
 
 
 @pytest.mark.asyncio
@@ -218,6 +223,38 @@ async def test_stalled_socket_send_times_out_and_closes_source():
     )
     with pytest.raises(BaseException) as exc:
         await asyncio.wait_for(response(_http_scope(), receive, send), timeout=1)
+
+    assert "SendTimeoutError" in repr(exc.value)
+    await asyncio.wait_for(source_cleaned.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_stalled_heartbeat_send_times_out_and_closes_source():
+    source_cleaned = asyncio.Event()
+
+    async def source():
+        try:
+            await asyncio.Event().wait()
+            yield b"unreachable"
+        finally:
+            source_cleaned.set()
+
+    async def receive():
+        await asyncio.Event().wait()
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body", b"").startswith(
+            b": keepalive"
+        ):
+            await asyncio.Event().wait()
+
+    response = create_sse_response(
+        source(),
+        heartbeat_interval_seconds=0.01,
+        send_timeout_seconds=0.01,
+    )
+    with pytest.raises(BaseException) as exc:
+        await asyncio.wait_for(response(_http_scope(), receive, send), timeout=0.25)
 
     assert "SendTimeoutError" in repr(exc.value)
     await asyncio.wait_for(source_cleaned.wait(), timeout=1)
