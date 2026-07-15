@@ -126,6 +126,30 @@ async def _ensure_social_binding_schema(conn) -> None:
     logger.info("social_binding_schema_ensured", dialect=conn.dialect.name)
 
 
+async def _ensure_session_resource_manifest_schema(conn) -> None:
+    """Ensure the mode-independent resource manifest exists on startup."""
+    if conn.dialect.name != "postgresql":
+        return
+    statements = (
+        """
+        CREATE TABLE IF NOT EXISTS session_resource_manifests (
+            session_id VARCHAR(255) PRIMARY KEY,
+            resource_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+            version INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_session_resource_manifests_updated_at
+            ON session_resource_manifests (updated_at)
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+    logger.info("session_resource_manifest_schema_ensured")
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI endpoints to get database session.
@@ -206,6 +230,7 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
+        await _ensure_session_resource_manifest_schema(conn)
     logger.info("database_initialized")
 
 

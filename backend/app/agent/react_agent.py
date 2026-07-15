@@ -730,13 +730,30 @@ class ReActAgent:
 
                 if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
                     terminal_data = event.setdefault("data", {})
-                    manifest = await flush_resource_accumulator(
-                        resource_manifest_service,
+                    from app.agent.runtime.ownership import run_ownership_registry
+
+                    owns_run = await run_ownership_registry.can_write(
                         actual_session_id,
-                        resource_accumulator,
-                        terminal_data,
+                        active_run_id,
                     )
-                    resource_manifest_flushed = bool(resource_accumulator.refs)
+                    manifest = None
+                    if owns_run:
+                        manifest = await flush_resource_accumulator(
+                            resource_manifest_service,
+                            actual_session_id,
+                            resource_accumulator,
+                            terminal_data,
+                        )
+                        resource_manifest_flushed = bool(resource_accumulator.refs)
+                    elif resource_accumulator.refs:
+                        resource_manifest_flushed = True
+                        terminal_data["resource_refs_durable"] = False
+                        terminal_data["resource_refs_error"] = "stale_run_write_skipped"
+                        logger.info(
+                            "stale_run_resource_manifest_merge_skipped",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                        )
                     if manifest is not None:
                         views = derive_legacy_views(manifest.refs)
                         entry = self._session_store.setdefault(actual_session_id, {})
