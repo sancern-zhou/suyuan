@@ -838,10 +838,10 @@ Expected: all focused tests pass.
 Run:
 
 ```bash
-conda run -p /root/miniconda3/envs/backend_py311 pytest tests/api tests/test_template_report_pipeline.py tests/test_expert_deliberation_default_files.py -q
+conda run -p /root/miniconda3/envs/backend_py311 pytest tests/api -q
 ```
 
-Expected: all tests pass. Tests requiring unavailable external services must already carry an integration/external marker; do not hide a new failure by adding a skip.
+Expected: all tracked API tests pass. Tests requiring unavailable external services must already carry an integration/external marker; do not hide a new failure by adding a skip.
 
 - [ ] **Step 3: Run formatting and import checks**
 
