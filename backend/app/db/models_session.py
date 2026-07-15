@@ -14,11 +14,28 @@
 """
 
 from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
 Base = declarative_base()
+
+
+class SessionResourceManifestDB(Base):
+    """Canonical resource refs, deliberately independent of transcript storage."""
+
+    __tablename__ = "session_resource_manifests"
+
+    session_id = Column(String(255), primary_key=True)
+    resource_refs = Column(JSONB, nullable=False, default=list)
+    version = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_session_resource_manifests_updated_at", "updated_at"),
+    )
 
 
 class SessionDB(Base):

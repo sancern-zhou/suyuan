@@ -627,11 +627,13 @@ class SessionManagerDB:
 
             # 从数据库删除
             success = await self.repository.delete_session(session_id)
+            from app.agent.resources.service import get_session_resource_manifest_service
+            manifest_deleted = await get_session_resource_manifest_service().delete(session_id)
 
-            if success:
+            if success or manifest_deleted:
                 logger.info("session_deleted_from_db", session_id=session_id)
 
-            return success
+            return bool(success or manifest_deleted)
 
         except Exception as e:
             logger.error(
