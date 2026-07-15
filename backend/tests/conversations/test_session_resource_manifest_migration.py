@@ -6,7 +6,8 @@ from app.db.database import _ensure_session_resource_manifest_schema
 
 
 def test_manifest_migration_is_independent_and_bounded():
-    sql = Path("app/db/migrations/008_create_session_resource_manifests.sql").read_text()
+    backend_root = Path(__file__).resolve().parents[2]
+    sql = (backend_root / "app/db/migrations/008_create_session_resource_manifests.sql").read_text()
     assert "CREATE TABLE IF NOT EXISTS session_resource_manifests" in sql
     assert "session_id VARCHAR(255) PRIMARY KEY" in sql
     assert "resource_refs JSONB NOT NULL" in sql

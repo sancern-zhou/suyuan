@@ -1,6 +1,10 @@
 import pytest
 
-from app.agent.resources.runtime import RunReferenceAccumulator, flush_resource_accumulator
+from app.agent.resources.runtime import (
+    RunReferenceAccumulator,
+    event_turn_sequence,
+    flush_resource_accumulator,
+)
 from app.agent.resources.service import ManifestPersistenceError, SessionResourceManifest
 
 
@@ -72,3 +76,7 @@ async def test_terminal_flush_exposes_non_durable_failure():
     assert manifest is None
     assert terminal_data["resource_refs_durable"] is False
     assert terminal_data["resource_refs_error"] == "manifest_persistence_failed"
+
+
+def test_malformed_iteration_falls_back_without_breaking_resource_capture():
+    assert event_turn_sequence({"iteration": "not-a-number"}) == 0
