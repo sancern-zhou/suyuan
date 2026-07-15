@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import fcntl
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -231,6 +233,26 @@ def _resolve_dataset_path(dataset_path: Path) -> Path:
     return resolved
 
 
+def _run_ops_audit_rules_with_lock(
+    dataset_path: Path,
+    *,
+    output_dir: Optional[Path],
+    evidence_level: str,
+    enable_visual: bool,
+) -> Dict[str, Any]:
+    effective_output_dir = (output_dir or dataset_path.parent).resolve()
+    effective_output_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = effective_output_dir / ".ops_audit_run_rules.lock"
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        return run_ops_audit_rules(
+            dataset_path,
+            output_dir=output_dir,
+            evidence_level=evidence_level,
+            enable_visual=enable_visual,
+        )
+
+
 class OpsAuditRunRulesTool(LLMTool):
     """Run deterministic audit rules against an existing dataset."""
 
@@ -278,7 +300,8 @@ class OpsAuditRunRulesTool(LLMTool):
                     {"dataset_path": dataset_path, "latest_dataset_path": str(_latest_dataset_path()) if _latest_dataset_path() else None},
                 )
             visual_enabled = _coerce_bool(enable_visual, default=True)
-            result = run_ops_audit_rules(
+            result = await asyncio.to_thread(
+                _run_ops_audit_rules_with_lock,
                 resolved_dataset_path,
                 output_dir=Path(output_dir) if output_dir else None,
                 evidence_level=evidence_level,
