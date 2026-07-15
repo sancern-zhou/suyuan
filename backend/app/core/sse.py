@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from typing import TypeAlias
+
+from sse_starlette import EventSourceResponse, ServerSentEvent
+
+from config.settings import settings
 
 
 SSEFrame: TypeAlias = str | bytes | bytearray | memoryview
@@ -23,3 +27,41 @@ async def _encode_sse_frames(source: AsyncIterable[SSEFrame]) -> AsyncIterator[b
             "SSE source must yield str or bytes-like frames, "
             f"got {type(frame).__name__}"
         )
+
+
+def _keepalive_comment() -> ServerSentEvent:
+    return ServerSentEvent(comment="keepalive")
+
+
+def create_sse_response(
+    source: AsyncIterable[SSEFrame],
+    *,
+    heartbeat_interval_seconds: float | None = None,
+    send_timeout_seconds: float | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> EventSourceResponse:
+    """Build an SSE response whose heartbeats stay outside business event streams."""
+
+    response_headers = dict(headers or {})
+    response_headers.update(
+        {
+            "Cache-Control": "no-store",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+    return EventSourceResponse(
+        _encode_sse_frames(source),
+        ping=(
+            settings.sse_heartbeat_interval_seconds
+            if heartbeat_interval_seconds is None
+            else heartbeat_interval_seconds
+        ),
+        ping_message_factory=_keepalive_comment,
+        send_timeout=(
+            settings.sse_send_timeout_seconds
+            if send_timeout_seconds is None
+            else send_timeout_seconds
+        ),
+        headers=response_headers,
+    )
