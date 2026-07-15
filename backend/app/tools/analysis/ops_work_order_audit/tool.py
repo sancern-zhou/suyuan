@@ -18,8 +18,43 @@ from app.services.ops_work_order_audit import (
     run_ops_audit_rules,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_ref, build_file_ref, merge_refs
 
 logger = structlog.get_logger()
+
+_OUTPUT_PATH_FIELDS = (
+    "dataset_path",
+    "audit_result_path",
+    "semantic_candidates_path",
+    "semantic_review_tasks_path",
+    "semantic_review_results_path",
+    "final_issue_list_path",
+)
+
+
+def _declared_resource_refs(data: Dict[str, Any]) -> Dict[str, list[Dict[str, Any]]]:
+    files = []
+    for field in _OUTPUT_PATH_FIELDS:
+        path = data.get(field)
+        if not isinstance(path, str) or not path:
+            continue
+        metadata: Dict[str, Any] = {
+            "label": field.replace("_", " ").title(),
+            "role": "output",
+        }
+        if field == "final_issue_list_path":
+            metadata.update({
+                "logical_key": "ops_audit.final_issue_list",
+                "label": "Final issue list",
+                "importance": "high",
+            })
+        files.append(build_file_ref(path, **metadata))
+    data_refs = []
+    if isinstance(data.get("data_id"), str) and data["data_id"]:
+        ref = build_data_ref(data["data_id"], usage="primary")
+        ref.update({"label": "Operations audit summary", "role": "primary"})
+        data_refs.append(ref)
+    return merge_refs({"files": files}, {"data": data_refs})
 
 
 def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,6 +72,7 @@ def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dic
         "summary": summary,
         "data": data,
         "metadata": metadata,
+        "refs": _declared_resource_refs(data),
     }
     if data_id:
         result["data_id"] = data_id

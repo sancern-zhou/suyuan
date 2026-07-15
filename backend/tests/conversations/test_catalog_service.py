@@ -121,3 +121,20 @@ async def test_delete_removes_catalog_record_through_service_boundary():
 
     assert await service.delete("s1") is True
     assert await repository.get("s1") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_shared_resource_manifest_when_configured():
+    deleted_manifests = []
+
+    class ResourceService:
+        async def delete(self, session_id):
+            deleted_manifests.append(session_id)
+            return True
+
+    service = ConversationCatalogService(
+        FakeRepository([row()]),
+        resource_manifest_service=ResourceService(),
+    )
+    assert await service.delete("s1") is True
+    assert deleted_manifests == ["s1"]

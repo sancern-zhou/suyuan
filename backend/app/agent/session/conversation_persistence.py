@@ -72,7 +72,6 @@ class ConversationPersistenceService:
         session: Session,
         *,
         display_history: List[Dict[str, Any]],
-        collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
@@ -80,7 +79,6 @@ class ConversationPersistenceService:
         session.conversation_history = self._persistent_messages(display_history)
         self.apply_metadata(
             session,
-            collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
             drawio_board=drawio_board,
@@ -91,7 +89,6 @@ class ConversationPersistenceService:
         session: Session,
         *,
         display_history: List[Dict[str, Any]],
-        collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
@@ -102,7 +99,6 @@ class ConversationPersistenceService:
         )
         self.append_metadata(
             session,
-            collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
             drawio_board=drawio_board,
@@ -114,7 +110,6 @@ class ConversationPersistenceService:
         *,
         display_history: List[Dict[str, Any]],
         terminal_message: Dict[str, Any],
-        collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
@@ -124,7 +119,6 @@ class ConversationPersistenceService:
         )
         self.apply_metadata(
             session,
-            collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
             drawio_board=drawio_board,
@@ -136,7 +130,6 @@ class ConversationPersistenceService:
         *,
         display_history: List[Dict[str, Any]],
         terminal_message: Dict[str, Any],
-        collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
@@ -147,7 +140,6 @@ class ConversationPersistenceService:
         )
         self.append_metadata(
             session,
-            collected_data_ids=collected_data_ids,
             collected_visuals=collected_visuals,
             office_documents=office_documents,
             drawio_board=drawio_board,
@@ -194,12 +186,10 @@ class ConversationPersistenceService:
         self,
         session: Session,
         *,
-        collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
-        session.data_ids = list(dict.fromkeys(collected_data_ids))
         session.visual_ids = [
             visual.get("id")
             for visual in collected_visuals
@@ -218,13 +208,10 @@ class ConversationPersistenceService:
         self,
         session: Session,
         *,
-        collected_data_ids: List[str],
         collected_visuals: List[Dict[str, Any]],
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
-        session.data_ids = list(dict.fromkeys([*session.data_ids, *collected_data_ids]))
-
         existing_visuals = []
         if isinstance(session.metadata, dict):
             existing_visuals = [

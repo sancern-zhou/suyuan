@@ -768,7 +768,6 @@ class AgentBridge:
         sent_text_contents = set()
 
         conversation_history = []
-        collected_data_ids = []
         collected_visuals = []
         seen_visual_ids = set()
 
@@ -797,7 +796,6 @@ class AgentBridge:
                 persistence.append_complete(
                     session,
                     display_history=conversation_history,
-                    collected_data_ids=collected_data_ids,
                     collected_visuals=collected_visuals,
                     office_documents=office_documents,
                 )
@@ -806,7 +804,6 @@ class AgentBridge:
                     session,
                     display_history=conversation_history,
                     terminal_message=terminal_message,
-                    collected_data_ids=collected_data_ids,
                     collected_visuals=collected_visuals,
                     office_documents=office_documents,
                 )
@@ -814,9 +811,6 @@ class AgentBridge:
 
             if session_id not in self.agent._session_store:
                 self.agent._session_store[session_id] = {}
-            self.agent._session_store[session_id]["collected_data_ids"] = list(
-                dict.fromkeys(collected_data_ids)
-            )
             self.agent._session_store[session_id]["collected_visuals"] = collected_visuals
             self.agent._session_store[session_id]["display_history_persisted"] = True
 
@@ -824,7 +818,6 @@ class AgentBridge:
                 log_event,
                 session_id=session_id,
                 conversation_history_length=len(conversation_history),
-                collected_data_ids_count=len(collected_data_ids),
                 collected_visuals_count=len(collected_visuals),
                 **log_fields,
             )
@@ -881,14 +874,6 @@ class AgentBridge:
                     logger.debug("conversation_history_appended",
                                 event_type=event_type,
                                 history_length=len(conversation_history))
-
-                # 收集数据ID
-                if event_type == "tool_result" and "data" in event:
-                    data = event.get("data", {})
-                    if "data_id" in data:
-                        collected_data_ids.append(data["data_id"])
-                    if "data_ids" in data:
-                        collected_data_ids.extend(data["data_ids"])
 
                 # 收集可视化（基于ID去重）
                 if "visuals" in event.get("data", {}):

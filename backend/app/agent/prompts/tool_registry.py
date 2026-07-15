@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List
 
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
+    "list_session_resources",
     # 浏览
     "list_directory", "search_files", "read_file",
 
@@ -54,6 +55,7 @@ ASSISTANT_TOOL_NAMES = [
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
+    "list_session_resources",
     # 数据查询工具
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
@@ -84,6 +86,7 @@ EXPERT_TOOL_NAMES = [
 
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
+    "list_session_resources",
     # === 源码查看工具 ===
     "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
 
@@ -117,6 +120,7 @@ QUERY_TOOL_NAMES = [
 
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
+    "list_session_resources",
     # 规划工具
     "complex_query_planner",
 
@@ -147,6 +151,7 @@ REPORT_TOOL_NAMES = [
 
 # ===== 图表模式工具 =====
 CHART_TOOL_NAMES = [
+    "list_session_resources",
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash", "present_artifact",
@@ -168,6 +173,7 @@ CHART_TOOL_NAMES = [
 
 # ===== 运维管理模式工具 =====
 OPS_TOOL_NAMES = [
+    "list_session_resources",
     # 技能发现与按需读取
     "list_skills", "view_skill", "read_file",
 
@@ -199,6 +205,7 @@ OPS_TOOL_NAMES = [
 
 # ===== 知识库图谱编辑模式工具 =====
 GRAPH_TOOL_NAMES = [
+    "list_session_resources",
     "knowledge_graph_query",
     "knowledge_graph_build",
     "read_file",
@@ -210,6 +217,7 @@ GRAPH_TOOL_NAMES = [
 
 # ===== 社交模式工具（移动端助理） =====
 SOCIAL_TOOL_NAMES = [
+    "list_session_resources",
     # 文件操作
     "read_file", "edit_file", "grep", "write_file",
     "list_directory", "search_files", "list_skills", "view_skill",
@@ -235,6 +243,7 @@ SOCIAL_TOOL_NAMES = [
 
 # ===== 记忆整合器工具（后台专用） =====
 MEMORY_CONSOLIDATOR_TOOL_NAMES = [
+    "list_session_resources",
     # 文件操作（只保留读取和搜索）
     "read_file", "grep",
 
@@ -244,6 +253,7 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
 
 # ===== 会商专用模式工具 =====
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
+    "list_session_resources",
     "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
@@ -251,6 +261,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
+    "list_session_resources",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
@@ -259,6 +270,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = [
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
+    "list_session_resources",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
@@ -267,6 +279,7 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = [
 ]
 
 DELIBERATION_REVIEWER_TOOL_NAMES = [
+    "list_session_resources",
     "read_file", "write_file", "edit_file", "grep",
     "list_directory", "search_files", "execute_python",
     "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",

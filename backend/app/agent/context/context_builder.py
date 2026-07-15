@@ -89,6 +89,9 @@ class SimplifiedContextBuilder:
         # 问数模式地图交互上下文，仅 query 模式允许注入。
         self.map_context = None
 
+        # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
+        self.session_resource_context = None
+
         # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
 
         logger.info(
@@ -263,6 +266,12 @@ class SimplifiedContextBuilder:
             board_context=self.board_context if self.current_mode == "chart" else None,
         )
         sections = [mode_prompt.rstrip()]
+        if self.session_resource_context:
+            sections.append(
+                "<session_resources>\n"
+                + self.session_resource_context.strip()
+                + "\n</session_resources>"
+            )
         if self.current_mode == "query" and self.map_context:
             sections.append(
                 "## Agentic GIS 视觉交互说明\n"
