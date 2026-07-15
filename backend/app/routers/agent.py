@@ -5,7 +5,6 @@ ReAct Agent 的 REST API 路由
 """
 
 from fastapi import APIRouter, HTTPException, Body, Depends, Request
-from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -25,6 +24,7 @@ from app.auth.models import CurrentUser
 from app.conversations import ConversationSource
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
+from app.core.sse import create_sse_response
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -1136,15 +1136,7 @@ async def analyze_stream(
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
+        return create_sse_response(event_generator())
 
     except Exception as e:
         logger.error(

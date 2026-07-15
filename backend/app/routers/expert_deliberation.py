@@ -1,20 +1,20 @@
 """Fact-driven expert deliberation API."""
 
 import asyncio
+import json
+import os
+import re
 from datetime import date, datetime
 from html.parser import HTMLParser
 from io import BytesIO
-import json
-import os
 from pathlib import Path
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
 import structlog
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 
+from app.core.sse import create_sse_response
 from app.routers.utils_docx import convert_docx_to_markdown
 from app.services.expert_deliberation import ExpertDeliberationEngine
 from app.services.expert_deliberation.schemas import (
@@ -60,7 +60,7 @@ async def run_deliberation(request: DeliberationRequest) -> DeliberationResult:
 
 
 @router.post("/run-stream")
-async def run_deliberation_stream(request: DeliberationRequest) -> StreamingResponse:
+async def run_deliberation_stream(request: DeliberationRequest) -> Response:
     """Run expert deliberation and stream progress events with SSE."""
 
     async def event_stream():
@@ -81,37 +81,38 @@ async def run_deliberation_stream(request: DeliberationRequest) -> StreamingResp
             return await ExpertDeliberationEngine().run_async(request, progress_callback=publish)
 
         task = asyncio.create_task(run_engine())
-        yield _sse_data({"event": "connected", "message": "会商进度流已连接"})
-
-        while not task.done() or not queue.empty():
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=0.5)
-                yield _sse_data(item)
-            except asyncio.TimeoutError:
-                continue
-
         try:
-            result = await task
-            logger.info(
-                "expert_deliberation_completed",
-                facts=len(result.facts),
-                analyses=len(result.analyses),
-                conclusions=len(result.conclusions),
-                streamed=True,
-            )
-            yield _sse_data({"event": "result", "result": result.model_dump(mode="json")})
-        except Exception as exc:
-            logger.error("expert_deliberation_failed", error=str(exc), streamed=True, exc_info=True)
-            yield _sse_data({"event": "error", "message": str(exc)})
+            yield _sse_data({"event": "connected", "message": "会商进度流已连接"})
 
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+            while not task.done() or not queue.empty():
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    yield _sse_data(item)
+                except asyncio.TimeoutError:
+                    continue
+
+            try:
+                result = await task
+                logger.info(
+                    "expert_deliberation_completed",
+                    facts=len(result.facts),
+                    analyses=len(result.analyses),
+                    conclusions=len(result.conclusions),
+                    streamed=True,
+                )
+                yield _sse_data({"event": "result", "result": result.model_dump(mode="json")})
+            except Exception as exc:
+                logger.error("expert_deliberation_failed", error=str(exc), streamed=True, exc_info=True)
+                yield _sse_data({"event": "error", "message": str(exc)})
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    return create_sse_response(event_stream())
 
 
 def _sse_data(payload: dict[str, Any]) -> str:
