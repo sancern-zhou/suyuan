@@ -74,6 +74,58 @@ async def _ensure_uploaded_files_schema(conn) -> None:
         logger.warning("uploaded_files_session_id_column_migration_failed", error=str(exc))
 
 
+async def _ensure_social_binding_schema(conn) -> None:
+    """Apply compatibility fixes for social binding tables."""
+    if conn.dialect.name != "postgresql":
+        return
+
+    statements = (
+        """
+        ALTER TABLE social_users
+            ADD COLUMN IF NOT EXISTS platform_user_id VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS platform_username VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS platform_display_name VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS account_id VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS ilink_user_id VARCHAR(255)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS weixin_scan_tasks (
+            id VARCHAR(36) PRIMARY KEY,
+            account_id VARCHAR(255) NOT NULL UNIQUE,
+            owner_user_id VARCHAR(255) NOT NULL,
+            owner_username VARCHAR(255) NOT NULL,
+            owner_display_name VARCHAR(255) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'created',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_weixin_scan_tasks_owner_status
+            ON weixin_scan_tasks(owner_user_id, status)
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_platform_user
+            ON social_users(platform_user_id)
+            WHERE status = 'active' AND platform_user_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_ilink_user
+            ON social_users(ilink_user_id)
+            WHERE status = 'active' AND ilink_user_id IS NOT NULL
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_social_users_active_account
+            ON social_users(account_id, status)
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+
+    logger.info("social_binding_schema_ensured", dialect=conn.dialect.name)
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for FastAPI endpoints to get database session.
@@ -153,6 +205,7 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
+        await _ensure_social_binding_schema(conn)
     logger.info("database_initialized")
 
 
