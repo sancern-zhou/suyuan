@@ -30,6 +30,7 @@
       :reflexion-count="reflexionCount"
       :use-markdown="true"
       :assistant-mode="assistantMode"
+      :agent-mode="agentMode"
       :selected-message-id="selectedMessageId"
       :visualization-panel-ref="null"
       :on-message-click="handleMessageClick"
@@ -100,6 +101,10 @@ const props = defineProps({
   assistantMode: {
     type: String,
     default: 'general-agent'
+  },
+  agentMode: {
+    type: String,
+    default: 'assistant'
   },
   useReranker: {
     type: Boolean,

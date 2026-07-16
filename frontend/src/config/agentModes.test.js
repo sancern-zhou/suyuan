@@ -26,6 +26,18 @@ test('every agent mode provides complete platform copy and presentation metadata
   }
 })
 
+test('every non-query agent provides complete chat welcome content', () => {
+  const agentsWithWelcome = AGENT_MODES.filter(agent => agent.id !== 'query')
+
+  assert.equal(agentsWithWelcome.length, 5)
+  for (const agent of agentsWithWelcome) {
+    assert.ok(agent.welcome?.description)
+    assert.ok(agent.welcome?.features.length >= 3)
+    assert.ok(agent.welcome?.features.every(feature => feature.trim()))
+    assert.ok(agent.welcome?.example)
+  }
+})
+
 test('agent mode lookup returns matching metadata and null for unsupported modes', () => {
   assert.equal(getAgentMode('query')?.name, 'AI问数智能体')
   assert.equal(getAgentMode('missing'), null)

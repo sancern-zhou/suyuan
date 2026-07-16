@@ -37,10 +37,11 @@ test('agent cards use a clean surface without a colored left-edge decoration', a
   assert.doesNotMatch(source, /agent\.iconPaths/)
 })
 
-test('agent workspace header resolves display copy from the shared catalog', async () => {
-  const source = await readComponent('AgentWorkspaceHeader.vue')
+test('empty chat resolves complete welcome copy from the selected agent catalog entry', async () => {
+  const source = await readComponent('../ReActMessageList.vue')
 
   assert.match(source, /getAgentMode/)
-  assert.match(source, /agent\.name/)
-  assert.match(source, /agent\.description/)
+  assert.match(source, /agentMode/)
+  assert.match(source, /agent\.welcome/)
+  assert.doesNotMatch(source, /大气环境智能分析与决策支持平台/)
 })
