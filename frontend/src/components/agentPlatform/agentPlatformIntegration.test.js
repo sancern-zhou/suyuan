@@ -26,7 +26,7 @@ test('sidebar moves system management entries into the bottom user settings menu
   assert.match(source, /:aria-expanded="settingsMenuOpen"/)
   assert.match(source, /userDisplayName/)
   assert.match(source, /settingsModules/)
-  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'tools-management'[\s\S]*'skills-management'[\s\S]*'fetchers'[\s\S]*'social-platform'/)
+  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'tools-management'[\s\S]*'file-manager'[\s\S]*'fetchers'[\s\S]*'social-platform'/)
   assert.match(source, /id: 'system',[\s\S]*ids: \['scheduled-tasks'\]/)
   assert.match(source, /document\.addEventListener\('pointerdown'/)
   assert.match(source, /event\.key === 'Escape'/)
@@ -63,6 +63,17 @@ test('all six primary sidebar actions share one uniform spacing system', async (
   assert.match(source, /\.new-session-section \{[\s\S]*padding-bottom: 0;[\s\S]*margin-bottom: 0;[\s\S]*gap: 4px/)
   assert.match(source, /\.module-list \{[\s\S]*gap: 4px/)
   assert.match(source, /\.module-group \{[\s\S]*gap: 4px/)
+})
+
+test('skills management is primary while file management lives in user settings', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+  const settingsIds = source.match(/const SETTINGS_MODULE_IDS = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] || ''
+  const primaryGroups = source.match(/const groups = \[([\s\S]*?)\n  \]/)?.[1] || ''
+
+  assert.match(settingsIds, /'file-manager'/)
+  assert.doesNotMatch(settingsIds, /'skills-management'/)
+  assert.match(primaryGroups, /'skills-management'/)
+  assert.doesNotMatch(primaryGroups, /'file-manager'/)
 })
 
 test('main layout switches between agent platform and chat workspace', async () => {

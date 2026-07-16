@@ -352,7 +352,7 @@ const modules = [
 
 const SETTINGS_MODULE_IDS = Object.freeze([
   'tools-management',
-  'skills-management',
+  'file-manager',
   'fetchers',
   'social-platform'
 ])
@@ -515,7 +515,7 @@ const moduleGroups = computed(() => {
     },
     {
       id: 'resources',
-      ids: ['knowledge-base', 'file-manager']
+      ids: ['knowledge-base', 'skills-management']
     },
     {
       id: 'system',
