@@ -4,16 +4,15 @@
     <div v-if="messages.length === 0 && !hideWelcome" class="welcome-message">
       <h2>{{ welcomeContent.title }}</h2>
       <p>{{ welcomeContent.description }}</p>
-      <div class="welcome-capabilities">
-        <button
+      <ul class="welcome-capabilities">
+        <li
           v-for="(feature, index) in welcomeContent.features"
           :key="index"
           class="welcome-capability"
-          type="button"
         >
           {{ feature }}
-        </button>
-      </div>
+        </li>
+      </ul>
       <p class="hint">{{ welcomeContent.example }}</p>
     </div>
 
@@ -1877,25 +1876,21 @@ const closeImagePreview = () => {
   }
 
   .welcome-capabilities {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
     margin: 22px auto 0;
-    text-align: left;
+    padding: 0;
+    list-style: none;
+    text-align: center;
   }
 
   .welcome-capability {
-    min-height: 42px;
-    padding: 9px 12px;
-    border: 1px solid #d8deea;
-    border-radius: 8px;
-    background: #fff;
     color: #35425f;
-    font: inherit;
     font-size: 13px;
-    line-height: 1.45;
-    text-align: left;
-    cursor: default;
+    line-height: 1.6;
+    text-align: center;
   }
 
   .hint {
