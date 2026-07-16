@@ -40,30 +40,30 @@
       </button>
     </div>
 
-    <div class="sidebar-scroll-area">
-      <div class="module-list">
-        <div
-          v-for="group in moduleGroups"
-          :key="group.id"
-          class="module-group"
+    <div class="module-list">
+      <div
+        v-for="group in moduleGroups"
+        :key="group.id"
+        class="module-group"
+      >
+        <button
+          v-for="module in group.modules"
+          :key="module.id"
+          class="module-card"
+          :class="{ active: isActive(module.id) }"
+          type="button"
+          @click="handleModuleSelect(module.id)"
+          :title="isCollapsed ? module.name : ''"
         >
-          <button
-            v-for="module in group.modules"
-            :key="module.id"
-            class="module-card"
-            :class="{ active: isActive(module.id) }"
-            type="button"
-            @click="handleModuleSelect(module.id)"
-            :title="isCollapsed ? module.name : ''"
-          >
-            <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
-            <div v-if="!isCollapsed" class="module-info">
-              <p class="module-title">{{ module.name }}</p>
-            </div>
-          </button>
-        </div>
+          <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">{{ module.name }}</p>
+          </div>
+        </button>
       </div>
+    </div>
 
+    <div class="sidebar-scroll-area">
       <!-- 最近对话列表 -->
       <div v-if="!isCollapsed && displayedRecentSessions.length > 0" class="recent-sessions-section">
         <div class="recent-sessions-header">
@@ -711,6 +711,7 @@ onUnmounted(() => {
 
 .module-list {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 6px;
 

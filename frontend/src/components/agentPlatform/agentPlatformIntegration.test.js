@@ -41,6 +41,20 @@ test('sidebar navigation omits work resource and system group labels', async () 
   assert.doesNotMatch(source, /title: '(工作|资源|系统)'/)
 })
 
+test('primary sidebar navigation sits outside the independently scrolling recent sessions area', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+  const moduleListIndex = source.indexOf('<div class="module-list">')
+  const scrollAreaIndex = source.indexOf('<div class="sidebar-scroll-area">')
+  const recentSessionsIndex = source.indexOf('class="recent-sessions-section"')
+
+  assert.ok(moduleListIndex >= 0)
+  assert.ok(scrollAreaIndex >= 0)
+  assert.ok(recentSessionsIndex >= 0)
+  assert.ok(moduleListIndex < scrollAreaIndex)
+  assert.ok(scrollAreaIndex < recentSessionsIndex)
+  assert.match(source, /\.module-list \{[\s\S]*flex: 0 0 auto/)
+})
+
 test('main layout switches between agent platform and chat workspace', async () => {
   const source = await readSource('../reactAnalysis/MainLayout.vue')
 
