@@ -100,12 +100,6 @@
         />
 
         <div class="input-footer">
-          <AgentModeSelector
-            v-if="assistantMode === 'general-agent' && showAgentModeSelector"
-            v-model="agentMode"
-            @update:modelValue="handleAgentModeChange"
-          />
-
           <div class="action-group">
             <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
@@ -226,7 +220,6 @@ import { ref, watch, nextTick, computed } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useReactStore } from '@/stores/reactStore'
 import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
-import AgentModeSelector from '@/components/AgentModeSelector.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
@@ -276,14 +269,10 @@ const props = defineProps({
   sessionId: {
     type: String,
     default: ''
-  },
-  showAgentModeSelector: {
-    type: Boolean,
-    default: true
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReranker', 'update:agentMode'])
+const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReranker'])
 
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
@@ -294,12 +283,6 @@ const atSymbolIndex = ref(-1)  // 记录@符号的位置
 const highlightedTool = ref(null)  // 高亮的工具
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
 const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops', 'graph']
-// ✅ 使用统一的模式键名，与 store.currentMode 保持一致
-const cachedMode = localStorage.getItem('current-mode') || 'assistant'
-const initialAgentMode = validAgentModes.includes(reactStore.currentMode)
-  ? reactStore.currentMode
-  : (validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
-const agentMode = ref(initialAgentMode)
 const validModelTiers = ['auto', 'flash', 'pro']
 const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
 const draftModelTierKey = 'llm-model-tier:draft'
@@ -390,7 +373,7 @@ const sendableAttachmentCount = computed(() => (
   attachments.value.length + (pendingBoardSnapshotAttachment.value ? 1 : 0)
 ))
 const activeModelTierMode = computed(() => (
-  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : agentMode.value
+  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : 'assistant'
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
@@ -419,21 +402,6 @@ const workflowTools = [
 
 const toggleKnowledgeBase = () => {
   showKnowledgeBaseSelector.value = !showKnowledgeBaseSelector.value
-}
-
-const handleAgentModeChange = (newMode) => {
-  if (!validAgentModes.includes(newMode)) {
-    console.warn('[InputBox] Invalid agent mode:', newMode)
-    return
-  }
-
-  // ✅ 处理Agent模式变化
-  agentMode.value = newMode
-  if (reactStore.currentMode !== newMode) {
-    reactStore.switchMode(newMode)
-  }
-  emit('update:agentMode', newMode)
-  console.log('[InputBox] Agent mode changed:', newMode)
 }
 
 const autoResize = () => {
@@ -523,16 +491,6 @@ const selectWorkflowTool = (tool, event) => {
 watch(() => props.modelValue, (newValue) => {
   localValue.value = newValue
 })
-
-watch(
-  () => reactStore.currentMode,
-  (newMode) => {
-    if (validAgentModes.includes(newMode) && agentMode.value !== newMode) {
-      agentMode.value = newMode
-    }
-  },
-  { immediate: true }
-)
 
 watch(localValue, async (newValue) => {
   emit('update:modelValue', newValue)
@@ -643,8 +601,7 @@ const handleSend = () => {
   // 将查询、知识库ID、Agent模式、附件一起发送
   const activeAgentMode = validAgentModes.includes(reactStore.currentMode)
     ? reactStore.currentMode
-    : agentMode.value
-  agentMode.value = activeAgentMode
+    : 'assistant'
 
   emit('send', {
     query: localValue.value,

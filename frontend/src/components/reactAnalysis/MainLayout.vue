@@ -13,8 +13,18 @@
 
     <!-- 主分析面板 -->
     <div class="analysis-panel" ref="layoutRef">
-      <QueryDashboardWorkspace
-        v-if="agentMode === 'query'"
+      <AgentPlatform
+        v-if="workspace === 'platform'"
+        :running-modes="runningAgentModes"
+        :selecting-mode="selectingAgentMode"
+        :error="agentPlatformError"
+        @select="$emit('select-agent', $event)"
+      />
+      <template v-else>
+        <div class="conversation-workspace">
+          <AgentWorkspaceHeader :mode="agentMode" />
+          <QueryDashboardWorkspace
+            v-if="agentMode === 'query'"
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
@@ -39,7 +49,6 @@
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
-        @update:agentMode="handleAgentModeChange"
         @select-message="handleSelectMessage"
         @load-more="handleLoadMore"
         @drag-over="handleChatAreaDragOver"
@@ -126,8 +135,8 @@
           />
         </template>
       </QueryDashboardWorkspace>
-      <ChatArea
-        v-else
+          <ChatArea
+            v-else
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
@@ -151,7 +160,6 @@
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
-        @update:agentMode="handleAgentModeChange"
         @drag-over="handleChatAreaDragOver"
         @drag-leave="handleChatAreaDragLeave"
         @drop="handleChatAreaDrop"
@@ -236,20 +244,21 @@
             @close="$emit('close-management-panel')"
           />
         </template>
-      </ChatArea>
-      <!-- 宽度调整器 -->
-      <WidthResizer
-        v-if="rightPanelVisible"
+          </ChatArea>
+        </div>
+        <!-- 宽度调整器 -->
+        <WidthResizer
+          v-if="rightPanelVisible"
         :visible="rightPanelVisible"
         :is-dragging="isDragging"
         @start-drag="handleStartDrag"
         @stop-drag="handleStopDrag"
         @reset="handleResetWidth"
-      />
+        />
 
-      <!-- 右侧面板 -->
-      <RightPanelContainer
-        v-if="rightPanelVisible"
+        <!-- 右侧面板 -->
+        <RightPanelContainer
+          v-if="rightPanelVisible"
         :visible="rightPanelVisible"
         :viz-panel-visible="vizPanelVisible"
         :office-panel-visible="officePanelVisible"
@@ -271,7 +280,8 @@
         @board-selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
         @board-version-restore="handleBoardVersionRestore"
-      />
+        />
+      </template>
     </div>
   </div>
 </template>
@@ -279,6 +289,8 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
+import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
+import AgentWorkspaceHeader from '@/components/agentPlatform/AgentWorkspaceHeader.vue'
 import ChatArea from './ChatArea.vue'
 import QueryDashboardWorkspace from '@/components/queryDashboard/QueryDashboardWorkspace.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
@@ -296,6 +308,22 @@ import { useAuthStore } from '@/auth/authStore.js'
 const auth = useAuthStore()
 
 const props = defineProps({
+  workspace: {
+    type: String,
+    default: 'platform'
+  },
+  runningAgentModes: {
+    type: Array,
+    default: () => []
+  },
+  selectingAgentMode: {
+    type: String,
+    default: ''
+  },
+  agentPlatformError: {
+    type: String,
+    default: ''
+  },
   // Store状态
   messages: {
     type: Array,
@@ -490,7 +518,6 @@ const emit = defineEmits([
   'send',
   'pause',
   'update:useReranker',
-  'update:agentMode',
   'select-message',
   'load-more',
   'assistant-select',
@@ -532,7 +559,8 @@ const emit = defineEmits([
   'restore-session',
   'toggle-session-case',
   'delete-sessions',
-  'new-web-conversation'
+  'new-web-conversation',
+  'select-agent'
 ])
 
 const layoutRef = ref(null)
@@ -641,10 +669,6 @@ const handleRerankerChange = (value) => {
   emit('update:useReranker', value)
 }
 
-const handleAgentModeChange = (value) => {
-  emit('update:agentMode', value)
-}
-
 const handleSelectMessage = (messageId) => {
   emit('select-message', messageId)
 }
@@ -728,6 +752,22 @@ defineExpose({ layoutRef })
   display: flex;
   height: 100%;
   overflow: hidden;
+}
+
+.conversation-workspace {
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.conversation-workspace :deep(.chat-area),
+.conversation-workspace :deep(.query-dashboard-workspace) {
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
 }
 
 /* ChatArea 占据剩余空间，min-width: 0 防止内容撑开 */
