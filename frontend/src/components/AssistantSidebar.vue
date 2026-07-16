@@ -6,7 +6,6 @@
           <img src="/wechat-screenshot.png" alt="企业微信截图" class="header-image">
           <div class="brand-copy">
             <h2>风清气智</h2>
-            <span>智能体平台</span>
           </div>
         </div>
       </template>
@@ -18,7 +17,7 @@
     <!-- 核心工作入口固定在 header 下方 -->
     <div class="new-session-section">
       <button
-        class="module-card agent-platform-btn"
+        class="module-card"
         :class="{ active: isActive('agent-platform') }"
         type="button"
         @click="handleModuleSelect('agent-platform')"
@@ -27,11 +26,10 @@
         <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
         <div v-if="!isCollapsed" class="module-info">
           <p class="module-title">智能体平台</p>
-          <p class="platform-entry-desc">选择适合任务的智能体</p>
         </div>
       </button>
       <button
-        class="module-card new-session-btn"
+        class="module-card"
         type="button"
         @click="handleModuleSelect('restart-session')"
       >
@@ -535,9 +533,7 @@ onUnmounted(() => {
   }
 
   .brand-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: block;
     min-width: 0;
   }
 
@@ -546,13 +542,6 @@ onUnmounted(() => {
     font-size: 16px;
     color: #1f2a44;
     font-weight: 600;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-  }
-
-  span {
-    font-size: 11px;
-    color: #7a86a0;
-    white-space: nowrap;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
 
@@ -579,10 +568,9 @@ onUnmounted(() => {
   background: #f8fafc;
   padding-bottom: 10px;
   margin-bottom: 4px;
-  box-shadow: 0 8px 0 #f8fafc;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 
   .collapsed & {
     position: static;
@@ -732,45 +720,6 @@ onUnmounted(() => {
   font-size: 12px;
   color: #7a86a0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-}
-
-.new-session-btn {
-  border: 1px solid #dfe6f0;
-  background: #fff;
-  color: #526173;
-
-  &:hover {
-    border-color: #b7d5f7;
-    background: #eef6ff;
-    color: #1976d2;
-  }
-
-  .module-title {
-    color: inherit;
-  }
-}
-
-.agent-platform-btn {
-  min-height: 52px;
-  background: linear-gradient(135deg, #1976d2 0%, #2867d8 100%);
-  color: #fff;
-  box-shadow: 0 6px 14px rgba(25, 118, 210, 0.18);
-
-  &:hover,
-  &.active {
-    background: linear-gradient(135deg, #1565c0 0%, #245bc2 100%);
-    color: #fff;
-  }
-
-  .platform-entry-desc {
-    margin: 2px 0 0;
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 10px;
-  }
-
-  .collapsed & {
-    min-height: 40px;
-  }
 }
 
 /* 最近对话列表样式 */
