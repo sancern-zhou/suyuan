@@ -929,13 +929,13 @@ export const useReactStore = defineStore('react', {
     /**
      * 设置当前模式的 sessionId（用于会话恢复）
      */
-    setSessionId(sessionId) {
+    setSessionId(sessionId, mode = null) {
       if (!sessionId || typeof sessionId !== 'string') {
         console.warn('[setSessionId] Invalid sessionId:', sessionId)
         return
       }
-      const mode = this._getModeForSessionId(sessionId)
-      const targetState = this._activateSession(sessionId, mode)
+      const sessionMode = VALID_MODES.includes(mode) ? mode : this._getModeForSessionId(sessionId)
+      const targetState = this._activateSession(sessionId, sessionMode)
       targetState.sessionId = sessionId
       console.log(`[setSessionId] Set sessionId for mode ${this.currentMode}:`, sessionId)
     },

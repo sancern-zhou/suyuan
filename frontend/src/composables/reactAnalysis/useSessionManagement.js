@@ -6,6 +6,7 @@ import { authFetch } from '@/auth/http.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
 import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
+import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
 import {
   listSessions,
   restoreSession,
@@ -418,8 +419,10 @@ export function useSessionManagement(store) {
       }
 
       // 3. 更新store
+      const restoredMode = resolveRestoredAgentMode(sessionData, sessionId, store.currentMode)
+      store.switchMode(restoredMode)
       store.reset()
-      store.setSessionId(sessionId)
+      store.setSessionId(sessionId, restoredMode)
       store.currentState.conversationAccess = {
         source: sessionData.source || 'web',
         read_only_on_web: sessionData.read_only_on_web === true
