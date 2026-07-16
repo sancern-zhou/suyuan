@@ -8,7 +8,8 @@
     "build:standalone": "vite build --mode standalone",
     "preview": "vite preview",
     "test:auth": "node --test src/auth/*.test.mjs",
-    "test:event-tasks": "node --test src/components/management/*.test.js"
+    "test:event-tasks": "node --test src/components/management/*.test.js",
+    "test:images": "node --test src/services/apiImageBlob.test.mjs src/components/markdownApiImages.test.mjs"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",
