@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { AGENT_MODES, AGENT_MODE_IDS, getAgentMode } from './agentModes.js'
+import { AGENT_MODES, AGENT_MODE_IDS, AGENT_SCENES, getAgentMode } from './agentModes.js'
 
 test('agent mode catalog exposes the six supported modes in product order', () => {
   assert.deepEqual(AGENT_MODE_IDS, [
@@ -27,6 +27,29 @@ test('every agent mode provides complete platform copy and presentation metadata
 })
 
 test('agent mode lookup returns matching metadata and null for unsupported modes', () => {
-  assert.equal(getAgentMode('query')?.name, '智能问数')
+  assert.equal(getAgentMode('query')?.name, 'AI问数智能体')
   assert.equal(getAgentMode('missing'), null)
+})
+
+test('agent scenes group modes in the requested top-to-bottom order', () => {
+  assert.deepEqual(AGENT_SCENES, [
+    {
+      id: 'office',
+      name: '办公',
+      description: '日常办公与内容创作',
+      modeIds: ['assistant', 'chart']
+    },
+    {
+      id: 'monitoring',
+      name: '监测分析',
+      description: '环境数据研判与成果输出',
+      modeIds: ['query', 'expert', 'report']
+    },
+    {
+      id: 'operations',
+      name: '运维管理',
+      description: '运维处置与任务管理',
+      modeIds: ['ops']
+    }
+  ])
 })
