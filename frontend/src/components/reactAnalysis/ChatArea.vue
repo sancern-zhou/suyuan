@@ -59,7 +59,6 @@
       @send="$emit('send', $event)"
       @pause="$emit('pause')"
       @update:useReranker="$emit('update:useReranker', $event)"
-      @update:agentMode="$emit('update:agentMode', $event)"
     />
   </div>
 </template>
@@ -156,7 +155,6 @@ const emit = defineEmits([
   'send',
   'pause',
   'update:useReranker',
-  'update:agentMode',
   'select-message',
   'load-more',
   'toggle-viz-panel',
