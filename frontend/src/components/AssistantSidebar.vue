@@ -35,7 +35,7 @@
       >
         <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
         <div v-if="!isCollapsed" class="module-info">
-          <p class="module-title">新对话</p>
+          <p class="module-title">新建任务</p>
         </div>
       </button>
     </div>
@@ -268,8 +268,8 @@ const modules = [
   },
   {
     id: 'restart-session',
-    name: '新对话',
-    abbr: '新对话',
+    name: '新建任务',
+    abbr: '新建任务',
     desc: '清空对话，开始新分析',
     badge: '操作',
     isAction: true
