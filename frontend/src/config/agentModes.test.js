@@ -40,6 +40,7 @@ test('every non-query agent provides complete chat welcome content', () => {
 
 test('agent mode lookup returns matching metadata and null for unsupported modes', () => {
   assert.equal(getAgentMode('query')?.name, 'AI问数智能体')
+  assert.equal(getAgentMode('ops')?.welcome.example, '例如："审核这个月1-7日的运维工单"')
   assert.equal(getAgentMode('missing'), null)
 })
 

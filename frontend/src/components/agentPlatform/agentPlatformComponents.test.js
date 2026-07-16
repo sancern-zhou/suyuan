@@ -45,3 +45,13 @@ test('empty chat resolves complete welcome copy from the selected agent catalog 
   assert.match(source, /agent\.welcome/)
   assert.doesNotMatch(source, /大气环境智能分析与决策支持平台/)
 })
+
+test('welcome capabilities render as centered plain text instead of styled buttons', async () => {
+  const source = await readComponent('../ReActMessageList.vue')
+
+  assert.match(source, /<ul class="welcome-capabilities">/)
+  assert.match(source, /<li[\s\S]*class="welcome-capability"/)
+  assert.doesNotMatch(source, /<button[\s\S]*class="welcome-capability"/)
+  assert.match(source, /\.welcome-capabilities[\s\S]*align-items: center/)
+  assert.match(source, /\.welcome-capability[\s\S]*text-align: center/)
+})
