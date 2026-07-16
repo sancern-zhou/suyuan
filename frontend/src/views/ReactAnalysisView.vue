@@ -3,12 +3,16 @@
     <!-- 会话管理模态框 -->
     <SessionManagerModal
       v-model="showSessionManager"
-      @restore="handleSessionRestore"
+      @restore="handleSessionRestoreAndClosePanel"
     />
 
     <!-- 主布局 -->
     <MainLayout
       ref="mainLayoutRef"
+      :workspace="workspace"
+      :running-agent-modes="runningAgentModes"
+      :selecting-agent-mode="selectingAgentMode"
+      :agent-platform-error="agentPlatformError"
       :messages="currentModeMessages"
       :pending-steering-inputs="currentModePendingSteeringInputs"
       :is-analyzing="currentModeIsAnalyzing"
@@ -24,7 +28,7 @@
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
       :map-program="store.currentState.currentMapProgram"
-      :active-module="activeAssistant"
+      :active-module="workspace === 'platform' ? 'agent-platform' : activeAssistant"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
@@ -65,6 +69,7 @@
       @update:era5-historical-date="era5HistoricalDate = $event"
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
+      @select-agent="handleAgentSelect"
       @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
@@ -135,7 +140,7 @@
 <script setup>
 import { authFetch } from '@/auth/http.js'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
@@ -147,6 +152,11 @@ import {
 } from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
 import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
+import { AGENT_MODE_IDS } from '@/config/agentModes.js'
+import {
+  isAgentModeRunning,
+  resolveAgentSelection
+} from '@/components/agentPlatform/workspacePolicy.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -164,7 +174,7 @@ import KnowledgeBaseEditDialog from '@/components/reactAnalysis/dialogs/Knowledg
 import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/KnowledgeBaseChunksDialog.vue'
 
 // Stores
-const router = useRouter()
+const route = useRoute()
 const store = useReactStore()
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
@@ -282,6 +292,9 @@ const chatAreaDragOver = ref(false)
 const useReranker = ref(false)
 const scheduledTasksRefreshing = ref(false)
 const mainLayoutRef = ref(null)
+const workspace = ref('platform')
+const selectingAgentMode = ref('')
+const agentPlatformError = ref('')
 
 // 对话框状态（从dialogManager获取）
 const showKbCreateDialog = computed(() => dialogs.value.kbCreate)
@@ -319,6 +332,9 @@ const currentModeSessionId = computed(() => store.currentState.sessionId)
 const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
 const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
 const currentModePendingSteeringInputs = computed(() => store.currentState.pendingSteeringInputs || [])
+const runningAgentModes = computed(() => (
+  AGENT_MODE_IDS.filter(mode => isAgentModeRunning(mode, store))
+))
 
 const inputDisabled = computed(() => {
   // 执行中允许用户预编辑下一条消息；发送由 InputBox 的 isAnalyzing 保护阻止。
@@ -331,6 +347,34 @@ const handleRerankerChange = (value) => {
   useReranker.value = value
 }
 
+const handleAgentSelect = async (mode) => {
+  if (selectingAgentMode.value) return
+
+  const decision = resolveAgentSelection(mode, store)
+  if (decision.action === 'invalid') {
+    agentPlatformError.value = '暂不支持该智能体模式'
+    return
+  }
+
+  selectingAgentMode.value = mode
+  agentPlatformError.value = ''
+
+  try {
+    store.switchMode(mode)
+    if (decision.action === 'reset-and-open') {
+      store.reset()
+    }
+    hideManagementPanel()
+    resetPanelState()
+    activeAssistant.value = 'general-agent'
+    workspace.value = 'chat'
+  } catch (error) {
+    agentPlatformError.value = error?.message || '智能体初始化失败，请重试'
+  } finally {
+    selectingAgentMode.value = ''
+  }
+}
+
 const handleAgentModeChange = (value) => {
   store.switchMode(value)
   console.log('[ReactAnalysisView] Agent模式切换:', value)
@@ -340,6 +384,7 @@ const handleLoadSessionAndClosePanel = async (sessionId) => {
   const restored = await handleLoadSession(sessionId)
   if (restored) {
     hideManagementPanel()
+    workspace.value = 'chat'
   }
   return restored
 }
@@ -348,6 +393,7 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   const restored = await handleSessionRestore(sessionId)
   if (restored) {
     hideManagementPanel()
+    workspace.value = 'chat'
   }
   return restored
 }
@@ -360,6 +406,20 @@ const handleAssistantSelect = async (moduleId) => {
 
 const handleSidebarAction = async (actionId) => {
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
+  if (actionId === 'agent-platform') {
+    hideManagementPanel()
+    resetPanelState()
+    agentPlatformError.value = ''
+    workspace.value = 'platform'
+    return
+  }
+
+  if (actionId === 'restart-session' && workspace.value === 'platform') {
+    agentPlatformError.value = '请先选择一个智能体，再开始新对话'
+    return
+  }
+
+  workspace.value = 'chat'
   switch (actionId) {
     case 'query-dashboard':
       store.switchMode('query')
@@ -576,7 +636,7 @@ const deleteScheduledTask = async (task) => {
 
 // ========== 生命周期 ==========
 
-onMounted(() => {
+onMounted(async () => {
   setupPanelWatchers()
   setupGlobalListeners()
 
@@ -594,6 +654,10 @@ onMounted(() => {
   // 初始化日期
   const today = new Date()
   era5HistoricalDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+  if (route.params.id) {
+    await handleSessionRestoreAndClosePanel(route.params.id)
+  }
 })
 
 onBeforeUnmount(() => {

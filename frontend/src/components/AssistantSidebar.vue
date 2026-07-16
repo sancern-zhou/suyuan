@@ -15,8 +15,21 @@
       </button>
     </div>
 
-    <!-- 新对话按钮固定在header下方 -->
+    <!-- 核心工作入口固定在 header 下方 -->
     <div class="new-session-section">
+      <button
+        class="module-card agent-platform-btn"
+        :class="{ active: isActive('agent-platform') }"
+        type="button"
+        @click="handleModuleSelect('agent-platform')"
+        :title="isCollapsed ? '智能体平台' : ''"
+      >
+        <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
+        <div v-if="!isCollapsed" class="module-info">
+          <p class="module-title">智能体平台</p>
+          <p class="platform-entry-desc">选择适合任务的智能体</p>
+        </div>
+      </button>
       <button
         class="module-card new-session-btn"
         type="button"
@@ -188,6 +201,14 @@ const activeSessionList = computed(() => {
 
 const modules = [
   {
+    id: 'agent-platform',
+    name: '智能体平台',
+    abbr: '平台',
+    desc: '选择适合任务的智能体',
+    badge: '工作台',
+    isAction: true
+  },
+  {
     id: 'restart-session',
     name: '新对话',
     abbr: '新对话',
@@ -270,6 +291,14 @@ const modules = [
 ]
 
 const moduleIcons = {
+  'agent-platform': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" />
+      <path d="m4.5 8 7.5 4.2L19.5 8" />
+      <path d="M12 12.2v8" />
+      <path d="m8.5 6 7 4" />
+    </svg>
+  `,
   'restart-session': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5v14" />
@@ -551,6 +580,9 @@ onUnmounted(() => {
   padding-bottom: 10px;
   margin-bottom: 4px;
   box-shadow: 0 8px 0 #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 
   .collapsed & {
     position: static;
@@ -703,16 +735,41 @@ onUnmounted(() => {
 }
 
 .new-session-btn {
-  background: #1976d2;
-  color: #fff;
+  border: 1px solid #dfe6f0;
+  background: #fff;
+  color: #526173;
 
   &:hover {
-    background: #1565c0;
-    color: #fff;
+    border-color: #b7d5f7;
+    background: #eef6ff;
+    color: #1976d2;
   }
 
   .module-title {
     color: inherit;
+  }
+}
+
+.agent-platform-btn {
+  min-height: 52px;
+  background: linear-gradient(135deg, #1976d2 0%, #2867d8 100%);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(25, 118, 210, 0.18);
+
+  &:hover,
+  &.active {
+    background: linear-gradient(135deg, #1565c0 0%, #245bc2 100%);
+    color: #fff;
+  }
+
+  .platform-entry-desc {
+    margin: 2px 0 0;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 10px;
+  }
+
+  .collapsed & {
+    min-height: 40px;
   }
 }
 
