@@ -29,3 +29,18 @@ test('analysis view defaults to the platform and opens chat through explicit flo
   assert.match(source, /workspace\.value = 'platform'/)
   assert.match(source, /route\.params\.id/)
 })
+
+test('conversation workspace no longer exposes inline agent mode switching', async () => {
+  const inputBox = await readSource('../InputBox.vue')
+  const queryDashboard = await readSource('../queryDashboard/QueryDashboardWorkspace.vue')
+  const chatArea = await readSource('../reactAnalysis/ChatArea.vue')
+  const mainLayout = await readSource('../reactAnalysis/MainLayout.vue')
+  const analysisView = await readSource('../../views/ReactAnalysisView.vue')
+
+  for (const source of [inputBox, queryDashboard]) {
+    assert.doesNotMatch(source, /AgentModeSelector/)
+  }
+  for (const source of [inputBox, queryDashboard, chatArea, mainLayout, analysisView]) {
+    assert.doesNotMatch(source, /update:agentMode|update:agent-mode/)
+  }
+})

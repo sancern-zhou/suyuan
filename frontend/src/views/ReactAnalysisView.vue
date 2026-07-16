@@ -63,7 +63,6 @@
       @send="handleSend"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
-      @update:agent-mode="handleAgentModeChange"
       @select-message="selectMessage"
       @load-more="handleLoadMore"
       @update:era5-historical-date="era5HistoricalDate = $event"
@@ -373,11 +372,6 @@ const handleAgentSelect = async (mode) => {
   } finally {
     selectingAgentMode.value = ''
   }
-}
-
-const handleAgentModeChange = (value) => {
-  store.switchMode(value)
-  console.log('[ReactAnalysisView] Agent模式切换:', value)
 }
 
 const handleLoadSessionAndClosePanel = async (sessionId) => {

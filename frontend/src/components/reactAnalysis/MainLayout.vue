@@ -49,7 +49,6 @@
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
-        @update:agentMode="handleAgentModeChange"
         @select-message="handleSelectMessage"
         @load-more="handleLoadMore"
         @drag-over="handleChatAreaDragOver"
@@ -161,7 +160,6 @@
         @send="handleSend"
         @pause="handlePause"
         @update:useReranker="handleRerankerChange"
-        @update:agentMode="handleAgentModeChange"
         @drag-over="handleChatAreaDragOver"
         @drag-leave="handleChatAreaDragLeave"
         @drop="handleChatAreaDrop"
@@ -520,7 +518,6 @@ const emit = defineEmits([
   'send',
   'pause',
   'update:useReranker',
-  'update:agentMode',
   'select-message',
   'load-more',
   'assistant-select',
@@ -670,10 +667,6 @@ const handlePause = () => {
 
 const handleRerankerChange = (value) => {
   emit('update:useReranker', value)
-}
-
-const handleAgentModeChange = (value) => {
-  emit('update:agentMode', value)
 }
 
 const handleSelectMessage = (messageId) => {
