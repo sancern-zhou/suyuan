@@ -9,6 +9,9 @@ test('sidebar exposes the agent platform as a primary action', async () => {
 
   assert.match(source, /agent-platform/)
   assert.match(source, /智能体平台/)
+  assert.doesNotMatch(source, /<span>智能体平台<\/span>/)
+  assert.doesNotMatch(source, /agent-platform-btn|new-session-btn/)
+  assert.doesNotMatch(source, /linear-gradient\(135deg/)
 })
 
 test('main layout switches between agent platform and chat workspace', async () => {
