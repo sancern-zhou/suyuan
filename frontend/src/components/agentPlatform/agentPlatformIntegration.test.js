@@ -32,6 +32,13 @@ test('sidebar moves system management entries into the bottom user settings menu
   assert.match(source, /settingsMenuOpen\.value = false/)
 })
 
+test('sidebar navigation omits work resource and system group labels', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+
+  assert.doesNotMatch(source, /module-group-title/)
+  assert.doesNotMatch(source, /title: '(工作|资源|系统)'/)
+})
+
 test('main layout switches between agent platform and chat workspace', async () => {
   const source = await readSource('../reactAnalysis/MainLayout.vue')
 

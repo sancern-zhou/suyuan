@@ -47,7 +47,6 @@
           :key="group.id"
           class="module-group"
         >
-          <div v-if="!isCollapsed" class="module-group-title">{{ group.title }}</div>
           <button
             v-for="module in group.modules"
             :key="module.id"
@@ -510,17 +509,14 @@ const moduleGroups = computed(() => {
   const groups = [
     {
       id: 'work',
-      title: '工作',
       ids: ['session-history']
     },
     {
       id: 'resources',
-      title: '资源',
       ids: ['knowledge-base', 'file-manager']
     },
     {
       id: 'system',
-      title: '系统',
       ids: ['scheduled-tasks']
     }
   ]
@@ -716,7 +712,7 @@ onUnmounted(() => {
 .module-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
 
   .collapsed & {
     align-items: center;
@@ -733,14 +729,6 @@ onUnmounted(() => {
     align-items: center;
     gap: 6px;
   }
-}
-
-.module-group-title {
-  padding: 0 8px;
-  font-size: 11px;
-  color: #8a96a8;
-  line-height: 1.8;
-  letter-spacing: 0;
 }
 
 .module-card {
