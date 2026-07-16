@@ -33,6 +33,8 @@ test('agent cards use a clean surface without a colored left-edge decoration', a
 
   assert.doesNotMatch(source, /&::before/)
   assert.doesNotMatch(source, /inset: 0 auto 0 0/)
+  assert.doesNotMatch(source, /class="agent-icon"/)
+  assert.doesNotMatch(source, /agent\.iconPaths/)
 })
 
 test('agent workspace header resolves display copy from the shared catalog', async () => {

@@ -53,17 +53,10 @@
               :disabled="Boolean(selectingMode)"
               @click="emit('select', agent.id)"
             >
-              <div class="card-topline">
-                <span class="agent-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24">
-                    <path v-for="path in agent.iconPaths" :key="path" :d="path" />
-                  </svg>
-                </span>
-                <span v-if="isRunning(agent.id)" class="running-badge">
-                  <span class="running-dot" aria-hidden="true"></span>
-                  运行中
-                </span>
-              </div>
+              <span v-if="isRunning(agent.id)" class="running-badge">
+                <span class="running-dot" aria-hidden="true"></span>
+                运行中
+              </span>
 
               <div class="card-copy">
                 <h3>{{ agent.name }}</h3>
@@ -328,35 +321,10 @@ const isRunning = mode => props.runningModes.includes(mode)
   }
 }
 
-.card-topline {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  min-height: 40px;
-}
-
-.agent-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--agent-accent) 10%, white);
-  color: var(--agent-accent);
-
-  svg {
-    width: 21px;
-    height: 21px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.7;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-}
-
 .running-badge {
+  position: absolute;
+  top: 14px;
+  right: 16px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -377,7 +345,7 @@ const isRunning = mode => props.runningModes.includes(mode)
 }
 
 .card-copy {
-  margin-top: 8px;
+  margin-top: 0;
 
   h3 {
     margin: 0 0 6px;
