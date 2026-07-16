@@ -15,51 +15,53 @@
     </div>
 
     <!-- 核心工作入口固定在 header 下方 -->
-    <div class="new-session-section">
-      <button
-        class="module-card"
-        :class="{ active: isActive('agent-platform') }"
-        type="button"
-        @click="handleModuleSelect('agent-platform')"
-        :title="isCollapsed ? '智能体平台' : ''"
-      >
-        <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
-        <div v-if="!isCollapsed" class="module-info">
-          <p class="module-title">智能体平台</p>
-        </div>
-      </button>
-      <button
-        class="module-card"
-        type="button"
-        @click="handleModuleSelect('restart-session')"
-      >
-        <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
-        <div v-if="!isCollapsed" class="module-info">
-          <p class="module-title">新建任务</p>
-        </div>
-      </button>
-    </div>
-
-    <div class="module-list">
-      <div
-        v-for="group in moduleGroups"
-        :key="group.id"
-        class="module-group"
-      >
+    <div class="primary-navigation">
+      <div class="new-session-section">
         <button
-          v-for="module in group.modules"
-          :key="module.id"
           class="module-card"
-          :class="{ active: isActive(module.id) }"
+          :class="{ active: isActive('agent-platform') }"
           type="button"
-          @click="handleModuleSelect(module.id)"
-          :title="isCollapsed ? module.name : ''"
+          @click="handleModuleSelect('agent-platform')"
+          :title="isCollapsed ? '智能体平台' : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+          <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">{{ module.name }}</p>
+            <p class="module-title">智能体平台</p>
           </div>
         </button>
+        <button
+          class="module-card"
+          type="button"
+          @click="handleModuleSelect('restart-session')"
+        >
+          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">新建任务</p>
+          </div>
+        </button>
+      </div>
+
+      <div class="module-list">
+        <div
+          v-for="group in moduleGroups"
+          :key="group.id"
+          class="module-group"
+        >
+          <button
+            v-for="module in group.modules"
+            :key="module.id"
+            class="module-card"
+            :class="{ active: isActive(module.id) }"
+            type="button"
+            @click="handleModuleSelect(module.id)"
+            :title="isCollapsed ? module.name : ''"
+          >
+            <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+            <div v-if="!isCollapsed" class="module-info">
+              <p class="module-title">{{ module.name }}</p>
+            </div>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -655,21 +657,24 @@ onUnmounted(() => {
   }
 }
 
+.primary-navigation {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .new-session-section {
-  position: sticky;
-  top: 54px;
-  z-index: 19;
   background: #f8fafc;
-  padding-bottom: 10px;
-  margin-bottom: 4px;
+  padding-bottom: 0;
+  margin-bottom: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 
   .collapsed & {
-    position: static;
-    margin-bottom: 12px;
     padding-bottom: 0;
+    margin-bottom: 0;
   }
 }
 
@@ -713,11 +718,11 @@ onUnmounted(() => {
   display: flex;
   flex: 0 0 auto;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 
   .collapsed & {
     align-items: center;
-    gap: 8px;
+    gap: 4px;
   }
 }
 
@@ -728,7 +733,7 @@ onUnmounted(() => {
 
   .collapsed & {
     align-items: center;
-    gap: 6px;
+    gap: 4px;
   }
 }
 
