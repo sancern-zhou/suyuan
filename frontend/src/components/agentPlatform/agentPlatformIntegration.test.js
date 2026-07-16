@@ -55,6 +55,16 @@ test('primary sidebar navigation sits outside the independently scrolling recent
   assert.match(source, /\.module-list \{[\s\S]*flex: 0 0 auto/)
 })
 
+test('all six primary sidebar actions share one uniform spacing system', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+
+  assert.match(source, /<div class="primary-navigation">/)
+  assert.match(source, /\.primary-navigation \{[\s\S]*gap: 4px/)
+  assert.match(source, /\.new-session-section \{[\s\S]*padding-bottom: 0;[\s\S]*margin-bottom: 0;[\s\S]*gap: 4px/)
+  assert.match(source, /\.module-list \{[\s\S]*gap: 4px/)
+  assert.match(source, /\.module-group \{[\s\S]*gap: 4px/)
+})
+
 test('main layout switches between agent platform and chat workspace', async () => {
   const source = await readSource('../reactAnalysis/MainLayout.vue')
 
