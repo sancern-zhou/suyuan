@@ -32,7 +32,12 @@ test('agent mode lookup returns matching metadata and null for unsupported modes
 })
 
 test('agent scenes group modes in the requested top-to-bottom order', () => {
-  assert.deepEqual(AGENT_SCENES, [
+  assert.deepEqual(AGENT_SCENES.map(({ id, name, description, modeIds }) => ({
+    id,
+    name,
+    description,
+    modeIds
+  })), [
     {
       id: 'office',
       name: '办公',
@@ -52,4 +57,13 @@ test('agent scenes group modes in the requested top-to-bottom order', () => {
       modeIds: ['ops']
     }
   ])
+})
+
+test('each agent scene provides a dedicated two-tone line icon', () => {
+  for (const scene of AGENT_SCENES) {
+    assert.ok(scene.iconPaths.length >= 2)
+    assert.ok(scene.iconPaths.some(path => path.tone === 'primary'))
+    assert.ok(scene.iconPaths.some(path => path.tone === 'accent'))
+    assert.ok(scene.iconPaths.every(path => path.d))
+  }
 })

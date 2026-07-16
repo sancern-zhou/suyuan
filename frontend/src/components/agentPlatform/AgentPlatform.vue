@@ -23,8 +23,20 @@
           :aria-labelledby="`scene-${scene.id}`"
         >
           <header class="scene-header">
-            <h2 :id="`scene-${scene.id}`">{{ scene.name }}</h2>
-            <p>{{ scene.description }}</p>
+            <span class="scene-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  v-for="path in scene.iconPaths"
+                  :key="path.d"
+                  :class="`tone-${path.tone}`"
+                  :d="path.d"
+                />
+              </svg>
+            </span>
+            <div class="scene-title-copy">
+              <h2 :id="`scene-${scene.id}`">{{ scene.name }}</h2>
+              <p>{{ scene.description }}</p>
+            </div>
           </header>
 
           <div class="scene-agent-grid">
@@ -219,9 +231,40 @@ const isRunning = mode => props.runningModes.includes(mode)
 
 .scene-header {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 9px;
   padding: 0 8px 0 2px;
+}
+
+.scene-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+
+  svg {
+    width: 28px;
+    height: 28px;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.65;
+  }
+
+  .tone-primary {
+    stroke: #55647c;
+  }
+
+  .tone-accent {
+    stroke: #2878ff;
+  }
+}
+
+.scene-title-copy {
+  min-width: 0;
 
   h2 {
     margin: 0 0 7px;
@@ -395,11 +438,14 @@ const isRunning = mode => props.runningModes.includes(mode)
   }
 
   .scene-header {
-    flex-direction: row;
-    align-items: baseline;
     justify-content: flex-start;
-    gap: 10px;
     padding: 0;
+  }
+
+  .scene-title-copy {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
 
     h2 {
       margin: 0;

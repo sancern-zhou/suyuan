@@ -92,19 +92,36 @@ export const AGENT_SCENES = Object.freeze([
     id: 'office',
     name: '办公',
     description: '日常办公与内容创作',
-    modeIds: ['assistant', 'chart']
+    modeIds: ['assistant', 'chart'],
+    iconPaths: [
+      { tone: 'primary', d: 'M5 3.5h9l4 4V20H5V3.5Z' },
+      { tone: 'primary', d: 'M14 3.5v4h4' },
+      { tone: 'primary', d: 'M8 9.5h4M8 13h3' },
+      { tone: 'accent', d: 'm10.5 17.5 5.9-5.9a1.4 1.4 0 0 1 2 2l-5.9 5.9-2.8.7.8-2.7Z' }
+    ]
   },
   {
     id: 'monitoring',
     name: '监测分析',
     description: '环境数据研判与成果输出',
-    modeIds: ['query', 'expert', 'report']
+    modeIds: ['query', 'expert', 'report'],
+    iconPaths: [
+      { tone: 'primary', d: 'M4 5v14h16' },
+      { tone: 'primary', d: 'm6.5 14 3-3 3 2 3.5-6 3 2' },
+      { tone: 'accent', d: 'M8.5 11a1 1 0 1 0 2 0 1 1 0 0 0-2 0ZM15 7a1 1 0 1 0 2 0 1 1 0 0 0-2 0ZM18 9a1 1 0 1 0 2 0 1 1 0 0 0-2 0Z' }
+    ]
   },
   {
     id: 'operations',
     name: '运维管理',
     description: '运维处置与任务管理',
-    modeIds: ['ops']
+    modeIds: ['ops'],
+    iconPaths: [
+      { tone: 'primary', d: 'm12 3.5 7.4 4.25v8.5L12 20.5l-7.4-4.25v-8.5L12 3.5Z' },
+      { tone: 'primary', d: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z' },
+      { tone: 'accent', d: 'm10.3 12 1.15 1.15 2.4-2.55' },
+      { tone: 'accent', d: 'M18.3 5.2a1.1 1.1 0 1 0 2.2 0 1.1 1.1 0 0 0-2.2 0Z' }
+    ]
   }
 ])
 

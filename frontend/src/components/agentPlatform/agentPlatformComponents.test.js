@@ -9,6 +9,9 @@ test('agent platform renders accessible cards and emits mode selection', async (
 
   assert.match(source, /v-for="scene in sceneGroups"/)
   assert.match(source, /v-for="agent in scene\.agents"/)
+  assert.match(source, /class="scene-icon"/)
+  assert.match(source, /scene\.iconPaths/)
+  assert.match(source, /path\.tone/)
   assert.match(source, /<button/)
   assert.match(source, /emit\('select', agent\.id\)/)
   assert.match(source, /运行中/)
