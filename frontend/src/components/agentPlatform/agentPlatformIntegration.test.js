@@ -19,8 +19,18 @@ test('main layout switches between agent platform and chat workspace', async () 
 
   assert.match(source, /workspace === 'platform'/)
   assert.match(source, /<AgentPlatform/)
-  assert.match(source, /<AgentWorkspaceHeader/)
+  assert.doesNotMatch(source, /AgentWorkspaceHeader/)
+  assert.match(source, /:agent-mode="agentMode"/)
   assert.match(source, /select-agent/)
+})
+
+test('chat workspace passes the selected agent to the welcome area without changing query dashboard behavior', async () => {
+  const chatArea = await readSource('../reactAnalysis/ChatArea.vue')
+  const queryDashboard = await readSource('../queryDashboard/QueryDashboardWorkspace.vue')
+
+  assert.match(chatArea, /agentMode:/)
+  assert.match(chatArea, /:agent-mode="agentMode"/)
+  assert.match(queryDashboard, /:hide-welcome="true"/)
 })
 
 test('analysis view defaults to the platform and opens chat through explicit flows', async () => {

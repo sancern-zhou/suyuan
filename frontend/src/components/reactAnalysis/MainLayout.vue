@@ -22,7 +22,6 @@
       />
       <template v-else>
         <div class="conversation-workspace">
-          <AgentWorkspaceHeader :mode="agentMode" />
           <QueryDashboardWorkspace
             v-if="agentMode === 'query'"
         :messages="messages"
@@ -137,6 +136,7 @@
       </QueryDashboardWorkspace>
           <ChatArea
             v-else
+        :agent-mode="agentMode"
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
         :is-analyzing="isAnalyzing"
@@ -290,7 +290,6 @@
 import { ref, computed, watch } from 'vue'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
-import AgentWorkspaceHeader from '@/components/agentPlatform/AgentWorkspaceHeader.vue'
 import ChatArea from './ChatArea.vue'
 import QueryDashboardWorkspace from '@/components/queryDashboard/QueryDashboardWorkspace.vue'
 import RightPanelContainer from './RightPanelContainer.vue'

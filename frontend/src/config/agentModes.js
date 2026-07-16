@@ -4,6 +4,16 @@ export const AGENT_MODES = Object.freeze([
     name: '通用助手智能体',
     shortName: '助手',
     description: '通用问答、任务处理与综合分析',
+    welcome: {
+      description: '面向日常办公、信息整理和综合任务处理，为你提供从需求理解到成果交付的一站式协助。',
+      features: [
+        '解答通用问题，梳理需求与工作思路',
+        '处理文件、表格、文档和演示材料',
+        '拆解复杂任务，汇总并提炼关键信息',
+        '形成清晰、可直接使用的内容成果'
+      ],
+      example: '例如："整理我上传的项目材料，提炼关键结论并生成一份汇报提纲"'
+    },
     tags: ['通用问答', '任务处理'],
     accent: '#2878ff',
     iconPaths: [
@@ -16,6 +26,16 @@ export const AGENT_MODES = Object.freeze([
     name: '专家分析智能体',
     shortName: '专家',
     description: '多专家协同研判，适合复杂问题和专业决策',
+    welcome: {
+      description: '面向复杂的大气环境问题组织多领域专家协同分析，综合数据、机理与业务经验形成专业判断。',
+      features: [
+        '协同开展空气质量、气象和污染组分分析',
+        '诊断污染过程成因、传输路径与关键影响因素',
+        '交叉核验多类证据，识别结论的不确定性',
+        '输出专业研判结论与针对性决策建议'
+      ],
+      example: '例如："综合分析广州近期臭氧污染过程的成因，并给出管控建议"'
+    },
     tags: ['协同研判', '专业决策'],
     accent: '#7656e8',
     iconPaths: [
@@ -44,6 +64,16 @@ export const AGENT_MODES = Object.freeze([
     name: '报告生成智能体',
     shortName: '报告',
     description: '根据资料与分析结果生成结构化专业报告',
+    welcome: {
+      description: '将业务资料、分析结论和图表组织为结构清晰、内容完整且便于继续编辑的专业报告。',
+      features: [
+        '按报告目标规划章节结构与内容重点',
+        '整合对话结论、上传资料和可视化图表',
+        '依据模板生成简报、专报和分析报告',
+        '优化表述与版式，形成可编辑交付成果'
+      ],
+      example: '例如："根据本轮分析结果生成一份污染过程溯源简报"'
+    },
     tags: ['专业报告', '结构化输出'],
     accent: '#e78324',
     iconPaths: [
@@ -58,6 +88,16 @@ export const AGENT_MODES = Object.freeze([
     name: '图表创作智能体',
     shortName: '图表',
     description: '生成数据图表、流程图及可视化内容',
+    welcome: {
+      description: '根据数据结构和表达目标创作清晰、准确的专业图表，让趋势、对比和业务关系更直观。',
+      features: [
+        '识别数据特征并推荐合适的图表类型',
+        '生成趋势、对比、分布、地图和专题图表',
+        '创作流程图、关系图等结构化视觉内容',
+        '调整配色、标题、标注和整体版式'
+      ],
+      example: '例如："绘制广州各站点 PM2.5 月均浓度对比图，并突出异常站点"'
+    },
     tags: ['数据图表', '流程图'],
     accent: '#d24d77',
     iconPaths: [
@@ -73,6 +113,16 @@ export const AGENT_MODES = Object.freeze([
     name: '运维智能体',
     shortName: '运维',
     description: '处理运维工单、排查问题并辅助形成处置方案',
+    welcome: {
+      description: '面向系统运维与工单处置场景，协助定位故障原因、评估影响并形成可执行的处理方案。',
+      features: [
+        '解析运维工单，提取故障现象与影响范围',
+        '结合日志和运行状态排查潜在根因',
+        '制定处置步骤、验证方法和回退方案',
+        '沉淀处理记录与可复用的运维经验'
+      ],
+      example: '例如："分析这份接口异常日志，定位可能原因并生成故障处置步骤"'
+    },
     tags: ['故障排查', '工单处置'],
     accent: '#52677f',
     iconPaths: [
