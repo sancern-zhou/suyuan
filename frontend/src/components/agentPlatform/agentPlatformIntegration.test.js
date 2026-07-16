@@ -14,6 +14,24 @@ test('sidebar exposes the agent platform as a primary action', async () => {
   assert.doesNotMatch(source, /linear-gradient\(135deg/)
 })
 
+test('sidebar moves system management entries into the bottom user settings menu', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+
+  assert.match(source, /useAuthStore/)
+  assert.match(source, /class="user-settings-footer"/)
+  assert.match(source, /class="user-settings-menu"/)
+  assert.match(source, /role="menu"/)
+  assert.match(source, /:aria-expanded="settingsMenuOpen"/)
+  assert.match(source, /userDisplayName/)
+  assert.match(source, /settingsModules/)
+  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'tools-management'[\s\S]*'skills-management'[\s\S]*'fetchers'[\s\S]*'social-platform'/)
+  assert.match(source, /id: 'system',[\s\S]*ids: \['scheduled-tasks'\]/)
+  assert.match(source, /document\.addEventListener\('pointerdown'/)
+  assert.match(source, /event\.key === 'Escape'/)
+  assert.match(source, /handleSettingsSelect/)
+  assert.match(source, /settingsMenuOpen\.value = false/)
+})
+
 test('main layout switches between agent platform and chat workspace', async () => {
   const source = await readSource('../reactAnalysis/MainLayout.vue')
 
