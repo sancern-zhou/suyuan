@@ -435,16 +435,15 @@ const handleAssistantSelect = async (moduleId) => {
 
 const handleSidebarAction = async (actionId) => {
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
+  const newTaskMode = actionId === 'restart-session'
+    ? (workspace.value === 'platform' ? 'assistant' : store.currentMode)
+    : null
+
   if (actionId === 'agent-platform') {
     hideManagementPanel()
     resetPanelState()
     agentPlatformError.value = ''
     workspace.value = 'platform'
-    return
-  }
-
-  if (actionId === 'restart-session' && workspace.value === 'platform') {
-    agentPlatformError.value = '请先选择一个智能体，再开始新对话'
     return
   }
 
@@ -493,9 +492,11 @@ const handleSidebarAction = async (actionId) => {
       break
     case 'restart-session':
       console.log('[ReactAnalysisView] Restarting session')
+      if (newTaskMode !== store.currentMode) store.switchMode(newTaskMode)
       store.restart()
       hideManagementPanel()
       resetPanelState()
+      agentPlatformError.value = ''
       break
   }
   console.log('[ReactAnalysisView] managementPanel value after action:', managementPanel.value)
