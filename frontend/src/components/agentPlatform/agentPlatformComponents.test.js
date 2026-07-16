@@ -14,6 +14,15 @@ test('agent platform renders accessible cards and emits mode selection', async (
   assert.match(source, /focus-visible/)
 })
 
+test('agent platform keeps the six-card desktop grid compact enough for one viewport', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /padding: clamp\(24px, 4vh, 40px\) 0 32px/)
+  assert.match(source, /min-height: 218px/)
+  assert.match(source, /gap: 14px/)
+  assert.match(source, /@media \(max-width: 820px\)/)
+})
+
 test('agent workspace header resolves display copy from the shared catalog', async () => {
   const source = await readComponent('AgentWorkspaceHeader.vue')
 

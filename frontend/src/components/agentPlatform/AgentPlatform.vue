@@ -128,18 +128,18 @@ const isRunning = mode => props.runningModes.includes(mode)
 }
 
 .platform-content {
-  width: min(1160px, calc(100% - 80px));
+  width: min(1160px, calc(100% - 56px));
   margin: 0 auto;
-  padding: clamp(48px, 8vh, 88px) 0 56px;
+  padding: clamp(24px, 4vh, 40px) 0 32px;
 }
 
 .platform-hero {
   max-width: 700px;
-  margin-bottom: 38px;
+  margin-bottom: 24px;
 
   h1 {
-    margin: 14px 0 12px;
-    font-size: clamp(30px, 3vw, 42px);
+    margin: 10px 0 8px;
+    font-size: clamp(28px, 2.5vw, 36px);
     line-height: 1.2;
     letter-spacing: -0.025em;
     font-weight: 650;
@@ -148,8 +148,8 @@ const isRunning = mode => props.runningModes.includes(mode)
 
   p {
     margin: 0;
-    font-size: 15px;
-    line-height: 1.8;
+    font-size: 14px;
+    line-height: 1.6;
     color: #65718a;
   }
 }
@@ -172,8 +172,8 @@ const isRunning = mode => props.runningModes.includes(mode)
 }
 
 .platform-error {
-  margin: -18px 0 24px;
-  padding: 12px 16px;
+  margin: -10px 0 16px;
+  padding: 10px 14px;
   border: 1px solid #fecaca;
   border-radius: 10px;
   background: #fff5f5;
@@ -184,15 +184,15 @@ const isRunning = mode => props.runningModes.includes(mode)
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 14px;
 }
 
 .agent-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 260px;
-  padding: 24px;
+  min-height: 218px;
+  padding: 16px 18px;
   overflow: hidden;
   border: 1px solid #e4e9f2;
   border-radius: 16px;
@@ -246,22 +246,22 @@ const isRunning = mode => props.runningModes.includes(mode)
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  min-height: 50px;
+  min-height: 40px;
 }
 
 .agent-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
-  border-radius: 13px;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
   background: color-mix(in srgb, var(--agent-accent) 10%, white);
   color: var(--agent-accent);
 
   svg {
-    width: 24px;
-    height: 24px;
+    width: 21px;
+    height: 21px;
     fill: none;
     stroke: currentColor;
     stroke-width: 1.7;
@@ -291,32 +291,32 @@ const isRunning = mode => props.runningModes.includes(mode)
 }
 
 .card-copy {
-  margin-top: 19px;
+  margin-top: 12px;
 
   h2 {
-    margin: 0 0 9px;
-    font-size: 19px;
+    margin: 0 0 6px;
+    font-size: 18px;
     font-weight: 650;
     color: #1d2942;
   }
 
   p {
-    min-height: 44px;
+    min-height: 36px;
     margin: 0;
     color: #6b768d;
     font-size: 13px;
-    line-height: 1.7;
+    line-height: 1.55;
   }
 }
 
 .agent-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 16px;
+  gap: 6px;
+  margin-top: 10px;
 
   span {
-    padding: 4px 8px;
+    padding: 3px 7px;
     border-radius: 6px;
     background: #f4f6fa;
     color: #778197;
@@ -329,7 +329,7 @@ const isRunning = mode => props.runningModes.includes(mode)
   align-items: center;
   justify-content: space-between;
   margin-top: auto;
-  padding-top: 18px;
+  padding-top: 10px;
   color: var(--agent-accent);
   font-size: 13px;
   font-weight: 600;
@@ -346,7 +346,7 @@ const isRunning = mode => props.runningModes.includes(mode)
   }
 }
 
-@media (max-width: 1040px) {
+@media (max-width: 820px) {
   .agent-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -355,11 +355,11 @@ const isRunning = mode => props.runningModes.includes(mode)
 @media (max-width: 720px) {
   .platform-content {
     width: min(100% - 32px, 560px);
-    padding-top: 38px;
+    padding-top: 24px;
   }
 
   .platform-hero {
-    margin-bottom: 28px;
+    margin-bottom: 20px;
   }
 
   .agent-grid {
@@ -367,7 +367,7 @@ const isRunning = mode => props.runningModes.includes(mode)
   }
 
   .agent-card {
-    min-height: 238px;
+    min-height: 208px;
   }
 }
 </style>
