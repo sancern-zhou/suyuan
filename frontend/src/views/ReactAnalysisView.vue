@@ -153,6 +153,7 @@ import { PANEL_SIZES } from '@/utils/constants'
 import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import {
+  getRunningAgentSessionId,
   isAgentModeRunning,
   resolveAgentSelection
 } from '@/components/agentPlatform/workspacePolicy.js'
@@ -359,8 +360,15 @@ const handleAgentSelect = async (mode) => {
   agentPlatformError.value = ''
 
   try {
-    store.switchMode(mode)
-    if (decision.action === 'reset-and-open') {
+    if (decision.action === 'open-running') {
+      const runningSessionId = getRunningAgentSessionId(mode, store)
+      if (runningSessionId) {
+        store._activateSession(runningSessionId, mode)
+      } else {
+        store.switchMode(mode)
+      }
+    } else {
+      store.switchMode(mode)
       store.reset()
     }
     hideManagementPanel()
@@ -391,6 +399,33 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   }
   return restored
 }
+
+let routeSessionRestoreQueue = Promise.resolve()
+const queueRouteSessionRestore = (sessionId) => {
+  routeSessionRestoreQueue = routeSessionRestoreQueue
+    .then(async () => {
+      if (!sessionId || sessionId !== route.params.id) return false
+      return handleSessionRestoreAndClosePanel(sessionId)
+    })
+    .catch((error) => {
+      console.error('[ReactAnalysisView] 路由会话恢复失败:', error)
+      return false
+    })
+  return routeSessionRestoreQueue
+}
+
+watch(
+  () => route.params.id,
+  (sessionId) => {
+    if (sessionId) {
+      queueRouteSessionRestore(sessionId)
+      return
+    }
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'platform'
+  }
+)
 
 const handleAssistantSelect = async (moduleId) => {
   if (moduleId !== 'general-agent' && store.currentState.isAnalyzing) {
@@ -650,7 +685,7 @@ onMounted(async () => {
   era5HistoricalDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
   if (route.params.id) {
-    await handleSessionRestoreAndClosePanel(route.params.id)
+    await queueRouteSessionRestore(route.params.id)
   }
 })
 

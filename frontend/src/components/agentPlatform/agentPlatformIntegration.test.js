@@ -28,6 +28,8 @@ test('analysis view defaults to the platform and opens chat through explicit flo
   assert.match(source, /workspace\.value = 'chat'/)
   assert.match(source, /workspace\.value = 'platform'/)
   assert.match(source, /route\.params\.id/)
+  assert.match(source, /watch\(\s*\(\) => route\.params\.id/)
+  assert.match(source, /queueRouteSessionRestore/)
 })
 
 test('conversation workspace no longer exposes inline agent mode switching', async () => {

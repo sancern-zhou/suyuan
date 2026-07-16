@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isAgentModeRunning, resolveAgentSelection } from './workspacePolicy.js'
+import {
+  getRunningAgentSessionId,
+  isAgentModeRunning,
+  resolveAgentSelection
+} from './workspacePolicy.js'
 
 const createState = () => ({
   modeStates: {
@@ -38,6 +42,21 @@ test('running session selection preserves background task state', () => {
 
   assert.equal(isAgentModeRunning('expert', state), true)
   assert.equal(resolveAgentSelection('expert', state).action, 'open-running')
+})
+
+test('running session lookup ignores an idle active session in the same mode', () => {
+  const state = createState()
+  state.sessionStates.expert_idle = {
+    mode: 'expert',
+    isAnalyzing: false
+  }
+  state.sessionStates.expert_running = {
+    mode: 'expert',
+    isAnalyzing: true
+  }
+  state.activeSessionByMode = { expert: 'expert_idle' }
+
+  assert.equal(getRunningAgentSessionId('expert', state), 'expert_running')
 })
 
 test('unsupported mode selection is rejected', () => {
