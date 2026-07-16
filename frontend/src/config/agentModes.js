@@ -1,7 +1,7 @@
 export const AGENT_MODES = Object.freeze([
   {
     id: 'assistant',
-    name: '智能助手',
+    name: '通用助手智能体',
     shortName: '助手',
     description: '通用问答、任务处理与综合分析',
     tags: ['通用问答', '任务处理'],
@@ -13,7 +13,7 @@ export const AGENT_MODES = Object.freeze([
   },
   {
     id: 'expert',
-    name: '专家分析',
+    name: '专家分析智能体',
     shortName: '专家',
     description: '多专家协同研判，适合复杂问题和专业决策',
     tags: ['协同研判', '专业决策'],
@@ -26,7 +26,7 @@ export const AGENT_MODES = Object.freeze([
   },
   {
     id: 'query',
-    name: '智能问数',
+    name: 'AI问数智能体',
     shortName: '问数',
     description: '自然语言查询数据，联动地图与数据大屏',
     tags: ['数据查询', '地图联动'],
@@ -41,7 +41,7 @@ export const AGENT_MODES = Object.freeze([
   },
   {
     id: 'report',
-    name: '报告生成',
+    name: '报告生成智能体',
     shortName: '报告',
     description: '根据资料与分析结果生成结构化专业报告',
     tags: ['专业报告', '结构化输出'],
@@ -55,7 +55,7 @@ export const AGENT_MODES = Object.freeze([
   },
   {
     id: 'chart',
-    name: '图表创作',
+    name: '图表创作智能体',
     shortName: '图表',
     description: '生成数据图表、流程图及可视化内容',
     tags: ['数据图表', '流程图'],
@@ -86,5 +86,26 @@ export const AGENT_MODES = Object.freeze([
 ])
 
 export const AGENT_MODE_IDS = Object.freeze(AGENT_MODES.map(agent => agent.id))
+
+export const AGENT_SCENES = Object.freeze([
+  {
+    id: 'office',
+    name: '办公',
+    description: '日常办公与内容创作',
+    modeIds: ['assistant', 'chart']
+  },
+  {
+    id: 'monitoring',
+    name: '监测分析',
+    description: '环境数据研判与成果输出',
+    modeIds: ['query', 'expert', 'report']
+  },
+  {
+    id: 'operations',
+    name: '运维管理',
+    description: '运维处置与任务管理',
+    modeIds: ['ops']
+  }
+])
 
 export const getAgentMode = mode => AGENT_MODES.find(agent => agent.id === mode) || null

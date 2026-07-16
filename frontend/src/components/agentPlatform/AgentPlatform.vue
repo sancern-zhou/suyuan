@@ -15,62 +15,80 @@
 
       <div v-if="error" class="platform-error" role="alert">{{ error }}</div>
 
-      <section class="agent-grid" aria-label="可用智能体">
-        <button
-          v-for="agent in agents"
-          :key="agent.id"
-          class="agent-card"
-          type="button"
-          :class="{
-            running: isRunning(agent.id),
-            selecting: selectingMode === agent.id
-          }"
-          :style="{ '--agent-accent': agent.accent }"
-          :disabled="Boolean(selectingMode)"
-          @click="emit('select', agent.id)"
+      <section class="scene-stack" aria-label="智能体应用场景">
+        <section
+          v-for="scene in sceneGroups"
+          :key="scene.id"
+          class="scene-section"
+          :aria-labelledby="`scene-${scene.id}`"
         >
-          <div class="card-topline">
-            <span class="agent-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path v-for="path in agent.iconPaths" :key="path" :d="path" />
-              </svg>
-            </span>
-            <span v-if="isRunning(agent.id)" class="running-badge">
-              <span class="running-dot" aria-hidden="true"></span>
-              运行中
-            </span>
-          </div>
+          <header class="scene-header">
+            <h2 :id="`scene-${scene.id}`">{{ scene.name }}</h2>
+            <p>{{ scene.description }}</p>
+          </header>
 
-          <div class="card-copy">
-            <h2>{{ agent.name }}</h2>
-            <p>{{ agent.description }}</p>
-          </div>
+          <div class="scene-agent-grid">
+            <button
+              v-for="agent in scene.agents"
+              :key="agent.id"
+              class="agent-card"
+              type="button"
+              :class="{
+                running: isRunning(agent.id),
+                selecting: selectingMode === agent.id
+              }"
+              :style="{ '--agent-accent': agent.accent }"
+              :disabled="Boolean(selectingMode)"
+              @click="emit('select', agent.id)"
+            >
+              <div class="card-topline">
+                <span class="agent-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path v-for="path in agent.iconPaths" :key="path" :d="path" />
+                  </svg>
+                </span>
+                <span v-if="isRunning(agent.id)" class="running-badge">
+                  <span class="running-dot" aria-hidden="true"></span>
+                  运行中
+                </span>
+              </div>
 
-          <div class="agent-tags" aria-label="能力标签">
-            <span v-for="tag in agent.tags" :key="tag">{{ tag }}</span>
-          </div>
+              <div class="card-copy">
+                <h3>{{ agent.name }}</h3>
+                <p>{{ agent.description }}</p>
+              </div>
 
-          <div class="card-action">
-            <span>{{ selectingMode === agent.id ? '正在进入…' : (isRunning(agent.id) ? '查看任务' : '开始使用') }}</span>
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M4 10h12" />
-              <path d="m12 6 4 4-4 4" />
-            </svg>
+              <div class="agent-tags" aria-label="能力标签">
+                <span v-for="tag in agent.tags" :key="tag">{{ tag }}</span>
+              </div>
+
+              <div class="card-action">
+                <span>{{ selectingMode === agent.id ? '正在进入…' : (isRunning(agent.id) ? '查看任务' : '开始使用') }}</span>
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M4 10h12" />
+                  <path d="m12 6 4 4-4 4" />
+                </svg>
+              </div>
+            </button>
           </div>
-        </button>
+        </section>
       </section>
     </div>
   </main>
 </template>
 
 <script setup>
-import { toRefs } from 'vue'
-import { AGENT_MODES } from '@/config/agentModes.js'
+import { computed } from 'vue'
+import { AGENT_MODES, AGENT_SCENES } from '@/config/agentModes.js'
 
 const props = defineProps({
   agents: {
     type: Array,
     default: () => AGENT_MODES
+  },
+  scenes: {
+    type: Array,
+    default: () => AGENT_SCENES
   },
   runningModes: {
     type: Array,
@@ -87,7 +105,12 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select'])
-const { agents } = toRefs(props)
+const sceneGroups = computed(() => props.scenes.map(scene => ({
+  ...scene,
+  agents: scene.modeIds
+    .map(mode => props.agents.find(agent => agent.id === mode))
+    .filter(Boolean)
+})))
 const isRunning = mode => props.runningModes.includes(mode)
 </script>
 
@@ -181,7 +204,41 @@ const isRunning = mode => props.runningModes.includes(mode)
   font-size: 13px;
 }
 
-.agent-grid {
+.scene-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scene-section {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+}
+
+.scene-header {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 8px 0 2px;
+
+  h2 {
+    margin: 0 0 7px;
+    color: #26344f;
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  p {
+    margin: 0;
+    color: #8993a6;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+}
+
+.scene-agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
@@ -191,8 +248,8 @@ const isRunning = mode => props.runningModes.includes(mode)
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 218px;
-  padding: 16px 18px;
+  min-height: 176px;
+  padding: 14px 16px;
   overflow: hidden;
   border: 1px solid #e4e9f2;
   border-radius: 16px;
@@ -203,24 +260,10 @@ const isRunning = mode => props.runningModes.includes(mode)
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 
-  &::before {
-    content: '';
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 3px;
-    background: var(--agent-accent);
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
   &:hover:not(:disabled) {
     transform: translateY(-3px);
     border-color: color-mix(in srgb, var(--agent-accent) 35%, #e4e9f2);
     box-shadow: 0 18px 42px rgba(31, 48, 78, 0.1);
-
-    &::before {
-      opacity: 1;
-    }
 
     .card-action svg {
       transform: translateX(3px);
@@ -291,17 +334,17 @@ const isRunning = mode => props.runningModes.includes(mode)
 }
 
 .card-copy {
-  margin-top: 12px;
+  margin-top: 8px;
 
-  h2 {
+  h3 {
     margin: 0 0 6px;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 650;
     color: #1d2942;
   }
 
   p {
-    min-height: 36px;
+    min-height: 32px;
     margin: 0;
     color: #6b768d;
     font-size: 13px;
@@ -313,7 +356,7 @@ const isRunning = mode => props.runningModes.includes(mode)
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 8px;
 
   span {
     padding: 3px 7px;
@@ -329,7 +372,7 @@ const isRunning = mode => props.runningModes.includes(mode)
   align-items: center;
   justify-content: space-between;
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 6px;
   color: var(--agent-accent);
   font-size: 13px;
   font-weight: 600;
@@ -346,8 +389,26 @@ const isRunning = mode => props.runningModes.includes(mode)
   }
 }
 
+@media (max-width: 1100px) {
+  .scene-section {
+    grid-template-columns: 1fr;
+  }
+
+  .scene-header {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 0;
+
+    h2 {
+      margin: 0;
+    }
+  }
+}
+
 @media (max-width: 820px) {
-  .agent-grid {
+  .scene-agent-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -362,7 +423,7 @@ const isRunning = mode => props.runningModes.includes(mode)
     margin-bottom: 20px;
   }
 
-  .agent-grid {
+  .scene-agent-grid {
     grid-template-columns: 1fr;
   }
 
