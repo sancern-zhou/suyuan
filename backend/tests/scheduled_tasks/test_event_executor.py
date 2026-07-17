@@ -1,10 +1,11 @@
 import json
+import asyncio
 
 import pytest
 
 from app.scheduled_tasks.event_output import parse_event_task_output
 from app.scheduled_tasks.executor import ScheduledTaskExecutor
-from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskStep
+from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskExecution, TaskStep
 from app.scheduled_tasks.storage import ExecutionStorage, TaskStorage
 
 
@@ -93,6 +94,161 @@ class CurrentRuntimeAgent:
         }
 
 
+class RecordingAgent:
+    def __init__(self):
+        self.analyze_kwargs = None
+
+    async def analyze(self, prompt, **kwargs):
+        self.analyze_kwargs = kwargs
+        yield {"type": "complete", "data": {"answer": "完成"}}
+
+
+class RecordingConversationPersistence:
+    def __init__(self):
+        self.calls = []
+
+    async def persist_agent_session(self, **kwargs):
+        self.calls.append(kwargs)
+        return True
+
+    async def publish_conversation(self, **kwargs):
+        self.calls.append({"published": kwargs})
+        return True
+
+    async def ensure_terminal_session(self, **kwargs):
+        self.calls.append({"ensured": kwargs})
+        return True
+
+
+class SlowAgent:
+    async def analyze(self, prompt, **kwargs):
+        await asyncio.sleep(2)
+        yield {"type": "complete", "data": {"answer": "too late"}}
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_web_storage_and_persists_completed_runtime(tmp_path):
+    agent = RecordingAgent()
+    persistence = RecordingConversationPersistence()
+    task = ScheduledTask(
+        task_id="task-1",
+        name="任务",
+        description="任务描述",
+        execution_mode="social",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        steps=[TaskStep(step_id="step-1", description="执行", agent_prompt="执行")],
+    )
+    execution = TaskExecution(
+        execution_id="exec-1",
+        task_id=task.task_id,
+        task_name=task.name,
+        session_id="scheduled-session",
+        status="running",
+        total_steps=1,
+    )
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=lambda: agent,
+        conversation_persistence=persistence,
+    )
+
+    await executor._run_agent_step(
+        "执行",
+        execution.session_id,
+        manual_mode="social",
+        task=task,
+        execution=execution,
+    )
+
+    assert agent.analyze_kwargs["manual_mode"] == "social"
+    assert agent.analyze_kwargs["session_storage_mode"] == "assistant"
+    assert len(persistence.calls) == 1
+    assert persistence.calls[0]["agent"] is agent
+    assert persistence.calls[0]["task"] is task
+    assert persistence.calls[0]["execution"] is execution
+    assert [message["type"] for message in persistence.calls[0]["display_history"]] == [
+        "user", "final"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_timeout_still_persists_partial_runtime_before_returning(tmp_path):
+    persistence = RecordingConversationPersistence()
+    task = ScheduledTask(
+        task_id="task-timeout",
+        name="超时任务",
+        description="超时任务",
+        execution_mode="assistant",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        steps=[TaskStep(
+            step_id="slow",
+            description="慢步骤",
+            agent_prompt="执行",
+            timeout_seconds=1,
+        )],
+    )
+    execution = TaskExecution(
+        execution_id="exec-timeout",
+        task_id=task.task_id,
+        task_name=task.name,
+        session_id="scheduled-timeout",
+        status="running",
+        total_steps=1,
+    )
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=SlowAgent,
+        conversation_persistence=persistence,
+    )
+
+    result = await executor._execute_step(
+        task.steps[0],
+        execution,
+        execution.session_id,
+        task.execution_mode,
+        task=task,
+        prompt="执行",
+    )
+
+    assert result.status.value == "timeout"
+    assert len(persistence.calls) == 1
+    assert persistence.calls[0]["execution"] is execution
+    assert persistence.calls[0]["display_history"][-1]["type"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_execution_is_published_only_after_all_steps_finish(tmp_path):
+    persistence = RecordingConversationPersistence()
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="task-publish",
+        name="发布任务",
+        description="发布任务",
+        execution_mode="social",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+    )
+    task_storage.create(task)
+    executor = ScheduledTaskExecutor(
+        task_storage=task_storage,
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=RecordingAgent,
+        conversation_persistence=persistence,
+    )
+
+    execution = await executor.execute_task(task)
+
+    assert execution.status.value == "success"
+    assert len(persistence.calls) == 2
+    assert "display_history" in persistence.calls[0]
+    assert persistence.calls[1]["published"]["execution"] is execution
+
+
 @pytest.mark.asyncio
 async def test_executor_collects_current_runtime_complete_response(tmp_path):
     executor = ScheduledTaskExecutor(
@@ -133,6 +289,7 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
         task_storage=task_storage,
         execution_storage=execution_storage,
         agent_factory=lambda: agent,
+        conversation_persistence=RecordingConversationPersistence(),
     )
     event = TaskEvent(
         event_id="alert-1",

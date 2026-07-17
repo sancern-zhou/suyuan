@@ -4,9 +4,11 @@
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 from app.scheduled_tasks import (
     get_scheduled_task_service,
     ScheduledTask,
@@ -126,7 +128,10 @@ async def list_event_types():
     return get_event_definitions()
 
 @router.post("", response_model=TaskResponse)
-async def create_task(request: CreateTaskRequest):
+async def create_task(
+    request: CreateTaskRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
     """创建定时任务"""
     try:
         service = get_scheduled_task_service()
@@ -153,7 +158,10 @@ async def create_task(request: CreateTaskRequest):
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
             steps=request.steps,
-            tags=request.tags
+            tags=request.tags,
+            owner_user_id=user.id,
+            owner_username=user.username,
+            owner_display_name=user.display_name,
         )
         await _validate_event_task_config(task)
 

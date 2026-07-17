@@ -228,6 +228,28 @@ class ReActAgent:
                 "timestamp": datetime.now().isoformat()
             }
 
+    def export_runtime_session(
+        self,
+        session_id: str,
+        *,
+        query: str,
+        mode: str,
+    ):
+        """Export a direct-call runtime as a complete persistable Session."""
+        entry = self._session_store.get(session_id)
+        if entry is None:
+            return None
+
+        from app.agent.session.models import Session
+
+        session = Session(
+            session_id=session_id,
+            query=query,
+            metadata={"mode": mode},
+        )
+        self._apply_session_store_entry_for_persistence(session, entry)
+        return session
+
     @staticmethod
     def _set_mode_memory_tool_context(
         manual_mode: str,
@@ -370,7 +392,8 @@ class ReActAgent:
         board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
         map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
-        cancel_event: Optional[Any] = None
+        cancel_event: Optional[Any] = None,
+        session_storage_mode: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -518,6 +541,7 @@ class ReActAgent:
             session_id,
             reset_session,
             manual_mode=manual_mode,
+            storage_mode=session_storage_mode or manual_mode,
         )
         session_document_context = self._build_session_document_context(
             self._session_store.get(actual_session_id, {}).get("office_documents", []),
@@ -883,7 +907,7 @@ class ReActAgent:
                         # ✅ 从数据库加载 session
                         session = await load_session_for_mode(
                             actual_session_id,
-                            mode=manual_mode,
+                            mode=session_storage_mode or manual_mode,
                             include_messages=False,
                         )
 
@@ -897,7 +921,7 @@ class ReActAgent:
                             # runtime tools.
                             await save_session_metadata_for_mode(
                                 session,
-                                mode=manual_mode,
+                                mode=session_storage_mode or manual_mode,
                             )
                             logger.info(
                                 "session_saved_after_analysis",
@@ -1404,6 +1428,7 @@ class ReActAgent:
         session_id: Optional[str],
         reset_session: bool = False,
         manual_mode: Optional[str] = None,
+        storage_mode: Optional[str] = None,
     ) -> Tuple[str, HybridMemoryManager, bool]:
         """
         获取或创建会话记忆管理器
@@ -1438,12 +1463,12 @@ class ReActAgent:
                     logger.info(
                         "react_session_restore_load_start",
                         session_id=session_id,
-                        mode=manual_mode,
+                        mode=storage_mode or manual_mode,
                         include_messages="llm_light",
                     )
                     saved_session = await load_session_for_llm_mode(
                         session_id,
-                        mode=manual_mode,
+                        mode=storage_mode or manual_mode,
                     )
 
                     if saved_session:

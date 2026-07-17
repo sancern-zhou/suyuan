@@ -75,6 +75,17 @@ class FakeDelivery:
         ]
 
 
+class FakeConversationPersistence:
+    async def persist_agent_session(self, **kwargs):
+        return True
+
+    async def ensure_terminal_session(self, **kwargs):
+        return True
+
+    async def publish_conversation(self, **kwargs):
+        return True
+
+
 @pytest.fixture
 def agent_factory(tmp_path):
     report = tmp_path / "report.docx"
@@ -95,6 +106,7 @@ def service(tmp_path, agent_factory, fake_delivery):
         execution_storage=ExecutionStorage(tmp_path),
         claim_storage=EventClaimStorage(tmp_path),
         event_delivery=fake_delivery,
+        conversation_persistence=FakeConversationPersistence(),
     )
 
 
