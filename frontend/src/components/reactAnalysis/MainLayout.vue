@@ -97,6 +97,7 @@
             @execute-task="$emit('execute-scheduled-task', $event)"
             @edit-task="$emit('edit-scheduled-task', $event)"
             @delete-task="$emit('delete-scheduled-task', $event)"
+            @restore-execution-session="$emit('restore-execution-session', $event)"
           />
 
           <SessionHistoryPanel
@@ -208,6 +209,7 @@
             @execute-task="$emit('execute-scheduled-task', $event)"
             @edit-task="$emit('edit-scheduled-task', $event)"
             @delete-task="$emit('delete-scheduled-task', $event)"
+            @restore-execution-session="$emit('restore-execution-session', $event)"
           />
 
           <SessionHistoryPanel
@@ -553,6 +555,7 @@ const emit = defineEmits([
   'execute-scheduled-task',
   'edit-scheduled-task',
   'delete-scheduled-task',
+  'restore-execution-session',
   'refresh-session-history',
   'cleanup-sessions',
   'restore-session',

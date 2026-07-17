@@ -1,13 +1,19 @@
 <template>
   <div class="management-panel scheduled-tasks-panel">
     <div class="panel-header">
-      <h3>任务管理</h3>
-      <button class="panel-btn small primary" @click="openCreateDialog">
+      <h3>{{ selectedHistoryTask ? `${selectedHistoryTask.name} · 执行记录` : '任务管理' }}</h3>
+      <button v-if="!selectedHistoryTask" class="panel-btn small primary" @click="openCreateDialog">
         新建任务
       </button>
+      <div v-else class="panel-actions">
+        <button class="panel-btn small" @click="closeExecutionHistory">返回任务列表</button>
+        <button class="panel-btn small primary" :disabled="executionHistoryLoading" @click="refreshExecutionHistory">
+          {{ executionHistoryLoading ? '刷新中...' : '刷新' }}
+        </button>
+      </div>
     </div>
 
-    <div class="scheduled-tasks-content">
+    <div v-if="!selectedHistoryTask" class="scheduled-tasks-content">
       <!-- 统计信息 -->
       <div class="scheduled-stats-card">
         <div class="scheduled-stat-item">
@@ -89,6 +95,9 @@
             >
               {{ task.executing ? '执行中...' : '▶️ 立即执行' }}
             </button>
+            <button class="scheduled-btn scheduled-btn-secondary" @click="openExecutionHistory(task)">
+              执行记录
+            </button>
             <button class="scheduled-btn scheduled-btn-secondary" @click="openEditDialog(task)">
               编辑
             </button>
@@ -97,6 +106,53 @@
             </button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div v-else class="execution-history-view">
+      <div v-if="executionHistoryLoading" class="execution-history-state">
+        <span class="execution-history-spinner">⏳</span>
+        <p>加载执行记录...</p>
+      </div>
+
+      <div v-else-if="executionHistoryError" class="execution-history-state error">
+        <p>{{ executionHistoryError }}</p>
+        <button class="panel-btn small" @click="refreshExecutionHistory">重试</button>
+      </div>
+
+      <div v-else-if="executionHistory.length === 0" class="execution-history-state">
+        <span class="execution-history-empty-icon">📭</span>
+        <p>暂无执行记录</p>
+      </div>
+
+      <div v-else class="execution-history-list">
+        <button
+          v-for="execution in executionHistory"
+          :key="execution.execution_id"
+          type="button"
+          class="execution-history-item"
+          :class="{ disabled: !canRestoreExecution(execution) }"
+          :disabled="!canRestoreExecution(execution)"
+          :title="canRestoreExecution(execution) ? '查看执行对话' : '该记录未生成会话'"
+          @click="restoreExecutionSession(execution)"
+        >
+          <span class="execution-history-main">
+            <span :class="['execution-status', `status-${executionStatusMeta(execution.status).key}`]">
+              {{ executionStatusMeta(execution.status).label }}
+            </span>
+            <span class="execution-time">{{ formatExecutionTime(execution.started_at) }}</span>
+            <span class="execution-duration">{{ formatExecutionDuration(execution.duration_seconds) }}</span>
+          </span>
+          <span class="execution-history-meta">
+            <span>{{ execution.completed_steps || 0 }}/{{ execution.total_steps || 0 }} 个步骤</span>
+            <span>{{ execution.trigger_type === 'event' ? '事件触发' : '定时触发' }}</span>
+            <span v-if="execution.session_id">会话 {{ shortSessionId(execution.session_id) }}</span>
+            <span v-else>未生成会话</span>
+          </span>
+          <span v-if="execution.error_message" class="execution-error-summary">
+            {{ execution.error_message }}
+          </span>
+        </button>
       </div>
     </div>
 
@@ -279,6 +335,12 @@ import {
   buildTaskPayload,
   selectableWeixinUsers
 } from './scheduledTaskForm.js'
+import {
+  canRestoreExecution,
+  executionStatusMeta,
+  loadScheduledTaskExecutions,
+  sortExecutionsNewestFirst
+} from './scheduledTaskActions.js'
 
 // Props
 defineProps({
@@ -300,13 +362,25 @@ defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'refresh-tasks', 'toggle-task', 'execute-task', 'edit-task', 'delete-task'])
+const emit = defineEmits([
+  'close',
+  'refresh-tasks',
+  'toggle-task',
+  'execute-task',
+  'edit-task',
+  'delete-task',
+  'restore-execution-session'
+])
 
 const scheduledTasksStore = useScheduledTasksStore()
 const showCreateDialog = ref(false)
 const creatingTask = ref(false)
 const editingTaskId = ref(null)
 const formError = ref('')
+const selectedHistoryTask = ref(null)
+const executionHistory = ref([])
+const executionHistoryLoading = ref(false)
+const executionHistoryError = ref('')
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const weixinUsers = computed(() => selectableWeixinUsers(scheduledTasksStore.socialUsers))
@@ -350,6 +424,67 @@ const createForm = ref(defaultForm())
 const setTriggerType = (triggerType) => {
   applyTriggerDefaults(createForm.value, triggerType, eventTypes.value)
 }
+
+const refreshExecutionHistory = async () => {
+  if (!selectedHistoryTask.value) return
+  executionHistoryLoading.value = true
+  executionHistoryError.value = ''
+  try {
+    const records = await loadScheduledTaskExecutions(
+      scheduledTasksStore,
+      selectedHistoryTask.value
+    )
+    executionHistory.value = sortExecutionsNewestFirst(records)
+  } catch (error) {
+    console.error('Failed to fetch task executions:', error)
+    executionHistoryError.value = '执行记录加载失败，请重试'
+  } finally {
+    executionHistoryLoading.value = false
+  }
+}
+
+const openExecutionHistory = async (task) => {
+  selectedHistoryTask.value = task
+  executionHistory.value = []
+  await refreshExecutionHistory()
+}
+
+const closeExecutionHistory = () => {
+  selectedHistoryTask.value = null
+  executionHistory.value = []
+  executionHistoryError.value = ''
+}
+
+const restoreExecutionSession = (execution) => {
+  if (!canRestoreExecution(execution)) return
+  emit('restore-execution-session', execution.session_id)
+}
+
+const formatExecutionTime = (timestamp) => {
+  if (!timestamp) return '时间未知'
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '时间无效'
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+const formatExecutionDuration = (seconds) => {
+  if (seconds == null) return '耗时计算中'
+  const value = Number(seconds)
+  if (!Number.isFinite(value) || value < 0) return '耗时未知'
+  if (value < 60) return `${value.toFixed(value < 10 ? 1 : 0)} 秒`
+  const minutes = Math.floor(value / 60)
+  const remainingSeconds = Math.round(value % 60)
+  return `${minutes} 分 ${remainingSeconds} 秒`
+}
+
+const shortSessionId = (sessionId) => sessionId.slice(0, 8)
 
 // Methods
 const getScheduledTaskLabel = (type) => {
@@ -556,6 +691,11 @@ const saveTask = async () => {
   font-size: 18px;
   font-weight: 600;
   color: #333;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .panel-btn {
@@ -864,6 +1004,132 @@ const saveTask = async () => {
 
 .scheduled-btn-danger:hover:not(:disabled) {
   background: #f8d7da;
+}
+
+.execution-history-view {
+  min-height: 240px;
+}
+
+.execution-history-state {
+  display: flex;
+  min-height: 240px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #64748b;
+  text-align: center;
+}
+
+.execution-history-state.error {
+  color: #b42318;
+}
+
+.execution-history-state p {
+  margin: 0;
+}
+
+.execution-history-spinner,
+.execution-history-empty-icon {
+  font-size: 30px;
+}
+
+.execution-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-history-item {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.execution-history-item:hover:not(:disabled) {
+  border-color: #1976d2;
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.14);
+}
+
+.execution-history-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.execution-history-main,
+.execution-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-history-main {
+  margin-bottom: 8px;
+}
+
+.execution-history-meta {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.execution-status {
+  display: inline-flex;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-running,
+.status-pending {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.status-failed,
+.status-timeout {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-cancelled,
+.status-unknown {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.execution-time {
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.execution-duration {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.execution-error-summary {
+  display: block;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-left: 3px solid #dc2626;
+  background: #fff5f5;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .modal-backdrop {

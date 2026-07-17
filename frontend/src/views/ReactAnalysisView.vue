@@ -98,6 +98,7 @@
       @execute-scheduled-task="executeScheduledTask"
       @edit-scheduled-task="editScheduledTask"
       @delete-scheduled-task="deleteScheduledTask"
+      @restore-execution-session="handleSessionRestoreAndClosePanel"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
