@@ -43,6 +43,7 @@ class ScheduledTaskService:
         execution_storage: ExecutionStorage | None = None,
         claim_storage: EventClaimStorage | None = None,
         event_delivery: EventTaskDelivery | None = None,
+        conversation_persistence=None,
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
@@ -54,7 +55,8 @@ class ScheduledTaskService:
         self.executor = ScheduledTaskExecutor(
             task_storage=self.task_storage,
             execution_storage=self.execution_storage,
-            agent_factory=agent_factory
+            agent_factory=agent_factory,
+            conversation_persistence=conversation_persistence,
         )
 
         # 初始化调度器

@@ -16,6 +16,7 @@ from ..models.execution import (
     ExecutionStatus
 )
 from ..storage import TaskStorage, ExecutionStorage
+from ..conversation_persistence import ScheduledTaskConversationPersistence
 
 logger = structlog.get_logger()
 
@@ -27,11 +28,16 @@ class ScheduledTaskExecutor:
         self,
         task_storage: TaskStorage,
         execution_storage: ExecutionStorage,
-        agent_factory: Optional[callable] = None
+        agent_factory: Optional[callable] = None,
+        conversation_persistence=None,
     ):
         self.task_storage = task_storage
         self.execution_storage = execution_storage
         self.agent_factory = agent_factory  # 用于创建ReAct Agent实例
+        self.conversation_persistence = (
+            conversation_persistence or ScheduledTaskConversationPersistence()
+        )
+        self._persisted_execution_ids: set[str] = set()
 
     async def execute_task(
         self,
@@ -78,6 +84,7 @@ class ScheduledTaskExecutor:
                     execution,
                     task_session_id,
                     task.execution_mode,
+                    task=task,
                     prompt=(
                         self._build_event_prompt(step.agent_prompt, event)
                         if event
@@ -121,6 +128,25 @@ class ScheduledTaskExecutor:
                 execution.completed_at - execution.started_at
             ).total_seconds()
 
+            try:
+                if execution.execution_id not in self._persisted_execution_ids:
+                    await self.conversation_persistence.ensure_terminal_session(
+                        task=task,
+                        execution=execution,
+                    )
+                if execution.execution_id in self._persisted_execution_ids or execution.session_id:
+                    await self.conversation_persistence.publish_conversation(
+                        task=task,
+                        execution=execution,
+                    )
+            except Exception as publish_error:
+                execution.status = ExecutionStatus.FAILED
+                execution.error_message = (
+                    f"Scheduled conversation publication failed: {publish_error}"
+                )
+            finally:
+                self._persisted_execution_ids.discard(execution.execution_id)
+
             # 保存最终状态
             self.execution_storage.update(execution)
 
@@ -146,6 +172,7 @@ class ScheduledTaskExecutor:
         execution: TaskExecution,
         session_id: str,  # ✅ 接收 session_id 参数
         manual_mode: str,
+        task: ScheduledTask,
         prompt: str,
     ) -> StepExecution:
         """执行单个步骤"""
@@ -164,7 +191,13 @@ class ScheduledTaskExecutor:
         try:
             # 执行步骤（带超时，并传入 session_id）
             result = await asyncio.wait_for(
-                self._run_agent_step(prompt, session_id, manual_mode=manual_mode),
+                self._run_agent_step(
+                    prompt,
+                    session_id,
+                    manual_mode=manual_mode,
+                    task=task,
+                    execution=execution,
+                ),
                 timeout=step.timeout_seconds
             )
 
@@ -199,7 +232,14 @@ class ScheduledTaskExecutor:
 
         return step_exec
 
-    async def _run_agent_step(self, prompt: str, session_id: str, manual_mode: str) -> dict:
+    async def _run_agent_step(
+        self,
+        prompt: str,
+        session_id: str,
+        manual_mode: str,
+        task: ScheduledTask | None = None,
+        execution: TaskExecution | None = None,
+    ) -> dict:
         """
         运行Agent步骤
 
@@ -228,69 +268,108 @@ class ScheduledTaskExecutor:
         thoughts = []
         tool_calls = []
         iterations = 0
+        display_history = [{
+            "type": "user",
+            "content": prompt,
+            "timestamp": datetime.now().isoformat(),
+        }]
 
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
-        async for event in agent.analyze(
-            prompt,
-            session_id=session_id,
-            manual_mode=manual_mode
-        ):
-            event_type = event.get("type")
+        try:
+            async for event in agent.analyze(
+                prompt,
+                session_id=session_id,
+                manual_mode=manual_mode,
+                session_storage_mode="assistant",
+            ):
+                event_type = event.get("type")
+                event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
 
-            # 记录思考过程
-            if event_type == "thought":
-                thought = event.get("content", "")
-                if thought:
-                    thoughts.append(thought)
+                if event_type in {"thought", "tool_use", "tool_result"}:
+                    frontend_message = {
+                        "type": event_type,
+                        "data": event_data,
+                        "timestamp": event_data.get("timestamp") or datetime.now().isoformat(),
+                    }
+                    if event_type == "thought":
+                        frontend_message["content"] = event_data.get("thought") or event.get("content", "")
+                    elif event_type == "tool_use":
+                        tool_name = event_data.get("tool_name") or event.get("tool_name", "")
+                        frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
+                    else:
+                        result = event_data.get("result")
+                        if isinstance(result, dict):
+                            frontend_message["content"] = result.get("summary_text") or result.get("summary") or "获得结果"
+                        else:
+                            frontend_message["content"] = str(result or event.get("summary") or "获得结果")
+                    display_history.append(frontend_message)
 
-            # 记录工具调用
-            elif event_type == "tool_call":
-                tool_name = event.get("tool_name", "")
-                tool_args = event.get("args", {})
-                tool_calls.append({
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "timestamp": datetime.now().isoformat()
+                # 记录思考过程
+                if event_type == "thought":
+                    thought = event_data.get("thought") or event.get("content", "")
+                    if thought:
+                        thoughts.append(thought)
+
+                # 记录工具调用
+                elif event_type in {"tool_call", "tool_use"}:
+                    tool_name = event_data.get("tool_name") or event.get("tool_name", "")
+                    tool_args = event_data.get("input") or event.get("args", {})
+                    tool_calls.append({
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # 记录工具结果
+                elif event_type == "tool_result":
+                    result = event_data.get("result")
+                    if tool_calls:
+                        tool_calls[-1]["success"] = not event_data.get("is_error", False)
+                        tool_calls[-1]["result"] = result or event.get("summary", "")
+
+                elif event_type == "iteration":
+                    iterations = event.get("iteration", 0)
+                elif event_type == "data_saved":
+                    data_id = event.get("data_id")
+                    if data_id:
+                        data_ids.append(data_id)
+                elif event_type == "visual_generated":
+                    visual = event.get("visual")
+                    if visual:
+                        visuals.append(visual)
+                elif event_type == "final_response":
+                    summary_parts[:] = [event.get("content", "")]
+                elif event_type == "agent_finish":
+                    summary_parts[:] = [event.get("answer") or event_data.get("answer", "")]
+                elif event_type == "complete":
+                    data = event.get("data") or {}
+                    summary_parts[:] = [data.get("answer") or data.get("response") or ""]
+        except BaseException as analysis_error:
+            display_history.append({
+                "type": "error",
+                "content": str(analysis_error) or type(analysis_error).__name__,
+                "timestamp": datetime.now().isoformat(),
+            })
+            raise
+        finally:
+            final_answer = "\n".join(summary_parts)
+            if final_answer:
+                display_history.append({
+                    "type": "final",
+                    "role": "assistant",
+                    "content": final_answer,
+                    "data": {"answer": final_answer},
+                    "timestamp": datetime.now().isoformat(),
                 })
-
-            # 记录工具结果
-            elif event_type == "tool_result":
-                tool_name = event.get("tool_name", "")
-                success = event.get("success", False)
-                summary = event.get("summary", "")
-                # 将结果添加到最后一个工具调用
-                if tool_calls:
-                    tool_calls[-1]["success"] = success
-                    tool_calls[-1]["result"] = summary
-
-            # 记录迭代
-            elif event_type == "iteration":
-                iterations = event.get("iteration", 0)
-
-            # 数据保存
-            elif event_type == "data_saved":
-                data_id = event.get("data_id")
-                if data_id:
-                    data_ids.append(data_id)
-
-            # 可视化生成
-            elif event_type == "visual_generated":
-                visual = event.get("visual")
-                if visual:
-                    visuals.append(visual)
-
-            elif event_type == "final_response":
-                summary_parts[:] = [event.get("content", "")]
-
-            # Current AgentRuntime emits the final answer as agent_finish and
-            # then complete. Keep the latest value instead of concatenating
-            # both copies into invalid output.
-            elif event_type == "agent_finish":
-                summary_parts[:] = [event.get("answer", "")]
-
-            elif event_type == "complete":
-                data = event.get("data") or {}
-                summary_parts[:] = [data.get("answer") or data.get("response") or ""]
+            if task is not None and execution is not None:
+                persisted = await self.conversation_persistence.persist_agent_session(
+                    agent=agent,
+                    task=task,
+                    execution=execution,
+                    display_history=display_history,
+                )
+                if persisted:
+                    self._persisted_execution_ids.add(execution.execution_id)
 
         return {
             "summary": "\n".join(summary_parts),

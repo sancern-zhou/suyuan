@@ -635,6 +635,9 @@ async def analyze_stream(
             "enable_reasoning": request.enable_reasoning,
             "is_interruption": request.is_interruption,
             "manual_mode": request.mode,
+            # Web conversations always use the canonical DB store. Runtime
+            # behavior (including social prompts/tools) is an independent axis.
+            "session_storage_mode": "assistant",
             "attachments": request.attachments,  # ✅ 传递附件信息
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
             "skip_auto_followup": request.skip_auto_followup

@@ -88,6 +88,9 @@ class ScheduledTask(BaseModel):
 
     # 创建者信息
     created_by: str = Field(default="user", description="创建者")
+    owner_user_id: str = Field(default="system", description="会话归属用户ID")
+    owner_username: str = Field(default="scheduled-task", description="会话归属用户名")
+    owner_display_name: str = Field(default="定时任务", description="会话归属显示名")
     tags: List[str] = Field(default_factory=list, description="标签")
 
     @model_validator(mode="after")

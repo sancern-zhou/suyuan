@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import scheduled_task_routes as routes
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 
 
 class FakeUser:
@@ -57,6 +59,13 @@ def _client(monkeypatch):
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
     monkeypatch.setattr(routes, "get_social_user_registry", lambda: FakeRegistry())
     app = FastAPI()
+    app.dependency_overrides[require_current_user] = lambda: CurrentUser(
+        id="creator-1",
+        username="creator",
+        display_name="任务创建人",
+        is_admin=True,
+        auth_source="mock",
+    )
     app.include_router(routes.router)
     return TestClient(app), service
 
@@ -103,6 +112,9 @@ def test_create_event_task_with_multiple_users(monkeypatch):
     assert task["trigger_type"] == "event"
     assert task["target_user_ids"] == ["admin-1", "admin-2"]
     assert task["schedule_type"] is None
+    assert task["owner_user_id"] == "creator-1"
+    assert task["owner_username"] == "creator"
+    assert task["owner_display_name"] == "任务创建人"
 
 
 def test_create_rejects_unregistered_event_type(monkeypatch):
