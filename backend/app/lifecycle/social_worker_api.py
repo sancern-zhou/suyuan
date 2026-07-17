@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from types import SimpleNamespace
 
 from fastapi import FastAPI, Request
@@ -15,9 +16,22 @@ from app.api.social_account_routes import set_channel_manager_override
 from app.api.fetcher_worker_routes import router as fetcher_worker_router
 from app.api.scheduled_task_routes import router as scheduled_task_router
 from app.api.social_broadcast_worker_routes import router as social_broadcast_worker_router
+from app.auth.internal_identity import INTERNAL_USER_HEADER, decode_internal_user
 from config.settings import settings
 
 logger = structlog.get_logger()
+
+
+def _trusted_internal_identity_transport(request: Request, internal_token: str) -> bool:
+    if internal_token:
+        return True
+    client = request.client
+    if client is None:
+        return False
+    try:
+        return ipaddress.ip_address(client.host).is_loopback
+    except ValueError:
+        return False
 
 
 def create_social_worker_api_app(
@@ -39,6 +53,25 @@ def create_social_worker_api_app(
             )
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
+        identity_envelope = (
+            request.headers.get(INTERNAL_USER_HEADER)
+            if request.url.path == "/api/scheduled-tasks"
+            or request.url.path.startswith("/api/scheduled-tasks/")
+            else None
+        )
+        if identity_envelope:
+            if not _trusted_internal_identity_transport(request, internal_token):
+                return JSONResponse(
+                    {"detail": "internal_identity_transport_not_configured"},
+                    status_code=503,
+                )
+            try:
+                request.state.current_user = decode_internal_user(identity_envelope)
+            except ValueError:
+                return JSONResponse(
+                    {"detail": "invalid_internal_identity"},
+                    status_code=401,
+                )
         return await call_next(request)
 
     app.include_router(social_account_router)
