@@ -1,7 +1,7 @@
 import {
-  apiImagePath,
-  loadApiImageObjectUrl
-} from '../services/apiImageBlob.js'
+  loadApiMediaObjectUrl,
+  sameOriginApiMediaPath
+} from '../services/apiMediaBlob.js'
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -18,7 +18,7 @@ export function escapeRawHtmlImageTags(html) {
 }
 
 export function deferredApiImageAttributes(source) {
-  const path = apiImagePath(source)
+  const path = sameOriginApiMediaPath(source)
   return path ? { 'data-api-image-src': path } : null
 }
 
@@ -40,7 +40,7 @@ export function renderDeferredApiImage({
 }
 
 export function createMarkdownApiImageHydrator({
-  loadObjectUrl = loadApiImageObjectUrl,
+  loadObjectUrl = loadApiMediaObjectUrl,
   revokeObjectURL = value => URL.revokeObjectURL(value),
   onError = (error, source) => console.error('Markdown图片加载失败:', source, error)
 } = {}) {

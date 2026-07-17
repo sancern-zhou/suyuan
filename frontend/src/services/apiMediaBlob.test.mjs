@@ -2,11 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  apiImagePath,
-  createLatestImageObjectUrlLoader,
-  loadApiImageObjectUrl,
-  objectUrlToDataUrl
-} from './apiImageBlob.js'
+  createLatestMediaObjectUrlLoader,
+  loadApiMediaObjectUrl,
+  objectUrlToDataUrl,
+  sameOriginApiMediaPath
+} from './apiMediaBlob.js'
 
 function deferred() {
   let resolve
@@ -18,23 +18,41 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-test('apiImagePath accepts API URLs and legacy placeholders', () => {
-  assert.equal(apiImagePath('/api/image/chart_1'), '/api/image/chart_1')
-  assert.equal(apiImagePath('[IMAGE:chart_1]'), '/api/image/chart_1')
-  assert.equal(apiImagePath('https://example.test/image.png'), null)
+test('sameOriginApiMediaPath accepts every same-origin API media path', () => {
+  assert.equal(sameOriginApiMediaPath('/api/image/chart_1'), '/api/image/chart_1')
+  assert.equal(
+    sameOriginApiMediaPath('/api/html-artifacts/atmos_monitor_arch/assets/diagram.drawio.svg'),
+    '/api/html-artifacts/atmos_monitor_arch/assets/diagram.drawio.svg'
+  )
+  assert.equal(
+    sameOriginApiMediaPath('/api/reports/report-1/assets/chart.png?download=0'),
+    '/api/reports/report-1/assets/chart.png?download=0'
+  )
+  assert.equal(sameOriginApiMediaPath('/api/signed-media/token-1'), '/api/signed-media/token-1')
 })
 
-test('loadApiImageObjectUrl fetches image bytes through the supplied authenticated client', async () => {
+test('sameOriginApiMediaPath preserves legacy placeholders at the compatibility boundary', () => {
+  assert.equal(sameOriginApiMediaPath('[IMAGE:chart_1]'), '/api/image/chart_1')
+})
+
+test('sameOriginApiMediaPath rejects non-API and external sources', () => {
+  assert.equal(sameOriginApiMediaPath('https://example.test/image.png'), null)
+  assert.equal(sameOriginApiMediaPath('assets/chart.png'), null)
+  assert.equal(sameOriginApiMediaPath('data:image/png;base64,abc'), null)
+  assert.equal(sameOriginApiMediaPath('/api/'), null)
+})
+
+test('loadApiMediaObjectUrl fetches API media through the supplied authenticated client', async () => {
   const calls = []
   const blob = new Blob(['png'], { type: 'image/png' })
-  const fetchImage = async path => {
+  const fetchMedia = async path => {
     calls.push(path)
     return new Response(blob, { headers: { 'Content-Type': 'image/png' } })
   }
   const created = []
 
-  const url = await loadApiImageObjectUrl('/api/image/chart_1', {
-    fetchImage,
+  const url = await loadApiMediaObjectUrl('/api/html-artifacts/artifact-1/assets/diagram.svg', {
+    fetchMedia,
     createObjectURL(value) {
       created.push(value)
       return 'blob:chart-1'
@@ -42,15 +60,15 @@ test('loadApiImageObjectUrl fetches image bytes through the supplied authenticat
   })
 
   assert.equal(url, 'blob:chart-1')
-  assert.deepEqual(calls, ['/api/image/chart_1'])
+  assert.deepEqual(calls, ['/api/html-artifacts/artifact-1/assets/diagram.svg'])
   assert.equal(created.length, 1)
   assert.equal(created[0].type, 'image/png')
 })
 
-test('loadApiImageObjectUrl rejects HTTP failures before creating an Object URL', async () => {
+test('loadApiMediaObjectUrl rejects HTTP failures before creating an Object URL', async () => {
   await assert.rejects(
-    () => loadApiImageObjectUrl('/api/image/missing', {
-      fetchImage: async () => new Response('missing', { status: 404 }),
+    () => loadApiMediaObjectUrl('/api/image/missing', {
+      fetchMedia: async () => new Response('missing', { status: 404 }),
       createObjectURL() {
         throw new Error('must not create')
       }
@@ -59,10 +77,10 @@ test('loadApiImageObjectUrl rejects HTTP failures before creating an Object URL'
   )
 })
 
-test('loadApiImageObjectUrl rejects non-image responses before creating an Object URL', async () => {
+test('loadApiMediaObjectUrl rejects non-image responses before creating an Object URL', async () => {
   await assert.rejects(
-    () => loadApiImageObjectUrl('/api/image/not-image', {
-      fetchImage: async () => new Response('<html>', {
+    () => loadApiMediaObjectUrl('/api/image/not-image', {
+      fetchMedia: async () => new Response('<html>', {
         headers: { 'Content-Type': 'text/html' }
       }),
       createObjectURL() {
@@ -80,7 +98,7 @@ test('latest image loader discards stale results and only settles the current re
   ])
   const revoked = []
   const events = []
-  const loader = createLatestImageObjectUrlLoader({
+  const loader = createLatestMediaObjectUrlLoader({
     loadObjectUrl: source => requests.get(source).promise,
     revokeObjectURL: url => revoked.push(url)
   })
@@ -111,7 +129,7 @@ test('latest image loader revokes a replaced URL and reports only current errors
   const revoked = []
   const errors = []
   const settled = []
-  const loader = createLatestImageObjectUrlLoader({
+  const loader = createLatestMediaObjectUrlLoader({
     loadObjectUrl: source => {
       if (source === 'failure') return failure.promise
       return Promise.resolve(`blob:${source}`)
@@ -140,7 +158,7 @@ test('clearing the latest image loader invalidates a pending direct-source reque
   const pending = deferred()
   const revoked = []
   const published = []
-  const loader = createLatestImageObjectUrlLoader({
+  const loader = createLatestMediaObjectUrlLoader({
     loadObjectUrl: () => pending.promise,
     revokeObjectURL: url => revoked.push(url)
   })
