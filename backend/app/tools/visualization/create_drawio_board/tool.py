@@ -124,7 +124,17 @@ class CreateDrawioBoardTool(LLMTool):
                     "summary": f"画板生成失败：不支持 operation={op}",
                 }
         except DrawioXmlError as exc:
-            return {"success": False, "data": {"error": str(exc)}, "summary": f"画板生成失败：{exc}"}
+            return {
+                "success": False,
+                "data": {
+                    "error": str(exc),
+                    "error_code": exc.error_code,
+                    "failed_operation_index": exc.operation_index,
+                    "field": exc.field,
+                    "retryable": exc.retryable,
+                },
+                "summary": f"画板生成失败：{exc}",
+            }
 
         changed = op == "create" or normalized_xml != before_xml
         operation_count = len(operations or []) if op == "edit" else 0
@@ -169,6 +179,9 @@ def _operation_cell_ids(
     cell_ids: List[str] = []
     for operation in operations:
         cell_id = str(operation.get("cell_id") or operation.get("edge_id") or "").strip()
+        if not cell_id and str(operation.get("operation") or "").strip().lower() in {"add", "update"}:
+            match = re.search(r'<mxCell\b[^>]*\bid=["\']([^"\']+)["\']', str(operation.get("new_xml") or ""))
+            cell_id = match.group(1) if match else ""
         if not cell_id and str(operation.get("target") or "").strip() == "selected":
             cell_id = _first_selected_cell_id(selected_cells)
         if not cell_id and str(operation.get("operation") or "").strip().lower() == "connect":

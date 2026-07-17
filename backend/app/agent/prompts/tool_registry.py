@@ -157,7 +157,7 @@ CHART_TOOL_NAMES = [
     "bash", "present_artifact",
 
     # 代码执行和原生多模态视觉参考
-    "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
+    "create_report_chart", "execute_python", "execute_echarts_python",
 
     # 数据读取
     "read_data_registry",
@@ -169,6 +169,16 @@ CHART_TOOL_NAMES = [
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
     "execute_sql_query",
+]
+
+# ===== 画板模式工具 =====
+BOARD_TOOL_NAMES = [
+    "list_session_resources",
+    "read_file",
+    "read_docx",
+    "parse_pdf",
+    "analyze_image",
+    "create_drawio_board",
 ]
 
 # ===== 运维管理模式工具 =====
@@ -302,6 +312,7 @@ EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
+BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
@@ -317,6 +328,7 @@ EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
+BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
 SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
@@ -328,7 +340,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "expert" | "query" | "report" | "social" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -340,6 +352,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "chart": CHART_TOOLS,
+        "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
         "graph": GRAPH_TOOLS,
         "memory_consolidator": MEMORY_CONSOLIDATOR_TOOLS,

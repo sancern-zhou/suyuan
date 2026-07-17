@@ -1001,6 +1001,15 @@ class LLMService:
             "model_env": "MIMO_MODEL",
             "model_default": "mimo-v2.5",
         },
+        # Qwen visual models use DashScope's OpenAI-compatible endpoint.
+        # Keep this separate from the retired general-purpose `qwen` provider.
+        "qwen_vl": {
+            "url_env": "QWEN_VL_BASE_URL",
+            "url_default": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "key_env": "QWEN_VL_API_KEY",
+            "model_env": "QWEN_VISION_MODEL",
+            "model_default": "qwen3.7-plus",
+        },
         "agnes": {
             "url_env": "AGNES_BASE_URL",
             "url_default": "https://apihub.agnes-ai.com/v1",
@@ -1320,6 +1329,24 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_mimo_model_fallback_to_env", model=self.model)
+
+        elif self.provider == "qwen_vl":
+            self.api_mode = "chat_completions"
+            self.base_url = (
+                settings.qwen_vl_base_url
+                or os.getenv(config["url_env"])
+                or config["url_default"]
+            )
+            self.api_key = (
+                settings.qwen_vl_api_key
+                or os.getenv(config["key_env"])
+                or ""
+            )
+            self.model = (
+                settings.qwen_vision_model
+                or os.getenv(config["model_env"])
+                or config["model_default"]
+            )
 
         elif self.provider == "agnes":
             self.api_mode = getattr(settings, "agnes_api_mode", "chat_completions")
@@ -2665,8 +2692,9 @@ class LLMService:
                 system=system,
             ),
             "temperature": temperature,
-            "stream": stream,
         }
+        if stream or self.provider not in {"qwen", "qwen_vl"}:
+            payload["stream"] = stream
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
@@ -2676,6 +2704,8 @@ class LLMService:
             payload["enable_thinking"] = False
             if stream:
                 payload["stream_options"] = {"include_usage": True}
+        elif self.provider in {"qwen", "qwen_vl"}:
+            payload["enable_thinking"] = False
         return payload
 
     @staticmethod

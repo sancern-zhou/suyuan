@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 
-NATIVE_MULTIMODAL_MODES = frozenset({"social", "chart"})
+NATIVE_MULTIMODAL_MODES = frozenset({"social", "chart", "board"})
 
 
 def supports_native_multimodal(mode: Optional[str]) -> bool:

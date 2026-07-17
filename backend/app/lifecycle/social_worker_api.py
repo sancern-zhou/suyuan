@@ -53,11 +53,14 @@ def create_social_worker_api_app(
             )
         if internal_token and request.headers.get("x-social-worker-token") != internal_token:
             return JSONResponse({"detail": "Forbidden"}, status_code=403)
-        identity_envelope = (
-            request.headers.get(INTERNAL_USER_HEADER)
-            if request.url.path == "/api/scheduled-tasks"
+        identity_path = (
+            request.url.path == "/api/scheduled-tasks"
             or request.url.path.startswith("/api/scheduled-tasks/")
-            else None
+            or request.url.path == "/api/social/accounts"
+            or request.url.path.startswith("/api/social/accounts/")
+        )
+        identity_envelope = (
+            request.headers.get(INTERNAL_USER_HEADER) if identity_path else None
         )
         if identity_envelope:
             if not _trusted_internal_identity_transport(request, internal_token):
