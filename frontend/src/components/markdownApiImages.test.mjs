@@ -43,14 +43,24 @@ function fakeRoot(images) {
   }
 }
 
-test('deferredApiImageAttributes defers only supported API images', () => {
+test('deferredApiImageAttributes defers every same-origin API image', () => {
   assert.deepEqual(deferredApiImageAttributes('/api/image/chart_1'), {
     'data-api-image-src': '/api/image/chart_1'
+  })
+  assert.deepEqual(
+    deferredApiImageAttributes('/api/html-artifacts/atmos_monitor_arch/assets/diagram.drawio.svg'),
+    {
+      'data-api-image-src': '/api/html-artifacts/atmos_monitor_arch/assets/diagram.drawio.svg'
+    }
+  )
+  assert.deepEqual(deferredApiImageAttributes('/api/reports/report-1/assets/chart.png'), {
+    'data-api-image-src': '/api/reports/report-1/assets/chart.png'
   })
   assert.deepEqual(deferredApiImageAttributes('[IMAGE:chart_1]'), {
     'data-api-image-src': '/api/image/chart_1'
   })
   assert.equal(deferredApiImageAttributes('https://example.test/chart.png'), null)
+  assert.equal(deferredApiImageAttributes('assets/chart.png'), null)
 })
 
 test('Markdown hydrator loads every deferred image and owns the resulting URLs', async () => {
@@ -126,6 +136,14 @@ test('renderDeferredApiImage escapes attributes and never emits a raw API src', 
   assert.match(html, /alt="&lt;浓度趋势&gt;"/)
   assert.doesNotMatch(html, /\s+src="\/api\/image\//)
   assert.match(html, /<p class="md-image-caption">&lt;浓度趋势&gt;<\/p>/)
+})
+
+test('renderDeferredApiImage handles HTML artifact media without endpoint-specific logic', () => {
+  const source = '/api/html-artifacts/atmos_monitor_arch/assets/diagram.drawio.svg'
+  const html = renderDeferredApiImage({ src: source, alt: '架构图' })
+
+  assert.match(html, new RegExp(`data-api-image-src="${source}"`))
+  assert.doesNotMatch(html, new RegExp(`\\s+src="${source}"`))
 })
 
 test('escapeRawHtmlImageTags prevents raw HTML images from issuing browser requests', () => {

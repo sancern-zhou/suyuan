@@ -91,14 +91,13 @@ md.renderer.rules.image = function (tokens, idx, options, env, self) {
       </div>`
     }
 
-    // API图片先不设置src，DOM渲染后通过鉴权请求转换为Blob URL
-    if (src && src.startsWith('/api/image/')) {
-      return renderDeferredApiImage({
-        src,
-        alt,
-        cssClass: 'md-external-image'
-      })
-    }
+    // 所有同源 API 图片先不设置 src，DOM 渲染后通过统一鉴权媒体层转换为 Blob URL。
+    const deferredImage = renderDeferredApiImage({
+      src,
+      alt,
+      cssClass: 'md-external-image'
+    })
+    if (deferredImage) return deferredImage
   }
 
   return defaultImageRender(tokens, idx, options, env, self)

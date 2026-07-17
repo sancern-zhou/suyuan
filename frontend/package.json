@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test:auth": "node --test src/auth/*.test.mjs",
     "test:event-tasks": "node --test src/components/management/*.test.js",
-    "test:images": "node --test src/services/apiImageBlob.test.mjs src/components/markdownApiImages.test.mjs",
+    "test:images": "node --test src/services/apiMediaBlob.test.mjs src/components/markdownApiImages.test.mjs",
     "test:agent-platform": "node --test src/config/agentModes.test.js src/components/agentPlatform/*.test.js"
   },
   "dependencies": {

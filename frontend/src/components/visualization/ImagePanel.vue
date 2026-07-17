@@ -51,10 +51,10 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 import { createImagePanelLightboxImage } from './imagePanelLightbox.js'
 import {
-  apiImagePath,
-  createLatestImageObjectUrlLoader,
-  objectUrlToDataUrl
-} from '@/services/apiImageBlob.js'
+  createLatestMediaObjectUrlLoader,
+  objectUrlToDataUrl,
+  sameOriginApiMediaPath
+} from '@/services/apiMediaBlob.js'
 
 const props = defineProps({
   src: {
@@ -78,7 +78,7 @@ const loadError = ref(false)
 const lightboxVisible = ref(false)
 const lightboxImages = ref([])
 
-const apiImageLoader = createLatestImageObjectUrlLoader()
+const apiMediaLoader = createLatestMediaObjectUrlLoader()
 let activeApiLoad = null
 
 const getCaptureImage = async (source) => {
@@ -102,7 +102,7 @@ const getChartImage = async () => {
   // 主动触发加载并等待
   if (!imageSrc.value && !isLoading.value && !loadError.value) {
     const src = props.src
-    if (apiImagePath(src)) {
+    if (sameOriginApiMediaPath(src)) {
       await fetchImage(src)
       return imageSrc.value ? getCaptureImage(imageSrc.value) : null
     }
@@ -118,12 +118,12 @@ defineExpose({
 
 // 从API获取图片数据
 const fetchImage = (source) => {
-  apiImageLoader.clear()
+  apiMediaLoader.clear()
   isLoading.value = true
   loadError.value = false
   imageSrc.value = ''
 
-  activeApiLoad = apiImageLoader.start(source, {
+  activeApiLoad = apiMediaLoader.start(source, {
     onSuccess: (url) => {
       imageSrc.value = url
     },
@@ -145,10 +145,10 @@ const fetchImage = (source) => {
 const updateImageSrc = () => {
   const src = props.src
 
-  if (apiImagePath(src)) {
+  if (sameOriginApiMediaPath(src)) {
     fetchImage(src)
   } else {
-    apiImageLoader.clear()
+    apiMediaLoader.clear()
     activeApiLoad = null
     isLoading.value = false
     loadError.value = false
@@ -171,7 +171,7 @@ const onLoad = () => {
 
 const onError = () => {
   console.error('图片加载失败:', imageSrc.value)
-  apiImageLoader.clear()
+  apiMediaLoader.clear()
   imageSrc.value = ''
   loadError.value = true
   emit('ready')
@@ -190,7 +190,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  apiImageLoader.clear()
+  apiMediaLoader.clear()
   activeApiLoad = null
 })
 </script>

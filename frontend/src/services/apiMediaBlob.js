@@ -1,43 +1,53 @@
 import { authFetch } from '../auth/http.js'
 
-const API_IMAGE_PREFIX = '/api/image/'
 
-export function apiImagePath(source) {
+const SAME_ORIGIN_API_PREFIX = '/api/'
+const LEGACY_IMAGE_PREFIX = '[IMAGE:'
+
+
+function legacyImagePlaceholderPath(source) {
+  if (!source.startsWith(LEGACY_IMAGE_PREFIX) || !source.endsWith(']')) return null
+  const imageId = source.slice(LEGACY_IMAGE_PREFIX.length, -1)
+  return imageId ? `/api/image/${encodeURIComponent(imageId)}` : null
+}
+
+
+export function sameOriginApiMediaPath(source) {
   if (typeof source !== 'string') return null
 
-  if (source.startsWith(API_IMAGE_PREFIX) && source.length > API_IMAGE_PREFIX.length) {
-    return source
-  }
+  const legacyPath = legacyImagePlaceholderPath(source)
+  if (legacyPath) return legacyPath
 
-  if (source.startsWith('[IMAGE:') && source.endsWith(']')) {
-    const imageId = source.slice(7, -1)
-    return imageId ? `${API_IMAGE_PREFIX}${encodeURIComponent(imageId)}` : null
+  if (source.startsWith(SAME_ORIGIN_API_PREFIX) && source.length > SAME_ORIGIN_API_PREFIX.length) {
+    return source
   }
 
   return null
 }
 
-export async function loadApiImageObjectUrl(source, {
-  fetchImage = authFetch,
+
+export async function loadApiMediaObjectUrl(source, {
+  fetchMedia = authFetch,
   createObjectURL = value => URL.createObjectURL(value)
 } = {}) {
-  const path = apiImagePath(source)
+  const path = sameOriginApiMediaPath(source)
   if (!path) {
-    throw new Error(`Unsupported API image source: ${source}`)
+    throw new Error(`Unsupported same-origin API media source: ${source}`)
   }
 
-  const response = await fetchImage(path)
+  const response = await fetchMedia(path)
   if (!response.ok) {
-    throw new Error(`Image request failed: HTTP ${response.status}`)
+    throw new Error(`Media request failed: HTTP ${response.status}`)
   }
 
   const contentType = response.headers.get('Content-Type') || ''
   if (!contentType.toLowerCase().startsWith('image/')) {
-    throw new Error(`Image response is not an image: ${contentType || 'unknown content type'}`)
+    throw new Error(`Media response is not an image: ${contentType || 'unknown content type'}`)
   }
 
   return createObjectURL(await response.blob())
 }
+
 
 function readBlobWithFileReader(blob) {
   return new Promise((resolve, reject) => {
@@ -47,6 +57,7 @@ function readBlobWithFileReader(blob) {
     reader.readAsDataURL(blob)
   })
 }
+
 
 export async function objectUrlToDataUrl(objectUrl, {
   fetchObjectUrl = value => fetch(value),
@@ -64,8 +75,9 @@ export async function objectUrlToDataUrl(objectUrl, {
   return dataUrl
 }
 
-export function createLatestImageObjectUrlLoader({
-  loadObjectUrl = loadApiImageObjectUrl,
+
+export function createLatestMediaObjectUrlLoader({
+  loadObjectUrl = loadApiMediaObjectUrl,
   revokeObjectURL = value => URL.revokeObjectURL(value)
 } = {}) {
   let generation = 0
