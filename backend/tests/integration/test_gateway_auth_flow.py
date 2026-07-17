@@ -134,3 +134,92 @@ async def test_fake_infrastructure_gateway_flow(monkeypatch):
     ) as websocket:
         websocket.send_text("ping")
         assert websocket.receive_text() == "pong"
+
+
+def test_authenticated_social_account_request_keeps_identity_across_worker_proxy(
+    monkeypatch,
+):
+    from app.api import social_account_routes
+    from app.core.social_account_worker_proxy import SocialAccountWorkerProxyMiddleware
+    from app.lifecycle.social_worker_api import create_social_worker_api_app
+
+    class FakeAuthService:
+        async def authenticate(self, token, sys_code):
+            assert token == "local-mock"
+            assert sys_code == "SUYUAN"
+            return CurrentUser(
+                id="social-user-1",
+                username="social-user",
+                display_name="社交用户",
+            )
+
+    class FakeBindings:
+        async def list_visible(self, user):
+            assert user.id == "social-user-1"
+            return [SimpleNamespace(account_id="weixin-1")]
+
+    channel = SimpleNamespace(
+        config=SimpleNamespace(name="微信账号", enabled=True),
+        is_running=True,
+        bot_account="bot-1",
+        _token="worker-token",
+        _current_qr_code_path=None,
+    )
+    worker_app = create_social_worker_api_app(
+        SimpleNamespace(
+            channel_manager=SimpleNamespace(
+                channels={"weixin:weixin-1": channel},
+            ),
+        ),
+        internal_token="worker-secret",
+    )
+    worker_app.dependency_overrides[
+        social_account_routes.get_social_binding_service
+    ] = lambda: FakeBindings()
+
+    original_request = httpx.AsyncClient.request
+
+    async def forward_to_worker(self, method, url, **kwargs):
+        transport = httpx.ASGITransport(
+            app=worker_app,
+            client=("127.0.0.1", 12345),
+        )
+        async with httpx.AsyncClient(transport=transport) as worker_client:
+            return await original_request(worker_client, method, url, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", forward_to_worker)
+
+    web_app = FastAPI()
+    web_app.add_middleware(
+        SocialAccountWorkerProxyMiddleware,
+        app_role="web",
+        worker_base_url="http://worker",
+        worker_token="worker-secret",
+    )
+    web_app.add_middleware(
+        GatewayAuthenticationMiddleware,
+        settings=SimpleNamespace(
+            auth_mode="mock",
+            auth_sys_code="SUYUAN",
+            auth_docs_public=False,
+            trusted_gateway_networks_list=["127.0.0.1/32"],
+        ),
+        auth_service=FakeAuthService(),
+    )
+
+    try:
+        response = TestClient(web_app).get("/api/social/accounts")
+    finally:
+        social_account_routes.set_channel_manager_override(None)
+
+    assert response.status_code == 200
+    assert response.json() == [{
+        "id": "weixin-1",
+        "name": "微信账号",
+        "type": "weixin",
+        "enabled": True,
+        "running": True,
+        "bot_account": "bot-1",
+        "login_status": "logged_in",
+        "qr_code_available": False,
+    }]

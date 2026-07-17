@@ -55,6 +55,7 @@ def test_scanner_identity_survives_channel_restart(tmp_path):
 
 
 def test_weixin_channel_never_logs_token_previews():
-    source = Path("backend/app/channels/weixin.py").read_text()
+    backend_dir = Path(__file__).resolve().parents[2]
+    source = (backend_dir / "app/channels/weixin.py").read_text()
 
     assert "token_preview" not in source

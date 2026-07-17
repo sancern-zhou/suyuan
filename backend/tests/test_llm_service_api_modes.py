@@ -57,6 +57,42 @@ def test_llm_service_rejects_retired_qwen_provider(monkeypatch):
         LLMService()
 
 
+def test_llm_service_loads_qwen_vl_chat_completions_config(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "qwen_vl")
+    monkeypatch.setattr(settings, "qwen_vl_api_key", "vision-key")
+    monkeypatch.setattr(
+        settings,
+        "qwen_vl_base_url",
+        "https://dashscope.example/compatible-mode/v1",
+    )
+    monkeypatch.setattr(settings, "qwen_vision_model", "qwen3.7-plus")
+
+    service = LLMService()
+
+    assert service.provider == "qwen_vl"
+    assert service.api_mode == "chat_completions"
+    assert service.api_key == "vision-key"
+    assert service.base_url == "https://dashscope.example/compatible-mode/v1"
+    assert service.model == "qwen3.7-plus"
+    assert service.anthropic_client is None
+
+
+def test_multimodal_auto_profile_includes_qwen_vl_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "deepseek")
+    monkeypatch.setattr(
+        settings,
+        "llm_multimodal_models",
+        "mimo/mimo-v2.5,qwen_vl/qwen3.7-plus",
+    )
+
+    service = LLMService()
+
+    with service.use_auto_profile("multimodal"):
+        assert service.provider == "mimo"
+        assert service.model == "mimo-v2.5"
+        assert service.request_fallbacks == "qwen_vl/qwen3.7-plus"
+
+
 def test_ocr_configuration_uses_only_visual_qwen_settings(monkeypatch):
     import inspect
 

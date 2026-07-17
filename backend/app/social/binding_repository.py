@@ -128,8 +128,10 @@ class SocialBindingRepository:
                 selected.email = None
                 selected.status = "active"
                 selected.bind_code = None
-                selected.social_user_id = f"weixin:{bot_account}:{ilink_user_id}"
-                selected.channel = "weixin"
+                selected.channel = f"weixin:{task.account_id}"
+                selected.social_user_id = (
+                    f"{selected.channel}:{bot_account}:{ilink_user_id}"
+                )
                 selected.bot_account = bot_account
                 selected.sender_id = ilink_user_id
                 selected.platform_user_id = task.owner_user_id

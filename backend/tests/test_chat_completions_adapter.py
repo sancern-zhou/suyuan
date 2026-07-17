@@ -123,9 +123,10 @@ def test_convert_anthropic_messages_to_chat_preserves_image_url_blocks():
     ]
 
 
-def test_chat_completions_payload_omits_false_stream_and_disables_qwen_thinking():
+@pytest.mark.parametrize("provider", ["qwen", "qwen_vl"])
+def test_chat_completions_payload_omits_false_stream_and_disables_qwen_thinking(provider):
     service = object.__new__(LLMService)
-    service.provider = "qwen"
+    service.provider = provider
     service.model = "qwen-plus"
 
     payload = service._build_chat_completions_payload(

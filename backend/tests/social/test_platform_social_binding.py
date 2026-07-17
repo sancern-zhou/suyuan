@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi import HTTPException
 from app.auth.models import CurrentUser
 from app.social.binding_schemas import SocialBindingRecord, WeixinScanTaskRecord
 from app.social.binding_service import SocialBindingConflict, SocialBindingService
+from app.social import binding_repository
 
 
 class ForeignWeixinIdentityError(RuntimeError):
@@ -83,6 +85,71 @@ class FakeBindingRepository:
             row for row in self.bindings
             if row.status == "active" and row.bot_account == bot_account and row.ilink_user_id == ilink_user_id
         ), None)
+
+
+@pytest.mark.asyncio
+async def test_new_wechat_binding_persists_full_channel_key(monkeypatch):
+    task = WeixinScanTaskRecord(
+        id="scan-1",
+        account_id="auto_account_1",
+        owner_user_id="u1",
+        owner_username="alice",
+        owner_display_name="Alice",
+        status="confirmed",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    )
+    added = []
+
+    class TransactionContext:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakeSession:
+        def __init__(self):
+            self.scalar_results = [
+                SimpleNamespace(account_id=task.account_id, status="confirmed"),
+                None,
+                None,
+                None,
+            ]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def begin(self):
+            return TransactionContext()
+
+        async def scalar(self, _statement):
+            return self.scalar_results.pop(0)
+
+        def add(self, row):
+            row.id = "binding-1"
+            added.append(row)
+
+        async def refresh(self, _row):
+            return None
+
+    monkeypatch.setattr(binding_repository, "async_session", FakeSession)
+
+    await binding_repository.SocialBindingRepository().replace_active_binding(
+        task=task,
+        ilink_user_id="wx-user-1",
+        bot_account="bot-1",
+    )
+
+    assert added[0].channel == "weixin:auto_account_1"
+    assert (
+        added[0].social_user_id
+        == "weixin:auto_account_1:bot-1:wx-user-1"
+    )
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .chart_prompt import build_chart_prompt
+from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
 from .deliberation_prompt import (
@@ -31,6 +32,7 @@ AgentMode = Literal[
     "report",
     "social",
     "chart",
+    "board",
     "ops",
     "graph",
     "memory_consolidator",
@@ -55,6 +57,7 @@ def build_react_system_prompt(
     heartbeat_context: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 当前内容
     backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
     board_context: Optional[dict] = None,  # 图表模式 draw.io 画板上下文
+    board_run_contract: Optional[dict] = None,
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
@@ -125,6 +128,14 @@ def build_react_system_prompt(
         )
     elif mode == "chart":
         return build_chart_prompt(filtered_tools, memory_context, memory_file_path, board_context)
+    elif mode == "board":
+        return build_board_prompt(
+            filtered_tools,
+            memory_context,
+            memory_file_path,
+            board_context,
+            board_run_contract,
+        )
     elif mode == "ops":
         return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "graph":
