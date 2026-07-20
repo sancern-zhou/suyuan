@@ -1622,7 +1622,14 @@ def create_react_agent(
     Returns:
         配置好的 ReActAgent 实例
     """
-    if with_test_tools:
+    explicit_tool_registry = kwargs.pop("tool_registry", None)
+    if explicit_tool_registry is not None:
+        agent = ReActAgent(tool_registry=explicit_tool_registry, **kwargs)
+        logger.info(
+            "react_agent_created_with_explicit_tools",
+            tool_count=len(explicit_tool_registry),
+        )
+    elif with_test_tools:
         from .core.executor import create_test_executor
 
         # 创建包含测试工具的执行器

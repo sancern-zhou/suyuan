@@ -253,6 +253,11 @@ class SimplifiedContextBuilder:
 
         mode_prompt = build_react_system_prompt(
             mode=self.current_mode,
+            available_tools=(
+                list(self.tool_registry.keys())
+                if self.current_mode == "custom" and isinstance(self.tool_registry, dict)
+                else None
+            ),
             user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
             memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅social模式使用）
             soul_file_path=self.soul_file_path,  # ✅ 传递 soul.md 文件路径

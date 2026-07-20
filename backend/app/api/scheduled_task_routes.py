@@ -23,6 +23,12 @@ from app.scheduled_tasks.event_catalog import (
     get_event_definitions,
 )
 from app.social.user_registry import get_social_user_registry
+from app.services.lifecycle_manager import get_tool_registry
+from app.scheduled_tasks.custom_agent import (
+    CustomToolValidationError,
+    authorized_tool_names_for_user,
+    validate_custom_tool_names,
+)
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -33,7 +39,8 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social）")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social/custom）")
+    tool_names: Optional[List[str]] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
     schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
     run_at: Optional[datetime] = None
@@ -54,6 +61,7 @@ class UpdateTaskRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     execution_mode: Optional[str] = None
+    tool_names: Optional[List[str]] = None
     trigger_type: Optional[TriggerType] = None
     schedule_type: Optional[ScheduleType] = None
     run_at: Optional[datetime] = None
@@ -123,9 +131,42 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
             )
 
 
+def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
+    if task.execution_mode != "custom":
+        return
+    try:
+        registry = get_tool_registry()
+        validate_custom_tool_names(
+            task.tool_names or [],
+            registry,
+            authorized_tool_names_for_user(user, registry),
+        )
+    except CustomToolValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_custom_task_tools", "items": exc.items},
+        ) from exc
+
+
 @router.get("/event-types", response_model=List[EventDefinition])
 async def list_event_types():
     return get_event_definitions()
+
+
+@router.get("/tools")
+async def list_custom_task_tools(
+    user: CurrentUser = Depends(require_current_user),
+):
+    """List tools the authenticated user may select for custom task mode."""
+    registry = get_tool_registry()
+    authorized = authorized_tool_names_for_user(user, registry)
+    tools = registry.get_tools_info()
+    return {
+        "tools": [
+            tool for tool in tools
+            if tool.get("status") == "enabled" and tool.get("name") in authorized
+        ]
+    }
 
 @router.post("", response_model=TaskResponse)
 async def create_task(
@@ -146,6 +187,7 @@ async def create_task(
             name=request.name,
             description=request.description,
             execution_mode=request.execution_mode,
+            tool_names=request.tool_names,
             trigger_type=request.trigger_type,
             schedule_type=request.schedule_type,
             run_at=request.run_at,
@@ -164,6 +206,7 @@ async def create_task(
             owner_display_name=user.display_name,
         )
         await _validate_event_task_config(task)
+        _validate_custom_task_tools(task, user)
 
         created_task = service.create_task(task)
 
@@ -249,7 +292,11 @@ async def get_task(task_id: str):
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, request: UpdateTaskRequest):
+async def update_task(
+    task_id: str,
+    request: UpdateTaskRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
     """更新任务"""
     try:
         service = get_scheduled_task_service()
@@ -259,10 +306,13 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
         updates = request.model_dump(exclude_unset=True)
+        if updates.get("execution_mode") != "custom" and "execution_mode" in updates:
+            updates.setdefault("tool_names", None)
         task_data = task.model_dump()
         task_data.update(updates)
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
+        _validate_custom_task_tools(task, user)
 
         updated_task = service.update_task(task)
 

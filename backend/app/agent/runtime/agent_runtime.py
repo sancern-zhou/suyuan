@@ -29,6 +29,10 @@ from ..context.context_diagnostics import ContextDiagnostics
 logger = structlog.get_logger()
 
 
+class CustomAgentTerminalError(RuntimeError):
+    """A custom scheduled Agent reached a non-retryable terminal failure."""
+
+
 @dataclass
 class AgentRuntimeConfig:
     memory_manager: Any
@@ -111,6 +115,7 @@ class AgentRuntime:
         state: RunState,
         initial_messages: Optional[List[Dict[str, Any]]],
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        deterministic_error_count = 0
         try:
             if self.config.agent_logger:
                 run_id = self.config.agent_logger.start_new_run(
@@ -139,6 +144,7 @@ class AgentRuntime:
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
+                    deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
                     yield self.events.interrupted(state)
@@ -152,13 +158,37 @@ class AgentRuntime:
                         exc_info=True,
                     )
                     yield self.events.error(state, exc)
+                    if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
+                        self._ensure_user_message_written(state)
+                        async for event in self.finalizer.fatal_error(state, exc):
+                            yield event
+                        return
+                    if state.mode == "custom" and self._is_deterministic_model_error(exc):
+                        deterministic_error_count += 1
+                        if deterministic_error_count >= 2:
+                            terminal_error = CustomAgentTerminalError(
+                                f"custom Agent 模型请求连续失败，已熔断: {exc}"
+                            )
+                            self._ensure_user_message_written(state)
+                            async for event in self.finalizer.fatal_error(state, terminal_error):
+                                yield event
+                            return
+                    else:
+                        deterministic_error_count = 0
                     if "fatal" in str(exc).lower():
                         break
 
             if not state.task_completed:
                 self._ensure_user_message_written(state)
-                async for event in self.finalizer.timeout(state):
-                    yield event
+                if state.mode == "custom":
+                    error = CustomAgentTerminalError(
+                        f"custom Agent 在 {state.iteration} 次迭代内未形成成功或失败终态"
+                    )
+                    async for event in self.finalizer.fatal_error(state, error):
+                        yield event
+                else:
+                    async for event in self.finalizer.timeout(state):
+                        yield event
 
         except Exception as exc:
             if isinstance(exc, AgentRunCancelled):
@@ -243,6 +273,7 @@ class AgentRuntime:
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
             self.writer.add_iteration(planner_result.thought, action, observation)
+            self._enforce_custom_tool_terminal_rules(state, action, records)
             for event in tool_events:
                 yield event
             async for event in self.observation_processor.process(state, planner_result, action, observation):
@@ -540,7 +571,14 @@ class AgentRuntime:
         from ..core.streaming_tool_executor import StreamingToolExecutor
 
         # 按模式过滤工具 schema（节省 token）
-        tool_schemas = get_tool_schemas(mode=state.mode)
+        tool_schemas = get_tool_schemas(
+            mode=state.mode,
+            allowed_tool_names=(
+                list(self.executor.tool_registry.keys())
+                if state.mode == "custom" and hasattr(self.executor, "tool_registry")
+                else None
+            ),
+        )
         suppressed_tool_names = self._tool_names_to_suppress(state)
         state.suppress_tool_names_current_turn = suppressed_tool_names
         if suppressed_tool_names:
@@ -852,9 +890,61 @@ class AgentRuntime:
         self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)
         self.writer.add_iteration(planner_result.thought, action, observation)
+        self._enforce_custom_tool_terminal_rules(state, action, records)
 
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
+
+    @staticmethod
+    def _is_deterministic_model_error(error: Exception) -> bool:
+        message = str(error).lower()
+        markers = (
+            "http 400", "status code: 400", "status_code=400", "error code: 400",
+            "400 client error", "bad request",
+            "http 401", "http 403", "error code: 401", "error code: 403",
+            "unauthorized", "forbidden",
+            "authentication", "invalid request", "request format",
+        )
+        return any(marker in message for marker in markers)
+
+    @staticmethod
+    def _enforce_custom_tool_terminal_rules(
+        state: RunState,
+        action: Dict[str, Any],
+        records: List[Dict[str, Any]],
+    ) -> None:
+        if state.mode != "custom":
+            return
+        unavailable = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and str(record["result"].get("error", "")).startswith(("工具不可用:", "工具不存在:"))
+        ), None)
+        if unavailable is not None:
+            raise CustomAgentTerminalError(
+                f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
+            )
+        blocked = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and record["result"].get("loop_guard") is True
+            and record["result"].get("severity") == "block"
+        ), None)
+        if blocked is None:
+            if records:
+                state.last_loop_block_signature = None
+            return
+        signature = json.dumps(
+            {"tool": blocked.get("tool_name"), "args": blocked.get("tool_input", {})},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        if state.last_loop_block_signature == signature:
+            raise CustomAgentTerminalError(
+                f"工具循环已终止: {blocked.get('tool_name')} 使用相同参数重复请求"
+            )
+        state.last_loop_block_signature = signature
 
     async def _complete_response(
         self,

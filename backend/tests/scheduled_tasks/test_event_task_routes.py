@@ -26,6 +26,22 @@ class FakeRegistry:
         return self.users.get(user_id)
 
 
+class FakeToolRegistry:
+    statuses = {"read_file": "enabled", "write_file": "enabled", "disabled": "disabled"}
+
+    def get_tool_status(self, name):
+        return self.statuses.get(name)
+
+    def list_tools(self):
+        return list(self.statuses)
+
+    def get_tools_info(self):
+        return [
+            {"name": name, "status": status, "description": name}
+            for name, status in self.statuses.items()
+        ]
+
+
 class FakeService:
     def __init__(self):
         self.tasks = {}
@@ -58,6 +74,7 @@ def _client(monkeypatch):
     service = FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
     monkeypatch.setattr(routes, "get_social_user_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(routes, "get_tool_registry", lambda: FakeToolRegistry())
     app = FastAPI()
     app.dependency_overrides[require_current_user] = lambda: CurrentUser(
         id="creator-1",
@@ -173,3 +190,39 @@ def test_retry_delivery_endpoint_uses_existing_execution(monkeypatch):
     assert response.status_code == 200
     assert response.json()["retried_user_ids"] == ["admin-2"]
     assert service.retry_execution_id == "exec-1"
+
+
+def test_custom_task_rejects_invalid_tools_with_structured_details(monkeypatch):
+    client, _ = _client(monkeypatch)
+    payload = _event_payload()
+    payload.update({
+        "execution_mode": "custom",
+        "tool_names": ["missing", "disabled"],
+    })
+
+    response = client.post("/api/scheduled-tasks", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "invalid_custom_task_tools",
+        "items": [
+            {"name": "missing", "reason": "not_found"},
+            {"name": "disabled", "reason": "disabled"},
+        ],
+    }
+
+
+def test_updating_custom_task_to_existing_mode_clears_tool_names(monkeypatch):
+    client, _ = _client(monkeypatch)
+    payload = _event_payload()
+    payload.update({"execution_mode": "custom", "tool_names": ["read_file"]})
+    created = client.post("/api/scheduled-tasks", json=payload)
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.put(
+        f"/api/scheduled-tasks/{task_id}",
+        json={"execution_mode": "assistant"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["tool_names"] is None

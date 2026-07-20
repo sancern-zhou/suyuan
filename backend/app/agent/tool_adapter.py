@@ -789,7 +789,10 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 # 工具Schema定义（用于LLM Function Calling）
 # ========================================
 
-def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_tool_schemas(
+    mode: Optional[str] = None,
+    allowed_tool_names: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """
     获取工具Schema定义（单一注册源）
 
@@ -798,8 +801,9 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     schemas = []
 
-    allowed_tools = None
-    if mode:
+    requested_order = list(dict.fromkeys(allowed_tool_names or []))
+    allowed_tools = set(requested_order) if allowed_tool_names is not None else None
+    if allowed_tools is None and mode:
         from app.agent.prompts.tool_registry import get_tools_by_mode
         allowed_tools = set(get_tools_by_mode(mode).keys())
 
@@ -889,6 +893,10 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
             "required": ["data_id"]
         }
         })
+
+    if allowed_tool_names is not None:
+        schemas_by_name = {schema["name"]: schema for schema in schemas}
+        schemas = [schemas_by_name[name] for name in requested_order if name in schemas_by_name]
 
     logger.info("tool_schemas_generated", count=len(schemas))
 

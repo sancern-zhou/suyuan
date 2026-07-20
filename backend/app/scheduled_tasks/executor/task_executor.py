@@ -21,6 +21,19 @@ from ..conversation_persistence import ScheduledTaskConversationPersistence
 logger = structlog.get_logger()
 
 
+def build_runtime_custom_tool_registry(tool_names):
+    """Validate and freeze the selected global tools for one custom task run."""
+    from app.agent.tool_adapter import get_react_agent_tool_registry
+    from app.services.lifecycle_manager import get_tool_registry
+    from ..custom_agent import build_custom_tool_registry
+
+    return build_custom_tool_registry(
+        tool_names,
+        get_tool_registry(),
+        get_react_agent_tool_registry(),
+    )
+
+
 class ScheduledTaskExecutor:
     """定时任务执行器"""
 
@@ -73,6 +86,16 @@ class ScheduledTaskExecutor:
         )
 
         try:
+            shared_agent = None
+            if task.execution_mode == "custom":
+                if not self.agent_factory:
+                    raise RuntimeError("Agent factory not configured")
+                fixed_tools = build_runtime_custom_tool_registry(task.tool_names or [])
+                shared_agent = self.agent_factory(
+                    tool_registry=fixed_tools,
+                    enable_memory=False,
+                )
+
             # 顺序执行步骤（所有步骤共享同一个 session_id）
             for i, step in enumerate(task.steps):
                 execution.current_step_index = i
@@ -85,6 +108,7 @@ class ScheduledTaskExecutor:
                     task_session_id,
                     task.execution_mode,
                     task=task,
+                    agent=shared_agent,
                     prompt=(
                         self._build_event_prompt(step.agent_prompt, event)
                         if event
@@ -96,11 +120,11 @@ class ScheduledTaskExecutor:
                 # 更新统计
                 if step_result.status == ExecutionStatus.SUCCESS:
                     execution.completed_steps += 1
-                elif step_result.status == ExecutionStatus.FAILED:
+                elif step_result.status in {ExecutionStatus.FAILED, ExecutionStatus.TIMEOUT}:
                     execution.failed_steps += 1
 
                     # 如果步骤失败且不重试，终止任务
-                    if not step.retry_on_failure:
+                    if task.execution_mode == "custom" or not step.retry_on_failure:
                         logger.warning(
                             f"Step {step.step_id} failed and retry_on_failure=False, "
                             f"stopping task execution"
@@ -174,6 +198,7 @@ class ScheduledTaskExecutor:
         manual_mode: str,
         task: ScheduledTask,
         prompt: str,
+        agent=None,
     ) -> StepExecution:
         """执行单个步骤"""
         step_exec = StepExecution(
@@ -197,6 +222,7 @@ class ScheduledTaskExecutor:
                     manual_mode=manual_mode,
                     task=task,
                     execution=execution,
+                    agent=agent,
                 ),
                 timeout=step.timeout_seconds
             )
@@ -239,6 +265,7 @@ class ScheduledTaskExecutor:
         manual_mode: str,
         task: ScheduledTask | None = None,
         execution: TaskExecution | None = None,
+        agent=None,
     ) -> dict:
         """
         运行Agent步骤
@@ -253,8 +280,8 @@ class ScheduledTaskExecutor:
         if not self.agent_factory:
             raise RuntimeError("Agent factory not configured")
 
-        # 创建Agent实例
-        agent = self.agent_factory()
+        # custom 模式由任务执行器创建一个固定工具集的 Agent 并在所有步骤间复用。
+        agent = agent or self.agent_factory()
 
         logger.info(
             f"Running agent step with session_id: {session_id}, "
@@ -280,7 +307,7 @@ class ScheduledTaskExecutor:
                 prompt,
                 session_id=session_id,
                 manual_mode=manual_mode,
-                session_storage_mode="assistant",
+                session_storage_mode=("custom" if manual_mode == "custom" else "assistant"),
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -344,6 +371,9 @@ class ScheduledTaskExecutor:
                 elif event_type == "complete":
                     data = event.get("data") or {}
                     summary_parts[:] = [data.get("answer") or data.get("response") or ""]
+                elif event_type == "fatal_error":
+                    error = event_data.get("error") or event.get("error") or "Agent execution failed"
+                    raise RuntimeError(error)
         except BaseException as analysis_error:
             display_history.append({
                 "type": "error",
