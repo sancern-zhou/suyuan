@@ -4,7 +4,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ScheduleType(str, Enum):
@@ -54,7 +54,11 @@ class ScheduledTask(BaseModel):
     description: str = Field(..., description="任务描述")
     execution_mode: str = Field(
         default="expert",
-        description="执行模式（assistant/expert/query/social）"
+        description="执行模式（assistant/expert/query/social/custom）"
+    )
+    tool_names: Optional[List[str]] = Field(
+        default=None,
+        description="custom 模式固定使用的工具名称列表",
     )
 
     # 触发配置
@@ -93,8 +97,27 @@ class ScheduledTask(BaseModel):
     owner_display_name: str = Field(default="定时任务", description="会话归属显示名")
     tags: List[str] = Field(default_factory=list, description="标签")
 
+    @field_validator("tool_names")
+    @classmethod
+    def normalize_tool_names(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return None
+        normalized: List[str] = []
+        seen = set()
+        for raw_name in value:
+            name = raw_name.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append(name)
+        return normalized
+
     @model_validator(mode="after")
     def validate_trigger(self):
+        if self.execution_mode == "custom" and not self.tool_names:
+            raise ValueError("tool_names is required for custom mode")
+        if self.execution_mode != "custom" and self.tool_names is not None:
+            raise ValueError("tool_names is only valid for custom mode")
         if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type is None:
             raise ValueError("schedule_type is required for schedule tasks")
         if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():

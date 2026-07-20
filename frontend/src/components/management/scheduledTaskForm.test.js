@@ -2,10 +2,44 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  applyExecutionMode,
   applyTriggerDefaults,
   buildTaskPayload,
   selectableWeixinUsers
 } from './scheduledTaskForm.js'
+
+
+test('custom payload keeps only unique selected tools in user order', () => {
+  const payload = buildTaskPayload({
+    name: '最小工具任务',
+    description: '生成报告',
+    execution_mode: 'custom',
+    tool_names: ['write_file', 'read_file', 'write_file', ''],
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.deepEqual(payload.tool_names, ['write_file', 'read_file'])
+})
+
+
+test('non-custom payload omits tools and changing mode clears stale selection', () => {
+  const form = { execution_mode: 'custom', tool_names: ['read_file'] }
+  applyExecutionMode(form, 'assistant')
+
+  const payload = buildTaskPayload({
+    ...form,
+    name: '助手任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.deepEqual(form.tool_names, [])
+  assert.equal(Object.hasOwn(payload, 'tool_names'), false)
+})
 
 
 test('filters active bound WeChat users', () => {

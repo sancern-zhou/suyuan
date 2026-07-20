@@ -14,6 +14,7 @@ from .chart_prompt import build_chart_prompt
 from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
+from .custom_prompt import build_custom_prompt
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -35,6 +36,7 @@ AgentMode = Literal[
     "board",
     "ops",
     "graph",
+    "custom",
     "memory_consolidator",
     "deliberation_meteorology",
     "deliberation_monitoring",
@@ -80,13 +82,16 @@ def build_react_system_prompt(
         系统提示词字符串
     """
     # 如果未指定工具，加载该模式的默认工具
-    if available_tools is None:
+    if available_tools is None and mode != "custom":
         tools_dict = get_tools_by_mode(mode)
         available_tools = list(tools_dict.keys())
 
     # 过滤：只保留该模式支持的工具
-    mode_tools = get_tools_by_mode(mode)
-    filtered_tools = [t for t in available_tools if t in mode_tools]
+    if mode == "custom":
+        filtered_tools = list(available_tools or [])
+    else:
+        mode_tools = get_tools_by_mode(mode)
+        filtered_tools = [t for t in available_tools if t in mode_tools]
 
     logger.info(
         "building_prompt",
@@ -104,6 +109,8 @@ def build_react_system_prompt(
     )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
+    if mode == "custom":
+        return build_custom_prompt(filtered_tools)
     if mode == "assistant":
         return build_assistant_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "expert":

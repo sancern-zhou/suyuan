@@ -14,6 +14,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
     eventTypes: [],
     socialUsers: [],
+    availableTools: [],
     ws: null,
     wsConnected: false,
     wsConnecting: false,
@@ -54,6 +55,14 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       return this.socialUsers;
     },
 
+    async fetchAvailableTools() {
+      const response = await authFetch(`${API_BASE}/tools`);
+      if (!response.ok) throw new Error('Failed to fetch available tools');
+      const data = await response.json();
+      this.availableTools = Array.isArray(data?.tools) ? data.tools : [];
+      return this.availableTools;
+    },
+
     async fetchStats() {
       try {
         const response = await authFetch(`${API_BASE}/statistics/summary`);
@@ -84,7 +93,13 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         },
         body: JSON.stringify(data)
       });
-      if (!response.ok) throw new Error('Failed to create task');
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const items = body?.detail?.items || [];
+        throw new Error(body?.detail?.code === 'invalid_custom_task_tools'
+          ? `工具配置无效：${items.map(item => `${item.name}（${item.reason}）`).join('、')}`
+          : (body?.detail || 'Failed to create task'));
+      }
       const task = await response.json();
       await this.fetchTasks();
       await this.fetchStats();
@@ -183,7 +198,13 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         },
         body: JSON.stringify(data)
       });
-      if (!response.ok) throw new Error('Failed to update task');
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const items = body?.detail?.items || [];
+        throw new Error(body?.detail?.code === 'invalid_custom_task_tools'
+          ? `工具配置无效：${items.map(item => `${item.name}（${item.reason}）`).join('、')}`
+          : (body?.detail || 'Failed to update task'));
+      }
       await this.fetchTasks();
     },
 

@@ -189,19 +189,43 @@
 
             <label class="form-field">
               <span>执行模式</span>
-              <select v-model="createForm.execution_mode">
+              <select v-model="createForm.execution_mode" @change="handleExecutionModeChange">
                 <option value="assistant">assistant</option>
                 <option value="expert">expert</option>
+                <option value="query">query</option>
                 <option value="social">social</option>
+                <option value="custom">custom（自选工具）</option>
               </select>
             </label>
+
+            <div v-if="createForm.execution_mode === 'custom'" class="form-field form-wide">
+              <span>Agent 工具（本次任务所有步骤固定共享）</span>
+              <input v-model="createForm.toolSearch" type="search" placeholder="搜索工具名称或说明" />
+              <div class="tool-picker">
+                <label v-for="tool in filteredTools" :key="tool.name" class="tool-option">
+                  <input
+                    v-model="createForm.tool_names"
+                    type="checkbox"
+                    :value="tool.name"
+                    :disabled="tool.status !== 'enabled'"
+                  />
+                  <span class="tool-option-main">
+                    <strong>{{ tool.name }}</strong>
+                    <small>{{ tool.description || '暂无说明' }}</small>
+                  </span>
+                  <span v-if="tool.status !== 'enabled'" class="tool-disabled">已禁用</span>
+                </label>
+                <div v-if="filteredTools.length === 0" class="recipient-empty">没有匹配的工具</div>
+              </div>
+              <small class="form-hint">仅加载所选工具，不继承其他模式能力；系统不会自动补充依赖工具。</small>
+            </div>
 
             <label class="form-field form-wide">
               <span>任务描述</span>
               <textarea v-model="createForm.description" rows="4" placeholder="描述广播主题、语气、目标人群"></textarea>
             </label>
 
-            <label v-if="createForm.trigger_type === 'event'" class="form-field form-wide">
+            <label v-if="createForm.trigger_type === 'event' || createForm.execution_mode === 'custom'" class="form-field form-wide">
               <span>Agent 执行指令</span>
               <textarea
                 v-model="createForm.agent_prompt"
@@ -331,6 +355,7 @@
 import { computed, ref } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import {
+  applyExecutionMode,
   applyTriggerDefaults,
   buildTaskPayload,
   selectableWeixinUsers
@@ -384,6 +409,14 @@ const executionHistoryError = ref('')
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const weixinUsers = computed(() => selectableWeixinUsers(scheduledTasksStore.socialUsers))
+const filteredTools = computed(() => {
+  const query = createForm.value.toolSearch.trim().toLowerCase()
+  return scheduledTasksStore.availableTools.filter(tool => !query || [
+    tool.name,
+    tool.description,
+    tool.category
+  ].some(value => String(value || '').toLowerCase().includes(query)))
+})
 
 const channelOptions = [
   { label: '微信', value: 'weixin' },
@@ -402,6 +435,8 @@ const defaultForm = () => ({
   description: '',
   agent_prompt: '',
   execution_mode: 'assistant',
+  tool_names: [],
+  toolSearch: '',
   trigger_type: 'schedule',
   schedule_type: 'daily_custom',
   event_type: '',
@@ -423,6 +458,10 @@ const createForm = ref(defaultForm())
 
 const setTriggerType = (triggerType) => {
   applyTriggerDefaults(createForm.value, triggerType, eventTypes.value)
+}
+
+const handleExecutionModeChange = () => {
+  applyExecutionMode(createForm.value, createForm.value.execution_mode)
 }
 
 const refreshExecutionHistory = async () => {
@@ -518,7 +557,8 @@ const getExecutionModeLabel = (mode) => {
     assistant: '助手模式',
     expert: '专家模式',
     query: '问数模式',
-    social: '社交模式'
+    social: '社交模式',
+    custom: '自定义工具模式'
   }
   return labels[mode] || mode || '默认'
 }
@@ -562,13 +602,18 @@ const buildBroadcastPrompt = () => {
 const loadConfigurationOptions = async () => {
   const results = await Promise.allSettled([
     scheduledTasksStore.fetchEventTypes(),
-    scheduledTasksStore.fetchSocialUsers()
+    scheduledTasksStore.fetchSocialUsers(),
+    scheduledTasksStore.fetchAvailableTools()
   ])
   if (results.some(result => result.status === 'rejected')) {
     formError.value = '部分配置项加载失败，请关闭后重试'
   }
-  if (createForm.value.trigger_type === 'event') {
-    applyTriggerDefaults(createForm.value, 'event', eventTypes.value)
+  if (
+    createForm.value.trigger_type === 'event' &&
+    !createForm.value.event_type &&
+    eventTypes.value.length > 0
+  ) {
+    createForm.value.event_type = eventTypes.value[0].event_type
   }
 }
 
@@ -589,6 +634,7 @@ const openEditDialog = async (task) => {
     description: task.description || '',
     agent_prompt: task.steps?.[0]?.agent_prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
+    tool_names: [...(task.tool_names || [])],
     trigger_type: task.trigger_type || 'schedule',
     schedule_type: task.schedule_type || 'daily_custom',
     event_type: task.event_type || '',
@@ -634,6 +680,10 @@ const saveTask = async () => {
     formError.value = '请至少选择一名微信接收人'
     return
   }
+  if (createForm.value.execution_mode === 'custom' && createForm.value.tool_names.length === 0) {
+    formError.value = '请至少选择一个 Agent 工具'
+    return
+  }
 
   creatingTask.value = true
   try {
@@ -647,7 +697,7 @@ const saveTask = async () => {
     const payload = buildTaskPayload({
       ...createForm.value,
       event_filters: eventFilters,
-      agent_prompt: createForm.value.trigger_type === 'event'
+      agent_prompt: createForm.value.trigger_type === 'event' || createForm.value.execution_mode === 'custom'
         ? (createForm.value.agent_prompt || createForm.value.description)
         : buildBroadcastPrompt()
     })
@@ -1214,6 +1264,29 @@ const saveTask = async () => {
 .form-wide {
   grid-column: 1 / -1;
 }
+
+.tool-picker {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.tool-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.tool-option:last-child { border-bottom: 0; }
+.tool-option input { width: auto; }
+.tool-option-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tool-option-main strong { font-size: 13px; color: #0f172a; overflow-wrap: anywhere; }
+.tool-option-main small, .form-hint { font-size: 12px; color: #64748b; }
+.tool-disabled { font-size: 12px; color: #b42318; }
 
 .channel-checks {
   display: flex;
