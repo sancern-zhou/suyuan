@@ -222,10 +222,10 @@
 
 - 输出文件名为 `report.qmd`。
 - 必须包含可渲染的 YAML header。
-- 证据目录中的源 `report.qmd` 与抓取图片位于同一目录，图片路径必须相对 `report.qmd.parent` 计算，使用裸文件名引用，例如 `![后向轨迹](trajectory.png)`、`![能见度](visibility.png)`。
-- 禁止在源 `report.qmd` 中使用 `assets/trajectory.png`；抓取脚本不会创建该目录，这类路径无法解析。也不要在源 QMD 中手工猜测最终报告包路径。
-- 调用 `create_report_package` 时，必须把每张入稿图片的真实绝对路径传入 `create_report_package.assets`。报告包工具负责复制图片并把发布稿引用规范化为 `assets/charts/trajectory.png` 等包内路径。
-- 调用 `create_report_package` 前，逐一确认源 QMD 图片引用相对源 QMD 所在目录确实存在；调用后必须执行 `validate_report_package`。如果工具返回 `Report image validation failed`、缺失引用、解析路径或 `Could not fetch resource`，必须按 `repair_hint` 修复源 QMD 或 `assets` 参数并重新打包、校验，不得继续交付。
+- 源 QMD 的图片地址按实际文件位置计算：先设置 `report_qmd_path = Path(report_dir) / "report.qmd"`，再从 manifest 的资产项获得 `image_path`，确认 `Path(image_path).is_file()`，然后使用 `source_image_ref = Path(image_path).resolve().relative_to(report_qmd_path.parent.resolve()).as_posix()` 得到 Markdown 引用地址。当前抓取脚本把图片与源 QMD 放在同一证据目录，因此计算结果通常是裸文件名，例如 `![后向轨迹](trajectory.png)`、`![能见度](visibility.png)`。
+- 如果 `relative_to(report_qmd_path.parent)` 无法计算，先把图片复制到 `report_qmd_path.parent` 的受管子目录，再重新计算相对路径。图片引用始终来自真实文件路径与 QMD 目录的相对关系，不根据文件名猜测目录层级。
+- 调用 `create_report_package` 时，把每张入稿图片的真实绝对路径传入 `create_report_package.assets`。报告包工具复制完成后，从工具结果的 `copied_assets[].relative_path` 获取发布稿引用；例如返回 `assets/charts/trajectory.png` 时，发布稿使用该路径。
+- 调用 `create_report_package` 前，逐一解析 `report_qmd_path.parent / source_image_ref` 并确认文件存在；调用后执行 `validate_report_package`。如果工具返回 `Report image validation failed`、缺失引用、解析路径或 `Could not fetch resource`，根据 `resolved_path` 和 `repair_hint` 重新定位真实图片、更新源 QMD 引用或 `assets` 参数，再次打包并校验。
 - 图片紧跟其对应的时间节点，不集中陈列。
 - 图片存在时，最终 `report.qmd` 必须在“污染过程时间线”的周边联动节点或该节点内的周边联动正文中展示 `city_pollutant_choropleth.png`；图注必须说明实际有效时次、目标污染物、运城市与周边城市的主要空间差异及其业务意义，不得仅在附件清单中列名。
 - 只选取能解释节点变化或支持下一步行动的图片，不以覆盖全部资产为目标；存在与过程直接相关且时次明确的图片时，正文至少插入 1 张。

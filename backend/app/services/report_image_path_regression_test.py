@@ -199,7 +199,10 @@ def test_yuncheng_skill_defines_source_and_package_image_path_contract():
 
     assert "![后向轨迹](trajectory.png)" in skill
     assert "assets/charts/trajectory.png" in skill
-    assert "禁止在源 `report.qmd` 中使用 `assets/trajectory.png`" in skill
+    assert "report_qmd_path.parent" in skill
+    assert "Path(image_path).resolve().relative_to" in skill
+    assert "copied_assets[].relative_path" in skill
+    assert "禁止在源 `report.qmd`" not in skill
     assert "create_report_package.assets" in skill
 
     source_qmd_description = report_package_tool.CreateReportPackageTool().function_schema[
