@@ -19,7 +19,6 @@ from typing import Any, Dict
 import structlog
 
 from app.auth.share_access import external_api_path
-
 from app.services.report.government_docx_style import (
     ensure_government_reference_docx,
     finalize_government_docx,
@@ -70,6 +69,96 @@ def _disable_docx_quarto_auto_structure(qmd_content: str) -> tuple[str, bool]:
 
 class ReportRenderError(RuntimeError):
     """Raised when Quarto rendering fails."""
+
+
+def markdown_image_path(reference: str) -> str:
+    """Return the path portion of a Markdown image destination."""
+    value = reference.strip()
+    if value.startswith("<"):
+        closing = value.find(">")
+        if closing > 0:
+            return value[1:closing]
+    match = re.match(
+        r'''^(?P<path>\S+?)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$''',
+        value,
+    )
+    return match.group("path") if match else value
+
+
+def inspect_report_image_refs(
+    report_dir: Path,
+    qmd_content: str,
+    *,
+    qmd_path: Path | None = None,
+) -> Dict[str, Any]:
+    """Inspect package-local Markdown image references before rendering."""
+    report_root = report_dir.resolve()
+    refs: list[str] = []
+    missing: list[str] = []
+    api_refs: list[str] = []
+    issues: list[Dict[str, str]] = []
+
+    for match in MARKDOWN_IMAGE_PATTERN.finditer(qmd_content or ""):
+        ref = match.group("src").strip()
+        if not ref or re.match(r"^(?:https?://|data:)", ref, re.IGNORECASE):
+            continue
+        refs.append(ref)
+        if ref.startswith("/api/image/"):
+            api_refs.append(ref)
+            continue
+
+        clean_ref = markdown_image_path(ref).split("#", 1)[0].split("?", 1)[0].strip()
+        candidate = (report_dir / clean_ref).resolve()
+        reason = None
+        try:
+            candidate.relative_to(report_root)
+        except ValueError:
+            reason = "path escapes report package"
+        else:
+            if not candidate.exists():
+                reason = "file does not exist"
+            elif not candidate.is_file():
+                reason = "path is not a file"
+
+        if reason:
+            missing.append(ref)
+            filename = Path(clean_ref).name or "image.png"
+            issues.append(
+                {
+                    "reference": ref,
+                    "resolved_path": str(candidate),
+                    "reason": reason,
+                    "repair_hint": (
+                        "Pass the real image path in create_report_package.assets and "
+                        f"use the copied package path assets/charts/{filename}, "
+                        "then validate again."
+                    ),
+                }
+            )
+
+    return {
+        "qmd_path": str(qmd_path or report_dir / "report.qmd"),
+        "refs": refs,
+        "missing": missing,
+        "api_image_refs": api_refs,
+        "issues": issues,
+    }
+
+
+def format_report_image_validation_error(validation: Dict[str, Any]) -> str:
+    """Build an actionable error that an Agent can use to repair a report."""
+    lines = [f"Report image validation failed for {validation.get('qmd_path', 'report.qmd')}:"]
+    for issue in validation.get("issues") or []:
+        lines.extend(
+            [
+                f"- reference: {issue['reference']}",
+                f"  resolved_path: {issue['resolved_path']}",
+                f"  reason: {issue['reason']}",
+            ]
+        )
+    if validation.get("issues"):
+        lines.append(f"Repair: {validation['issues'][0]['repair_hint']}")
+    return "\n".join(lines)
 
 
 def _process_api_image_refs_in_qmd(
@@ -194,18 +283,28 @@ class QuartoReportRenderer:
 
     def get_qmd_path(self, report_id: str) -> Path:
         report_dir = self.get_report_dir(report_id)
-        source_qmd = self._get_source_qmd_path(report_dir)
-        qmd_path = source_qmd or report_dir / "report.qmd"
+        qmd_path = report_dir / "report.qmd"
         if not qmd_path.exists():
             raise FileNotFoundError(f"report.qmd not found for report_id={report_id}")
         return qmd_path.resolve()
 
+    def _validate_render_qmd(self, report_dir: Path, qmd_path: Path) -> Dict[str, Any]:
+        text = qmd_path.read_text(encoding="utf-8", errors="replace")
+        validation = inspect_report_image_refs(
+            report_dir,
+            text,
+            qmd_path=qmd_path,
+        )
+        if validation["issues"]:
+            raise ReportRenderError(format_report_image_validation_error(validation))
+        return validation
+
     def render_preview_html(self, report_id: str) -> Path:
         """Render lightweight preview HTML with external assets."""
         report_dir = self.get_report_dir(report_id)
-        self._snapshot_source_qmd(report_dir)
         output_path = report_dir / "report.html"
-        self.get_qmd_path(report_id)
+        qmd_path = self.get_qmd_path(report_id)
+        self._validate_render_qmd(report_dir, qmd_path)
         self._run_quarto(
             report_dir,
             ["render", "report.qmd", "--to", "html", "--output", "report.html"],
@@ -215,6 +314,7 @@ class QuartoReportRenderer:
     def render_docx(self, report_id: str) -> Path:
         report_dir = self.get_report_dir(report_id)
         qmd_path = self.get_qmd_path(report_id)
+        self._validate_render_qmd(report_dir, qmd_path)
         self._normalize_project_config_for_docx(report_dir)
 
         # 自动处理 /api/image/ 引用，确保 Quarto 能找到图片
@@ -240,6 +340,8 @@ class QuartoReportRenderer:
             style_cleanup = finalize_government_docx(docx_path)
             logger.info("quarto_docx_government_style_finalized", **style_cleanup)
             return docx_path
+        except ReportRenderError:
+            raise
         except Exception as exc:
             logger.error("quarto_docx_render_failed", error=str(exc), fallback="using_html_conversion")
             return self._render_docx_from_html_fallback(report_dir)
@@ -267,8 +369,8 @@ class QuartoReportRenderer:
         """Render standalone HTML and persist a share token in meta.json."""
         report_dir = self.get_report_dir(report_id)
         try:
-            self._snapshot_source_qmd(report_dir)
-            self.get_qmd_path(report_id)
+            qmd_path = self.get_qmd_path(report_id)
+            self._validate_render_qmd(report_dir, qmd_path)
             self._run_quarto(
                 report_dir,
                 [
@@ -449,6 +551,20 @@ class QuartoReportRenderer:
             )
             detail = exc.stderr or exc.stdout or str(exc)
             raise ReportRenderError(detail) from exc
+        combined_output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+        missing_resource_lines = [
+            line.strip()
+            for line in combined_output.splitlines()
+            if "could not fetch resource" in line.lower()
+        ]
+        if missing_resource_lines:
+            detail = "\n".join(missing_resource_lines)
+            raise ReportRenderError(
+                "Quarto rendered with unresolved image resources:\n"
+                f"{detail}\n"
+                "Repair: pass each real image path in create_report_package.assets, use its "
+                "assets/charts/{filename} package path, and validate the report again."
+            )
         logger.info("quarto_render_done", stdout=completed.stdout, stderr=completed.stderr)
 
     def _read_meta(self, report_dir: Path) -> Dict[str, Any]:
@@ -460,58 +576,5 @@ class QuartoReportRenderer:
     def _write_meta(self, report_dir: Path, meta: Dict[str, Any]) -> None:
         meta_path = report_dir / "meta.json"
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def _get_source_qmd_path(self, report_dir: Path) -> Path | None:
-        meta = self._read_meta(report_dir)
-        files = meta.get("files") if isinstance(meta.get("files"), dict) else {}
-        raw_path = files.get("source_qmd") or meta.get("source_qmd")
-        if not raw_path:
-            return None
-        source_qmd = Path(raw_path).expanduser().resolve()
-        if source_qmd == (report_dir / "report.qmd").resolve():
-            return None
-        return source_qmd
-
-    def _snapshot_source_qmd(self, report_dir: Path) -> Path | None:
-        source_qmd = self._get_source_qmd_path(report_dir)
-        if not source_qmd:
-            return None
-        if not source_qmd.exists():
-            raise FileNotFoundError(f"source_qmd not found: {source_qmd}")
-        snapshot_qmd = report_dir / "report.qmd"
-        text = source_qmd.read_text(encoding="utf-8", errors="replace")
-        snapshot_qmd.write_text(text, encoding="utf-8")
-        self._copy_source_qmd_local_assets(source_qmd, report_dir, text)
-        logger.info(
-            "report_source_qmd_snapshotted",
-            source_qmd=str(source_qmd),
-            snapshot_qmd=str(snapshot_qmd),
-        )
-        return snapshot_qmd
-
-    def _copy_source_qmd_local_assets(self, source_qmd: Path, report_dir: Path, qmd_text: str) -> None:
-        source_dir = source_qmd.parent
-        for match in MARKDOWN_IMAGE_PATTERN.finditer(qmd_text or ""):
-            src = match.group("src").strip().split("#", 1)[0].split("?", 1)[0]
-            if not src or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", src) or src.startswith("/api/"):
-                continue
-            source_asset = Path(src)
-            if source_asset.is_absolute():
-                continue
-            source_asset = (source_dir / source_asset).resolve()
-            try:
-                source_asset.relative_to(source_dir.resolve())
-            except ValueError:
-                continue
-            if not source_asset.exists() or not source_asset.is_file():
-                continue
-            target_asset = (report_dir / Path(src)).resolve()
-            try:
-                target_asset.relative_to(report_dir.resolve())
-            except ValueError:
-                continue
-            target_asset.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_asset, target_asset)
-
 
 quarto_report_renderer = QuartoReportRenderer()

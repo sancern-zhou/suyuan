@@ -222,7 +222,10 @@
 
 - 输出文件名为 `report.qmd`。
 - 必须包含可渲染的 YAML header。
-- 图片使用相对路径引用。
+- 证据目录中的源 `report.qmd` 与抓取图片位于同一目录，图片路径必须相对 `report.qmd.parent` 计算，使用裸文件名引用，例如 `![后向轨迹](trajectory.png)`、`![能见度](visibility.png)`。
+- 禁止在源 `report.qmd` 中使用 `assets/trajectory.png`；抓取脚本不会创建该目录，这类路径无法解析。也不要在源 QMD 中手工猜测最终报告包路径。
+- 调用 `create_report_package` 时，必须把每张入稿图片的真实绝对路径传入 `create_report_package.assets`。报告包工具负责复制图片并把发布稿引用规范化为 `assets/charts/trajectory.png` 等包内路径。
+- 调用 `create_report_package` 前，逐一确认源 QMD 图片引用相对源 QMD 所在目录确实存在；调用后必须执行 `validate_report_package`。如果工具返回 `Report image validation failed`、缺失引用、解析路径或 `Could not fetch resource`，必须按 `repair_hint` 修复源 QMD 或 `assets` 参数并重新打包、校验，不得继续交付。
 - 图片紧跟其对应的时间节点，不集中陈列。
 - 图片存在时，最终 `report.qmd` 必须在“污染过程时间线”的周边联动节点或该节点内的周边联动正文中展示 `city_pollutant_choropleth.png`；图注必须说明实际有效时次、目标污染物、运城市与周边城市的主要空间差异及其业务意义，不得仅在附件清单中列名。
 - 只选取能解释节点变化或支持下一步行动的图片，不以覆盖全部资产为目标；存在与过程直接相关且时次明确的图片时，正文至少插入 1 张。
