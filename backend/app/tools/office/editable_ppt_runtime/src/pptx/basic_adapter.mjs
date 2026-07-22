@@ -58,7 +58,7 @@ export function addBasicElement(slide, element, pptxApi) {
   if (element.source === "native-ref") return { kind: "native-ref", id: element.id };
   const position = pxBoxToInches(element.box);
   const objectName = element.id;
-  const hasText = typeof element.text === "string" && element.text.trim() !== "";
+  const hasText = typeof element.text === "string" && element.text.trim() !== "" && !element.hasTaggedDescendant;
   const background = normalizeColor(element.style?.backgroundColor);
 
   if (element.tagName === "img" && element.src) {

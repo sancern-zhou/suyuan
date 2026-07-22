@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.agent.prompts.tool_registry import ASSISTANT_TOOL_NAMES
 from app.tools import create_global_tool_registry
+from app.agent.skill_metadata import SKILL_METADATA
 
 
 def test_editable_ppt_tool_is_registered_and_exposed():
@@ -17,3 +18,8 @@ def test_workflow_declares_direct_file_edit_and_strict_gate():
     assert "3–5" in guide
     assert "strict" in guide
     assert "无需重新生成" in guide
+
+
+def test_editable_ppt_generation_scenario_metadata_is_selectable():
+    metadata = SKILL_METADATA["editable_ppt_generation"]
+    assert {"manage_editable_ppt", "read_file", "edit_file"} <= set(metadata["required_tools"])

@@ -5,6 +5,8 @@ import html
 import json
 import re
 import shutil
+import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Iterable
@@ -85,10 +87,30 @@ class EditablePptProjectService:
         path = self._source_path(root, relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = content if isinstance(content, bytes) else content.encode("utf-8")
+        self._validate_candidate(root, relative_path, payload)
         tmp = path.with_name(f".{path.name}.tmp")
         tmp.write_bytes(payload)
         tmp.replace(path)
         return self._record_change(root, current, [relative_path], "managed_edit")
+
+    def _validate_candidate(self, root: Path, relative_path: str, payload: bytes):
+        if relative_path.startswith(("assets/", "templates/")):
+            return
+        with tempfile.TemporaryDirectory(prefix="editable-ppt-validate-") as temp:
+            staged = Path(temp) / "project"
+            shutil.copytree(root, staged, ignore=shutil.ignore_patterns(".editable-ppt", "build"))
+            target = staged / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+            cli = Path(__file__).resolve().parent.parent / "editable_ppt_runtime" / "src" / "cli.mjs"
+            request = json.dumps({"command": "inspect", "projectDir": str(staged)}).encode()
+            try:
+                run = subprocess.run(["node", str(cli)], input=request, capture_output=True, timeout=5)
+            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                raise ValueError(f"source validation unavailable: {exc}") from exc
+            if run.returncode != 0:
+                message = run.stderr.decode("utf-8", errors="replace").strip()
+                raise ValueError(f"source validation failed: {message}")
 
     def reconcile_external_edits(self, project_dir: str | Path) -> ProjectState:
         root = self._project_root(project_dir)

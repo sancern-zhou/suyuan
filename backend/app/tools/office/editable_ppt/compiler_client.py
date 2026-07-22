@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
+import os
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,7 @@ class EditablePptCompilerClient:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
             )
         except FileNotFoundError as exc:
             raise CompilerClientError("NODE_RUNTIME_MISSING", self.node_binary) from exc
@@ -87,9 +89,11 @@ class EditablePptCompilerClient:
                 process.communicate(payload), timeout=self.timeout_seconds
             )
         except TimeoutError as exc:
-            process.kill()
-            await process.wait()
+            await self._terminate(process)
             raise CompilerClientError("COMPILER_TIMEOUT", f"exceeded {self.timeout_seconds}s") from exc
+        except asyncio.CancelledError:
+            await self._terminate(process)
+            raise
         stderr_text = stderr.decode("utf-8", errors="replace").strip()
         if process.returncode != 0:
             raise CompilerClientError(
@@ -108,3 +112,13 @@ class EditablePptCompilerClient:
         if not isinstance(response, dict):
             raise CompilerClientError("COMPILER_PROTOCOL_ERROR", "response must be an object")
         return response
+
+    @staticmethod
+    async def _terminate(process):
+        try:
+            if os.name == "posix" and getattr(process, "pid", None):
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        finally:
+            await process.wait()

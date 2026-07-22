@@ -14,10 +14,13 @@ class FakeCompiler:
         return {"success": True, "previewDir": str(Path(project_dir) / "build/preview"), "pages": []}
 
     async def compile(self, project_dir, output_dir=None, **kwargs):
+        pptx = Path(project_dir) / "build/pptx/presentation.pptx"
+        pptx.parent.mkdir(parents=True, exist_ok=True)
+        pptx.write_bytes(b"fake-pptx")
         return {
             "success": True,
-            "pptxPath": str(Path(project_dir) / "build/pptx/presentation.pptx"),
-            "report": {"forbiddenRasterFallbacks": 0, "issues": []},
+            "pptxPath": str(pptx),
+            "report": {"editable": "strict", "forbiddenRasterFallbacks": 0, "issues": []},
         }
 
 
@@ -62,3 +65,24 @@ async def test_unsupported_operation_returns_structured_failure(tmp_path):
     result = await make_tool(tmp_path).execute(operation="unknown")
     assert result["success"] is False
     assert result["data"]["issues"][0]["code"] == "UNSUPPORTED_OPERATION"
+
+
+class FailingQa:
+    async def execute(self, **kwargs):
+        return {"success": True, "summary": "QA found issues", "data": {"success": False, "issues": [{"type": "blank_slide", "message": "blank"}], "gate": {"passed": False}}}
+
+
+@pytest.mark.asyncio
+async def test_finalize_rejects_qa_failure_and_stale_source(tmp_path):
+    tool = make_tool(tmp_path)
+    tool.validator = FailingQa()
+    created = await tool.execute(operation="create", title="QA")
+    project = created["data"]["project_dir"]
+    await tool.execute(operation="compile", project_dir=project)
+    qa = await tool.execute(operation="finalize", project_dir=project)
+    assert qa["success"] is False
+    state = tool.projects.inspect(project)
+    source = tool.projects.read_source(project, "slides/slide-001.js")
+    tool.projects.edit_source(project, "slides/slide-001.js", source.replace("QA", "changed"), state.revision)
+    stale = await tool.execute(operation="finalize", project_dir=project)
+    assert stale["data"]["issues"][0]["code"] == "STALE_COMPILE_ARTIFACT"

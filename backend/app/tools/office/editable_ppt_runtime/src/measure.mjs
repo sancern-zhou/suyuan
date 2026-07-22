@@ -99,6 +99,7 @@ async function extractPage(page) {
         tagName: node.tagName.toLowerCase(),
         text: node.innerText || "",
         src: node.tagName === "IMG" ? node.getAttribute("src") : null,
+        hasTaggedDescendant: Boolean(node.querySelector("[data-pptx-id], [data-pptx-ref]")),
         box: {
           x: rect.left - rootRect.left,
           y: rect.top - rootRect.top,
@@ -112,6 +113,9 @@ async function extractPage(page) {
           borderWidth: style.borderWidth,
           borderRadius: style.borderRadius,
           boxShadow: style.boxShadow,
+          backgroundImage: style.backgroundImage,
+          filter: style.filter,
+          transform: style.transform,
           fontFamily: style.fontFamily,
           fontSize: style.fontSize,
           fontWeight: style.fontWeight,
@@ -181,7 +185,8 @@ export async function measureDeck(projectDir, outputDir, options = {}) {
   const misses = [];
   for (const pageNumber of pages) {
     const slide = payload.slides[pageNumber - 1];
-    const digest = crypto.createHash("sha256").update(JSON.stringify({ slide, theme: payload.theme, viewport: VIEWPORT })).digest("hex");
+    const referencedAssets = Object.fromEntries(Object.entries(payload.assetHashes || {}).filter(([name]) => slide.html.includes(`assets/${name}`)));
+    const digest = crypto.createHash("sha256").update(JSON.stringify({ slide, theme: payload.theme, referencedAssets, viewport: VIEWPORT })).digest("hex");
     const jsonPath = cacheDir ? path.join(cacheDir, `${slide.id}-${digest}.json`) : null;
     const pngPath = cacheDir ? path.join(cacheDir, `${slide.id}-${digest}.png`) : null;
     const screenshotPath = path.join(screenshotsDir, `page-${String(pageNumber).padStart(3, "0")}.png`);
