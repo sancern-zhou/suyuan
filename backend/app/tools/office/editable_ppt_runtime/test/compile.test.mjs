@@ -80,3 +80,12 @@ test("CLI rejects malformed JSON without writing protocol noise to stdout", () =
   assert.equal(run.stdout, "");
   assert.match(run.stderr, /COMPILER_PROTOCOL_ERROR/);
 });
+
+test("compile rejects output file names containing a directory", async () => {
+  const projectDir = await nativeProject();
+  const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "editable-ppt-output-name-"));
+  await assert.rejects(
+    () => compileDeck(projectDir, outputDir, { fileName: "../outside.pptx" }),
+    /OUTPUT_FILE_NAME_INVALID/,
+  );
+});

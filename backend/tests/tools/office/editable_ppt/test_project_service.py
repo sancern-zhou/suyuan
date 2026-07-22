@@ -45,6 +45,8 @@ def test_rejects_path_escape_and_stale_revision_without_writes(tmp_path):
     project = service.create_project(title="年度报告")
     with pytest.raises(ValueError, match="outside project root"):
         service.edit_source(project.project_dir, "../outside.js", "bad", project.revision)
+    with pytest.raises(ValueError, match="outside editable source scope"):
+        service.edit_source(project.project_dir, "build/presentation.pptx", b"bad", project.revision)
     with pytest.raises(RevisionConflictError):
         service.edit_source(project.project_dir, "theme.json", "{}", project.revision - 1)
     assert json.loads(Path(project.project_dir, "theme.json").read_text())["fontTitle"]

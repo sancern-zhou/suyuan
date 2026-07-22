@@ -40,7 +40,7 @@ class ManageEditablePptTool(LLMTool):
                     _branch("read_source", ["project_dir", "relative_path"], {**PROJECT, "relative_path": {"type": "string"}}),
                     _branch("edit_source", ["project_dir", "relative_path", "content", "base_revision"], {**PROJECT, "relative_path": {"type": "string"}, "content": {"type": "string"}, "base_revision": {"type": "integer", "minimum": 1}}),
                     _branch("render", ["project_dir"], {**PROJECT, "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}}}),
-                    _branch("compile", ["project_dir"], {**PROJECT, "editable": {"type": "string", "enum": ["strict", "compatible"], "default": "strict"}, "file_name": {"type": "string", "default": "presentation.pptx"}}),
+                    _branch("compile", ["project_dir"], {**PROJECT, "editable": {"type": "string", "enum": ["strict", "compatible"], "default": "strict"}, "file_name": {"type": "string", "pattern": "^[^/\\\\]+\\.pptx$", "default": "presentation.pptx"}}),
                     _branch("validate", ["project_dir"], {**PROJECT, "pptx_path": {"type": "string"}}),
                     _branch("restore", ["project_dir", "revision", "base_revision"], {**PROJECT, "revision": {"type": "integer", "minimum": 1}, "base_revision": {"type": "integer", "minimum": 1}}),
                     _branch("finalize", ["project_dir"], {**PROJECT, "pptx_path": {"type": "string"}}),

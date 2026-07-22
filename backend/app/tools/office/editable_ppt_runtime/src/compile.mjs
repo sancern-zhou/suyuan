@@ -84,6 +84,10 @@ export async function renderPreview(projectDir, outputDir, options = {}) {
 
 export async function compileDeck(projectDir, outputDir, options = {}) {
   const startedAt = Date.now();
+  const fileName = options.fileName || "presentation.pptx";
+  if (path.basename(fileName) !== fileName || path.extname(fileName).toLowerCase() !== ".pptx") {
+    throw new Error(`OUTPUT_FILE_NAME_INVALID: ${fileName}`);
+  }
   const project = await loadProject(projectDir);
   const editable = options.editable || project.deck.editable || "strict";
   await fs.mkdir(outputDir, { recursive: true });
@@ -137,7 +141,7 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
     addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, project.theme, report, project.projectRoot);
   }
 
-  const pptxPath = path.join(outputDir, options.fileName || "presentation.pptx");
+  const pptxPath = path.join(outputDir, fileName);
   await pptx.writeFile({ fileName: pptxPath });
   report.ooxml = await auditPptx(pptxPath);
   if (!report.ooxml.hasPresentation || !report.ooxml.hasContentTypes || report.ooxml.slides !== report.slideCount) {
