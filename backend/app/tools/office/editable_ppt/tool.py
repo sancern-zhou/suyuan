@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from app.tools.office.editable_ppt.project_service import (
     EditablePptProjectService,
     RevisionConflictError,
 )
+from app.tools.office.editable_ppt.quality import build_editable_ppt_gate
 
 
 def _branch(operation: str, required: list[str], properties: dict[str, Any] | None = None):
@@ -90,6 +92,7 @@ class ManageEditablePptTool(LLMTool):
                 )
                 if result.get("success"):
                     state = self.projects.mark_clean(state.project_dir, state.dirty_slides)
+                self._record_json(state.project_dir, "last_compile.json", result)
                 return self._state_result(state, "PPTX 编译完成" if result.get("success") else "PPTX 编译需要修订", **result)
             if operation == "validate":
                 return await self._validate(kwargs["project_dir"], kwargs.get("pptx_path"))
@@ -98,10 +101,14 @@ class ManageEditablePptTool(LLMTool):
                 return self._state_result(state, f"已恢复 revision {kwargs['revision']}")
             if operation == "finalize":
                 validation = await self._validate(kwargs["project_dir"], kwargs.get("pptx_path"))
-                if not validation["success"]:
-                    return validation
-                validation["summary"] = "严格编译与 PPTX 验证通过，可以交付"
-                validation["data"]["finalized"] = True
+                compile_result = self._read_json(kwargs["project_dir"], "last_compile.json")
+                gate = build_editable_ppt_gate(
+                    compile_result.get("report", {}), validation["data"].get("validation", {})
+                )
+                validation["success"] = gate.status == "passed"
+                validation["summary"] = "严格编译与 PPTX 验证通过，可以交付" if validation["success"] else "质量门未通过，拒绝交付"
+                validation["data"]["finalized"] = validation["success"]
+                validation["data"]["quality_gate"] = gate.to_dict()
                 return validation
             return self._failure("UNSUPPORTED_OPERATION", f"不支持的操作：{operation}")
         except RevisionConflictError as error:
@@ -118,7 +125,18 @@ class ManageEditablePptTool(LLMTool):
             from app.tools.office.validate_pptx_tool import ValidatePptxTool
             self.validator = ValidatePptxTool()
         result = await self.validator.execute(path=path)
+        self._record_json(project_dir, "last_validation.json", result)
         return self._state_result(state, result.get("summary", "PPTX 验证完成"), validation=result, pptx_path=path, success=result.get("success", False))
+
+    @staticmethod
+    def _record_json(project_dir: str, name: str, value: dict[str, Any]):
+        target = Path(project_dir) / ".editable-ppt" / name
+        target.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    @staticmethod
+    def _read_json(project_dir: str, name: str):
+        target = Path(project_dir) / ".editable-ppt" / name
+        return json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
 
     @staticmethod
     def _state_result(state, summary: str, success: bool = True, **extra):
