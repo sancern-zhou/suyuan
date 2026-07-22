@@ -15,6 +15,7 @@ class EditablePptGate:
 
 
 BLOCKING_CODES = {
+    "STRICT_COMPILE_REPORT_MISSING", "EDITABILITY_MODE_NOT_STRICT",
     "FORBIDDEN_RASTER_FALLBACK", "NATIVE_REFERENCE_MISSING", "OOXML_STRUCTURE_INVALID",
     "CRITICAL_ELEMENT_MISSING", "CRITICAL_ELEMENT_GEOMETRY_DRIFT", "BLANK_SLIDE",
     "MISSING_ASSET", "POWERPOINT_REPAIR_RISK",
@@ -47,6 +48,10 @@ def build_editable_ppt_gate(
     compile_report = compile_report or {}
     validation = validation or {}
     forbidden = int(compile_report.get("forbiddenRasterFallbacks", 0) or 0)
+    if not compile_report:
+        issues.append(_issue("STRICT_COMPILE_REPORT_MISSING", "缺少 strict 编译报告，不能交付"))
+    elif compile_report.get("editable") != "strict":
+        issues.append(_issue("EDITABILITY_MODE_NOT_STRICT", "最终交付必须由 strict 模式编译"))
     if forbidden:
         issues.append(_issue(
             "FORBIDDEN_RASTER_FALLBACK",

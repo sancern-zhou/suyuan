@@ -98,6 +98,7 @@ async function extractPage(page) {
         source: node.hasAttribute("data-pptx-ref") ? "native-ref" : "dom",
         tagName: node.tagName.toLowerCase(),
         text: node.innerText || "",
+        src: node.tagName === "IMG" ? node.getAttribute("src") : null,
         box: {
           x: rect.left - rootRect.left,
           y: rect.top - rootRect.top,

@@ -33,6 +33,7 @@ class ManageEditablePptTool(LLMTool):
                 "源码是普通 JSON/JS/资源文档，可被 read_file/edit_file 多次修改；随后 inspect 会自动协调版本。"
             ),
             "parameters": {
+                "type": "object",
                 "oneOf": [
                     _branch("create", ["title"], {"title": {"type": "string"}, "theme": {"type": "string", "enum": ["government", "business", "data-analysis"], "default": "business"}}),
                     _branch("inspect", ["project_dir"], PROJECT),

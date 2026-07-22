@@ -36,12 +36,21 @@ function findMeasuredBox(page, id) {
   return measured.box;
 }
 
-function addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, theme, report) {
+function resolveImageSource(element, projectRoot) {
+  if (element.tagName !== "img" || !element.src || element.src.startsWith("data:")) return element;
+  if (/^[a-z]+:\/\//i.test(element.src)) throw new Error(`REMOTE_IMAGE_NOT_SUPPORTED: ${element.src}`);
+  const resolved = path.resolve(projectRoot, element.src.replace(/^\/+/, ""));
+  const relative = path.relative(projectRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`IMAGE_PATH_OUTSIDE_PROJECT: ${element.src}`);
+  return { ...element, src: resolved };
+}
+
+function addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, theme, report, projectRoot) {
   pptxSlide.background = { color: normalizeColor(theme.canvas) || "FFFFFF" };
   const nativeIds = new Set((slideSpec.nativeElements || []).map((element) => element.id));
   for (const element of measuredPage.elements) {
     if (element.id === "slide-root" || element.source === "native-ref" || nativeIds.has(element.id)) continue;
-    const added = addBasicElement(pptxSlide, element, pptx);
+    const added = addBasicElement(pptxSlide, resolveImageSource(element, projectRoot), pptx);
     if (added?.kind === "text") report.native.text += 1;
     if (added?.kind === "shape") report.native.shape += 1;
     if (added?.kind === "image") report.native.image += 1;
@@ -125,7 +134,7 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
     const measuredPage = measuredBySlide.get(slideSpec.id);
     if (!measuredPage) throw new Error(`MEASUREMENT_MISSING: ${slideSpec.id}`);
     const pptxSlide = pptx.addSlide();
-    addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, project.theme, report);
+    addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, project.theme, report, project.projectRoot);
   }
 
   const pptxPath = path.join(outputDir, options.fileName || "presentation.pptx");
