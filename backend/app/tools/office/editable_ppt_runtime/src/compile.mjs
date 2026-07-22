@@ -80,6 +80,8 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
   await fs.mkdir(outputDir, { recursive: true });
   const measurement = await measureDeck(projectDir, path.join(outputDir, "measurement"), {
     pages: options.pages,
+    dirtySlides: options.dirtySlides,
+    cacheDir: options.cacheDir,
   });
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
@@ -111,6 +113,7 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
       viewport: measurement.viewport,
       previewDir: measurement.previewDir,
       screenshots: measurement.pages.map((page) => page.screenshotPath),
+      cache: measurement.cache,
     },
   };
   if (editable === "strict" && report.forbiddenRasterFallbacks > 0) {
