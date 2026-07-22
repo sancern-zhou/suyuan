@@ -187,12 +187,16 @@ class EditablePptProjectService:
 
     @staticmethod
     def _source_path(root: Path, relative_path: str) -> Path:
+        normalized = str(relative_path).replace("\\", "/")
         path = (root / relative_path).resolve()
         try:
             path.relative_to(root)
         except ValueError as exc:
             raise ValueError("path is outside project root") from exc
-        if path == root or relative_path.startswith(".editable-ppt/"):
+        allowed = normalized in {"deck.json", "theme.json"} or normalized.startswith(("slides/", "templates/", "assets/"))
+        if not allowed:
+            raise ValueError("path is outside editable source scope")
+        if path == root:
             raise ValueError("path is outside editable source scope")
         return path
 
