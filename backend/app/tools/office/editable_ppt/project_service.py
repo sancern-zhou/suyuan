@@ -33,7 +33,7 @@ class EditablePptProjectService:
         (root / ".editable-ppt" / "snapshots").mkdir(parents=True)
         deck = {
             "schemaVersion": "1.0", "id": slug, "title": title,
-            "theme": "theme.json", "slides": ["slides/slide-001.js"],
+            "theme": "theme.json", "slides": ["cover"],
         }
         themes = {
             "government": {"primary": "#8B1E1E", "secondary": "#B98B2F"},
@@ -148,15 +148,18 @@ class EditablePptProjectService:
 
     def _dirty_slides(self, root: Path, changed: Iterable[str]) -> list[str]:
         deck = json.loads((root / "deck.json").read_text(encoding="utf-8"))
-        slide_paths = deck.get("slides", [])
+        ordered_ids = deck.get("slides", [])
         slide_ids = []
         sources = {}
-        for index, relative in enumerate(slide_paths, 1):
-            text = (root / relative).read_text(encoding="utf-8") if (root / relative).exists() else ""
+        for index, path in enumerate(sorted((root / "slides").glob("slide-*.js")), 1):
+            relative = path.relative_to(root).as_posix()
+            text = path.read_text(encoding="utf-8")
             match = re.search(r'\bid\s*:\s*["\']([^"\']+)', text)
             slide_id = match.group(1) if match else f"slide-{index}"
             slide_ids.append(slide_id)
             sources[relative] = (slide_id, text)
+        if ordered_ids:
+            slide_ids = [item for item in ordered_ids if item in slide_ids]
         dirty = set()
         for relative in changed:
             if relative in {"deck.json", "theme.json"} or relative.startswith("templates/"):
