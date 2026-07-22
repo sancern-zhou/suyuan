@@ -129,7 +129,7 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "   - 文本文件 → `read_file` / `edit_file`\n",
         "   - Word 文档：读取统一用 `read_file`；当前助手模式不再暴露 Word 编辑工具\n",
         "   - Excel → `execute_python` 或 Excel 技能文档\n",
-        "   - PPT → PPT 专用工具；正式业务 PPT 先读 `ppt_master_references/index.md`，通用操作再读 `PPT操作指南.md`\n",
+        "   - PPT → 从零生成且要求高质量/可反复底层编辑时优先 `manage_editable_ppt` 并阅读 `editable_ppt/references/index.md`；兼容旧流程时使用 PPT Master\n",
         "   - 图片 → `read_file` / `analyze_image`\n",
         "   - PDF → `read_file`\n",
         "\n",
