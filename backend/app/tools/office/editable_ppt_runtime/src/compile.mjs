@@ -36,6 +36,18 @@ function findMeasuredBox(page, id) {
   return measured.box;
 }
 
+export function unsupportedStyleIssues(measurement) {
+  const rules = [
+    ["backgroundImage", (value) => value && value !== "none"],
+    ["filter", (value) => value && value !== "none"],
+    ["transform", (value) => value && value !== "none"],
+    ["boxShadow", (value) => value && value !== "none"],
+  ];
+  return measurement.pages.flatMap((page) => page.elements.flatMap((element) => rules
+    .filter(([name, unsupported]) => unsupported(element.style?.[name]))
+    .map(([name]) => ({ code: "UNSUPPORTED_STYLE_STRICT", slideId: page.slideId, elementId: element.id, message: `${name} cannot be preserved as a native object` }))));
+}
+
 function resolveImageSource(element, projectRoot) {
   if (element.tagName !== "img" || !element.src || element.src.startsWith("data:")) return element;
   if (/^[a-z]+:\/\//i.test(element.src)) throw new Error(`REMOTE_IMAGE_NOT_SUPPORTED: ${element.src}`);
@@ -110,6 +122,7 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
   };
 
   const fallbackAudit = auditFallbacks(options.fallbacks || [], editable);
+  const styleIssues = unsupportedStyleIssues(measurement);
   const report = {
     schemaVersion: SCHEMA_VERSION,
     deckId: project.deck.id,
@@ -119,9 +132,9 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
     allowedRasterFallbacks: fallbackAudit.allowedRasterFallbacks,
     forbiddenRasterFallbacks: fallbackAudit.forbiddenRasterFallbacks,
     forbiddenElementIds: fallbackAudit.forbiddenElementIds,
-    issues: measurement.pages.flatMap((page) =>
+    issues: [...styleIssues, ...measurement.pages.flatMap((page) =>
       page.issues.map((issue) => ({ ...issue, pageNumber: page.pageNumber, slideId: page.slideId })),
-    ),
+    )],
     measurement: {
       viewport: measurement.viewport,
       previewDir: measurement.previewDir,
@@ -131,6 +144,9 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
   };
   if (editable === "strict" && report.forbiddenRasterFallbacks > 0) {
     return { success: false, report, error: "RASTER_FALLBACK_FORBIDDEN" };
+  }
+  if (editable === "strict" && styleIssues.length > 0) {
+    return { success: false, report, error: "UNSUPPORTED_STYLE_STRICT" };
   }
 
   const measuredBySlide = new Map(measurement.pages.map((page) => [page.slideId, page]));

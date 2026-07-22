@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -86,11 +87,20 @@ class ManageEditablePptTool(LLMTool):
                 return self._state_result(state, "Web 预览已渲染", **result)
             if operation == "compile":
                 state = self.projects.inspect(kwargs["project_dir"])
+                compile_revision = state.revision
+                compile_hashes = state.hashes
                 result = await self.compiler.compile(
                     state.project_dir, dirty_slides=state.dirty_slides,
                     cache_dir=Path(state.project_dir) / ".editable-ppt" / "cache",
                     editable=kwargs.get("editable", "strict"), file_name=kwargs.get("file_name", "presentation.pptx"),
                 )
+                if result.get("success"):
+                    pptx_path = Path(result["pptxPath"]).resolve()
+                    result.update({
+                        "sourceRevision": compile_revision,
+                        "sourceHashes": compile_hashes,
+                        "pptxSha256": self._sha256(pptx_path),
+                    })
                 if result.get("success"):
                     state = self.projects.mark_clean(state.project_dir, state.dirty_slides)
                 self._record_json(state.project_dir, "last_compile.json", result)
@@ -101,8 +111,20 @@ class ManageEditablePptTool(LLMTool):
                 state = self.projects.restore_revision(kwargs["project_dir"], kwargs["revision"], kwargs["base_revision"])
                 return self._state_result(state, f"已恢复 revision {kwargs['revision']}")
             if operation == "finalize":
-                validation = await self._validate(kwargs["project_dir"], kwargs.get("pptx_path"))
+                state = self.projects.inspect(kwargs["project_dir"])
                 compile_result = self._read_json(kwargs["project_dir"], "last_compile.json")
+                target = Path(kwargs.get("pptx_path") or compile_result.get("pptxPath", "")).resolve()
+                stale = (
+                    bool(state.dirty_slides)
+                    or compile_result.get("sourceRevision") != state.revision
+                    or compile_result.get("sourceHashes") != state.hashes
+                    or not target.is_file()
+                    or target != Path(compile_result.get("pptxPath", "")).resolve()
+                    or compile_result.get("pptxSha256") != (self._sha256(target) if target.is_file() else None)
+                )
+                if stale:
+                    return self._failure("STALE_COMPILE_ARTIFACT", "源码、revision 或 PPTX 已变化，必须重新 strict 编译", state.project_dir)
+                validation = await self._validate(state.project_dir, str(target))
                 gate = build_editable_ppt_gate(
                     compile_result.get("report", {}), validation["data"].get("validation", {})
                 )
@@ -127,7 +149,13 @@ class ManageEditablePptTool(LLMTool):
             self.validator = ValidatePptxTool()
         result = await self.validator.execute(path=path)
         self._record_json(project_dir, "last_validation.json", result)
-        return self._state_result(state, result.get("summary", "PPTX 验证完成"), validation=result, pptx_path=path, success=result.get("success", False))
+        payload = result.get("data", result)
+        passed = bool(result.get("success")) and payload.get("gate", {}).get("passed", payload.get("success", False))
+        return self._state_result(state, result.get("summary", "PPTX 验证完成"), validation=payload, pptx_path=path, success=passed)
+
+    @staticmethod
+    def _sha256(path: Path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     @staticmethod
     def _record_json(project_dir: str, name: str, value: dict[str, Any]):

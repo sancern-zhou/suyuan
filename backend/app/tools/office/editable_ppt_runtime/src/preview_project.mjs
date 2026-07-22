@@ -1,11 +1,27 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { loadProject } from "./source_loader.mjs";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RUNTIME_DIR = path.resolve(MODULE_DIR, "..", "runtime");
+
+async function assetHashes(root) {
+  const result = {};
+  async function visit(dir) {
+    let entries;
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return; throw error; }
+    for (const entry of entries) {
+      const current = path.join(dir, entry.name);
+      if (entry.isDirectory()) await visit(current);
+      if (entry.isFile()) result[path.relative(root, current).replaceAll("\\", "/")] = crypto.createHash("sha256").update(await fs.readFile(current)).digest("hex");
+    }
+  }
+  await visit(root);
+  return result;
+}
 
 function quoteTailwindSource(sourcePath) {
   return sourcePath.replaceAll("\\", "/").replaceAll('"', '\\"');
@@ -32,6 +48,7 @@ export async function materializePreview(projectDir, outputDir = path.join(proje
     schemaVersion: project.deck.schemaVersion,
     deck: project.deck,
     theme: project.theme,
+    assetHashes: await assetHashes(assetsDir),
     slides: project.slides.map(({ sourcePath, number, ...slide }) => ({ number, ...slide })),
   };
   await fs.writeFile(

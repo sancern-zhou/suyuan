@@ -84,3 +84,14 @@ def test_project_title_is_safe_inside_javascript_template(tmp_path):
     source = Path(project.project_dir, "slides/slide-001.js").read_text(encoding="utf-8")
     assert "\\`\\${globalThis.process}\\`" in source
     assert "&lt;script&gt;" in source
+
+
+def test_invalid_managed_deck_edit_does_not_replace_source(tmp_path):
+    service = EditablePptProjectService(tmp_path)
+    project = service.create_project(title="年度报告")
+    deck = Path(project.project_dir, "deck.json")
+    before = deck.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="source validation failed"):
+        service.edit_source(project.project_dir, "deck.json", "{bad", project.revision)
+    assert deck.read_text(encoding="utf-8") == before
+    assert service.inspect(project.project_dir).revision == project.revision

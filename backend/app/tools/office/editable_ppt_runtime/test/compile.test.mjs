@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import JSZip from "jszip";
 
-import { compileDeck } from "../src/compile.mjs";
+import { compileDeck, unsupportedStyleIssues } from "../src/compile.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PROJECT = path.join(HERE, "fixtures", "project");
@@ -88,4 +88,10 @@ test("compile rejects output file names containing a directory", async () => {
     () => compileDeck(projectDir, outputDir, { fileName: "../outside.pptx" }),
     /OUTPUT_FILE_NAME_INVALID/,
   );
+});
+
+test("strict style audit discovers unsupported native styling itself", () => {
+  const issues = unsupportedStyleIssues({ pages: [{ slideId: "cover", elements: [{ id: "hero", style: { backgroundImage: "linear-gradient(red, blue)", filter: "none", transform: "none", boxShadow: "none" } }] }] });
+  assert.equal(issues[0].code, "UNSUPPORTED_STYLE_STRICT");
+  assert.equal(issues[0].elementId, "hero");
 });
