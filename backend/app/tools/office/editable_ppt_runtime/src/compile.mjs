@@ -43,9 +43,15 @@ export function unsupportedStyleIssues(measurement) {
     ["transform", (value) => value && value !== "none"],
     ["boxShadow", (value) => value && value !== "none"],
   ];
-  return measurement.pages.flatMap((page) => page.elements.flatMap((element) => rules
-    .filter(([name, unsupported]) => unsupported(element.style?.[name]))
-    .map(([name]) => ({ code: "UNSUPPORTED_STYLE_STRICT", slideId: page.slideId, elementId: element.id, message: `${name} cannot be preserved as a native object` }))));
+  return measurement.pages.flatMap((page) => page.elements.flatMap((element) => {
+    const issues = rules
+      .filter(([name, unsupported]) => unsupported(element.style?.[name]))
+      .map(([name]) => ({ code: "UNSUPPORTED_STYLE_STRICT", slideId: page.slideId, elementId: element.id, message: `${name} cannot be preserved as a native object` }));
+    if (element.source === "dom" && element.hasUntaggedTextDescendant) {
+      issues.push({ code: "UNTAGGED_TEXT_STRICT", slideId: page.slideId, elementId: element.id, message: "text-bearing descendant needs its own data-pptx-id to preserve formatting" });
+    }
+    return issues;
+  }));
 }
 
 function resolveImageSource(element, projectRoot) {
