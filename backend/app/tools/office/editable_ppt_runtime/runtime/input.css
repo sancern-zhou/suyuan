@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  background: #e5e7eb;
+}
+
+body {
+  display: grid;
+  place-items: start center;
+  overflow: auto;
+}
+
+#app {
+  position: relative;
+  width: 1440px;
+  height: 810px;
+  overflow: hidden;
+  background: var(--canvas, #ffffff);
+}
+
+.editable-ppt-error {
+  margin: 48px;
+  padding: 24px;
+  color: #991b1b;
+  border: 2px solid #ef4444;
+  background: #fef2f2;
+  font: 24px/1.4 sans-serif;
+}
