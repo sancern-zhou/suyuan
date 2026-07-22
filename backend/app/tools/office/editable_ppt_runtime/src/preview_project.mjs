@@ -16,6 +16,12 @@ export async function materializePreview(projectDir, outputDir = path.join(proje
   const resolvedOutput = path.resolve(outputDir);
   await fs.mkdir(resolvedOutput, { recursive: true });
   await fs.cp(RUNTIME_DIR, resolvedOutput, { recursive: true, force: true });
+  const assetsDir = path.join(project.projectRoot, "assets");
+  try {
+    await fs.cp(assetsDir, path.join(resolvedOutput, "assets"), { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 
   const slideSource = quoteTailwindSource(path.join(project.projectRoot, "slides"));
   const cssPath = path.join(resolvedOutput, "input.css");

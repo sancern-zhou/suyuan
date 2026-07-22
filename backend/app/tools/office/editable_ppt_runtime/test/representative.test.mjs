@@ -28,6 +28,7 @@ test("representative ten-slide deck compiles with native semantic objects", { ti
   assert.equal(result.report.native.chart >= 1, true);
   assert.equal(result.report.native.table >= 1, true);
   assert.equal(result.report.native.diagram >= 1, true);
+  assert.equal(result.report.native.image >= 1, true);
   assert.equal(result.report.forbiddenRasterFallbacks, 0);
   const zip = await JSZip.loadAsync(await fs.readFile(result.pptxPath));
   const names = Object.keys(zip.files);
