@@ -22,7 +22,7 @@ ASSISTANT_TOOL_NAMES = [
     "list_directory", "search_files", "read_file",
 
     # Office
-    "create_pptx_with_ppt_master", "validate_pptx",
+    "manage_editable_ppt", "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
