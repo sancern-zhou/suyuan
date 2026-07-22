@@ -34,3 +34,15 @@ test("measures a 1440x810 slide and writes its screenshot", { timeout: 45_000 },
   assert.equal((await fs.stat(result.pages[0].screenshotPath)).size > 0, true);
   assert.deepEqual(result.pages[0].issues, []);
 });
+
+test("reuses unchanged slide measurements from the persistent cache", { timeout: 45_000 }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "editable-ppt-cache-"));
+  const cacheDir = path.join(root, "cache");
+  const first = await measureDeck(FIXTURE_PROJECT, path.join(root, "first"), { cacheDir, dirtySlides: ["cover"] });
+  const second = await measureDeck(FIXTURE_PROJECT, path.join(root, "second"), { cacheDir, dirtySlides: [] });
+  assert.equal(first.pages[0].cacheHit, false);
+  assert.equal(second.pages[0].cacheHit, true);
+  assert.equal(second.cache.hits, 1);
+  assert.equal(second.cache.misses, 0);
+  assert.equal((await fs.stat(second.pages[0].screenshotPath)).size > 0, true);
+});

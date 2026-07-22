@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -167,21 +168,47 @@ export async function measureDeck(projectDir, outputDir, options = {}) {
   await fs.mkdir(screenshotsDir, { recursive: true });
   const { payload } = await materializePreview(projectDir, previewDir);
   const pages = options.pages || payload.slides.map((slide) => slide.number);
-  const { server, baseUrl } = await startPreviewServer(previewDir);
+  for (const pageNumber of pages) {
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > payload.slides.length) {
+      throw new Error(`page must be between 1 and ${payload.slides.length}`);
+    }
+  }
+  const dirtySlides = new Set(options.dirtySlides || []);
+  const cacheDir = options.cacheDir ? path.resolve(options.cacheDir) : null;
+  if (cacheDir) await fs.mkdir(cacheDir, { recursive: true });
+  const resultByPage = new Map();
+  const misses = [];
+  for (const pageNumber of pages) {
+    const slide = payload.slides[pageNumber - 1];
+    const digest = crypto.createHash("sha256").update(JSON.stringify({ slide, theme: payload.theme, viewport: VIEWPORT })).digest("hex");
+    const jsonPath = cacheDir ? path.join(cacheDir, `${slide.id}-${digest}.json`) : null;
+    const pngPath = cacheDir ? path.join(cacheDir, `${slide.id}-${digest}.png`) : null;
+    const screenshotPath = path.join(screenshotsDir, `page-${String(pageNumber).padStart(3, "0")}.png`);
+    if (cacheDir && !dirtySlides.has(slide.id) && fsSync.existsSync(jsonPath) && fsSync.existsSync(pngPath)) {
+      const cached = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+      await fs.copyFile(pngPath, screenshotPath);
+      resultByPage.set(pageNumber, { ...cached, screenshotPath, cacheHit: true, cacheKey: digest });
+    } else {
+      misses.push({ pageNumber, slide, digest, jsonPath, pngPath, screenshotPath });
+    }
+  }
+  let server;
+  let baseUrl;
   let browser;
   try {
-    browser = await puppeteer.launch({
-      executablePath: resolveBrowserExecutable(),
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-    });
-    const page = await browser.newPage();
-    await page.setViewport({ ...VIEWPORT, deviceScaleFactor: 1 });
-    const results = [];
-    for (const pageNumber of pages) {
-      if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > payload.slides.length) {
-        throw new Error(`page must be between 1 and ${payload.slides.length}`);
-      }
+    let page;
+    if (misses.length) {
+      ({ server, baseUrl } = await startPreviewServer(previewDir));
+      browser = await puppeteer.launch({
+        executablePath: resolveBrowserExecutable(),
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+      });
+      page = await browser.newPage();
+      await page.setViewport({ ...VIEWPORT, deviceScaleFactor: 1 });
+    }
+    for (const miss of misses) {
+      const { pageNumber, digest, jsonPath, pngPath, screenshotPath } = miss;
       await page.goto(`${baseUrl}/?page=${pageNumber}`, { waitUntil: "networkidle0", timeout: 30_000 });
       await page.waitForFunction(
         () => window.__PPT_READY__ === true || Boolean(window.__PPT_ERROR__),
@@ -189,20 +216,30 @@ export async function measureDeck(projectDir, outputDir, options = {}) {
       );
       const measured = await extractPage(page);
       if (measured.diagnostics.runtimeError) throw new Error(measured.diagnostics.runtimeError);
-      const screenshotPath = path.join(screenshotsDir, `page-${String(pageNumber).padStart(3, "0")}.png`);
       await page.screenshot({ path: screenshotPath, clip: { x: 0, y: 0, ...VIEWPORT } });
-      results.push({
+      const result = {
         pageNumber,
         slideId: measured.slideId,
         elements: measured.elements,
         diagnostics: measured.diagnostics,
         issues: diagnosticIssues(measured),
         screenshotPath,
-      });
+        cacheHit: false,
+        cacheKey: digest,
+      };
+      if (cacheDir) {
+        const cached = { ...result };
+        delete cached.screenshotPath;
+        await fs.writeFile(jsonPath, `${JSON.stringify(cached)}\n`, "utf8");
+        await fs.copyFile(screenshotPath, pngPath);
+      }
+      resultByPage.set(pageNumber, result);
     }
-    return { viewport: { ...VIEWPORT }, previewDir, pages: results };
+    const results = pages.map((pageNumber) => resultByPage.get(pageNumber));
+    const hits = results.filter((item) => item.cacheHit).length;
+    return { viewport: { ...VIEWPORT }, previewDir, pages: results, cache: { enabled: Boolean(cacheDir), hits, misses: results.length - hits } };
   } finally {
     if (browser) await browser.close();
-    await server.close();
+    if (server) await server.close();
   }
 }
