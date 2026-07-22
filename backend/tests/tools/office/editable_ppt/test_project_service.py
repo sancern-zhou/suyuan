@@ -74,3 +74,11 @@ def test_asset_edit_dirties_only_consumers(tmp_path):
     )
     result = service.edit_source(root, "assets/hero.png", b"after", state.revision)
     assert result.dirty_slides == ["cover"]
+
+
+def test_project_title_is_safe_inside_javascript_template(tmp_path):
+    service = EditablePptProjectService(tmp_path)
+    project = service.create_project(title='`${globalThis.process}` <script>')
+    source = Path(project.project_dir, "slides/slide-001.js").read_text(encoding="utf-8")
+    assert "\\`\\${globalThis.process}\\`" in source
+    assert "&lt;script&gt;" in source

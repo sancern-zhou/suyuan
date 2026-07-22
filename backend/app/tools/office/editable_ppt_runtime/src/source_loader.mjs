@@ -14,21 +14,24 @@ export function resolveInside(projectRoot, relativePath) {
 }
 
 export function loadSlideSource(source, filename = "slide.js") {
-  const slideDataMap = new Map();
-  const sandboxWindow = Object.freeze({ slideDataMap });
   const context = vm.createContext(
-    { window: sandboxWindow },
+    {},
     {
       codeGeneration: { strings: false, wasm: false },
       name: `editable-ppt:${filename}`,
     },
   );
+  new vm.Script("globalThis.window = Object.freeze({ slideDataMap: new Map() });")
+    .runInContext(context, { timeout: 200 });
   const script = new vm.Script(source, { filename });
   script.runInContext(context, { timeout: 200 });
-  if (slideDataMap.size !== 1) {
+  const serialized = new vm.Script("JSON.stringify(Array.from(window.slideDataMap.entries()))")
+    .runInContext(context, { timeout: 200 });
+  const entries = JSON.parse(serialized);
+  if (entries.length !== 1) {
     throw new Error(`${filename} must register exactly one slide`);
   }
-  const [[number, slide]] = [...slideDataMap.entries()];
+  const [[number, slide]] = entries;
   if (!Number.isInteger(number) || number < 1) {
     throw new Error(`${filename} must use a positive integer page number`);
   }

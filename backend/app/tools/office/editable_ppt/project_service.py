@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import shutil
@@ -47,9 +48,11 @@ class EditablePptProjectService:
             "line": "#CBD5E1", "fontTitle": "Microsoft YaHei",
             "fontBody": "Microsoft YaHei",
         }
+        safe_title = html.escape(title).replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+        intent = json.dumps(f"introduce {title}", ensure_ascii=False)
         slide = f'''window.slideDataMap.set(1, {{
-  schemaVersion: "1.0", id: "cover", type: "cover", intent: "introduce {title}",
-  layoutMode: "freeform", html: `<section class="relative w-[1440px] h-[810px] bg-[var(--canvas)]" data-pptx-id="slide-root"><h1 class="absolute left-[100px] top-[280px] text-[58px] font-bold" data-pptx-id="title">{title}</h1></section>`,
+  schemaVersion: "1.0", id: "cover", type: "cover", intent: {intent},
+  layoutMode: "freeform", html: `<section class="relative w-[1440px] h-[810px] bg-[var(--canvas)]" data-pptx-id="slide-root"><h1 class="absolute left-[100px] top-[280px] text-[58px] font-bold" data-pptx-id="title">{safe_title}</h1></section>`,
   nativeElements: [], speakerNotes: []
 }});
 '''
