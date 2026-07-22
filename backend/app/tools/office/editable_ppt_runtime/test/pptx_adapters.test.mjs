@@ -108,6 +108,7 @@ test("semantic adapters emit native chart and table calls", () => {
   assert.deepEqual(slide.calls.map((call) => call.method), ["addChart", "addTable"]);
   assert.deepEqual(slide.calls[0].data, [{ name: "收入", labels: ["2025", "2026"], values: [10, 15] }]);
   assert.equal(slide.calls[0].options.showLegend, true);
+  assert.equal(slide.calls[0].options.barDir, "col");
 });
 
 test("diagram adapter emits separately editable nodes and connectors", () => {

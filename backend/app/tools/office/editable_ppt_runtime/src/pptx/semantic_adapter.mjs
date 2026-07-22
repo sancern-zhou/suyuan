@@ -9,7 +9,9 @@ function chartData(element) {
 }
 
 function addChart(slide, element, box, theme, pptxApi) {
-  const chartType = pptxApi.ChartType[element.chartType];
+  const chartType = element.chartType === "column"
+    ? (pptxApi.ChartType.column || pptxApi.ChartType.bar)
+    : pptxApi.ChartType[element.chartType];
   if (!chartType) throw new Error(`UNSUPPORTED_CHART_TYPE: ${element.chartType}`);
   slide.addChart(chartType, chartData(element), {
     ...pxBoxToInches(box),
@@ -23,6 +25,7 @@ function addChart(slide, element, box, theme, pptxApi) {
     valAxisLabelFontFace: theme.fontBody,
     chartColors: [normalizeColor(theme.primary) || "174A7C", normalizeColor(theme.secondary) || "0F766E"],
     showBorder: false,
+    ...(element.chartType === "column" ? { barDir: "col" } : {}),
   });
   return { kind: "chart", id: element.id };
 }
