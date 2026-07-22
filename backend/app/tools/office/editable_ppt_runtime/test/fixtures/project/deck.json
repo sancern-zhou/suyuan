@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "id": "fixture-deck",
+  "title": "年度报告",
+  "theme": "theme.json",
+  "slides": ["cover"],
+  "editable": "strict"
+}
