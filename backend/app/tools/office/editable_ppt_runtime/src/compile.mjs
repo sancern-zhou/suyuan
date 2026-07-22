@@ -135,6 +135,8 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
     report.issues.push({ code: "OOXML_STRUCTURE_INVALID", message: "generated PPTX structure is incomplete" });
   }
   report.durationMs = Date.now() - startedAt;
+  report.outputSizeBytes = (await fs.stat(pptxPath)).size;
+  report.rssBytes = process.memoryUsage().rss;
   const reportPath = path.join(outputDir, "compile-report.json");
   await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return {
