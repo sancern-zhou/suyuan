@@ -30,12 +30,12 @@ function renderTable(target, element) {
 function renderChart(target, element) {
   const chart = document.createElement("div");
   chart.dataset.previewKind = "chart";
-  chart.style.cssText = "display:flex;align-items:end;gap:12px;width:100%;height:100%;padding:24px";
+  chart.style.cssText = "display:flex;align-items:end;gap:12px;width:100%;height:100%;padding:24px;overflow:hidden;box-sizing:border-box";
   const values = element.data?.series?.flatMap((series) => series.values || []) || [];
   const max = Math.max(1, ...values.map(Number));
   for (const value of values) {
     const bar = document.createElement("div");
-    bar.style.cssText = `flex:1;height:${(Number(value) / max) * 100}%;background:var(--primary,#174a7c)`;
+    bar.style.cssText = `flex:1;min-width:0;height:${(Number(value) / max) * 100}%;background:var(--primary,#174a7c)`;
     bar.title = String(value);
     chart.append(bar);
   }

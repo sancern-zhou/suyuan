@@ -154,6 +154,9 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
   if (editable === "strict" && styleIssues.length > 0) {
     return { success: false, report, error: "UNSUPPORTED_STYLE_STRICT" };
   }
+  if (editable === "strict" && report.issues.some((issue) => ["ELEMENT_OUT_OF_BOUNDS", "SLIDE_CONTENT_OVERFLOW", "DUPLICATE_ELEMENT_ID", "IMAGE_LOAD_FAILED"].includes(issue.code))) {
+    return { success: false, report, error: "SLIDE_MEASUREMENT_GATE_FAILED" };
+  }
 
   const measuredBySlide = new Map(measurement.pages.map((page) => [page.slideId, page]));
   for (const slideSpec of project.slides) {
