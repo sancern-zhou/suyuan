@@ -28,6 +28,20 @@ test("slide source cannot access process or require", () => {
   );
 });
 
+test("slide source cannot escape through a host Map constructor", () => {
+  assert.throws(
+    () => loadSlideSource('window.slideDataMap.constructor.constructor("return process")()'),
+    /Code generation from strings disallowed|process is not defined/,
+  );
+});
+
+test("slide getters are serialized inside the VM timeout", () => {
+  assert.throws(
+    () => loadSlideSource('window.slideDataMap.set(1, { get schemaVersion() { while (true) {} } });'),
+    /timed out/,
+  );
+});
+
 test("slide source must register exactly one positive integer page", () => {
   assert.throws(() => loadSlideSource("void 0;", "empty.js"), /must register exactly one slide/);
   assert.throws(
