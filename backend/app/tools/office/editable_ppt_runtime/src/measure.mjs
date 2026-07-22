@@ -100,6 +100,11 @@ async function extractPage(page) {
         text: node.innerText || "",
         src: node.tagName === "IMG" ? node.getAttribute("src") : null,
         hasTaggedDescendant: Boolean(node.querySelector("[data-pptx-id], [data-pptx-ref]")),
+        hasUntaggedTextDescendant: [...node.querySelectorAll("*")].some((child) =>
+          (child.innerText || "").trim() &&
+          !child.closest("[data-pptx-ref]") &&
+          !child.matches("[data-pptx-id], [data-pptx-ref]") &&
+          !child.querySelector("[data-pptx-id], [data-pptx-ref]")),
         box: {
           x: rect.left - rootRect.left,
           y: rect.top - rootRect.top,
