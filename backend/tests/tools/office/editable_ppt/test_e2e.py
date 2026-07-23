@@ -8,7 +8,6 @@ from app.tools.office.editable_ppt.compiler_client import EditablePptCompilerCli
 from app.tools.office.editable_ppt.project_service import EditablePptProjectService
 from app.tools.office.editable_ppt.tool import ManageEditablePptTool
 
-
 RUNTIME = Path("app/tools/office/editable_ppt_runtime").resolve()
 REPRESENTATIVE = RUNTIME / "fixtures" / "representative"
 
