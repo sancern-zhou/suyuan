@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import hashlib
+import copy
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.office.editable_ppt.compiler_client import CompilerClientError, EditablePptCompilerClient
@@ -12,6 +15,11 @@ from app.tools.office.editable_ppt.project_service import (
     RevisionConflictError,
 )
 from app.tools.office.editable_ppt.quality import build_editable_ppt_gate
+from app.tools.office.editable_ppt.diagnostics import PptDiagnosticBuilder
+from app.tools.office.editable_ppt.report_store import PptReportStore, ReportRefError
+
+
+logger = structlog.get_logger()
 
 
 def _branch(operation: str, required: list[str], properties: dict[str, Any] | None = None):
@@ -57,8 +65,24 @@ class ManageEditablePptTool(LLMTool):
                         },
                         "base_revision": {"type": "integer", "minimum": 1},
                     }),
-                    _branch("render", ["project_dir"], {**PROJECT, "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}}}),
-                    _branch("compile", ["project_dir"], {**PROJECT, "editable": {"type": "string", "enum": ["strict", "compatible"], "default": "strict"}, "file_name": {"type": "string", "pattern": "^[^/\\\\]+\\.pptx$", "default": "presentation.pptx"}}),
+                    _branch("read_report", ["project_dir", "report_ref"], {
+                        **PROJECT,
+                        "report_ref": {"type": "string"},
+                        "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                        "codes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                        "element_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                    }),
+                    _branch("render", ["project_dir"], {
+                        **PROJECT,
+                        "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                        "expected_slide_count": {"type": "integer", "minimum": 1},
+                    }),
+                    _branch("compile", ["project_dir"], {
+                        **PROJECT,
+                        "editable": {"type": "string", "enum": ["strict", "compatible"], "default": "strict"},
+                        "file_name": {"type": "string", "pattern": "^[^/\\\\]+\\.pptx$", "default": "presentation.pptx"},
+                        "expected_slide_count": {"type": "integer", "minimum": 1},
+                    }),
                     _branch("validate", ["project_dir"], {**PROJECT, "pptx_path": {"type": "string"}}),
                     _branch("restore", ["project_dir", "revision", "base_revision"], {**PROJECT, "revision": {"type": "integer", "minimum": 1}, "base_revision": {"type": "integer", "minimum": 1}}),
                     _branch("finalize", ["project_dir"], {**PROJECT, "pptx_path": {"type": "string"}}),
@@ -115,6 +139,20 @@ class ManageEditablePptTool(LLMTool):
                     state,
                     f"已在单一 revision 中原子更新 {len(edits)} 个源码文档",
                 )
+            if operation == "read_report":
+                state = self.projects.inspect(kwargs["project_dir"])
+                pages = self._optional_list(kwargs.get("pages"), "pages", item_type=int)
+                codes = self._optional_list(kwargs.get("codes"), "codes", item_type=str)
+                element_ids = self._optional_list(
+                    kwargs.get("element_ids"), "element_ids", item_type=str
+                )
+                report = self._report_store(state.project_dir).read(
+                    kwargs["report_ref"],
+                    pages=pages,
+                    codes=codes,
+                    element_ids=element_ids,
+                )
+                return self._state_result(state, "PPT 原始报告读取完成", report=report)
             if operation == "render":
                 state = self.projects.inspect(kwargs["project_dir"])
                 pages = kwargs.get("pages")
@@ -129,7 +167,15 @@ class ManageEditablePptTool(LLMTool):
                     state.project_dir, dirty_slides=state.dirty_slides, pages=pages,
                     cache_dir=Path(state.project_dir) / ".editable-ppt" / "cache",
                 )
-                return self._state_result(state, "Web 预览已渲染", **result)
+                result = self._with_expected_slide_count(
+                    state.project_dir, result, kwargs.get("expected_slide_count")
+                )
+                return self._diagnostic_result(
+                    state,
+                    "render",
+                    result,
+                    "Web 预览已渲染" if result.get("success") else "Web 预览需要修订",
+                )
             if operation == "compile":
                 state = self.projects.inspect(kwargs["project_dir"])
                 compile_revision = state.revision
@@ -138,6 +184,9 @@ class ManageEditablePptTool(LLMTool):
                     state.project_dir, dirty_slides=state.dirty_slides,
                     cache_dir=Path(state.project_dir) / ".editable-ppt" / "cache",
                     editable=kwargs.get("editable", "strict"), file_name=kwargs.get("file_name", "presentation.pptx"),
+                )
+                result = self._with_expected_slide_count(
+                    state.project_dir, result, kwargs.get("expected_slide_count")
                 )
                 if result.get("success"):
                     pptx_path = Path(result["pptxPath"]).resolve()
@@ -149,7 +198,12 @@ class ManageEditablePptTool(LLMTool):
                 if result.get("success"):
                     state = self.projects.mark_clean(state.project_dir, state.dirty_slides)
                 self._record_json(state.project_dir, "last_compile.json", result)
-                return self._state_result(state, "PPTX 编译完成" if result.get("success") else "PPTX 编译需要修订", **result)
+                return self._diagnostic_result(
+                    state,
+                    "compile",
+                    result,
+                    "PPTX 编译完成" if result.get("success") else "PPTX 编译需要修订",
+                )
             if operation == "validate":
                 return await self._validate(kwargs["project_dir"], kwargs.get("pptx_path"))
             if operation == "restore":
@@ -171,9 +225,23 @@ class ManageEditablePptTool(LLMTool):
                 )
                 if stale:
                     return self._failure("STALE_COMPILE_ARTIFACT", "源码、revision 或 PPTX 已变化，必须重新 strict 编译", state.project_dir)
-                validation = await self._validate(state.project_dir, str(target))
+                validation_state, validation_path, raw_validation, validation_passed = (
+                    await self._run_validation_raw(state.project_dir, str(target))
+                )
+                self._record_json(state.project_dir, "last_validation.json", raw_validation)
                 gate = build_editable_ppt_gate(
-                    compile_result.get("report", {}), validation["data"].get("validation", {})
+                    compile_result.get("report", {}),
+                    raw_validation.get("data", raw_validation),
+                )
+                validation = self._diagnostic_result(
+                    validation_state,
+                    "validate",
+                    raw_validation,
+                    "严格编译与 PPTX 验证通过，可以交付"
+                    if gate.status == "passed" and validation_passed
+                    else "质量门未通过，拒绝交付",
+                    success=gate.status == "passed" and validation_passed,
+                    facts={"pptx_path": validation_path, "validation_passed": validation_passed},
                 )
                 validation["success"] = gate.status == "passed"
                 validation["summary"] = "严格编译与 PPTX 验证通过，可以交付" if validation["success"] else "质量门未通过，拒绝交付"
@@ -191,6 +259,8 @@ class ManageEditablePptTool(LLMTool):
             return self._failure("UNSUPPORTED_OPERATION", f"不支持的操作：{operation}")
         except RevisionConflictError as error:
             return self._failure("REVISION_CONFLICT", str(error), kwargs.get("project_dir"))
+        except ReportRefError as error:
+            return self._failure("INVALID_REPORT_REF", str(error), kwargs.get("project_dir"))
         except CompilerClientError as error:
             diagnostic = error.stderr.strip()[:8000]
             return self._failure(
@@ -206,7 +276,7 @@ class ManageEditablePptTool(LLMTool):
         except (KeyError, ValueError, OSError) as error:
             return self._failure("INVALID_REQUEST", str(error), kwargs.get("project_dir"))
 
-    async def _validate(self, project_dir: str, pptx_path: str | None):
+    async def _run_validation_raw(self, project_dir: str, pptx_path: str | None):
         state = self.projects.inspect(project_dir)
         path = pptx_path or str(Path(project_dir) / "build" / "pptx" / "presentation.pptx")
         theme_path = Path(project_dir) / "theme.json"
@@ -218,10 +288,162 @@ class ManageEditablePptTool(LLMTool):
             from app.tools.office.validate_pptx_tool import ValidatePptxTool
             self.validator = ValidatePptxTool()
         result = await self.validator.execute(path=path, expected_fonts=expected_fonts)
-        self._record_json(project_dir, "last_validation.json", result)
         payload = result.get("data", result)
         passed = bool(result.get("success")) and payload.get("gate", {}).get("passed", payload.get("success", False))
-        return self._state_result(state, result.get("summary", "PPTX 验证完成"), validation=payload, pptx_path=path, success=passed)
+        return state, path, result, passed
+
+    async def _validate(self, project_dir: str, pptx_path: str | None):
+        state, path, result, passed = await self._run_validation_raw(project_dir, pptx_path)
+        self._record_json(project_dir, "last_validation.json", result)
+        return self._diagnostic_result(
+            state,
+            "validate",
+            result,
+            result.get("summary", "PPTX 验证完成"),
+            success=passed,
+            facts={"pptx_path": path, "validation_passed": passed},
+        )
+
+    @staticmethod
+    def _optional_list(value: Any, field: str, *, item_type: type):
+        if isinstance(value, str):
+            value = json.loads(value)
+        if value is None:
+            return None
+        if not isinstance(value, list) or any(
+            not isinstance(item, item_type)
+            or (item_type is int and isinstance(item, bool))
+            or (item_type is int and item < 1)
+            or (item_type is str and not item)
+            for item in value
+        ):
+            raise ValueError(f"{field} 格式不正确")
+        return value
+
+    @staticmethod
+    def _deck_slide_count(project_dir: str) -> int | None:
+        try:
+            deck = json.loads(Path(project_dir, "deck.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        slides = deck.get("slides")
+        return len(slides) if isinstance(slides, list) else None
+
+    def _with_expected_slide_count(
+        self,
+        project_dir: str,
+        raw: dict[str, Any],
+        expected_slide_count: Any,
+    ) -> dict[str, Any]:
+        if expected_slide_count is None:
+            return raw
+        expected = self._positive_int(expected_slide_count, "expected_slide_count")
+        report = raw.get("report") if isinstance(raw.get("report"), dict) else {}
+        actual = raw.get("slideCount") or report.get("slideCount") or self._deck_slide_count(project_dir)
+        if actual == expected:
+            if raw.get("slideCount") is not None or report.get("slideCount") is not None:
+                return raw
+            augmented = copy.deepcopy(raw)
+            augmented["slideCount"] = actual
+            return augmented
+        augmented = copy.deepcopy(raw)
+        augmented["success"] = False
+        augmented.setdefault("issues", []).append({
+            "code": "REQUESTED_PAGE_COUNT_MISMATCH",
+            "message": f"要求 {expected} 页，当前项目为 {actual} 页",
+            "sourcePath": "deck.json",
+            "expected": expected,
+            "actual": actual,
+            "severity": "error",
+        })
+        return augmented
+
+    @staticmethod
+    def _report_store(project_dir: str) -> PptReportStore:
+        return PptReportStore(project_dir)
+
+    def _diagnostic_result(
+        self,
+        state,
+        operation: str,
+        raw: dict[str, Any],
+        summary: str,
+        *,
+        success: bool | None = None,
+        facts: dict[str, Any] | None = None,
+    ):
+        raw_chars = len(json.dumps(raw, ensure_ascii=False, default=str))
+        try:
+            report_ref = self._report_store(state.project_dir).persist(
+                operation, state.revision, raw
+            )
+        except OSError as error:
+            return self._failure(
+                "REPORT_PERSIST_FAILED",
+                f"完整 PPT 报告保存失败：{error}",
+                state.project_dir,
+            )
+        previous = self._read_json(state.project_dir, "last_diagnostic.json") or None
+        builder = PptDiagnosticBuilder(state.project_dir)
+        diagnostic = builder.build(operation, raw, report_ref, previous)
+        self._record_json(state.project_dir, "last_diagnostic.json", diagnostic)
+        compact_facts = facts or self._compact_facts(operation, raw)
+        public_success = bool(raw.get("success")) if success is None else success
+        result = self._state_result(
+            state,
+            summary,
+            success=public_success,
+            diagnostic=diagnostic,
+            report_ref=report_ref,
+            recommended_action=builder.recommended_action(diagnostic),
+            suggested_stage=self._suggested_stage(operation, diagnostic, public_success),
+            **compact_facts,
+        )
+        envelope_chars = len(json.dumps(result, ensure_ascii=False, default=str))
+        logger.info(
+            "ppt_diagnostic_envelope_built",
+            operation=operation,
+            revision=state.revision,
+            raw_chars=raw_chars,
+            envelope_chars=envelope_chars,
+            issue_count=diagnostic["issue_count"],
+            fingerprint=diagnostic["fingerprint"],
+            diagnostic_status=diagnostic["status"],
+        )
+        return result
+
+    @staticmethod
+    def _compact_facts(operation: str, raw: dict[str, Any]) -> dict[str, Any]:
+        report = raw.get("report") if isinstance(raw.get("report"), dict) else {}
+        measurement = report.get("measurement") if isinstance(report.get("measurement"), dict) else {}
+        facts: dict[str, Any] = {
+            "slide_count": raw.get("slideCount") or report.get("slideCount"),
+        }
+        if operation == "render":
+            facts["preview_dir"] = raw.get("previewDir") or measurement.get("previewDir")
+        elif operation == "compile":
+            facts.update({
+                "pptxPath": raw.get("pptxPath"),
+                "editable": report.get("editable"),
+                "forbidden_raster_fallbacks": report.get("forbiddenRasterFallbacks"),
+                "measurement_cache": measurement.get("cache"),
+                "sourceRevision": raw.get("sourceRevision"),
+                "sourceHashes": raw.get("sourceHashes"),
+                "pptxSha256": raw.get("pptxSha256"),
+            })
+        return {key: value for key, value in facts.items() if value is not None}
+
+    @staticmethod
+    def _suggested_stage(operation: str, diagnostic: dict[str, Any], success: bool) -> str:
+        if operation == "render" and diagnostic.get("issue_count"):
+            return "preview_fixing"
+        if operation == "compile" and diagnostic.get("issue_count"):
+            return "compile_fixing"
+        if operation == "compile" and success:
+            return "validating"
+        if operation == "validate" and success:
+            return "ready_to_finalize"
+        return "source_draft"
 
     @staticmethod
     def _sha256(path: Path):
