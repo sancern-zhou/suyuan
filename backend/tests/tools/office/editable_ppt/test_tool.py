@@ -164,6 +164,8 @@ async def test_compile_reports_unchanged_after_ineffective_edit_cycle(tmp_path):
     assert first["data"]["diagnostic"]["status"] == "new"
     assert second["data"]["diagnostic"]["status"] == "unchanged"
     assert second["data"]["recommended_action"]["source_paths"] == ["slides/slide-001.js"]
+    assert "重新读取" in second["data"]["next_actions"][0]
+    assert "slides/slide-001.js" in second["data"]["next_actions"][0]
 
 
 @pytest.mark.asyncio
@@ -344,6 +346,15 @@ class PassingQa:
         return {"success": True, "summary": "QA passed", "data": {"success": True, "issues": [], "gate": {"passed": True}}}
 
 
+class ConflictingQa:
+    async def execute(self, **kwargs):
+        return {
+            "success": False,
+            "summary": "validator transport failed",
+            "data": {"success": True, "issues": [], "gate": {"passed": True}},
+        }
+
+
 @pytest.mark.asyncio
 async def test_finalize_rejects_qa_failure_and_stale_source(tmp_path):
     tool = make_tool(tmp_path)
@@ -377,3 +388,18 @@ async def test_finalize_records_current_revision_as_the_only_presentable_artifac
     assert manifest["pptxSha256"] == compiled["data"]["pptxSha256"]
     assert manifest["pptxPath"] == compiled["data"]["pptxPath"]
     assert tool.validator.calls[-1]["expected_fonts"] == ["Noto Sans CJK SC"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_requires_validator_call_and_quality_gate_to_both_pass(tmp_path):
+    tool = make_tool(tmp_path)
+    tool.validator = ConflictingQa()
+    created = await tool.execute(operation="create", title="验证状态冲突")
+    project = created["data"]["project_dir"]
+    await tool.execute(operation="compile", project_dir=project)
+
+    finalized = await tool.execute(operation="finalize", project_dir=project)
+
+    assert finalized["success"] is False
+    assert finalized["data"]["finalized"] is False
+    assert not Path(project, ".editable-ppt", "finalized.json").exists()
