@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -39,13 +40,17 @@ def test_schema_exposes_complete_direct_document_edit_contract(tmp_path):
     schema = make_tool(tmp_path).get_function_schema()
     branches = schema["parameters"]["oneOf"]
     operations = {branch["properties"]["operation"]["const"] for branch in branches}
-    assert operations == {"create", "inspect", "read_source", "edit_source", "edit_sources", "render", "compile", "validate", "restore", "finalize"}
+    assert operations == {"create", "inspect", "read_source", "edit_source", "edit_sources", "read_report", "render", "compile", "validate", "restore", "finalize"}
     edit = next(branch for branch in branches if branch["properties"]["operation"]["const"] == "edit_source")
     assert set(edit["required"]) == {"operation", "project_dir", "relative_path", "content", "base_revision"}
     edit_many = next(branch for branch in branches if branch["properties"]["operation"]["const"] == "edit_sources")
     assert set(edit_many["required"]) == {"operation", "project_dir", "edits", "base_revision"}
     compile_branch = next(branch for branch in branches if branch["properties"]["operation"]["const"] == "compile")
     assert compile_branch["properties"]["editable"]["default"] == "strict"
+    assert compile_branch["properties"]["expected_slide_count"]["minimum"] == 1
+    read_report = next(branch for branch in branches if branch["properties"]["operation"]["const"] == "read_report")
+    assert set(read_report["required"]) == {"operation", "project_dir", "report_ref"}
+    assert {"pages", "codes", "element_ids"}.issubset(read_report["properties"])
 
 
 @pytest.mark.asyncio
@@ -83,6 +88,155 @@ async def test_render_accepts_json_encoded_page_array_from_llm(tmp_path):
 
     assert result["success"] is True
     assert compiler.preview_calls[-1]["pages"] == [1]
+
+
+class DiagnosticCompiler(FakeCompiler):
+    async def preview(self, project_dir, output_dir=None, **kwargs):
+        return {
+            "success": False,
+            "slideCount": 1,
+            "pages": {"nodes": [f"node-{index}" for index in range(5000)]},
+            "issues": [
+                {
+                    "code": "ELEMENT_OVERFLOW",
+                    "page": 1,
+                    "slideId": "cover",
+                    "sourceId": "hero",
+                    "message": "outside viewport",
+                    "box": {"x": 0, "y": 760, "width": 1440, "height": 100},
+                }
+            ],
+        }
+
+    async def compile(self, project_dir, output_dir=None, **kwargs):
+        return {
+            "success": False,
+            "error": "SLIDE_MEASUREMENT_GATE_FAILED",
+            "report": {
+                "slideCount": 1,
+                "issues": [
+                    {
+                        "code": "ELEMENT_OVERFLOW",
+                        "page": 1,
+                        "slideId": "cover",
+                        "sourceId": "hero",
+                        "message": "outside viewport",
+                    }
+                ],
+                "measurement": {"domTree": "x" * 80000},
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_render_persists_raw_result_but_returns_compact_complete_diagnostic(tmp_path):
+    tool = ManageEditablePptTool(
+        project_service=EditablePptProjectService(tmp_path),
+        compiler_client=DiagnosticCompiler(),
+    )
+    created = await tool.execute(operation="create", title="诊断")
+
+    result = await tool.execute(operation="render", project_dir=created["data"]["project_dir"])
+
+    assert result["success"] is False
+    assert result["data"]["diagnostic"]["issue_count"] == 1
+    assert result["data"]["diagnostic"]["issues"][0]["source_path"] == "slides/slide-001.js"
+    assert "nodes" not in result["data"]
+    assert len(json.dumps(result, ensure_ascii=False)) < 10_000
+    raw = json.loads(
+        Path(created["data"]["project_dir"], result["data"]["report_ref"]).read_text(encoding="utf-8")
+    )
+    assert len(raw["pages"]["nodes"]) == 5000
+
+
+@pytest.mark.asyncio
+async def test_compile_reports_unchanged_after_ineffective_edit_cycle(tmp_path):
+    tool = ManageEditablePptTool(
+        project_service=EditablePptProjectService(tmp_path),
+        compiler_client=DiagnosticCompiler(),
+    )
+    created = await tool.execute(operation="create", title="诊断")
+    project_dir = created["data"]["project_dir"]
+
+    first = await tool.execute(operation="compile", project_dir=project_dir)
+    second = await tool.execute(operation="compile", project_dir=project_dir)
+
+    assert first["data"]["diagnostic"]["status"] == "new"
+    assert second["data"]["diagnostic"]["status"] == "unchanged"
+    assert second["data"]["recommended_action"]["source_paths"] == ["slides/slide-001.js"]
+
+
+@pytest.mark.asyncio
+async def test_read_report_returns_filtered_raw_evidence(tmp_path):
+    tool = ManageEditablePptTool(
+        project_service=EditablePptProjectService(tmp_path),
+        compiler_client=DiagnosticCompiler(),
+    )
+    created = await tool.execute(operation="create", title="诊断")
+    project_dir = created["data"]["project_dir"]
+    compiled = await tool.execute(operation="compile", project_dir=project_dir)
+
+    evidence = await tool.execute(
+        operation="read_report",
+        project_dir=project_dir,
+        report_ref=compiled["data"]["report_ref"],
+        pages=[1],
+        codes=["ELEMENT_OVERFLOW"],
+        element_ids=["hero"],
+    )
+
+    assert evidence["success"] is True
+    assert evidence["data"]["report"]["matched_issues"][0]["sourceId"] == "hero"
+
+
+@pytest.mark.asyncio
+async def test_read_report_rejects_paths_outside_current_project(tmp_path):
+    tool = make_tool(tmp_path)
+    created = await tool.execute(operation="create", title="诊断")
+
+    result = await tool.execute(
+        operation="read_report",
+        project_dir=created["data"]["project_dir"],
+        report_ref="../secret.json",
+    )
+
+    assert result["success"] is False
+    assert result["data"]["issues"][0]["code"] == "INVALID_REPORT_REF"
+
+
+@pytest.mark.asyncio
+async def test_compile_returns_page_count_mismatch_as_actionable_deck_issue(tmp_path):
+    tool = make_tool(tmp_path)
+    created = await tool.execute(operation="create", title="十页汇报")
+
+    result = await tool.execute(
+        operation="compile",
+        project_dir=created["data"]["project_dir"],
+        expected_slide_count=10,
+    )
+
+    assert result["success"] is False
+    issue = result["data"]["diagnostic"]["issues"][0]
+    assert issue["code"] == "REQUESTED_PAGE_COUNT_MISMATCH"
+    assert issue["source_path"] == "deck.json"
+    assert issue["expected"] == 10
+    assert issue["actual"] == 1
+    assert result["data"]["recommended_action"]["source_paths"] == ["deck.json"]
+
+
+@pytest.mark.asyncio
+async def test_matching_page_count_preserves_successful_compile(tmp_path):
+    tool = make_tool(tmp_path)
+    created = await tool.execute(operation="create", title="一页汇报")
+
+    result = await tool.execute(
+        operation="compile",
+        project_dir=created["data"]["project_dir"],
+        expected_slide_count=1,
+    )
+
+    assert result["success"] is True
+    assert result["data"]["slide_count"] == 1
 
 
 @pytest.mark.asyncio
