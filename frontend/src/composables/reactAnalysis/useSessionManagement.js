@@ -7,6 +7,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { preserveCatalogFields } from '@/components/management/sessionHistoryAccess.js'
 import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
 import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
+import { filterConversationHistory } from '@/components/conversationListPolicy.js'
 import {
   listSessions,
   restoreSession,
@@ -112,6 +113,7 @@ export function useSessionManagement(store) {
     }
 
     const shouldLoadDrawioBoard = loadDrawioBoard &&
+      store.currentMode === 'board' &&
       store.currentState.lazyArtifacts?.hasDrawioBoard &&
       !store.currentState.lazyArtifacts?.drawioBoardLoaded
 
@@ -119,12 +121,15 @@ export function useSessionManagement(store) {
       store.setLazyArtifacts({ loadingDrawioBoard: true })
       tasks.push(
         getSessionDrawioBoard(sessionId)
-          .then(response => {
+          .then(async response => {
             if (store.currentState.sessionId !== sessionId) return
             const drawioBoard = response?.drawio_board || null
             console.log('[会话恢复] 画板延迟加载完成:', !!drawioBoard)
             if (drawioBoard && typeof store.restoreDrawioBoardFromSession === 'function') {
               store.restoreDrawioBoardFromSession({ drawio_board: drawioBoard })
+              if (typeof store.loadDrawioBoardVersions === 'function') {
+                await store.loadDrawioBoardVersions()
+              }
             }
             store.setLazyArtifacts({
               hasDrawioBoard: !!drawioBoard,
@@ -181,7 +186,7 @@ export function useSessionManagement(store) {
       )
     }
 
-    return Array.from(byId.values()).sort((a, b) => {
+    return filterConversationHistory(Array.from(byId.values())).sort((a, b) => {
       if (!!a.is_running !== !!b.is_running) return a.is_running ? -1 : 1
       return new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
     })
@@ -244,19 +249,23 @@ export function useSessionManagement(store) {
    */
   const handleSend = async (payload) => {
     if (currentConversationPolicy.value.readOnly) return false
-    // 处理新的输入格式：可能是字符串（向后兼容）或对象
-    const query = typeof payload === 'string' ? payload : payload.query
-    const knowledgeBaseIds = typeof payload === 'object' ? payload.knowledgeBaseIds || [] : []
-    const agentMode = typeof payload === 'object' ? payload.agentMode || store.agentMode : store.agentMode
-    const attachments = typeof payload === 'object' ? payload.attachments || null : null
-    const modelTier = typeof payload === 'object' ? payload.modelTier || 'auto' : 'auto'
+    const query = payload.query
+    const knowledgeBaseIds = payload.knowledgeBaseIds || []
+    const agentMode = payload.agentMode || store.agentMode
+    const skillIds = payload.skillIds || []
+    const contextRefs = payload.contextRefs || []
+    const messageAttachments = payload.messageAttachments || []
+    const modelTier = payload.modelTier || 'auto'
 
     // 构建分析选项
     const options = {
       knowledgeBaseIds,
       agentMode,  // ✅ 传递agentMode参数
       modelTier,
-      attachments  // ✅ 传递附件信息
+      skillIds,
+      contextRefs,
+      messageAttachments,
+      onAccepted: payload.onAccepted
     }
 
     // 使用store的分析方法
@@ -428,7 +437,7 @@ export function useSessionManagement(store) {
         read_only_on_web: sessionData.read_only_on_web === true
       }
       store.setMessages(messages)
-      if (typeof store.restoreDrawioBoardFromSession === 'function') {
+      if (restoredMode === 'board' && typeof store.restoreDrawioBoardFromSession === 'function') {
         store.restoreDrawioBoardFromSession(sessionData)
       }
       store.setLazyArtifacts({
@@ -440,7 +449,7 @@ export function useSessionManagement(store) {
         officeDocumentCount: sessionData.office_document_count || 0,
         officeDocumentsLoaded: !lazyArtifacts,
         loadingOfficeDocuments: false,
-        hasDrawioBoard: !!sessionData.has_lazy_drawio_board,
+        hasDrawioBoard: restoredMode === 'board' && !!sessionData.has_lazy_drawio_board,
         drawioBoardLoaded: !lazyArtifacts,
         loadingDrawioBoard: false
       })

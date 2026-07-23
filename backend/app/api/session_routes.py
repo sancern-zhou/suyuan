@@ -19,6 +19,14 @@ from app.conversations.adapters import (
 )
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
+from app.boards.application import BoardApplicationService
+from app.boards.service import BoardNotFound, BoardVersionNotFound
+from app.db.database import async_session
+from app.agent.resources.service import (
+    ManifestPersistenceError,
+    get_session_resource_manifest_service,
+)
+from app.agent.selection_context import serialize_conversation_files
 
 logger = structlog.get_logger()
 
@@ -210,8 +218,25 @@ async def list_sessions(
     effective_limit = min(limit or SESSION_LIST_DEFAULT_LIMIT, SESSION_LIST_MAX_LIMIT)
 
     rows = await catalog.list_visible(user, limit=effective_limit)
-    sessions = [
-        {
+    web_session_ids = [
+        row.session_id
+        for row in rows
+        if row.source == ConversationSource.WEB
+    ]
+    web_metadata = {}
+    if web_session_ids:
+        from app.db.session_repository import get_session_repository
+
+        web_metadata = await get_session_repository().get_session_summary_metadata(
+            web_session_ids
+        )
+
+    sessions = []
+    for row in rows:
+        metadata = dict(web_metadata.get(row.session_id, {}))
+        if row.mode:
+            metadata["mode"] = row.mode
+        sessions.append({
             "session_id": row.session_id,
             "query": row.title or "",
             "created_at": row.created_at.isoformat(),
@@ -219,11 +244,9 @@ async def list_sessions(
             "data_count": 0,
             "visual_count": 0,
             "has_error": False,
-            "metadata": {"mode": row.mode} if row.mode else {},
+            "metadata": metadata,
             **row.model_dump(mode="json"),
-        }
-        for row in rows
-    ]
+        })
 
     return {
         "sessions": sessions,
@@ -451,6 +474,27 @@ async def get_session_messages(
     return result
 
 
+@router.get("/{session_id}/resources")
+async def get_session_resources(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """List active uploaded and Agent-generated files available to the composer."""
+    await catalog.require_read(session_id, user)
+    try:
+        manifest = await get_session_resource_manifest_service().load(session_id)
+    except ManifestPersistenceError as exc:
+        raise HTTPException(status_code=503, detail="resource_manifest_unavailable") from exc
+    resources = serialize_conversation_files(manifest.refs)
+    return {
+        "session_id": session_id,
+        "resources": resources,
+        "total": len(resources),
+        "resource_refs_version": manifest.version,
+    }
+
+
 @router.get("/{session_id}/visualizations")
 async def get_session_visualizations(
     session_id: str,
@@ -538,6 +582,65 @@ async def get_session_drawio_board(
     drawio_board = metadata.get("drawio_board") if isinstance(metadata, dict) else None
     if not isinstance(drawio_board, dict):
         drawio_board = None
+
+    try:
+        legacy_xml = (
+            drawio_board.get("current_xml")
+            or drawio_board.get("currentXml")
+            or drawio_board.get("xml")
+            if isinstance(drawio_board, dict)
+            else None
+        )
+        snapshot = await BoardApplicationService(async_session).load_session_board(
+            session_id,
+            legacy_title=(drawio_board or {}).get("title"),
+            legacy_xml=legacy_xml,
+        )
+        if snapshot is None and drawio_board:
+            raise BoardNotFound(str(drawio_board.get("board_id") or session_id))
+        if snapshot is not None:
+            is_candidate = snapshot.lifecycle_status == "candidate"
+            drawio_board = {
+                "artifact_kind": "drawio_board",
+                "board_id": snapshot.board_id,
+                "active_board_id": snapshot.board_id,
+                "title": snapshot.title,
+                "current_xml": snapshot.xml,
+                "version": snapshot.version_number,
+                "revision": snapshot.revision,
+                "lifecycle_status": snapshot.lifecycle_status,
+                "preview_candidate": is_candidate,
+                "requires_visual_review": is_candidate,
+                "candidate_version_id": snapshot.version_id if is_candidate else None,
+                "current_version_id": snapshot.current_version_id,
+                "base_version_id": snapshot.current_version_id,
+                "xml_sha256": snapshot.xml_sha256,
+                "quality_status": snapshot.quality_status,
+                "quality_report": snapshot.quality_report,
+                "screenshot_ref": snapshot.screenshot_ref,
+                "selected_cells": (drawio_board or {}).get("selected_cells") or [],
+                "dirty": False,
+                "updated_at": snapshot.updated_at,
+                "has_board_versions": True,
+            }
+            lightweight_metadata = dict(metadata or {})
+            lightweight_metadata["drawio_board"] = {
+                key: drawio_board[key]
+                for key in (
+                    "artifact_kind", "board_id", "active_board_id", "title",
+                    "version", "revision", "lifecycle_status", "preview_candidate",
+                    "requires_visual_review", "candidate_version_id",
+                    "current_version_id", "updated_at",
+                )
+            }
+            if lightweight_metadata != metadata:
+                await repo.update_session(session_id, metadata=lightweight_metadata)
+    except (FileNotFoundError, BoardNotFound, BoardVersionNotFound) as exc:
+        logger.warning("drawio_board_version_restore_missing", session_id=session_id, error=str(exc))
+        raise HTTPException(status_code=409, detail="board_version_restore_failed") from exc
+    except Exception as exc:
+        logger.exception("drawio_board_version_restore_failed", session_id=session_id, error=str(exc))
+        raise HTTPException(status_code=503, detail="board_version_restore_failed") from exc
 
     return {
         "session_id": session_id,

@@ -71,6 +71,63 @@ def test_cleanup_is_admin_only():
     assert response.json()["detail"] == "admin_required"
 
 
+def test_session_list_restores_web_case_metadata_without_loading_non_web_sessions(monkeypatch):
+    rows = [
+        ConversationCatalogRecord(
+            session_id="web-case",
+            owner_user_id="u1",
+            owner_username="u1",
+            owner_display_name="U1",
+            source=ConversationSource.WEB,
+            mode="expert",
+            title="Web case",
+            created_at=datetime(2026, 7, 20),
+            updated_at=datetime(2026, 7, 21),
+        ),
+        ConversationCatalogRecord(
+            session_id="social-case",
+            owner_user_id="u1",
+            owner_username="u1",
+            owner_display_name="U1",
+            source=ConversationSource.SOCIAL,
+            mode="social",
+            title="Social case",
+            created_at=datetime(2026, 7, 20),
+            updated_at=datetime(2026, 7, 21),
+        ),
+    ]
+
+    class Catalog:
+        async def list_visible(self, user, limit):
+            return rows
+
+    class SessionRepository:
+        async def get_session_summary_metadata(self, session_ids):
+            assert session_ids == ["web-case"]
+            return {
+                "web-case": {
+                    "is_case": True,
+                    "case_marked_at": "2026-07-21T09:00:00",
+                }
+            }
+
+    monkeypatch.setattr(
+        "app.db.session_repository.get_session_repository",
+        lambda: SessionRepository(),
+    )
+
+    response = make_client(catalog=Catalog()).get("/api/sessions?limit=200")
+
+    assert response.status_code == 200
+    sessions = {item["session_id"]: item for item in response.json()["sessions"]}
+    assert sessions["web-case"]["metadata"] == {
+        "mode": "expert",
+        "is_case": True,
+        "case_marked_at": "2026-07-21T09:00:00",
+    }
+    assert sessions["social-case"]["metadata"] == {"mode": "social"}
+
+
 def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
     row = ConversationCatalogRecord(
         session_id="kqa-1",

@@ -51,9 +51,9 @@
         <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
           <div v-for="(attachment, idx) in message.attachments" :key="idx" class="message-attachment">
             <!-- 图片附件 -->
-            <img
+            <AuthenticatedImage
               v-if="attachment.type === 'image'"
-              :src="attachment.url"
+              :source="attachment.url"
               :alt="attachment.name"
               :title="attachment.name"
               class="attachment-image"
@@ -274,10 +274,15 @@
     <!-- 图片预览模态框 -->
     <div v-if="previewedImage" class="image-preview-modal" @click="closeImagePreview">
       <div class="image-preview-content" @click.stop>
-        <img :src="previewedImage.url" :alt="previewedImage.name" class="preview-image" />
+        <AuthenticatedImage
+          :source="previewedImage.url"
+          :alt="previewedImage.name"
+          class="preview-image"
+          @resolved="setPreviewResolvedUrl"
+        />
         <div class="preview-info">
           <span class="preview-filename">{{ previewedImage.name }}</span>
-          <a :href="previewedImage.url" :download="previewedImage.name" class="preview-download" @click.stop>
+          <a v-if="previewedImage.resolvedUrl" :href="previewedImage.resolvedUrl" :download="previewedImage.name" class="preview-download" @click.stop>
             下载
           </a>
         </div>
@@ -298,6 +303,7 @@ import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import { getAgentMode } from '@/config/agentModes.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   getExecutingProcessMessages,
   getMessageType,
@@ -1770,7 +1776,13 @@ const previewedImage = ref(null)
 
 const previewAttachment = (attachment) => {
   if (attachment.type === 'image') {
-    previewedImage.value = attachment
+    previewedImage.value = { ...attachment, resolvedUrl: '' }
+  }
+}
+
+const setPreviewResolvedUrl = (url) => {
+  if (previewedImage.value) {
+    previewedImage.value.resolvedUrl = url
   }
 }
 

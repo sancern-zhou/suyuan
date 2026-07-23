@@ -171,6 +171,17 @@ class SessionRepository:
                 msg_data.setdefault(key, value)
         return SessionRepository._convert_decimal_to_float(msg_data)
 
+    @staticmethod
+    def _message_attachments(metadata: Any) -> List[Dict[str, Any]]:
+        """Read only the lightweight attachment contract from message metadata."""
+        if not isinstance(metadata, dict):
+            return []
+        return [
+            dict(attachment)
+            for attachment in metadata.get("attachments") or []
+            if isinstance(attachment, dict)
+        ]
+
     async def create_session(
         self,
         session_id: str,
@@ -438,6 +449,27 @@ class SessionRepository:
                 })
 
             return summaries
+
+    async def get_session_summary_metadata(
+        self,
+        session_ids: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return lightweight list metadata for the requested Web sessions."""
+        unique_ids = list(dict.fromkeys(session_ids))
+        if not unique_ids:
+            return {}
+
+        async with AsyncSession(self.engine) as session:
+            stmt = select(
+                SessionDB.session_id,
+                SessionDB.session_metadata,
+            ).where(SessionDB.session_id.in_(unique_ids))
+            rows = (await session.execute(stmt)).all()
+
+        return {
+            row.session_id: self._session_summary_metadata(row.session_metadata)
+            for row in rows
+        }
 
     def _session_summary_metadata(self, metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Keep list metadata lightweight while preserving fields used by list features."""
@@ -785,6 +817,9 @@ class SessionRepository:
         }
         if include_data and getattr(row, "data", None):
             message["data"] = row.data
+        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        if attachments:
+            message["attachments"] = attachments
         return message
 
     async def get_llm_history_messages(self, session_id: str) -> List[Dict[str, Any]]:
@@ -896,7 +931,7 @@ class SessionRepository:
         )
 
     async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
-        """Load a full-length display transcript stub without data/metadata JSON."""
+        """Load display text plus the small attachment contract, without result data."""
         async with AsyncSession(self.engine) as session:
             stmt = (
                 select(
@@ -904,6 +939,7 @@ class SessionRepository:
                     SessionMessageDB.role,
                     SessionMessageDB.msg_type,
                     SessionMessageDB.content,
+                    SessionMessageDB.msg_metadata,
                     SessionMessageDB.timestamp,
                     SessionMessageDB.sequence_number,
                 )
@@ -935,6 +971,9 @@ class SessionRepository:
             "sequence_number": row.sequence_number,
             "is_lightweight": True,
         }
+        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        if attachments:
+            msg_dict["attachments"] = attachments
 
         # ✅ 从 content_preview 中提取工具名称（用于前端显示）
         # tool_use 消息的 content 通常包含："调用工具：check_order" 等信息
@@ -994,6 +1033,7 @@ class SessionRepository:
                         SessionMessageDB.id,
                         SessionMessageDB.role,
                         SessionMessageDB.msg_type,
+                        SessionMessageDB.msg_metadata,
                         SessionMessageDB.timestamp,
                         SessionMessageDB.sequence_number,
                         func.substring(content_text, 1, 2000).label("content_preview"),

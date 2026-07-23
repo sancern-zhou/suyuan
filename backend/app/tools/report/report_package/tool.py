@@ -142,8 +142,23 @@ def _rewrite_image_refs_to_copied_assets(
 
     def replace(match: re.Match[str]) -> str:
         src = match.group("src").strip()
-        if not src or src.startswith(("http://", "https://", "data:", "/api/image/")):
+        if not src or src.startswith(("http://", "https://", "data:")):
             return match.group(0)
+
+        if src.startswith("/api/image/"):
+            image_key = src[len("/api/image/") :].split("#", 1)[0].split("?", 1)[0]
+            rewritten = ref_map.get(image_key) or ref_map.get(Path(image_key).name)
+            if not rewritten and not Path(image_key).suffix:
+                matching_assets = {
+                    relative_path
+                    for key, relative_path in ref_map.items()
+                    if Path(key).stem == Path(image_key).name
+                }
+                if len(matching_assets) == 1:
+                    rewritten = matching_assets.pop()
+            if not rewritten:
+                return match.group(0)
+            return match.group(0).replace(match.group("src"), rewritten, 1)
 
         candidate = (report_dir / src).resolve()
         try:

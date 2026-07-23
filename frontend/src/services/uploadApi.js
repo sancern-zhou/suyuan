@@ -11,16 +11,16 @@ import { authFetch } from '@/auth/http.js'
 /**
  * 上传文件用于对话
  * @param {File} file - 要上传的文件
- * @param {string} sessionId - 可选的会话ID
+ * @param {string} sessionId - 当前会话ID
+ * @param {string} mode - 当前 Agent 模式
  * @returns {Promise<Object>} 上传结果
  */
-export async function uploadChatFile(file, sessionId = null) {
+export async function uploadChatFile(file, sessionId, mode = 'assistant') {
+  if (!sessionId) throw new Error('上传前必须创建会话')
   const formData = new FormData();
   formData.append('file', file);
-
-  if (sessionId) {
-    formData.append('session_id', sessionId);
-  }
+  formData.append('session_id', sessionId);
+  formData.append('mode', mode);
 
   try {
     console.log('[uploadChatFile] 上传文件:', file.name, '大小:', file.size, '类型:', file.type);

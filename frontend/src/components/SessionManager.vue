@@ -90,6 +90,10 @@
 import { ref, computed, onMounted } from 'vue'
 import SessionItem from './SessionItem.vue'
 import {
+  filterConversationHistory,
+  reconcileConversationHistoryStats
+} from './conversationListPolicy.js'
+import {
   listSessions,
   getSessionStats,
   exportSession,
@@ -111,7 +115,7 @@ const fetchSessions = async () => {
   loading.value = true
   try {
     const response = await listSessions({ limit: 200 })
-    sessions.value = response.sessions
+    sessions.value = filterConversationHistory(response.sessions || [])
   } catch (error) {
     console.error('Failed to fetch sessions:', error)
   } finally {
@@ -122,7 +126,7 @@ const fetchSessions = async () => {
 const fetchStats = async () => {
   try {
     const data = await getSessionStats()
-    stats.value = data
+    stats.value = reconcileConversationHistoryStats(data, sessions.value)
   } catch (error) {
     console.error('Failed to fetch stats:', error)
   }
@@ -130,6 +134,7 @@ const fetchStats = async () => {
 
 const refreshSessions = async () => {
   await Promise.all([fetchSessions(), fetchStats()])
+  stats.value = reconcileConversationHistoryStats(stats.value, sessions.value)
 }
 
 const handleRestore = async (sessionId) => {

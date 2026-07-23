@@ -5,6 +5,19 @@ import { authFetch } from '@/auth/http.js'
 import { defineStore } from 'pinia'
 import { agentAPI } from '../services/reactApi.js'
 import { uploadChatFile } from '../services/uploadApi.js'
+import {
+  commitManualBoardVersion,
+  getBoardVersions,
+  restoreBoardVersion as restoreBoardVersionRequest,
+  saveBoardDraft
+} from '../api/board.js'
+import { exportActiveDrawioBoardXml } from '../components/board/drawioBoardBridge.js'
+import { prepareBoardForSend } from '../components/board/boardSendPreparation.js'
+import {
+  isAcceptedBoardPayload,
+  mapServerBoardVersions,
+  shouldPreviewBoardCandidate
+} from '../components/board/boardVersionHistory.js'
 import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
 import { autoSaveSession } from '../api/session.js'
 import {
@@ -14,16 +27,50 @@ import {
 import {
   addPendingSteeringInput,
   applyPendingSteeringInputs,
+  fallbackSteeringInputToQueue,
   promoteUnappliedSteeringInputsToQueue,
   removePendingSteeringInput
 } from './reactStoreSteering.js'
 import { getEventRunId, shouldApplyRunEvent } from './reactStoreRunOwnership.js'
-import { enqueueUserInput, hasShownClientMessage } from './reactStoreQueue.js'
+import {
+  acknowledgeQueuedInput,
+  enqueueUserInput,
+  hasShownClientMessage,
+  peekNextQueuedInput,
+  queueIncomingBehindPendingAndTakeNext,
+} from './reactStoreQueue.js'
 import { restoreMapScene } from './reactStoreMapScene.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'expert', 'query', 'report', 'chart', 'ops', 'graph']
+const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops', 'graph']
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const drawioDraftTimers = new Map()
+const DRAWIO_DRAFT_DEBOUNCE_MS = 1000
+
+const cancelDrawioDraftSave = (boardId) => {
+  const timer = drawioDraftTimers.get(boardId)
+  if (timer) clearTimeout(timer)
+  drawioDraftTimers.delete(boardId)
+}
+
+const scheduleDrawioDraftSave = (board) => {
+  const boardId = board?.activeBoardId
+  if (!boardId || !board?.currentXml) return
+  cancelDrawioDraftSave(boardId)
+  const xml = board.currentXml
+  const timer = setTimeout(async () => {
+    drawioDraftTimers.delete(boardId)
+    try {
+      await saveBoardDraft(boardId, xml)
+    } catch (error) {
+      console.warn('[drawio-board] draft autosave failed', {
+        boardId,
+        error: error?.message || error
+      })
+    }
+  }, DRAWIO_DRAFT_DEBOUNCE_MS)
+  drawioDraftTimers.set(boardId, timer)
+}
 
 export const isQueryVoiceOutputEnabled = () => {
   if (typeof localStorage === 'undefined') return false
@@ -168,6 +215,13 @@ const createEmptyDrawioBoardState = () => ({
   baseVersionId: null,
   selectedCells: [],
   pendingSnapshotAttachment: null,
+  revision: 0,
+  currentVersionSha256: null,
+  syncStatus: 'idle',
+  syncError: null,
+  readOnly: false,
+  qualityStatus: null,
+  qualityReport: {},
   version: 0,
   dirty: false,
   updatedAt: null
@@ -238,9 +292,7 @@ const createDrawioBoardVersionRecord = ({
 } = {}) => {
   const versions = Array.isArray(board.versions) ? board.versions : []
   const requestedVersionNumber = Number(payload.version_number || payload.version || 0)
-  const versionNumber = requestedVersionNumber > versions.length
-    ? requestedVersionNumber
-    : versions.length + 1
+  const versionNumber = requestedVersionNumber > 0 ? requestedVersionNumber : versions.length + 1
   const stableId = payload.version_id ||
     payload.versionId ||
     `${payload.artifact_id || payload.board_id || board.activeBoardId || 'drawio'}_v${versionNumber}_${Date.now()}`
@@ -260,6 +312,11 @@ const createDrawioBoardVersionRecord = ({
     file_path: payload.file_path || payload.path || `drawio_versions/${fileName}`,
     format: 'drawio',
     source,
+    lifecycleStatus: payload.lifecycle_status || payload.lifecycleStatus || 'accepted',
+    qualityStatus: payload.quality_status || payload.qualityStatus || 'pending',
+    qualityReport: payload.quality_report || payload.qualityReport || {},
+    screenshotUrl: payload.screenshot_ref?.read_url || payload.screenshot_ref?.url || null,
+    visibleInHistory: (payload.lifecycle_status || payload.lifecycleStatus || 'accepted') === 'accepted',
     downloadLabel: fileName,
     summary: result.summary || payload.summary || '',
     created_at: payload.created_at || payload.createdAt || result.timestamp || new Date().toISOString(),
@@ -429,6 +486,7 @@ export const useReactStore = defineStore('react', {
       // 所有模式的状态（按模式隔离）
       modeStates: {
         assistant: createEmptyModeState(),
+        ppt: createEmptyModeState(),
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
         report: createEmptyModeState(),
@@ -711,7 +769,10 @@ export const useReactStore = defineStore('react', {
     _persistModeState(mode) {
       if (!this.modeStates[mode]) return
 
-      const modeState = this.modeStates[mode]
+      const activeSessionId = this.activeSessionByMode[mode]
+      const modeState = activeSessionId && this.sessionStates[activeSessionId]
+        ? this.sessionStates[activeSessionId]
+        : this.modeStates[mode]
 
       // 只保存最近50条消息（避免localStorage超限）
       const messagesToSave = modeState.messages.slice(-50)
@@ -766,6 +827,7 @@ export const useReactStore = defineStore('react', {
         results: modeState.results,
         sessionRound: modeState.sessionRound,
         interventionQueue: modeState.interventionQueue,
+        pendingUserInputs: modeState.pendingUserInputs,
         pendingSteeringInputs: modeState.pendingSteeringInputs,
         streamingAnswerMessageId: modeState.streamingAnswerMessageId,
         _forceRenderCount: modeState._forceRenderCount,
@@ -1633,8 +1695,6 @@ export const useReactStore = defineStore('react', {
 
         case 'tool_result': {
           // ✅ V3: Anthropic tool_result 事件
-          // task_guard 等虚拟工具不会先发送 tool_use；如果它拦截了已流出的
-          // PLAIN_TEXT_REPLY，需要先把该文本降级为过程消息，避免下一轮重复追加。
           this._convertStreamingAnswerToThoughtIfToolPlanning(targetState)
           this.applyMapProgramMetadata(data, targetState)
 
@@ -1897,6 +1957,7 @@ export const useReactStore = defineStore('react', {
 
           // 【修复】使用targetState而不是currentState，确保状态更新到正确的模式
           targetState.isAnalyzing = false
+          if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
           targetState.isInterruption = false
           targetState.isComplete = true
           this.applyMapProgramMetadata(data, targetState)
@@ -2019,6 +2080,7 @@ export const useReactStore = defineStore('react', {
         case 'incomplete': {
           // 未完成（达到最大迭代）
           targetState.isAnalyzing = false
+          if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
           targetState.isComplete = true
           targetState.iterations = data?.iterations || targetState.iterations
           // ✅ 优先使用response字段，兼容answer字段
@@ -2070,6 +2132,7 @@ export const useReactStore = defineStore('react', {
             queuedAlreadyShown: true,
             timestamp: data?.timestamp || new Date().toISOString()
           })
+          this._persistModeState(targetMode)
           break
         }
 
@@ -2081,6 +2144,7 @@ export const useReactStore = defineStore('react', {
 
         case 'interrupted': {
           targetState.isAnalyzing = false
+          if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
           targetState.isComplete = false
           targetState.error = null
           targetState.isInterruption = true
@@ -2092,12 +2156,14 @@ export const useReactStore = defineStore('react', {
             queuedAlreadyShown: true,
             timestamp: data?.timestamp || new Date().toISOString()
           })
+          this._persistModeState(targetMode)
           break
         }
 
         case 'fatal_error': {
           // 致命错误
           targetState.isAnalyzing = false
+          if (targetMode === 'board' && targetState.board) targetState.board.readOnly = false
           targetState.error = data?.error || '致命错误'
           addMessage('error', `致命错误: ${targetState.error}`, data)
           targetState.streamingAnswerMessageId = null
@@ -2107,6 +2173,7 @@ export const useReactStore = defineStore('react', {
             queuedAlreadyShown: true,
             timestamp: data?.timestamp || new Date().toISOString()
           })
+          this._persistModeState(targetMode)
           break
         }
 
@@ -2257,7 +2324,13 @@ export const useReactStore = defineStore('react', {
 
         case 'steering_applied': {
           const appliedMessages = Array.isArray(data?.messages) ? data.messages : []
-          applyPendingSteeringInputs(targetState, appliedMessages, data?.timestamp || new Date().toISOString())
+          const appliedInputIds = Array.isArray(data?.input_ids) ? data.input_ids : []
+          applyPendingSteeringInputs(
+            targetState,
+            appliedMessages,
+            data?.timestamp || new Date().toISOString(),
+            appliedInputIds
+          )
           console.log('[event:steering_applied] 执行中补充已应用', {
             count: data?.count,
             session_id: data?.session_id
@@ -2317,6 +2390,27 @@ export const useReactStore = defineStore('react', {
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'pendingSnapshotAttachment')) {
         targetState.board.pendingSnapshotAttachment = null
       }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'revision')) {
+        targetState.board.revision = 0
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'currentVersionSha256')) {
+        targetState.board.currentVersionSha256 = null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'syncStatus')) {
+        targetState.board.syncStatus = 'idle'
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'syncError')) {
+        targetState.board.syncError = null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'readOnly')) {
+        targetState.board.readOnly = false
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'qualityStatus')) {
+        targetState.board.qualityStatus = null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'qualityReport')) {
+        targetState.board.qualityReport = {}
+      }
       return targetState.board
     },
 
@@ -2336,26 +2430,37 @@ export const useReactStore = defineStore('react', {
       return board
     },
 
-    addDrawioBoardVersion(payload = {}, result = {}, targetState = this.currentState) {
+    addDrawioBoardVersion(payload = {}, result = {}, targetState = this.currentState, options = {}) {
       const board = this.ensureDrawioBoardState(targetState)
       const xml = getDrawioBoardXml(payload)
       if (!xml) return null
 
-      const existing = board.versions.find(version => version.xml === xml)
-      const record = existing || createDrawioBoardVersionRecord({
+      const payloadVersionId = payload.version_id || payload.versionId || null
+      const existing = board.versions.find(version => (
+        payloadVersionId
+          ? (version.version_id || version.id) === String(payloadVersionId)
+          : version.xml === xml
+      ))
+      const incoming = createDrawioBoardVersionRecord({
         board,
         payload,
         result,
         xml,
         source: payload.source || 'agent'
       })
+      const record = existing ? { ...existing, ...incoming, id: existing.id, version_id: existing.version_id } : incoming
 
+      const makeCurrent = options.makeCurrent !== false
       board.versions = board.versions
-        .map(version => ({ ...version, is_current: false }))
+        .map(version => makeCurrent ? { ...version, is_current: false } : version)
         .filter(version => version.id !== record.id && version.version_id !== record.version_id)
-      board.versions.push({ ...record, is_current: true })
-      board.currentVersionId = record.version_id || record.id
-      board.baseVersionId = board.currentVersionId
+      board.versions.push({ ...record, is_current: makeCurrent })
+      if (makeCurrent) {
+        board.currentVersionId = record.version_id || record.id
+        board.baseVersionId = board.currentVersionId
+        board.currentVersionSha256 = payload.xml_sha256 || payload.xml_ref?.sha256 || board.currentVersionSha256
+        board.revision = Number(payload.revision ?? board.revision ?? 0)
+      }
       return record
     },
 
@@ -2367,6 +2472,32 @@ export const useReactStore = defineStore('react', {
       if (!xml) return false
 
       const board = this.ensureDrawioBoardState(targetState)
+      const accepted = isAcceptedBoardPayload(payload, result?.success)
+      board.activeBoardId = payload.activeBoardId || payload.active_board_id || payload.board_id || payload.artifact_id || payload.id || board.activeBoardId || null
+      if (!accepted) {
+        if (
+          payload.revision !== undefined &&
+          Number.isFinite(Number(payload.revision)) &&
+          Number(payload.revision) < Number(board.revision || 0)
+        ) return true
+        const versionRecord = this.addDrawioBoardVersion(
+          { ...payload, xml },
+          result,
+          targetState,
+          { makeCurrent: false }
+        )
+        if (shouldPreviewBoardCandidate(payload)) {
+          board.previousXml = board.currentXml || ''
+          board.currentXml = xml
+          board.title = payload.title || payload.name || board.title || 'Draw.io Board'
+          board.version = versionRecord?.versionNumber || board.version
+          board.qualityStatus = payload.quality_status || 'pending'
+          board.qualityReport = payload.quality_report || {}
+          board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
+        }
+        targetState.hasResults = true
+        return true
+      }
       const nextVersion = Number(payload.version ?? board.version ?? 0)
       const selectedCells = payload.selectedCells || payload.selected_cells || board.selectedCells || []
 
@@ -2376,10 +2507,13 @@ export const useReactStore = defineStore('react', {
       const versionRecord = this.addDrawioBoardVersion({ ...payload, xml }, result, targetState)
       board.previousXml = board.currentXml || ''
       board.currentXml = xml
-      board.activeBoardId = payload.activeBoardId || payload.active_board_id || payload.board_id || payload.artifact_id || payload.id || board.activeBoardId || null
       board.title = payload.title || payload.name || board.title || 'Draw.io Board'
       board.selectedCells = Array.isArray(selectedCells) ? selectedCells : []
       board.version = versionRecord?.versionNumber || (Number.isFinite(nextVersion) ? nextVersion : board.version)
+      board.revision = Number(payload.revision ?? board.revision ?? 0)
+      board.currentVersionSha256 = payload.xml_sha256 || payload.xml_ref?.sha256 || board.currentVersionSha256
+      board.qualityStatus = payload.quality_status || board.qualityStatus || null
+      board.qualityReport = payload.quality_report || board.qualityReport || {}
       board.dirty = Boolean(payload.dirty ?? false)
       board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
       targetState.hasResults = true
@@ -2398,6 +2532,12 @@ export const useReactStore = defineStore('react', {
       try {
         const xml = await readDrawioBoardXmlFromRef(xmlRef)
         if (!xml) return false
+        const board = this.ensureDrawioBoardState(targetState)
+        if (
+          payload.revision !== undefined &&
+          Number.isFinite(Number(payload.revision)) &&
+          Number(payload.revision) < Number(board.revision || 0)
+        ) return false
         return this.applyDrawioBoardToolResult({
           ...result,
           data: {
@@ -2470,11 +2610,46 @@ export const useReactStore = defineStore('react', {
         dirty: board.dirty,
         updatedAt: board.updatedAt
       })
+      if (board.dirty && options.saveDraft !== false) {
+        scheduleDrawioDraftSave(board)
+      }
       return board
     },
 
-    restoreDrawioBoardVersion(versionId, targetState = this.currentState) {
+    async restoreDrawioBoardVersion(versionId, targetState = this.currentState) {
       const board = this.ensureDrawioBoardState(targetState)
+      if (board.activeBoardId && Number.isFinite(Number(board.revision))) {
+        try {
+          const response = await restoreBoardVersionRequest(
+            board.activeBoardId,
+            versionId,
+            Number(board.revision || 0)
+          )
+          const version = response?.version || {}
+          const xmlRef = version.xml_ref || {}
+          const xml = await readDrawioBoardXmlFromRef(xmlRef)
+          if (!xml) throw new Error('board_version_load_failed')
+          if (board.currentXml && board.currentXml !== xml) {
+            this.pushDrawioBoardHistory(board.currentXml, targetState)
+          }
+          board.previousXml = board.currentXml || ''
+          board.currentXml = xml
+          board.currentVersionId = response.current_version_id || version.version_id || version.id
+          board.baseVersionId = board.currentVersionId
+          board.revision = Number(response.revision)
+          board.version = Number(version.version_number || board.version)
+          board.currentVersionSha256 = version.xml_sha256 || null
+          board.qualityStatus = version.quality_status || null
+          board.qualityReport = version.quality_report || {}
+          board.dirty = false
+          board.updatedAt = response.updated_at || new Date().toISOString()
+          await this.loadDrawioBoardVersions(targetState)
+          return board
+        } catch (error) {
+          board.syncError = error?.code || error?.message || 'board_version_load_failed'
+          throw error
+        }
+      }
       const version = board.versions.find(item => (
         item.id === versionId ||
         item.version_id === versionId ||
@@ -2499,6 +2674,17 @@ export const useReactStore = defineStore('react', {
       board.dirty = false
       board.updatedAt = new Date().toISOString()
       return board
+    },
+
+    async loadDrawioBoardVersions(targetState = this.currentState) {
+      const board = this.ensureDrawioBoardState(targetState)
+      if (!board.activeBoardId) return []
+      const response = await getBoardVersions(board.activeBoardId)
+      board.currentVersionId = response.current_version_id || board.currentVersionId
+      board.baseVersionId = board.currentVersionId
+      board.revision = Number(response.revision ?? board.revision ?? 0)
+      board.versions = mapServerBoardVersions(response.versions || [], board.currentVersionId)
+      return board.versions
     },
 
     undoDrawioBoard(targetState = this.currentState) {
@@ -2558,7 +2744,12 @@ export const useReactStore = defineStore('react', {
     async confirmDrawioBoardSnapshot(snapshot = {}, targetState = this.currentState) {
       if (!snapshot?.file) return null
 
-      const uploadResult = await uploadChatFile(snapshot.file, targetState?.sessionId || null)
+      if (!targetState?.sessionId) this.createSessionId()
+      const uploadResult = await uploadChatFile(
+        snapshot.file,
+        targetState?.sessionId,
+        targetState?.mode || this.currentMode
+      )
       const attachment = {
         id: uploadResult.file_id || `drawio_board_snapshot_${Date.now()}`,
         file_id: uploadResult.file_id,
@@ -2569,6 +2760,8 @@ export const useReactStore = defineStore('react', {
         mime_type: uploadResult.mime_type || snapshot.file.type || 'image/png',
         size: uploadResult.file_size || uploadResult.size || snapshot.file.size || 0,
         url: uploadResult.url || uploadResult.file_url || '',
+        resourceRefId: uploadResult.resource_ref?.ref_id || null,
+        resource_ref: uploadResult.resource_ref || null,
         source: 'drawio_board_snapshot',
         title: snapshot.title || targetState?.board?.title || '画板',
         xml_length: snapshot.xmlLength || 0,
@@ -2585,19 +2778,71 @@ export const useReactStore = defineStore('react', {
     },
 
     consumeDrawioBoardSnapshotAttachment(mode = this.currentMode, targetState = this.currentState) {
-      if (mode !== 'chart') return null
+      if (mode !== 'board') return null
       const board = this.ensureDrawioBoardState(targetState)
       const attachment = board.pendingSnapshotAttachment
       board.pendingSnapshotAttachment = null
       return attachment || null
     },
 
+    async prepareDrawioBoardForSend(mode = this.currentMode, targetState = this.currentState) {
+      if (mode !== 'board' || !targetState?.board?.currentXml) return null
+      const board = this.ensureDrawioBoardState(targetState)
+      board.syncStatus = 'syncing'
+      board.syncError = null
+      cancelDrawioDraftSave(board.activeBoardId)
+      try {
+        const result = await prepareBoardForSend({
+          board,
+          exportXml: exportActiveDrawioBoardXml,
+          updateXml: (xml) => this.updateDrawioBoardXml(xml, { dirty: true, saveDraft: false }, targetState),
+          commitManual: (payload) => commitManualBoardVersion(board.activeBoardId, payload)
+        })
+        const version = result.response?.version
+        if (version) {
+          const existingIndex = board.versions.findIndex(item => (
+            (item.version_id || item.id) === (version.version_id || version.id)
+          ))
+          const record = {
+            ...version,
+            id: version.version_id || version.id,
+            versionNumber: version.version_number,
+            xml: board.currentXml,
+            title: board.title,
+            is_current: true
+          }
+          board.versions = board.versions.map(item => ({ ...item, is_current: false }))
+          if (existingIndex >= 0) board.versions.splice(existingIndex, 1, record)
+          else board.versions.push(record)
+        }
+        board.syncStatus = 'idle'
+        cancelDrawioDraftSave(board.activeBoardId)
+        return result.context
+      } catch (error) {
+        board.syncStatus = 'error'
+        board.syncError = error?.code || error?.message || 'board_sync_failed'
+        throw error
+      }
+    },
+
     buildBoardContext(mode = this.currentMode, targetState = null) {
-      if (mode !== 'chart') return null
+      if (mode !== 'board') return null
 
       const state = targetState || this.currentState
       const board = state?.board
       if (!board?.currentXml) return null
+
+      const compactVersionContext = board.currentVersionId && Number.isFinite(Number(board.revision))
+      if (compactVersionContext) {
+        return {
+          artifact_kind: 'drawio_board',
+          board_id: board.activeBoardId,
+          version_id: board.currentVersionId,
+          revision: Number(board.revision),
+          selected_cells: board.selectedCells || [],
+          title: board.title
+        }
+      }
 
       return {
         artifact_kind: 'drawio_board',
@@ -2758,12 +3003,16 @@ export const useReactStore = defineStore('react', {
         agentMode = this.agentMode,  // ✅ 双模式架构：assistant | expert
         knowledgeBaseIds = null,  // ✅ 知识库ID列表
         modelTier = 'auto',
-        attachments = null,  // ✅ 附件列表
+        skillIds = [],
+        contextRefs = [],
+        messageAttachments = [],
         skipAutoFollowup = false,
         preserveCurrentMode = false,
         synthetic = false,
         syntheticMeta = null,
-        queuedAlreadyShown = false
+        queuedAlreadyShown = false,
+        dequeuedInput = false,
+        onAccepted
       } = options
 
       const requestedMode = VALID_MODES.includes(agentMode) ? agentMode : this.currentMode
@@ -2788,21 +3037,16 @@ export const useReactStore = defineStore('react', {
         }
       }
 
-      const boardSnapshotAttachment = actualMode === 'chart'
-        ? this.consumeDrawioBoardSnapshotAttachment(actualMode, sessionState)
-        : null
-      const outgoingAttachments = [
-        ...(Array.isArray(attachments) ? attachments : []),
-        ...(boardSnapshotAttachment ? [boardSnapshotAttachment] : [])
-      ]
+      const hasStructuredSelection = skillIds.length > 0 || contextRefs.length > 0
 
-      if (!query.trim() && outgoingAttachments.length === 0) {
+      if (!query.trim() && !hasStructuredSelection) {
         return
       }
 
       if (sessionState.isAnalyzing) {
-        if (actualMode === 'assistant' && outgoingAttachments.length === 0 && sessionState.sessionId) {
+        if (actualMode === 'assistant' && !hasStructuredSelection && sessionState.sessionId) {
           await this.steerActiveAnalysis(query, sessionState)
+          if (typeof onAccepted === 'function') onAccepted()
           return
         }
 
@@ -2811,18 +3055,57 @@ export const useReactStore = defineStore('react', {
           query,
           options: {
             ...options,
+            onAccepted: undefined,
             agentMode: actualMode,
-            attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,
+            skillIds,
+            contextRefs,
           },
-          data: syntheticMeta,
-          attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null
+          data: {
+            ...(syntheticMeta || {}),
+            skill_ids: skillIds,
+            context_refs: contextRefs
+          },
+          attachments: messageAttachments.length > 0 ? messageAttachments : null
         })
         sessionState.currentMessage = ''
         console.log('[startAnalysis] 当前模式运行中，用户输入已排队', {
           mode: actualMode,
           queuedCount: sessionState.pendingUserInputs.length
         })
+        this._persistModeState(actualMode)
+        if (typeof onAccepted === 'function') onAccepted()
         return
+      }
+
+      if (!dequeuedInput && sessionState.pendingUserInputs?.length) {
+        const next = queueIncomingBehindPendingAndTakeNext(sessionState, {
+          query,
+          options: {
+            ...options,
+            onAccepted: undefined,
+            agentMode: actualMode,
+            skillIds,
+            contextRefs
+          },
+          data: {
+            ...(syntheticMeta || {}),
+            skill_ids: skillIds,
+            context_refs: contextRefs
+          },
+          attachments: messageAttachments.length > 0 ? messageAttachments : null
+        })
+        if (typeof onAccepted === 'function') onAccepted()
+        if (next) {
+          return await this.startAnalysis(next.query, {
+            ...next.options,
+            agentMode: next.options?.agentMode || actualMode,
+            dequeuedInput: true,
+            onAccepted: () => {
+              acknowledgeQueuedInput(sessionState, next.clientMessageId)
+              this._persistModeState(actualMode)
+            }
+          })
+        }
       }
 
       // 首次分析或继续分析
@@ -2864,8 +3147,12 @@ export const useReactStore = defineStore('react', {
           sessionState,
           'user',
           query,
-          syntheticMeta,
-          outgoingAttachments.length > 0 ? outgoingAttachments : null,
+          {
+            ...(syntheticMeta || {}),
+            skill_ids: skillIds,
+            context_refs: contextRefs
+          },
+          messageAttachments.length > 0 ? messageAttachments : null,
           {
             ...(synthetic ? { synthetic: true } : {}),
             ...(clientMessageId ? { clientMessageId } : {})
@@ -2874,6 +3161,7 @@ export const useReactStore = defineStore('react', {
       }
       sessionState.currentMessage = ''
       sessionState.isAnalyzing = true
+      if (actualMode === 'board') this.ensureDrawioBoardState(sessionState).readOnly = true
       sessionState.isComplete = false
       sessionState.error = null
       sessionState.iterations = 0
@@ -2899,7 +3187,7 @@ export const useReactStore = defineStore('react', {
       }
 
       try {
-        const boardContext = actualMode === 'chart' ? this.buildBoardContext(actualMode, sessionState) : null
+        const boardContext = actualMode === 'board' ? this.buildBoardContext(actualMode, sessionState) : null
         const mapContext = actualMode === 'graph'
           ? options.mapContext || null
           : actualMode === 'query'
@@ -2930,10 +3218,12 @@ export const useReactStore = defineStore('react', {
           agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
           modelTier,
-          attachments: outgoingAttachments.length > 0 ? outgoingAttachments : null,  // ✅ 传递附件列表
+          skillIds,
+          contextRefs,
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
           skipAutoFollowup,
+          onAccepted,
           onEvent: (event) => {
             if (!event.data) event.data = {}
             if (!event.data.session_id) event.data.session_id = sessionState.sessionId
@@ -2953,7 +3243,8 @@ export const useReactStore = defineStore('react', {
             agentMode: actualMode,
             knowledgeBaseIds,
             modelTier,
-            attachments: null,
+            skillIds: [],
+            contextRefs: [],
             skipAutoFollowup: true,
             synthetic: true,
             syntheticMeta: {
@@ -2973,8 +3264,14 @@ export const useReactStore = defineStore('react', {
         } else {
           console.error('Analysis failed:', error)
           sessionState.isAnalyzing = false
+          if (actualMode === 'board' && sessionState.board) sessionState.board.readOnly = false
           sessionState.error = error.message
           this._addMessageToState(sessionState, 'error', `分析失败: ${error.message}`)
+          promoteUnappliedSteeringInputsToQueue(sessionState, {
+            agentMode: actualMode,
+            queuedAlreadyShown: true
+          })
+          this._persistModeState(actualMode)
         }
       }
     },
@@ -2983,31 +3280,29 @@ export const useReactStore = defineStore('react', {
       const text = (query || '').trim()
       if (!text || !sessionState.sessionId) return
 
-      addPendingSteeringInput(sessionState, text)
+      const steeringInputId = addPendingSteeringInput(sessionState, text)
       sessionState.currentMessage = ''
+      this._persistModeState(sessionState.mode || 'assistant')
 
       let accepted = false
       try {
-        const result = await agentAPI.steer(sessionState.sessionId, text)
+        const result = await agentAPI.steer(sessionState.sessionId, text, steeringInputId)
         accepted = !!result.accepted
       } catch (error) {
         console.warn('[steerActiveAnalysis] 追加指令失败，已转入队列', error)
       }
 
       if (!accepted) {
-        removePendingSteeringInput(sessionState, text)
+        removePendingSteeringInput(sessionState, text, steeringInputId)
         freezeActiveAssistantOutput(sessionState, { reason: 'steering_fallback' }, contentToString)
-        enqueueUserInput(sessionState, {
-          query: text,
-          options: { agentMode: 'assistant' },
-          data: { source: 'steering_fallback' }
-        })
+        fallbackSteeringInputToQueue(sessionState, text, steeringInputId)
+        this._persistModeState(sessionState.mode || 'assistant')
         console.warn('[steerActiveAnalysis] 后端没有可追加任务，已转入队列')
       }
     },
 
     async _runNextQueuedInput(sessionState, actualMode) {
-      const next = sessionState.pendingUserInputs?.shift()
+      const next = peekNextQueuedInput(sessionState)
       if (!next) return
 
       console.log('[runNextQueuedInput] 开始处理排队输入', {
@@ -3016,7 +3311,12 @@ export const useReactStore = defineStore('react', {
       })
       await this.startAnalysis(next.query, {
         ...next.options,
-        agentMode: next.options?.agentMode || actualMode
+        agentMode: next.options?.agentMode || actualMode,
+        dequeuedInput: true,
+        onAccepted: () => {
+          acknowledgeQueuedInput(sessionState, next.clientMessageId)
+          this._persistModeState(actualMode)
+        }
       })
     },
 
@@ -3045,6 +3345,7 @@ export const useReactStore = defineStore('react', {
       }
       await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
+      if (this.currentMode === 'board' && this.currentState.board) this.currentState.board.readOnly = false
       // 不添加系统消息
     },
 
@@ -3058,6 +3359,7 @@ export const useReactStore = defineStore('react', {
       }
       await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
+      if (this.currentMode === 'board' && this.currentState.board) this.currentState.board.readOnly = false
       this.currentState.isComplete = false
       this.currentState.error = null
       this.currentState.isInterruption = true  // 标记为中断状态

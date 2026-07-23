@@ -11,7 +11,7 @@ import os
 
 import structlog
 
-from app.db.database import close_db, init_db
+from app.db.database import check_db_connection, close_db, init_db
 from app.services.lifecycle_manager import initialize_fetchers, stop_fetchers
 
 logger = structlog.get_logger()
@@ -30,8 +30,15 @@ async def init_database() -> bool:
         return False
 
     try:
-        await init_db()
-        logger.info("database_initialized")
+        initialize_schema = os.getenv(
+            "DATABASE_SCHEMA_INIT_ON_STARTUP", "true"
+        ).lower() in {"1", "true", "yes", "on"}
+        if initialize_schema:
+            await init_db()
+            logger.info("database_initialized")
+        else:
+            await check_db_connection()
+            logger.info("database_connection_verified", schema_managed_externally=True)
         return True
     except Exception as e:
         logger.error("database_initialization_failed", error=str(e), exc_info=True)

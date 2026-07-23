@@ -54,6 +54,10 @@ APP_ROLE="${APP_ROLE:-web}"
 export APP_ROLE
 WORKERS="${WORKERS:-4}"
 echo "[INFO] Starting role=${APP_ROLE} with ${WORKERS} worker(s)"
+# Prepare the schema exactly once before Uvicorn forks worker processes.
+echo "[INFO] Preparing database schema..."
+"${PYTHON_BIN}" -m app.db.prepare_database
+export DATABASE_SCHEMA_INIT_ON_STARTUP=false
 # Authentication must see the raw TCP peer; Nginx owns public-client-IP logging.
 "${PYTHON_BIN}" -m uvicorn app.main:app \
     --host 0.0.0.0 \

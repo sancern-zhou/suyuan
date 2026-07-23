@@ -2,6 +2,7 @@
 
 :root {
   color-scheme: light;
+  --ppt-runtime-css-ready: 1;
 }
 
 * {
@@ -20,6 +21,7 @@ body {
   display: grid;
   place-items: start center;
   overflow: auto;
+  font-family: var(--font-body, "Noto Sans CJK SC"), "Noto Sans CJK SC", sans-serif;
 }
 
 #app {

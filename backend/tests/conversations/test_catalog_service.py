@@ -80,6 +80,39 @@ async def test_social_record_rejects_web_write_with_409():
 
 
 @pytest.mark.asyncio
+async def test_claim_web_draft_registers_new_session_for_current_user():
+    repository = FakeRepository()
+    service = ConversationCatalogService(repository)
+    owner = CurrentUser(id="u1", username="u1", display_name="U1")
+
+    claimed = await service.claim_web_draft(
+        session_id="draft-1",
+        user=owner,
+        mode="assistant",
+    )
+
+    assert claimed.owner_user_id == "u1"
+    assert claimed.source == ConversationSource.WEB
+    assert claimed.mode == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_claim_web_draft_rejects_session_owned_by_another_user():
+    service = ConversationCatalogService(FakeRepository([row()]))
+    other = CurrentUser(id="u2", username="u2", display_name="U2")
+
+    with pytest.raises(HTTPException) as exc:
+        await service.claim_web_draft(
+            session_id="s1",
+            user=other,
+            mode="assistant",
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "session_not_found"
+
+
+@pytest.mark.asyncio
 async def test_registration_cannot_reassign_existing_catalog_identity():
     service = ConversationCatalogService(FakeRepository([row()]))
 

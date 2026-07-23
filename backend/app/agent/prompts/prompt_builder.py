@@ -6,6 +6,7 @@ ReAct系统提示词构建器（多模式架构）
 
 from typing import Literal, List, Optional
 from .assistant_prompt import build_assistant_prompt
+from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_prompt
 from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
@@ -28,6 +29,7 @@ logger = structlog.get_logger()
 
 AgentMode = Literal[
     "assistant",
+    "ppt",
     "expert",
     "query",
     "report",
@@ -58,14 +60,13 @@ def build_react_system_prompt(
     user_context: Optional[str] = None,  # ✅ 新增：用户上下文内容（USER.md）
     heartbeat_context: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 当前内容
     backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
-    board_context: Optional[dict] = None,  # 图表模式 draw.io 画板上下文
-    board_run_contract: Optional[dict] = None,
+    board_context: Optional[dict] = None,  # 画板模式 draw.io 上下文
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops")
+        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "ops")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
         user_preferences: 用户偏好配置（仅social模式使用）
         memory_file_path: 用户记忆文件路径（仅social模式使用）
@@ -113,6 +114,8 @@ def build_react_system_prompt(
         return build_custom_prompt(filtered_tools)
     if mode == "assistant":
         return build_assistant_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "ppt":
+        return build_ppt_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "expert":
         return build_expert_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "query":
@@ -134,14 +137,13 @@ def build_react_system_prompt(
             backend_host,
         )
     elif mode == "chart":
-        return build_chart_prompt(filtered_tools, memory_context, memory_file_path, board_context)
+        return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "board":
         return build_board_prompt(
             filtered_tools,
             memory_context,
             memory_file_path,
             board_context,
-            board_run_contract,
         )
     elif mode == "ops":
         return build_ops_prompt(filtered_tools, memory_context, memory_file_path)

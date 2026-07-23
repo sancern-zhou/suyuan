@@ -13,6 +13,7 @@
  */
 
 import { ref } from 'vue'
+import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { restoreSession as restoreSessionApi, getSessionMessages } from '@/api/session'
 
 /**
@@ -168,7 +169,7 @@ export function useSessionRestore(options) {
     if (sessionId.includes('_')) {
       const parts = sessionId.split('_')
       const potentialMode = parts[0]
-      if (['assistant', 'expert'].includes(potentialMode)) {
+      if (AGENT_MODE_IDS.includes(potentialMode)) {
         return potentialMode
       }
     }

@@ -269,10 +269,6 @@ def test_complete_response_integration_does_not_emit_dashboard_metadata():
         ]
     }
 
-    class Guard:
-        async def check(self, session_id):
-            return {"has_incomplete": False}
-
     class Writer:
         def __init__(self):
             self.user_messages = []
@@ -291,7 +287,7 @@ def test_complete_response_integration_does_not_emit_dashboard_metadata():
             state.assistant_message_written = True
 
     runtime = AgentRuntime.__new__(AgentRuntime)
-    runtime.config = SimpleNamespace(task_completion_guard=Guard(), agent_logger=None)
+    runtime.config = SimpleNamespace(agent_logger=None)
     runtime.events = RuntimeEventBus()
     runtime.writer = Writer()
     runtime.finalizer = Finalizer(runtime.writer, runtime.events)

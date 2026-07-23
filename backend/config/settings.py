@@ -488,6 +488,15 @@ class Settings(BaseSettings):
     redis_port: int = Field(default=6379, description="Redis port")
     redis_db: int = Field(default=0, description="Redis database number")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
+    agent_steering_redis_prefix: str = Field(
+        default="suyuan:agent:steering",
+        description="Redis key prefix for cross-worker active-run steering",
+    )
+    agent_steering_ttl_seconds: int = Field(
+        default=7200,
+        ge=60,
+        description="TTL for active-run steering metadata and pending inputs",
+    )
 
     # Cache TTL (seconds)
     cache_ttl_config: int = Field(default=3600, description="Config cache TTL")

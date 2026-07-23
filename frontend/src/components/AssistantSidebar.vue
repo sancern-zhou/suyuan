@@ -67,26 +67,41 @@
 
     <div class="sidebar-scroll-area">
       <!-- 最近对话列表 -->
-      <div v-if="!isCollapsed && displayedRecentSessions.length > 0" class="recent-sessions-section">
+      <div v-if="!isCollapsed" class="recent-sessions-section">
         <div class="recent-sessions-header">
-          <span class="recent-sessions-title">{{ showCaseLibrary ? '案例库' : '最近对话' }}</span>
-          <button
-            class="case-library-icon"
-            :class="{ active: showCaseLibrary }"
-            type="button"
-            @click="toggleCaseLibrary"
-            :title="showCaseLibrary ? '返回最近对话' : '查看案例库'"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 4.5h12a1 1 0 0 1 1 1v14l-7-3.5-7 3.5v-14a1 1 0 0 1 1-1Z" />
-              <path d="M9 8h6" />
-              <path d="M9 11h4" />
-            </svg>
-          </button>
+          <span class="recent-sessions-title">{{ conversationListTitle }}</span>
+          <div class="conversation-view-actions">
+            <button
+              class="conversation-view-icon"
+              :class="{ active: conversationListView === CONVERSATION_LIST_VIEW.CASES }"
+              type="button"
+              @click="toggleConversationView(CONVERSATION_LIST_VIEW.CASES)"
+              title="查看案例库"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 4.5h12a1 1 0 0 1 1 1v14l-7-3.5-7 3.5v-14a1 1 0 0 1 1-1Z" />
+                <path d="M9 8h6" />
+                <path d="M9 11h4" />
+              </svg>
+            </button>
+            <button
+              class="conversation-view-icon"
+              :class="{ active: conversationListView === CONVERSATION_LIST_VIEW.IM }"
+              type="button"
+              @click="toggleConversationView(CONVERSATION_LIST_VIEW.IM)"
+              title="查看IM对话"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 5.5h14v10H9l-4 3v-13Z" />
+                <path d="M8.5 9h7" />
+                <path d="M8.5 12h4.5" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="recent-sessions-list">
-          <div v-if="showCaseLibrary && caseLibrarySessions.length === 0" class="recent-session-empty">
-            暂无案例
+          <div v-if="activeSessionList.length === 0" class="recent-session-empty">
+            {{ conversationListEmptyText }}
           </div>
           <div
             v-for="session in activeSessionList"
@@ -151,6 +166,11 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/auth/authStore.js'
 import { useReactStore } from '@/stores/reactStore'
+import {
+  CONVERSATION_LIST_VIEW,
+  filterSidebarConversations,
+  toggleConversationListView
+} from './conversationListPolicy.js'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -200,18 +220,16 @@ const userInitial = computed(() => Array.from(userDisplayName.value)[0] || '用'
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
-const showCaseLibrary = ref(false)
+const conversationListView = ref(CONVERSATION_LIST_VIEW.RECENT)
 const RECENT_SESSIONS_LIMIT = 30
 const SESSION_FETCH_LIMIT = 200
 let recentSessionsTimer = null
-
-const isSessionCase = (session) => session?.metadata?.is_case === true
 
 const handleSessionCaseUpdated = () => {
   refreshRecentSessions({ silent: true })
 }
 
-const displayedRecentSessions = computed(() => {
+const mergedRecentSessions = computed(() => {
   const localSessions = Object.values(store.sessionStates || {})
     .filter(session => session.sessionId)
     .map(session => {
@@ -222,7 +240,10 @@ const displayedRecentSessions = computed(() => {
         query: firstUser?.content || '新对话',
         updated_at: lastMessage?.timestamp || new Date().toISOString(),
         is_running: !!session.isAnalyzing,
-        is_local: true
+        is_local: true,
+        ...(session.conversationAccess?.source
+          ? { source: session.conversationAccess.source }
+          : {})
       }
     })
 
@@ -242,12 +263,20 @@ const displayedRecentSessions = computed(() => {
       if (a.is_running !== b.is_running) return a.is_running ? -1 : 1
       return new Date(b.updated_at) - new Date(a.updated_at)
     })
-    .slice(0, RECENT_SESSIONS_LIMIT)
+})
+
+const displayedRecentSessions = computed(() => {
+  return filterSidebarConversations(
+    mergedRecentSessions.value,
+    CONVERSATION_LIST_VIEW.RECENT
+  ).slice(0, RECENT_SESSIONS_LIMIT)
 })
 
 const caseLibrarySessions = computed(() => {
-  return recentSessions.value
-    .filter(isSessionCase)
+  return filterSidebarConversations(
+    mergedRecentSessions.value,
+    CONVERSATION_LIST_VIEW.CASES
+  )
     .sort((a, b) => {
       const aMarked = a.metadata?.case_marked_at || a.updated_at || 0
       const bMarked = b.metadata?.case_marked_at || b.updated_at || 0
@@ -255,9 +284,34 @@ const caseLibrarySessions = computed(() => {
     })
 })
 
-const activeSessionList = computed(() => {
-  return showCaseLibrary.value ? caseLibrarySessions.value : displayedRecentSessions.value
+const imConversationSessions = computed(() => {
+  return filterSidebarConversations(
+    mergedRecentSessions.value,
+    CONVERSATION_LIST_VIEW.IM
+  ).slice(0, RECENT_SESSIONS_LIMIT)
 })
+
+const activeSessionList = computed(() => {
+  if (conversationListView.value === CONVERSATION_LIST_VIEW.CASES) {
+    return caseLibrarySessions.value
+  }
+  if (conversationListView.value === CONVERSATION_LIST_VIEW.IM) {
+    return imConversationSessions.value
+  }
+  return displayedRecentSessions.value
+})
+
+const conversationListTitle = computed(() => ({
+  [CONVERSATION_LIST_VIEW.RECENT]: '最近对话',
+  [CONVERSATION_LIST_VIEW.CASES]: '案例库',
+  [CONVERSATION_LIST_VIEW.IM]: 'IM对话'
+})[conversationListView.value])
+
+const conversationListEmptyText = computed(() => ({
+  [CONVERSATION_LIST_VIEW.RECENT]: '暂无最近对话',
+  [CONVERSATION_LIST_VIEW.CASES]: '暂无案例',
+  [CONVERSATION_LIST_VIEW.IM]: '暂无IM对话'
+})[conversationListView.value])
 
 const modules = [
   {
@@ -501,8 +555,11 @@ const loadSession = (session) => {
   emit('loadSession', session.session_id)
 }
 
-const toggleCaseLibrary = () => {
-  showCaseLibrary.value = !showCaseLibrary.value
+const toggleConversationView = (targetView) => {
+  conversationListView.value = toggleConversationListView(
+    conversationListView.value,
+    targetView
+  )
 }
 
 // 过滤后的模块列表（排除"新对话"）
@@ -976,7 +1033,13 @@ onUnmounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
-.case-library-icon {
+.conversation-view-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conversation-view-icon {
   width: 26px;
   height: 26px;
   display: inline-flex;

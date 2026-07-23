@@ -22,7 +22,9 @@ from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
+from .session.conversation_persistence import ConversationPersistenceService
 from .resources.manifest import derive_legacy_views, project_session_resources
+from .resources.models import SessionResourceRef
 from .resources.runtime import (
     RunReferenceAccumulator,
     event_turn_sequence,
@@ -31,6 +33,10 @@ from .resources.runtime import (
 from .resources.service import (
     ManifestPersistenceError,
     get_session_resource_manifest_service,
+)
+from .selection_context import (
+    resource_refs_to_runtime_attachments,
+    selected_resource_projection,
 )
 
 logger = structlog.get_logger()
@@ -205,13 +211,14 @@ class ReActAgent:
             logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
 
         if collected_visuals:
-            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-            session.metadata["visualizations"] = collected_visuals
-            session.metadata["visuals_count"] = len(collected_visuals)
+            ConversationPersistenceService().append_metadata(
+                session,
+                collected_visuals=collected_visuals,
+            )
             logger.info(
-                "visualizations_set_in_metadata",
+                "visualizations_merged_into_metadata",
                 session_id=session.session_id,
-                visuals_count=len(collected_visuals)
+                visuals_count=len(session.metadata.get("visualizations") or []),
             )
 
         office_docs = entry.get("office_documents", [])
@@ -381,6 +388,8 @@ class ReActAgent:
         initial_messages: Optional[List[Dict[str, Any]]] = None,
         manual_mode: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
+        selected_skill_context: Optional[str] = None,
+        selected_resource_refs: Optional[List[SessionResourceRef]] = None,
         user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
         social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
         social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）
@@ -389,7 +398,7 @@ class ReActAgent:
         social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
-        board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
+        board_context: Optional[Dict[str, Any]] = None,  # 画板模式 draw.io 上下文
         map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None,
@@ -483,6 +492,11 @@ class ReActAgent:
 
         runtime_attachments = []
 
+        if selected_resource_refs and supports_native_multimodal(manual_mode):
+            runtime_attachments.extend(
+                resource_refs_to_runtime_attachments(selected_resource_refs)
+            )
+
         # ✅ 如果有附件，添加到查询中（保存到对话历史，确保后续能访问文件）
         if attachments and len(attachments) > 0:
             attachment_info = "\n\n**用户上传的附件**：\n"
@@ -494,9 +508,9 @@ class ReActAgent:
                 att_url = att.get("url") or ""
                 att_mime_type = att.get("mime_type") or att.get("content_type")
 
-                # 对于图片和有file_id的附件，优先使用本地文件路径。
+                # 所有上传附件都通过 file_id 在服务端解析本地路径。
                 # 社交模式会把本地图片编码为 Anthropic 原生 image block。
-                if att_file_id and (att_type == "image" or not att_url.startswith("/")):
+                if att_file_id:
                     try:
                         from app.db.database import async_session
                         from app.knowledge_base.models import UploadedFile
@@ -535,6 +549,19 @@ class ReActAgent:
                 count=len(attachments),
                 attachment_types=[a.get("type") for a in attachments],
                 attachment_urls=[a.get("url") for a in attachments]
+            )
+
+        if supports_native_multimodal(manual_mode):
+            logger.info(
+                "current_turn_multimodal_attachments_prepared",
+                session_id=session_id,
+                mode=manual_mode,
+                selected_resource_count=len(selected_resource_refs or []),
+                image_count=sum(
+                    1
+                    for attachment in runtime_attachments
+                    if isinstance(attachment, dict) and attachment.get("type") == "image"
+                ),
             )
 
         actual_session_id, memory_manager, created_new = await self._get_or_create_session(
@@ -627,10 +654,17 @@ class ReActAgent:
                 saved_manifest = await resource_manifest_service.load(actual_session_id)
                 registry = getattr(run_executor, "tool_registry", {}) or {}
                 available_tools = set(registry.keys()) if isinstance(registry, dict) else set()
+                projected_refs = selected_resource_projection(
+                    selected_resource_refs,
+                    saved_refs=saved_manifest.refs,
+                )
                 react_loop.context_builder.session_resource_context = project_session_resources(
-                    saved_manifest.refs,
+                    projected_refs,
                     query=user_query,
                     available_tools=available_tools,
+                    preferred_ref_ids=[
+                        ref.ref_id for ref in selected_resource_refs or []
+                    ],
                     max_chars=8000,
                 ) or None
                 if react_loop.context_builder.session_resource_context:
@@ -639,7 +673,7 @@ class ReActAgent:
                         session_id=actual_session_id,
                         mode=manual_mode or "expert",
                         version=saved_manifest.version,
-                        resource_count=len(saved_manifest.refs),
+                        resource_count=len(projected_refs),
                         context_length=len(react_loop.context_builder.session_resource_context),
                     )
             except ManifestPersistenceError as exc:
@@ -650,6 +684,14 @@ class ReActAgent:
                     error=str(exc),
                 )
 
+            if selected_skill_context:
+                react_loop.context_builder.selected_skill_context = selected_skill_context
+                logger.info(
+                    "selected_skill_context_set",
+                    session_id=actual_session_id,
+                    context_length=len(selected_skill_context),
+                )
+
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
             if memory_context:
                 react_loop.context_builder.memory_context = memory_context
@@ -658,16 +700,24 @@ class ReActAgent:
                     context_length=len(memory_context)
                 )
 
-            if manual_mode == "chart" and board_context:
-                react_loop.context_builder.board_context = board_context
+            if manual_mode == "board":
+                effective_board_context = dict(board_context or {})
+                effective_board_context["current_request_images"] = [
+                    {
+                        "name": attachment.get("name") or attachment.get("filename") or "image",
+                        "mime_type": attachment.get("mime_type") or attachment.get("content_type") or "image",
+                        "source": "current_turn_upload",
+                    }
+                    for attachment in runtime_attachments
+                    if isinstance(attachment, dict) and attachment.get("type") == "image"
+                ]
+                react_loop.context_builder.board_context = effective_board_context
                 logger.info(
                     "board_context_set_to_context_builder",
-                    has_current_xml=bool(board_context.get("current_xml") or board_context.get("currentXml")),
-                    current_xml_length=len(board_context.get("current_xml") or board_context.get("currentXml") or ""),
-                    previous_xml_length=len(board_context.get("previous_xml") or board_context.get("previousXml") or ""),
-                    selected_count=len(board_context.get("selected_cells") or board_context.get("selectedCells") or []),
-                    version=board_context.get("version"),
-                    dirty=board_context.get("dirty"),
+                    has_current_xml=bool(effective_board_context.get("current_xml") or effective_board_context.get("currentXml")),
+                    current_xml_length=len(effective_board_context.get("current_xml") or effective_board_context.get("currentXml") or ""),
+                    selected_count=len(effective_board_context.get("selected_cells") or effective_board_context.get("selectedCells") or []),
+                    current_request_image_count=len(effective_board_context["current_request_images"]),
                 )
 
             if manual_mode in {"query", "graph"} and map_context:

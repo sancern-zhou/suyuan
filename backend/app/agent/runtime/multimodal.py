@@ -29,8 +29,10 @@ def build_anthropic_user_content(
             continue
 
         image_block = _build_image_block(attachment)
-        if image_block:
-            blocks.append(image_block)
+        if not image_block:
+            name = str(attachment.get("name") or "image")
+            raise ValueError(f"native_image_build_failed: {name}")
+        blocks.append(image_block)
 
     return blocks if len(blocks) > 1 else text
 
@@ -54,8 +56,10 @@ def build_base64_user_content(
         if attachment.get("type") != "image":
             continue
         image_block = _build_local_base64_image_block(attachment)
-        if image_block:
-            blocks.append(image_block)
+        if not image_block:
+            name = str(attachment.get("name") or "image")
+            raise ValueError(f"native_image_build_failed: {name}")
+        blocks.append(image_block)
 
     return blocks if len(blocks) > 1 else text
 

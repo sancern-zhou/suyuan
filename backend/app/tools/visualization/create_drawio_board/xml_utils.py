@@ -78,11 +78,13 @@ def apply_drawio_operations(
                 if cell_id not in order:
                     order.append(cell_id)
             elif operation == "delete":
+                _require_existing_cell(by_id, cell_id)
                 delete_ids = _cascade_delete_ids(by_id, cell_id)
                 for delete_id in delete_ids:
                     by_id.pop(delete_id, None)
                 order = [existing_id for existing_id in order if existing_id not in delete_ids]
             elif operation == "delete_with_edges":
+                _require_existing_cell(by_id, cell_id)
                 delete_ids = _cascade_delete_ids(by_id, cell_id)
                 for delete_id in delete_ids:
                     by_id.pop(delete_id, None)

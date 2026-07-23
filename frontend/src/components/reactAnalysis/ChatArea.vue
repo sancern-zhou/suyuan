@@ -68,6 +68,7 @@
 import { ref, computed, nextTick } from 'vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
+import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 
 const props = defineProps({
   messages: {
@@ -187,7 +188,7 @@ const inputPlaceholder = computed(() => {
     'report-generation-expert': '输入报告生成需求...',
     'office-assistant': '输入您需要处理的办公任务...'
   }
-  return placeholders[props.assistantMode] || '输入您的问题...'
+  return withComposerShortcutGuide(placeholders[props.assistantMode])
 })
 
 // 事件处理

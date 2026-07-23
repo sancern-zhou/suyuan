@@ -21,7 +21,11 @@ export const enqueueUserInput = (
 ) => {
   if (!state) return null
   const text = normalizeText(query)
-  if (!text && !attachments) return null
+  const hasStructuredSelection = (
+    (options.skillIds || []).length > 0 ||
+    (options.contextRefs || []).length > 0
+  )
+  if (!text && !attachments && !hasStructuredSelection) return null
 
   state.pendingUserInputs = state.pendingUserInputs || []
   state.messages = state.messages || []
@@ -55,4 +59,30 @@ export const enqueueUserInput = (
   }
 
   return clientMessageId
+}
+
+export const takeNextQueuedInput = (state) => {
+  if (!state?.pendingUserInputs?.length) return null
+  return state.pendingUserInputs.shift() || null
+}
+
+export const peekNextQueuedInput = (state) => {
+  if (!state?.pendingUserInputs?.length) return null
+  return state.pendingUserInputs[0] || null
+}
+
+export const acknowledgeQueuedInput = (state, clientMessageId) => {
+  if (!state?.pendingUserInputs?.length || !clientMessageId) return null
+  const index = state.pendingUserInputs.findIndex(item => (
+    item?.clientMessageId === clientMessageId
+  ))
+  if (index === -1) return null
+  const [removed] = state.pendingUserInputs.splice(index, 1)
+  return removed || null
+}
+
+export const queueIncomingBehindPendingAndTakeNext = (state, incoming = {}) => {
+  if (!state?.pendingUserInputs?.length) return null
+  enqueueUserInput(state, incoming)
+  return peekNextQueuedInput(state)
 }

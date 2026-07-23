@@ -86,6 +86,14 @@ def test_project_title_is_safe_inside_javascript_template(tmp_path):
     assert "&lt;script&gt;" in source
 
 
+def test_new_project_uses_the_available_cjk_sans_font(tmp_path):
+    service = EditablePptProjectService(tmp_path)
+    project = service.create_project(title="字体基线")
+    theme = json.loads(Path(project.project_dir, "theme.json").read_text(encoding="utf-8"))
+    assert theme["fontTitle"] == "Noto Sans CJK SC"
+    assert theme["fontBody"] == "Noto Sans CJK SC"
+
+
 def test_invalid_managed_deck_edit_does_not_replace_source(tmp_path):
     service = EditablePptProjectService(tmp_path)
     project = service.create_project(title="年度报告")

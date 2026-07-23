@@ -14,9 +14,15 @@ load_dotenv()
 logger = structlog.get_logger()
 
 # Database URL from environment
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://user:password@localhost:5432/weather_db"
+def _normalize_async_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    return url
+
+
+DATABASE_URL = _normalize_async_database_url(
+    os.getenv("DATABASE_URL")
+    or "postgresql+asyncpg://user:password@localhost:5432/weather_db"
 )
 
 # Create async engine
@@ -47,6 +53,13 @@ async_session = async_sessionmaker(
 
 # Base class for all models
 Base = declarative_base()
+
+
+def _schema_init_lock_sql(dialect_name: str) -> str | None:
+    """Serialize schema initialization across multi-worker process startup."""
+    if dialect_name == "postgresql":
+        return "SELECT pg_advisory_xact_lock(hashtext('suyuan_schema_init'))"
+    return None
 
 
 def _uploaded_files_session_id_alter_sql(dialect_name: str) -> str | None:
@@ -225,13 +238,24 @@ async def init_db():
     import app.knowledge_base.models  # noqa: F401
     import app.knowledge_base.graph_models  # noqa: F401
     import app.knowledge_base.graph_build_models  # noqa: F401
+    import app.boards.models  # noqa: F401
 
     async with engine.begin() as conn:
+        dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
+        lock_sql = _schema_init_lock_sql(dialect_name)
+        if lock_sql:
+            await conn.execute(text(lock_sql))
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
         await _ensure_session_resource_manifest_schema(conn)
     logger.info("database_initialized")
+
+
+async def check_db_connection() -> None:
+    """Verify database availability without mutating the schema."""
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
 
 
 async def close_db():

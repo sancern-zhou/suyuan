@@ -18,6 +18,8 @@ test('top-level persisted mode takes priority when available', () => {
 
 test('mode-prefixed ids remain a fallback for legacy sessions', () => {
   assert.equal(resolveRestoredAgentMode({}, 'chart_session_123_abc', 'assistant'), 'chart')
+  assert.equal(resolveRestoredAgentMode({}, 'board_session_123_abc', 'assistant'), 'board')
+  assert.equal(resolveRestoredAgentMode({}, 'ppt_session_123_abc', 'assistant'), 'ppt')
 })
 
 test('unsupported metadata falls back to the current supported mode', () => {

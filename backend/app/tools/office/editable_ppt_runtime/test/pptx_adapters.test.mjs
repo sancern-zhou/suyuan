@@ -78,6 +78,31 @@ test("basic adapter maps measured text to editable text with normalized colors",
   assert.equal(normalizeColor("#174A7C"), "174A7C");
 });
 
+test("basic adapter preserves rgba alpha as native fill and line transparency", () => {
+  const slide = fakeSlideRecorder();
+  addBasicElement(
+    slide,
+    {
+      id: "glass-card",
+      source: "dom",
+      tagName: "div",
+      text: "",
+      box: { x: 100, y: 100, width: 300, height: 180 },
+      style: {
+        backgroundColor: "rgba(255, 255, 255, 0.08)",
+        borderColor: "rgba(255, 255, 255, 0.12)",
+        borderWidth: "1px",
+        opacity: "1",
+      },
+    },
+    { ShapeType: pptxApi.ShapeType },
+  );
+
+  assert.equal(slide.calls[0].options.fill.color, "FFFFFF");
+  assert.equal(slide.calls[0].options.fill.transparency, 92);
+  assert.equal(slide.calls[0].options.line.transparency, 88);
+});
+
 test("semantic adapters emit native chart and table calls", () => {
   const slide = fakeSlideRecorder();
   const theme = { primary: "174A7C", text: "1F2937", fontBody: "Microsoft YaHei" };

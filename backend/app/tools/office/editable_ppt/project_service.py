@@ -47,8 +47,8 @@ class EditablePptProjectService:
         theme_doc = {
             "name": theme, **colors, "accent": "#E8A317", "canvas": "#F7F9FC",
             "surface": "#FFFFFF", "text": "#1F2937", "muted": "#64748B",
-            "line": "#CBD5E1", "fontTitle": "Microsoft YaHei",
-            "fontBody": "Microsoft YaHei",
+            "line": "#CBD5E1", "fontTitle": "Noto Sans CJK SC",
+            "fontBody": "Noto Sans CJK SC",
         }
         safe_title = html.escape(title).replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
         intent = json.dumps(f"introduce {title}", ensure_ascii=False)
@@ -93,15 +93,67 @@ class EditablePptProjectService:
         tmp.replace(path)
         return self._record_change(root, current, [relative_path], "managed_edit")
 
+    def edit_sources(
+        self,
+        project_dir: str | Path,
+        edits: list[dict[str, str | bytes]],
+        base_revision: int,
+    ) -> ProjectState:
+        root = self._project_root(project_dir)
+        current = self.reconcile_external_edits(root)
+        if current.revision != base_revision:
+            raise RevisionConflictError(
+                f"stale revision {base_revision}; current revision is {current.revision}"
+            )
+        if not edits:
+            raise ValueError("edits 不能为空")
+        candidates: list[tuple[str, bytes]] = []
+        seen: set[str] = set()
+        for edit in edits:
+            relative_path = str(edit["relative_path"]).replace("\\", "/")
+            if relative_path in seen:
+                raise ValueError(f"edits 包含重复路径: {relative_path}")
+            seen.add(relative_path)
+            self._source_path(root, relative_path)
+            content = edit["content"]
+            payload = content if isinstance(content, bytes) else str(content).encode("utf-8")
+            candidates.append((relative_path, payload))
+
+        self._validate_candidates(root, candidates)
+        staged_files: list[tuple[Path, Path]] = []
+        try:
+            for relative_path, payload in candidates:
+                target = self._source_path(root, relative_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                staged = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+                staged.write_bytes(payload)
+                staged_files.append((staged, target))
+            for staged, target in staged_files:
+                staged.replace(target)
+        finally:
+            for staged, _target in staged_files:
+                if staged.exists():
+                    staged.unlink()
+        return self._record_change(
+            root,
+            current,
+            [relative_path for relative_path, _payload in candidates],
+            "managed_batch_edit",
+        )
+
     def _validate_candidate(self, root: Path, relative_path: str, payload: bytes):
-        if relative_path.startswith(("assets/", "templates/")):
+        self._validate_candidates(root, [(relative_path, payload)])
+
+    def _validate_candidates(self, root: Path, candidates: list[tuple[str, bytes]]):
+        if all(relative_path.startswith(("assets/", "templates/")) for relative_path, _ in candidates):
             return
         with tempfile.TemporaryDirectory(prefix="editable-ppt-validate-") as temp:
             staged = Path(temp) / "project"
             shutil.copytree(root, staged, ignore=shutil.ignore_patterns(".editable-ppt", "build"))
-            target = staged / relative_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(payload)
+            for relative_path, payload in candidates:
+                target = staged / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payload)
             cli = Path(__file__).resolve().parent.parent / "editable_ppt_runtime" / "src" / "cli.mjs"
             request = json.dumps({"command": "inspect", "projectDir": str(staged)}).encode()
             try:

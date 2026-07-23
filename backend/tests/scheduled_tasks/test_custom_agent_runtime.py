@@ -100,6 +100,103 @@ def test_deterministic_model_errors_are_recognized(message):
     assert AgentRuntime._is_deterministic_model_error(RuntimeError(message)) is True
 
 
+@pytest.mark.parametrize("message", [
+    "已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。 (2056)",
+    "insufficient_quota: billing limit reached",
+    "HTTP 402 Payment Required",
+])
+def test_exhausted_quota_errors_are_terminal(message):
+    assert AgentRuntime._is_terminal_quota_error(RuntimeError(message)) is True
+
+
+@pytest.mark.asyncio
+async def test_ppt_runtime_stops_immediately_when_token_plan_is_exhausted():
+    calls = 0
+
+    class FakeFinalizer:
+        async def fatal_error(self, state, error):
+            yield {"type": "fatal_error", "data": {"error": str(error)}}
+
+    async def no_events(state):
+        if False:
+            yield None
+
+    async def close_steering(state):
+        return None
+
+    async def failing_iteration(state):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("Error code: 429 - 已达到 Token Plan 用量上限")
+        yield
+
+    runtime = object.__new__(AgentRuntime)
+    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False)
+    runtime.planner = SimpleNamespace(is_interruption=False)
+    runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
+    runtime.events = SimpleNamespace(
+        start=lambda state: {"type": "start"},
+        error=lambda state, error: {"type": "error", "data": {"error": str(error)}},
+    )
+    runtime.finalizer = FakeFinalizer()
+    runtime._raise_if_cancelled = lambda: None
+    runtime._ensure_user_message_written = lambda state: None
+    runtime._close_steering = close_steering
+    runtime._apply_steering_inputs = no_events
+    runtime._run_iteration = failing_iteration
+    state = RunState(session_id="s", user_query="run", mode="ppt")
+
+    events = [event async for event in runtime._run_locked(state, None)]
+
+    assert calls == 1
+    assert events[-1]["type"] == "fatal_error"
+    assert "额度" in events[-1]["data"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_ppt_runtime_breaks_after_two_deterministic_model_failures():
+    calls = 0
+
+    class FakeFinalizer:
+        async def fatal_error(self, state, error):
+            yield {"type": "fatal_error", "data": {"error": str(error)}}
+
+    async def no_events(state):
+        if False:
+            yield None
+
+    async def close_steering(state):
+        return None
+
+    async def failing_iteration(state):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("HTTP 400 Bad Request")
+        yield
+
+    runtime = object.__new__(AgentRuntime)
+    runtime.config = SimpleNamespace(agent_logger=None, max_iterations=80, is_interruption=False)
+    runtime.planner = SimpleNamespace(is_interruption=False)
+    runtime.writer = SimpleNamespace(load_initial_history_if_needed=lambda messages: None)
+    runtime.events = SimpleNamespace(
+        start=lambda state: {"type": "start"},
+        error=lambda state, error: {"type": "error", "data": {"error": str(error)}},
+    )
+    runtime.finalizer = FakeFinalizer()
+    runtime._raise_if_cancelled = lambda: None
+    runtime._ensure_user_message_written = lambda state: None
+    runtime._close_steering = close_steering
+    runtime._apply_steering_inputs = no_events
+    runtime._run_iteration = failing_iteration
+    state = RunState(session_id="s", user_query="run", mode="ppt")
+
+    events = [event async for event in runtime._run_locked(state, None)]
+
+    assert calls == 2
+    assert events[-1]["type"] == "fatal_error"
+    assert "已熔断" in events[-1]["data"]["error"]
+
+
 @pytest.mark.asyncio
 async def test_custom_iteration_limit_emits_fatal_failure_not_continue_prompt():
     class FakeFinalizer:

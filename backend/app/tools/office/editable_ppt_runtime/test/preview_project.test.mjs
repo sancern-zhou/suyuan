@@ -25,6 +25,7 @@ test("materializes immutable runtime with project data and Tailwind source", asy
   assert.equal(payload.slides.length, 1);
   assert.equal(payload.slides[0].id, "cover");
   assert.equal(payload.theme.id, "government");
+  assert.match(payload.runtimeHash, /^[a-f0-9]{64}$/);
   assert.equal((await fs.stat(path.join(outputDir, "assets", "pixel.svg"))).isFile(), true);
 });
 
