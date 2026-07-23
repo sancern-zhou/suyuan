@@ -6,16 +6,65 @@
 
 Agent 不必把每次修改都转换成 Patch。可以用 `read_file` / `edit_file` 直接编辑这些文档，再调用 `manage_editable_ppt(operation="inspect")`；服务会检测哈希变化、创建新 revision，并只把受影响页面标记为 dirty。这样可以从底层多次完善，无需重新生成未修改的页面或丢失人工调整历史。
 
-## 推荐步骤
+## 1. 材料理解
 
-1. 先完成完整大纲、受众、叙事目标和数据依据。
-2. `create` 创建源码项目，选择 government、business 或 data-analysis 主题。
-3. 先做封面、一个关键内容页、一个数据页三张锚点页，`render` 检查视觉方向。
-4. 方向确定后每批制作 3–5 页。结构调整优先直接编辑源码；单文件修改可用 `edit_source`，同一轮多文件修改用 `edit_sources` 原子提交。
-5. 每批 `render`，检查溢出、缺失资源、重复 ID 和关键元素位置。
-6. `compile` 使用默认 `editable="strict"`，读取 compile report，确认 forbiddenRasterFallbacks 为 0。
-7. `validate` 执行 LibreOffice/PNG/montage/字体/空页检查；修复后重新编译。
-8. 只有 strict 编译和验证均通过才 `finalize`。
+- 读取用户材料并形成结构化 brief，至少包含受众、汇报目标、核心结论、事实数据、数据来源和视觉约束。
+- 后续优先使用 brief，不重复读取整份原始材料；需要核对事实时，只回读对应原文片段。
+- 材料不足但不影响方向时可以做显式假设，不得虚构事实、来源或数据。
+
+退出条件：已经具备页面规划所需信息，所有关键数字都能追溯到用户材料或工具结果。
+
+## 2. 大纲规划
+
+- 在生成源码前完成精确页数的大纲。每页至少写明页面目的、核心结论、内容来源和建议版式。
+- 检查用户要求页数、章节闭环、目录承诺与正文页是否一致。
+- 用户指定页数时，后续 `render` 和 `compile` 必须传 `expected_slide_count`。
+
+退出条件：计划页数与用户要求完全一致；页数不匹配时不得进入源码生成。
+
+## 3. 初稿生成
+
+- 使用 `create` 创建源码项目，根据任务选择 government、business 或 data-analysis 主题。
+- 约束清晰的任务优先一次批量生成 theme、deck 和全部页面源码。只有视觉方向高度不确定时，才先做封面、关键内容页和数据页作为锚点。
+- 生成后立即 `inspect`，确认实际页面数、源码文件数、资源引用和 revision。
+
+退出条件：源码项目结构完整，实际页面数通过检查。
+
+## 4. 低成本预览
+
+- 对全部页面执行结构检查和 `render`，默认消费工具返回的结构化 `diagnostic` 与 `report_ref`。
+- 诊断是定位索引，不是源码。发现问题后，依据 `diagnostic.issues[*].source_path` 读取全部受影响源码，不能只处理第一项。
+- 原始报告只有在结构化诊断不足时才通过 `read_report` 按页面、错误码或元素 ID 回读；不要无条件把完整报告带入上下文。
+
+退出条件：Agent 已掌握全部当前问题及其对应源码，或预览问题已经清零。
+
+## 5. 批量修复
+
+- 按错误类型和共同根因分组；同类多页问题优先在一次 `edit_sources` 中原子提交。
+- 修改前记录当前 revision 和 `diagnostic.fingerprint`，并先读取相关源码。不得只根据错误摘要盲目修改。
+- 每次重新检查前，明确说明修改了什么，以及为什么预计会改变对应诊断。
+- 不得为局部页面问题重新生成整套 PPT。
+
+退出条件：修改已提交到新 revision，所有受影响源码均被处理或有明确排除理由。
+
+## 6. 严格编译
+
+- 预览结构问题清零后执行 `compile(editable="strict")`，确认 forbiddenRasterFallbacks 为 0。
+- `diagnostic.status=resolved` 表示上一轮问题已经清零，可以进入验证。
+- `diagnostic.status=changed` 表示问题集合已经变化，应处理新问题或剩余问题。
+- `diagnostic.status=unchanged` 表示上轮修改没有改变问题；必须重新读取源码和必要的原始证据、重新判断根因，不得立即重复同一种修改。
+- 编译成功后再次确认实际页数、原生对象和栅格降级情况。
+
+退出条件：当前 revision 的 strict compile 成功且页数契约成立。
+
+## 7. 验证与交付
+
+- `validate` 执行 LibreOffice、PNG、montage、字体和空页检查；失败时返回对应源码继续修复。
+- 只有当前 revision 的 strict compile 和 validate 均通过后才能 `finalize`。
+- 只有 `finalize` 成功后才能 `present_artifact`。
+- 最终回复说明实际页数、验证结果、产物和仍存在的限制。
+
+退出条件：源码 revision、编译产物和验证结果一致，质量门通过。
 
 ## 编辑与并发规则
 

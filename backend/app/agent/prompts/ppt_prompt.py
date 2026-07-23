@@ -40,6 +40,16 @@ def build_ppt_prompt(
         "- 以 strict 可编辑导出为目标时，不要使用渐变、filter、transform、box-shadow；"
         "装饰元素必须完全位于 1440×810 画布内。每个承载可见文字的叶子节点（包括 span）"
         "都要有页内唯一的 data-pptx-id；原生占位框使用相对整页的绝对坐标，避免嵌套定位重复偏移。\n\n",
+        "## 诊断驱动修复\n",
+        "- render、compile、validate 默认返回结构化诊断和 report_ref。诊断是定位索引，不是源码；"
+        "修改前必须读取 diagnostic.issues 对应的 source_path。\n",
+        "- 一次诊断涉及多个页面时，一次读取全部受影响源码，按共同根因分析，并优先使用单次 "
+        "edit_sources 批量修复。\n",
+        "- 只有结构化诊断证据不足时才用 read_report 按页面、错误码或元素读取原始报告；"
+        "不要无条件读取完整报告。\n",
+        "- diagnostic.status=unchanged 表示上轮修改没有改变问题；必须重新读取源码和证据、"
+        "重新判断根因，不得立即重复同一种修改。\n",
+        "- 用户指定页数时，render 和 compile 必须传 expected_slide_count；页数不符不得进入交付。\n\n",
         "## 质量闭环\n",
         "- 编译默认使用 strict 可编辑模式，并确认 forbiddenRasterFallbacks 为 0。\n",
         "- 编译后调用 `validate_pptx` 或 `manage_editable_ppt(operation=\"validate\")`；"

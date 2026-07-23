@@ -1,5 +1,7 @@
 """Contracts for the dedicated editable presentation mode."""
 
+from pathlib import Path
+
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.agent.prompts.tool_registry import PPT_TOOL_ORDER, get_tools_by_mode
 from app.agent.runtime.mode_capabilities import supports_native_multimodal
@@ -49,6 +51,34 @@ def test_ppt_mode_prompt_uses_editable_incremental_workflow_by_default():
     assert "finalize 返回 success=true" in prompt
     assert "不要使用渐变、filter、transform、box-shadow" in prompt
     assert "每个承载可见文字的叶子节点" in prompt
+    assert "诊断是定位索引，不是源码" in prompt
+    assert "修改前必须读取" in prompt
+    assert "diagnostic.status=unchanged" in prompt
+    assert "不得立即重复同一种修改" in prompt
+    assert "一次读取全部受影响源码" in prompt
+    assert "expected_slide_count" in prompt
+
+
+def test_ppt_workflow_defines_diagnostic_driven_stage_protocol():
+    workflow = Path(
+        "app/tools/office/editable_ppt/references/workflow.md"
+    ).read_text(encoding="utf-8")
+    headings = [
+        "材料理解",
+        "大纲规划",
+        "初稿生成",
+        "低成本预览",
+        "批量修复",
+        "严格编译",
+        "验证与交付",
+    ]
+    assert all(
+        f"## {index}. {heading}" in workflow
+        for index, heading in enumerate(headings, 1)
+    )
+    assert workflow.index("读取全部受影响源码") < workflow.index("edit_sources")
+    assert "read_report" in workflow
+    assert "原始报告只有在结构化诊断不足时" in workflow
 
 
 def test_ppt_mode_prompt_keeps_memory_preferences():
