@@ -1,23 +1,25 @@
 from __future__ import annotations
 
-import json
-import hashlib
 import copy
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.office.editable_ppt.compiler_client import CompilerClientError, EditablePptCompilerClient
+from app.tools.office.editable_ppt.compiler_client import (
+    CompilerClientError,
+    EditablePptCompilerClient,
+)
+from app.tools.office.editable_ppt.diagnostics import PptDiagnosticBuilder
 from app.tools.office.editable_ppt.project_service import (
     EditablePptProjectService,
     RevisionConflictError,
 )
 from app.tools.office.editable_ppt.quality import build_editable_ppt_gate
-from app.tools.office.editable_ppt.diagnostics import PptDiagnosticBuilder
 from app.tools.office.editable_ppt.report_store import PptReportStore, ReportRefError
-
 
 logger = structlog.get_logger()
 
@@ -243,7 +245,7 @@ class ManageEditablePptTool(LLMTool):
                     success=gate.status == "passed" and validation_passed,
                     facts={"pptx_path": validation_path, "validation_passed": validation_passed},
                 )
-                validation["success"] = gate.status == "passed"
+                validation["success"] = gate.status == "passed" and validation_passed
                 validation["summary"] = "严格编译与 PPTX 验证通过，可以交付" if validation["success"] else "质量门未通过，拒绝交付"
                 validation["data"]["finalized"] = validation["success"]
                 validation["data"]["quality_gate"] = gate.to_dict()
@@ -399,6 +401,17 @@ class ManageEditablePptTool(LLMTool):
             suggested_stage=self._suggested_stage(operation, diagnostic, public_success),
             **compact_facts,
         )
+        if not public_success:
+            source_paths = result["data"]["recommended_action"]["source_paths"]
+            joined_paths = "、".join(source_paths) or "diagnostic.issues 对应源码"
+            if diagnostic["status"] == "unchanged":
+                result["data"]["next_actions"] = [
+                    f"诊断未变化；重新读取 {joined_paths} 和必要原始证据，重新判断根因后再修改"
+                ]
+            else:
+                result["data"]["next_actions"] = [
+                    f"读取 {joined_paths}，按 diagnostic.issues 的共同根因批量修复后重新检查"
+                ]
         envelope_chars = len(json.dumps(result, ensure_ascii=False, default=str))
         logger.info(
             "ppt_diagnostic_envelope_built",

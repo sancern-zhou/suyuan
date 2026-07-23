@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 LIKELY_CAUSES = {
     "ELEMENT_OVERFLOW": "嵌套绝对定位或元素尺寸造成页面越界",
 }
