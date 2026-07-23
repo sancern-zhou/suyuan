@@ -12,10 +12,16 @@ function configuredApiBase() {
 
 
 export function gatewayUrl(url, apiBaseUrl = configuredApiBase()) {
-  if (url === apiBaseUrl || url.startsWith(`${apiBaseUrl}/`) || url.startsWith(`${apiBaseUrl}?`)) {
+  if (
+    url === apiBaseUrl ||
+    url.startsWith(`${apiBaseUrl}/`) ||
+    url.startsWith(`${apiBaseUrl}?`) ||
+    url.startsWith(`${apiBaseUrl}#`)
+  ) {
     return url
   }
   if (url === '/api') return apiBaseUrl
+  if (url.startsWith('/api?') || url.startsWith('/api#')) return `${apiBaseUrl}${url.slice(4)}`
   if (url.startsWith('/api/')) return `${apiBaseUrl}${url.slice(4)}`
   return url
 }

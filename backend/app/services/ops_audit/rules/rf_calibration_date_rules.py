@@ -89,7 +89,7 @@ def check_rf_calibration_dates(
             "时间合理性",
             "高",
             f"rf.{table}.{first.get('next_field') or first.get('prev_field')}",
-            f"RF表单校准有效期异常: {first.get('label')} {first.get('reason')}",
+            f"RF表单校准有效期异常: {first.get('description') or first.get('label')}",
             json.dumps(evidence, ensure_ascii=False, default=str),
         )
 
@@ -194,6 +194,7 @@ def _violation(
     reference_time: datetime,
     reason: str,
 ) -> dict[str, Any]:
+    label = str(pair.get("label") or "校准有效期")
     return {
         "label": pair.get("label"),
         "prev_field": prev_field,
@@ -202,7 +203,29 @@ def _violation(
         "next_time": _format_time(next_time),
         "reference_time": _format_time(reference_time),
         "reason": reason,
+        "description": _violation_description(label, prev_time, next_time, reference_time, reason),
     }
+
+
+def _violation_description(
+    label: str,
+    prev_time: datetime | None,
+    next_time: datetime | None,
+    reference_time: datetime,
+    reason: str,
+) -> str:
+    prev_text = _format_time(prev_time)
+    next_text = _format_time(next_time)
+    reference_text = _format_time(reference_time)
+    if reason == "not_after_reference":
+        return f"{label}至{next_text}，本次检查时间为{reference_text}"
+    if reason == "prev_after_reference":
+        return f"{label}的上次校准时间为{prev_text}，晚于本次检查时间{reference_text}"
+    if reason == "prev_after_next":
+        return f"{label}的上次校准时间为{prev_text}，晚于有效期截止时间{next_text}"
+    if reason == "interval_over_two_years":
+        return f"{label}从{prev_text}至{next_text}，有效期超过两年"
+    return label
 
 
 def _first_time(record: dict[str, Any], fields: list[str]) -> datetime | None:

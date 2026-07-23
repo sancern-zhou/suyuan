@@ -50,7 +50,7 @@ class ConversationCatalogService:
             if existing.owner_user_id != owner_user_id or existing.source != source:
                 raise RuntimeError("catalog_identity_conflict")
             return existing
-        return await self.repository.upsert(
+        stored = await self.repository.upsert(
             ConversationCatalogRecord(
                 session_id=session_id,
                 owner_user_id=owner_user_id,
@@ -62,6 +62,33 @@ class ConversationCatalogService:
                 read_only_on_web=read_only_on_web,
             )
         )
+        if stored.owner_user_id != owner_user_id or stored.source != source:
+            raise RuntimeError("catalog_identity_conflict")
+        return stored
+
+    async def claim_web_draft(
+        self,
+        *,
+        session_id: str,
+        user: CurrentUser,
+        mode: str | None,
+    ) -> ConversationCatalogRecord:
+        """Bind a pre-analysis upload session to its owner, or authorize it."""
+        existing = await self.repository.get(session_id)
+        if existing is not None:
+            return await self.require_write(session_id, user)
+        try:
+            return await self.register(
+                session_id=session_id,
+                user=user,
+                source=ConversationSource.WEB,
+                mode=mode,
+                title=None,
+            )
+        except RuntimeError as exc:
+            if str(exc) == "catalog_identity_conflict":
+                raise HTTPException(status_code=404, detail="session_not_found") from exc
+            raise
 
     async def find(self, session_id: str) -> ConversationCatalogRecord | None:
         """Return a catalog record without applying visibility policy."""

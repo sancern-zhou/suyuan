@@ -105,6 +105,22 @@ def inspect_report_image_refs(
         refs.append(ref)
         if ref.startswith("/api/image/"):
             api_refs.append(ref)
+            image_key = ref[len("/api/image/") :].split("#", 1)[0].split("?", 1)[0]
+            filename = Path(image_key).name or "image.png"
+            if not Path(filename).suffix:
+                filename = f"{filename}.png"
+            issues.append(
+                {
+                    "reference": ref,
+                    "resolved_path": str(report_dir / "assets" / "charts" / filename),
+                    "reason": "API image reference was not normalized",
+                    "repair_hint": (
+                        "Pass the real image path in create_report_package.assets and "
+                        f"use the copied package path assets/charts/{filename}, "
+                        "then validate again."
+                    ),
+                }
+            )
             continue
 
         clean_ref = markdown_image_path(ref).split("#", 1)[0].split("?", 1)[0].strip()

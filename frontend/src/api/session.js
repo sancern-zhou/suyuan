@@ -97,6 +97,13 @@ export async function getSessionMessages(sessionId, beforeSequence, limit = 30) 
 }
 
 /**
+ * 获取当前对话可通过 @ 引用的上传文件和 Agent 生成文件。
+ */
+export async function getSessionResources(sessionId) {
+  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources`)
+}
+
+/**
  * 按需加载会话图表数据
  */
 export async function getSessionVisualizations(sessionId) {

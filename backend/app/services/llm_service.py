@@ -2865,7 +2865,7 @@ class LLMService:
 
         try:
             if self.api_mode == "chat_completions":
-                return await self._run_llm_request_with_global_limit(
+                return await self._run_anthropic_with_fallback(
                     "chat_completions_chat",
                     lambda: self._chat_completions_create(
                         messages=messages,
@@ -3064,20 +3064,7 @@ class LLMService:
                     yield event
             return
 
-        if self.api_mode == "chat_completions":
-            semaphore = get_llm_pool_semaphore(self.provider, self.model)
-            async with semaphore:
-                async for event in self._chat_completions_stream(
-                    messages=messages,
-                    tools=tools,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system,
-                ):
-                    yield event
-            return
-
-        if not self.anthropic_client:
+        if self.api_mode != "chat_completions" and not self.anthropic_client:
             raise RuntimeError(
                 "Anthropic client not initialized. "
                 f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
@@ -3123,6 +3110,28 @@ class LLMService:
                     continue
 
                 try:
+                    candidate_emitted = False
+                    if self.api_mode == "chat_completions":
+                        semaphore = get_llm_pool_semaphore(self.provider, self.model)
+                        async with semaphore:
+                            async for event in self._chat_completions_stream(
+                                messages=messages,
+                                tools=tools,
+                                max_tokens=max_tokens,
+                                temperature=temperature,
+                                system=system,
+                            ):
+                                candidate_emitted = True
+                                yield event
+                        if attempts:
+                            logger.warning(
+                                "llm_streaming_fallback_candidate_succeeded",
+                                provider=self.provider,
+                                model=self.model,
+                                attempts=summarize_attempts(attempts),
+                            )
+                        return
+
                     if not self.anthropic_client:
                         raise RuntimeError(
                             f"Anthropic-compatible client not initialized for provider '{self.provider}'."
@@ -3276,7 +3285,7 @@ class LLMService:
                         "code": failure.code,
                         "error": failure.message,
                     })
-                    if failure.reason == "context_overflow" or first_token_received:
+                    if failure.reason == "context_overflow" or first_token_received or candidate_emitted:
                         logger.error(
                             "llm_anthropic_streaming_failed",
                             provider=self.provider,

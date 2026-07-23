@@ -163,6 +163,49 @@ async def test_create_report_package_fails_for_unresolved_image_refs(tmp_path, m
 
 
 @pytest.mark.asyncio
+async def test_create_report_package_rewrites_api_image_ref_from_copied_asset(
+    tmp_path,
+    monkeypatch,
+):
+    renderer = QuartoReportRenderer(report_root=tmp_path / "reports")
+    monkeypatch.setattr(report_package_tool, "quarto_report_renderer", renderer)
+    image_path = tmp_path / "images" / "daily_chart.png"
+    image_path.parent.mkdir()
+    image_path.write_bytes(b"png")
+
+    result = await report_package_tool.CreateReportPackageTool().execute(
+        report_id="tender_report",
+        qmd_content="# Report\n\n![](/api/image/daily_chart.png)\n",
+        assets=[str(image_path)],
+        render_html=False,
+    )
+
+    assert result["success"] is True
+    package_qmd = tmp_path / "reports" / "tender_report" / "report.qmd"
+    assert "![](assets/charts/daily_chart.png)" in package_qmd.read_text(encoding="utf-8")
+    assert result["data"]["validation"]["api_image_refs"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_report_package_fails_for_residual_api_image_ref(tmp_path, monkeypatch):
+    renderer = QuartoReportRenderer(report_root=tmp_path / "reports")
+    monkeypatch.setattr(report_package_tool, "quarto_report_renderer", renderer)
+
+    result = await report_package_tool.CreateReportPackageTool().execute(
+        report_id="tender_report",
+        qmd_content="# Report\n\n![](/api/image/missing_chart.png)\n",
+        render_html=False,
+    )
+
+    assert result["success"] is False
+    validation = result["data"]["validation"]
+    assert validation["api_image_refs"] == ["/api/image/missing_chart.png"]
+    assert validation["issues"][0]["reference"] == "/api/image/missing_chart.png"
+    assert validation["issues"][0]["reason"] == "API image reference was not normalized"
+    assert "assets/charts/missing_chart.png" in result["data"]["error"]
+
+
+@pytest.mark.asyncio
 async def test_create_report_package_returns_failure_for_quarto_resource_error(
     tmp_path,
     monkeypatch,

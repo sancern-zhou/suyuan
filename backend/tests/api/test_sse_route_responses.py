@@ -212,7 +212,12 @@ async def test_agent_heartbeat_stays_out_of_wire_contract_and_persistence(monkey
     monkeypatch.setattr(agent, "multi_expert_agent_instance", FakeAgent())
 
     response = await agent.analyze_stream(
-        agent.AgentAnalyzeRequest(query="question", session_id="agent-session"),
+        agent.AgentAnalyzeRequest(
+            query="question",
+            session_id="agent-session",
+            skill_ids=[],
+            context_refs=[],
+        ),
         RawRequest(),
         user=CurrentUser(id="user-1", username="user", display_name="User"),
         catalog=Catalog(),

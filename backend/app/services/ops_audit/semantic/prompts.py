@@ -25,13 +25,15 @@ REMARK_SEMANTIC_JSON_PROMPT = (
 )
 
 REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
-    "请批量判断运维工单备注是否完整说明原因、措施、结果。"
+    "请逐项判断运维工单备注是否完整说明当前异常项的原因、措施、结果。"
     "仅对故障、异常、报警、待定、处置闭环类场景使用该标准；不要把计划任务主表描述充分性混入本任务。"
     "如果 semantic_focus 或证据中包含 RF_RANGE_OUT_OF_SPEC，表示表单检查值超出品牌正常范围，"
     "应重点读取备注、异常时处理记录、处理记录或处置说明，判断该异常检查值是否已被合理解释。"
     "当异常时处理记录说明了异常原因、采取的处理措施，并能证明复测恢复正常或该异常值有合理业务原因时，"
     "不可直接判定为问题；如果只写已处理/正常、未说明为什么超出范围、未说明处置动作或未说明恢复正常，应判为不完整。"
-    "如果字段级说明明确写明表格范围有误、范围配置有误、系统表格范围错误等，表示超范围来自表单范围配置问题，"
+    "必须优先读取当前异常项 issue.remark_candidates 中对应字段的CHECKROW或字段级说明。"
+    "如果字段级说明明确写明表格范围有误、范围配置有误、系统表格范围错误、厂家备案参数、厂家备案范围、"
+    "厂家实际参数或设备适用范围等，表示超范围来自通用范围配置与现场设备范围不一致，"
     "可视为该异常检查值已有合理业务解释，不要再按缺少原因、措施、结果判为问题。"
     "如果 semantic_focus 或证据中包含 RF_PM_TEMP_ERROR_OUT_OF_RANGE，表示颗粒物温度误差超出±2℃，"
     "应重点读取 evidence_summary.sample_issues.evidence 中的 calibration_situation 或对应校准情况字段。"
@@ -41,9 +43,10 @@ REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
     "此时不要套用故障闭环的原因、措施、结果三要素，也不要因为备注为空、/、正常、清洗等固定低信息词直接判问题。"
     "应只判断备注或上下文是否合理说明了未提供清洗照片、照片缺失、附件无法上传或其他证据不足的业务原因；"
     "如果没有合理说明，应判为不完整；如果说明合理，应判为完整。"
-    "problem_description 必须具体描述每个工单备注的问题，不要输出固定整改建议。"
+    "每个输入项必须独立判断，不得用同一工单其他RF表或其他字段的备注替代当前异常项说明。"
+    "problem_description 必须具体描述当前review_item_id对应备注的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"working_order_code\":string,\"is_complete\":bool,\"has_cause\":bool,"
+    "{\"results\":[{\"review_item_id\":string,\"working_order_code\":string,\"is_complete\":bool,\"has_cause\":bool,"
     "\"has_action\":bool,\"has_result\":bool,\"problem_description\":string,\"confidence\":number}]}"
 )
 

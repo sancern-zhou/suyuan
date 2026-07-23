@@ -1,8 +1,13 @@
+import inspect
+
 import pytest
 from fastapi import HTTPException
 from sse_starlette import EventSourceResponse
 
 from app.auth.models import CurrentUser
+from app.agent.react_agent import ReActAgent
+from app.agent.session.conversation_persistence import ConversationPersistenceService
+from app.agent.session.models import Session
 from config.settings import settings
 from app.conversations import ConversationSource
 from app.routers.agent import (
@@ -86,13 +91,83 @@ class EmptyRequest:
 ordinary_user = CurrentUser(id="u1", username="u1", display_name="U1")
 
 
+def test_agent_metadata_persistence_merges_existing_visualizations_by_id():
+    session = Session(
+        session_id="assistant_session_existing",
+        query="old query",
+        metadata={
+            "visualizations": [
+                {"id": "visual_old", "title": "历史图表"},
+                {"id": "visual_shared", "title": "旧标题"},
+            ],
+            "visuals_count": 2,
+        },
+        visual_ids=["visual_old", "visual_shared"],
+    )
+    entry = {
+        "collected_visuals": [
+            {"id": "visual_shared", "title": "新标题"},
+            {"id": "visual_new", "title": "本轮图表"},
+        ],
+    }
+
+    ReActAgent._apply_session_store_entry_for_persistence(session, entry)
+
+    assert session.metadata["visualizations"] == [
+        {"id": "visual_old", "title": "历史图表"},
+        {"id": "visual_shared", "title": "新标题"},
+        {"id": "visual_new", "title": "本轮图表"},
+    ]
+    assert session.visual_ids == ["visual_old", "visual_shared", "visual_new"]
+    assert session.metadata["visuals_count"] == 3
+
+
+def test_route_and_agent_finally_do_not_duplicate_anonymous_visualizations():
+    session = Session(
+        session_id="assistant_session_existing",
+        query="old query",
+        metadata={
+            "visualizations": [{"type": "table", "title": "历史无ID图表"}],
+            "visuals_count": 1,
+        },
+    )
+    current_visuals = [{"type": "chart", "title": "本轮无ID图表"}]
+
+    ConversationPersistenceService().append_complete(
+        session,
+        display_history=[],
+        collected_visuals=current_visuals,
+    )
+    ReActAgent._apply_session_store_entry_for_persistence(
+        session,
+        {"collected_visuals": current_visuals, "display_history_persisted": True},
+    )
+
+    assert session.metadata["visualizations"] == [
+        {"type": "table", "title": "历史无ID图表"},
+        {"type": "chart", "title": "本轮无ID图表"},
+    ]
+    assert session.metadata["visuals_count"] == 2
+
+
+def test_web_route_uses_append_persistence_for_all_terminal_paths():
+    source = inspect.getsource(analyze_stream)
+
+    assert "persistence.apply_complete(" not in source
+    assert "persistence.apply_terminal(" not in source
+    assert source.count("persistence.append_complete(") == 1
+    assert source.count("persistence.append_terminal(") == 3
+
+
 @pytest.mark.asyncio
 async def test_reusing_session_requires_write_access_before_body_processing():
     catalog = DenyingCatalog()
 
     with pytest.raises(HTTPException) as exc:
         await analyze_stream(
-            AgentAnalyzeRequest(query="continue", session_id="other-session"),
+            AgentAnalyzeRequest(
+                query="continue", session_id="other-session", skill_ids=[], context_refs=[]
+            ),
             UnusedRequest(),
             user=ordinary_user,
             catalog=catalog,
@@ -109,7 +184,9 @@ async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_abse
     monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
 
     response = await analyze_stream(
-        AgentAnalyzeRequest(query="first message", session_id="new-session"),
+        AgentAnalyzeRequest(
+            query="first message", session_id="new-session", skill_ids=[], context_refs=[]
+        ),
         EmptyRequest(),
         user=ordinary_user,
         catalog=catalog,
@@ -132,7 +209,9 @@ async def test_uncataloged_existing_source_session_cannot_be_claimed(monkeypatch
 
     with pytest.raises(HTTPException) as exc:
         await analyze_stream(
-            AgentAnalyzeRequest(query="continue", session_id="legacy-session"),
+            AgentAnalyzeRequest(
+                query="continue", session_id="legacy-session", skill_ids=[], context_refs=[]
+            ),
             UnusedRequest(),
             user=ordinary_user,
             catalog=catalog,

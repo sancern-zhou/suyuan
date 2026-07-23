@@ -20,6 +20,17 @@ def test_workflow_declares_direct_file_edit_and_strict_gate():
     assert "无需重新生成" in guide
 
 
+def test_workflow_contains_copyable_native_element_contracts():
+    guide = Path("app/tools/office/editable_ppt/references/workflow.md").read_text(encoding="utf-8")
+    assert 'data-pptx-ref="roi-chart"' in guide
+    assert 'kind: "chart"' in guide
+    assert 'categories: ["Q1", "Q2"]' in guide
+    assert 'series: [{ name: "节省工时", values: [120, 260] }]' in guide
+    assert 'kind: "table"' in guide
+    assert 'data: { rows:' in guide
+    assert "示例数据" in guide
+
+
 def test_editable_ppt_generation_scenario_metadata_is_selectable():
     metadata = SKILL_METADATA["editable_ppt_generation"]
     assert {"manage_editable_ppt", "read_file", "edit_file"} <= set(metadata["required_tools"])

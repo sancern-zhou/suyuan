@@ -53,6 +53,20 @@ ASSISTANT_TOOL_NAMES = [
     "call_sub_agent",
 ]
 
+# ===== 幻灯片模式工具 =====
+PPT_TOOL_NAMES = [
+    "list_session_resources",
+    # PPT 源码项目和交付
+    "manage_editable_ppt", "validate_pptx", "create_pptx_with_ppt_master",
+    # 文件读取与直接源码编辑
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    # 图表、图片检查和必要计算
+    "create_report_chart", "analyze_image", "execute_python", "present_artifact",
+    # 用户材料、知识库与外部资料
+    "knowledge_qa_workflow", "knowledge_document_reader",
+    "web_search", "web_fetch", "browser",
+]
+
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
@@ -175,10 +189,9 @@ CHART_TOOL_NAMES = [
 BOARD_TOOL_NAMES = [
     "list_session_resources",
     "read_file",
-    "read_docx",
-    "parse_pdf",
-    "analyze_image",
     "create_drawio_board",
+    "render_drawio_board_candidate",
+    "accept_drawio_board_candidate",
 ]
 
 # ===== 运维管理模式工具 =====
@@ -308,6 +321,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
 
 
 ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
+PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
@@ -324,6 +338,7 @@ DELIBERATION_REVIEWER_TOOLS = _build_tool_dict(DELIBERATION_REVIEWER_TOOL_NAMES)
 
 # Backward-compatible order aliases used by tests and older callers.
 ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
+PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
@@ -340,13 +355,14 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "expert" | "query" | "report" | "social" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
     """
     mode_mapping = {
         "assistant": ASSISTANT_TOOLS,
+        "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
         "report": REPORT_TOOLS,

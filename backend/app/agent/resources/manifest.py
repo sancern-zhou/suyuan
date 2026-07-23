@@ -66,7 +66,8 @@ def derive_legacy_views(refs: list[SessionResourceRef]) -> LegacyResourceViews:
 
 
 def project_session_resources(
-    refs: list[SessionResourceRef], *, query: str, available_tools: set[str], max_chars: int = 8000
+    refs: list[SessionResourceRef], *, query: str, available_tools: set[str],
+    preferred_ref_ids: list[str] | None = None, max_chars: int = 8000
 ) -> str:
     resolver_tool = {
         ResourceKind.DATA: "read_data_registry",
@@ -76,8 +77,9 @@ def project_session_resources(
         ResourceKind.VISUAL: "present_artifact",
     }
     words = {word for word in query.casefold().split() if word}
+    preferred_ids = set(preferred_ref_ids or [])
 
-    def score(ref: SessionResourceRef) -> tuple[int, int, int, str]:
+    def score(ref: SessionResourceRef) -> tuple[int, int, int, int, str]:
         searchable = " ".join((
             ref.label,
             ref.logical_key or "",
@@ -86,6 +88,7 @@ def project_session_resources(
         match = int(any(word in searchable for word in words))
         importance = {ResourceImportance.NORMAL: 0, ResourceImportance.HIGH: 1, ResourceImportance.PINNED: 2}[ref.importance]
         return (
+            int(ref.ref_id in preferred_ids),
             match,
             importance,
             int(resolver_tool[ref.kind] in available_tools),

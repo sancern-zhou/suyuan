@@ -1,9 +1,16 @@
-export async function openExcelForEditing(filePath, fetchImpl = fetch) {
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+
+function officeApiUrl(path, apiBaseUrl = API_BASE_URL) {
+  const baseUrl = String(apiBaseUrl || '/api').replace(/\/$/, '')
+  return `${baseUrl}/office/${path}`
+}
+
+export async function openExcelForEditing(filePath, fetchImpl = fetch, apiBaseUrl = API_BASE_URL) {
   if (!filePath) {
     throw new Error('缺少文档路径')
   }
 
-  const response = await fetchImpl('/api/office/open-excel', {
+  const response = await fetchImpl(officeApiUrl('open-excel', apiBaseUrl), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file_path: filePath })
@@ -22,7 +29,8 @@ export async function saveEditedExcel({
   buffer,
   fileName = 'document.xlsx',
   fetchImpl = fetch,
-  formDataFactory = () => new FormData()
+  formDataFactory = () => new FormData(),
+  apiBaseUrl = API_BASE_URL
 }) {
   if (!filePath) {
     throw new Error('缺少文档路径')
@@ -42,7 +50,7 @@ export async function saveEditedExcel({
     fileName || 'document.xlsx'
   )
 
-  const response = await fetchImpl('/api/office/save-excel', {
+  const response = await fetchImpl(officeApiUrl('save-excel', apiBaseUrl), {
     method: 'POST',
     body: formData
   })
@@ -62,13 +70,14 @@ export async function saveEditedExcel({
 export async function downloadExcelFile(filePath, {
   fallbackFileName = 'document.xlsx',
   fileName = fallbackFileName,
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  apiBaseUrl = API_BASE_URL
 } = {}) {
   if (!filePath) {
     throw new Error('缺少文档路径')
   }
 
-  const response = await fetchImpl('/api/office/download-excel', {
+  const response = await fetchImpl(officeApiUrl('download-excel', apiBaseUrl), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'

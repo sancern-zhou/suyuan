@@ -41,24 +41,38 @@ function pixels(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function colorAlpha(value) {
+  const rgba = String(value || "").match(
+    /^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,\s*([\d.]+))?\s*\)$/i,
+  );
+  if (!rgba) return normalizeColor(value) ? 1 : 0;
+  return rgba[1] === undefined ? 1 : Math.min(1, Math.max(0, Number(rgba[1])));
+}
+
 function lineOptions(style) {
   const color = normalizeColor(style?.borderColor);
   const width = pixels(style?.borderWidth);
-  return color && width > 0 ? { color, width: round(width * 0.75) } : { color: "FFFFFF", transparency: 100 };
+  const alpha = colorAlpha(style?.borderColor);
+  return color && width > 0 && alpha > 0
+    ? { color, width: round(width * 0.75), transparency: Math.round((1 - alpha) * 100) }
+    : { color: "FFFFFF", transparency: 100 };
 }
 
 function fillOptions(style) {
   const color = normalizeColor(style?.backgroundColor);
   if (!color) return { color: "FFFFFF", transparency: 100 };
   const opacity = Math.min(1, Math.max(0, Number(style?.opacity ?? 1)));
-  return { color, transparency: Math.round((1 - opacity) * 100) };
+  const alpha = colorAlpha(style?.backgroundColor);
+  return { color, transparency: Math.round((1 - opacity * alpha) * 100) };
 }
 
 export function addBasicElement(slide, element, pptxApi) {
   if (element.source === "native-ref") return { kind: "native-ref", id: element.id };
   const position = pxBoxToInches(element.box);
   const objectName = element.id;
-  const hasText = typeof element.text === "string" && element.text.trim() !== "" && !element.hasTaggedDescendant;
+  const hasRichText = Array.isArray(element.textRuns) && element.textRuns.length > 0;
+  const hasText = typeof element.text === "string" && element.text.trim() !== "" &&
+    (!element.hasTaggedDescendant || hasRichText);
   const background = normalizeColor(element.style?.backgroundColor);
 
   if (element.tagName === "img" && element.src) {
@@ -76,7 +90,19 @@ export function addBasicElement(slide, element, pptxApi) {
     });
   }
   if (hasText) {
-    slide.addText(element.text, {
+    const text = hasRichText
+      ? element.textRuns.map((run) => ({
+          text: run.text,
+          options: {
+            color: normalizeColor(run.style?.color) || normalizeColor(element.style?.color) || "000000",
+            fontFace: firstFont(run.style?.fontFamily || element.style?.fontFamily),
+            fontSize: round(pixels(run.style?.fontSize || element.style?.fontSize, 16) * 0.75),
+            bold: pixels(run.style?.fontWeight, pixels(element.style?.fontWeight, 400)) >= 600,
+            italic: (run.style?.fontStyle || element.style?.fontStyle) === "italic",
+          },
+        }))
+      : element.text;
+    slide.addText(text, {
       ...position,
       objectName,
       margin: 0,

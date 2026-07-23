@@ -815,7 +815,7 @@ function downloadRelatedFile(file) {
   }
 
   try {
-    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
+    const fileUrl = normalizeArtifactUrl(file.url || `/api/file/${encodeURIComponent(file.file_path)}`)
     const link = document.createElement('a')
     link.href = fileUrl
     link.download = file.file_path?.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'
@@ -837,7 +837,7 @@ function downloadOriginalFile(doc) {
   }
 
   try {
-    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+    const fileUrl = normalizeArtifactUrl(`/api/file/${encodeURIComponent(doc.file_path)}`)
     const link = document.createElement('a')
     link.href = fileUrl
     link.download = doc.file_name || 'artifact'
@@ -861,7 +861,7 @@ function downloadMarkdown(doc) {
 
   try {
     // 使用通用文件下载API（类似PDF的简单方式）
-    const fileUrl = `/api/file/${encodeURIComponent(doc.file_path)}`
+    const fileUrl = normalizeArtifactUrl(`/api/file/${encodeURIComponent(doc.file_path)}`)
 
     // 创建下载链接
     const link = document.createElement('a')

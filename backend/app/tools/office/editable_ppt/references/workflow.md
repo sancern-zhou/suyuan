@@ -11,7 +11,7 @@ Agent 不必把每次修改都转换成 Patch。可以用 `read_file` / `edit_fi
 1. 先完成完整大纲、受众、叙事目标和数据依据。
 2. `create` 创建源码项目，选择 government、business 或 data-analysis 主题。
 3. 先做封面、一个关键内容页、一个数据页三张锚点页，`render` 检查视觉方向。
-4. 方向确定后每批制作 3–5 页。结构调整优先直接编辑源码；极小文本修改可用 `edit_source`。
+4. 方向确定后每批制作 3–5 页。结构调整优先直接编辑源码；单文件修改可用 `edit_source`，同一轮多文件修改用 `edit_sources` 原子提交。
 5. 每批 `render`，检查溢出、缺失资源、重复 ID 和关键元素位置。
 6. `compile` 使用默认 `editable="strict"`，读取 compile report，确认 forbiddenRasterFallbacks 为 0。
 7. `validate` 执行 LibreOffice/PNG/montage/字体/空页检查；修复后重新编译。
@@ -20,10 +20,41 @@ Agent 不必把每次修改都转换成 Patch。可以用 `read_file` / `edit_fi
 ## 编辑与并发规则
 
 - 调用 `edit_source` 必须携带最近一次 inspect 返回的 `base_revision`；版本过期会拒绝写入。
+- 同时修改多页时用一次 `edit_sources`，全部候选源码会先整体校验，然后只增加一个 revision，避免并发调用共享旧版本号造成冲突。
 - 普通 `edit_file` 直接编辑后，先 inspect 获取新 revision，再继续托管编辑。
 - theme 或模板变化会使全稿 dirty；单页源码变化只影响该页；资源变化只影响引用该资源的页面。
 - 每个 `data-pptx-id` / `data-pptx-ref` 必须稳定且页内唯一，图表/表格/流程图通过 nativeElements 表达。
+- strict 模式不要使用渐变、`filter`、`transform`、`box-shadow`；装饰元素不能越出 1440×810 画布。每个承载可见文字的叶子节点（包括 `span`）必须有独立的 `data-pptx-id`。
 - 可用 `restore` 回到任意已有快照；恢复本身会产生新 revision，不覆写历史。
+
+## 原生对象契约（可直接复制）
+
+原生对象必须同时具备 HTML 占位框和同 ID 的 `nativeElements` 项。占位框负责位置与尺寸，导出时会替换成可编辑的 PowerPoint 对象。不要使用 `type`、`labels`、`values`、`headers` 等简化字段。
+占位框应直接放在整页根节点下，并使用相对整页的绝对坐标；不要把整页坐标的占位框嵌入另一个已偏移的容器，否则偏移量会重复叠加并造成越界。
+
+```js
+html: `<div class="absolute left-[160px] top-[220px] w-[1120px] h-[420px]" data-pptx-ref="roi-chart"></div>`,
+nativeElements: [{
+  id: "roi-chart",
+  kind: "chart",
+  chartType: "column",
+  data: {
+    categories: ["Q1", "Q2"],
+    series: [{ name: "节省工时", values: [120, 260] }]
+  }
+}]
+```
+
+```js
+html: `<div class="absolute left-[120px] top-[210px] w-[1200px] h-[430px]" data-pptx-ref="scenario-table"></div>`,
+nativeElements: [{
+  id: "scenario-table",
+  kind: "table",
+  data: { rows: [["场景", "价值", "优先级"], ["智能文档", "高", "P0"]] }
+}]
+```
+
+流程图使用 `kind: "diagram"`，`data.nodes` 的每项包含稳定的 `id` 与 `label`，`data.edges` 的每项包含稳定 `id`、`source`、`target`。若数据并非来自可核验来源，必须在图表或表格附近以可见文字标注“示例数据”，仅写在演讲者备注中不算合格。
 
 ## 当前边界
 

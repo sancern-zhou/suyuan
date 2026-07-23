@@ -9,8 +9,11 @@ const API_BASE = '/api'
  * @param {string} keyword - 可选，过滤关键词
  * @returns {Promise<Object>}
  */
-export async function getSkillsList(keyword = null) {
-  const params = keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''
+export async function getSkillsList(keyword = null, mode = null) {
+  const search = new URLSearchParams()
+  if (keyword) search.set('keyword', keyword)
+  if (mode) search.set('mode', mode)
+  const params = search.toString() ? `?${search}` : ''
   const response = await authFetch(`${API_BASE}/skills${params}`)
   if (!response.ok) {
     throw new Error(`获取技能列表失败: ${response.statusText}`)

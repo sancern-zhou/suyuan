@@ -305,6 +305,9 @@ def _specialized_semantic_source_message(source_issue: dict[str, Any]) -> str | 
 
 
 def _source_issue_for_rule(result: dict[str, Any], rule_id: str) -> dict[str, Any] | None:
+    source_issue = result.get("source_issue")
+    if isinstance(source_issue, dict) and source_issue.get("rule_id") == rule_id:
+        return source_issue
     evidence_summary = result.get("evidence_summary") or {}
     sample_issues = evidence_summary.get("sample_issues") or []
     if not isinstance(sample_issues, list):

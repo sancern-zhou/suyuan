@@ -19,6 +19,7 @@ from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import stop_scheduled_task_service
 from app.lifecycle.social import stop_social_platform_service
 from app.lifecycle.social_worker_api import stop_social_worker_api_service
+from app.agent.runtime.steering import steering_registry
 from app.utils.http_client import http_client
 from config.settings import settings
 
@@ -46,3 +47,4 @@ async def run_shutdown(app: FastAPI) -> None:
     auth_redis = getattr(app.state, "auth_redis", None)
     if auth_redis is not None:
         await auth_redis.aclose()
+    await steering_registry.aclose()

@@ -3,6 +3,12 @@ import asyncio
 import pytest
 
 from app.agent.resources.manifest import merge_resource_refs, project_session_resources
+from app.agent.resources.models import (
+    ResourceKind,
+    ResourceLocator,
+    ResourceRole,
+    SessionResourceRef,
+)
 from app.agent.resources.runtime import RunReferenceAccumulator
 from app.agent.resources.service import SessionResourceManifest, SessionResourceManifestService
 from app.tools.analysis.ops_work_order_audit.tool import _standard_success
@@ -46,6 +52,33 @@ def _ops_event(tmp_path, data_id):
         "type": "tool_result",
         "data": {"tool_name": "ops_audit_run_rules", "result": result, "is_error": False},
     }
+
+
+def _data_ref(data_id):
+    return SessionResourceRef.create(
+        kind=ResourceKind.DATA,
+        locator=ResourceLocator(data_id=data_id),
+        role=ResourceRole.PRIMARY,
+        label=data_id,
+        tool_name="query",
+        run_id="run",
+        turn_sequence=1,
+    )
+
+
+def test_explicit_resource_is_preferred_without_hiding_automatic_resources():
+    automatic = _data_ref("data:v1:automatic")
+    explicit = _data_ref("data:v1:explicit")
+
+    context = project_session_resources(
+        [automatic, explicit],
+        query="unrelated",
+        available_tools={"read_data_registry"},
+        preferred_ref_ids=[explicit.ref_id],
+    )
+
+    assert context.index("data:v1:explicit") < context.index("data:v1:automatic")
+    assert "data:v1:automatic" in context
 
 
 @pytest.mark.asyncio

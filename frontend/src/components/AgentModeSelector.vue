@@ -15,6 +15,21 @@
     </button>
     <button
       class="mode-button"
+      :class="{ active: store.currentMode === 'ppt', running: isModeRunning('ppt') }"
+      @click="selectMode('ppt')"
+      title="幻灯片"
+    >
+      <span v-if="isModeRunning('ppt')" class="running-indicator">●</span>
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 5h16v12H4z" />
+        <path d="M8 21h8" />
+        <path d="M12 17v4" />
+        <path d="m9 13 3-5 3 5" />
+      </svg>
+      <span>幻灯片</span>
+    </button>
+    <button
+      class="mode-button"
       :class="{ active: store.currentMode === 'expert', running: isModeRunning('expert') }"
       @click="selectMode('expert')"
       title="专家"
@@ -75,6 +90,21 @@
     </button>
     <button
       class="mode-button"
+      :class="{ active: store.currentMode === 'board', running: isModeRunning('board') }"
+      @click="selectMode('board')"
+      title="画板"
+    >
+      <span v-if="isModeRunning('board')" class="running-indicator">●</span>
+      <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 5h16v14H4z" />
+        <path d="M7 9h4v3H7z" />
+        <path d="M13 12h4v3h-4z" />
+        <path d="M11 10.5h2v3h-2" />
+      </svg>
+      <span>画板</span>
+    </button>
+    <button
+      class="mode-button"
       :class="{ active: store.currentMode === 'ops', running: isModeRunning('ops') }"
       @click="selectMode('ops')"
       title="运维"
@@ -104,7 +134,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'expert', 'query', 'report', 'chart', 'ops'].includes(value)
+    validator: (value) => ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'].includes(value)
   }
 })
 
@@ -126,10 +156,12 @@ const backgroundRunningModes = computed(() => {
 const getModeLabel = (mode) => {
   const labelMap = {
     'assistant': '助手',
+    'ppt': '幻灯片',
     'expert': '专家',
     'query': '问数',
     'report': '报告',
-    'chart': '图表',
+      'chart': '图表',
+      'board': '画板',
     'ops': '运维'
   }
   return labelMap[mode] || mode

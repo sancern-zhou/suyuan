@@ -63,6 +63,21 @@ def test_projection_excludes_inactive_refs_and_honors_budget():
     assert "additional resources" in text
 
 
+def test_projection_prefers_explicit_refs_without_filtering_automatic_refs():
+    automatic = make_ref("data:v1:automatic", run_id="run")
+    explicit = make_ref("data:v1:explicit", run_id="run")
+
+    text = project_session_resources(
+        [automatic, explicit],
+        query="unrelated",
+        available_tools={"read_data_registry"},
+        preferred_ref_ids=[explicit.ref_id],
+    )
+
+    assert text.index("data:v1:explicit") < text.index("data:v1:automatic")
+    assert "data:v1:automatic" in text
+
+
 def test_legacy_views_use_only_active_refs():
     active = make_ref("data:v1:active", run_id="run")
     inactive = make_ref("data:v1:old", run_id="run")

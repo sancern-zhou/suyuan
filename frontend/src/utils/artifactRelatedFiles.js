@@ -1,3 +1,5 @@
+import { gatewayUrl } from '../auth/http.js'
+
 const getFileName = (filePath = '') => {
   if (!filePath || typeof filePath !== 'string') return ''
   const normalized = filePath.replace(/\\/g, '/')
@@ -14,16 +16,33 @@ const normalizeFormat = (value = '') => {
     .replace(/[\s.-]+/g, '_')
 }
 
-export const normalizeArtifactUrl = (url = '') => {
+export const normalizeArtifactUrl = (url = '', options = {}) => {
   if (!url || typeof url !== 'string') return url
-  if (url.startsWith('/api/')) return url
+  const { apiBaseUrl, origin } = options
+
+  if (
+    url === '/api' ||
+    url.startsWith('/api/') ||
+    url.startsWith('/api?') ||
+    url.startsWith('/api#')
+  ) {
+    return gatewayUrl(url, apiBaseUrl)
+  }
+
+  const browserOrigin = origin || globalThis.location?.origin || ''
+  if (!browserOrigin) return url
 
   try {
-    const parsed = url.startsWith('//')
-      ? new URL(`https:${url}`)
-      : new URL(url)
-    if (parsed.pathname.startsWith('/api/')) {
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    const normalizedOrigin = new URL(browserOrigin).origin
+    const parsed = new URL(url, normalizedOrigin)
+    if (
+      parsed.origin === normalizedOrigin &&
+      (parsed.pathname === '/api' || parsed.pathname.startsWith('/api/'))
+    ) {
+      return gatewayUrl(
+        `${parsed.pathname}${parsed.search}${parsed.hash}`,
+        apiBaseUrl
+      )
     }
   } catch (error) {
     return url
@@ -103,11 +122,12 @@ const normalizeEntry = (entry) => {
 
   const downloadLabel = entry.title || entry.downloadLabel || entry.file_name || getFileName(filePath) || '下载文件'
   const key = filePath
+  const rawUrl = entry.url || `/api/file/${encodeURIComponent(filePath)}`
 
   return {
     format,
     file_path: filePath,
-    url: normalizeArtifactUrl(entry.url),
+    url: normalizeArtifactUrl(rawUrl),
     relative_path: entry.relative_path,
     downloadLabel,
     key

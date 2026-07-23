@@ -45,7 +45,7 @@ def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any
     properties.pop("analysis_type", None)
     properties["as_multimodal_attachment"] = {
         "type": "boolean",
-        "description": "社交模式/图表模式等原生多模态模式下，仅在需要查看历史或工具生成的本地图片时设置为 true；本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "description": "社交、幻灯片、图表等原生多模态模式下，仅在需要查看历史或工具生成的本地图片时设置为 true；本轮用户上传图片已经由输入自动挂载，不需要再读取。",
         "default": False,
     }
     return multimodal_schema

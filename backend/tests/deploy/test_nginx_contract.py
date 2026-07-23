@@ -43,3 +43,10 @@ def test_standalone_build_keeps_the_existing_root_login_url():
     assert "VITE_APP_BASE_PATH=/" in env_text
     assert "VITE_API_BASE_URL=/api/suyuan" in env_text
     assert package["scripts"]["build:standalone"] == "vite build --mode standalone"
+
+
+def test_default_build_targets_the_public_root_nginx_deployment():
+    package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
+
+    assert package["scripts"]["build"] == "vite build --mode standalone"
+    assert package["scripts"]["build:gateway"] == "vite build --mode production"

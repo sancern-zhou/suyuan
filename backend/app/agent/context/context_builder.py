@@ -83,7 +83,7 @@ class SimplifiedContextBuilder:
         # ✅ 新增：HEARTBEAT文件内容快照（仅social模式使用）
         self.heartbeat_context = None
 
-        # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
+        # draw.io 画板上下文仅允许注入 board 模式。
         self.board_context = None
 
         # 问数模式地图交互上下文，仅 query 模式允许注入。
@@ -91,6 +91,9 @@ class SimplifiedContextBuilder:
 
         # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
         self.session_resource_context = None
+
+        # 用户为当前轮显式选择的技能正文。技能全模式通用，但不能改变工具权限。
+        self.selected_skill_context = None
 
         # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
 
@@ -268,9 +271,15 @@ class SimplifiedContextBuilder:
             user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
             heartbeat_context=self.heartbeat_context,  # ✅ 传递 HEARTBEAT.md 当前内容
             backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
-            board_context=self.board_context if self.current_mode == "chart" else None,
+            board_context=self.board_context if self.current_mode == "board" else None,
         )
         sections = [mode_prompt.rstrip()]
+        if self.selected_skill_context:
+            sections.append(
+                "<selected_skill>\n"
+                + self.selected_skill_context.strip()
+                + "\n</selected_skill>"
+            )
         if self.session_resource_context:
             sections.append(
                 "<session_resources>\n"
@@ -358,9 +367,9 @@ class SimplifiedContextBuilder:
         self.heartbeat_file_path = None
         self.heartbeat_context = None
 
-        if mode != "chart" and self.board_context is not None:
+        if mode != "board" and self.board_context is not None:
             logger.warning(
-                "non_chart_board_context_stripped",
+                "non_board_context_stripped",
                 mode=mode,
             )
             self.board_context = None
@@ -392,8 +401,8 @@ class SimplifiedContextBuilder:
         return f"**可用工具**：{', '.join(tool_names[:20])}..."
 
     def _build_board_selection_user_summary(self) -> str:
-        """Build a compact current-turn summary for chart board selection."""
-        if self.current_mode != "chart" or not isinstance(self.board_context, dict):
+        """Build a compact current-turn summary for board selection."""
+        if self.current_mode != "board" or not isinstance(self.board_context, dict):
             return ""
 
         selected_cells = (

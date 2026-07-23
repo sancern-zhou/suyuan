@@ -22,6 +22,30 @@ export const AGENT_MODES = Object.freeze([
     ]
   },
   {
+    id: 'ppt',
+    name: '幻灯片智能体',
+    shortName: '幻灯片',
+    description: '创建、检查并多轮完善高质量可编辑演示文稿',
+    welcome: {
+      description: '围绕演示目标规划内容结构与视觉表达，生成可继续编辑的 PPTX，并在原文件基础上反复修改完善。',
+      features: [
+        '规划演示逻辑、页面结构与重点信息',
+        '生成包含原生文本、图表和图形的可编辑幻灯片',
+        '基于已有源码项目定位页面并进行增量修改',
+        '检查内容溢出、布局质量与文件完整性'
+      ],
+      example: '例如："根据我上传的项目材料制作一份 10 页汇报 PPT，并采用蓝色科技风"'
+    },
+    tags: ['可编辑 PPT', '演示设计'],
+    accent: '#5b6de8',
+    iconPaths: [
+      'M4 5h16v12H4z',
+      'M8 21h8',
+      'M12 17v4',
+      'm9 13 3-5 3 5'
+    ]
+  },
+  {
     id: 'expert',
     name: '专家分析智能体',
     shortName: '专家',
@@ -87,13 +111,13 @@ export const AGENT_MODES = Object.freeze([
     id: 'chart',
     name: '图表创作智能体',
     shortName: '图表',
-    description: '生成数据图表、流程图及可视化内容',
+    description: '生成数据图表及专题可视化内容',
     welcome: {
       description: '根据数据结构和表达目标创作清晰、准确的专业图表，让趋势、对比和业务关系更直观。',
       features: [
         '识别数据特征并推荐合适的图表类型',
         '生成趋势、对比、分布、地图和专题图表',
-        '创作流程图、关系图等结构化视觉内容',
+        '输出 ECharts 与适合报告使用的静态图表',
         '调整配色、标题、标注和整体版式'
       ],
       example: '例如："绘制广州各站点 PM2.5 月均浓度对比图，并突出异常站点"'
@@ -106,6 +130,30 @@ export const AGENT_MODES = Object.freeze([
       'M9 16v-5',
       'M13 16V8',
       'M17 16v-3'
+    ]
+  },
+  {
+    id: 'board',
+    name: '画板创作智能体',
+    shortName: '画板',
+    description: '创建和编辑可交互的流程图与结构化画板',
+    welcome: {
+      description: '根据文字、文档或参考图片创建可继续编辑的 draw.io 画板，并精确处理节点、连线和布局。',
+      features: [
+        '创建业务流程图、架构图和关系图',
+        '基于当前画板局部修改节点、连线与样式',
+        '结合截图检查视觉效果和结构差异',
+        '保留可编辑 XML 与画板版本状态'
+      ],
+      example: '例如："阅读我上传的任务说明，绘制一张三模块业务流程画板"'
+    },
+    tags: ['流程画板', '可编辑图形'],
+    accent: '#7b61d1',
+    iconPaths: [
+      'M4 5h16v14H4z',
+      'M7 9h4v3H7z',
+      'M13 12h4v3h-4z',
+      'M11 10.5h2v3h-2'
     ]
   },
   {
@@ -142,7 +190,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'office',
     name: '办公',
     description: '日常办公与内容创作',
-    modeIds: ['assistant', 'chart'],
+    modeIds: ['assistant', 'ppt', 'board'],
     iconPaths: [
       { tone: 'primary', d: 'M5 3.5h9l4 4V20H5V3.5Z' },
       { tone: 'primary', d: 'M14 3.5v4h4' },
@@ -154,7 +202,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'monitoring',
     name: '监测分析',
     description: '环境数据研判与成果输出',
-    modeIds: ['query', 'expert', 'report'],
+    modeIds: ['query', 'expert', 'report', 'chart'],
     iconPaths: [
       { tone: 'primary', d: 'M4 5v14h16' },
       { tone: 'primary', d: 'm6.5 14 3-3 3 2 3.5-6 3 2' },

@@ -23,6 +23,11 @@ async function assetHashes(root) {
   return result;
 }
 
+async function directoryHash(root) {
+  const hashes = await assetHashes(root);
+  return crypto.createHash("sha256").update(JSON.stringify(hashes)).digest("hex");
+}
+
 function quoteTailwindSource(sourcePath) {
   return sourcePath.replaceAll("\\", "/").replaceAll('"', '\\"');
 }
@@ -46,6 +51,7 @@ export async function materializePreview(projectDir, outputDir = path.join(proje
 
   const payload = {
     schemaVersion: project.deck.schemaVersion,
+    runtimeHash: await directoryHash(RUNTIME_DIR),
     deck: project.deck,
     theme: project.theme,
     assetHashes: await assetHashes(assetsDir),

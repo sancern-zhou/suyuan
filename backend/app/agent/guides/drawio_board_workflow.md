@@ -1,12 +1,12 @@
 # Draw.io Board Workflow
 
-本文件是图表模式 draw.io 画板任务的强约束流程。只适用于 `mode=chart`。
+本文件是画板模式 draw.io 任务的工作流程。只适用于 `mode=board`。
 
 ## 入口判断
 
 当用户要求创建、修改、整理、扩展、重绘、连接、布局、解释或继续编辑可交互画板时，必须使用 `create_drawio_board`。
 
-不得在图表模式使用 `create_diagram_artifact` 处理画板任务。
+不得在画板模式使用 `create_diagram_artifact` 处理可交互画板任务。
 
 ## 权威状态
 
@@ -21,8 +21,11 @@
 3. 按“专项设计文档路由”读取与任务匹配的设计文档；如果任务只做局部文字、颜色、位置调整，可以不读取专项设计文档。
 4. 新建画板时，调用 `create_drawio_board(operation="create")`，传入完整可渲染 XML。
 5. 编辑画板时，基于 `board_context.current_xml` 理解现有画板，并调用 `create_drawio_board(operation="edit")` 提交结构化 `operations`。
-6. 如果用户选择了画布元素，优先用 `board_context.selected_cells` 解释“这个”“这里”“选中的模块”等指代。
-7. 工具返回失败时，先修正 XML 或 operations，再重试；不要直接向用户输出无法渲染的 XML。
+6. `create_drawio_board` 返回候选 XML 后，前端会立即预览，不需要等待截图。
+7. 一般情况下，建议调用 `render_drawio_board_candidate` 获取截图并检查布局、文字、连线和整体可读性；是否重试、修改或接受由 Agent 结合当前任务自主决定。
+8. 如果用户选择了画布元素，优先用 `board_context.selected_cells` 解释“这个”“这里”“选中的模块”等指代。
+9. 工具返回失败时，先修正 XML 或 operations，再重试；不要直接向用户输出无法渲染的 XML。截图失败不影响已生成 XML 的前端预览。
+10. `create_drawio_board` 返回 `routing_status=partial` 或 `fallback` 时，候选画板已经成功生成。应继续截图和验收，不要仅因 routing_issues 再次调用 `create_drawio_board`；只有用户明确要求整理连线或截图显示严重不可读时，才做局部编辑。
 
 ## 专项设计文档路由
 

@@ -55,6 +55,27 @@ test('primary sidebar navigation sits outside the independently scrolling recent
   assert.match(source, /\.module-list \{[\s\S]*flex: 0 0 auto/)
 })
 
+test('recent conversations expose separate case-library and IM conversation views', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+
+  assert.match(source, /CONVERSATION_LIST_VIEW/)
+  assert.match(source, /toggleConversationView\(CONVERSATION_LIST_VIEW\.CASES\)/)
+  assert.match(source, /toggleConversationView\(CONVERSATION_LIST_VIEW\.IM\)/)
+  assert.match(source, /title="查看IM对话"/)
+  assert.match(source, /\[CONVERSATION_LIST_VIEW\.IM\]: 'IM对话'/)
+})
+
+test('session history applies the shared scheduled-conversation exclusion policy', async () => {
+  const source = await readSource('../../composables/reactAnalysis/useSessionManagement.js')
+  const legacyManager = await readSource('../SessionManager.vue')
+
+  assert.match(source, /filterConversationHistory/)
+  assert.match(source, /return filterConversationHistory\(Array\.from\(byId\.values\(\)\)\)/)
+  assert.match(legacyManager, /filterConversationHistory/)
+  assert.match(legacyManager, /sessions\.value = filterConversationHistory\(response\.sessions \|\| \[\]\)/)
+  assert.match(legacyManager, /reconcileConversationHistoryStats\(data, sessions\.value\)/)
+})
+
 test('all six primary sidebar actions share one uniform spacing system', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 

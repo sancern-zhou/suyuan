@@ -55,7 +55,6 @@ class ObservationProcessor:
                     state.workflow_sources = sources
                     # ❌ 移除：不再提取visuals到state
                     # state.workflow_visuals = observation.get("visuals", [])
-                    state.direct_from_workflow = True
 
         # ✅ 记录图表观测（用于memory追踪，但不提取到state）
         if observation.get("visuals") and isinstance(observation.get("visuals"), list):
@@ -112,7 +111,6 @@ class ObservationProcessor:
                 state.workflow_sources = sources
                 # ❌ 移除：不再提取visuals到state
                 # state.workflow_visuals = tool_observation.get("visuals", [])
-                state.direct_from_workflow = True
                 return True
 
         return False
@@ -133,7 +131,6 @@ class ObservationProcessor:
         response = data.get(response_field, "")
         if not response:
             return None
-        state.direct_from_workflow = True
         state.workflow_sources = data.get("sources", [])
         # ❌ 移除：不再提取visuals到state
         # state.workflow_visuals = observation.get("visuals", [])

@@ -40,6 +40,23 @@ class ManageEditablePptTool(LLMTool):
                     _branch("inspect", ["project_dir"], PROJECT),
                     _branch("read_source", ["project_dir", "relative_path"], {**PROJECT, "relative_path": {"type": "string"}}),
                     _branch("edit_source", ["project_dir", "relative_path", "content", "base_revision"], {**PROJECT, "relative_path": {"type": "string"}, "content": {"type": "string"}, "base_revision": {"type": "integer", "minimum": 1}}),
+                    _branch("edit_sources", ["project_dir", "edits", "base_revision"], {
+                        **PROJECT,
+                        "edits": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "relative_path": {"type": "string"},
+                                    "content": {"type": "string"},
+                                },
+                                "required": ["relative_path", "content"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "base_revision": {"type": "integer", "minimum": 1},
+                    }),
                     _branch("render", ["project_dir"], {**PROJECT, "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}}}),
                     _branch("compile", ["project_dir"], {**PROJECT, "editable": {"type": "string", "enum": ["strict", "compatible"], "default": "strict"}, "file_name": {"type": "string", "pattern": "^[^/\\\\]+\\.pptx$", "default": "presentation.pptx"}}),
                     _branch("validate", ["project_dir"], {**PROJECT, "pptx_path": {"type": "string"}}),
@@ -74,14 +91,42 @@ class ManageEditablePptTool(LLMTool):
                 content = self.projects.read_source(state.project_dir, kwargs["relative_path"])
                 return self._state_result(state, "源码读取完成", relative_path=kwargs["relative_path"], content=content)
             if operation == "edit_source":
+                base_revision = self._positive_int(kwargs["base_revision"], "base_revision")
                 state = self.projects.edit_source(
-                    kwargs["project_dir"], kwargs["relative_path"], kwargs["content"], kwargs["base_revision"]
+                    kwargs["project_dir"], kwargs["relative_path"], kwargs["content"], base_revision
                 )
                 return self._state_result(state, "源码已更新；仅相关页面被标记为待重编译")
+            if operation == "edit_sources":
+                base_revision = self._positive_int(kwargs["base_revision"], "base_revision")
+                edits = kwargs["edits"]
+                if isinstance(edits, str):
+                    edits = json.loads(edits)
+                if not isinstance(edits, list) or not edits or any(
+                    not isinstance(edit, dict)
+                    or not isinstance(edit.get("relative_path"), str)
+                    or not isinstance(edit.get("content"), str)
+                    for edit in edits
+                ):
+                    raise ValueError("edits 必须是包含 relative_path 与 content 的非空数组")
+                state = self.projects.edit_sources(
+                    kwargs["project_dir"], edits, base_revision
+                )
+                return self._state_result(
+                    state,
+                    f"已在单一 revision 中原子更新 {len(edits)} 个源码文档",
+                )
             if operation == "render":
                 state = self.projects.inspect(kwargs["project_dir"])
+                pages = kwargs.get("pages")
+                if isinstance(pages, str):
+                    pages = json.loads(pages)
+                if pages is not None and (
+                    not isinstance(pages, list)
+                    or any(not isinstance(page, int) or isinstance(page, bool) or page < 1 for page in pages)
+                ):
+                    raise ValueError("pages 必须是正整数数组")
                 result = await self.compiler.preview(
-                    state.project_dir, dirty_slides=state.dirty_slides, pages=kwargs.get("pages"),
+                    state.project_dir, dirty_slides=state.dirty_slides, pages=pages,
                     cache_dir=Path(state.project_dir) / ".editable-ppt" / "cache",
                 )
                 return self._state_result(state, "Web 预览已渲染", **result)
@@ -108,7 +153,9 @@ class ManageEditablePptTool(LLMTool):
             if operation == "validate":
                 return await self._validate(kwargs["project_dir"], kwargs.get("pptx_path"))
             if operation == "restore":
-                state = self.projects.restore_revision(kwargs["project_dir"], kwargs["revision"], kwargs["base_revision"])
+                revision = self._positive_int(kwargs["revision"], "revision")
+                base_revision = self._positive_int(kwargs["base_revision"], "base_revision")
+                state = self.projects.restore_revision(kwargs["project_dir"], revision, base_revision)
                 return self._state_result(state, f"已恢复 revision {kwargs['revision']}")
             if operation == "finalize":
                 state = self.projects.inspect(kwargs["project_dir"])
@@ -132,22 +179,45 @@ class ManageEditablePptTool(LLMTool):
                 validation["summary"] = "严格编译与 PPTX 验证通过，可以交付" if validation["success"] else "质量门未通过，拒绝交付"
                 validation["data"]["finalized"] = validation["success"]
                 validation["data"]["quality_gate"] = gate.to_dict()
+                if validation["success"]:
+                    self._record_json(state.project_dir, "finalized.json", {
+                        "sourceRevision": compile_result["sourceRevision"],
+                        "sourceHashes": compile_result["sourceHashes"],
+                        "pptxPath": str(target),
+                        "pptxSha256": compile_result["pptxSha256"],
+                        "qualityGate": gate.to_dict(),
+                    })
                 return validation
             return self._failure("UNSUPPORTED_OPERATION", f"不支持的操作：{operation}")
         except RevisionConflictError as error:
             return self._failure("REVISION_CONFLICT", str(error), kwargs.get("project_dir"))
         except CompilerClientError as error:
-            return self._failure(error.code, str(error), kwargs.get("project_dir"))
+            diagnostic = error.stderr.strip()[:8000]
+            return self._failure(
+                error.code,
+                str(error),
+                kwargs.get("project_dir"),
+                evidence={"stderr": diagnostic} if diagnostic else None,
+                next_action=(
+                    f"按编译器诊断修正源码后重试：{diagnostic}"
+                    if diagnostic else "修正请求后重试"
+                ),
+            )
         except (KeyError, ValueError, OSError) as error:
             return self._failure("INVALID_REQUEST", str(error), kwargs.get("project_dir"))
 
     async def _validate(self, project_dir: str, pptx_path: str | None):
         state = self.projects.inspect(project_dir)
         path = pptx_path or str(Path(project_dir) / "build" / "pptx" / "presentation.pptx")
+        theme_path = Path(project_dir) / "theme.json"
+        theme = json.loads(theme_path.read_text(encoding="utf-8")) if theme_path.is_file() else {}
+        expected_fonts = list(dict.fromkeys(
+            font for font in (theme.get("fontTitle"), theme.get("fontBody")) if font
+        ))
         if self.validator is None:
             from app.tools.office.validate_pptx_tool import ValidatePptxTool
             self.validator = ValidatePptxTool()
-        result = await self.validator.execute(path=path)
+        result = await self.validator.execute(path=path, expected_fonts=expected_fonts)
         self._record_json(project_dir, "last_validation.json", result)
         payload = result.get("data", result)
         passed = bool(result.get("success")) and payload.get("gate", {}).get("passed", payload.get("success", False))
@@ -158,13 +228,21 @@ class ManageEditablePptTool(LLMTool):
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     @staticmethod
+    def _positive_int(value: Any, field: str) -> int:
+        if isinstance(value, str) and value.isdecimal():
+            value = int(value)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"{field} 必须是正整数")
+        return value
+
+    @staticmethod
     def _record_json(project_dir: str, name: str, value: dict[str, Any]):
         target = Path(project_dir) / ".editable-ppt" / name
         target.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     @staticmethod
     def _read_json(project_dir: str, name: str):
-        target = Path(project_dir) / ".editable-ppt" / name
+        target = (Path(project_dir) / ".editable-ppt" / name).resolve()
         return json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
 
     @staticmethod
@@ -180,11 +258,21 @@ class ManageEditablePptTool(LLMTool):
         }
 
     @staticmethod
-    def _failure(code: str, message: str, project_dir: str | None = None):
+    def _failure(
+        code: str,
+        message: str,
+        project_dir: str | None = None,
+        *,
+        evidence: dict[str, Any] | None = None,
+        next_action: str = "修正请求后重试",
+    ):
+        issue = {"code": code, "message": message}
+        if evidence:
+            issue["evidence"] = evidence
         return {
             "success": False, "summary": message,
             "data": {"project_dir": project_dir, "revision": None, "dirty_slides": [],
-                     "issues": [{"code": code, "message": message}], "next_actions": ["修正请求后重试"]},
+                     "issues": [issue], "next_actions": [next_action]},
         }
 
 

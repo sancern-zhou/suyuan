@@ -111,6 +111,7 @@
         :version-files="board?.versions || []"
         :current-version-id="board?.currentVersionId || board?.current_version_id || ''"
         :board-dirty="!!board?.dirty"
+        :read-only="!!board?.readOnly"
         @xml-change="handleBoardXmlChange"
         @selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"

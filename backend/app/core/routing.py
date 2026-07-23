@@ -37,6 +37,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.signed_media_routes", prefix="/api", description="Signed media API"),
     RouterSpec("app.api.utility_routes", prefix="/api", description="Utility API"),
     RouterSpec("app.api.session_routes", description="Session management"),
+    RouterSpec("app.boards.routes", description="Draw.io board versions"),
     RouterSpec("app.routers.knowledge_qa", description="Knowledge QA"),
     RouterSpec("app.api.scheduled_task_routes", description="Scheduled tasks"),
     RouterSpec("app.api.scheduled_task_ws", description="Scheduled task WebSocket"),

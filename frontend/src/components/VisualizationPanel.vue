@@ -127,6 +127,7 @@ import MarkdownRenderer from './MarkdownRenderer.vue'
 import {
   buildArtifactDownloadPayload,
   hasRelatedArtifactFiles,
+  normalizeArtifactUrl,
   normalizeRelatedArtifactFiles
 } from '@/utils/artifactRelatedFiles'
 
@@ -879,7 +880,7 @@ const downloadRelatedFile = (file) => {
   }
 
   try {
-    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
+    const fileUrl = normalizeArtifactUrl(file.url || `/api/file/${encodeURIComponent(file.file_path)}`)
     const link = document.createElement('a')
     link.href = fileUrl
     link.download = file.file_path.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'

@@ -47,7 +47,9 @@ export function unsupportedStyleIssues(measurement) {
     const issues = rules
       .filter(([name, unsupported]) => unsupported(element.style?.[name]))
       .map(([name]) => ({ code: "UNSUPPORTED_STYLE_STRICT", slideId: page.slideId, elementId: element.id, message: `${name} cannot be preserved as a native object` }));
-    if (element.source === "dom" && element.hasUntaggedTextDescendant) {
+    if (element.source === "dom" && (
+      element.hasUntaggedTextDescendant || (element.hasUntaggedDirectText && !element.textRuns?.length)
+    )) {
       issues.push({ code: "UNTAGGED_TEXT_STRICT", slideId: page.slideId, elementId: element.id, message: "text-bearing descendant needs its own data-pptx-id to preserve formatting" });
     }
     return issues;
@@ -64,10 +66,18 @@ function resolveImageSource(element, projectRoot) {
 }
 
 function addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, theme, report, projectRoot) {
-  pptxSlide.background = { color: normalizeColor(theme.canvas) || "FFFFFF" };
+  const slideRoot = measuredPage.elements.find((element) => element.id === "slide-root");
+  const slideBackground = normalizeColor(slideRoot?.style?.backgroundColor);
+  pptxSlide.background = { color: slideBackground || normalizeColor(theme.canvas) || "FFFFFF" };
   const nativeIds = new Set((slideSpec.nativeElements || []).map((element) => element.id));
+  const richTextChildIds = new Set(measuredPage.elements.flatMap((element) =>
+    (element.textRuns || []).map((run) => run.elementId).filter(Boolean),
+  ));
   for (const element of measuredPage.elements) {
-    if (element.id === "slide-root" || element.source === "native-ref" || nativeIds.has(element.id)) continue;
+    if (
+      element.id === "slide-root" || element.source === "native-ref" ||
+      nativeIds.has(element.id) || richTextChildIds.has(element.id)
+    ) continue;
     const added = addBasicElement(pptxSlide, resolveImageSource(element, projectRoot), pptx);
     if (added?.kind === "text") report.native.text += 1;
     if (added?.kind === "shape") report.native.shape += 1;
@@ -91,6 +101,11 @@ export async function inspectProject(projectDir) {
     deckId: project.deck.id,
     slideCount: project.slides.length,
     slideIds: project.slides.map((slide) => slide.id),
+    slideSources: project.slides.map((slide) => ({
+      pageNumber: slide.number,
+      slideId: slide.id,
+      relativePath: path.relative(project.projectRoot, slide.sourcePath).split(path.sep).join("/"),
+    })),
     editable: project.deck.editable || "strict",
   };
 }
@@ -154,7 +169,16 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
   if (editable === "strict" && styleIssues.length > 0) {
     return { success: false, report, error: "UNSUPPORTED_STYLE_STRICT" };
   }
-  if (editable === "strict" && report.issues.some((issue) => ["ELEMENT_OUT_OF_BOUNDS", "SLIDE_CONTENT_OVERFLOW", "DUPLICATE_ELEMENT_ID", "IMAGE_LOAD_FAILED"].includes(issue.code))) {
+  if (editable === "strict" && report.issues.some((issue) => [
+    "ELEMENT_OUT_OF_BOUNDS",
+    "SLIDE_CONTENT_OVERFLOW",
+    "DUPLICATE_ELEMENT_ID",
+    "IMAGE_LOAD_FAILED",
+    "ASSET_REFERENCE_OUTSIDE_PROJECT",
+    "RUNTIME_CSS_NOT_READY",
+    "RUNTIME_BUILD_FAILED",
+    "BROWSER_RUNTIME_ERROR",
+  ].includes(issue.code))) {
     return { success: false, report, error: "SLIDE_MEASUREMENT_GATE_FAILED" };
   }
 

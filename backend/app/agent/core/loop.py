@@ -15,7 +15,6 @@ from ..context.context_builder import SimplifiedContextBuilder
 from ..memory.hybrid_manager import HybridMemoryManager
 from ..runtime import AgentRuntime, AgentRuntimeConfig
 from ...utils.agent_logger import AgentLogger
-from .guards import TaskCompletionGuard
 from .schema_injection import SchemaInjector
 
 logger = structlog.get_logger()
@@ -75,10 +74,6 @@ class ReActLoop:
             tool_registry=tool_executor.tool_registry if hasattr(tool_executor, "tool_registry") else None,
         )
 
-        self.task_completion_guard = TaskCompletionGuard(
-            memory_manager,
-            task_list=getattr(tool_executor, "task_list", None),
-        )
         self.enable_reasoning = enable_reasoning
         self.current_mode = "expert"
         self.schema_injector = SchemaInjector(consecutive_error_threshold=2)
@@ -113,7 +108,6 @@ class ReActLoop:
             planner=self.planner,
             tool_executor=self.executor,
             context_builder=self.context_builder,
-            task_completion_guard=self.task_completion_guard,
             max_iterations=self.max_iterations,
             enhance_with_history=enhance_with_history,
             enable_reasoning=self.enable_reasoning,
@@ -128,7 +122,7 @@ class ReActLoop:
             auto_profile=self.auto_profile,
             runtime_mode=self.current_mode,
             user_identifier=getattr(self.executor, "user_identifier", None),
-            board_context=self.context_builder.board_context if self.current_mode == "chart" else None,
+            board_context=self.context_builder.board_context if self.current_mode == "board" else None,
         ))
 
         async for event in runtime.run(

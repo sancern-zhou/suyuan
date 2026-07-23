@@ -31,6 +31,9 @@
         :src="drawioUrl"
         title="Draw.io board"
       ></iframe>
+      <div v-if="readOnly" class="board-readonly-overlay" role="status">
+        Agent 正在处理画板，当前暂不可编辑
+      </div>
     </div>
 
     <div class="file-history-section">
@@ -43,7 +46,7 @@
           当前画布有手动修改，后续 AI 将基于当前画布内容。
         </div>
         <button
-          v-for="version in versionFiles"
+          v-for="version in acceptedVersions"
           :key="getVersionKey(version)"
           type="button"
           class="history-item file-history-item"
@@ -57,8 +60,37 @@
           </span>
           <span class="history-time">{{ formatTime(version.created_at || version.createdAt) }}</span>
         </button>
-        <div v-if="versionFiles.length === 0" class="history-empty">
+        <div v-if="acceptedVersions.length === 0" class="history-empty">
           暂无版本文件
+        </div>
+        <button
+          v-if="qualityAttempts.length > 0"
+          type="button"
+          class="quality-attempts-toggle"
+          @click="showQualityAttempts = !showQualityAttempts"
+        >
+          {{ showQualityAttempts ? '收起' : '查看' }}质量核查过程（{{ qualityAttempts.length }}）
+        </button>
+        <div v-if="showQualityAttempts" class="quality-attempts">
+          <div
+            v-for="version in qualityAttempts"
+            :key="getVersionKey(version)"
+            class="quality-attempt"
+          >
+            <AuthenticatedImage
+              v-if="version.screenshotUrl"
+              :source="version.screenshotUrl"
+              :alt="`${getVersionName(version)} 核查截图`"
+              class="quality-thumbnail"
+            />
+            <div class="quality-attempt-body">
+              <span>{{ getVersionName(version) }}</span>
+              <span class="quality-status" :class="`status-${version.qualityStatus || 'pending'}`">
+                {{ getQualityLabel(version) }}
+              </span>
+              <span class="quality-summary">{{ getQualitySummary(version) }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -67,11 +99,16 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
 import {
   getDrawioSelectionPayload,
   getDrawioSelectionPayloadFromExport,
   parseDrawioSelectedCells
 } from './drawioSelection.js'
+import {
+  createDrawioBoardBridge,
+  registerActiveDrawioBoardExporter
+} from './drawioBoardBridge.js'
 
 const props = defineProps({
   xml: {
@@ -93,6 +130,10 @@ const props = defineProps({
   boardDirty: {
     type: Boolean,
     default: false
+  },
+  readOnly: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -103,21 +144,37 @@ const iframeReady = ref(false)
 const latestXml = ref(props.xml || '')
 const exportingSnapshot = ref(false)
 const showVersionFiles = ref(false)
+const showQualityAttempts = ref(false)
 let pendingExportResolver = null
 let selectionProbeInterval = null
 let selectionProbePending = false
 let xmlSyncPending = false
 let xmlSyncTimeout = null
 let lastXmlSyncAt = 0
+let unregisterBoardExporter = null
 
 const XML_SYNC_INTERVAL_MS = 1200
+const DRAWIO_URL = 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&modified=0&saveAndExit=0&noSaveBtn=1&noExitBtn=1'
+const DRAWIO_ORIGIN = new URL(DRAWIO_URL).origin
 
-const drawioUrl = computed(() => 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&modified=0&saveAndExit=0&noSaveBtn=1&noExitBtn=1')
+const drawioUrl = computed(() => DRAWIO_URL)
+const acceptedVersions = computed(() => props.versionFiles.filter(version => (
+  version.visibleInHistory !== false &&
+  (version.lifecycleStatus || version.lifecycle_status || 'accepted') === 'accepted'
+)))
+const qualityAttempts = computed(() => props.versionFiles.filter(version => (
+  (version.lifecycleStatus || version.lifecycle_status) !== 'accepted'
+)))
+
+const boardBridge = createDrawioBoardBridge({
+  getTargetWindow: () => iframeRef.value?.contentWindow || null,
+  allowedOrigin: DRAWIO_ORIGIN
+})
 
 const postDrawio = (action, extra = {}) => {
   const target = iframeRef.value?.contentWindow
   if (!target) return
-  target.postMessage(JSON.stringify({ action, ...extra }), '*')
+  target.postMessage(JSON.stringify({ action, ...extra }), DRAWIO_ORIGIN)
 }
 
 const applySelection = (selection, source = 'unknown') => {
@@ -151,6 +208,19 @@ const getVersionSummary = (version = {}) => {
   const sourceLabel = version.source === 'agent' ? 'AI生成' : version.source === 'user_restore' ? '手动恢复' : '版本文件'
   const number = version.version_number || version.versionNumber
   return `${sourceLabel}${number ? ` · v${number}` : ''}`
+}
+
+const getQualityLabel = (version = {}) => {
+  const labels = { passed: '通过', warning: '有警告', failed: '未通过', pending: '待核查' }
+  return labels[version.qualityStatus || version.quality_status] || '待核查'
+}
+
+const getQualitySummary = (version = {}) => {
+  const report = version.qualityReport || version.quality_report || {}
+  const errors = Array.isArray(report.errors) ? report.errors.length : Number(report.error_count || 0)
+  const warnings = Array.isArray(report.warnings) ? report.warnings.length : Number(report.warning_count || 0)
+  if (!errors && !warnings) return '未发现结构或视觉问题'
+  return `${errors} 个错误 · ${warnings} 个警告`
 }
 
 const formatTime = (value) => {
@@ -238,6 +308,14 @@ const applyEditorXml = (xml, event = 'sync') => {
     xmlLength: xml.length
   })
   emit('xml-change', xml)
+}
+
+const exportCurrentXml = async () => {
+  const xml = await boardBridge.exportCurrentXml()
+  xmlSyncPending = false
+  clearXmlSyncTimeout()
+  applyEditorXml(xml, 'pre-send-sync')
+  return xml
 }
 
 const exportBoardImage = () => {
@@ -385,6 +463,9 @@ const parseDrawioMessage = (data) => {
 }
 
 const handleMessage = (event) => {
+  const target = iframeRef.value?.contentWindow
+  if (!target || event.source !== target || event.origin !== DRAWIO_ORIGIN) return
+  if (boardBridge.handleMessage(event)) return
   const msg = parseDrawioMessage(event.data)
   if (!msg) return
 
@@ -453,12 +534,16 @@ const handleWindowFocus = () => {
 }
 
 onMounted(() => {
+  unregisterBoardExporter = registerActiveDrawioBoardExporter(exportCurrentXml)
   window.addEventListener('message', handleMessage)
   window.addEventListener('blur', handleWindowBlur)
   window.addEventListener('focus', handleWindowFocus)
 })
 
 onBeforeUnmount(() => {
+  unregisterBoardExporter?.()
+  unregisterBoardExporter = null
+  boardBridge.cancel('board_editor_unmounted')
   window.removeEventListener('message', handleMessage)
   window.removeEventListener('blur', handleWindowBlur)
   window.removeEventListener('focus', handleWindowFocus)
@@ -467,6 +552,8 @@ onBeforeUnmount(() => {
     pendingExportResolver.reject(new Error('draw.io board panel unmounted'))
   }
 })
+
+defineExpose({ exportCurrentXml })
 
 watch(() => props.xml, (xml) => {
   if (xml === latestXml.value) return
@@ -537,6 +624,20 @@ watch(() => props.xml, (xml) => {
   display: flex;
   flex: 1;
   min-height: 0;
+}
+
+.board-readonly-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.68);
+  color: #43536a;
+  font-size: 14px;
+  font-weight: 600;
+  backdrop-filter: blur(1px);
 }
 
 .file-history-section {
@@ -621,6 +722,61 @@ watch(() => props.xml, (xml) => {
   color: #8a6420;
   font-size: 12px;
 }
+
+.quality-attempts-toggle {
+  padding: 5px 2px;
+  border: 0;
+  background: transparent;
+  color: #607d9b;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.quality-attempts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quality-attempt {
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid #e5eaf0;
+  border-radius: 5px;
+  background: #fff;
+}
+
+.quality-thumbnail {
+  width: 68px;
+  height: 44px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: #f4f6f8;
+}
+
+.quality-attempt-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+  color: #4a596b;
+  font-size: 11px;
+}
+
+.quality-status {
+  align-self: flex-start;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #edf2f7;
+}
+
+.quality-status.status-passed { background: #e8f5e9; color: #2e7d32; }
+.quality-status.status-warning { background: #fff3e0; color: #a15c00; }
+.quality-status.status-failed { background: #ffebee; color: #b3261e; }
+.quality-summary { color: #7b8796; }
 
 .history-icon {
   flex: 0 0 auto;

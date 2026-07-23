@@ -3,13 +3,15 @@ import assert from 'node:assert/strict'
 
 import { AGENT_MODES, AGENT_MODE_IDS, AGENT_SCENES, getAgentMode } from './agentModes.js'
 
-test('agent mode catalog exposes the six supported modes in product order', () => {
+test('agent mode catalog exposes dedicated ppt, chart and board modes in product order', () => {
   assert.deepEqual(AGENT_MODE_IDS, [
     'assistant',
+    'ppt',
     'expert',
     'query',
     'report',
     'chart',
+    'board',
     'ops'
   ])
   assert.deepEqual(AGENT_MODES.map(agent => agent.id), AGENT_MODE_IDS)
@@ -29,7 +31,7 @@ test('every agent mode provides complete platform copy and presentation metadata
 test('every non-query agent provides complete chat welcome content', () => {
   const agentsWithWelcome = AGENT_MODES.filter(agent => agent.id !== 'query')
 
-  assert.equal(agentsWithWelcome.length, 5)
+  assert.equal(agentsWithWelcome.length, 7)
   for (const agent of agentsWithWelcome) {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)
@@ -55,13 +57,13 @@ test('agent scenes group modes in the requested top-to-bottom order', () => {
       id: 'office',
       name: '办公',
       description: '日常办公与内容创作',
-      modeIds: ['assistant', 'chart']
+      modeIds: ['assistant', 'ppt', 'board']
     },
     {
       id: 'monitoring',
       name: '监测分析',
       description: '环境数据研判与成果输出',
-      modeIds: ['query', 'expert', 'report']
+      modeIds: ['query', 'expert', 'report', 'chart']
     },
     {
       id: 'operations',

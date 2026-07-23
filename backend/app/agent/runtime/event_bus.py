@@ -71,12 +71,18 @@ class RuntimeEventBus:
             },
         }
 
-    def steering_applied(self, state: RunState, messages: list[str]) -> Dict[str, Any]:
+    def steering_applied(
+        self,
+        state: RunState,
+        messages: list[str],
+        input_ids: list[str] | None = None,
+    ) -> Dict[str, Any]:
         return {
             "type": "steering_applied",
             "stream": "lifecycle",
             "data": {
                 "messages": messages,
+                "input_ids": input_ids or [],
                 "count": len(messages),
                 "session_id": state.session_id,
                 "run_id": state.run_id,
@@ -178,7 +184,6 @@ class RuntimeEventBus:
             # ✅ 保留sources字段（用于知识溯源）
             "sources": state.workflow_sources,
             # ❌ 移除visuals字段（应该从tool_result获取）
-            # ❌ 移除direct_from_workflow字段（不需要）
         }
         if status != "completed":
             data["status"] = status
