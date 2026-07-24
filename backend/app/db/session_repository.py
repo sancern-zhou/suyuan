@@ -197,7 +197,6 @@ class SessionRepository:
                 query=query,
                 mode=mode,
                 session_metadata=metadata or {},
-                office_documents=office_documents or []
             )
             session.add(db_session)
             await session.commit()
@@ -207,7 +206,7 @@ class SessionRepository:
                 "session_created_in_db",
                 session_id=session_id,
                 mode=mode,
-                office_documents_count=len(office_documents) if office_documents else 0
+                resource_store="unified"
             )
             return db_session
 
@@ -364,7 +363,7 @@ class SessionRepository:
         # 过滤掉无效的字段名（只保留 SessionDB 模型中定义的字段）
         valid_fields = {
             "query", "mode", "current_step", "current_expert",
-            "data_ids", "visual_ids", "office_documents", "error", "session_metadata"
+            "error", "session_metadata"
         }
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_fields}
 
