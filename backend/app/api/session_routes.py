@@ -157,44 +157,6 @@ def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> L
     return documents
 
 
-async def _get_session_artifacts(
-    session_id: str,
-    load_visualizations: bool = True,
-    load_office_documents: bool = True
-) -> Dict[str, List[Dict[str, Any]]]:
-    from app.db.session_repository import get_session_repository
-
-    repo = get_session_repository()
-    session_dict = await repo.get_session_with_messages(session_id, include_messages=False)
-    if not session_dict:
-        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
-
-    metadata = session_dict.get("metadata") or {}
-    visualizations = (metadata.get("visualizations") or []) if load_visualizations else []
-    office_documents = (session_dict.get("office_documents") or []) if load_office_documents else []
-
-    if load_office_documents and not office_documents:
-        try:
-            from app.routers.agent import multi_expert_agent_instance
-            if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:
-                office_documents = multi_expert_agent_instance._session_store[session_id].get("office_documents", [])
-        except Exception as e:
-            logger.warning("lazy_office_documents_memory_fallback_failed", session_id=session_id, error=str(e))
-
-    if (load_visualizations and not visualizations) or (load_office_documents and not office_documents):
-        full_session = await repo.get_session_with_messages(session_id, include_messages=True)
-        messages = full_session.get("conversation_history", []) if full_session else []
-        if load_visualizations and not visualizations:
-            visualizations = _extract_visualizations_from_messages(messages)
-        if load_office_documents and not office_documents:
-            office_documents = _extract_office_documents_from_messages(messages)
-
-    return {
-        "visualizations": visualizations if isinstance(visualizations, list) else [],
-        "office_documents": office_documents if isinstance(office_documents, list) else [],
-    }
-
-
 @router.get("/")
 @router.get("")  # 同时支持不带斜杠的请求
 async def list_sessions(
