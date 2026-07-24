@@ -95,11 +95,6 @@ class SessionDB(Base):
     current_step = Column(String(255), nullable=True)
     current_expert = Column(String(100), nullable=True)
 
-    # 结果数据引用
-    data_ids = Column(JSON, nullable=True)  # List[str]
-    visual_ids = Column(JSON, nullable=True)  # List[str]
-    office_documents = Column(JSON, nullable=True)  # List[Dict[str, Any]] - Office文档PDF预览数据
-
     # 错误信息
     error = Column(JSON, nullable=True)  # Dict[str, Any]
 
