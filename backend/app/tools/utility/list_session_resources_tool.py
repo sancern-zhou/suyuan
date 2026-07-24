@@ -3,12 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agent.resources.manifest import filter_session_resources
 from app.agent.resources.models import ResourceKind, ResourceStatus
-from app.agent.resources.service import (
-    ManifestPersistenceError,
-    get_session_resource_manifest_service,
-)
+from app.agent.resources.resource_service import SessionResourceService
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
@@ -39,7 +35,7 @@ class ListSessionResourcesTool(LLMTool):
             version="1.0.0",
             requires_context=True,
         )
-        self.service = service or get_session_resource_manifest_service()
+        self.service = service or SessionResourceService.database()
 
     async def execute(
         self,
@@ -62,23 +58,15 @@ class ListSessionResourcesTool(LLMTool):
         except ValueError as exc:
             return {"success": False, "error": str(exc), "data": []}
         try:
-            manifest = await self.service.load(session_id)
-        except ManifestPersistenceError:
-            return {"success": False, "error": "manifest_persistence_unavailable", "data": []}
-        matches = filter_session_resources(
-            manifest.refs,
-            kind=kind_filter,
-            status=status_filter,
-            label=label,
-            tool_name=tool_name,
-            run_id=run_id,
-            logical_key=logical_key,
-        )
+            page = await self.service.list_resources(session_id, kind=kind_filter.value if kind_filter else None, status=status_filter.value if status_filter else None, limit=min(max(int(limit), 1), 100))
+        except Exception:
+            return {"success": False, "error": "resource_store_unavailable", "data": []}
+        matches = [r for r in page.resources if (not label or label.lower() in r.label.lower()) and (not tool_name or r.tool_name == tool_name) and (not run_id or r.run_id == run_id) and (not logical_key or r.resource_key == logical_key)]
         bounded_limit = min(max(int(limit), 1), 100)
         return {
             "success": True,
-            "data": [ref.model_dump(mode="json", exclude_none=True) for ref in matches[:bounded_limit]],
+            "data": [r.__dict__ for r in matches[:bounded_limit]],
             "total_matches": len(matches),
             "truncated": len(matches) > bounded_limit,
-            "resource_refs_version": manifest.version,
+            "resource_version": 0,
         }
