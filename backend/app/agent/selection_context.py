@@ -204,18 +204,19 @@ def resource_refs_to_runtime_attachments(
     attachments: list[dict[str, str]] = []
     for ref in refs:
         mime_type = str(ref.metadata.get("mime_type") or "")
-        path = ref.locator.path
+        locator = ref.locator
+        path = locator.get("path") if isinstance(locator, dict) else locator.path
         if not mime_type.startswith("image/"):
             continue
         if ref.status is not ResourceStatus.ACTIVE:
-            raise ValueError(f"current_turn_image_invalid: {ref.ref_id}")
+            raise ValueError(f"current_turn_image_invalid: {getattr(ref, 'ref_id', getattr(ref, 'resource_id', 'unknown'))}")
         if not path:
-            raise ValueError(f"current_turn_image_invalid: {ref.ref_id}")
+            raise ValueError(f"current_turn_image_invalid: {getattr(ref, 'ref_id', getattr(ref, 'resource_id', 'unknown'))}")
         resolved_path = Path(path).resolve()
         if not resolved_path.exists() or not resolved_path.is_file():
-            raise ValueError(f"current_turn_image_missing: {ref.ref_id}")
+            raise ValueError(f"current_turn_image_missing: {getattr(ref, 'ref_id', getattr(ref, 'resource_id', 'unknown'))}")
         attachments.append({
-            "file_id": str(ref.metadata.get("file_id") or ref.ref_id),
+            "file_id": str(ref.metadata.get("file_id") or getattr(ref, "ref_id", getattr(ref, "resource_id", ""))),
             "name": ref.label,
             "type": "image",
             "mime_type": mime_type,
