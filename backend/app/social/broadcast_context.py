@@ -56,11 +56,7 @@ async def persist_broadcast_context(
             "data": {**metadata, "attachments": attachments},
         })
 
-    documents = {
-        item.get("file_path"): item
-        for item in session.office_documents
-        if isinstance(item, dict) and item.get("file_path")
-    }
+    documents = {}
     for attachment in attachments:
         documents[attachment["path"]] = {
             "file_path": attachment["path"],
@@ -68,8 +64,6 @@ async def persist_broadcast_context(
             "source": "broadcast",
             **metadata,
         }
-    session.office_documents = list(documents.values())
-
     return bool(
         await append_session_transcript_for_mode(session, mode="social")
     )

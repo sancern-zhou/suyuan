@@ -709,10 +709,7 @@ class CallSubAgentTool(LLMTool):
         data_ids = self._extract_data_ids(result_events)
 
         # 去重后添加
-        existing_data_ids = set(session.data_ids)
-        for data_id in data_ids:
-            if data_id not in existing_data_ids:
-                session.data_ids.append(data_id)
+        # Data resources are persisted by the unified resource service.
 
         # 保存session（更新时间戳）
         session_manager.save_session(session, update_timestamp=True)
@@ -721,5 +718,5 @@ class CallSubAgentTool(LLMTool):
             "session_updated",
             session_id=session_id,
             conversation_length=len(session.conversation_history),
-            data_count=len(session.data_ids)
+            data_count=0
         )
