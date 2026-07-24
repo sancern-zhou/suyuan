@@ -38,6 +38,40 @@ class SessionResourceManifestDB(Base):
     )
 
 
+class SessionResourceDB(Base):
+    """One current resource row for the unified session resource service."""
+
+    __tablename__ = "session_resources"
+
+    session_id = Column(String(255), primary_key=True)
+    resource_key = Column(String(255), primary_key=True)
+    resource_id = Column(String(64), nullable=False, unique=True, index=True)
+    kind = Column(String(32), nullable=False, index=True)
+    role = Column(String(32), nullable=False)
+    logical_key = Column(String(255), nullable=True)
+    label = Column(String(512), nullable=False)
+    locator = Column(JSONB, nullable=False)
+    presentation_type = Column(String(32), nullable=True, index=True)
+    presentation = Column(JSONB, nullable=True)
+    resource_metadata = Column("metadata", JSONB, nullable=False, default=dict)
+    tool_name = Column(String(255), nullable=False)
+    run_id = Column(String(255), nullable=False)
+    turn_sequence = Column(Integer, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class SessionResourceVersionDB(Base):
+    """Monotonic coordination version; it contains no resource payload."""
+
+    __tablename__ = "session_resource_versions"
+
+    session_id = Column(String(255), primary_key=True)
+    version = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class SessionDB(Base):
     """
     会话主表
