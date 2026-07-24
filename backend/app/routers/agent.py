@@ -903,8 +903,7 @@ async def analyze_stream(
                         session_id=actual_session_id,
                         has_conversation_history=bool(session.conversation_history),
                         conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
-                        has_data_ids=bool(session.data_ids),
-                        data_ids_count=len(session.data_ids) if session.data_ids else 0
+                        resource_store="unified",
                     )
                     conversation_history = session.conversation_history or []
                     if request.mode == "board" and drawio_board_context is not None:
