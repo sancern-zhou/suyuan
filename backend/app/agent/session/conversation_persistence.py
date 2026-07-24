@@ -206,16 +206,6 @@ class ConversationPersistenceService:
         office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
-        session.visual_ids = [
-            visual.get("id")
-            for visual in collected_visuals
-            if isinstance(visual, dict) and visual.get("id")
-        ]
-        if office_documents is not None:
-            session.office_documents = list(office_documents)
-        if collected_visuals:
-            session.metadata["visualizations"] = list(collected_visuals)
-            session.metadata["visuals_count"] = len(collected_visuals)
         normalized_board = self.normalize_drawio_board(drawio_board)
         if normalized_board:
             session.metadata["drawio_board"] = normalized_board
@@ -229,12 +219,6 @@ class ConversationPersistenceService:
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         existing_visuals = []
-        if isinstance(session.metadata, dict):
-            existing_visuals = [
-                visual
-                for visual in session.metadata.get("visualizations", [])
-                if isinstance(visual, dict)
-            ]
         visuals_by_id: Dict[str, Dict[str, Any]] = {}
         anonymous_visuals: List[Dict[str, Any]] = []
         anonymous_visual_keys = set()
@@ -257,17 +241,6 @@ class ConversationPersistenceService:
                 anonymous_visual_keys.add(visual_key)
 
         merged_visuals = [*visuals_by_id.values(), *anonymous_visuals]
-        session.visual_ids = [
-            visual.get("id")
-            for visual in merged_visuals
-            if isinstance(visual, dict) and visual.get("id")
-        ]
-        if merged_visuals:
-            session.metadata["visualizations"] = merged_visuals
-            session.metadata["visuals_count"] = len(merged_visuals)
-
-        if office_documents is not None:
-            session.office_documents = list(office_documents)
 
         normalized_board = self.normalize_drawio_board(drawio_board)
         if normalized_board:
