@@ -22,10 +22,6 @@ from app.conversations.service import ConversationCatalogService
 from app.boards.application import BoardApplicationService
 from app.boards.service import BoardNotFound, BoardVersionNotFound
 from app.db.database import async_session
-from app.agent.resources.service import (
-    ManifestPersistenceError,
-    get_session_resource_manifest_service,
-)
 from app.agent.resources.resource_service import SessionResourceService
 
 logger = structlog.get_logger()
