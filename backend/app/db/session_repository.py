@@ -301,9 +301,6 @@ class SessionRepository:
                 "mode": db_session.mode,
                 "current_step": db_session.current_step,
                 "current_expert": db_session.current_expert,
-                "data_ids": db_session.data_ids or [],
-                "visual_ids": db_session.visual_ids or [],
-                "office_documents": db_session.office_documents or [] if include_artifacts else [],
                 "error": db_session.error,
                 "metadata": db_session.session_metadata or {} if include_artifacts else {},
                 "conversation_history": []
