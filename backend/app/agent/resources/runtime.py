@@ -1,12 +1,10 @@
-"""Per-run resource collection at the shared agent event boundary."""
+"""Per-run collection and durability for explicit session resources."""
 from __future__ import annotations
 
 from typing import Any
 
-from .manifest import merge_resource_refs
-from .models import SessionResourceRef
-from .normalizer import normalize_tool_result_refs
-from .service import ManifestPersistenceError, SessionResourceManifest
+from .contracts import ResourceDeclaration
+from .normalizer import normalize_tool_resources
 
 
 def event_turn_sequence(event_data: dict[str, Any]) -> int:
@@ -16,51 +14,51 @@ def event_turn_sequence(event_data: dict[str, Any]) -> int:
         return 0
 
 
-class RunReferenceAccumulator:
-    def __init__(self, *, run_id: str) -> None:
+class RunResourceAccumulator:
+    def __init__(self, *, run_id: str):
         self.run_id = run_id
-        self.refs: list[SessionResourceRef] = []
+        self.resources: list[ResourceDeclaration] = []
         self.rejected: list[dict[str, str]] = []
 
     def capture(self, event: dict[str, Any], *, turn_sequence: int) -> None:
-        event_type = event.get("type")
-        data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        if event_type == "tool_result":
-            if data.get("is_error") or data.get("success") is False:
-                return
-            result = data.get("result")
-            tool_name = str(data.get("tool_name") or data.get("name") or "unknown_tool")
-        elif event_type in {"office_document", "html_document"}:
-            result = data
-            tool_name = event_type
-        else:
+        if event.get("type") != "tool_result":
             return
-        run_id = str(data.get("run_id") or event.get("run_id") or self.run_id or "unknown-run")
-        refs, rejected = normalize_tool_result_refs(
-            tool_name=tool_name,
-            run_id=run_id,
-            turn_sequence=turn_sequence,
-            result=result,
-        )
-        self.refs = merge_resource_refs(self.refs, refs)
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if data.get("is_error") or data.get("success") is False:
+            return
+        result = data.get("result") if isinstance(data.get("result"), dict) else data
+        resources, rejected = normalize_tool_resources(result=result)
         self.rejected = [*self.rejected, *rejected][-50:]
+        by_key = {item.resource_key(): item for item in self.resources}
+        for resource in resources:
+            by_key[resource.resource_key()] = resource
+        self.resources = list(by_key.values())
 
 
 async def flush_resource_accumulator(
     service,
     session_id: str,
-    accumulator: RunReferenceAccumulator,
+    accumulator: RunResourceAccumulator,
     terminal_data: dict[str, Any],
-) -> SessionResourceManifest | None:
-    """Persist collected refs and make durability explicit on the terminal event."""
-    if not accumulator.refs:
+    *,
+    turn_sequence: int = 0,
+):
+    """Persist collected resources before reporting terminal durability."""
+    if not accumulator.resources:
         return None
     try:
-        manifest = await service.merge(session_id, accumulator.refs)
-    except ManifestPersistenceError:
-        terminal_data["resource_refs_durable"] = False
-        terminal_data["resource_refs_error"] = "manifest_persistence_failed"
+        result = await service.upsert_run_resources(
+            session_id,
+            accumulator.run_id,
+            accumulator.resources,
+            turn_sequence=turn_sequence,
+        )
+    except Exception:
+        terminal_data["resource_durable"] = False
+        terminal_data["resource_error"] = "resource_persistence_failed"
         return None
-    terminal_data["resource_refs_version"] = manifest.version
-    terminal_data["resource_refs_durable"] = True
-    return manifest
+    terminal_data["resource_version"] = result.version
+    terminal_data["resource_durable"] = True
+    if accumulator.rejected:
+        terminal_data["resource_errors"] = list(accumulator.rejected)
+    return result
