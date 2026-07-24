@@ -85,7 +85,7 @@ class SessionManager:
 
             logger.info(
                 f"Session saved: {session.session_id} "
-                f"(data_count: {len(session.data_ids)})"
+                "(resources: unified store)"
             )
 
             return True
