@@ -62,7 +62,7 @@ export function useSessionManagement(store) {
         getSessionVisualizations(sessionId)
           .then(response => {
             if (store.currentState.sessionId !== sessionId) return
-            const visualizations = response?.visualizations || []
+            const visualizations = response?.resources || []
             console.log('[会话恢复] 图表延迟加载完成:', visualizations.length)
             store.setVisualizationHistory(visualizations)
             store.setLazyArtifacts({
@@ -87,7 +87,7 @@ export function useSessionManagement(store) {
         getSessionOfficeDocuments(sessionId)
           .then(response => {
             if (store.currentState.sessionId !== sessionId) return
-            const officeDocs = response?.office_documents || []
+            const officeDocs = response?.resources || []
             console.log('[会话恢复] 文档延迟加载完成:', officeDocs.length)
             if (officeDocs.length > 0) {
               if (typeof store.setOfficeDocumentHistory === 'function') {
@@ -385,47 +385,9 @@ export function useSessionManagement(store) {
         console.log(`[会话恢复] 按ID去重：${beforeCount} → ${messages.length} (过滤${beforeCount - messages.length}条)`)
       }
 
-      // 2. 提取可视化内容（优先使用 metadata.visualizations）
-      let visuals = []
-
-      // lazy 模式下图表由独立接口在首屏消息显示后自动加载
-      if (lazyArtifacts) {
-        visuals = []
-      } else if (sessionData.metadata?.visualizations && Array.isArray(sessionData.metadata.visualizations)) {
-        // 优先从 session.metadata.visualizations 获取完整可视化数据
-        visuals = sessionData.metadata.visualizations
-
-        // 【修复】补充 tool_result 消息的缺失 data.result.visuals（旧会话兼容）
-        let fixedCount = 0
-        messages.forEach(msg => {
-          if (msg.type === 'tool_result' && msg.data) {
-            const hasResultVisuals = msg.data?.result?.visuals && Array.isArray(msg.data.result.visuals)
-            const hasResultsVisuals = msg.data?.results && Array.isArray(msg.data.results) &&
-                                     msg.data.results.some(r => r.visuals && Array.isArray(r.visuals))
-
-            if (!hasResultVisuals && !hasResultsVisuals) {
-              const toolUseId = msg.data?.tool_use_id
-              const toolName = msg.data?.tool_name || ''
-              const matchingVisuals = visuals.filter(v => {
-                const vToolName = v.meta?.generator || v.meta?.tool_name || ''
-                const vToolUseId = v.meta?.tool_use_id
-                return vToolName === toolName || vToolUseId === toolUseId
-              })
-
-              if (matchingVisuals.length > 0) {
-                if (!msg.data.result) {
-                  msg.data.result = {}
-                }
-                msg.data.result.visuals = matchingVisuals
-                fixedCount++
-              }
-            }
-          }
-        })
-      } else {
-        // 降级方案：从消息中提取
-        visuals = extractVisualsFromMessages(messages)
-      }
+      // 2. 资源只来自统一资源接口/恢复载荷，不再从消息推断。
+      const resources = Array.isArray(sessionData.resources) ? sessionData.resources : []
+      const visuals = lazyArtifacts ? [] : resources.filter(r => r.presentation_type === 'visualization')
 
       // 3. 更新store
       const restoredMode = resolveRestoredAgentMode(sessionData, sessionId, store.currentMode)
@@ -441,12 +403,12 @@ export function useSessionManagement(store) {
         store.restoreDrawioBoardFromSession(sessionData)
       }
       store.setLazyArtifacts({
-        hasVisualizations: !!sessionData.has_lazy_visualizations,
-        visualizationCount: sessionData.visualization_count || 0,
+        hasVisualizations: (sessionData.resource_counts?.visualizations || 0) > 0,
+        visualizationCount: sessionData.resource_counts?.visualizations || 0,
         visualizationsLoaded: !lazyArtifacts,
         loadingVisualizations: false,
-        hasOfficeDocuments: !!sessionData.has_lazy_office_documents,
-        officeDocumentCount: sessionData.office_document_count || 0,
+        hasOfficeDocuments: (sessionData.resource_counts?.documents || 0) > 0,
+        officeDocumentCount: sessionData.resource_counts?.documents || 0,
         officeDocumentsLoaded: !lazyArtifacts,
         loadingOfficeDocuments: false,
         hasDrawioBoard: restoredMode === 'board' && !!sessionData.has_lazy_drawio_board,
@@ -471,15 +433,7 @@ export function useSessionManagement(store) {
 
       // 4. 恢复Office文档
       if (restoreOfficeDocs && !lazyArtifacts) {
-        let officeDocs = sessionData.office_documents || []
-
-        // 如果sessionData中没有，从消息中提取
-        if (officeDocs.length === 0) {
-          const extractedDocs = extractOfficeDocuments(messages)
-          if (extractedDocs.length > 0) {
-            officeDocs = extractedDocs
-          }
-        }
+        const officeDocs = resources.filter(r => r.presentation_type === 'document')
 
         if (officeDocs.length > 0) {
           if (typeof store.setOfficeDocumentHistory === 'function') {
@@ -505,7 +459,7 @@ export function useSessionManagement(store) {
         success: true,
         messageCount: messages.length,
         visualCount: lazyArtifacts ? (sessionData.visualization_count || 0) : visuals.length,
-        officeDocCount: lazyArtifacts ? (sessionData.office_document_count || 0) : (restoreOfficeDocs ? (sessionData.office_documents || []).length : 0)
+        officeDocCount: lazyArtifacts ? (sessionData.resource_counts?.documents || 0) : (restoreOfficeDocs ? resources.filter(r => r.presentation_type === 'document').length : 0)
       }
 
     } catch (error) {

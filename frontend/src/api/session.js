@@ -107,14 +107,14 @@ export async function getSessionResources(sessionId) {
  * 按需加载会话图表数据
  */
 export async function getSessionVisualizations(sessionId) {
-  return await request(`${BASE_URL}/${sessionId}/visualizations`)
+  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=visualization`)
 }
 
 /**
  * 按需加载会话文档/报告预览元数据
  */
 export async function getSessionOfficeDocuments(sessionId) {
-  return await request(`${BASE_URL}/${sessionId}/office-documents`)
+  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=document`)
 }
 
 /**
