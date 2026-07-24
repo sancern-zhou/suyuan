@@ -30,7 +30,10 @@ class RunResourceAccumulator:
         resources, rejected = normalize_tool_resources(result=result)
         self.rejected = [*self.rejected, *rejected][-50:]
         by_key = {item.resource_key(): item for item in self.resources}
+        tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
         for resource in resources:
+            if tool_name:
+                resource = resource.model_copy(update={"tool_name": tool_name})
             by_key[resource.resource_key()] = resource
         self.resources = list(by_key.values())
 
