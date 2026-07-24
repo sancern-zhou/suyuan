@@ -52,7 +52,7 @@ class StoredResource:
             presentation_type=declaration.presentation_type.value if declaration.presentation_type else None,
             presentation=declaration.presentation.model_dump(mode="json") if declaration.presentation else None,
             metadata=declaration.metadata,
-            tool_name="",
+            tool_name=declaration.tool_name,
             run_id=run_id,
             turn_sequence=turn_sequence,
             status=declaration.status.value,

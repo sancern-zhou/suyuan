@@ -70,6 +70,7 @@ class ResourceDeclaration(BaseModel):
     presentation: DocumentPresentation | VisualizationPresentation | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     status: ResourceStatus = ResourceStatus.ACTIVE
+    tool_name: str = Field(default="", max_length=255)
 
     @model_validator(mode="after")
     def validate_presentation(self) -> "ResourceDeclaration":

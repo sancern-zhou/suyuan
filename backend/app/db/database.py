@@ -139,28 +139,44 @@ async def _ensure_social_binding_schema(conn) -> None:
     logger.info("social_binding_schema_ensured", dialect=conn.dialect.name)
 
 
-async def _ensure_session_resource_manifest_schema(conn) -> None:
-    """Ensure the mode-independent resource manifest exists on startup."""
+async def _ensure_session_resources_schema(conn) -> None:
+    """Ensure the unified row-oriented session resource store exists on startup."""
     if conn.dialect.name != "postgresql":
         return
     statements = (
         """
-        CREATE TABLE IF NOT EXISTS session_resource_manifests (
-            session_id VARCHAR(255) PRIMARY KEY,
-            resource_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
-            version INTEGER NOT NULL DEFAULT 0,
+        CREATE TABLE IF NOT EXISTS session_resources (
+            session_id VARCHAR(255) NOT NULL,
+            resource_key VARCHAR(255) NOT NULL,
+            resource_id UUID NOT NULL UNIQUE,
+            kind VARCHAR(32) NOT NULL,
+            role VARCHAR(64) NOT NULL,
+            logical_key VARCHAR(255) NOT NULL,
+            label VARCHAR(512) NOT NULL,
+            locator JSONB NOT NULL,
+            presentation_type VARCHAR(32) NOT NULL,
+            presentation JSONB NOT NULL DEFAULT '{}'::jsonb,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            tool_name VARCHAR(255) NOT NULL DEFAULT '',
+            run_id VARCHAR(255),
+            turn_sequence INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR(32) NOT NULL DEFAULT 'active',
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (session_id, resource_key)
         )
         """,
         """
-        CREATE INDEX IF NOT EXISTS ix_session_resource_manifests_updated_at
-            ON session_resource_manifests (updated_at)
+        CREATE TABLE IF NOT EXISTS session_resource_versions (
+            session_id VARCHAR(255) PRIMARY KEY,
+            version INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
         """,
     )
     for statement in statements:
         await conn.execute(text(statement))
-    logger.info("session_resource_manifest_schema_ensured")
+    logger.info("session_resources_schema_ensured")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -248,7 +264,7 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
-        await _ensure_session_resource_manifest_schema(conn)
+        await _ensure_session_resources_schema(conn)
     logger.info("database_initialized")
 
 

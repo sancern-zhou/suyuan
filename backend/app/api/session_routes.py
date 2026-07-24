@@ -26,7 +26,7 @@ from app.agent.resources.service import (
     ManifestPersistenceError,
     get_session_resource_manifest_service,
 )
-from app.agent.selection_context import serialize_conversation_files
+from app.agent.resources.resource_service import SessionResourceService
 
 logger = structlog.get_logger()
 
@@ -477,77 +477,55 @@ async def get_session_messages(
 @router.get("/{session_id}/resources")
 async def get_session_resources(
     session_id: str,
+    kind: Optional[str] = None,
+    presentation_type: Optional[str] = None,
+    role: Optional[str] = None,
+    status: str = "active",
+    limit: int = 100,
+    cursor: Optional[str] = None,
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
-    """List active uploaded and Agent-generated files available to the composer."""
+    """List the single authoritative resource collection for a session."""
     await catalog.require_read(session_id, user)
     try:
-        manifest = await get_session_resource_manifest_service().load(session_id)
-    except ManifestPersistenceError as exc:
+        page = await SessionResourceService.database().list_resources(
+            session_id,
+            kind=kind,
+            presentation_type=presentation_type,
+            role=role,
+            status=status,
+            limit=min(max(limit, 1), 200),
+            cursor=cursor,
+        )
+        resources = [
+            {
+                "resource_id": item.resource_id,
+                "resource_key": item.resource_key,
+                "kind": item.kind,
+                "role": item.role,
+                "label": item.label,
+                "locator": item.locator,
+                "presentation_type": item.presentation_type,
+                "presentation": item.presentation,
+                "metadata": item.metadata,
+                "tool_name": item.tool_name,
+                "run_id": item.run_id,
+                "turn_sequence": item.turn_sequence,
+                "status": item.status,
+                "created_at": item.created_at.isoformat(),
+                "updated_at": item.updated_at.isoformat(),
+            }
+            for item in page.resources
+        ]
+    except Exception as exc:
+        logger.error("session_resources_load_failed", session_id=session_id, error=str(exc))
         raise HTTPException(status_code=503, detail="resource_manifest_unavailable") from exc
-    resources = serialize_conversation_files(manifest.refs)
     return {
         "session_id": session_id,
         "resources": resources,
         "total": len(resources),
-        "resource_refs_version": manifest.version,
-    }
-
-
-@router.get("/{session_id}/visualizations")
-async def get_session_visualizations(
-    session_id: str,
-    user: CurrentUser = Depends(require_current_user),
-    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
-):
-    """
-    按需获取会话可视化数据。
-
-    restore 接口默认只返回聊天首屏，图表数据由前端在首屏渲染后自动加载。
-    """
-    row = await catalog.require_read(session_id, user)
-    if row.source != ConversationSource.WEB:
-        return {"session_id": session_id, "visualizations": [], "total": 0}
-    artifacts = await _get_session_artifacts(
-        session_id,
-        load_visualizations=True,
-        load_office_documents=False
-    )
-    visualizations = _sanitize_floats(artifacts["visualizations"])
-
-    return {
-        "session_id": session_id,
-        "visualizations": visualizations,
-        "total": len(visualizations)
-    }
-
-
-@router.get("/{session_id}/office-documents")
-async def get_session_office_documents(
-    session_id: str,
-    user: CurrentUser = Depends(require_current_user),
-    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
-):
-    """
-    按需获取会话文档/报告预览元数据。
-
-    restore 接口默认不返回这些预览，避免首屏触发 iframe 加载报告 HTML。
-    """
-    row = await catalog.require_read(session_id, user)
-    if row.source != ConversationSource.WEB:
-        return {"session_id": session_id, "office_documents": [], "total": 0}
-    artifacts = await _get_session_artifacts(
-        session_id,
-        load_visualizations=False,
-        load_office_documents=True
-    )
-    office_documents = _sanitize_floats(artifacts["office_documents"])
-
-    return {
-        "session_id": session_id,
-        "office_documents": office_documents,
-        "total": len(office_documents)
+        "next_cursor": page.next_cursor,
     }
 
 
@@ -724,84 +702,28 @@ async def restore_session(
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
 
-    metadata = session_data.get("metadata") or {}
-    office_documents = session_data.get("office_documents") or []
-    visualizations = metadata.get("visualizations") or []
-    visual_ids = session_data.get("visual_ids") or []
-    has_lazy_drawio_board = bool(metadata.get("drawio_board"))
-
-    # 根据lazy_artifacts模式决定是否提取消息中的图表和文档
-    if lazy_artifacts:
-        # 首屏模式：只统计数量，不遍历消息提取内容（性能优化）
-        from app.db.session_repository import get_session_repository
-
-        lazy_metadata = await get_session_repository().get_session_metadata(session_id) or {}
-        has_lazy_drawio_board = bool(lazy_metadata.get("drawio_board"))
-        has_lazy_visualizations = bool(visual_ids or visualizations)
-        visualization_count = len(visual_ids) if visual_ids else len(visualizations) if visualizations else 0
-        has_lazy_office_documents = bool(office_documents)
-        office_document_count = len(office_documents)
-    else:
-        # 完整模式：从消息中提取图表和文档（兼容旧数据）
-        message_visualizations = []
-        message_office_documents = []
-        loaded_messages = session_data.get("conversation_history", [])
-        if not visualizations and loaded_messages:
-            message_visualizations = _extract_visualizations_from_messages(loaded_messages)
-        if not office_documents and loaded_messages:
-            message_office_documents = _extract_office_documents_from_messages(loaded_messages)
-
-        has_lazy_visualizations = bool(visualizations or visual_ids or message_visualizations)
-        visualization_count = (
-            len(visualizations) if isinstance(visualizations, list) and visualizations
-            else len(visual_ids) if isinstance(visual_ids, list) and visual_ids
-            else len(message_visualizations)
-        )
-        has_lazy_office_documents = bool(office_documents or message_office_documents)
-        office_document_count = (
-            len(office_documents) if isinstance(office_documents, list) and office_documents
-            else len(message_office_documents)
-        )
+    resource_counts = {"total": 0, "documents": 0, "visualizations": 0, "files": 0}
+    try:
+        counts = await SessionResourceService.database().resource_counts(session_id)
+        resource_counts = {
+            "total": counts.total,
+            "documents": counts.documents,
+            "visualizations": counts.visualizations,
+            "files": counts.files,
+        }
+    except Exception as exc:
+        logger.warning("session_resource_counts_unavailable", session_id=session_id, error=str(exc))
 
     # 分页状态（从数据库查询结果获取）
     session_data["has_more_messages"] = pagination["has_more"]
     session_data["total_message_count"] = pagination["total_count"]
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
-    session_data["has_lazy_visualizations"] = has_lazy_visualizations
-    session_data["visualization_count"] = visualization_count
-    session_data["has_lazy_office_documents"] = has_lazy_office_documents
-    session_data["office_document_count"] = office_document_count
-    session_data["has_lazy_drawio_board"] = has_lazy_drawio_board
+    session_data["resource_counts"] = resource_counts
 
     if lazy_artifacts:
-        # 首屏恢复只带聊天内容，图表/文档预览由前端在消息显示后自动拉取。
-        if isinstance(session_data.get("metadata"), dict):
-            session_data["metadata"] = {
-                key: value
-                for key, value in session_data["metadata"].items()
-                if key != "visualizations"
-            }
-        session_data["office_documents"] = []
         session_data["conversation_history"] = _strip_lazy_artifacts(
             session_data.get("conversation_history", [])
         )
-
-    # ✅ 优先从数据库获取office_documents，如果没有再从react_agent的_session_store获取（兼容旧数据）
-    if not lazy_artifacts and not session_data.get("office_documents"):
-        try:
-            from app.routers.agent import multi_expert_agent_instance
-            if multi_expert_agent_instance and session_id in multi_expert_agent_instance._session_store:
-                session_store_data = multi_expert_agent_instance._session_store[session_id]
-                office_documents = session_store_data.get("office_documents", [])
-                if office_documents:
-                    session_data["office_documents"] = office_documents
-                    logger.info("[会话恢复] 从react_agent获取office_documents（内存降级）",
-                                session_id=session_id,
-                                count=len(office_documents))
-        except Exception as e:
-            logger.warning("[会话恢复] 获取office_documents失败",
-                          session_id=session_id,
-                          error=str(e))
 
     # 清理特殊浮点值，防止 JSON 序列化错误
     session_data = _sanitize_floats(session_data)
