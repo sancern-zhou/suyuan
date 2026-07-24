@@ -88,12 +88,19 @@ class _MemoryState:
 
 
 class SessionResourceService:
-    def __init__(self, state: _MemoryState | None = None):
+    def __init__(self, state: _MemoryState | None = None, repository=None):
         self._state = state or _MemoryState()
+        self._repository = repository
 
     @classmethod
     def in_memory(cls) -> "SessionResourceService":
         return cls(_MemoryState())
+
+    @classmethod
+    def database(cls) -> "SessionResourceService":
+        from app.db.session_resources_repository import SessionResourcesRepository
+
+        return cls(repository=SessionResourcesRepository())
 
     async def upsert_run_resources(
         self,
@@ -103,6 +110,10 @@ class SessionResourceService:
         *,
         turn_sequence: int = 0,
     ) -> ResourceBatchResult:
+        if self._repository is not None:
+            return await self._repository.upsert(
+                session_id, run_id, list(resources), turn_sequence=turn_sequence
+            )
         declarations = list(resources)
         if not declarations:
             return ResourceBatchResult(
@@ -140,6 +151,16 @@ class SessionResourceService:
         limit: int = 100,
         cursor: str | None = None,
     ) -> ResourcePage:
+        if self._repository is not None:
+            return await self._repository.list(
+                session_id,
+                kind=kind,
+                presentation_type=presentation_type,
+                role=role,
+                status=status,
+                limit=limit,
+                cursor=cursor,
+            )
         resources = await self._resources_for(session_id)
         filtered = [
             item for item in resources
@@ -154,6 +175,8 @@ class SessionResourceService:
         return ResourcePage(page, next_cursor)
 
     async def resource_counts(self, session_id: str) -> ResourceCounts:
+        if self._repository is not None:
+            return await self._repository.counts(session_id)
         resources = await self._resources_for(session_id)
         return ResourceCounts(
             total=len(resources),
@@ -163,9 +186,13 @@ class SessionResourceService:
         )
 
     async def delete_resource(self, session_id: str, resource_key: str) -> bool:
+        if self._repository is not None:
+            return await self._repository.delete_resource(session_id, resource_key)
         return self._state.resources.pop((session_id, resource_key), None) is not None
 
     async def delete_session_resources(self, session_id: str) -> bool:
+        if self._repository is not None:
+            return await self._repository.delete_session(session_id)
         keys = [key for key in self._state.resources if key[0] == session_id]
         for key in keys:
             self._state.resources.pop(key, None)
