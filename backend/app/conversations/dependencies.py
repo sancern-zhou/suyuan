@@ -2,12 +2,12 @@
 
 from .repository import ConversationCatalogRepository
 from .service import ConversationCatalogService
-from app.agent.resources.service import get_session_resource_manifest_service
+from app.agent.resources.resource_service import SessionResourceService
 
 
 _service = ConversationCatalogService(
     ConversationCatalogRepository(),
-    resource_manifest_service=get_session_resource_manifest_service(),
+    resource_manifest_service=SessionResourceService.database(),
 )
 
 
