@@ -23,12 +23,9 @@ import structlog
 from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.utils.path_config import get_uploads_dir
-from app.agent.resources.service import (
-    ManifestPersistenceError,
-    get_session_resource_manifest_service,
-)
-from app.agent.selection_context import build_uploaded_file_ref
-from app.agent.selection_context import mark_uploaded_file_missing
+from app.agent.resources.contracts import ResourceDeclaration, ResourceLocator
+from app.agent.resources.models import ResourceKind, ResourceRole
+from app.agent.resources.resource_service import SessionResourceService
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
@@ -255,20 +252,25 @@ async def upload_chat_file(
 
     resource_ref = None
     if session_id:
-        resource_ref = build_uploaded_file_ref(
-            file_id=file_id,
-            file_path=file_path,
-            filename=file.filename or "unnamed",
-            mime_type=file.content_type or "application/octet-stream",
-        )
         try:
-            await get_session_resource_manifest_service().merge(session_id, [resource_ref])
-        except ManifestPersistenceError as exc:
+            declaration = ResourceDeclaration(
+                kind=ResourceKind.FILE,
+                logical_key=f"upload:{file_id}",
+                role=ResourceRole.SOURCE,
+                label=file.filename or "unnamed",
+                locator=ResourceLocator(path=file_path),
+                metadata={"mime_type": file.content_type or "application/octet-stream", "file_id": file_id},
+                tool_name="upload_chat",
+            )
+            await SessionResourceService.database().upsert_run_resources(
+                session_id, f"upload:{file_id}", [declaration]
+            )
+        except Exception as exc:
             await db.execute(delete(UploadedFile).where(UploadedFile.id == file_id))
             await db.commit()
             if os.path.exists(file_path):
                 os.remove(file_path)
-            raise HTTPException(status_code=503, detail="resource_manifest_unavailable") from exc
+            raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
 
     logger.info(
         "file_uploaded",
@@ -431,14 +433,12 @@ async def delete_uploaded_file(
 
     if uploaded_file.session_id:
         try:
-            service = get_session_resource_manifest_service()
-            manifest = await service.load(uploaded_file.session_id)
-            updates = mark_uploaded_file_missing(manifest.refs, file_id)
-            if updates:
-                await service.merge(uploaded_file.session_id, updates)
-        except ManifestPersistenceError as exc:
+            await SessionResourceService.database().delete_resource(
+                uploaded_file.session_id, f"upload:{file_id}"
+            )
+        except Exception as exc:
             logger.error(
-                "deleted_upload_manifest_update_failed",
+                "deleted_upload_resource_update_failed",
                 file_id=file_id,
                 session_id=uploaded_file.session_id,
                 error=str(exc),

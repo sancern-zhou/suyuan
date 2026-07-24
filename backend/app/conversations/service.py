@@ -123,5 +123,5 @@ class ConversationCatalogService:
         catalog_deleted = await self.repository.delete(session_id)
         manifest_deleted = False
         if self.resource_manifest_service is not None:
-            manifest_deleted = await self.resource_manifest_service.delete(session_id)
+            manifest_deleted = await self.resource_manifest_service.delete_session_resources(session_id)
         return bool(catalog_deleted or manifest_deleted)
