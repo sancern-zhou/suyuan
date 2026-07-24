@@ -4,9 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from app.tools.resource_refs import build_artifact_ref, build_file_ref, merge_refs
-
-
 OFFICE_MIME_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -60,7 +57,7 @@ def attach_document_artifact(
     generator: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Attach artifact and artifacts fields while preserving legacy preview keys."""
+    """Attach one explicit document resource and the render payload."""
     preview = result_data.get(preview_key) if preview_key else None
     artifact = build_document_artifact(
         file_path,
@@ -72,21 +69,29 @@ def attach_document_artifact(
         metadata=metadata,
     )
     result_data["artifact"] = artifact
-    result_data["artifacts"] = [artifact]
-    result_data["refs"] = merge_refs(
-        result_data.get("refs"),
-        {
-            "files": [
-                build_file_ref(
-                    file_path,
-                    type="document",
-                    format=artifact.get("format"),
-                    usage="artifact",
-                )
-            ],
-            "artifacts": [build_artifact_ref(artifact)],
-        },
+    logical_key = str(
+        metadata.get("report_id") if isinstance(metadata, dict) and metadata.get("report_id")
+        else metadata.get("artifact_id") if isinstance(metadata, dict) and metadata.get("artifact_id")
+        else title or Path(file_path).stem
     )
+    result_data["resources"] = [{
+        "kind": "file",
+        "logical_key": logical_key,
+        "role": "report" if kind == "report" else "output",
+        "label": title or Path(file_path).name,
+        "locator": {"path": str(Path(file_path).resolve())},
+        "presentation_type": "document",
+        "presentation": {
+            "format": artifact.get("format") or "document",
+            "preview": preview or {},
+            "editable": bool(artifact.get("preview_panel", False)),
+        },
+        "metadata": {
+            "generator": generator,
+            "artifact_kind": kind,
+            "mime_type": artifact.get("mime_type"),
+        },
+    }]
     return result_data
 
 
@@ -107,6 +112,6 @@ def build_artifact_resume_context(
     if extra_resume:
         resume.update({key: value for key, value in extra_resume.items() if value is not None})
     return {
-        "refs": result_data.get("refs", {}),
+        "resources": result_data.get("resources", []),
         "llm_resume": resume,
     }

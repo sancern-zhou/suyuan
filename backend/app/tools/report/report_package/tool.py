@@ -30,7 +30,6 @@ from app.services.report_preview_refresh import (
 )
 from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_refs import build_file_ref, build_url_ref, merge_refs
 from app.utils.path_config import get_images_dir
 
 logger = structlog.get_logger()
@@ -760,35 +759,6 @@ format:
             generator="create_report_package",
             metadata={"report_id": safe_id},
         )
-        extra_refs = {}
-        extra_file_refs = []
-        if source_qmd:
-            extra_file_refs.append(
-                build_file_ref(
-                    source_qmd,
-                    type="document",
-                    format=source_qmd.suffix.lstrip(".") or "qmd",
-                    usage="source",
-                )
-            )
-        if html_preview and html_path:
-            extra_file_refs.append(
-                build_file_ref(
-                    html_path,
-                    type="document",
-                    format="html",
-                    usage="preview",
-                    report_id=safe_id,
-                )
-            )
-            html_url = html_preview.get("html_url") if isinstance(html_preview, dict) else None
-            if html_url:
-                extra_refs["urls"] = [build_url_ref(html_url, usage="display", source="html_preview")]
-        if extra_file_refs:
-            extra_refs["files"] = extra_file_refs
-        if extra_refs:
-            data["refs"] = merge_refs(data.get("refs"), extra_refs)
-
         primary_artifact_path = str(html_path) if html_preview and html_path else str(qmd_path)
         resume_context = build_artifact_resume_context(
             data,
