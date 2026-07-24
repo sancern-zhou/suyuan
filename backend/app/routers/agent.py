@@ -25,10 +25,7 @@ from app.agent.selection_context import (
     resource_refs_to_message_attachments,
     select_conversation_files,
 )
-from app.agent.resources.service import (
-    ManifestPersistenceError,
-    get_session_resource_manifest_service,
-)
+from app.agent.resources.resource_service import SessionResourceService
 from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
@@ -831,18 +828,18 @@ async def analyze_stream(
         selected_resource_refs = []
         if request.context_refs:
             try:
-                resource_manifest = await get_session_resource_manifest_service().load(actual_session_id)
-                selected_resource_refs = select_conversation_files(
-                    resource_manifest.refs,
-                    [ref.resource_id for ref in request.context_refs],
-                )
+                page = await SessionResourceService.database().list_resources(actual_session_id, limit=1000)
+                requested_ids = {ref.resource_id for ref in request.context_refs}
+                selected_resource_refs = [ref for ref in page.resources if ref.resource_id in requested_ids]
+                if len(selected_resource_refs) != len(requested_ids):
+                    raise InvalidContextReference("one or more context resources were not found")
             except InvalidContextReference as exc:
                 raise HTTPException(
                     status_code=409,
                     detail={"code": "invalid_context_reference", "message": str(exc)},
                 ) from exc
-            except ManifestPersistenceError as exc:
-                raise HTTPException(status_code=503, detail="resource_manifest_unavailable") from exc
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
 
         analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
         analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
