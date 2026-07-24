@@ -107,9 +107,6 @@ class SessionManagerDB:
                     mode=metadata.get("mode"),
                     current_step=session.current_step,
                     current_expert=session.current_expert,
-                    data_ids=session.data_ids,
-                    visual_ids=session.visual_ids,
-                    office_documents=session.office_documents,
                     error=session.error,
                     metadata=metadata
                 )
@@ -120,7 +117,6 @@ class SessionManagerDB:
                     query=session.query,
                     mode=session.metadata.get("mode"),
                     metadata=session.metadata,
-                    office_documents=session.office_documents
                 )
 
             # 保存对话历史：默认走增量追加，避免全量 DELETE + INSERT 阻塞 SSE 首包。
@@ -262,9 +258,6 @@ class SessionManagerDB:
                 created_at=datetime.fromisoformat(session_dict["created_at"]) if session_dict["created_at"] else None,
                 updated_at=datetime.fromisoformat(session_dict["updated_at"]) if session_dict["updated_at"] else None,
                 conversation_history=session_dict["conversation_history"],
-                data_ids=session_dict["data_ids"],
-                visual_ids=session_dict["visual_ids"],
-                office_documents=session_dict.get("office_documents", []),
                 metadata=session_dict["metadata"],
                 error=session_dict["error"],
                 current_step=session_dict.get("current_step"),
@@ -313,9 +306,6 @@ class SessionManagerDB:
                 if conversation_history is not None
                 else session_dict["conversation_history"]
             ),
-            data_ids=session_dict["data_ids"],
-            visual_ids=session_dict["visual_ids"],
-            office_documents=session_dict.get("office_documents", []),
             metadata=metadata,
             error=session_dict["error"],
             current_step=session_dict.get("current_step"),
@@ -564,9 +554,6 @@ class SessionManagerDB:
                 created_at=datetime.fromisoformat(session_dict["created_at"]) if session_dict["created_at"] else None,
                 updated_at=datetime.fromisoformat(session_dict["updated_at"]) if session_dict["updated_at"] else None,
                 conversation_history=session_dict["conversation_history"],  # 只包含最新N条
-                data_ids=session_dict["data_ids"],
-                visual_ids=session_dict["visual_ids"],
-                office_documents=session_dict.get("office_documents", []),
                 metadata=session_dict["metadata"],
                 error=session_dict["error"],
                 current_step=session_dict.get("current_step"),
