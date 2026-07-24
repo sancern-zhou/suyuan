@@ -47,9 +47,6 @@ class Session(BaseModel):
     current_step: Optional[str] = Field(default=None, description="当前执行步骤")
     current_expert: Optional[str] = Field(default=None, description="当前执行的专家")
 
-    # 结果数据
-    data_ids: List[str] = Field(default_factory=list, description="生成的数据ID列表")
-    visual_ids: List[str] = Field(default_factory=list, description="生成的可视化ID列表")
 
     # 子Agent专用字段
     parent_mode: Optional[str] = Field(
@@ -65,11 +62,6 @@ class Session(BaseModel):
         description="是否为子Agent session"
     )
 
-    # Office文档预览数据（用于历史对话恢复PDF预览）
-    office_documents: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="Office文档PDF预览元数据列表"
-    )
 
     # 元数据
     metadata: Dict[str, Any] = Field(default_factory=dict, description="会话元数据")
@@ -89,8 +81,8 @@ class Session(BaseModel):
             query=self.query,
             created_at=self.created_at,
             updated_at=self.updated_at,
-            data_count=len(self.data_ids),
-            visual_count=len(self.visual_ids),
+            data_count=0,
+            visual_count=0,
             has_error=self.error is not None,
             metadata=self.metadata
         )

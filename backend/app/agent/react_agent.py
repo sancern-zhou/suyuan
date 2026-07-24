@@ -202,10 +202,6 @@ class ReActAgent:
         collected_data_ids = entry.get("collected_data_ids", [])
         collected_visuals = entry.get("collected_visuals", [])
 
-        if collected_data_ids:
-            session.data_ids = collected_data_ids
-            logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
-
         if collected_visuals:
             ConversationPersistenceService().append_metadata(
                 session,
@@ -215,13 +211,6 @@ class ReActAgent:
                 "visualizations_merged_into_metadata",
                 session_id=session.session_id,
                 visuals_count=len(session.metadata.get("visualizations") or []),
-            )
-
-        office_docs = entry.get("office_documents", [])
-        if office_docs:
-            session.office_documents = ReActAgent._trim_office_documents(
-                office_docs,
-                ReActAgent.OFFICE_DOCUMENT_STORE_LIMIT,
             )
 
         if entry.get("has_error"):
@@ -1423,8 +1412,7 @@ class ReActAgent:
                             "react_session_restored_from_manager",
                             session_id=session_id,
                             history_length=len(saved_session.conversation_history),
-                            has_data_ids=bool(saved_session.data_ids),
-                            data_ids_count=len(saved_session.data_ids) if saved_session.data_ids else 0
+                            resource_store="unified",
                         )
 
                         # 创建新的 memory_manager（但会从 saved_session 恢复历史）
@@ -1465,9 +1453,8 @@ class ReActAgent:
                             "memory": memory_manager,
                             "created": datetime.utcnow(),
                             "last_used": datetime.utcnow(),
-                            "collected_data_ids": list(saved_session.data_ids or []),
-                            "collected_visuals": saved_visualizations,
-                            "office_documents": list(saved_session.office_documents or []),
+                            "collected_data_ids": [],
+                            "collected_visuals": [],
                         }
 
                         return session_id, memory_manager, False  # False 表示不是新建，是恢复的
