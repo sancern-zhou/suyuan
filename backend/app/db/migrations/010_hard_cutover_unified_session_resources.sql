@@ -6,3 +6,8 @@ CREATE TABLE IF NOT EXISTS session_resource_versions (
     version INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE IF EXISTS sessions
+    DROP COLUMN IF EXISTS data_ids,
+    DROP COLUMN IF EXISTS visual_ids,
+    DROP COLUMN IF EXISTS office_documents;
