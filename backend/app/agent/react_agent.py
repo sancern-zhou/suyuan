@@ -23,17 +23,13 @@ from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
 from .session.conversation_persistence import ConversationPersistenceService
-from .resources.manifest import derive_legacy_views, project_session_resources
 from .resources.models import SessionResourceRef
 from .resources.runtime import (
-    RunReferenceAccumulator,
+    RunResourceAccumulator,
     event_turn_sequence,
     flush_resource_accumulator,
 )
-from .resources.service import (
-    ManifestPersistenceError,
-    get_session_resource_manifest_service,
-)
+from .resources.resource_service import SessionResourceService
 from .selection_context import (
     resource_refs_to_runtime_attachments,
     selected_resource_projection,
@@ -602,9 +598,9 @@ class ReActAgent:
         )
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
-        resource_manifest_service = get_session_resource_manifest_service()
-        resource_accumulator = RunReferenceAccumulator(run_id="")
-        resource_manifest_flushed = False
+        resource_service = SessionResourceService.database()
+        resource_accumulator = RunResourceAccumulator(run_id="")
+        resource_flushed = False
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
@@ -651,38 +647,14 @@ class ReActAgent:
             )
 
             try:
-                saved_manifest = await resource_manifest_service.load(actual_session_id)
-                registry = getattr(run_executor, "tool_registry", {}) or {}
-                available_tools = set(registry.keys()) if isinstance(registry, dict) else set()
-                projected_refs = selected_resource_projection(
-                    selected_resource_refs,
-                    saved_refs=saved_manifest.refs,
-                )
-                react_loop.context_builder.session_resource_context = project_session_resources(
-                    projected_refs,
-                    query=user_query,
-                    available_tools=available_tools,
-                    preferred_ref_ids=[
-                        ref.ref_id for ref in selected_resource_refs or []
-                    ],
-                    max_chars=8000,
-                ) or None
-                if react_loop.context_builder.session_resource_context:
-                    logger.info(
-                        "session_resource_context_projected",
-                        session_id=actual_session_id,
-                        mode=manual_mode or "expert",
-                        version=saved_manifest.version,
-                        resource_count=len(projected_refs),
-                        context_length=len(react_loop.context_builder.session_resource_context),
+                resource_page = await resource_service.list_resources(actual_session_id, limit=100)
+                if resource_page.resources:
+                    react_loop.context_builder.session_resource_context = "\n".join(
+                        f"- {item.resource_id} | {item.kind} | {item.label} | {next(iter(item.locator.values()))}"
+                        for item in resource_page.resources
                     )
-            except ManifestPersistenceError as exc:
-                logger.error(
-                    "session_resource_context_load_failed",
-                    session_id=actual_session_id,
-                    mode=manual_mode or "expert",
-                    error=str(exc),
-                )
+            except Exception as exc:
+                logger.error("session_resource_context_load_failed", session_id=actual_session_id, error=str(exc))
 
             if selected_skill_context:
                 react_loop.context_builder.selected_skill_context = selected_skill_context
@@ -804,7 +776,6 @@ class ReActAgent:
                     event,
                     turn_sequence=event_turn_sequence(event_data),
                 )
-                self._capture_office_document(actual_session_id, event)
 
                 if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
                     terminal_data = event.setdefault("data", {})
@@ -816,45 +787,40 @@ class ReActAgent:
                     )
                     manifest = None
                     if owns_run:
-                        manifest = await flush_resource_accumulator(
-                            resource_manifest_service,
+                        result = await flush_resource_accumulator(
+                            resource_service,
                             actual_session_id,
                             resource_accumulator,
                             terminal_data,
                         )
-                        resource_manifest_flushed = bool(resource_accumulator.refs)
-                    elif resource_accumulator.refs:
-                        resource_manifest_flushed = True
-                        terminal_data["resource_refs_durable"] = False
-                        terminal_data["resource_refs_error"] = "stale_run_write_skipped"
+                        resource_flushed = bool(resource_accumulator.resources)
+                    elif resource_accumulator.resources:
+                        resource_flushed = True
+                        terminal_data["resource_durable"] = False
+                        terminal_data["resource_error"] = "stale_run_write_skipped"
                         logger.info(
                             "stale_run_resource_manifest_merge_skipped",
                             session_id=actual_session_id,
                             run_id=active_run_id,
                         )
-                    if manifest is not None:
-                        views = derive_legacy_views(manifest.refs)
-                        entry = self._session_store.setdefault(actual_session_id, {})
-                        entry["collected_data_ids"] = views.data_ids
-                        entry["office_documents"] = views.office_documents
-                        entry["resource_refs_version"] = manifest.version
+                    if result is not None:
                         logger.info(
-                            "session_resource_manifest_merged",
+                            "session_resources_merged",
                             session_id=actual_session_id,
                             run_id=active_run_id,
                             mode=manual_mode or "expert",
-                            version=manifest.version,
-                            resource_count=len(manifest.refs),
-                            extracted_count=len(resource_accumulator.refs),
+                            version=result.version,
+                            resource_count=len(result.resources),
+                            extracted_count=len(resource_accumulator.resources),
                             rejected_count=len(resource_accumulator.rejected),
                         )
-                    elif terminal_data.get("resource_refs_durable") is False:
+                    elif terminal_data.get("resource_durable") is False:
                         logger.error(
-                            "session_resource_manifest_merge_failed",
+                            "session_resources_merge_failed",
                             session_id=actual_session_id,
                             run_id=active_run_id,
                             mode=manual_mode or "expert",
-                            extracted_count=len(resource_accumulator.refs),
+                            extracted_count=len(resource_accumulator.resources),
                         )
 
                 if self._should_run_report_auto_followup(
@@ -897,37 +863,38 @@ class ReActAgent:
 
             if await run_ownership_registry.can_write(actual_session_id, active_run_id):
                 await flush_resource_accumulator(
-                    resource_manifest_service,
+                    resource_service,
                     actual_session_id,
                     resource_accumulator,
                     fatal_event["data"],
                 )
-            elif resource_accumulator.refs:
+            elif resource_accumulator.resources:
                 fatal_event["data"].update({
-                    "resource_refs_durable": False,
-                    "resource_refs_error": "stale_run_write_skipped",
+                    "resource_durable": False,
+                    "resource_error": "stale_run_write_skipped",
                 })
-            resource_manifest_flushed = bool(resource_accumulator.refs)
+            resource_flushed = bool(resource_accumulator.resources)
             yield fatal_event
         finally:
-            if resource_accumulator.refs and not resource_manifest_flushed:
+            if resource_accumulator.resources and not resource_flushed:
                 try:
                     from app.agent.runtime.ownership import run_ownership_registry
 
                     if await run_ownership_registry.can_write(actual_session_id, active_run_id):
-                        await resource_manifest_service.merge(
+                        await resource_service.upsert_run_resources(
                             actual_session_id,
-                            resource_accumulator.refs,
+                            resource_accumulator.run_id,
+                            resource_accumulator.resources,
                         )
                     else:
                         logger.info(
-                            "stale_run_resource_manifest_finally_flush_skipped",
+                            "stale_run_resources_finally_flush_skipped",
                             session_id=actual_session_id,
                             run_id=active_run_id,
                         )
-                except ManifestPersistenceError as exc:
+                except Exception as exc:
                     logger.error(
-                        "session_resource_manifest_finally_flush_failed",
+                        "session_resources_finally_flush_failed",
                         session_id=actual_session_id,
                         run_id=active_run_id,
                         mode=manual_mode or "expert",
@@ -1026,76 +993,6 @@ class ReActAgent:
                     logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
             await self._mark_session_used(actual_session_id)
-
-    def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
-        """Persist document preview metadata emitted during a run."""
-        if event.get("type") not in {"office_document", "html_document"} or not event.get("data"):
-            return
-
-        office_doc_data = event["data"]
-        if session_id not in self._session_store:
-            self._session_store[session_id] = {}
-        if "office_documents" not in self._session_store[session_id]:
-            self._session_store[session_id]["office_documents"] = []
-
-        doc_entry = {
-            "pdf_preview": office_doc_data.get("pdf_preview"),
-            "markdown_preview": office_doc_data.get("markdown_preview"),
-            "html_preview": office_doc_data.get("html_preview"),
-            "svg_preview": office_doc_data.get("svg_preview"),
-            "spreadsheet_preview": office_doc_data.get("spreadsheet_preview"),
-            "file_name": office_doc_data.get("file_name"),
-            "file_path": office_doc_data.get("file_path"),
-            "file_type": office_doc_data.get("file_type"),
-            "generator": office_doc_data.get("generator"),
-            "summary": office_doc_data.get("summary"),
-            "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
-            "related_files": office_doc_data.get("related_files"),
-            "artifacts": office_doc_data.get("artifacts"),
-            "refs": office_doc_data.get("refs"),
-            "assets": office_doc_data.get("assets"),
-            "metadata": office_doc_data.get("metadata"),
-        }
-        doc_entry = {k: v for k, v in doc_entry.items() if v is not None}
-
-        file_path = (
-            doc_entry.get("file_path")
-            or doc_entry.get("html_preview", {}).get("html_id")
-            or doc_entry.get("pdf_preview", {}).get("pdf_id")
-            or doc_entry.get("svg_preview", {}).get("svg_path")
-        )
-        if file_path:
-            doc_entry["file_path"] = file_path
-        existing = self._session_store[session_id]["office_documents"]
-        existing_index = next(
-            (index for index, item in enumerate(existing) if item.get("file_path") == file_path),
-            -1,
-        )
-        if existing_index >= 0:
-            existing[existing_index] = {
-                **existing[existing_index],
-                **doc_entry,
-            }
-            logger.info(
-                "office_document_updated_in_session",
-                session_id=session_id,
-                file_path=file_path,
-                generator=doc_entry["generator"],
-                total_documents=len(existing),
-            )
-        else:
-            existing.append(doc_entry)
-            logger.info(
-                "office_document_saved_to_session",
-                session_id=session_id,
-                file_path=file_path,
-                generator=doc_entry["generator"],
-                total_documents=len(existing),
-            )
-        self._session_store[session_id]["office_documents"] = self._trim_office_documents(
-            existing,
-            self.OFFICE_DOCUMENT_STORE_LIMIT,
-        )
 
     def _should_run_report_auto_followup(
         self,
