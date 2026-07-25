@@ -87,7 +87,23 @@ export function useSessionManagement(store) {
         getSessionOfficeDocuments(sessionId)
           .then(response => {
             if (store.currentState.sessionId !== sessionId) return
-            const officeDocs = response?.resources || []
+            const officeDocs = (response?.resources || []).map(resource => {
+              const locator = resource.locator || {}
+              const presentation = resource.presentation || {}
+              const preview = presentation.preview || {}
+              return {
+                ...resource,
+                file_name: resource.label,
+                file_path: locator.path,
+                pdf_preview: preview.pdf_preview || preview,
+                pdf_url: preview.pdf_url,
+                html_preview: preview.html_preview,
+                html_url: preview.html_url,
+                markdown_preview: preview.markdown_preview,
+                svg_preview: preview.svg_preview,
+                spreadsheet_preview: preview.spreadsheet_preview,
+              }
+            })
             console.log('[会话恢复] 文档延迟加载完成:', officeDocs.length)
             if (officeDocs.length > 0) {
               if (typeof store.setOfficeDocumentHistory === 'function') {
