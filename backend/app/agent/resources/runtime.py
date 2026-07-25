@@ -56,9 +56,10 @@ async def flush_resource_accumulator(
             accumulator.resources,
             turn_sequence=turn_sequence,
         )
-    except Exception:
+    except Exception as exc:
         terminal_data["resource_durable"] = False
         terminal_data["resource_error"] = "resource_persistence_failed"
+        terminal_data["resource_error_detail"] = str(exc)[:500]
         return None
     terminal_data["resource_version"] = result.version
     terminal_data["resource_durable"] = True

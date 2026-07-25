@@ -810,6 +810,7 @@ class ReActAgent:
                             run_id=active_run_id,
                             mode=manual_mode or "expert",
                             extracted_count=len(resource_accumulator.resources),
+                            error=terminal_data.get("resource_error_detail"),
                         )
 
                 if self._should_run_report_auto_followup(
