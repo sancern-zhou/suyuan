@@ -677,9 +677,21 @@ async def restore_session(
     session_data["total_message_count"] = pagination["total_count"]
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
     session_data["resource_counts"] = resource_counts
+    # 轻量恢复 deliberately 不加载 artifacts，因而 session_data 中可能没有
+    # session_metadata。画板仍按需从 metadata 读取；不能因为首屏省略 metadata
+    # 就把已有画板错误标记为不存在，否则前端不会调度 /drawio-board。
+    drawio_metadata = session_data.get("metadata")
+    if not isinstance(drawio_metadata, dict):
+        try:
+            from app.db.session_repository import get_session_repository
+
+            drawio_metadata = await get_session_repository().get_session_metadata(session_id)
+        except Exception as exc:
+            logger.warning("session_drawio_board_flag_unavailable", session_id=session_id, error=str(exc))
+            drawio_metadata = None
     session_data["has_lazy_drawio_board"] = bool(
-        isinstance(session_data.get("metadata"), dict)
-        and session_data["metadata"].get("drawio_board")
+        isinstance(drawio_metadata, dict)
+        and isinstance(drawio_metadata.get("drawio_board"), dict)
     )
 
     if lazy_artifacts:
