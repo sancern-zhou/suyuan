@@ -148,7 +148,7 @@ async def _ensure_session_resources_schema(conn) -> None:
         CREATE TABLE IF NOT EXISTS session_resources (
             session_id VARCHAR(255) NOT NULL,
             resource_key VARCHAR(255) NOT NULL,
-            resource_id UUID NOT NULL UNIQUE,
+            resource_id VARCHAR(64) NOT NULL UNIQUE,
             kind VARCHAR(32) NOT NULL,
             role VARCHAR(64) NOT NULL,
             logical_key VARCHAR(255) NOT NULL,
@@ -180,7 +180,12 @@ async def _ensure_session_resources_schema(conn) -> None:
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """
+        """,
+        """
+        ALTER TABLE IF EXISTS session_resources
+            ALTER COLUMN resource_id TYPE VARCHAR(64)
+            USING resource_id::text
+        """
     Dependency for FastAPI endpoints to get database session.
 
     Usage:
