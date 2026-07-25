@@ -159,6 +159,7 @@ class ReadPptxTool(LLMTool):
             return {
                 "success": True,
                 "data": result_data,
+                "resources": result_data.get("resources", []),
                 "summary": f"已读取 {file_path.name}，共 {slide_total} 页，返回 {len(slides)} 页内容",
             }
         except Exception as e:
