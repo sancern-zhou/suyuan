@@ -146,7 +146,7 @@ def get_max_size(content_type: str, filename: str = None) -> int:
 @router.post("/chat")
 async def upload_chat_file(
     file: UploadFile = File(...),
-    session_id: str = Form(...),
+    session_id: str = Form(..., min_length=1),
     mode: str = Form("assistant"),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(require_current_user),
@@ -259,13 +259,35 @@ async def upload_chat_file(
                 role=ResourceRole.SOURCE,
                 label=file.filename or "unnamed",
                 locator=ResourceLocator(path=file_path),
-                metadata={"mime_type": file.content_type or "application/octet-stream", "file_id": file_id},
+                metadata={
+                    "mime_type": file.content_type or "application/octet-stream",
+                    "file_id": file_id,
+                    "source": "user_upload",
+                },
                 tool_name="upload_chat",
             )
-            await SessionResourceService.database().upsert_run_resources(
+            resource_batch = await SessionResourceService.database().upsert_run_resources(
                 session_id, f"upload:{file_id}", [declaration]
             )
+            resource_ref = next(
+                (
+                    item
+                    for item in resource_batch.resources
+                    if item.resource_key == declaration.resource_key()
+                ),
+                None,
+            )
+            if resource_ref is None:
+                raise RuntimeError("uploaded resource missing from resource store result")
         except Exception as exc:
+            logger.error(
+                "session_resource_registration_failed",
+                file_id=file_id,
+                session_id=session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             await db.execute(delete(UploadedFile).where(UploadedFile.id == file_id))
             await db.commit()
             if os.path.exists(file_path):
@@ -294,11 +316,13 @@ async def upload_chat_file(
         "upload_time": uploaded_file.created_at.isoformat(),
         "resource_ref": (
             {
-                "ref_id": resource_ref.ref_id,
-                "kind": resource_ref.kind.value,
-                "role": resource_ref.role.value,
+                "ref_id": resource_ref.resource_id,
+                "resource_id": resource_ref.resource_id,
+                "resource_key": resource_ref.resource_key,
+                "kind": resource_ref.kind,
+                "role": resource_ref.role,
                 "label": resource_ref.label,
-                "status": resource_ref.status.value,
+                "status": resource_ref.status,
                 "created_at": resource_ref.created_at.isoformat(),
                 "metadata": resource_ref.metadata,
             }

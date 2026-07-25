@@ -458,6 +458,7 @@ async def get_session_resources(
         )
         resources = [
             {
+                "ref_id": item.resource_id,
                 "resource_id": item.resource_id,
                 "resource_key": item.resource_key,
                 "kind": item.kind,

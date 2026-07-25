@@ -23,13 +23,12 @@ from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
 from .session.conversation_persistence import ConversationPersistenceService
-from .resources.models import SessionResourceRef
 from .resources.runtime import (
     RunResourceAccumulator,
     event_turn_sequence,
     flush_resource_accumulator,
 )
-from .resources.resource_service import SessionResourceService
+from .resources.resource_service import SessionResourceService, StoredResource
 from .selection_context import (
     resource_refs_to_runtime_attachments,
     selected_resource_projection,
@@ -365,7 +364,7 @@ class ReActAgent:
         manual_mode: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         selected_skill_context: Optional[str] = None,
-        selected_resource_refs: Optional[List[SessionResourceRef]] = None,
+        selected_resource_refs: Optional[List[StoredResource]] = None,
         user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
         social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
         social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）

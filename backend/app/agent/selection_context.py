@@ -1,8 +1,9 @@
 """Resolve explicit skill and conversation-file selections for one agent turn."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.agent.resources.models import (
@@ -12,6 +13,8 @@ from app.agent.resources.models import (
     ResourceStatus,
     SessionResourceRef,
 )
+from app.agent.resources.resource_service import StoredResource
+
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "docs" / "skills"
 
 
@@ -198,25 +201,24 @@ def serialize_conversation_files(refs: list[SessionResourceRef]) -> list[dict]:
 
 
 def resource_refs_to_runtime_attachments(
-    refs: list[SessionResourceRef],
+    refs: Sequence[StoredResource],
 ) -> list[dict[str, str]]:
     """Convert selected image refs into native multimodal planner attachments."""
     attachments: list[dict[str, str]] = []
     for ref in refs:
         mime_type = str(ref.metadata.get("mime_type") or "")
-        locator = ref.locator
-        path = locator.get("path") if isinstance(locator, dict) else locator.path
+        path = ref.locator.get("path")
         if not mime_type.startswith("image/"):
             continue
-        if ref.status is not ResourceStatus.ACTIVE:
-            raise ValueError(f"current_turn_image_invalid: {getattr(ref, 'ref_id', getattr(ref, 'resource_id', 'unknown'))}")
+        if ref.status != ResourceStatus.ACTIVE.value:
+            raise ValueError(f"current_turn_image_invalid: {ref.resource_id}")
         if not path:
-            raise ValueError(f"current_turn_image_invalid: {getattr(ref, 'ref_id', getattr(ref, 'resource_id', 'unknown'))}")
+            raise ValueError(f"current_turn_image_invalid: {ref.resource_id}")
         resolved_path = Path(path).resolve()
         if not resolved_path.exists() or not resolved_path.is_file():
-            raise ValueError(f"current_turn_image_missing: {getattr(ref, 'ref_id', getattr(ref, 'resource_id', 'unknown'))}")
+            raise ValueError(f"current_turn_image_missing: {ref.resource_id}")
         attachments.append({
-            "file_id": str(ref.metadata.get("file_id") or getattr(ref, "ref_id", getattr(ref, "resource_id", ""))),
+            "file_id": str(ref.metadata.get("file_id") or ref.resource_id),
             "name": ref.label,
             "type": "image",
             "mime_type": mime_type,
@@ -227,7 +229,7 @@ def resource_refs_to_runtime_attachments(
 
 
 def resource_refs_to_message_attachments(
-    refs: list[SessionResourceRef],
+    refs: Sequence[StoredResource],
 ) -> list[dict[str, str]]:
     """Project selected refs into the public attachment contract used by chat UI."""
     attachments: list[dict[str, str]] = []

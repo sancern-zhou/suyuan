@@ -151,11 +151,11 @@ async def _ensure_session_resources_schema(conn) -> None:
             resource_id VARCHAR(64) NOT NULL UNIQUE,
             kind VARCHAR(32) NOT NULL,
             role VARCHAR(64) NOT NULL,
-            logical_key VARCHAR(255) NOT NULL,
+            logical_key VARCHAR(255),
             label VARCHAR(512) NOT NULL,
             locator JSONB NOT NULL,
-            presentation_type VARCHAR(32) NOT NULL,
-            presentation JSONB NOT NULL DEFAULT '{}'::jsonb,
+            presentation_type VARCHAR(32),
+            presentation JSONB,
             metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
             tool_name VARCHAR(255) NOT NULL DEFAULT '',
             run_id VARCHAR(255),
@@ -177,6 +177,12 @@ async def _ensure_session_resources_schema(conn) -> None:
         ALTER TABLE IF EXISTS session_resources
             ALTER COLUMN resource_id TYPE VARCHAR(64)
             USING resource_id::text
+        """,
+        """
+        ALTER TABLE IF EXISTS session_resources
+            ALTER COLUMN logical_key DROP NOT NULL,
+            ALTER COLUMN presentation_type DROP NOT NULL,
+            ALTER COLUMN presentation DROP NOT NULL
         """,
     )
     for statement in statements:
