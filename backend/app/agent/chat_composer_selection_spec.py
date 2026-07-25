@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
@@ -12,6 +12,7 @@ from app.agent.resources.models import (
     ResourceStatus,
     SessionResourceRef,
 )
+from app.agent.resources.resource_service import StoredResource
 from app.agent.selection_context import (
     InvalidContextReference,
     build_uploaded_file_ref,
@@ -19,16 +20,16 @@ from app.agent.selection_context import (
     load_skill_selection,
     mark_uploaded_file_missing,
     resource_refs_to_message_attachments,
-    selected_resource_projection,
     resource_refs_to_runtime_attachments,
     select_conversation_files,
+    selected_resource_projection,
     serialize_conversation_files,
 )
 from app.routers.agent import AgentAnalyzeRequest
 
 
 def _ref(ref_id: str, *, kind=ResourceKind.FILE, status=ResourceStatus.ACTIVE):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return SessionResourceRef(
         ref_id=ref_id,
         kind=kind,
@@ -41,6 +42,40 @@ def _ref(ref_id: str, *, kind=ResourceKind.FILE, status=ResourceStatus.ACTIVE):
         status=status,
         created_at=now,
         last_seen_at=now,
+    )
+
+
+def _stored_resource(
+    tmp_path,
+    *,
+    resource_id: str = "resource-1",
+    file_id: str = "file-1",
+    filename: str = "upload.png",
+    mime_type: str = "image/png",
+    status: str = "active",
+    create_file: bool = True,
+) -> StoredResource:
+    path = tmp_path / filename
+    if create_file:
+        path.write_bytes(b"data")
+    now = datetime.now(UTC)
+    return StoredResource(
+        session_id="session-1",
+        resource_key=f"upload:{file_id}",
+        resource_id=resource_id,
+        kind="file",
+        role="source",
+        label=filename,
+        locator={"path": str(path)},
+        presentation_type=None,
+        presentation=None,
+        metadata={"file_id": file_id, "mime_type": mime_type},
+        tool_name="upload_chat",
+        run_id=f"upload:{file_id}",
+        turn_sequence=0,
+        status=status,
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -106,11 +141,12 @@ def test_prompt_resource_projection_keeps_saved_refs_without_explicit_selection(
 
 
 def test_current_turn_image_ref_must_resolve_to_an_existing_file(tmp_path):
-    missing = build_uploaded_file_ref(
+    missing = _stored_resource(
+        tmp_path,
+        resource_id="missing-image-resource",
         file_id="missing-image",
-        file_path=str(tmp_path / "missing.png"),
         filename="missing.png",
-        mime_type="image/png",
+        create_file=False,
     )
 
     with pytest.raises(ValueError, match="current_turn_image_missing"):
@@ -177,27 +213,36 @@ def test_uploaded_files_are_safe_to_list_and_images_support_native_input(tmp_pat
     assert payload["metadata"]["source"] == "user_upload"
     assert payload["metadata"]["file_id"] == "file-1"
     assert "locator" not in payload
-    assert resource_refs_to_runtime_attachments([file_ref]) == []
 
-    image = tmp_path / "image.png"
-    image.write_bytes(b"png")
-    image_ref = build_uploaded_file_ref(
-        file_id="image-1",
-        file_path=str(image),
-        filename="现场.png",
-        mime_type="image/png",
+    non_image = _stored_resource(
+        tmp_path,
+        file_id="file-1",
+        filename="upload.xlsx",
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    assert resource_refs_to_runtime_attachments([image_ref])[0]["local_path"] == str(image.resolve())
+    assert resource_refs_to_runtime_attachments([non_image]) == []
+
+
+def test_persisted_uploaded_image_supports_native_input(tmp_path):
+    image_ref = _stored_resource(
+        tmp_path, file_id="image-1", filename="persisted-image.png"
+    )
+
+    assert resource_refs_to_runtime_attachments([image_ref])[0]["local_path"] == str(
+        (tmp_path / "persisted-image.png").resolve()
+    )
+
+
+def test_inactive_persisted_image_is_rejected(tmp_path):
+    image_ref = _stored_resource(tmp_path, status="missing")
+
+    with pytest.raises(ValueError, match="current_turn_image_invalid: resource-1"):
+        resource_refs_to_runtime_attachments([image_ref])
 
 
 def test_uploaded_image_ref_builds_safe_message_attachment(tmp_path):
-    image = tmp_path / "image.png"
-    image.write_bytes(b"png")
-    image_ref = build_uploaded_file_ref(
-        file_id="image-1",
-        file_path=str(image),
-        filename="现场.png",
-        mime_type="image/png",
+    image_ref = _stored_resource(
+        tmp_path, file_id="image-1", filename="现场.png"
     )
 
     assert resource_refs_to_message_attachments([image_ref]) == [{
