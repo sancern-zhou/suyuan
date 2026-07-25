@@ -93,15 +93,19 @@ export function useSessionManagement(store) {
               const preview = presentation.preview?.pdf_preview || presentation.preview || {}
               const pdfId = preview.pdf_id || preview.pdfId
               const pdfUrl = preview.pdf_url || (pdfId ? `/api/office/pdf/${encodeURIComponent(pdfId)}` : undefined)
+              const format = String(presentation.format || '').toLowerCase()
               return {
                 ...resource,
                 file_name: resource.label,
                 file_path: locator.path,
+                format,
+                doc_type: format === 'qmd' ? 'report' : (format === 'md' || format === 'markdown' ? 'markdown' : undefined),
                 pdf_preview: preview.pdf_preview || preview,
                 pdf_url: pdfUrl,
                 html_preview: preview.html_preview,
                 html_url: preview.html_url,
                 markdown_preview: preview.markdown_preview,
+                markdown_content: preview.content || preview.markdown_content,
                 svg_preview: preview.svg_preview,
                 spreadsheet_preview: preview.spreadsheet_preview,
               }
