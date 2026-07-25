@@ -202,16 +202,7 @@ class ReActAgent:
         collected_data_ids = entry.get("collected_data_ids", [])
         collected_visuals = entry.get("collected_visuals", [])
 
-        if collected_visuals:
-            ConversationPersistenceService().append_metadata(
-                session,
-                collected_visuals=collected_visuals,
-            )
-            logger.info(
-                "visualizations_merged_into_metadata",
-                session_id=session.session_id,
-                visuals_count=len(session.metadata.get("visualizations") or []),
-            )
+        # 图表资源已由 SessionResourceService 持久化；不再复制到 metadata.visualizations。
 
         if entry.get("has_error"):
             session.error = {
@@ -1452,8 +1443,6 @@ class ReActAgent:
                             )
 
                         saved_visualizations = []
-                        if isinstance(saved_session.metadata, dict):
-                            saved_visualizations = saved_session.metadata.get("visualizations") or []
 
                         # 保存到内存缓存。即使历史消息为空，也要缓存已存在的
                         # session，避免含 data/visual/office 状态的会话被当作新会话。
