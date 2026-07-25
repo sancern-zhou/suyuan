@@ -75,7 +75,7 @@ class SessionResourcesRepository:
                             "locator": stored.locator,
                             "presentation_type": stored.presentation_type,
                             "presentation": stored.presentation,
-                            "metadata": stored.metadata,
+                            "resource_metadata": stored.metadata,
                             "tool_name": stored.tool_name,
                             "run_id": stored.run_id,
                             "turn_sequence": stored.turn_sequence,
