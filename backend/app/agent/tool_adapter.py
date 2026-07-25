@@ -405,6 +405,7 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             standard_result["data_id"] = data_id
 
         passthrough_fields = (
+            "resources",
             "refs",
             "llm_resume",
             "context_refs",
