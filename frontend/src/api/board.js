@@ -38,10 +38,35 @@ export const getBoardVersion = async (boardId, versionId) => request(
   `/boards/${encodeURIComponent(boardId)}/versions/${encodeURIComponent(versionId)}`
 )
 
-export const restoreBoardVersion = async (boardId, versionId, baseRevision) => request(
-  `/boards/${encodeURIComponent(boardId)}/restore`,
-  {
-    method: 'POST',
-    body: JSON.stringify({ version_id: versionId, base_revision: baseRevision })
+const readBoardVersionXmlRef = async (xmlRef = {}) => {
+  const directUrl = xmlRef.read_url || xmlRef.url || xmlRef.download_url
+  const localPath = xmlRef.local_path || xmlRef.path || xmlRef.file_path
+  const normalizedDirectUrl = directUrl?.startsWith('/api/') && API_BASE_URL !== '/api'
+    ? `${API_BASE_URL}${directUrl.slice(4)}`
+    : directUrl
+  const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
+  if (!url) throw new Error('board_version_xml_ref_missing')
+
+  const response = await authFetch(url, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error(`board_version_xml_load_failed_${response.status}`)
   }
-)
+  return await response.text()
+}
+
+export const loadBoardVersionXml = async (boardId, versionId, version = {}) => {
+  const inlineXml = version.xml || version.current_xml || ''
+  let versionPayload = version
+  if (!inlineXml && !versionPayload.xml_ref) {
+    if (!boardId || !versionId) throw new Error('board_version_identity_missing')
+    const response = await getBoardVersion(boardId, versionId)
+    versionPayload = response.version || response
+  }
+
+  const xml = inlineXml || versionPayload.xml || versionPayload.current_xml || await readBoardVersionXmlRef(versionPayload.xml_ref)
+  const trimmed = String(xml || '').trim()
+  if (!trimmed.startsWith('<mxfile') && !trimmed.startsWith('<mxGraphModel')) {
+    throw new Error('board_version_xml_invalid')
+  }
+  return xml
+}

@@ -59,11 +59,11 @@ def load_env_vars():
                 print(f"[WARNING] 加载环境变量失败: {env_file}, 错误: {e}")
 
     # 验证关键环境变量
-    qwen_key = os.getenv("QWEN_VL_API_KEY")
-    if qwen_key:
-        print(f"[INFO] QWEN_VL_API_KEY已设置: {qwen_key[:10]}...")
+    bailian_key = os.getenv("BAILIAN_API_KEY")
+    if bailian_key:
+        print("[INFO] BAILIAN_API_KEY已设置")
     else:
-        print("[WARNING] QWEN_VL_API_KEY未设置，天气形势图解读可能失败")
+        print("[WARNING] BAILIAN_API_KEY未设置，天气形势图解读可能失败")
 
     # 验证LLM配置
     llm_provider = os.getenv("LLM_PROVIDER", "openai")

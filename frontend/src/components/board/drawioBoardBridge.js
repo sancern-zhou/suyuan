@@ -88,12 +88,79 @@ export const createDrawioBoardBridge = ({
   return { exportCurrentXml, handleMessage, cancel }
 }
 
-let activeBoardExporter = null
+export const createDrawioBoardLoader = ({
+  getTargetWindow,
+  allowedOrigin,
+  postMessage,
+  timeoutMs = 5000,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout
+}) => {
+  let pending = null
 
-export const registerActiveDrawioBoardExporter = (exporter) => {
+  const settle = (kind, value) => {
+    if (!pending) return
+    const current = pending
+    pending = null
+    clearTimer(current.timeoutId)
+    current[kind](value)
+  }
+
+  const cancel = (code = 'board_load_cancelled') => {
+    settle('reject', new BoardSyncError(code))
+  }
+
+  const loadXml = (xml, options = {}) => {
+    const target = getTargetWindow?.()
+    if (!target) {
+      return Promise.reject(new BoardSyncError('board_editor_not_ready', '画板编辑器尚未就绪'))
+    }
+    cancel('board_load_superseded')
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimer(() => {
+        settle('reject', new BoardSyncError('board_load_timeout', '加载画板版本超时'))
+      }, timeoutMs)
+      pending = { resolve, reject, timeoutId }
+      const payload = JSON.stringify({ action: 'load', xml, ...options })
+      if (postMessage) {
+        postMessage(payload, allowedOrigin)
+      } else {
+        target.postMessage(payload, allowedOrigin)
+      }
+    })
+  }
+
+  const handleMessage = (event) => {
+    const target = getTargetWindow?.()
+    if (!target || event?.source !== target || event?.origin !== allowedOrigin || !pending) return false
+    const message = parseMessage(event.data)
+    if (!message || message.event !== 'load') return false
+    if (message.error) {
+      settle('reject', new BoardSyncError('board_load_failed', message.error))
+    } else {
+      settle('resolve', message)
+    }
+    return true
+  }
+
+  return { loadXml, handleMessage, cancel }
+}
+
+let activeBoardExporter = null
+let activeBoardCommitHandler = null
+let activeBoardWorkingVersionProvider = null
+
+export const registerActiveDrawioBoardExporter = (exporter, onCommitted = null, getWorkingVersionId = null) => {
   activeBoardExporter = typeof exporter === 'function' ? exporter : null
+  activeBoardCommitHandler = typeof onCommitted === 'function' ? onCommitted : null
+  activeBoardWorkingVersionProvider = typeof getWorkingVersionId === 'function' ? getWorkingVersionId : null
   return () => {
-    if (activeBoardExporter === exporter) activeBoardExporter = null
+    if (activeBoardExporter === exporter) {
+      activeBoardExporter = null
+      activeBoardCommitHandler = null
+      activeBoardWorkingVersionProvider = null
+    }
   }
 }
 
@@ -102,4 +169,13 @@ export const exportActiveDrawioBoardXml = async () => {
     throw new BoardSyncError('board_editor_not_ready', '画板编辑器尚未就绪')
   }
   return await activeBoardExporter()
+}
+
+export const confirmActiveDrawioBoardCommit = (payload) => {
+  activeBoardCommitHandler?.(payload)
+}
+
+export const getActiveDrawioBoardWorkingVersionId = () => {
+  const versionId = activeBoardWorkingVersionProvider?.()
+  return versionId ? String(versionId) : null
 }

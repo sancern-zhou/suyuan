@@ -308,7 +308,7 @@ class CreateReportChartTool(LLMTool):
                         format=path.suffix.lstrip(".") or None,
                         size=path.stat().st_size if path.exists() else None,
                         usage="report_chart",
-                        preferred_for=["analyze_image", "present_artifact", "read_file"],
+                        preferred_for=["present_artifact", "read_file"],
                         visual_id=visual_id,
                     )
                 )
@@ -336,7 +336,10 @@ class CreateReportChartTool(LLMTool):
             llm_resume["generated_visuals"] = generated_visuals
             first_path = generated_visuals[0].get("tool_path")
             if first_path:
-                llm_resume["tool_hint"] = f"Use analyze_image(path='{first_path}') for image analysis."
+                llm_resume["tool_hint"] = (
+                    f"Use read_file(path='{first_path}', as_multimodal_attachment=true) "
+                    "to inspect this image."
+                )
         elif data_id:
             llm_resume["tool_hint"] = f"Use read_data_registry(data_id='{data_id}') to reread the source data."
         if llm_resume:

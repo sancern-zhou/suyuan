@@ -17,7 +17,6 @@ def test_ppt_mode_exposes_focused_editable_presentation_tools():
         "read_file",
         "edit_file",
         "create_report_chart",
-        "analyze_image",
         "web_search",
     }.issubset(tools)
     assert {
@@ -25,6 +24,7 @@ def test_ppt_mode_exposes_focused_editable_presentation_tools():
         "execute_sql_query",
         "create_drawio_board",
         "call_sub_agent",
+        "analyze_image",
     }.isdisjoint(tools)
 
     from app.agent.tool_adapter import get_tool_schemas

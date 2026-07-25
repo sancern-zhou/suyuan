@@ -53,6 +53,59 @@ def test_schema_exposes_complete_direct_document_edit_contract(tmp_path):
     assert {"pages", "codes", "element_ids"}.issubset(read_report["properties"])
 
 
+def test_schema_teaches_native_chart_contract_without_external_docs(tmp_path):
+    schema = make_tool(tmp_path).get_function_schema()
+    branches = schema["parameters"]["oneOf"]
+    edit = next(
+        branch
+        for branch in branches
+        if branch["properties"]["operation"]["const"] == "edit_source"
+    )
+    edit_many = next(
+        branch
+        for branch in branches
+        if branch["properties"]["operation"]["const"] == "edit_sources"
+    )
+
+    content_description = edit["properties"]["content"]["description"]
+    batch_content_description = edit_many["properties"]["edits"]["items"][
+        "properties"
+    ]["content"]["description"]
+
+    assert content_description == batch_content_description
+    assert 'data-pptx-ref="roi-chart"' in content_description
+    assert 'id: "roi-chart"' in content_description
+    assert 'kind: "chart"' in content_description
+    assert 'chartType: "column"' in content_description
+    assert 'categories: ["Q1", "Q2"]' in content_description
+    assert 'series: [{ name: "节省工时", values: [120, 260] }]' in content_description
+    assert '不要使用 type、dataId、labels、values' in content_description
+
+
+def test_schema_makes_revision_and_compile_success_semantics_explicit(tmp_path):
+    schema = make_tool(tmp_path).get_function_schema()
+    branches = schema["parameters"]["oneOf"]
+    edit = next(
+        branch
+        for branch in branches
+        if branch["properties"]["operation"]["const"] == "edit_source"
+    )
+    compile_branch = next(
+        branch
+        for branch in branches
+        if branch["properties"]["operation"]["const"] == "compile"
+    )
+
+    revision_description = edit["properties"]["base_revision"]["description"]
+    assert "最近一次 inspect/read_source 返回的 data.revision" in revision_description
+    assert "冲突时不会写入" in revision_description
+    assert "只表示当前源码成功打包" in schema["description"]
+    assert "不代表预期图表已经存在" in schema["description"]
+    assert "实际页数必须等于该值" in compile_branch["properties"][
+        "expected_slide_count"
+    ]["description"]
+
+
 @pytest.mark.asyncio
 async def test_create_edit_render_compile_flow_has_stable_results(tmp_path):
     tool = make_tool(tmp_path)

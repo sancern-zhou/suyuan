@@ -28,6 +28,8 @@ from app.agent.runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
 
+NATIVE_MULTIMODAL_HIDDEN_TOOLS = frozenset({"analyze_image"})
+
 
 def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Expose native multimodal image attachment while hiding legacy image analysis."""
@@ -45,7 +47,7 @@ def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any
     properties.pop("analysis_type", None)
     properties["as_multimodal_attachment"] = {
         "type": "boolean",
-        "description": "社交、幻灯片、图表等原生多模态模式下，仅在需要查看历史或工具生成的本地图片时设置为 true；本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "description": "所有Agent模式均支持原生多模态；仅在需要查看历史或工具生成的本地图片时设置为 true。本轮用户上传图片已经由输入自动挂载，不需要再读取。",
         "default": False,
     }
     return multimodal_schema
@@ -814,6 +816,8 @@ def get_tool_schemas(
     for tool_data in global_tool_registry.get_all_tools():
         tool = tool_data["tool"]
         if tool.is_available():
+            if tool.name in NATIVE_MULTIMODAL_HIDDEN_TOOLS:
+                continue
             if allowed_tools is not None and tool.name not in allowed_tools:
                 continue
             schema = tool.get_function_schema()

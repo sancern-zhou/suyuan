@@ -130,7 +130,7 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         "   - Word 文档：读取统一用 `read_file`；当前助手模式不再暴露 Word 编辑工具\n",
         "   - Excel → `execute_python` 或 Excel 技能文档\n",
         "   - PPT → 从零生成且要求高质量/可反复底层编辑时优先 `manage_editable_ppt` 并阅读 `editable_ppt/references/index.md`；兼容旧流程时使用 PPT Master\n",
-        "   - 图片 → `read_file` / `analyze_image`\n",
+        "   - 图片：本轮用户上传图片由模型直接查看；历史、本地或工具生成的图片 → `read_file(path=..., as_multimodal_attachment=true)`\n",
         "   - PDF → `read_file`\n",
         "\n",
         "2. **文件安全**：操作前确认路径正确\n",

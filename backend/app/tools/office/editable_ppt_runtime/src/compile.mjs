@@ -18,15 +18,50 @@ function emptyNativeCounts() {
   return { chart: 0, table: 0, diagram: 0 };
 }
 
+async function sanitizePptxPackage(pptxPath) {
+  const zip = await JSZip.loadAsync(await fs.readFile(pptxPath));
+  const contentTypesPart = zip.file("[Content_Types].xml");
+  if (!contentTypesPart) throw new Error("OOXML_CONTENT_TYPES_MISSING");
+  const names = new Set(Object.keys(zip.files));
+  const contentTypes = await contentTypesPart.async("string");
+  let removedPhantomSlideMasterOverrides = 0;
+  const sanitized = contentTypes.replace(/<Override\b[^>]*\/>/g, (override) => {
+    const partName = override.match(/\bPartName="([^"]+)"/)?.[1];
+    const relativeName = partName?.replace(/^\//, "");
+    if (
+      relativeName &&
+      /^ppt\/slideMasters\/slideMaster\d+\.xml$/.test(relativeName) &&
+      !names.has(relativeName)
+    ) {
+      removedPhantomSlideMasterOverrides += 1;
+      return "";
+    }
+    return override;
+  });
+  if (removedPhantomSlideMasterOverrides > 0) {
+    zip.file("[Content_Types].xml", sanitized);
+    const payload = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    await fs.writeFile(pptxPath, payload);
+  }
+  return { removedPhantomSlideMasterOverrides };
+}
+
 async function auditPptx(pptxPath) {
   const zip = await JSZip.loadAsync(await fs.readFile(pptxPath));
   const names = Object.keys(zip.files);
+  const nameSet = new Set(names);
+  const contentTypes = await zip.file("[Content_Types].xml")?.async("string") || "";
+  const danglingContentTypeParts = [...contentTypes.matchAll(/<Override\b[^>]*\bPartName="([^"]+)"[^>]*\/>/g)]
+    .map((match) => match[1].replace(/^\//, ""))
+    .filter((partName) => !nameSet.has(partName));
   return {
     slides: names.filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length,
     charts: names.filter((name) => /^ppt\/charts\/chart\d+\.xml$/.test(name)).length,
     embeddedWorkbooks: names.filter((name) => /^ppt\/embeddings\/.+\.xlsx$/.test(name)).length,
     hasPresentation: names.includes("ppt/presentation.xml"),
     hasContentTypes: names.includes("[Content_Types].xml"),
+    danglingContentTypeOverrides: danglingContentTypeParts.length,
+    danglingContentTypeParts,
   };
 }
 
@@ -78,7 +113,7 @@ function addSlideContent(pptx, pptxSlide, slideSpec, measuredPage, theme, report
       element.id === "slide-root" || element.source === "native-ref" ||
       nativeIds.has(element.id) || richTextChildIds.has(element.id)
     ) continue;
-    const added = addBasicElement(pptxSlide, resolveImageSource(element, projectRoot), pptx);
+    const added = addBasicElement(pptxSlide, resolveImageSource(element, projectRoot), pptx, theme);
     if (added?.kind === "text") report.native.text += 1;
     if (added?.kind === "shape") report.native.shape += 1;
     if (added?.kind === "image") report.native.image += 1;
@@ -137,8 +172,8 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
   pptx.company = "Suyuan";
   pptx.lang = "zh-CN";
   pptx.theme = {
-    headFontFace: project.theme.fontTitle || "Microsoft YaHei",
-    bodyFontFace: project.theme.fontBody || "Microsoft YaHei",
+    headFontFace: project.theme.pptFontTitle || (project.theme.fontTitle === "Noto Sans CJK SC" ? "Microsoft YaHei" : project.theme.fontTitle) || "Microsoft YaHei",
+    bodyFontFace: project.theme.pptFontBody || (project.theme.fontBody === "Noto Sans CJK SC" ? "Microsoft YaHei" : project.theme.fontBody) || "Microsoft YaHei",
     lang: "zh-CN",
   };
 
@@ -192,8 +227,14 @@ export async function compileDeck(projectDir, outputDir, options = {}) {
 
   const pptxPath = path.join(outputDir, fileName);
   await pptx.writeFile({ fileName: pptxPath });
+  report.ooxmlSanitization = await sanitizePptxPackage(pptxPath);
   report.ooxml = await auditPptx(pptxPath);
-  if (!report.ooxml.hasPresentation || !report.ooxml.hasContentTypes || report.ooxml.slides !== report.slideCount) {
+  if (
+    !report.ooxml.hasPresentation ||
+    !report.ooxml.hasContentTypes ||
+    report.ooxml.slides !== report.slideCount ||
+    report.ooxml.danglingContentTypeOverrides > 0
+  ) {
     report.issues.push({ code: "OOXML_STRUCTURE_INVALID", message: "generated PPTX structure is incomplete" });
   }
   report.durationMs = Date.now() - startedAt;

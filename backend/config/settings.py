@@ -282,7 +282,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="openai",
-        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, glm"
+        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian"
     )
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: str = Field(
@@ -310,6 +310,20 @@ class Settings(BaseSettings):
     deepseek_api_mode: str = Field(
         default="anthropic_messages",
         description="DeepSeek API protocol mode: anthropic_messages or chat_completions"
+    )
+
+    bailian_api_key: Optional[str] = Field(default=None, description="Alibaba Cloud Bailian Token Plan API key")
+    bailian_base_url: str = Field(
+        default="https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        description="Alibaba Cloud Bailian Anthropic-compatible API base URL",
+    )
+    bailian_model: str = Field(
+        default="qwen3.8-max-preview",
+        description="Default Bailian model used by Auto mode",
+    )
+    bailian_api_mode: str = Field(
+        default="anthropic_messages",
+        description="Bailian API protocol mode: anthropic_messages",
     )
 
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
@@ -434,34 +448,26 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="",
+        default="minimax/MiniMax-M3,deepseek/deepseek-v4-flash",
         description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_flash_models: str = Field(
-        default="",
+        default="bailian/qwen3.6-flash,minimax/MiniMax-M3,deepseek/deepseek-v4-flash",
         description="Comma-separated Flash model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
-        default="",
+        default="bailian/deepseek-v4-pro,minimax/MiniMax-M3,deepseek/deepseek-v4-pro",
         description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
-        default="mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
-        description="Comma-separated Auto multimodal model priority chain; used by social and chart modes"
+        default="bailian/qwen3.8-max-preview,mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+        description="Comma-separated multimodal model priority chain used by all Agent modes"
     )
     llm_failover_cooldown_seconds: int = Field(
         default=60,
         description="Cooldown seconds for transiently failing LLM providers"
     )
 
-    # Qwen 视觉与 OCR 配置
-    qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
-    qwen_vl_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        description="Qwen VL OpenAI-compatible API base URL"
-    )
-    qwen_vl_model: str = Field(default="qwen-vl-ocr", description="Qwen OCR model name")
-    qwen_vision_model: str = Field(default="qwen3.7-plus", description="Qwen model for visual understanding tasks")
     mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
     mimo_vl_base_url: Optional[str] = Field(
         default=None,
@@ -757,6 +763,14 @@ class Settings(BaseSettings):
                 "base_url": self.deepseek_base_url,
                 "model": self.deepseek_model,
                 "api_mode": self.deepseek_api_mode,
+            }
+        elif self.llm_provider == "bailian":
+            return {
+                "provider": "bailian",
+                "api_key": self.bailian_api_key,
+                "base_url": self.bailian_base_url,
+                "model": self.bailian_model,
+                "api_mode": self.bailian_api_mode,
             }
         elif self.llm_provider == "anthropic":
             return {

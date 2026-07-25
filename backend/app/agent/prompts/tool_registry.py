@@ -32,7 +32,7 @@ ASSISTANT_TOOL_NAMES = [
 
     # 执行
     "bash", "create_report_chart", "execute_python",
-    "get_platform_weather_image", "analyze_image", "browser",
+    "get_platform_weather_image", "browser",
 
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -61,7 +61,7 @@ PPT_TOOL_NAMES = [
     # 文件读取与直接源码编辑
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart", "analyze_image", "execute_python", "present_artifact",
+    "create_report_chart", "execute_python", "present_artifact",
     # 用户材料、知识库与外部资料
     "knowledge_qa_workflow", "knowledge_document_reader",
     "web_search", "web_fetch", "browser",

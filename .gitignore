@@ -228,6 +228,7 @@ temp_images/
 test_results/
 tmp/
 tmpnumpy_wheels/
+!backend/app/boards/test_routes_contract.py
 .worktrees/
 __pycache__/
 D:tmp/

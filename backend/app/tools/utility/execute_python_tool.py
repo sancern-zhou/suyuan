@@ -985,7 +985,10 @@ class ExecutePythonTool(LLMTool):
         if visual_refs and "tool_hint" not in llm_resume:
             first_visual_path = visual_refs[0].get("tool_path")
             if first_visual_path:
-                llm_resume["tool_hint"] = f"Use analyze_image(path='{first_visual_path}') for image analysis."
+                llm_resume["tool_hint"] = (
+                    f"Use read_file(path='{first_visual_path}', as_multimodal_attachment=true) "
+                    "to inspect this image."
+                )
         if llm_resume:
             result["llm_resume"] = llm_resume
 

@@ -78,6 +78,40 @@ test("basic adapter maps measured text to editable text with normalized colors",
   assert.equal(normalizeColor("#174A7C"), "174A7C");
 });
 
+test("basic adapter uses the PowerPoint CJK font and gives headings single-line tolerance", () => {
+  const slide = fakeSlideRecorder();
+  addBasicElement(
+    slide,
+    {
+      id: "page-title",
+      source: "dom",
+      tagName: "h2",
+      text: "同比变化分析 (2026 vs 2025)",
+      box: { x: 120, y: 120, width: 520, height: 54 },
+      style: {
+        color: "rgb(31, 41, 55)",
+        backgroundColor: "rgba(0, 0, 0, 0)",
+        fontFamily: '"Noto Sans CJK SC", sans-serif',
+        fontSize: "36px",
+        fontWeight: "700",
+        textAlign: "left",
+        opacity: "1",
+      },
+    },
+    { ShapeType: pptxApi.ShapeType },
+    {
+      fontTitle: "Noto Sans CJK SC",
+      fontBody: "Noto Sans CJK SC",
+      pptFontTitle: "Microsoft YaHei",
+      pptFontBody: "Microsoft YaHei",
+    },
+  );
+
+  assert.equal(slide.calls[0].options.fontFace, "Microsoft YaHei");
+  assert.equal(slide.calls[0].options.wrap, false);
+  assert.equal(slide.calls[0].options.w > pxBoxToInches({ x: 120, y: 120, width: 520, height: 54 }).w, true);
+});
+
 test("basic adapter preserves rgba alpha as native fill and line transparency", () => {
   const slide = fakeSlideRecorder();
   addBasicElement(
@@ -105,7 +139,12 @@ test("basic adapter preserves rgba alpha as native fill and line transparency", 
 
 test("semantic adapters emit native chart and table calls", () => {
   const slide = fakeSlideRecorder();
-  const theme = { primary: "174A7C", text: "1F2937", fontBody: "Microsoft YaHei" };
+  const theme = {
+    primary: "174A7C",
+    text: "1F2937",
+    fontBody: "Noto Sans CJK SC",
+    pptFontBody: "Microsoft YaHei",
+  };
   const box = { x: 108, y: 108, width: 648, height: 432 };
   addNativeElement(
     slide,
@@ -134,6 +173,8 @@ test("semantic adapters emit native chart and table calls", () => {
   assert.deepEqual(slide.calls[0].data, [{ name: "收入", labels: ["2025", "2026"], values: [10, 15] }]);
   assert.equal(slide.calls[0].options.showLegend, true);
   assert.equal(slide.calls[0].options.barDir, "col");
+  assert.equal(slide.calls[0].options.catAxisLabelFontFace, "Microsoft YaHei");
+  assert.equal(slide.calls[1].options.fontFace, "Microsoft YaHei");
 });
 
 test("diagram adapter emits separately editable nodes and connectors", () => {

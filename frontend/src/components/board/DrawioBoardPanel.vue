@@ -26,6 +26,7 @@
 
     <div class="drawio-canvas-shell">
       <iframe
+        :key="editorInstanceKey"
         ref="iframeRef"
         class="drawio-frame"
         :src="drawioUrl"
@@ -50,8 +51,9 @@
           :key="getVersionKey(version)"
           type="button"
           class="history-item file-history-item"
-          :class="{ current: !boardDirty && getVersionKey(version) === currentVersionId }"
-          @click="restoreVersion(version)"
+          :class="{ current: getVersionKey(version) === displayedVersionId }"
+          :disabled="previewLoading"
+          @click="previewVersion(version)"
         >
           <span class="history-icon">◇</span>
           <span class="history-text">
@@ -60,6 +62,9 @@
           </span>
           <span class="history-time">{{ formatTime(version.created_at || version.createdAt) }}</span>
         </button>
+        <div v-if="previewError" class="history-error" role="alert">
+          {{ previewError }}
+        </div>
         <div v-if="acceptedVersions.length === 0" class="history-empty">
           暂无版本文件
         </div>
@@ -100,17 +105,24 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
+import { loadBoardVersionXml } from '@/api/board.js'
 import {
   getDrawioSelectionPayload,
   getDrawioSelectionPayloadFromExport,
   parseDrawioSelectedCells
 } from './drawioSelection.js'
 import {
+  BoardSyncError,
   createDrawioBoardBridge,
+  createDrawioBoardLoader,
   registerActiveDrawioBoardExporter
 } from './drawioBoardBridge.js'
 
 const props = defineProps({
+  boardId: {
+    type: String,
+    default: ''
+  },
   xml: {
     type: String,
     default: ''
@@ -137,11 +149,17 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['xml-change', 'selection-change', 'board-snapshot-confirm', 'version-restore'])
+const emit = defineEmits(['xml-change', 'selection-change', 'board-snapshot-confirm'])
 
 const iframeRef = ref(null)
 const iframeReady = ref(false)
+const editorInstanceKey = ref(0)
 const latestXml = ref(props.xml || '')
+const previewVersionId = ref('')
+const previewXml = ref('')
+const previewSelection = ref([])
+const previewLoading = ref(false)
+const previewError = ref('')
 const exportingSnapshot = ref(false)
 const showVersionFiles = ref(false)
 const showQualityAttempts = ref(false)
@@ -152,6 +170,9 @@ let xmlSyncPending = false
 let xmlSyncTimeout = null
 let lastXmlSyncAt = 0
 let unregisterBoardExporter = null
+let previewRequestId = 0
+let editorLoadPromise = null
+let pendingEditorRestart = null
 
 const XML_SYNC_INTERVAL_MS = 1200
 const DRAWIO_URL = 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&ui=min&modified=0&saveAndExit=0&noSaveBtn=1&noExitBtn=1'
@@ -165,8 +186,14 @@ const acceptedVersions = computed(() => props.versionFiles.filter(version => (
 const qualityAttempts = computed(() => props.versionFiles.filter(version => (
   (version.lifecycleStatus || version.lifecycle_status) !== 'accepted'
 )))
+const displayedVersionId = computed(() => previewVersionId.value || String(props.currentVersionId || ''))
 
 const boardBridge = createDrawioBoardBridge({
+  getTargetWindow: () => iframeRef.value?.contentWindow || null,
+  allowedOrigin: DRAWIO_ORIGIN
+})
+
+const boardLoader = createDrawioBoardLoader({
   getTargetWindow: () => iframeRef.value?.contentWindow || null,
   allowedOrigin: DRAWIO_ORIGIN
 })
@@ -183,22 +210,135 @@ const applySelection = (selection, source = 'unknown') => {
     selectedCount: selection.length,
     selectedIds: selection.map((cell) => cell.id).filter(Boolean)
   })
+  if (previewVersionId.value) {
+    previewSelection.value = selection
+    return
+  }
   emit('selection-change', selection)
 }
 
-const loadXml = (xml = props.xml) => {
-  if (!xml || !iframeReady.value) return
-  postDrawio('load', {
-    xml,
-    autosave: 1
+const loadXml = async (xml = previewVersionId.value ? previewXml.value : props.xml, required = false) => {
+  if (!xml) return false
+  if (!iframeReady.value && required) {
+    throw new BoardSyncError('board_editor_not_ready', '画板编辑器尚未就绪')
+  }
+  if (!iframeReady.value) return false
+  const loadRequest = boardLoader.loadXml(xml, { autosave: previewVersionId.value ? 0 : 1 })
+  editorLoadPromise = loadRequest
+  try {
+    await loadRequest
+    return true
+  } catch (error) {
+    if (required) throw error
+    if (!['board_load_superseded', 'board_context_changed', 'board_editor_unmounted'].includes(error?.code)) {
+      console.error('[drawio-board] failed to load XML into editor', error)
+    }
+    return false
+  } finally {
+    if (editorLoadPromise === loadRequest) editorLoadPromise = null
+  }
+}
+
+const settleEditorRestart = (request, kind, value) => {
+  if (pendingEditorRestart !== request) return
+  pendingEditorRestart = null
+  if (editorLoadPromise === request.promise) editorLoadPromise = null
+  request[kind](value)
+}
+
+const cancelEditorRestart = (code) => {
+  if (!pendingEditorRestart) return
+  const request = pendingEditorRestart
+  settleEditorRestart(
+    request,
+    request.required ? 'reject' : 'resolve',
+    request.required ? new BoardSyncError(code) : false
+  )
+}
+
+const restartEditor = (xml, required = false) => {
+  boardBridge.cancel('board_editor_restarting')
+  boardLoader.cancel('board_editor_restarting')
+  cancelEditorRestart('board_load_superseded')
+  iframeReady.value = false
+  stopSelectionProbe()
+
+  let resolveRequest
+  let rejectRequest
+  const promise = new Promise((resolve, reject) => {
+    resolveRequest = resolve
+    rejectRequest = reject
   })
+  const request = {
+    xml,
+    required,
+    autosave: previewVersionId.value ? 0 : 1,
+    resolve: resolveRequest,
+    reject: rejectRequest,
+    promise
+  }
+  pendingEditorRestart = request
+  editorLoadPromise = promise
+  editorInstanceKey.value += 1
+  return promise
 }
 
 const reloadXml = () => {
-  loadXml()
+  void restartEditor(previewVersionId.value ? previewXml.value : props.xml)
 }
 
 const getVersionKey = (version = {}) => String(version.version_id || version.id || version.versionNumber || version.version_number || '')
+
+const showCurrentVersion = async () => {
+  const requestId = ++previewRequestId
+  previewVersionId.value = ''
+  previewXml.value = ''
+  previewSelection.value = []
+  previewError.value = ''
+  previewLoading.value = true
+  latestXml.value = props.xml || ''
+  try {
+    await restartEditor(props.xml, true)
+  } catch (error) {
+    if (requestId !== previewRequestId) return
+    console.error('[drawio-board] failed to reload current version', error)
+    previewError.value = '当前版本加载失败，请稍后重试'
+  } finally {
+    if (requestId === previewRequestId) previewLoading.value = false
+  }
+}
+
+const previewVersion = async (version = {}) => {
+  const versionId = getVersionKey(version)
+  if (!versionId) return
+  if (versionId === String(props.currentVersionId || '')) {
+    await showCurrentVersion()
+    return
+  }
+
+  boardBridge.cancel('board_version_preview_started')
+  const requestId = ++previewRequestId
+  previewLoading.value = true
+  previewError.value = ''
+  try {
+    const xml = await loadBoardVersionXml(props.boardId, versionId, version)
+    if (requestId !== previewRequestId) return
+    previewVersionId.value = versionId
+    previewXml.value = xml
+    previewSelection.value = []
+    latestXml.value = xml
+    stopSelectionProbe()
+    await restartEditor(xml, true)
+    if (requestId !== previewRequestId) return
+  } catch (error) {
+    if (requestId !== previewRequestId) return
+    console.error('[drawio-board] failed to preview board version', { versionId, error })
+    await showCurrentVersion()
+    previewError.value = '版本加载失败，请稍后重试'
+  } finally {
+    if (requestId === previewRequestId) previewLoading.value = false
+  }
+}
 
 const getVersionName = (version = {}) => {
   return version.file_name || version.fileName || version.downloadLabel || `${version.title || props.title || '画板'} v${version.version_number || version.versionNumber || ''}`.trim()
@@ -233,12 +373,6 @@ const formatTime = (value) => {
     hour: '2-digit',
     minute: '2-digit'
   })
-}
-
-const restoreVersion = (version = {}) => {
-  const versionId = getVersionKey(version)
-  if (!versionId) return
-  emit('version-restore', versionId)
 }
 
 const getActiveXml = () => latestXml.value || props.xml || ''
@@ -301,6 +435,10 @@ const getExportXml = (msg) => {
 }
 
 const applyEditorXml = (xml, event = 'sync') => {
+  if (previewVersionId.value) {
+    latestXml.value = xml
+    return
+  }
   if (typeof xml !== 'string' || xml === latestXml.value) return
   latestXml.value = xml
   console.log('[drawio-board] editor emitted XML', {
@@ -311,11 +449,43 @@ const applyEditorXml = (xml, event = 'sync') => {
 }
 
 const exportCurrentXml = async () => {
+  if (previewLoading.value && !editorLoadPromise) {
+    throw new BoardSyncError('board_editor_not_ready', '画板工作版本正在加载，请稍后重试')
+  }
+  if (editorLoadPromise) await editorLoadPromise
+  if (!iframeReady.value) {
+    throw new BoardSyncError('board_editor_not_ready', '画板编辑器尚未就绪')
+  }
+  const exportPreviewVersionId = previewVersionId.value
+  const exportPreviewRequestId = previewRequestId
+  const exportBoardId = props.boardId
   const xml = await boardBridge.exportCurrentXml()
+  if (
+    exportPreviewRequestId !== previewRequestId ||
+    exportBoardId !== props.boardId ||
+    exportPreviewVersionId !== previewVersionId.value
+  ) {
+    throw new BoardSyncError('board_version_conflict', '画板工作版本已切换，请重新发送')
+  }
   xmlSyncPending = false
   clearXmlSyncTimeout()
-  applyEditorXml(xml, 'pre-send-sync')
+  if (exportPreviewVersionId) {
+    latestXml.value = xml
+  } else {
+    applyEditorXml(xml, 'pre-send-sync')
+  }
   return xml
+}
+
+const confirmWorkingVersionCommit = ({ xml } = {}) => {
+  if (!previewVersionId.value) return
+  emit('selection-change', previewSelection.value)
+  previewRequestId += 1
+  previewVersionId.value = ''
+  previewXml.value = ''
+  previewSelection.value = []
+  previewError.value = ''
+  latestXml.value = xml || latestXml.value
 }
 
 const exportBoardImage = () => {
@@ -362,6 +532,7 @@ const clearXmlSyncTimeout = () => {
 }
 
 const syncDrawioXml = (force = false) => {
+  if (previewVersionId.value) return
   if (!iframeReady.value || xmlSyncPending || selectionProbePending || pendingExportResolver) return
 
   const now = Date.now()
@@ -471,9 +642,20 @@ const handleMessage = (event) => {
 
   if (msg.event === 'init') {
     iframeReady.value = true
-    loadXml()
+    if (pendingEditorRestart) {
+      const request = pendingEditorRestart
+      const loadRequest = boardLoader.loadXml(request.xml, { autosave: request.autosave })
+      loadRequest.then(
+        (result) => settleEditorRestart(request, 'resolve', result),
+        (error) => settleEditorRestart(request, request.required ? 'reject' : 'resolve', request.required ? error : false)
+      )
+      return
+    }
+    void loadXml()
     return
   }
+
+  if (boardLoader.handleMessage(event)) return
 
   if (msg.event === 'export') {
     if (xmlSyncPending) {
@@ -534,7 +716,11 @@ const handleWindowFocus = () => {
 }
 
 onMounted(() => {
-  unregisterBoardExporter = registerActiveDrawioBoardExporter(exportCurrentXml)
+  unregisterBoardExporter = registerActiveDrawioBoardExporter(
+    exportCurrentXml,
+    confirmWorkingVersionCommit,
+    () => previewVersionId.value || props.currentVersionId || null
+  )
   window.addEventListener('message', handleMessage)
   window.addEventListener('blur', handleWindowBlur)
   window.addEventListener('focus', handleWindowFocus)
@@ -544,6 +730,8 @@ onBeforeUnmount(() => {
   unregisterBoardExporter?.()
   unregisterBoardExporter = null
   boardBridge.cancel('board_editor_unmounted')
+  boardLoader.cancel('board_editor_unmounted')
+  cancelEditorRestart('board_editor_unmounted')
   window.removeEventListener('message', handleMessage)
   window.removeEventListener('blur', handleWindowBlur)
   window.removeEventListener('focus', handleWindowFocus)
@@ -556,9 +744,22 @@ onBeforeUnmount(() => {
 defineExpose({ exportCurrentXml })
 
 watch(() => props.xml, (xml) => {
+  if (previewVersionId.value) return
   if (xml === latestXml.value) return
   latestXml.value = xml || ''
-  loadXml(xml)
+  void restartEditor(xml)
+})
+
+watch(() => props.currentVersionId, (versionId) => {
+  if (previewVersionId.value && previewVersionId.value === String(versionId || '')) {
+    void showCurrentVersion()
+  }
+})
+
+watch(() => props.boardId, () => {
+  boardBridge.cancel('board_context_changed')
+  boardLoader.cancel('board_context_changed')
+  void showCurrentVersion()
 })
 </script>
 
@@ -697,9 +898,14 @@ watch(() => props.xml, (xml) => {
   text-align: left;
 }
 
-.history-item:hover {
+.history-item:hover:not(:disabled) {
   border-color: #d8e8fb;
   background: #f8fbff;
+}
+
+.history-item:disabled {
+  cursor: wait;
+  opacity: 0.68;
 }
 
 .history-item.current {
@@ -720,6 +926,15 @@ watch(() => props.xml, (xml) => {
   border-radius: 4px;
   background: #fff8e6;
   color: #8a6420;
+  font-size: 12px;
+}
+
+.history-error {
+  padding: 7px 8px;
+  border: 1px solid #ffcdd2;
+  border-radius: 4px;
+  background: #fff5f5;
+  color: #b3261e;
   font-size: 12px;
 }
 

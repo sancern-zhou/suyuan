@@ -8,10 +8,13 @@ import { uploadChatFile } from '../services/uploadApi.js'
 import {
   commitManualBoardVersion,
   getBoardVersions,
-  restoreBoardVersion as restoreBoardVersionRequest,
   saveBoardDraft
 } from '../api/board.js'
-import { exportActiveDrawioBoardXml } from '../components/board/drawioBoardBridge.js'
+import {
+  confirmActiveDrawioBoardCommit,
+  exportActiveDrawioBoardXml,
+  getActiveDrawioBoardWorkingVersionId
+} from '../components/board/drawioBoardBridge.js'
 import { prepareBoardForSend } from '../components/board/boardSendPreparation.js'
 import {
   isAcceptedBoardPayload,
@@ -2616,66 +2619,6 @@ export const useReactStore = defineStore('react', {
       return board
     },
 
-    async restoreDrawioBoardVersion(versionId, targetState = this.currentState) {
-      const board = this.ensureDrawioBoardState(targetState)
-      if (board.activeBoardId && Number.isFinite(Number(board.revision))) {
-        try {
-          const response = await restoreBoardVersionRequest(
-            board.activeBoardId,
-            versionId,
-            Number(board.revision || 0)
-          )
-          const version = response?.version || {}
-          const xmlRef = version.xml_ref || {}
-          const xml = await readDrawioBoardXmlFromRef(xmlRef)
-          if (!xml) throw new Error('board_version_load_failed')
-          if (board.currentXml && board.currentXml !== xml) {
-            this.pushDrawioBoardHistory(board.currentXml, targetState)
-          }
-          board.previousXml = board.currentXml || ''
-          board.currentXml = xml
-          board.currentVersionId = response.current_version_id || version.version_id || version.id
-          board.baseVersionId = board.currentVersionId
-          board.revision = Number(response.revision)
-          board.version = Number(version.version_number || board.version)
-          board.currentVersionSha256 = version.xml_sha256 || null
-          board.qualityStatus = version.quality_status || null
-          board.qualityReport = version.quality_report || {}
-          board.dirty = false
-          board.updatedAt = response.updated_at || new Date().toISOString()
-          await this.loadDrawioBoardVersions(targetState)
-          return board
-        } catch (error) {
-          board.syncError = error?.code || error?.message || 'board_version_load_failed'
-          throw error
-        }
-      }
-      const version = board.versions.find(item => (
-        item.id === versionId ||
-        item.version_id === versionId ||
-        String(item.versionNumber) === String(versionId) ||
-        String(item.version_number) === String(versionId)
-      ))
-      if (!version?.xml) return board
-
-      if (board.currentXml && board.currentXml !== version.xml) {
-        this.pushDrawioBoardHistory(board.currentXml, targetState)
-      }
-      board.previousXml = board.currentXml || ''
-      board.currentXml = version.xml
-      board.currentVersionId = version.version_id || version.id
-      board.baseVersionId = board.currentVersionId
-      board.versions = board.versions.map(item => ({
-        ...item,
-        is_current: (item.version_id || item.id) === board.currentVersionId
-      }))
-      board.version = Number(version.version_number || version.versionNumber || board.version)
-      board.title = version.title || board.title
-      board.dirty = false
-      board.updatedAt = new Date().toISOString()
-      return board
-    },
-
     async loadDrawioBoardVersions(targetState = this.currentState) {
       const board = this.ensureDrawioBoardState(targetState)
       if (!board.activeBoardId) return []
@@ -2795,8 +2738,10 @@ export const useReactStore = defineStore('react', {
         const result = await prepareBoardForSend({
           board,
           exportXml: exportActiveDrawioBoardXml,
+          getSourceVersionId: getActiveDrawioBoardWorkingVersionId,
           updateXml: (xml) => this.updateDrawioBoardXml(xml, { dirty: true, saveDraft: false }, targetState),
-          commitManual: (payload) => commitManualBoardVersion(board.activeBoardId, payload)
+          commitManual: (payload) => commitManualBoardVersion(board.activeBoardId, payload),
+          onCommitted: (payload) => confirmActiveDrawioBoardCommit(payload)
         })
         const version = result.response?.version
         if (version) {

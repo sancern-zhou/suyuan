@@ -42,6 +42,26 @@ def test_tender_llm_uses_configured_glm_provider_when_selected(monkeypatch):
     assert client.model == "glm-4.7"
 
 
+def test_tender_llm_uses_bailian_anthropic_provider_when_selected(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "bailian")
+    monkeypatch.setenv("BAILIAN_API_KEY", "bailian-valid-key")
+    monkeypatch.setenv(
+        "BAILIAN_BASE_URL",
+        "https://bailian.example/apps/anthropic",
+    )
+    monkeypatch.setenv("BAILIAN_MODEL", "qwen3.8-max-preview")
+    monkeypatch.delenv("TENDER_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("TENDER_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("TENDER_LLM_MODEL", raising=False)
+
+    client = OpenAICompatibleTenderLLMClient()
+
+    assert client.provider == "bailian"
+    assert client.api_key == "bailian-valid-key"
+    assert client.base_url == "https://bailian.example/apps/anthropic"
+    assert client.model == "qwen3.8-max-preview"
+
+
 def test_tender_llm_does_not_use_legacy_qwen_text_environment(monkeypatch):
     for name in [
         "TENDER_LLM_API_KEY",

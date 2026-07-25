@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import json
 import uuid
+import xml.etree.ElementTree as ET
+import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils.path_config import get_data_registry
 
 from .models import Board, BoardVersion
+
+
+_DRAWIO_GRAPH_MODEL_DEFAULTS = {
+    "grid": "1",
+    "gridSize": "10",
+    "guides": "1",
+    "tooltips": "1",
+    "connect": "1",
+    "arrows": "1",
+    "fold": "1",
+    "page": "1",
+    "pageScale": "1",
+    "pageWidth": "827",
+    "pageHeight": "1169",
+    "math": "0",
+    "shadow": "0",
+}
 
 
 class BoardVersionError(RuntimeError):
@@ -125,13 +147,50 @@ class BoardVersionService:
         await self.session.flush()
         return board
 
-    async def commit_manual(self, board_id: str, *, base_revision: int, xml: str) -> BoardVersion:
+    async def commit_manual(
+        self,
+        board_id: str,
+        *,
+        base_revision: int,
+        xml: str,
+        source_version_id: str | None = None,
+    ) -> BoardVersion:
         board = await self.get_board(board_id, for_update=True)
         self._require_revision(board, base_revision)
         digest = self._sha256(xml)
         current = await self._current_version(board)
-        if current is not None and current.xml_sha256 == digest:
+        source_version = (
+            await self.get_version(board_id, source_version_id)
+            if source_version_id
+            else None
+        )
+        if source_version is not None and source_version.lifecycle_status == "accepted":
+            source_xml = self._read_version_xml(source_version)
+            if source_xml is not None and self._semantic_sha256(source_xml) == self._semantic_sha256(xml):
+                if source_version.id != board.current_version_id:
+                    self._advance_board(board, source_version)
+                    await self.session.flush()
+                return source_version
+        if source_version is None and current is not None and current.xml_sha256 == digest:
             return current
+        semantic_digest = self._semantic_sha256(xml)
+        if source_version is None:
+            accepted_result = await self.session.execute(
+                select(BoardVersion)
+                .where(
+                    BoardVersion.board_id == board_id,
+                    BoardVersion.lifecycle_status == "accepted",
+                )
+                .order_by(BoardVersion.version_number.desc())
+            )
+            for accepted in accepted_result.scalars().all():
+                stored_xml = self._read_version_xml(accepted)
+                if stored_xml is None or self._semantic_sha256(stored_xml) != semantic_digest:
+                    continue
+                if accepted.id != board.current_version_id:
+                    self._advance_board(board, accepted)
+                    await self.session.flush()
+                return accepted
         version = await self._create_version(
             board,
             source="manual",
@@ -140,6 +199,7 @@ class BoardVersionService:
             quality_status="passed",
             quality_report={"status": "passed", "source": "manual"},
             accepted_at=datetime.utcnow(),
+            parent_version_id=source_version.id if source_version is not None else None,
         )
         self._advance_board(board, version)
         await self.session.flush()
@@ -259,32 +319,6 @@ class BoardVersionService:
         await self.session.flush()
         return version
 
-    async def restore(self, board_id: str, *, version_id: str, base_revision: int) -> BoardVersion:
-        board = await self.get_board(board_id, for_update=True)
-        self._require_revision(board, base_revision)
-        source = await self.get_version(board_id, version_id)
-        current_id = board.current_version_id
-        restored = BoardVersion(
-            board_id=board.id,
-            version_number=await self._next_version_number(board.id),
-            parent_version_id=current_id,
-            restored_from_version_id=source.id,
-            source="restore",
-            lifecycle_status="accepted",
-            xml_ref=dict(source.xml_ref),
-            xml_sha256=source.xml_sha256,
-            screenshot_ref=dict(source.screenshot_ref) if source.screenshot_ref else None,
-            quality_status=source.quality_status,
-            quality_report=dict(source.quality_report or {}),
-            summary=f"恢复版本 v{source.version_number}",
-            accepted_at=datetime.utcnow(),
-        )
-        self.session.add(restored)
-        await self.session.flush()
-        self._advance_board(board, restored)
-        await self.session.flush()
-        return restored
-
     async def import_legacy(self, session_id: str, *, title: str, xml: str) -> Board:
         board = await self.ensure_board(session_id, title=title)
         board = await self.get_board(board.id, for_update=True)
@@ -316,12 +350,13 @@ class BoardVersionService:
         agent_run_id: str | None = None,
         summary: str | None = None,
         accepted_at: datetime | None = None,
+        parent_version_id: str | None = None,
     ) -> BoardVersion:
         xml_ref, digest = self._store_xml(board.id, xml, prefix=source)
         version = BoardVersion(
             board_id=board.id,
             version_number=await self._next_version_number(board.id),
-            parent_version_id=board.current_version_id,
+            parent_version_id=parent_version_id or board.current_version_id,
             source=source,
             lifecycle_status=lifecycle_status,
             xml_ref=xml_ref,
@@ -364,6 +399,62 @@ class BoardVersionService:
     @staticmethod
     def _sha256(xml: str) -> str:
         return hashlib.sha256(str(xml).encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _semantic_sha256(cls, xml: str) -> str:
+        try:
+            root = ET.fromstring(str(xml))
+        except ET.ParseError:
+            return cls._sha256(xml)
+
+        def canonical(element: ET.Element) -> tuple[Any, ...]:
+            tag = element.tag.rsplit("}", 1)[-1]
+            if tag == "mxfile":
+                attributes = {}
+            elif tag == "mxGraphModel":
+                attributes = {
+                    key: value
+                    for key, value in element.attrib.items()
+                    if key not in {"dx", "dy"}
+                    and _DRAWIO_GRAPH_MODEL_DEFAULTS.get(key) != value
+                }
+            else:
+                attributes = element.attrib
+            text = (element.text or "").strip()
+            children = list(element)
+            if tag == "diagram" and not children and text:
+                decoded_graph = cls._decode_compressed_diagram(text)
+                if decoded_graph is not None:
+                    children = [decoded_graph]
+                    text = ""
+            return (
+                tag,
+                tuple(sorted((str(key), str(value)) for key, value in attributes.items())),
+                text,
+                tuple(canonical(child) for child in children),
+            )
+
+        normalized = json.dumps(canonical(root), ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _decode_compressed_diagram(value: str) -> ET.Element | None:
+        try:
+            compressed = base64.b64decode(value, validate=True)
+            encoded_xml = zlib.decompress(compressed, wbits=-15).decode("utf-8")
+            return ET.fromstring(unquote(encoded_xml))
+        except (binascii.Error, UnicodeError, zlib.error, ET.ParseError, ValueError):
+            return None
+
+    @staticmethod
+    def _read_version_xml(version: BoardVersion) -> str | None:
+        local_path = (version.xml_ref or {}).get("local_path") or (version.xml_ref or {}).get("path")
+        if not local_path:
+            return None
+        try:
+            return Path(local_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
 
     def _store_xml(self, board_id: str, xml: str, *, prefix: str) -> tuple[dict[str, Any], str]:
         digest = self._sha256(xml)

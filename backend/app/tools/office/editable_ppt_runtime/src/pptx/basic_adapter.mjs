@@ -36,6 +36,33 @@ function firstFont(fontFamily) {
     .replace(/^['"]|['"]$/g, "");
 }
 
+export function powerpointFont(theme = {}, role = "body") {
+  const title = role === "title";
+  const previewFont = title ? theme.fontTitle : theme.fontBody;
+  const configured = title ? theme.pptFontTitle : theme.pptFontBody;
+  return configured || (previewFont === "Noto Sans CJK SC" ? "Microsoft YaHei" : previewFont) || "Microsoft YaHei";
+}
+
+function mappedFont(fontFamily, element, theme) {
+  const measured = firstFont(fontFamily);
+  const title = ["h1", "h2"].includes(element.tagName);
+  const previewThemeFont = title ? theme?.fontTitle : theme?.fontBody;
+  if (!measured || measured === "Noto Sans CJK SC" || measured === previewThemeFont) {
+    return powerpointFont(theme, title ? "title" : "body");
+  }
+  return measured;
+}
+
+function textPosition(element) {
+  const position = pxBoxToInches(element.box);
+  if (!["h1", "h2"].includes(element.tagName)) return position;
+  const rightMargin = 0.65;
+  return {
+    ...position,
+    w: Math.max(position.w, round(SLIDE_WIDTH_IN - position.x - rightMargin)),
+  };
+}
+
 function pixels(value, fallback = 0) {
   const number = Number.parseFloat(String(value ?? ""));
   return Number.isFinite(number) ? number : fallback;
@@ -66,9 +93,9 @@ function fillOptions(style) {
   return { color, transparency: Math.round((1 - opacity * alpha) * 100) };
 }
 
-export function addBasicElement(slide, element, pptxApi) {
+export function addBasicElement(slide, element, pptxApi, theme = {}) {
   if (element.source === "native-ref") return { kind: "native-ref", id: element.id };
-  const position = pxBoxToInches(element.box);
+  const position = textPosition(element);
   const objectName = element.id;
   const hasRichText = Array.isArray(element.textRuns) && element.textRuns.length > 0;
   const hasText = typeof element.text === "string" && element.text.trim() !== "" &&
@@ -95,7 +122,7 @@ export function addBasicElement(slide, element, pptxApi) {
           text: run.text,
           options: {
             color: normalizeColor(run.style?.color) || normalizeColor(element.style?.color) || "000000",
-            fontFace: firstFont(run.style?.fontFamily || element.style?.fontFamily),
+            fontFace: mappedFont(run.style?.fontFamily || element.style?.fontFamily, element, theme),
             fontSize: round(pixels(run.style?.fontSize || element.style?.fontSize, 16) * 0.75),
             bold: pixels(run.style?.fontWeight, pixels(element.style?.fontWeight, 400)) >= 600,
             italic: (run.style?.fontStyle || element.style?.fontStyle) === "italic",
@@ -108,7 +135,7 @@ export function addBasicElement(slide, element, pptxApi) {
       margin: 0,
       breakLine: false,
       color: normalizeColor(element.style?.color) || "000000",
-      fontFace: firstFont(element.style?.fontFamily),
+      fontFace: mappedFont(element.style?.fontFamily, element, theme),
       fontSize: round(pixels(element.style?.fontSize, 16) * 0.75),
       bold: pixels(element.style?.fontWeight, 400) >= 600,
       italic: element.style?.fontStyle === "italic",
@@ -117,6 +144,7 @@ export function addBasicElement(slide, element, pptxApi) {
         : "left",
       valign: "mid",
       fit: "shrink",
+      wrap: !["h1", "h2"].includes(element.tagName),
       line: { color: "FFFFFF", transparency: 100 },
       fill: { color: "FFFFFF", transparency: 100 },
     });

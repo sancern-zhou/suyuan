@@ -142,7 +142,7 @@ class ReadFileTool(LLMTool):
             extract_tables: PDF是否提取表格（默认 True）
             extract_images: PDF是否提取图片（默认 False）
             enable_preview: PDF/DOCX是否生成预览（默认 True）
-            as_multimodal_attachment: 图片文件是否返回原生多模态附件（社交模式专用）
+            as_multimodal_attachment: 图片文件是否返回原生多模态附件（所有Agent模式可用）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}

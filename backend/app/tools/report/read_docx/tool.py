@@ -248,7 +248,7 @@ class ReadDocxTool(LLMTool):
                 except Exception as extract_error:
                     logger.warning("docx_image_extraction_failed", error=str(extract_error))
                 finally:
-                    # 注意：不立即删除临时目录，因为analyze_image需要访问
+                    # 注意：不立即删除临时目录，因为 read_file 多模态读取需要访问
                     # 临时文件会在系统清理时删除（如/tmp定时清理）
                     pass
 
@@ -282,7 +282,7 @@ class ReadDocxTool(LLMTool):
             if image_paths:
                 result_data["image_paths"] = image_paths
                 result_data["image_note"] = f"文档包含 {len(image_paths)} 张图片。"
-                result_data["image_suggestion"] = "图片已提取到临时目录，可直接使用 analyze_image 工具分析（使用上面 image_paths 中的路径）。"
+                result_data["image_suggestion"] = "图片已提取到临时目录，可使用 read_file 并设置 as_multimodal_attachment=true 查看（使用上面 image_paths 中的路径）。"
             elif image_count > 0:
                 # 如果检测到图片但提取失败
                 result_data["image_note"] = f"文档包含 {image_count} 张图片，但提取失败。"
@@ -456,7 +456,7 @@ class ReadDocxTool(LLMTool):
                 if image_paths:
                     result_data["image_paths"] = image_paths
                     result_data["image_note"] = f"文档包含 {len(image_paths)} 张图片。"
-                    result_data["image_suggestion"] = "图片已提取到临时目录，可直接使用 analyze_image 工具分析。"
+                    result_data["image_suggestion"] = "图片已提取到临时目录，可使用 read_file 并设置 as_multimodal_attachment=true 查看。"
 
                 # 生成PDF预览
                 try:
