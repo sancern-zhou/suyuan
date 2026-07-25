@@ -136,7 +136,6 @@ export function useSessionManagement(store) {
 
     const shouldLoadDrawioBoard = loadDrawioBoard &&
       store.currentMode === 'board' &&
-      store.currentState.lazyArtifacts?.hasDrawioBoard &&
       !store.currentState.lazyArtifacts?.drawioBoardLoaded
 
     if (shouldLoadDrawioBoard) {
