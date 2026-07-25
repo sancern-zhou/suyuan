@@ -1,4 +1,4 @@
-"""OCR adapter for attachment review via OpenAI-compatible multimodal APIs."""
+"""OCR adapter for attachment review via Bailian's Anthropic-compatible API."""
 
 from __future__ import annotations
 
@@ -16,15 +16,14 @@ from typing import Any
 import requests
 
 from config.settings import settings
+from app.services.bailian_multimodal import call_bailian_vision_sync
 
 
-QWEN_VL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+BAILIAN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
 MIMO_VL_BASE_URL = "https://api.xiaomimimo.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS = 90
 DEFAULT_PROMPT = "请识别图片中的所有文字内容，按原文输出，不要添加任何解释。"
-DEFAULT_MODEL = "qwen-vl-ocr"
-DEFAULT_VISION_MODEL = "qwen3.7-plus"
 DEFAULT_MIMO_MODEL = "mimo-v2.5"
 PDF_FIRST_PAGE_RENDER_DPI = 180
 _OCR_CACHE: dict[tuple[str, str, int, int], dict[str, Any]] = {}
@@ -67,7 +66,7 @@ def extract_attachment_json(
 
 
 def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt: str, task: str) -> dict[str, Any]:
-    """Call an OpenAI-compatible multimodal endpoint with an image and text prompt."""
+    """Call Bailian's Anthropic-compatible multimodal endpoint."""
 
     provider_id = target["provider"]
     model = target["model"]
@@ -76,7 +75,12 @@ def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt
     if resolved.get("status") != "success":
         return _error_result(source, model, str(resolved.get("error") or "附件路径不可用"))
 
-    cache_key = _cache_key(resolved, f"{provider_id}/{model}", task=task, prompt=prompt)
+    cache_key = _cache_key(
+        resolved,
+        f"{provider_id}/{model}",
+        task=f"{mode}:{task}",
+        prompt=prompt,
+    )
     cached = _OCR_CACHE.get(cache_key)
     if cached:
         return dict(cached)
@@ -88,50 +92,27 @@ def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt
     image_payload = _build_image_url_payload(resolved)
     if image_payload.get("status") != "success":
         return _error_result(source, model, str(image_payload.get("error") or "图片载荷构建失败"))
-    api_url = target["base_url"].rstrip("/")
-
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": image_payload["url"]},
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
     try:
-        response = requests.post(
-            f"{api_url}/chat/completions",
-            headers=headers,
-            json=payload,
+        call = (
+            call_bailian_vision_sync
+            if provider_id == "bailian"
+            else _call_openai_vision_sync
+        )
+        text, raw_response = call(
+            image_url=image_payload["url"],
+            prompt=prompt,
+            api_key=api_key,
+            base_url=target["base_url"],
+            model=model,
             timeout=_request_timeout_seconds(mode),
         )
-        response.raise_for_status()
-        raw_response = response.json()
-    except requests.Timeout as exc:
-        return _error_result(source, model, f"OCR 请求超时：{exc}")
-    except requests.RequestException as exc:
+    except Exception as exc:
         return _error_result(source, model, f"OCR 请求失败：{exc}")
-    except ValueError as exc:
-        return _error_result(source, model, f"OCR 响应解析失败：{exc}")
 
     service_error = _extract_service_error(raw_response)
     if service_error:
         return _error_result(source, model, service_error, raw_response=raw_response)
 
-    text = _extract_text_from_response(raw_response)
     confidence = _estimate_confidence(text, raw_response)
 
     result = {
@@ -151,6 +132,42 @@ def _call_vision_model(source: str, *, target: dict[str, str], mode: str, prompt
     return result
 
 
+def _call_openai_vision_sync(
+    *,
+    image_url: str,
+    prompt: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    timeout: float,
+) -> tuple[str, dict[str, Any]]:
+    """Call the optional Mimo visual fallback through its OpenAI endpoint."""
+
+    response = requests.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": image_url}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    raw_response = response.json()
+    return _extract_text_from_response(raw_response), raw_response
+
+
 def _normalize_mode(provider: str | None) -> str:
     value = str(provider or "general").strip().lower()
     if value in {"document", "table", "general", "flow_visual"}:
@@ -161,13 +178,13 @@ def _normalize_mode(provider: str | None) -> str:
 def _resolve_target(mode: str) -> dict[str, str]:
     if mode == "flow_visual":
         return _select_flow_visual_target()
-    return _qwen_target(mode)
+    return _bailian_target(mode)
 
 
 def _select_flow_visual_target() -> dict[str, str]:
     providers = _flow_visual_providers()
     if not providers:
-        return _qwen_target("general")
+        return _bailian_target("general")
 
     global _FLOW_PROVIDER_INDEX
     with _FLOW_PROVIDER_LOCK:
@@ -177,12 +194,12 @@ def _select_flow_visual_target() -> dict[str, str]:
 
 
 def _flow_visual_providers() -> list[dict[str, str]]:
-    raw = os.getenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", "qwen")
+    raw = os.getenv("OPS_AUDIT_FLOW_VISUAL_PROVIDERS", "bailian")
     names = [item.strip().lower() for item in raw.split(",") if item.strip()]
     targets: list[dict[str, str]] = []
     for name in names:
-        if name in {"qwen", "qwen_vl", "qwen-vl"}:
-            targets.append(_qwen_target("flow_visual"))
+        if name == "bailian":
+            targets.append(_bailian_target("flow_visual"))
         elif name in {"mimo", "mimo_vl", "mimo-vl"}:
             targets.append(_mimo_target())
     return targets
@@ -203,12 +220,12 @@ def flow_visual_provider_summary() -> list[dict[str, Any]]:
     return summary
 
 
-def _qwen_target(mode: str) -> dict[str, str]:
+def _bailian_target(mode: str) -> dict[str, str]:
     return {
-        "provider": "qwen",
-        "model": _resolve_qwen_model(mode),
-        "base_url": _resolve_qwen_base_url(),
-        "api_key": _resolve_qwen_api_key(),
+        "provider": "bailian",
+        "model": _resolve_bailian_model(mode),
+        "base_url": _resolve_bailian_base_url(),
+        "api_key": _resolve_bailian_api_key(),
     }
 
 
@@ -238,24 +255,8 @@ def _mimo_target() -> dict[str, str]:
     }
 
 
-def _resolve_qwen_model(mode: str) -> str:
-    if mode == "flow_visual":
-        return str(
-            os.getenv("QWEN_VISION_MODEL")
-            or os.getenv("OPS_AUDIT_FLOW_VISUAL_QWEN_MODEL")
-            or getattr(settings, "qwen_vision_model", "")
-            or DEFAULT_VISION_MODEL
-        ).strip()
-    if mode == "document":
-        return str(os.getenv("OCR_DOCUMENT_MODEL") or os.getenv("OCR_MODEL") or DEFAULT_MODEL).strip()
-    if mode == "table":
-        return str(os.getenv("OCR_TABLE_MODEL") or os.getenv("OCR_MODEL") or DEFAULT_MODEL).strip()
-    return str(
-        os.getenv("OCR_GENERAL_MODEL")
-        or os.getenv("OCR_MODEL")
-        or getattr(settings, "qwen_vl_model", "")
-        or DEFAULT_MODEL
-    ).strip()
+def _resolve_bailian_model(mode: str) -> str:
+    return str(settings.bailian_model).strip()
 
 
 def _request_timeout_seconds(mode: str) -> int:
@@ -268,17 +269,12 @@ def _request_timeout_seconds(mode: str) -> int:
         return DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS
 
 
-def _resolve_qwen_base_url() -> str:
-    return str(os.getenv("QWEN_VL_BASE_URL") or getattr(settings, "qwen_vl_base_url", "") or QWEN_VL_BASE_URL).strip()
+def _resolve_bailian_base_url() -> str:
+    return str(os.getenv("BAILIAN_BASE_URL") or settings.bailian_base_url or BAILIAN_BASE_URL).strip()
 
 
-def _resolve_qwen_api_key() -> str:
-    key = (
-        os.getenv("QWEN_VL_API_KEY")
-        or os.getenv("OCR_API_KEY")
-        or getattr(settings, "qwen_vl_api_key", "")
-        or getattr(settings, "aliyun_ocr_access_key_id", "")
-    )
+def _resolve_bailian_api_key() -> str:
+    key = os.getenv("BAILIAN_API_KEY") or settings.bailian_api_key or ""
     return str(key).strip()
 
 

@@ -92,6 +92,8 @@ def test_new_project_uses_the_available_cjk_sans_font(tmp_path):
     theme = json.loads(Path(project.project_dir, "theme.json").read_text(encoding="utf-8"))
     assert theme["fontTitle"] == "Noto Sans CJK SC"
     assert theme["fontBody"] == "Noto Sans CJK SC"
+    assert theme["pptFontTitle"] == "Microsoft YaHei"
+    assert theme["pptFontBody"] == "Microsoft YaHei"
 
 
 def test_invalid_managed_deck_edit_does_not_replace_source(tmp_path):

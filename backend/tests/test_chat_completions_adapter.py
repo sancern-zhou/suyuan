@@ -123,11 +123,10 @@ def test_convert_anthropic_messages_to_chat_preserves_image_url_blocks():
     ]
 
 
-@pytest.mark.parametrize("provider", ["qwen", "qwen_vl"])
-def test_chat_completions_payload_omits_false_stream_and_disables_qwen_thinking(provider):
+def test_chat_completions_payload_includes_explicit_false_stream():
     service = object.__new__(LLMService)
-    service.provider = provider
-    service.model = "qwen-plus"
+    service.provider = "openai"
+    service.model = "gpt-4.1-mini"
 
     payload = service._build_chat_completions_payload(
         messages=[{"role": "user", "content": "你好"}],
@@ -138,8 +137,8 @@ def test_chat_completions_payload_omits_false_stream_and_disables_qwen_thinking(
         stream=False,
     )
 
-    assert "stream" not in payload
-    assert payload["enable_thinking"] is False
+    assert payload["stream"] is False
+    assert "enable_thinking" not in payload
 
 
 def test_get_request_config_normalizes_trailing_slash_base_url():

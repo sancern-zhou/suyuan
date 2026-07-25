@@ -34,6 +34,37 @@ def _branch(operation: str, required: list[str], properties: dict[str, Any] | No
 
 PROJECT = {"project_dir": {"type": "string", "description": "可编辑 PPT 源码项目绝对路径"}}
 
+SOURCE_PATH = {
+    "type": "string",
+    "description": "相对 project_dir 的源码路径，例如 slides/slide-003.js、deck.json 或 theme.json。",
+}
+
+BASE_REVISION = {
+    "type": "integer",
+    "minimum": 1,
+    "description": (
+        "乐观锁版本号：必须使用最近一次 inspect/read_source 返回的 data.revision。"
+        "版本冲突时不会写入；重新 inspect 或 read_source，基于最新源码修改后再提交。"
+    ),
+}
+
+SOURCE_CONTENT = {
+    "type": "string",
+    "description": (
+        "要完整覆盖该文档的 UTF-8 内容；不是 patch。deck.json/theme.json 必须是完整 JSON。"
+        "slides/slide-*.js 必须完整调用 window.slideDataMap.set(pageNumber, slideObject)。"
+        "原生图表必须同时包含同 ID 的 HTML 占位框和 nativeElements 项。可直接照此结构生成："
+        "html: `<div class=\"absolute left-[160px] top-[220px] w-[1120px] h-[420px]\" "
+        "data-pptx-ref=\"roi-chart\"></div>`, "
+        "nativeElements: [{ id: \"roi-chart\", kind: \"chart\", chartType: \"column\", "
+        "data: { categories: [\"Q1\", \"Q2\"], "
+        "series: [{ name: \"节省工时\", values: [120, 260] }] } }]。"
+        "占位框应直接位于整页根节点下，使用 1440×810 画布绝对坐标。"
+        "原生对象不要使用 type、dataId、labels、values 等简写字段；"
+        "必须使用 id、kind 和完整 data，并保证 data-pptx-ref 与 id 完全一致。"
+    ),
+}
+
 
 class ManageEditablePptTool(LLMTool):
     def __init__(self, project_service=None, compiler_client=None, validator=None):
@@ -42,30 +73,33 @@ class ManageEditablePptTool(LLMTool):
             "description": (
                 "创建、直接读取/编辑、预览、编译和交付源码优先的高质量 PPT。"
                 "源码是普通 JSON/JS/资源文档，可被 read_file/edit_file 多次修改；随后 inspect 会自动协调版本。"
+                "compile success 只表示当前源码成功打包，不代表预期图表已经存在；"
+                "完成前应核对编译结果中的原生对象统计并渲染检查目标页面。"
             ),
             "parameters": {
                 "type": "object",
                 "oneOf": [
                     _branch("create", ["title"], {"title": {"type": "string"}, "theme": {"type": "string", "enum": ["government", "business", "data-analysis"], "default": "business"}}),
                     _branch("inspect", ["project_dir"], PROJECT),
-                    _branch("read_source", ["project_dir", "relative_path"], {**PROJECT, "relative_path": {"type": "string"}}),
-                    _branch("edit_source", ["project_dir", "relative_path", "content", "base_revision"], {**PROJECT, "relative_path": {"type": "string"}, "content": {"type": "string"}, "base_revision": {"type": "integer", "minimum": 1}}),
+                    _branch("read_source", ["project_dir", "relative_path"], {**PROJECT, "relative_path": SOURCE_PATH}),
+                    _branch("edit_source", ["project_dir", "relative_path", "content", "base_revision"], {**PROJECT, "relative_path": SOURCE_PATH, "content": SOURCE_CONTENT, "base_revision": BASE_REVISION}),
                     _branch("edit_sources", ["project_dir", "edits", "base_revision"], {
                         **PROJECT,
                         "edits": {
                             "type": "array",
                             "minItems": 1,
+                            "description": "在同一 revision 中原子更新多个完整源码文档；任一文档无效则全部不写入。",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "relative_path": {"type": "string"},
-                                    "content": {"type": "string"},
+                                    "relative_path": SOURCE_PATH,
+                                    "content": SOURCE_CONTENT,
                                 },
                                 "required": ["relative_path", "content"],
                                 "additionalProperties": False,
                             },
                         },
-                        "base_revision": {"type": "integer", "minimum": 1},
+                        "base_revision": BASE_REVISION,
                     }),
                     _branch("read_report", ["project_dir", "report_ref"], {
                         **PROJECT,
@@ -77,13 +111,13 @@ class ManageEditablePptTool(LLMTool):
                     _branch("render", ["project_dir"], {
                         **PROJECT,
                         "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}},
-                        "expected_slide_count": {"type": "integer", "minimum": 1},
+                        "expected_slide_count": {"type": "integer", "minimum": 1, "description": "可选页数验收条件；实际页数必须等于该值，否则 render 失败。"},
                     }),
                     _branch("compile", ["project_dir"], {
                         **PROJECT,
                         "editable": {"type": "string", "enum": ["strict", "compatible"], "default": "strict"},
                         "file_name": {"type": "string", "pattern": "^[^/\\\\]+\\.pptx$", "default": "presentation.pptx"},
-                        "expected_slide_count": {"type": "integer", "minimum": 1},
+                        "expected_slide_count": {"type": "integer", "minimum": 1, "description": "可选页数验收条件；实际页数必须等于该值，否则 compile 失败。"},
                     }),
                     _branch("validate", ["project_dir"], {**PROJECT, "pptx_path": {"type": "string"}}),
                     _branch("restore", ["project_dir", "revision", "base_revision"], {**PROJECT, "revision": {"type": "integer", "minimum": 1}, "base_revision": {"type": "integer", "minimum": 1}}),

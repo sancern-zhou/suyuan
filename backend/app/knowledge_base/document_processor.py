@@ -20,6 +20,9 @@ from typing import List, Dict, Any, Optional, Literal
 from pathlib import Path
 from enum import Enum
 import structlog
+from config.settings import settings
+from app.services.bailian_multimodal import call_bailian_vision
+from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
 
@@ -66,10 +69,8 @@ class DocumentProcessor:
         ".rtf": "rtf"
     }
 
-    # OCR 配置（阿里云百炼 - Qwen3-VL）
-    OCR_API_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-    OCR_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
-    OCR_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")  # 修复：统一使用QWEN_VL_MODEL
+    OCR_API_URL = settings.bailian_base_url
+    OCR_API_KEY = settings.bailian_api_key or ""
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
     OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "120"))
     
@@ -292,7 +293,7 @@ class DocumentProcessor:
             logger.error("pdf_to_images_failed", error=str(e), file_path=file_path)
             raise
 
-    # OCR 提示词（Qwen3-VL 通用多模态模型）
+    # OCR 提示词（百炼多模态模型）
     OCR_PROMPT_DEFAULT = """识别图片中的所有文字，要求：
 1. 按阅读顺序输出纯文本
 2. 表格用markdown格式（| 列1 | 列2 |）
@@ -319,7 +320,6 @@ class DocumentProcessor:
         Returns:
             (page_num, extracted_text)
         """
-        import httpx
         import base64
         import asyncio
         
@@ -331,55 +331,24 @@ class DocumentProcessor:
         
         for attempt in range(max_retries):
             try:
-                # 构建请求头（如果有API key则添加Authorization）
-                headers = {"Content-Type": "application/json"}
-                if self.OCR_API_KEY:  # 只有在有API key时才添加Authorization
-                    headers["Authorization"] = f"Bearer {self.OCR_API_KEY}"
-
-                async with httpx.AsyncClient(timeout=float(self.OCR_TIMEOUT)) as client:
-                    response = await client.post(
-                        f"{self.OCR_API_URL}/chat/completions",
-                        headers=headers,
-                        json={
-                            "model": self.OCR_MODEL,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
-                                        {"type": "text", "text": prompt}
-                                    ]
-                                }
-                            ],
-                            "max_tokens": 7000
-                        }
-                    )
-                    response.raise_for_status()
-                    result = response.json()
+                content, _ = await call_bailian_vision(
+                    image_url=f"data:image/png;base64,{base64_image}",
+                    prompt=prompt,
+                    api_key=self.OCR_API_KEY,
+                    base_url=self.OCR_API_URL,
+                    model=settings.bailian_model,
+                    timeout=float(self.OCR_TIMEOUT),
+                    max_tokens=7000,
+                )
+                content = self._clean_repeated_substrings(content)
+                logger.debug("ocr_page_success", page_num=page_num, content_length=len(content))
+                return (page_num, content)
                     
-                    content = result["choices"][0]["message"]["content"]
-                    # 清理可能的重复子串
-                    content = self._clean_repeated_substrings(content)
-                    
-                    logger.debug("ocr_page_success", page_num=page_num, content_length=len(content))
-                    return (page_num, content)
-                    
-            except httpx.ConnectError as e:
-                logger.warning("ocr_connection_failed", page_num=page_num, error=str(e))
-                return (page_num, f"[OCR失败: 连接错误 - 第{page_num + 1}页]")
-            except httpx.TimeoutException as e:
-                logger.warning("ocr_timeout", page_num=page_num, error=str(e))
-                return (page_num, f"[OCR超时 - 第{page_num + 1}页]")
-            except httpx.HTTPStatusError as e:
-                error_body = e.response.text if e.response else "No response body"
-                # 500 错误时重试
-                if e.response.status_code >= 500 and attempt < max_retries - 1:
-                    logger.warning("ocr_server_error_retrying", page_num=page_num, attempt=attempt+1, status=e.response.status_code)
-                    await asyncio.sleep(2 * (attempt + 1))  # 递增等待
-                    continue
-                logger.warning("ocr_http_error", page_num=page_num, status=e.response.status_code, error_body=error_body[:500])
-                return (page_num, f"[OCR失败: HTTP {e.response.status_code} - 第{page_num + 1}页]")
             except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning("ocr_retrying", page_num=page_num, attempt=attempt + 1, error=str(e))
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
                 logger.warning("ocr_failed", page_num=page_num, error=str(e), error_type=type(e).__name__)
                 return (page_num, f"[OCR失败: {str(e)} - 第{page_num + 1}页]")
         
@@ -1267,6 +1236,22 @@ class DocumentProcessor:
         import asyncio
         
         provider = ONLINE_LLM_PROVIDER.lower()
+
+        if provider == "bailian":
+            response = await llm_service.chat_anthropic(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=8192,
+                temperature=0.1,
+                system="你是文档分析助手。直接返回JSON，不要解释。",
+            )
+            content = "\n".join(
+                str(getattr(block, "text", ""))
+                for block in response.get("content", [])
+                if getattr(block, "type", None) == "text"
+            ).strip()
+            if not content:
+                raise RuntimeError("Bailian document chunking response contained no text")
+            return content
         
         if provider == "deepseek":
             api_key = os.getenv("DEEPSEEK_API_KEY")

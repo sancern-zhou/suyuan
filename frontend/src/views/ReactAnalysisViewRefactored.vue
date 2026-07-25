@@ -71,7 +71,6 @@
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
       @board-snapshot-confirm="handleBoardSnapshotConfirm"
-      @board-version-restore="handleBoardVersionRestore"
       @chat-area-drag-over="handleChatAreaDragOver"
       @chat-area-drag-leave="handleChatAreaDragLeave"
       @chat-area-drop="handleChatAreaDrop"
@@ -458,12 +457,6 @@ const handleBoardSelectionChange = (selection) => {
 const handleBoardSnapshotConfirm = async (snapshot) => {
   if (typeof store.confirmDrawioBoardSnapshot === 'function') {
     await store.confirmDrawioBoardSnapshot(snapshot)
-  }
-}
-
-const handleBoardVersionRestore = (versionId) => {
-  if (typeof store.restoreDrawioBoardVersion === 'function') {
-    store.restoreDrawioBoardVersion(versionId)
   }
 }
 

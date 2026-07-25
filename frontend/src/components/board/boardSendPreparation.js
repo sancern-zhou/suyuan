@@ -1,23 +1,25 @@
 import { BoardSyncError } from './drawioBoardBridge.js'
 
 
-export const prepareBoardForSend = async ({ board, exportXml, updateXml, commitManual }) => {
+export const prepareBoardForSend = async ({ board, exportXml, getSourceVersionId, updateXml, commitManual, onCommitted }) => {
   if (!board?.currentXml) return { context: null, response: null }
   if (!board.activeBoardId) {
     throw new BoardSyncError('board_manual_commit_failed', '当前画板尚未建立服务端版本，请重新加载会话')
   }
 
   const xml = await exportXml()
-  updateXml(xml)
+  const sourceVersionId = getSourceVersionId?.() || null
   const response = await commitManual({
     base_revision: Number(board.revision || 0),
-    xml
+    xml,
+    source_version_id: sourceVersionId
   })
   const version = response?.version || {}
   if (!response?.current_version_id || !Number.isFinite(Number(response?.revision))) {
     throw new BoardSyncError('board_manual_commit_failed', '画板版本提交失败')
   }
 
+  updateXml(xml)
   board.activeBoardId = response.board_id || board.activeBoardId
   board.currentVersionId = response.current_version_id
   board.baseVersionId = response.current_version_id
@@ -25,6 +27,7 @@ export const prepareBoardForSend = async ({ board, exportXml, updateXml, commitM
   board.revision = Number(response.revision)
   board.version = Number(version.version_number || board.version || 0)
   board.dirty = false
+  onCommitted?.({ xml, response })
 
   return {
     response,

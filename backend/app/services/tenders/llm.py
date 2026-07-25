@@ -255,12 +255,12 @@ class OpenAICompatibleTenderLLMClient:
     ):
         self._load_environment()
         provider = self._selected_provider()
+        self.provider = provider
         self.api_key = api_key or self._first_configured_value(
             [
                 "TENDER_LLM_API_KEY",
                 *self._provider_key_names(provider),
                 "OPENAI_API_KEY",
-                "DASHSCOPE_API_KEY",
             ]
         )
         self.base_url = self._normalize_base_url(
@@ -274,14 +274,13 @@ class OpenAICompatibleTenderLLMClient:
             or os.getenv("TENDER_LLM_MODEL")
             or self._provider_model(provider)
             or os.getenv("OPENAI_MODEL")
-            or os.getenv("DASHSCOPE_MODEL")
             or self._default_model(self.base_url)
         )
         self.temperature = temperature
         self.retry_rate_limits = True
         if not self.api_key:
             raise RuntimeError(
-                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、GLM_API_KEY、OPENAI_API_KEY 或 DASHSCOPE_API_KEY"
+                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、BAILIAN_API_KEY、GLM_API_KEY 或 OPENAI_API_KEY"
             )
 
     async def review_candidate(
@@ -463,6 +462,9 @@ class OpenAICompatibleTenderLLMClient:
         return notice
 
     async def _json_chat(self, prompt: str) -> Dict[str, Any]:
+        if getattr(self, "provider", "") == "bailian":
+            return await self._bailian_json_chat(prompt)
+
         from openai import (
             APIConnectionError,
             APITimeoutError,
@@ -529,6 +531,35 @@ class OpenAICompatibleTenderLLMClient:
             content = content.removeprefix("json").strip()
         return json.loads(content)
 
+    async def _bailian_json_chat(self, prompt: str) -> Dict[str, Any]:
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(
+            api_key=self.api_key,
+            base_url=(self.base_url or "").rstrip("/"),
+            timeout=float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "120")),
+            max_retries=int(os.getenv("TENDER_LLM_MAX_RETRIES", "3")),
+        )
+        try:
+            response = await client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                temperature=self.temperature,
+                system="你是招投标项目筛选和结构化抽取助手。只输出JSON。",
+                messages=[{"role": "user", "content": prompt}],
+            )
+        finally:
+            await client.close()
+
+        content = "\n".join(
+            str(getattr(block, "text", ""))
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip()
+        if content.startswith("```"):
+            content = content.strip("`").removeprefix("json").strip()
+        return json.loads(content or "{}")
+
     def _load_environment(self) -> None:
         try:
             from dotenv import dotenv_values, load_dotenv
@@ -542,11 +573,9 @@ class OpenAICompatibleTenderLLMClient:
                 in {
                     "TENDER_LLM_API_KEY",
                     "OPENAI_API_KEY",
-                    "DASHSCOPE_API_KEY",
                     "TENDER_LLM_BASE_URL",
                     "TENDER_LLM_MODEL",
                     "OPENAI_MODEL",
-                    "DASHSCOPE_MODEL",
                 }
                 and value
                 and (key not in os.environ or self._looks_placeholder(os.environ[key]))
@@ -558,28 +587,30 @@ class OpenAICompatibleTenderLLMClient:
         return provider.strip().split("#", 1)[0].strip().lower()
 
     def _provider_key_names(self, provider: str) -> list[str]:
+        if provider == "bailian":
+            return ["BAILIAN_API_KEY"]
         if provider == "glm":
             return ["GLM_API_KEY"]
         return []
 
     def _provider_base_url(self, provider: str) -> str | None:
+        if provider == "bailian":
+            return os.getenv("BAILIAN_BASE_URL")
         if provider == "glm":
             return os.getenv("GLM_BASE_URL")
         return None
 
     def _provider_model(self, provider: str) -> str | None:
+        if provider == "bailian":
+            return os.getenv("BAILIAN_MODEL")
         if provider == "glm":
             return os.getenv("GLM_MODEL")
         return None
 
     def _default_base_url(self) -> str | None:
-        if os.getenv("DASHSCOPE_API_KEY"):
-            return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         return None
 
     def _default_model(self, base_url: str | None = None) -> str:
-        if base_url and "dashscope.aliyuncs.com" in base_url:
-            return "qwen-plus"
         return "gpt-4.1-mini"
 
     def _normalize_base_url(self, value: str | None) -> str | None:

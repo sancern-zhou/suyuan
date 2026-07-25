@@ -1,4 +1,4 @@
-import { normalizeColor, pxBoxToInches } from "./basic_adapter.mjs";
+import { normalizeColor, powerpointFont, pxBoxToInches } from "./basic_adapter.mjs";
 
 function chartData(element) {
   return element.data.series.map((series) => ({
@@ -21,8 +21,8 @@ function addChart(slide, element, box, theme, pptxApi) {
     showValue: true,
     showCatName: false,
     showSerName: false,
-    catAxisLabelFontFace: theme.fontBody,
-    valAxisLabelFontFace: theme.fontBody,
+    catAxisLabelFontFace: powerpointFont(theme),
+    valAxisLabelFontFace: powerpointFont(theme),
     chartColors: [normalizeColor(theme.primary) || "174A7C", normalizeColor(theme.secondary) || "0F766E"],
     showBorder: false,
     ...(element.chartType === "column" ? { barDir: "col" } : {}),
@@ -37,7 +37,7 @@ function addTable(slide, element, box, theme) {
     border: { color: normalizeColor(theme.line) || "CBD5E1", width: 1 },
     color: normalizeColor(theme.text) || "1F2937",
     fill: normalizeColor(theme.surface) || "FFFFFF",
-    fontFace: theme.fontBody || "Microsoft YaHei",
+    fontFace: powerpointFont(theme),
     fontSize: 12,
     margin: 0.06,
     valign: "mid",
@@ -79,7 +79,7 @@ function addDiagram(slide, element, box, theme, pptxApi) {
       align: "center",
       valign: "mid",
       color: normalizeColor(theme.text) || "1F2937",
-      fontFace: theme.fontBody || "Microsoft YaHei",
+      fontFace: powerpointFont(theme),
       fontSize: 14,
       fit: "shrink",
     });

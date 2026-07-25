@@ -48,7 +48,8 @@ class EditablePptProjectService:
             "name": theme, **colors, "accent": "#E8A317", "canvas": "#F7F9FC",
             "surface": "#FFFFFF", "text": "#1F2937", "muted": "#64748B",
             "line": "#CBD5E1", "fontTitle": "Noto Sans CJK SC",
-            "fontBody": "Noto Sans CJK SC",
+            "fontBody": "Noto Sans CJK SC", "pptFontTitle": "Microsoft YaHei",
+            "pptFontBody": "Microsoft YaHei",
         }
         safe_title = html.escape(title).replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
         intent = json.dumps(f"introduce {title}", ensure_ascii=False)

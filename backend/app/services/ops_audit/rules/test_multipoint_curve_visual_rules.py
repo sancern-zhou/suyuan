@@ -335,13 +335,10 @@ def test_multipoint_review_rule_is_enabled_cataloged_and_not_hard_error():
     assert rules.RULE_ID not in scoring["critical_hard_error_rules"]
 
 
-def test_flow_visual_defaults_to_qwen37_plus_not_ocr(monkeypatch):
-    monkeypatch.delenv("QWEN_VISION_MODEL", raising=False)
-    monkeypatch.delenv("OPS_AUDIT_FLOW_VISUAL_QWEN_MODEL", raising=False)
-    monkeypatch.setattr(ocr_adapter.settings, "qwen_vision_model", "")
-    monkeypatch.setattr(ocr_adapter.settings, "qwen_vl_model", "qwen-vl-ocr")
+def test_flow_visual_follows_global_bailian_model(monkeypatch):
+    monkeypatch.setattr(ocr_adapter.settings, "bailian_model", "qwen3.8-max-preview")
 
-    assert ocr_adapter._resolve_qwen_model("flow_visual") == "qwen3.7-plus"
+    assert ocr_adapter._resolve_bailian_model("flow_visual") == "qwen3.8-max-preview"
 
 
 def test_flow_visual_uses_longer_configurable_timeout(monkeypatch):

@@ -65,6 +65,33 @@ test("compile writes pptx and strict compile report", { timeout: 45_000 }, async
   assert.equal(Object.keys(zip.files).some((name) => /^ppt\/embeddings\/.+\.xlsx$/.test(name)), true);
 });
 
+test("compile removes content type overrides for slide masters that do not exist", { timeout: 45_000 }, async () => {
+  const projectDir = await nativeProject();
+  const deckPath = path.join(projectDir, "deck.json");
+  const deck = JSON.parse(await fs.readFile(deckPath, "utf8"));
+  deck.slides = ["cover", "second"];
+  await fs.writeFile(deckPath, `${JSON.stringify(deck, null, 2)}\n`, "utf8");
+  await fs.writeFile(
+    path.join(projectDir, "slides", "slide-002.js"),
+    NATIVE_SLIDE.replace("set(1", "set(2").replace('id: "cover"', 'id: "second"'),
+    "utf8",
+  );
+  const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), "editable-ppt-content-types-"));
+
+  const result = await compileDeck(projectDir, outputDir, { editable: "strict" });
+
+  assert.equal(result.success, true);
+  const zip = await JSZip.loadAsync(await fs.readFile(result.pptxPath));
+  const contentTypes = await zip.file("[Content_Types].xml").async("string");
+  const declaredMasters = [...contentTypes.matchAll(/PartName="\/ppt\/slideMasters\/(slideMaster\d+\.xml)"/g)]
+    .map((match) => match[1]);
+  const actualMasters = Object.keys(zip.files)
+    .filter((name) => /^ppt\/slideMasters\/slideMaster\d+\.xml$/.test(name))
+    .map((name) => path.basename(name));
+  assert.deepEqual(declaredMasters, actualMasters);
+  assert.equal(result.report.ooxml.danglingContentTypeOverrides, 0);
+});
+
 test("compile preserves an opaque slide-root background as the native slide background", { timeout: 45_000 }, async () => {
   const projectDir = await nativeProject();
   const slidePath = path.join(projectDir, "slides", "slide-001.js");

@@ -2,7 +2,7 @@
 LLM Service
 
 提供LLM调用服务，支持JSON格式响应解析。
-支持多种LLM provider: deepseek, minimax, openai, agnes, glm
+支持多种LLM provider: deepseek, minimax, openai, agnes, glm, bailian
 """
 import asyncio
 import json
@@ -246,8 +246,8 @@ class LLMService:
     def use_auto_profile(self, auto_profile: Optional[str]):
         """Temporarily select a model chain for Auto based on capability profile.
 
-        Explicit provider/model calls and explicit Flash/Pro tier selections win
-        over Auto profile routing.
+        Capability profiles override Flash/Pro tier selections. Explicit
+        provider/model calls remain authoritative for non-Agent callers.
         """
         profile = (auto_profile or "").strip().lower()
         if not profile or profile == "default":
@@ -255,10 +255,10 @@ class LLMService:
             return
 
         active_state = _llm_request_state.get()
-        if active_state is not None and (
-            active_state.get("selection_source") == "tier"
-            or active_state.get("provider")
-            or active_state.get("model")
+        if (
+            active_state is not None
+            and active_state.get("selection_source") != "tier"
+            and (active_state.get("provider") or active_state.get("model"))
         ):
             yield
             return
@@ -310,7 +310,10 @@ class LLMService:
             )
             yield
         finally:
+            temporary_client = self.anthropic_client
             _llm_request_state.reset(token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
 
     @staticmethod
     def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -979,6 +982,13 @@ class LLMService:
             "model_env": "DEEPSEEK_MODEL",
             "model_default": "deepseek-chat",
         },
+        "bailian": {
+            "url_env": "BAILIAN_BASE_URL",
+            "url_default": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+            "key_env": "BAILIAN_API_KEY",
+            "model_env": "BAILIAN_MODEL",
+            "model_default": "qwen3.8-max-preview",
+        },
         "minimax": {
             "url_env": "MINIMAX_BASE_URL",
             "url_default": "https://api.minimaxi.com/v1",
@@ -1000,15 +1010,6 @@ class LLMService:
             "key_env": "MIMO_API_KEY",
             "model_env": "MIMO_MODEL",
             "model_default": "mimo-v2.5",
-        },
-        # Qwen visual models use DashScope's OpenAI-compatible endpoint.
-        # Keep this separate from the retired general-purpose `qwen` provider.
-        "qwen_vl": {
-            "url_env": "QWEN_VL_BASE_URL",
-            "url_default": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "key_env": "QWEN_VL_API_KEY",
-            "model_env": "QWEN_VISION_MODEL",
-            "model_default": "qwen3.7-plus",
         },
         "agnes": {
             "url_env": "AGNES_BASE_URL",
@@ -1254,8 +1255,8 @@ class LLMService:
 
     def _load_provider_config(self):
         """根据provider加载对应配置"""
-        if self.provider == "qwen":
-            raise ValueError("Unsupported LLM provider: qwen")
+        if self.provider in {"qwen", "qwen_vl"}:
+            raise ValueError(f"Unsupported LLM provider: {self.provider}")
 
         config = self.PROVIDER_CONFIG.get(self.provider)
 
@@ -1290,6 +1291,12 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_deepseek_model_fallback_to_env", model=self.model)
+
+        elif self.provider == "bailian":
+            self.api_mode = settings.bailian_api_mode
+            self.base_url = settings.bailian_base_url
+            self.api_key = settings.bailian_api_key or ""
+            self.model = settings.bailian_model
 
         elif self.provider == "minimax":
             self.api_mode = getattr(settings, "minimax_api_mode", "anthropic_messages")
@@ -1329,24 +1336,6 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_mimo_model_fallback_to_env", model=self.model)
-
-        elif self.provider == "qwen_vl":
-            self.api_mode = "chat_completions"
-            self.base_url = (
-                settings.qwen_vl_base_url
-                or os.getenv(config["url_env"])
-                or config["url_default"]
-            )
-            self.api_key = (
-                settings.qwen_vl_api_key
-                or os.getenv(config["key_env"])
-                or ""
-            )
-            self.model = (
-                settings.qwen_vision_model
-                or os.getenv(config["model_env"])
-                or config["model_default"]
-            )
 
         elif self.provider == "agnes":
             self.api_mode = getattr(settings, "agnes_api_mode", "chat_completions")
@@ -1454,7 +1443,7 @@ class LLMService:
             )
             return
 
-        if self.provider in ["deepseek", "mimo", "glm", "minimax"]:  # 支持 Anthropic 格式的提供商
+        if self.provider in ["deepseek", "mimo", "glm", "minimax", "bailian"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
@@ -1477,6 +1466,8 @@ class LLMService:
                         or os.getenv("ANTHROPIC_BASE_URL")
                         or "https://open.bigmodel.cn/api/anthropic"
                     )
+                elif self.provider == "bailian":
+                    anthropic_base_url = settings.bailian_base_url
                 else:
                     logger.error(
                         "llm_anthropic_unsupported_provider",
@@ -1489,15 +1480,6 @@ class LLMService:
                 anthropic_base_url = anthropic_base_url.rstrip('/')
                 logger.info("llm_anthropic_base_url_cleaned",
                     provider=self.provider,
-                    original_url=(
-                        settings.mimo_base_url
-                        if self.provider == "mimo"
-                        else getattr(settings, "minimax_anthropic_base_url", None)
-                        if self.provider == "minimax"
-                        else settings.deepseek_base_url
-                        if self.provider == "deepseek"
-                        else settings.glm_anthropic_base_url
-                    ),
                     cleaned_url=anthropic_base_url
                 )
 
@@ -1542,7 +1524,7 @@ class LLMService:
                     "llm_anthropic_client_initialized",
                     provider=self.provider,
                     base_url=anthropic_base_url,
-                    api_key_prefix=self.api_key[:10] + "..."  # 显示前10个字符
+                    has_api_key=bool(self.api_key),
                 )
             except ImportError:
                 logger.error(
@@ -2693,8 +2675,7 @@ class LLMService:
             ),
             "temperature": temperature,
         }
-        if stream or self.provider not in {"qwen", "qwen_vl"}:
-            payload["stream"] = stream
+        payload["stream"] = stream
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if converted_tools:
@@ -2704,8 +2685,6 @@ class LLMService:
             payload["enable_thinking"] = False
             if stream:
                 payload["stream_options"] = {"include_usage": True}
-        elif self.provider in {"qwen", "qwen_vl"}:
-            payload["enable_thinking"] = False
         return payload
 
     @staticmethod

@@ -16,6 +16,7 @@ test('synchronizes XML and commits a manual version before returning board conte
 
   const result = await prepareBoardForSend({
     board,
+    getSourceVersionId: () => 'version-1',
     exportXml: async () => {
       calls.push('sync')
       return '<mxfile>latest</mxfile>'
@@ -25,20 +26,22 @@ test('synchronizes XML and commits a manual version before returning board conte
       board.currentXml = xml
     },
     commitManual: async (payload) => {
-      calls.push(`commit:${payload.base_revision}:${payload.xml}`)
+      calls.push(`commit:${payload.base_revision}:${payload.source_version_id}:${payload.xml}`)
       return {
         board_id: 'board-1',
         current_version_id: 'version-2',
         revision: 2,
         version: { version_id: 'version-2', xml_sha256: 'hash-2' }
       }
-    }
+    },
+    onCommitted: ({ xml }) => calls.push(`confirmed:${xml}`)
   })
 
   assert.deepEqual(calls, [
     'sync',
+    'commit:1:version-1:<mxfile>latest</mxfile>',
     'update:<mxfile>latest</mxfile>',
-    'commit:1:<mxfile>latest</mxfile>'
+    'confirmed:<mxfile>latest</mxfile>'
   ])
   assert.deepEqual(result.context, {
     board_id: 'board-1',
@@ -64,6 +67,28 @@ test('does not commit when synchronization fails', async () => {
     (error) => error.code === 'board_sync_timeout'
   )
   assert.equal(commitCalls, 0)
+})
+
+
+test('does not replace current XML when the manual version commit fails', async () => {
+  const board = { activeBoardId: 'board-1', currentXml: '<mxfile>current</mxfile>', revision: 1 }
+  let updateCalls = 0
+  let committedCalls = 0
+
+  await assert.rejects(
+    prepareBoardForSend({
+      board,
+      exportXml: async () => '<mxfile>working</mxfile>',
+      updateXml: () => { updateCalls += 1 },
+      commitManual: async () => { throw Object.assign(new Error('conflict'), { code: 'board_version_conflict' }) },
+      onCommitted: () => { committedCalls += 1 }
+    }),
+    (error) => error.code === 'board_version_conflict'
+  )
+
+  assert.equal(updateCalls, 0)
+  assert.equal(committedCalls, 0)
+  assert.equal(board.currentXml, '<mxfile>current</mxfile>')
 })
 
 

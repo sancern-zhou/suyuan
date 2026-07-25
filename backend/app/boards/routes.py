@@ -35,11 +35,7 @@ class ManualVersionRequest(BaseModel):
     base_revision: int = Field(ge=0)
     xml: str = Field(min_length=1)
     xml_sha256: str | None = None
-
-
-class RestoreVersionRequest(BaseModel):
-    base_revision: int = Field(ge=0)
-    version_id: str = Field(min_length=1)
+    source_version_id: str | None = None
 
 
 def get_board_artifact_root() -> Path:
@@ -147,6 +143,7 @@ async def commit_manual_board_version(
             board_id,
             base_revision=request.base_revision,
             xml=request.xml,
+            source_version_id=request.source_version_id,
         )
         board = await service.get_board(board_id)
     except Exception as exc:
@@ -183,30 +180,6 @@ async def get_board_version(
     )
     try:
         version = await service.get_version(board_id, version_id)
-    except Exception as exc:
-        _raise_version_error(exc)
-    return {**serialize_board(board), "version": serialize_version(version)}
-
-
-@router.post("/{board_id}/restore")
-async def restore_board_version(
-    board_id: str,
-    request: RestoreVersionRequest,
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(require_current_user),
-    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
-    artifact_root: Path = Depends(get_board_artifact_root),
-):
-    service, _ = await _authorized_service(
-        board_id, db=db, artifact_root=artifact_root, catalog=catalog, user=user, write=True
-    )
-    try:
-        version = await service.restore(
-            board_id,
-            version_id=request.version_id,
-            base_revision=request.base_revision,
-        )
-        board = await service.get_board(board_id)
     except Exception as exc:
         _raise_version_error(exc)
     return {**serialize_board(board), "version": serialize_version(version)}
