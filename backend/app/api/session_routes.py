@@ -677,6 +677,10 @@ async def restore_session(
     session_data["total_message_count"] = pagination["total_count"]
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
     session_data["resource_counts"] = resource_counts
+    session_data["has_lazy_drawio_board"] = bool(
+        isinstance(session_data.get("metadata"), dict)
+        and session_data["metadata"].get("drawio_board")
+    )
 
     if lazy_artifacts:
         session_data["conversation_history"] = _strip_lazy_artifacts(
