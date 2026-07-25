@@ -1050,6 +1050,7 @@ class ReadFileTool(LLMTool):
                 return {
                     "success": True,
                     "data": result["data"],
+                    "resources": result.get("data", {}).get("resources", []),
                     "summary": result["summary"],
                     "metadata": {
                         "generator": "read_file",
