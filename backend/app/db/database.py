@@ -173,6 +173,11 @@ async def _ensure_session_resources_schema(conn) -> None:
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """,
+        """
+        ALTER TABLE IF EXISTS session_resources
+            ALTER COLUMN resource_id TYPE VARCHAR(64)
+            USING resource_id::text
+        """,
     )
     for statement in statements:
         await conn.execute(text(statement))
@@ -180,12 +185,7 @@ async def _ensure_session_resources_schema(conn) -> None:
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-        """,
-        """
-        ALTER TABLE IF EXISTS session_resources
-            ALTER COLUMN resource_id TYPE VARCHAR(64)
-            USING resource_id::text
-        """
+    """
     Dependency for FastAPI endpoints to get database session.
 
     Usage:
