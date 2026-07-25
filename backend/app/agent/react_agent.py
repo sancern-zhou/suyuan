@@ -555,21 +555,28 @@ class ReActAgent:
             manual_mode=manual_mode,
             storage_mode=session_storage_mode or manual_mode,
         )
-        session_document_context = self._build_session_document_context(
-            self._session_store.get(actual_session_id, {}).get("office_documents", []),
+        # 上下文资源唯一来源为持久化资源目录；不再读取会话内存中的旧
+        # office_documents 快照，避免重启前后 Agent 上下文不一致。
+        session_resources = await SessionResourceService.database().list_resources(
+            actual_session_id, presentation_type="document", limit=100
         )
+        resource_documents = [
+            {
+                "file_name": resource.label,
+                "file_path": (resource.locator or {}).get("path"),
+                "file_type": (resource.presentation or {}).get("format") if resource.presentation else None,
+                "summary": (resource.metadata or {}).get("summary"),
+            }
+            for resource in session_resources.resources
+        ]
+        session_document_context = self._build_session_document_context(resource_documents)
         if session_document_context:
             user_query = f"{user_query}\n\n{session_document_context}"
             logger.info(
                 "session_document_context_added",
                 session_id=actual_session_id,
                 context_length=len(session_document_context),
-                document_count=len(
-                    self._trim_office_documents(
-                        self._session_store.get(actual_session_id, {}).get("office_documents", []),
-                        self.SESSION_DOCUMENT_CONTEXT_LIMIT,
-                    )
-                ),
+                document_count=len(resource_documents[: self.SESSION_DOCUMENT_CONTEXT_LIMIT]),
             )
 
         from .task.task_models import TaskList
