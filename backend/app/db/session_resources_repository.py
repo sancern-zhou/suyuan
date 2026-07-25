@@ -83,9 +83,11 @@ class SessionResourcesRepository:
                             "updated_at": now,
                         }
                         statement = insert(SessionResourceDB).values(**values)
+                        update_values = {**values, "metadata": stored.metadata}
+                        update_values.pop("resource_metadata", None)
                         statement = statement.on_conflict_do_update(
                             index_elements=[SessionResourceDB.session_id, SessionResourceDB.resource_key],
-                            set_={**values, "created_at": SessionResourceDB.created_at},
+                            set_={**update_values, "created_at": SessionResourceDB.created_at},
                         )
                         await db.execute(statement)
                     version_row.version += 1
