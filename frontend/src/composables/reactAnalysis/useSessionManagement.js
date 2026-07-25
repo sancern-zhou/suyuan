@@ -90,13 +90,15 @@ export function useSessionManagement(store) {
             const officeDocs = (response?.resources || []).map(resource => {
               const locator = resource.locator || {}
               const presentation = resource.presentation || {}
-              const preview = presentation.preview || {}
+              const preview = presentation.preview?.pdf_preview || presentation.preview || {}
+              const pdfId = preview.pdf_id || preview.pdfId
+              const pdfUrl = preview.pdf_url || (pdfId ? `/api/office/pdf/${encodeURIComponent(pdfId)}` : undefined)
               return {
                 ...resource,
                 file_name: resource.label,
                 file_path: locator.path,
                 pdf_preview: preview.pdf_preview || preview,
-                pdf_url: preview.pdf_url,
+                pdf_url: pdfUrl,
                 html_preview: preview.html_preview,
                 html_url: preview.html_url,
                 markdown_preview: preview.markdown_preview,
