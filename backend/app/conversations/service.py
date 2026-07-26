@@ -1,5 +1,7 @@
 """Authorization and registration policy for conversation ownership."""
 
+from datetime import datetime
+
 from fastapi import HTTPException
 
 from app.auth.models import CurrentUser
@@ -49,6 +51,17 @@ class ConversationCatalogService:
         if existing:
             if existing.owner_user_id != owner_user_id or existing.source != source:
                 raise RuntimeError("catalog_identity_conflict")
+            clean_title = title.strip() if isinstance(title, str) else title
+            if not (existing.title or "").strip() and clean_title:
+                return await self.repository.upsert(
+                    existing.model_copy(
+                        update={
+                            "mode": mode or existing.mode,
+                            "title": clean_title,
+                            "updated_at": datetime.utcnow(),
+                        }
+                    )
+                )
             return existing
         stored = await self.repository.upsert(
             ConversationCatalogRecord(
