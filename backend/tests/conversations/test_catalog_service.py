@@ -129,6 +129,45 @@ async def test_registration_cannot_reassign_existing_catalog_identity():
 
 
 @pytest.mark.asyncio
+async def test_registration_fills_title_for_existing_web_draft():
+    draft = row().model_copy(update={"title": None})
+    repository = FakeRepository([draft])
+    service = ConversationCatalogService(repository)
+
+    registered = await service.register_identity(
+        session_id="s1",
+        owner_user_id="u1",
+        owner_username="u1",
+        owner_display_name="U1",
+        source=ConversationSource.WEB,
+        mode="assistant",
+        title="分析附件中的数据",
+    )
+
+    assert registered.title == "分析附件中的数据"
+    assert (await repository.get("s1")).title == "分析附件中的数据"
+
+
+@pytest.mark.asyncio
+async def test_registration_preserves_existing_catalog_title():
+    repository = FakeRepository([row()])
+    service = ConversationCatalogService(repository)
+
+    registered = await service.register_identity(
+        session_id="s1",
+        owner_user_id="u1",
+        owner_username="u1",
+        owner_display_name="U1",
+        source=ConversationSource.WEB,
+        mode="assistant",
+        title="later question",
+    )
+
+    assert registered.title == "hello"
+    assert (await repository.get("s1")).title == "hello"
+
+
+@pytest.mark.asyncio
 async def test_ordinary_lists_only_self_while_admin_lists_all():
     second = row(owner="u2")
     second = second.model_copy(update={"session_id": "s2"})

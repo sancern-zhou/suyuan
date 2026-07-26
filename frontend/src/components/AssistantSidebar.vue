@@ -235,9 +235,19 @@ const mergedRecentSessions = computed(() => {
     .map(session => {
       const firstUser = session.messages?.find(m => m.type === 'user')
       const lastMessage = session.messages?.[session.messages.length - 1]
+
+      // 获取会话标题：优先使用文本内容，其次使用附件名称，最后使用默认标题
+      let queryTitle = '新对话'
+      if (firstUser?.content && firstUser.content.trim()) {
+        queryTitle = firstUser.content.trim()
+      } else if (firstUser?.attachments && firstUser.attachments.length > 0) {
+        const firstAttachment = firstUser.attachments[0]
+        queryTitle = firstAttachment.name || firstAttachment.filename || '附件'
+      }
+
       return {
         session_id: session.sessionId,
-        query: firstUser?.content || '新对话',
+        query: queryTitle,
         updated_at: lastMessage?.timestamp || new Date().toISOString(),
         is_running: !!session.isAnalyzing,
         is_local: true,
