@@ -113,8 +113,12 @@ export async function getSessionVisualizations(sessionId) {
 /**
  * 按需加载会话文档/报告预览元数据
  */
-export async function getSessionOfficeDocuments(sessionId) {
-  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=document`)
+export async function getSessionOfficeDocuments(sessionId, options = {}) {
+  const { cursor = null, limit = null } = options
+  let url = `${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=document`
+  if (limit) url += `&limit=${encodeURIComponent(limit)}`
+  if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`
+  return await request(url)
 }
 
 /**
