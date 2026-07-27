@@ -4,7 +4,8 @@ const hasDocumentPreview = (doc = {}) => {
     doc?.markdown_preview ||
     doc?.html_preview ||
     doc?.svg_preview ||
-    doc?.spreadsheet_preview
+    doc?.spreadsheet_preview ||
+    doc?.ppt_preview
   )
 }
 
