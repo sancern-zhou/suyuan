@@ -8,6 +8,7 @@ import { preserveCatalogFields } from '@/components/management/sessionHistoryAcc
 import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
 import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
+import { mapSessionDocumentResources } from '@/services/sessionDocumentResources.js'
 import {
   listSessions,
   restoreSession,
@@ -87,29 +88,7 @@ export function useSessionManagement(store) {
         getSessionOfficeDocuments(sessionId)
           .then(response => {
             if (store.currentState.sessionId !== sessionId) return
-            const officeDocs = (response?.resources || []).map(resource => {
-              const locator = resource.locator || {}
-              const presentation = resource.presentation || {}
-              const preview = presentation.preview?.pdf_preview || presentation.preview || {}
-              const pdfId = preview.pdf_id || preview.pdfId
-              const pdfUrl = preview.pdf_url || (pdfId ? `/api/office/pdf/${encodeURIComponent(pdfId)}` : undefined)
-              const format = String(presentation.format || '').toLowerCase()
-              return {
-                ...resource,
-                file_name: resource.label,
-                file_path: locator.path,
-                format,
-                doc_type: format === 'qmd' ? 'report' : (format === 'md' || format === 'markdown' ? 'markdown' : undefined),
-                pdf_preview: preview.pdf_preview || preview,
-                pdf_url: pdfUrl,
-                html_preview: preview.html_preview,
-                html_url: preview.html_url,
-                markdown_preview: preview.markdown_preview,
-                markdown_content: preview.content || preview.markdown_content,
-                svg_preview: preview.svg_preview,
-                spreadsheet_preview: preview.spreadsheet_preview,
-              }
-            })
+            const officeDocs = mapSessionDocumentResources(response?.resources)
             console.log('[会话恢复] 文档延迟加载完成:', officeDocs.length)
             if (officeDocs.length > 0) {
               if (typeof store.setOfficeDocumentHistory === 'function') {

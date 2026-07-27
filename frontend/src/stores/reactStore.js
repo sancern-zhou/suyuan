@@ -22,7 +22,8 @@ import {
   shouldPreviewBoardCandidate
 } from '../components/board/boardVersionHistory.js'
 import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
-import { autoSaveSession } from '../api/session.js'
+import { autoSaveSession, getSessionOfficeDocuments } from '../api/session.js'
+import { refreshDurableDocumentResources } from '../services/sessionDocumentResources.js'
 import {
   convertStreamingAnswerToThoughtIfToolPlanning,
   freezeActiveAssistantOutput
@@ -1026,12 +1027,13 @@ export const useReactStore = defineStore('react', {
       console.log(`[setLastOfficeDocument] Set office document for mode ${this.currentMode}`)
     },
 
-    setOfficeDocumentHistory(documents) {
+    setOfficeDocumentHistory(documents, targetState = this.currentState) {
       if (!Array.isArray(documents)) {
         console.warn('[setOfficeDocumentHistory] Invalid documents:', documents)
         return
       }
-      this.currentState.officeDocumentHistory = []
+      targetState.officeDocumentHistory = []
+      targetState.lastOfficeDocument = null
       documents
         .slice()
         .sort((a, b) => {
@@ -1039,7 +1041,7 @@ export const useReactStore = defineStore('react', {
           const bTime = new Date(b?.timestamp || 0).getTime()
           return aTime - bTime
         })
-        .forEach(doc => this.recordOfficeDocument(doc, this.currentState))
+        .forEach(doc => this.recordOfficeDocument(doc, targetState))
       console.log(`[setOfficeDocumentHistory] Set ${documents.length} office documents for mode ${this.currentMode}`)
     },
 
@@ -2061,6 +2063,23 @@ export const useReactStore = defineStore('react', {
           } else if (data?.last_office_document) {
             this.recordOfficeDocument(data.last_office_document, targetState)
           }
+
+          void refreshDurableDocumentResources({
+            terminalData: data,
+            sessionId,
+            targetState,
+            fetchDocuments: getSessionOfficeDocuments,
+            applyDocuments: (documents) => {
+              this.setOfficeDocumentHistory(documents, targetState)
+              targetState.lazyArtifacts = {
+                ...(targetState.lazyArtifacts || createEmptyModeState().lazyArtifacts),
+                hasOfficeDocuments: documents.length > 0,
+                officeDocumentCount: documents.length,
+                officeDocumentsLoaded: true,
+                loadingOfficeDocuments: false
+              }
+            }
+          })
 
           this.finishQueryVoiceOutput(finalContent || targetState.finalAnswer, targetMode, targetState)
 
