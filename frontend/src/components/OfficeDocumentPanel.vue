@@ -135,6 +135,46 @@
               ></iframe>
             </div>
 
+            <!-- Native presentation preview -->
+            <div v-else-if="doc.ppt_preview" class="ppt-wrapper">
+              <div v-if="getPptPages(doc).length > 0" class="ppt-preview-content">
+                <div class="ppt-toolbar">
+                  <button
+                    type="button"
+                    class="ppt-nav-btn"
+                    :disabled="presentationPageIndex <= 0"
+                    @click="changePresentationPage(doc, -1)"
+                  >
+                    上一页
+                  </button>
+                  <span class="ppt-page-count">
+                    {{ presentationPageIndex + 1 }} / {{ getPptPages(doc).length }}
+                  </span>
+                  <button
+                    type="button"
+                    class="ppt-nav-btn"
+                    :disabled="presentationPageIndex >= getPptPages(doc).length - 1"
+                    @click="changePresentationPage(doc, 1)"
+                  >
+                    下一页
+                  </button>
+                </div>
+                <div class="ppt-slide-stage">
+                  <img
+                    v-if="getActivePptPage(doc)?.image_url"
+                    :src="getActivePptPage(doc).image_url"
+                    :alt="`幻灯片 ${getActivePptPage(doc).slide || presentationPageIndex + 1}`"
+                    class="ppt-slide-image"
+                    @load="onPdfLoaded(doc)"
+                  />
+                  <p v-else class="ppt-slide-error">当前幻灯片缺少预览图片</p>
+                </div>
+              </div>
+              <div v-else class="preview-error">
+                <p>演示文稿没有可用的分页预览</p>
+              </div>
+            </div>
+
             <!-- HTML/Image preview (iframe displays HTML pages and browser-renderable media URLs) -->
             <div v-else-if="doc.html_url" class="html-wrapper">
               <iframe
@@ -232,6 +272,7 @@ import DocxOnlineEditor from '@/components/DocxOnlineEditor.vue'
 import ExcelOnlineEditor from '@/components/ExcelOnlineEditor.vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { normalizeArtifactUrl, normalizeRelatedArtifactFiles } from '@/utils/artifactRelatedFiles'
+import { getPresentationPreviewPages } from '@/services/sessionDocumentResources.js'
 
 const reactStore = useReactStore()
 
@@ -252,6 +293,7 @@ const isExpanded = ref(true)
 const showFileHistory = ref(false)
 const showDownloadMenu = ref(false)
 const activeDocumentId = ref(null)
+const presentationPageIndex = ref(0)
 const refreshTimeouts = ref(new Map())
 const shareToast = ref({
   visible: false,
@@ -290,7 +332,7 @@ const hasOfficeDocuments = computed(() => {
 
 const officeDocuments = computed(() => {
   return (reactStore.officeDocumentHistory || [])
-    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.spreadsheet_preview || doc?.pdf_url || doc?.html_url || doc?.svg_url || doc?.markdown_content || isExcelPath(doc?.file_path || doc?.path || doc?.file_name))
+    .filter(doc => doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.spreadsheet_preview || doc?.ppt_preview || doc?.pdf_url || doc?.html_url || doc?.svg_url || doc?.markdown_content || isExcelPath(doc?.file_path || doc?.path || doc?.file_name))
     .map(normalizeDocument)
 })
 
@@ -331,6 +373,7 @@ function selectDocument(doc) {
   const key = getDocumentKey(doc)
   if (!key) return
   activeDocumentId.value = key
+  presentationPageIndex.value = 0
   isEditMode.value = false
   showDownloadMenu.value = false
 }
@@ -340,6 +383,15 @@ function normalizeDocument(doc) {
   const fileName = doc.file_name || (filePath ? filePath.split(/[/\\]/).pop() : 'unknown')
   const svgPreviewUrl = getSvgPreviewUrl(doc)
   const htmlPreviewUrl = doc.html_url || withPreviewVersion(doc.html_preview?.html_url, doc.html_preview?.preview_version) || svgPreviewUrl
+  const pptPreview = doc.ppt_preview
+    ? {
+        ...doc.ppt_preview,
+        pages: getPresentationPreviewPages(doc.ppt_preview).map(page => ({
+          ...page,
+          image_url: normalizeArtifactUrl(page.image_url)
+        }))
+      }
+    : undefined
   return {
     doc_type: doc.doc_type || getDocType(doc.generator, doc.markdown_preview, doc.html_preview, filePath, doc.file_type || doc.svg_preview?.file_type),
     document_id: doc.document_id,
@@ -352,6 +404,7 @@ function normalizeDocument(doc) {
     pdf_url: normalizeArtifactUrl(doc.pdf_url || doc.pdf_preview?.pdf_url),
     pdf_id: doc.pdf_id || doc.pdf_preview?.pdf_id,
     spreadsheet_preview: doc.spreadsheet_preview,
+    ppt_preview: pptPreview,
     html_url: normalizeArtifactUrl(htmlPreviewUrl),
     html_id: doc.html_id || doc.html_preview?.html_id,
     svg_url: normalizeArtifactUrl(svgPreviewUrl),
@@ -375,6 +428,26 @@ function normalizeDocument(doc) {
       timestamp: doc.timestamp || new Date()
     }
   }
+}
+
+function getPptPages(doc) {
+  return Array.isArray(doc?.ppt_preview?.pages) ? doc.ppt_preview.pages : []
+}
+
+function getActivePptPage(doc) {
+  const pages = getPptPages(doc)
+  if (pages.length === 0) return null
+  const index = Math.min(Math.max(presentationPageIndex.value, 0), pages.length - 1)
+  return pages[index]
+}
+
+function changePresentationPage(doc, delta) {
+  const pages = getPptPages(doc)
+  if (pages.length === 0) return
+  presentationPageIndex.value = Math.min(
+    Math.max(presentationPageIndex.value + delta, 0),
+    pages.length - 1
+  )
 }
 
 function getSvgPreviewUrl(doc) {
@@ -406,6 +479,7 @@ function withPreviewVersion(url, version) {
 watch(officeDocuments, (docs, oldDocs = []) => {
   if (docs.length === 0) {
     activeDocumentId.value = null
+    presentationPageIndex.value = 0
     return
   }
   const latestDoc = docs[docs.length - 1]
@@ -414,6 +488,7 @@ watch(officeDocuments, (docs, oldDocs = []) => {
   const activeStillExists = docs.some(doc => getDocumentKey(doc) === activeDocumentId.value)
   if (!activeStillExists || docs.length > oldDocs.length || latestChanged) {
     activeDocumentId.value = getDocumentKey(latestDoc)
+    presentationPageIndex.value = 0
   }
 }, { immediate: true })
 
@@ -424,6 +499,7 @@ watch(() => props.sessionId, (newSessionId, oldSessionId) => {
     // 如果store中有新的office document，会在lastOfficeDocument的watch中处理，这里不清空
     if (!reactStore.lastOfficeDocument) {
       activeDocumentId.value = null
+      presentationPageIndex.value = 0
       showFileHistory.value = false
       isEditMode.value = false
     }
@@ -1366,6 +1442,77 @@ defineExpose({
   height: 750px;
   border: none;
   transition: height 0.3s ease;
+}
+
+.ppt-wrapper {
+  width: 100%;
+  min-height: 600px;
+  background: #eef1f5;
+}
+
+.ppt-preview-content {
+  min-height: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ppt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid #e5e9ef;
+}
+
+.ppt-nav-btn {
+  padding: 6px 14px;
+  border: 1px solid #d9e0e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: #1976d2;
+    color: #1976d2;
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.ppt-page-count {
+  min-width: 72px;
+  text-align: center;
+  color: #526173;
+  font-size: 13px;
+}
+
+.ppt-slide-stage {
+  flex: 1;
+  min-height: 540px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.ppt-slide-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 170px);
+  object-fit: contain;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+}
+
+.ppt-slide-error {
+  color: #8a94a3;
 }
 
 .html-wrapper {

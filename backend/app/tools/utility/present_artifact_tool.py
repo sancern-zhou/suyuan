@@ -181,9 +181,9 @@ class PresentArtifactTool(LLMTool):
                 artifact.setdefault("title", html_artifact_id or resolved_path.stem)
             preview = (
                 data.get("html_preview")
-                or data.get("ppt_preview")
                 or data.get("spreadsheet_preview")
                 or data.get("pdf_preview")
+                or data.get("ppt_preview")
                 or data.get("markdown_preview")
             )
             if isinstance(preview, dict):

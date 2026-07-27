@@ -76,6 +76,156 @@ test('does not expose an empty preview as a supported office preview', () => {
 })
 
 
+test('keeps Draw.io resources out of Office preview even when legacy preview fields exist', () => {
+  const document = mapSessionDocumentResource({
+    locator: { path: '/data/board.drawio' },
+    presentation: {
+      format: 'drawio',
+      preview_type: 'html',
+      preview: { html_url: '/api/file/board.html' }
+    }
+  })
+
+  assert.equal(document.preview_type, 'none')
+  assert.equal(document.html_preview, undefined)
+  assert.equal(document.html_url, undefined)
+
+  const nestedDocument = mapSessionDocumentResource({
+    locator: { path: '/data/legacy-board.drawio' },
+    presentation: {
+      format: 'drawio',
+      preview: {
+        html_preview: { html_url: '/api/file/legacy-board.html' }
+      }
+    }
+  })
+
+  assert.equal(nestedDocument.preview_type, 'none')
+  assert.equal(nestedDocument.html_preview, undefined)
+  assert.equal(nestedDocument.html_url, undefined)
+})
+
+
+test('maps a canonical DOCX resource to a Word PDF preview', () => {
+  const document = mapSessionDocumentResource({
+    label: '合同',
+    locator: { path: '/data/contract.docx' },
+    presentation: {
+      format: 'docx',
+      preview_type: 'pdf',
+      preview: { pdf_id: 'word-1', pdf_url: '/api/office/pdf/word-1' }
+    }
+  })
+
+  assert.equal(document.doc_type, 'word')
+  assert.equal(document.pdf_preview.pdf_id, 'word-1')
+  assert.equal(document.pdf_url, '/api/office/pdf/word-1')
+})
+
+
+test('maps a canonical native PPTX preview and exposes browser-safe slide URLs', () => {
+  const document = mapSessionDocumentResource({
+    label: '汇报',
+    locator: { path: '/data/deck.pptx' },
+    presentation: {
+      format: 'pptx',
+      preview_type: 'presentation',
+      preview: {
+        pages: [
+          { slide: 1, png_path: '/tmp/deck/page-001.png' },
+          { slide: 2, image_url: '/api/presentations/deck/page-002.png' }
+        ]
+      }
+    }
+  })
+
+  assert.equal(document.doc_type, 'ppt')
+  assert.equal(document.pdf_preview, undefined)
+  assert.equal(document.ppt_preview.pages.length, 2)
+  assert.deepEqual(document.ppt_preview.pages, [
+    { slide: 1, png_path: '/tmp/deck/page-001.png', image_url: '/api/file/%2Ftmp%2Fdeck%2Fpage-001.png' },
+    { slide: 2, image_url: '/api/presentations/deck/page-002.png' }
+  ])
+})
+
+
+test('keeps PDF as the preferred PPTX preview when the canonical type is PDF', () => {
+  const document = mapSessionDocumentResource({
+    locator: { path: '/data/deck.pptx' },
+    presentation: {
+      format: 'pptx',
+      preview_type: 'pdf',
+      preview: {
+        pdf_url: '/api/file/deck.pdf',
+        pages: [{ slide: 1, png_path: '/tmp/deck/page-001.png' }]
+      }
+    }
+  })
+
+  assert.equal(document.pdf_url, '/api/file/deck.pdf')
+  assert.equal(document.ppt_preview, undefined)
+})
+
+
+test('maps canonical QMD and image preview types without format guessing', () => {
+  const report = mapSessionDocumentResource({
+    locator: { path: '/data/report.qmd' },
+    presentation: {
+      format: 'qmd',
+      preview_type: 'html',
+      preview: { html_url: '/api/reports/report-1' }
+    }
+  })
+  const image = mapSessionDocumentResource({
+    locator: { path: '/data/chart.png' },
+    presentation: {
+      format: 'png',
+      preview_type: 'image',
+      preview: { html_url: '/api/file/chart.png' }
+    }
+  })
+
+  assert.equal(report.doc_type, 'report')
+  assert.equal(report.html_url, '/api/reports/report-1')
+  assert.equal(image.doc_type, 'image')
+  assert.equal(image.html_url, '/api/file/chart.png')
+})
+
+
+test('maps generic typed preview URLs from the canonical resource contract', () => {
+  const html = mapSessionDocumentResource({
+    locator: { path: '/data/report.html' },
+    presentation: {
+      format: 'html',
+      preview: { type: 'html', url: '/api/reports/report-2' }
+    }
+  })
+  const pdf = mapSessionDocumentResource({
+    locator: { path: '/data/report.pdf' },
+    presentation: {
+      format: 'pdf',
+      preview: { type: 'pdf', url: '/api/file/report.pdf' }
+    }
+  })
+
+  assert.equal(html.html_url, '/api/reports/report-2')
+  assert.equal(pdf.pdf_url, '/api/file/report.pdf')
+})
+
+
+test('maps legacy native PPTX resources without a preview type', () => {
+  const document = mapSessionDocumentResource({
+    locator: { path: '/data/legacy.pptx' },
+    presentation: {
+      format: 'pptx',
+      preview: { pages: [{ slide: 1, png_path: '/tmp/legacy/page-001.png' }] }
+    }
+  })
+
+  assert.equal(document.ppt_preview.pages.length, 1)
+})
+
+
 const spreadsheetResource = {
   ref_id: 'resource-1',
   label: '匹配结果',

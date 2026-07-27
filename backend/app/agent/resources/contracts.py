@@ -17,6 +17,49 @@ class PresentationType(str, Enum):
     VISUALIZATION = "visualization"
 
 
+class DocumentPreviewType(str, Enum):
+    NONE = "none"
+    PDF = "pdf"
+    HTML = "html"
+    MARKDOWN = "markdown"
+    IMAGE = "image"
+    SPREADSHEET = "spreadsheet"
+    PRESENTATION = "presentation"
+
+
+SPREADSHEET_FORMATS = {"xls", "xlsx", "xlsm", "csv", "ods"}
+MARKDOWN_FORMATS = {"md", "markdown", "qmd"}
+HTML_FORMATS = {"html", "htm"}
+IMAGE_FORMATS = {"png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"}
+PRESENTATION_FORMATS = {"ppt", "pptx"}
+
+
+def infer_document_preview_type(format_name: str, preview: dict[str, Any]) -> DocumentPreviewType:
+    normalized_format = str(format_name or "").strip().lower()
+    if normalized_format == "drawio":
+        return DocumentPreviewType.NONE
+    declared_type = str(preview.get("type") or "").strip().lower()
+    if declared_type in {item.value for item in DocumentPreviewType}:
+        return DocumentPreviewType(declared_type)
+    if not preview:
+        return DocumentPreviewType.NONE
+    if preview.get("pdf_url") or preview.get("pdf_id") or preview.get("pdf_path"):
+        return DocumentPreviewType.PDF
+    if normalized_format in SPREADSHEET_FORMATS or preview.get("spreadsheet_preview"):
+        return DocumentPreviewType.SPREADSHEET
+    if normalized_format in IMAGE_FORMATS:
+        return DocumentPreviewType.IMAGE
+    if preview.get("html_url") or preview.get("html_id") or normalized_format in HTML_FORMATS:
+        return DocumentPreviewType.HTML
+    if preview.get("content") or normalized_format in MARKDOWN_FORMATS:
+        return DocumentPreviewType.MARKDOWN
+    if normalized_format in PRESENTATION_FORMATS and (
+        preview.get("pages") or preview.get("montage_path")
+    ):
+        return DocumentPreviewType.PRESENTATION
+    return DocumentPreviewType.NONE
+
+
 class ResourceLocator(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -44,9 +87,18 @@ class DocumentPresentation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     format: str = Field(min_length=1, max_length=32)
+    preview_type: DocumentPreviewType | None = None
     preview: dict[str, Any] = Field(default_factory=dict)
     download: dict[str, Any] = Field(default_factory=dict)
     editable: bool = False
+
+    @model_validator(mode="after")
+    def normalize_preview_type(self) -> "DocumentPresentation":
+        if self.format.strip().lower() == "drawio":
+            self.preview_type = DocumentPreviewType.NONE
+        elif self.preview_type is None:
+            self.preview_type = infer_document_preview_type(self.format, self.preview)
+        return self
 
 
 class VisualizationPresentation(BaseModel):

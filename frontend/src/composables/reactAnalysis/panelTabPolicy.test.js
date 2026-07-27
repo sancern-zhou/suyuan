@@ -17,3 +17,17 @@ test('auto-switches to document for a newly generated spreadsheet preview', () =
     activeTab: 'visualization'
   }), true)
 })
+
+
+test('auto-switches to document for a restored native presentation preview', () => {
+  assert.equal(shouldAutoSwitchToDocument({
+    doc: {
+      file_path: '/data/deck.pptx',
+      ppt_preview: {
+        pages: [{ slide: 1, image_url: '/api/file/slide-1.png' }]
+      }
+    },
+    previousDoc: null,
+    activeTab: 'visualization'
+  }), true)
+})

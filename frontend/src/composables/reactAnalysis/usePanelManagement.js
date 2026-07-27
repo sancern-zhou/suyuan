@@ -75,7 +75,7 @@ export function usePanelManagement(store = null) {
   const hasOfficeDocuments = computed(() => {
     if (!store || !store.messages) return false
 
-    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview || store.lastOfficeDocument?.svg_preview || store.lastOfficeDocument?.spreadsheet_preview) {
+    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview || store.lastOfficeDocument?.svg_preview || store.lastOfficeDocument?.spreadsheet_preview || store.lastOfficeDocument?.ppt_preview) {
       return true
     }
 
@@ -334,7 +334,7 @@ export function usePanelManagement(store = null) {
     if (store) {
       watch(() => store.lastOfficeDocument, (doc, previousDoc) => {
         // 支持 PDF/Markdown/HTML 预览，统一显示在"文档预览"标签页
-        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.spreadsheet_preview) {
+        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.spreadsheet_preview || doc?.ppt_preview) {
           officePanelVisible.value = true
           if (shouldAutoSwitchToDocument({ doc, previousDoc, activeTab: activeRightTab.value })) {
             activeRightTab.value = 'document'
