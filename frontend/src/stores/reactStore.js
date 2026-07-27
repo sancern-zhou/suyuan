@@ -2069,6 +2069,10 @@ export const useReactStore = defineStore('react', {
             sessionId,
             targetState,
             fetchDocuments: getSessionOfficeDocuments,
+            isSessionActive: () => (
+              this.currentMode === targetMode &&
+              (this.activeSessionByMode[targetMode] || targetState.sessionId) === sessionId
+            ),
             applyDocuments: (documents) => {
               this.setOfficeDocumentHistory(documents, targetState)
               targetState.lazyArtifacts = {

@@ -1,12 +1,40 @@
 export const mapSessionDocumentResource = (resource = {}) => {
   const locator = resource.locator || {}
   const presentation = resource.presentation || {}
-  const preview = presentation.preview?.pdf_preview || presentation.preview || {}
-  const pdfId = preview.pdf_id || preview.pdfId
-  const pdfUrl = preview.pdf_url || (pdfId
+  const preview = presentation.preview || {}
+  const format = String(presentation.format || '').toLowerCase()
+  const fileType = String(resource.metadata?.file_type || '').toLowerCase()
+  const hasPreview = preview && typeof preview === 'object' && Object.keys(preview).length > 0
+  let pdfPreview = preview.pdf_preview
+  let htmlPreview = preview.html_preview
+  let markdownPreview = preview.markdown_preview
+  let svgPreview = preview.svg_preview
+  let spreadsheetPreview = preview.spreadsheet_preview
+
+  if (hasPreview && !pdfPreview && !htmlPreview && !markdownPreview && !svgPreview && !spreadsheetPreview) {
+    if (['xls', 'xlsx', 'xlsm', 'csv', 'ods'].includes(format) || fileType === 'spreadsheet') {
+      spreadsheetPreview = preview
+    } else if (preview.html_url || preview.html_id || ['html', 'html_artifact', 'image'].includes(fileType)) {
+      htmlPreview = preview
+    } else if (preview.svg_url || preview.svg_path) {
+      svgPreview = preview
+    } else if (preview.content || ['md', 'markdown', 'qmd'].includes(format) || fileType === 'markdown') {
+      markdownPreview = preview
+    } else if (
+      preview.pdf_url ||
+      preview.pdf_id ||
+      preview.pdf_path ||
+      ['pdf', 'doc', 'docx'].includes(format) ||
+      ['pdf', 'document'].includes(fileType)
+    ) {
+      pdfPreview = preview
+    }
+  }
+
+  const pdfId = pdfPreview?.pdf_id || pdfPreview?.pdfId
+  const pdfUrl = pdfPreview?.pdf_url || (pdfId
     ? `/api/office/pdf/${encodeURIComponent(pdfId)}`
     : undefined)
-  const format = String(presentation.format || '').toLowerCase()
 
   return {
     ...resource,
@@ -16,14 +44,14 @@ export const mapSessionDocumentResource = (resource = {}) => {
     doc_type: format === 'qmd'
       ? 'report'
       : (format === 'md' || format === 'markdown' ? 'markdown' : undefined),
-    pdf_preview: preview.pdf_preview || preview,
+    pdf_preview: pdfPreview,
     pdf_url: pdfUrl,
-    html_preview: preview.html_preview,
-    html_url: preview.html_url,
-    markdown_preview: preview.markdown_preview,
-    markdown_content: preview.content || preview.markdown_content,
-    svg_preview: preview.svg_preview,
-    spreadsheet_preview: preview.spreadsheet_preview
+    html_preview: htmlPreview,
+    html_url: htmlPreview?.html_url,
+    markdown_preview: markdownPreview,
+    markdown_content: markdownPreview?.content || markdownPreview?.markdown_content,
+    svg_preview: svgPreview,
+    spreadsheet_preview: spreadsheetPreview
   }
 }
 
@@ -52,6 +80,7 @@ export const refreshDurableDocumentResources = async ({
   targetState,
   fetchDocuments,
   applyDocuments,
+  isSessionActive = () => targetState?.sessionId === sessionId,
   logger = console
 }) => {
   const version = Number(terminalData?.resource_version)
@@ -84,15 +113,29 @@ export const refreshDurableDocumentResources = async ({
   }
 
   try {
-    const response = await fetchDocuments(sessionId)
+    const resources = []
+    const seenCursors = new Set()
+    let cursor = null
+    do {
+      const response = await fetchDocuments(sessionId, { cursor, limit: 200 })
+      if (!isSessionActive()) return false
+      resources.push(...(Array.isArray(response?.resources) ? response.resources : []))
+      const nextCursor = response?.next_cursor || null
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        throw new Error(`repeated document resource cursor: ${nextCursor}`)
+      }
+      if (nextCursor) seenCursors.add(nextCursor)
+      cursor = nextCursor
+    } while (cursor)
+
     if (
-      targetState.sessionId !== sessionId ||
+      !isSessionActive() ||
       refreshState.requestedVersion !== version
     ) {
       return false
     }
 
-    const documents = mapSessionDocumentResources(response?.resources)
+    const documents = mapSessionDocumentResources(resources)
     applyDocuments(documents)
     refreshState.appliedVersion = version
     return true
