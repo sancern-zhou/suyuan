@@ -1745,12 +1745,13 @@ export const useReactStore = defineStore('react', {
             this.applyDrawioBoardToolResultFromRef(result, targetState)
           }
 
-          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview)) {
+          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview || resultData.spreadsheet_preview)) {
             this.recordOfficeDocument({
               pdf_preview: resultData.pdf_preview,
               markdown_preview: resultData.markdown_preview,
               html_preview: resultData.html_preview,
               svg_preview: resultData.svg_preview,
+              spreadsheet_preview: resultData.spreadsheet_preview,
               file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path || resultData.svg_preview?.svg_path,
               file_type: resultData.file_type || resultData.html_preview?.file_type || resultData.svg_preview?.file_type,
               related_files: resultData.related_files,
@@ -1782,6 +1783,7 @@ export const useReactStore = defineStore('react', {
             markdown_preview: data?.markdown_preview,
             html_preview: data?.html_preview,
             svg_preview: data?.svg_preview,
+            spreadsheet_preview: data?.spreadsheet_preview,
             file_path: data?.file_path || data?.svg_preview?.svg_path,
             file_type: data?.file_type || data?.svg_preview?.file_type,
             related_files: data?.related_files,

@@ -33,7 +33,8 @@ export function useOfficeDocumentHandler(store, options = {}) {
       latestDocument.value?.pdf_preview ||
       latestDocument.value?.markdown_preview ||
       latestDocument.value?.html_preview ||
-      latestDocument.value?.svg_preview
+      latestDocument.value?.svg_preview ||
+      latestDocument.value?.spreadsheet_preview
     )
   })
 
