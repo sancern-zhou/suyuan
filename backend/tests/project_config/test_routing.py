@@ -17,7 +17,7 @@ def test_every_registered_router_has_a_migration_owner():
     from app.core.routing import ROUTER_REGISTRY
 
     assert ROUTER_REGISTRY
-    assert all(spec.owner in {"core", "legacy"} for spec in ROUTER_REGISTRY)
+    assert all(spec.owner in {"core", "legacy", "xuchang-air-quality"} for spec in ROUTER_REGISTRY)
     assert next(
         spec for spec in ROUTER_REGISTRY if spec.module == "app.api.project_config_routes"
     ).owner == "core"

@@ -17,6 +17,13 @@ test('default project enables core and legacy', () => {
 })
 
 
+test('xuchang project enables only its declared business modules', () => {
+  const config = loadProjectBuildConfig({ projectId: 'xuchang', repoRoot })
+
+  assert.deepEqual(config.modules, ['core', 'legacy', 'xuchang-air-quality', 'xuchang-satellite'])
+})
+
+
 test('unsafe project identifiers fail before file access', () => {
   assert.throws(
     () => loadProjectBuildConfig({ projectId: '../secret', repoRoot }),

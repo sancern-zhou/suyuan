@@ -42,6 +42,8 @@ LLM Tools
 
 from app.tools.base.registry import ToolRegistry
 import structlog
+from app.project_config.loader import load_project_context
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -54,6 +56,7 @@ def create_global_tool_registry() -> ToolRegistry:
         ToolRegistry: 已注册所有可用工具的注册表
     """
     registry = ToolRegistry(registry_name="global")
+    enabled_modules = load_project_context(settings.project_id).enabled_modules
 
     # ========================================
     # Query Tools（查询工具）
@@ -300,6 +303,21 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="get_satellite_data")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
+
+    if "xuchang-satellite" in enabled_modules:
+        try:
+            from app.tools.query.get_gems_image.tool import GetGemsImageTool
+            registry.register(GetGemsImageTool(), priority=43)
+            logger.info("tool_loaded", tool="get_gems_image")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_gems_image", error=str(e))
+
+        try:
+            from app.tools.query.get_sentinel5p_image.tool import GetSentinel5PImageTool
+            registry.register(GetSentinel5PImageTool(), priority=43)
+            logger.info("tool_loaded", tool="get_sentinel5p_image")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_sentinel5p_image", error=str(e))
 
     # XcAiDb SQL Server 城市历史数据查询工具
     try:

@@ -11,11 +11,14 @@ urllib3>=1.21.1,<3
 chardet>=3.0.2,<6
 charset-normalizer>=2,<4
 httpx==0.27.2
+socksio>=1.0.0
 aiohttp==3.10.11
 
 # Data Processing
 pandas==2.2.3
 numpy==1.26.3  # Keep aligned with environment.yml; NumPy 2.x removes np.mat used by nimfa.
+xarray>=2024.1.0
+netCDF4>=1.6.5
 scipy>=1.10.0  # Sparse matrix optimization for OBM calculations
 PyKrige>=1.7.2  # Kriging interpolation backend for GIS concentration surfaces
 nimfa>=1.0.0   # Non-negative matrix factorization for PMF dual-mode
