@@ -64,6 +64,11 @@ ROUTER_REGISTRY = [
         description="Social account management",
     ),
     RouterSpec("app.api.skills_routes", optional=True, description="Skills management"),
+    RouterSpec(
+        "app.api.xuchang_air_quality_routes",
+        description="Xuchang hourly air quality forecast",
+        owner="xuchang-air-quality",
+    ),
     # System routes are registered last to preserve app/main.py route ordering.
     RouterSpec("app.routers.system", description="System routes", owner="core"),
 ]

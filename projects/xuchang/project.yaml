@@ -1,0 +1,17 @@
+schema_version: 1
+project: xuchang
+modules:
+  - legacy
+  - xuchang-air-quality
+  - xuchang-satellite
+frontend:
+  theme: default
+  features: {}
+backend:
+  tools:
+    - get_gems_image
+    - get_sentinel5p_image
+knowledge:
+  collections:
+  - xuchang
+scheduled_tasks: []
