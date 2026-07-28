@@ -8,7 +8,7 @@
     "build:standalone": "vite build --mode standalone",
     "build:gateway": "vite build --mode production",
     "preview": "vite preview",
-    "test:project-config": "node --test scripts/projectManifest.test.mjs src/config/projectConfig.test.js",
+    "test:project-config": "node --test scripts/projectManifest.test.mjs src/config/projectConfig.test.js src/router/projectRoutes.test.js src/components/sidebarProjectModules.test.js",
     "test:auth": "node --test src/auth/*.test.mjs",
     "test:event-tasks": "node --test src/components/management/*.test.js",
     "test:images": "node --test src/services/apiMediaBlob.test.mjs src/components/markdownApiImages.test.mjs src/components/messageAttachmentMedia.test.js",
