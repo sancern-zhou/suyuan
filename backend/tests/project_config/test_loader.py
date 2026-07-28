@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import app.tools as tools_module
 from app.project_config.loader import ProjectConfigError, load_project_context
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -13,6 +14,54 @@ def test_default_project_loads_legacy_module():
     assert context.manifest.project == "default"
     assert context.enabled_modules == frozenset({"core", "legacy"})
     assert context.manifest.frontend.theme == "default"
+    assert context.manifest.frontend.brand_name == "风清气智"
+    assert context.manifest.backend.tools == []
+    assert context.manifest.knowledge.collections == []
+
+
+def test_xuchang_project_composes_shared_and_customer_modules():
+    context = load_project_context("xuchang", repo_root=REPO_ROOT)
+
+    assert context.enabled_modules == frozenset(
+        {
+            "core",
+            "legacy",
+            "satellite",
+            "xuchang-air-quality",
+            "xuchang-satellite",
+        }
+    )
+    assert context.manifest.frontend.brand_name == "许昌市AI应用智能体"
+    assert context.manifest.backend.tools == [
+        "get_gems_image",
+        "get_sentinel5p_image",
+    ]
+    assert context.manifest.knowledge.collections == ["xuchang"]
+
+
+def test_default_project_does_not_enable_satellite_project_tools():
+    context = load_project_context("default", repo_root=REPO_ROOT)
+
+    assert not tools_module.is_project_tool_enabled(
+        context, "satellite", "get_gems_image"
+    )
+    assert not tools_module.is_project_tool_enabled(
+        context, "satellite", "get_sentinel5p_image"
+    )
+
+
+def test_xuchang_project_enables_only_declared_satellite_tools():
+    context = load_project_context("xuchang", repo_root=REPO_ROOT)
+
+    assert tools_module.is_project_tool_enabled(
+        context, "satellite", "get_gems_image"
+    )
+    assert tools_module.is_project_tool_enabled(
+        context, "satellite", "get_sentinel5p_image"
+    )
+    assert not tools_module.is_project_tool_enabled(
+        context, "satellite", "undeclared_satellite_tool"
+    )
 
 
 def test_unknown_module_fails_closed(tmp_path: Path):

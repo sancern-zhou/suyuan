@@ -11,5 +11,9 @@ def test_runtime_project_config_contains_only_public_manifest_data():
         "schemaVersion": 1,
         "project": "default",
         "modules": ["core", "legacy"],
-        "frontend": {"theme": "default", "features": {}},
+        "frontend": {
+            "theme": "default",
+            "brand_name": "风清气智",
+            "features": {},
+        },
     }
