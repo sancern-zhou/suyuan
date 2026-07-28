@@ -18,6 +18,14 @@ def test_company_auth_contract_defaults():
     assert value.nacos_register_enabled is True
 
 
+def test_project_environment_selects_deployment(monkeypatch):
+    monkeypatch.setenv("PROJECT", "jiyuan")
+
+    value = Settings(_env_file=None)
+
+    assert value.project_id == "jiyuan"
+
+
 def test_mock_authentication_has_no_redundant_enable_switch():
     value = Settings(_env_file=None, environment="development", auth_mode="mock")
 

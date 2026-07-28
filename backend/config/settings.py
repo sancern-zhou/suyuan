@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", description="Environment name")
     debug: bool = Field(default=True, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
+    project_id: str = Field(
+        default="default",
+        validation_alias="PROJECT",
+        pattern=r"^[a-z][a-z0-9_-]*$",
+        description="Deployment manifest selected from projects/<id>/project.yaml",
+    )
     app_role: str = Field(
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
