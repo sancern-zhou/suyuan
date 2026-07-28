@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { AGENT_MODES, AGENT_MODE_IDS, AGENT_PLATFORM_AGENTS, AGENT_PLATFORM_MODE_IDS, getAgentMode } from './agentModes.js'
+import { AGENT_MODES, AGENT_MODE_IDS, AGENT_SCENES, getAgentMode, selectAgentModes } from './agentModes.js'
 
 test('agent mode catalog exposes dedicated ppt, chart and board modes in product order', () => {
   assert.deepEqual(AGENT_MODE_IDS, [
@@ -44,8 +44,16 @@ test('agent mode lookup returns matching metadata and null for unsupported modes
   assert.equal(getAgentMode('missing'), null)
 })
 
-test('agent platform exposes only environment monitoring and analysis modes', () => {
-  assert.deepEqual(AGENT_PLATFORM_MODE_IDS, ['query', 'expert', 'report', 'chart'])
-  assert.deepEqual(AGENT_PLATFORM_AGENTS.map(agent => agent.id), AGENT_PLATFORM_MODE_IDS)
-  assert.ok(AGENT_PLATFORM_AGENTS.every(agent => AGENT_MODES.includes(agent)))
+test('agent platform selects the project-declared modes without leaking another project selection', () => {
+  assert.deepEqual(selectAgentModes(AGENT_MODE_IDS).map(agent => agent.id), AGENT_MODE_IDS)
+  assert.deepEqual(
+    selectAgentModes(['query', 'expert', 'report', 'chart']).map(agent => agent.id),
+    ['query', 'expert', 'report', 'chart']
+  )
+})
+
+test('default platform scenes cover every shared agent exactly once', () => {
+  const sceneModeIds = AGENT_SCENES.flatMap(scene => scene.modeIds)
+  assert.equal(new Set(sceneModeIds).size, AGENT_MODE_IDS.length)
+  assert.deepEqual([...sceneModeIds].sort(), [...AGENT_MODE_IDS].sort())
 })

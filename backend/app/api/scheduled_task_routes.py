@@ -16,7 +16,7 @@ from app.scheduled_tasks import (
     ScheduleType,
     TriggerType,
 )
-from app.scheduled_tasks.models import TaskStep
+from app.scheduled_tasks.models import TaskStep, WorkspaceEntry
 from app.scheduled_tasks.event_catalog import (
     EventDefinition,
     get_event_definition,
@@ -54,6 +54,7 @@ class CreateTaskRequest(BaseModel):
     enabled: bool = Field(default=True, description="是否启用")
     steps: List[TaskStep] = Field(..., description="任务步骤")
     tags: List[str] = Field(default_factory=list, description="标签")
+    workspace_entry: Optional[WorkspaceEntry] = None
 
 
 class UpdateTaskRequest(BaseModel):
@@ -75,6 +76,7 @@ class UpdateTaskRequest(BaseModel):
     enabled: Optional[bool] = None
     steps: Optional[List[TaskStep]] = None
     tags: Optional[List[str]] = None
+    workspace_entry: Optional[WorkspaceEntry] = None
 
 
 class TaskResponse(BaseModel):
@@ -201,6 +203,7 @@ async def create_task(
             enabled=request.enabled,
             steps=request.steps,
             tags=request.tags,
+            workspace_entry=request.workspace_entry,
             owner_user_id=user.id,
             owner_username=user.username,
             owner_display_name=user.display_name,

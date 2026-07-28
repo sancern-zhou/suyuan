@@ -1,6 +1,7 @@
 export function createProjectConfig(value) {
   const modules = new Set(value.modules)
   const features = Object.freeze({ ...value.frontend.features })
+  const agentModeIds = Object.freeze([...(value.frontend.agentModes || [])])
   return Object.freeze({
     schemaVersion: value.schemaVersion,
     project: value.project,
@@ -8,6 +9,8 @@ export function createProjectConfig(value) {
     theme: value.frontend.theme,
     brandName: value.frontend.brandName || '风清气智',
     features,
+    agentModeIds,
+    agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
     hasModule: moduleId => modules.has(moduleId),
     hasFeature: featureId => features[featureId] === true
   })
@@ -19,7 +22,13 @@ const injected = typeof __SUYUAN_PROJECT_CONFIG__ === 'undefined'
       schemaVersion: 1,
       project: 'default',
       modules: ['core', 'legacy'],
-      frontend: { theme: 'default', brandName: '风清气智', features: {} }
+      frontend: {
+        theme: 'default',
+        brandName: '风清气智',
+        features: {},
+        agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
+        agentPlatformLayout: 'scenes'
+      }
     }
   : __SUYUAN_PROJECT_CONFIG__
 

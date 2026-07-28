@@ -26,6 +26,10 @@ class FrontendManifest(StrictModel):
     theme: str = "default"
     brand_name: str = "风清气智"
     features: dict[str, bool] = Field(default_factory=dict)
+    agent_modes: list[str] = Field(default_factory=list)
+    agent_platform_layout: Literal["scenes", "environment-grid"] = "scenes"
+
+    _unique_agent_modes = field_validator("agent_modes")(unique)
 
 
 class BackendManifest(StrictModel):

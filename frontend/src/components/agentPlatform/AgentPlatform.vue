@@ -9,13 +9,74 @@
           <span class="eyebrow-mark" aria-hidden="true"></span>
           智能体平台
         </span>
-        <h1>环境监测与分析智能体</h1>
-        <p>围绕环境监测、污染研判和成果输出，选择合适的智能体开展业务工作。</p>
+        <h1>{{ isSceneLayout ? '选择智能体，开始工作' : '环境监测与分析智能体' }}</h1>
+        <p>{{ isSceneLayout
+          ? '根据任务类型选择合适的智能体，让专业能力协助你更高效地完成工作。'
+          : '围绕环境监测、污染研判和成果输出，选择合适的智能体开展业务工作。'
+        }}</p>
       </header>
 
       <div v-if="error" class="platform-error" role="alert">{{ error }}</div>
 
-      <section class="agent-grid" aria-label="环境业务智能体">
+      <section v-if="isSceneLayout" class="scene-stack" aria-label="智能体应用场景">
+        <section
+          v-for="scene in sceneGroups"
+          :key="scene.id"
+          class="scene-section"
+          :aria-labelledby="`scene-${scene.id}`"
+        >
+          <header class="scene-header">
+            <span class="scene-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  v-for="path in scene.iconPaths"
+                  :key="path.d"
+                  :class="`tone-${path.tone}`"
+                  :d="path.d"
+                />
+              </svg>
+            </span>
+            <div class="scene-title-copy">
+              <h2 :id="`scene-${scene.id}`">{{ scene.name }}</h2>
+              <p>{{ scene.description }}</p>
+            </div>
+          </header>
+
+          <div class="scene-agent-grid">
+            <button
+              v-for="agent in scene.agents"
+              :key="agent.id"
+              class="agent-card"
+              type="button"
+              :class="{ running: isRunning(agent.id), selecting: selectingMode === agent.id }"
+              :style="{ '--agent-accent': agent.accent }"
+              :disabled="Boolean(selectingMode)"
+              @click="emit('select', agent.id)"
+            >
+              <span v-if="isRunning(agent.id)" class="running-badge">
+                <span class="running-dot" aria-hidden="true"></span>
+                运行中
+              </span>
+              <div class="card-copy">
+                <h3>{{ agent.name }}</h3>
+                <p>{{ agent.description }}</p>
+              </div>
+              <div class="agent-tags" aria-label="能力标签">
+                <span v-for="tag in agent.tags" :key="tag">{{ tag }}</span>
+              </div>
+              <div class="card-action">
+                <span>{{ selectingMode === agent.id ? '正在进入…' : (isRunning(agent.id) ? '查看任务' : '开始使用') }}</span>
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M4 10h12" />
+                  <path d="m12 6 4 4-4 4" />
+                </svg>
+              </div>
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <section v-else class="agent-grid" aria-label="环境业务智能体">
         <button
           v-for="agent in agents"
           :key="agent.id"
@@ -57,12 +118,22 @@
 </template>
 
 <script setup>
-import { AGENT_PLATFORM_AGENTS } from '@/config/agentModes.js'
+import { computed } from 'vue'
+import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
+import { projectConfig } from '@/config/projectConfig.js'
 
 const props = defineProps({
   agents: {
     type: Array,
-    default: () => AGENT_PLATFORM_AGENTS
+    default: () => selectAgentModes(projectConfig.agentModeIds)
+  },
+  scenes: {
+    type: Array,
+    default: () => AGENT_SCENES
+  },
+  layout: {
+    type: String,
+    default: () => projectConfig.agentPlatformLayout
   },
   runningModes: {
     type: Array,
@@ -79,6 +150,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['select'])
+const isSceneLayout = computed(() => props.layout === 'scenes')
+const sceneGroups = computed(() => props.scenes.map(scene => ({
+  ...scene,
+  agents: scene.modeIds
+    .map(mode => props.agents.find(agent => agent.id === mode))
+    .filter(Boolean)
+})).filter(scene => scene.agents.length))
 const isRunning = mode => props.runningModes.includes(mode)
 </script>
 
@@ -170,6 +248,88 @@ const isRunning = mode => props.runningModes.includes(mode)
   background: #fff5f5;
   color: #b42318;
   font-size: 13px;
+}
+
+.scene-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scene-section {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 14px;
+}
+
+.scene-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 8px 0 2px;
+}
+
+.scene-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+
+  svg {
+    width: 28px;
+    height: 28px;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.65;
+  }
+
+  .tone-primary { stroke: #55647c; }
+  .tone-accent { stroke: #2878ff; }
+}
+
+.scene-title-copy {
+  min-width: 0;
+
+  h2 {
+    margin: 0 0 7px;
+    color: #26344f;
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  p {
+    margin: 0;
+    color: #8993a6;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+}
+
+.scene-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+
+  .agent-card {
+    min-height: 176px;
+    padding: 14px 16px;
+  }
+
+  .card-copy h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    font-weight: 650;
+    color: #1d2942;
+  }
+
+  .card-copy p { font-size: 13px; }
+  .agent-tags span { font-size: 11px; }
+  .card-action { font-size: 13px; }
 }
 
 .agent-grid {
@@ -298,7 +458,15 @@ const isRunning = mode => props.runningModes.includes(mode)
   }
 }
 
+@media (max-width: 1100px) {
+  .scene-section { grid-template-columns: 1fr; }
+  .scene-header { justify-content: flex-start; padding: 0; }
+  .scene-title-copy { display: flex; align-items: baseline; gap: 10px; }
+  .scene-title-copy h2 { margin: 0; }
+}
+
 @media (max-width: 820px) {
+  .scene-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -316,8 +484,12 @@ const isRunning = mode => props.runningModes.includes(mode)
     grid-template-columns: 1fr;
   }
 
+  .scene-agent-grid { grid-template-columns: 1fr; }
+
   .agent-card {
     min-height: 264px;
   }
+
+  .scene-agent-grid .agent-card { min-height: 208px; }
 }
 </style>

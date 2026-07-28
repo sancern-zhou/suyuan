@@ -9,8 +9,8 @@ test('sidebar exposes the agent platform as a primary action', async () => {
 
   assert.match(source, /agent-platform/)
   assert.match(source, /智能体平台/)
-  assert.match(source, /<p class="module-title">新建任务<\/p>/)
-  assert.match(source, /id: 'restart-session',[\s\S]*name: '新建任务'/)
+  assert.match(source, /<p class="module-title">新建对话<\/p>/)
+  assert.match(source, /id: 'restart-session',[\s\S]*name: '新建对话'/)
   assert.doesNotMatch(source, /<span>智能体平台<\/span>/)
   assert.doesNotMatch(source, /agent-platform-btn|new-session-btn/)
   assert.doesNotMatch(source, /linear-gradient\(135deg/)
@@ -42,6 +42,23 @@ test('sidebar moves system management entries into the bottom user settings menu
   assert.match(source, /event\.key === 'Escape'/)
   assert.match(source, /handleSettingsSelect/)
   assert.match(source, /settingsMenuOpen\.value = false/)
+})
+
+test('data, scheduled task and social management settings open their connected panels', async () => {
+  const analysisView = await readSource('../../views/ReactAnalysisView.vue')
+
+  assert.match(analysisView, /case 'fetchers':[\s\S]*showManagementPanel\('fetchers'\)[\s\S]*refreshFetcherStatus/)
+  assert.match(analysisView, /case 'scheduled-tasks':[\s\S]*showManagementPanel\('scheduled-tasks'\)[\s\S]*refreshScheduledTasks/)
+  assert.match(analysisView, /case 'social-platform':[\s\S]*showManagementPanel\('social-platform'\)/)
+})
+
+test('agent platform supports project-selected scene and environment grid layouts', async () => {
+  const source = await readSource('./AgentPlatform.vue')
+
+  assert.match(source, /projectConfig\.agentModeIds/)
+  assert.match(source, /projectConfig\.agentPlatformLayout/)
+  assert.match(source, /class="scene-stack"/)
+  assert.match(source, /class="agent-grid"/)
 })
 
 test('sidebar navigation omits work resource and system group labels', async () => {

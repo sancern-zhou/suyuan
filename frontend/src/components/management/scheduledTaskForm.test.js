@@ -114,6 +114,29 @@ test('keeps schedule fields for schedule tasks', () => {
 })
 
 
+test('always sends workspace entry state so an existing sidebar entry can be disabled', () => {
+  const enabled = buildTaskPayload({
+    name: '告警任务',
+    description: '执行告警分析',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    workspaceEntryEnabled: true,
+    workspaceEntryTitle: '告警溯源'
+  })
+  const disabled = buildTaskPayload({
+    name: '告警任务',
+    description: '执行告警分析',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    workspaceEntryEnabled: false,
+    workspaceEntryTitle: '告警溯源'
+  })
+
+  assert.deepEqual(enabled.workspace_entry, { enabled: true, title: '告警溯源' })
+  assert.deepEqual(disabled.workspace_entry, { enabled: false, title: '告警溯源' })
+})
+
+
 test('event trigger defaults to social execution and broadcasting', () => {
   const form = {
     trigger_type: 'schedule',
