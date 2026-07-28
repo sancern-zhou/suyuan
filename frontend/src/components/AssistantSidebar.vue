@@ -162,6 +162,7 @@
 
 <script setup>
 import { authFetch } from '@/auth/http.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/auth/authStore.js'
@@ -171,6 +172,7 @@ import {
   filterSidebarConversations,
   toggleConversationListView
 } from './conversationListPolicy.js'
+import { filterSidebarModules } from './sidebarProjectModules.js'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -323,7 +325,7 @@ const conversationListEmptyText = computed(() => ({
   [CONVERSATION_LIST_VIEW.IM]: '暂无IM对话'
 })[conversationListView.value])
 
-const modules = [
+const allModules = [
   {
     id: 'agent-platform',
     name: '智能体平台',
@@ -346,7 +348,8 @@ const modules = [
     abbr: '问数',
     desc: '进入广东省数据总览与问数联动大屏',
     badge: '问数',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'knowledge-base',
@@ -354,7 +357,8 @@ const modules = [
     abbr: '知识',
     desc: '管理文档与知识检索',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'tools-management',
@@ -362,7 +366,8 @@ const modules = [
     abbr: '工具',
     desc: '查看和管理分析工具',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'skills-management',
@@ -370,7 +375,8 @@ const modules = [
     abbr: '技能',
     desc: '查看和管理技能文档',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'fetchers',
@@ -378,7 +384,8 @@ const modules = [
     abbr: '数据',
     desc: '管理数据源和Fetchers',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'scheduled-tasks',
@@ -386,7 +393,8 @@ const modules = [
     abbr: '任务',
     desc: '创建和管理定时任务',
     badge: '工具',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'session-history',
@@ -402,7 +410,8 @@ const modules = [
     abbr: '社交',
     desc: '管理QQ、微信等社交机器人',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'file-manager',
@@ -410,9 +419,12 @@ const modules = [
     abbr: '文件',
     desc: '浏览和下载/tmp目录文件',
     badge: '工具',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   }
 ]
+
+const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 
 const SETTINGS_MODULE_IDS = Object.freeze([
   'tools-management',

@@ -1,0 +1,12 @@
+schema_version: 1
+project: default
+modules:
+  - legacy
+frontend:
+  theme: default
+  features: {}
+backend:
+  tools: []
+knowledge:
+  collections: []
+scheduled_tasks: []
