@@ -1,11 +1,19 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { loadProjectBuildConfig } from './scripts/projectManifest.mjs'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  const projectConfig = loadProjectBuildConfig({
+    projectId: env.PROJECT || 'default',
+    repoRoot: resolve(__dirname, '..')
+  })
   return {
     base: env.VITE_APP_BASE_PATH || '/',
+    define: {
+      __SUYUAN_PROJECT_CONFIG__: JSON.stringify(projectConfig)
+    },
     plugins: [vue()],
     resolve: {
       alias: {
