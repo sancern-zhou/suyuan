@@ -47,6 +47,13 @@ class TaskStep(BaseModel):
         }
 
 
+class WorkspaceEntry(BaseModel):
+    """Optional left-sidebar business entry for a scheduled task."""
+
+    enabled: bool = False
+    title: str = ""
+
+
 class ScheduledTask(BaseModel):
     """定时任务"""
     task_id: str = Field(..., description="任务ID")
@@ -96,6 +103,10 @@ class ScheduledTask(BaseModel):
     owner_username: str = Field(default="scheduled-task", description="会话归属用户名")
     owner_display_name: str = Field(default="定时任务", description="会话归属显示名")
     tags: List[str] = Field(default_factory=list, description="标签")
+    workspace_entry: Optional[WorkspaceEntry] = Field(
+        default=None,
+        description="左侧业务入口配置",
+    )
 
     @field_validator("tool_names")
     @classmethod

@@ -15,6 +15,17 @@ def test_default_project_loads_legacy_module():
     assert context.enabled_modules == frozenset({"core", "legacy"})
     assert context.manifest.frontend.theme == "default"
     assert context.manifest.frontend.brand_name == "风清气智"
+    assert context.manifest.frontend.agent_modes == [
+        "assistant",
+        "ppt",
+        "expert",
+        "query",
+        "report",
+        "chart",
+        "board",
+        "ops",
+    ]
+    assert context.manifest.frontend.agent_platform_layout == "scenes"
     assert context.manifest.backend.tools == []
     assert context.manifest.knowledge.collections == []
 
@@ -32,6 +43,13 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         }
     )
     assert context.manifest.frontend.brand_name == "许昌市AI应用智能体"
+    assert context.manifest.frontend.agent_modes == [
+        "query",
+        "expert",
+        "report",
+        "chart",
+    ]
+    assert context.manifest.frontend.agent_platform_layout == "environment-grid"
     assert context.manifest.backend.tools == [
         "get_gems_image",
         "get_sentinel5p_image",

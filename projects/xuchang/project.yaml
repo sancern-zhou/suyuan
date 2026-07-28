@@ -9,6 +9,12 @@ frontend:
   theme: default
   brand_name: 许昌市AI应用智能体
   features: {}
+  agent_modes:
+    - query
+    - expert
+    - report
+    - chart
+  agent_platform_layout: environment-grid
 backend:
   tools:
     - get_gems_image

@@ -15,5 +15,16 @@ def test_runtime_project_config_contains_only_public_manifest_data():
             "theme": "default",
             "brand_name": "风清气智",
             "features": {},
+            "agent_modes": [
+                "assistant",
+                "ppt",
+                "expert",
+                "query",
+                "report",
+                "chart",
+                "board",
+                "ops",
+            ],
+            "agent_platform_layout": "scenes",
         },
     }

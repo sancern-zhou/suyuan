@@ -5,6 +5,8 @@ import { parse } from 'yaml'
 
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/
+const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'])
+const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid'])
 
 
 function readYaml(path) {
@@ -36,6 +38,14 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
     throw new Error(`invalid project manifest identity: ${projectId}`)
   }
   const selected = uniqueStrings(manifest.modules ?? [], 'modules')
+  const agentModes = uniqueStrings(manifest.frontend?.agent_modes ?? [], 'frontend.agent_modes')
+  for (const modeId of agentModes) {
+    if (!AGENT_MODE_IDS.has(modeId)) throw new Error(`unknown agent mode: ${modeId}`)
+  }
+  const agentPlatformLayout = manifest.frontend?.agent_platform_layout ?? 'scenes'
+  if (!AGENT_PLATFORM_LAYOUTS.has(agentPlatformLayout)) {
+    throw new Error(`unknown agent platform layout: ${agentPlatformLayout}`)
+  }
   for (const moduleId of selected) {
     if (!IDENTIFIER.test(moduleId)) throw new Error(`invalid module identifier: ${moduleId}`)
     const moduleManifest = readYaml(resolve(repoRoot, 'modules', moduleId, 'module.yaml'))
@@ -54,7 +64,9 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
     frontend: {
       theme: manifest.frontend?.theme ?? 'default',
       brandName: manifest.frontend?.brand_name ?? '风清气智',
-      features: manifest.frontend?.features ?? {}
+      features: manifest.frontend?.features ?? {},
+      agentModes,
+      agentPlatformLayout
     }
   }
 }

@@ -218,6 +218,10 @@ def test_worker_restores_trusted_identity_for_task_creation(monkeypatch):
         json={
             "name": "测试任务",
             "description": "测试内部身份传递",
+            "workspace_entry": {
+                "enabled": True,
+                "title": "测试业务入口",
+            },
             "schedule_type": "once",
             "run_at": "2026-07-18T12:00:00",
             "steps": [{
@@ -232,6 +236,12 @@ def test_worker_restores_trusted_identity_for_task_creation(monkeypatch):
     assert service.created.owner_user_id == "creator-1"
     assert service.created.owner_username == "creator"
     assert service.created.owner_display_name == "任务创建人"
+    assert service.created.workspace_entry.enabled is True
+    assert service.created.workspace_entry.title == "测试业务入口"
+    assert response.json()["task"]["workspace_entry"] == {
+        "enabled": True,
+        "title": "测试业务入口",
+    }
 
 
 def test_worker_rejects_malformed_internal_identity_after_token_validation():
