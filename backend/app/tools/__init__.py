@@ -40,12 +40,26 @@ LLM Tools
 - 原始数据 → generate_chart
 """
 
-from app.tools.base.registry import ToolRegistry
 import structlog
+
 from app.project_config.loader import load_project_context
+from app.project_config.models import ProjectContext
+from app.tools.base.registry import ToolRegistry
 from config.settings import settings
 
 logger = structlog.get_logger()
+
+
+def is_project_tool_enabled(
+    context: ProjectContext,
+    owner: str,
+    tool_name: str,
+) -> bool:
+    """Return whether a project explicitly enables a tool owned by a module."""
+    return (
+        owner in context.enabled_modules
+        and tool_name in context.manifest.backend.tools
+    )
 
 
 def create_global_tool_registry() -> ToolRegistry:
@@ -56,7 +70,7 @@ def create_global_tool_registry() -> ToolRegistry:
         ToolRegistry: 已注册所有可用工具的注册表
     """
     registry = ToolRegistry(registry_name="global")
-    enabled_modules = load_project_context(settings.project_id).enabled_modules
+    context = load_project_context(settings.project_id)
 
     # ========================================
     # Query Tools（查询工具）
@@ -304,7 +318,7 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
 
-    if "satellite" in enabled_modules:
+    if is_project_tool_enabled(context, "satellite", "get_gems_image"):
         try:
             from app.tools.query.get_gems_image.tool import GetGemsImageTool
             registry.register(GetGemsImageTool(), priority=43)
@@ -312,6 +326,7 @@ def create_global_tool_registry() -> ToolRegistry:
         except ImportError as e:
             logger.warning("tool_import_failed", tool="get_gems_image", error=str(e))
 
+    if is_project_tool_enabled(context, "satellite", "get_sentinel5p_image"):
         try:
             from app.tools.query.get_sentinel5p_image.tool import GetSentinel5PImageTool
             registry.register(GetSentinel5PImageTool(), priority=43)
