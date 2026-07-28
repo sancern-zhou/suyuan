@@ -22,6 +22,7 @@ class RouterSpec:
 
 
 ROUTER_REGISTRY = [
+    RouterSpec("app.api.project_config_routes", description="Project runtime configuration"),
     RouterSpec("app.auth.routes", prefix="/api", description="Authentication support"),
     RouterSpec("app.routers.admin", description="Admin interface"),
     RouterSpec("app.routers.agent", description="ReAct Agent API"),
