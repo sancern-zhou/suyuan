@@ -24,6 +24,7 @@ import {
   escapeRawHtmlImageTags,
   renderDeferredApiImage
 } from './markdownApiImages.js'
+import { normalizeRestoredContent } from '@/stores/sessionContent.js'
 
 // 预处理后的内容
 const processedContent = ref('')
@@ -203,7 +204,7 @@ const renderedHtml = computed(() => {
   const _content = props.content
   const _streaming = props.streaming
 
-  let content = processedContent.value || _content || ''
+  let content = normalizeRestoredContent(processedContent.value || _content || '')
 
   // 【调试】
   if (content.includes('|') && content.includes('------')) {

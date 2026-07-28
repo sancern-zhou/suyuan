@@ -33,23 +33,33 @@ export function createAuthFetch({
   apiBaseUrl = configuredApiBase()
 }) {
   return async function authFetch(input, options = {}) {
-    const { external = false, public: publicRequest = false, ...fetchOptions } = options
+    const {
+      external = false,
+      public: publicRequest = false,
+      clearOnUnauthorized = true,
+      ...fetchOptions
+    } = options
     const rawUrl = typeof input === 'string' ? input : input.url
     if (ABSOLUTE_URL.test(rawUrl) && !external) {
       throw new Error('Absolute URLs require external: true')
     }
     const url = external ? rawUrl : gatewayUrl(rawUrl, apiBaseUrl)
     const headers = new Headers(fetchOptions.headers || (typeof input === 'string' ? undefined : input.headers))
+    let requestToken = ''
     if (!external && !publicRequest) {
       const session = storage.readSession()
-      if (session.token) headers.set('Authorization', `Bearer ${session.token}`)
+      requestToken = session.token || ''
+      if (requestToken) headers.set('Authorization', `Bearer ${requestToken}`)
       headers.set('SysCode', session.sysCode || 'SUYUAN')
     } else {
       headers.delete('Authorization')
       headers.delete('SysCode')
     }
     const response = await fetchImpl(url, { ...fetchOptions, headers })
-    if (!external && !publicRequest && response.status === 401) storage.clear()
+    if (!external && !publicRequest && clearOnUnauthorized && response.status === 401) {
+      // A delayed response from an earlier session must not log out a newer login.
+      if (storage.readSession().token === requestToken) storage.clear()
+    }
     return response
   }
 }

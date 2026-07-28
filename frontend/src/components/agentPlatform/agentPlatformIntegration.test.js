@@ -16,6 +16,16 @@ test('sidebar exposes the agent platform as a primary action', async () => {
   assert.doesNotMatch(source, /linear-gradient\(135deg/)
 })
 
+test('sidebar exposes smart query and opens the AI query agent workspace', async () => {
+  const sidebar = await readSource('../AssistantSidebar.vue')
+  const analysisView = await readSource('../../views/ReactAnalysisView.vue')
+
+  assert.match(sidebar, /<p class="module-title">智能问数<\/p>/)
+  assert.match(sidebar, /handleModuleSelect\('query-dashboard'\)/)
+  assert.match(sidebar, /id: 'query-dashboard',[\s\S]*name: '智能问数'/)
+  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\('query'\)/)
+})
+
 test('sidebar moves system management entries into the bottom user settings menu', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 
@@ -26,8 +36,8 @@ test('sidebar moves system management entries into the bottom user settings menu
   assert.match(source, /:aria-expanded="settingsMenuOpen"/)
   assert.match(source, /userDisplayName/)
   assert.match(source, /settingsModules/)
-  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'tools-management'[\s\S]*'file-manager'[\s\S]*'fetchers'[\s\S]*'social-platform'/)
-  assert.match(source, /id: 'system',[\s\S]*ids: \['scheduled-tasks'\]/)
+  assert.match(source, /const SETTINGS_MODULE_IDS = Object\.freeze\(\[[\s\S]*'session-history'[\s\S]*'skills-management'[\s\S]*'scheduled-tasks'[\s\S]*'tools-management'[\s\S]*'file-manager'[\s\S]*'fetchers'[\s\S]*'social-platform'/)
+  assert.doesNotMatch(source.match(/const SETTINGS_MODULE_IDS = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] || '', /'knowledge-base'/)
   assert.match(source, /document\.addEventListener\('pointerdown'/)
   assert.match(source, /event\.key === 'Escape'/)
   assert.match(source, /handleSettingsSelect/)
@@ -76,7 +86,7 @@ test('session history applies the shared scheduled-conversation exclusion policy
   assert.match(legacyManager, /reconcileConversationHistoryStats\(data, sessions\.value\)/)
 })
 
-test('all six primary sidebar actions share one uniform spacing system', async () => {
+test('primary sidebar actions share one uniform spacing system', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 
   assert.match(source, /<div class="primary-navigation">/)
@@ -86,15 +96,25 @@ test('all six primary sidebar actions share one uniform spacing system', async (
   assert.match(source, /\.module-group \{[\s\S]*gap: 4px/)
 })
 
-test('skills management is primary while file management lives in user settings', async () => {
+test('knowledge management is primary while remaining management entries live in user settings', async () => {
   const source = await readSource('../AssistantSidebar.vue')
   const settingsIds = source.match(/const SETTINGS_MODULE_IDS = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] || ''
-  const primaryGroups = source.match(/const groups = \[([\s\S]*?)\n  \]/)?.[1] || ''
+  const primaryNavigation = source.slice(
+    source.indexOf('<div class="primary-navigation">'),
+    source.indexOf('<div class="sidebar-scroll-area">')
+  )
 
-  assert.match(settingsIds, /'file-manager'/)
-  assert.doesNotMatch(settingsIds, /'skills-management'/)
-  assert.match(primaryGroups, /'skills-management'/)
-  assert.doesNotMatch(primaryGroups, /'file-manager'/)
+  for (const moduleId of [
+    'session-history',
+    'skills-management',
+    'scheduled-tasks',
+    'file-manager'
+  ]) {
+    assert.match(settingsIds, new RegExp(`'${moduleId}'`))
+  }
+  assert.doesNotMatch(settingsIds, /'knowledge-base'/)
+  assert.match(primaryNavigation, /handleModuleSelect\('knowledge-base'\)/)
+  assert.match(primaryNavigation, /<p class="module-title">知识管理<\/p>/)
 })
 
 test('main layout switches between agent platform and chat workspace', async () => {
@@ -107,13 +127,14 @@ test('main layout switches between agent platform and chat workspace', async () 
   assert.match(source, /select-agent/)
 })
 
-test('chat workspace passes the selected agent to the welcome area without changing query dashboard behavior', async () => {
+test('chat workspace passes the selected agent to the welcome area for every agent mode', async () => {
   const chatArea = await readSource('../reactAnalysis/ChatArea.vue')
-  const queryDashboard = await readSource('../queryDashboard/QueryDashboardWorkspace.vue')
+  const mainLayout = await readSource('../reactAnalysis/MainLayout.vue')
 
   assert.match(chatArea, /agentMode:/)
   assert.match(chatArea, /:agent-mode="agentMode"/)
-  assert.match(queryDashboard, /:hide-welcome="true"/)
+  assert.doesNotMatch(mainLayout, /QueryDashboardWorkspace/)
+  assert.doesNotMatch(mainLayout, /agentMode === 'query'/)
 })
 
 test('analysis view defaults to the platform and opens chat through explicit flows', async () => {
@@ -139,15 +160,14 @@ test('new task defaults to assistant on the platform and preserves the active ch
 
 test('conversation workspace no longer exposes inline agent mode switching', async () => {
   const inputBox = await readSource('../InputBox.vue')
-  const queryDashboard = await readSource('../queryDashboard/QueryDashboardWorkspace.vue')
   const chatArea = await readSource('../reactAnalysis/ChatArea.vue')
   const mainLayout = await readSource('../reactAnalysis/MainLayout.vue')
   const analysisView = await readSource('../../views/ReactAnalysisView.vue')
 
-  for (const source of [inputBox, queryDashboard]) {
+  for (const source of [inputBox, chatArea, mainLayout, analysisView]) {
     assert.doesNotMatch(source, /AgentModeSelector/)
   }
-  for (const source of [inputBox, queryDashboard, chatArea, mainLayout, analysisView]) {
+  for (const source of [inputBox, chatArea, mainLayout, analysisView]) {
     assert.doesNotMatch(source, /update:agentMode|update:agent-mode/)
   }
 })

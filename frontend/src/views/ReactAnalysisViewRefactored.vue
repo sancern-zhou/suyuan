@@ -22,7 +22,6 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
-      :map-program="store.currentState.currentMapProgram"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
@@ -71,6 +70,7 @@
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
       @board-snapshot-confirm="handleBoardSnapshotConfirm"
+      @board-version-restore="handleBoardVersionRestore"
       @chat-area-drag-over="handleChatAreaDragOver"
       @chat-area-drag-leave="handleChatAreaDragLeave"
       @chat-area-drop="handleChatAreaDrop"
@@ -97,7 +97,6 @@
       @toggle-session-case="handleToggleSessionCase"
       @delete-sessions="deleteSessions"
       @new-web-conversation="startNewWebConversation"
-      @map-event="handleMapEvent"
     />
 
     <!-- 知识库创建对话框 -->
@@ -142,7 +141,6 @@ import {
   toggleScheduledTask
 } from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
-import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -460,17 +458,9 @@ const handleBoardSnapshotConfirm = async (snapshot) => {
   }
 }
 
-const handleMapEvent = (event) => {
-  if (typeof store.recordMapEvent === 'function') {
-    store.recordMapEvent(event)
-  }
-  if (event?.receipt) {
-    postMapProgramReceipt({
-      sessionId: event.session_id || currentModeSessionId.value,
-      receipt: event.receipt
-    }).catch(error => {
-      console.warn('Failed to post map program receipt:', error)
-    })
+const handleBoardVersionRestore = (versionId) => {
+  if (typeof store.restoreDrawioBoardVersion === 'function') {
+    store.restoreDrawioBoardVersion(versionId)
   }
 }
 
@@ -514,7 +504,13 @@ const handleScheduledTaskToggle = async (task) => {
 }
 
 const executeScheduledTask = async (task) => {
-  await executeScheduledTaskAction(scheduledTasksStore, task)
+  try {
+    await executeScheduledTaskAction(scheduledTasksStore, task)
+    await refreshScheduledTasks()
+  } catch (error) {
+    console.error('Failed to execute scheduled task:', error)
+    alert('立即执行失败: ' + (error.message || '未知错误'))
+  }
 }
 
 const editScheduledTask = (task) => {

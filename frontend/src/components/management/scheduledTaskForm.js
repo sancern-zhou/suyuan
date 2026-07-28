@@ -52,6 +52,13 @@ export const buildTaskPayload = (form) => {
       .filter(Boolean)
   }
 
+  if (form.workspaceEntryEnabled) {
+    payload.workspace_entry = {
+      enabled: true,
+      title: String(form.workspaceEntryTitle || form.name || '').trim()
+    }
+  }
+
   if (payload.execution_mode === 'custom') {
     payload.tool_names = [...new Set(
       (form.tool_names || []).map(name => String(name).trim()).filter(Boolean)

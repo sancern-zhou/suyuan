@@ -27,8 +27,9 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
-      :map-program="store.currentState.currentMapProgram"
-      :active-module="workspace === 'platform' ? 'agent-platform' : activeAssistant"
+      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
+      :task-workspace-entries="taskWorkspaceEntries"
+      :task-workspace-task="taskWorkspaceTask"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
@@ -78,6 +79,7 @@
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
       @board-snapshot-confirm="handleBoardSnapshotConfirm"
+      @board-version-restore="handleBoardVersionRestore"
       @chat-area-drag-over="handleChatAreaDragOver"
       @chat-area-drag-leave="handleChatAreaDragLeave"
       @chat-area-drop="handleChatAreaDrop"
@@ -105,7 +107,6 @@
       @delete-sessions="deleteSessions"
       @new-web-conversation="startNewWebConversation"
       @toggle-viz-panel="toggleVizPanel"
-      @map-event="handleMapEvent"
     />
 
     <!-- 知识库创建对话框 -->
@@ -150,7 +151,6 @@ import {
   toggleScheduledTask
 } from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
-import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import {
   getRunningAgentSessionId,
@@ -178,6 +178,8 @@ const route = useRoute()
 const store = useReactStore()
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
+const taskWorkspaceTask = ref(null)
+const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
 
 // ========== 使用Composables ==========
 
@@ -396,6 +398,10 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   if (restored) {
     hideManagementPanel()
     workspace.value = 'chat'
+    if (taskWorkspaceTask.value) {
+      rightPanelVisible.value = true
+      activeRightTab.value = 'task-files'
+    }
   }
   return restored
 }
@@ -434,6 +440,16 @@ const handleAssistantSelect = async (moduleId) => {
 }
 
 const handleSidebarAction = async (actionId) => {
+  if (typeof actionId === 'object' && actionId?.type === 'task-workspace') {
+    await scheduledTasksStore.fetchTasks()
+    const task = scheduledTasksStore.tasks.find(item => item.task_id === actionId.taskId)
+    if (!task) return
+    taskWorkspaceTask.value = task
+    workspace.value = 'chat'
+    showManagementPanel('task-workspace')
+    rightPanelVisible.value = false
+    return
+  }
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
   const newTaskMode = actionId === 'restart-session'
     ? (workspace.value === 'platform' ? 'assistant' : store.currentMode)
@@ -444,6 +460,13 @@ const handleSidebarAction = async (actionId) => {
     resetPanelState()
     agentPlatformError.value = ''
     workspace.value = 'platform'
+    return
+  }
+
+  if (actionId === 'air-quality-forecast') {
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'forecast'
     return
   }
 
@@ -574,17 +597,9 @@ const handleBoardSnapshotConfirm = async (snapshot) => {
   }
 }
 
-const handleMapEvent = (event) => {
-  if (typeof store.recordMapEvent === 'function') {
-    store.recordMapEvent(event)
-  }
-  if (event?.receipt) {
-    postMapProgramReceipt({
-      sessionId: event.session_id || currentModeSessionId.value,
-      receipt: event.receipt
-    }).catch(error => {
-      console.warn('Failed to post map program receipt:', error)
-    })
+const handleBoardVersionRestore = (versionId) => {
+  if (typeof store.restoreDrawioBoardVersion === 'function') {
+    store.restoreDrawioBoardVersion(versionId)
   }
 }
 
@@ -647,7 +662,13 @@ const handleScheduledTaskToggle = async (task) => {
 }
 
 const executeScheduledTask = async (task) => {
-  await executeScheduledTaskAction(scheduledTasksStore, task)
+  try {
+    await executeScheduledTaskAction(scheduledTasksStore, task)
+    await refreshScheduledTasks()
+  } catch (error) {
+    console.error('Failed to execute scheduled task:', error)
+    alert('立即执行失败: ' + (error.message || '未知错误'))
+  }
 }
 
 const editScheduledTask = (task) => {
@@ -678,6 +699,7 @@ onMounted(async () => {
   // 初始化日期
   const today = new Date()
   era5HistoricalDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  await refreshScheduledTasks()
 
   if (route.params.id) {
     await queueRouteSessionRestore(route.params.id)

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { AGENT_MODES, AGENT_MODE_IDS, AGENT_SCENES, getAgentMode } from './agentModes.js'
+import { AGENT_MODES, AGENT_MODE_IDS, AGENT_PLATFORM_AGENTS, AGENT_PLATFORM_MODE_IDS, getAgentMode } from './agentModes.js'
 
 test('agent mode catalog exposes dedicated ppt, chart and board modes in product order', () => {
   assert.deepEqual(AGENT_MODE_IDS, [
@@ -28,11 +28,9 @@ test('every agent mode provides complete platform copy and presentation metadata
   }
 })
 
-test('every non-query agent provides complete chat welcome content', () => {
-  const agentsWithWelcome = AGENT_MODES.filter(agent => agent.id !== 'query')
-
-  assert.equal(agentsWithWelcome.length, 7)
-  for (const agent of agentsWithWelcome) {
+test('every agent provides complete chat welcome content', () => {
+  assert.equal(AGENT_MODES.length, 8)
+  for (const agent of AGENT_MODES) {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)
     assert.ok(agent.welcome?.features.every(feature => feature.trim()))
@@ -46,39 +44,8 @@ test('agent mode lookup returns matching metadata and null for unsupported modes
   assert.equal(getAgentMode('missing'), null)
 })
 
-test('agent scenes group modes in the requested top-to-bottom order', () => {
-  assert.deepEqual(AGENT_SCENES.map(({ id, name, description, modeIds }) => ({
-    id,
-    name,
-    description,
-    modeIds
-  })), [
-    {
-      id: 'office',
-      name: '办公',
-      description: '日常办公与内容创作',
-      modeIds: ['assistant', 'ppt', 'board']
-    },
-    {
-      id: 'monitoring',
-      name: '监测分析',
-      description: '环境数据研判与成果输出',
-      modeIds: ['query', 'expert', 'report', 'chart']
-    },
-    {
-      id: 'operations',
-      name: '运维管理',
-      description: '运维处置与任务管理',
-      modeIds: ['ops']
-    }
-  ])
-})
-
-test('each agent scene provides a dedicated two-tone line icon', () => {
-  for (const scene of AGENT_SCENES) {
-    assert.ok(scene.iconPaths.length >= 2)
-    assert.ok(scene.iconPaths.some(path => path.tone === 'primary'))
-    assert.ok(scene.iconPaths.some(path => path.tone === 'accent'))
-    assert.ok(scene.iconPaths.every(path => path.d))
-  }
+test('agent platform exposes only environment monitoring and analysis modes', () => {
+  assert.deepEqual(AGENT_PLATFORM_MODE_IDS, ['query', 'expert', 'report', 'chart'])
+  assert.deepEqual(AGENT_PLATFORM_AGENTS.map(agent => agent.id), AGENT_PLATFORM_MODE_IDS)
+  assert.ok(AGENT_PLATFORM_AGENTS.every(agent => AGENT_MODES.includes(agent)))
 })
