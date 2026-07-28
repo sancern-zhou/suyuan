@@ -3,14 +3,8 @@
     <div class="sidebar-header">
       <template v-if="!isCollapsed">
         <div class="header-title-wrapper">
-          <img
-            v-if="projectConfig.project === 'xuchang'"
-            class="header-image header-mark"
-            src="@/assets/xuchang-ai-agent-logo.png"
-            alt=""
-          />
           <div class="brand-copy">
-            <h2>{{ projectConfig.project === 'xuchang' ? '许昌市AI应用智能体' : '风清气智' }}</h2>
+            <h2>{{ projectConfig.brandName }}</h2>
           </div>
         </div>
       </template>

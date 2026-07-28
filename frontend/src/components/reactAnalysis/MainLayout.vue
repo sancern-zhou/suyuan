@@ -21,7 +21,12 @@
         :error="agentPlatformError"
         @select="$emit('select-agent', $event)"
       />
-      <AirQualityForecastView v-else-if="workspace === 'forecast'" class="forecast-workspace" embedded />
+      <component
+        :is="AirQualityForecastView"
+        v-else-if="workspace === 'forecast' && AirQualityForecastView"
+        class="forecast-workspace"
+        embedded
+      />
       <template v-else>
         <div class="conversation-workspace">
           <ChatArea
@@ -185,10 +190,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { defineAsyncComponent, ref, computed, watch } from 'vue'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
-import AirQualityForecastView from '@/views/AirQualityForecastView.vue'
+import { projectConfig } from '@/config/projectConfig.js'
 import ChatArea from './ChatArea.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
@@ -202,6 +207,10 @@ import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.v
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
 import FileManagerPanel from '@/components/FileManagerPanel.vue'
 import { useAuthStore } from '@/auth/authStore.js'
+
+const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
+  ? defineAsyncComponent(() => import('@/views/AirQualityForecastView.vue'))
+  : null
 
 const auth = useAuthStore()
 

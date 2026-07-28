@@ -4,6 +4,7 @@ modules:
   - legacy
 frontend:
   theme: default
+  brand_name: 风清气智
   features: {}
 backend:
   tools: []

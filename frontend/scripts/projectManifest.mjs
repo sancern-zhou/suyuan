@@ -53,6 +53,7 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
     modules: ['core', ...selected].sort(),
     frontend: {
       theme: manifest.frontend?.theme ?? 'default',
+      brandName: manifest.frontend?.brand_name ?? '风清气智',
       features: manifest.frontend?.features ?? {}
     }
   }

@@ -304,7 +304,7 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
 
-    if "xuchang-satellite" in enabled_modules:
+    if "satellite" in enabled_modules:
         try:
             from app.tools.query.get_gems_image.tool import GetGemsImageTool
             registry.register(GetGemsImageTool(), priority=43)
