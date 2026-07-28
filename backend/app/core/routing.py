@@ -44,7 +44,6 @@ ROUTER_REGISTRY = [
     RouterSpec("app.routers.expert_deliberation", prefix="/api", description="Expert deliberation"),
     RouterSpec("app.routers.monitoring", description="LLM monitoring"),
     RouterSpec("app.api.image_routes", prefix="/api", description="Image cache API"),
-    RouterSpec("app.api.signed_media_routes", prefix="/api", description="Signed media API"),
     RouterSpec("app.api.utility_routes", prefix="/api", description="Utility API"),
     RouterSpec("app.api.session_routes", description="Session management"),
     RouterSpec("app.boards.routes", description="Draw.io board versions"),

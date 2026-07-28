@@ -166,6 +166,22 @@ class ReActAgent:
         return "\n".join(lines)
 
     @staticmethod
+    def _build_attachment_reference_context(
+        attachments: List[Dict[str, Any]],
+    ) -> str:
+        if not attachments:
+            return ""
+        lines = ["", "", "**本轮会话资源**："]
+        for index, attachment in enumerate(attachments, 1):
+            label = "图片" if attachment.get("type") == "image" else "文件"
+            name = attachment.get("name") or "attachment"
+            resource_id = attachment.get("resource_id") or attachment.get("ref_id")
+            lines.append(f"{index}. {label}: {name}")
+            if resource_id:
+                lines.append(f"   会话资源: {resource_id}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _apply_session_store_entry_for_persistence(session, entry: Dict[str, Any]) -> None:
         """Apply non-transcript runtime state to a persisted Session.
 
@@ -472,58 +488,19 @@ class ReActAgent:
                 resource_refs_to_runtime_attachments(selected_resource_refs)
             )
 
-        # ✅ 如果有附件，添加到查询中（保存到对话历史，确保后续能访问文件）
+        # 当前调用使用附件实体；提示词只保留稳定会话资源身份，不复制路径或临时 URL。
         if attachments and len(attachments) > 0:
-            attachment_info = "\n\n**用户上传的附件**：\n"
-            for i, att in enumerate(attachments, 1):
-                normalized_att = dict(att)
-                att_type = att.get("type", "file")
-                att_name = att.get("name", "unknown")
-                att_file_id = att.get("file_id")
-                att_url = att.get("url") or ""
-                att_mime_type = att.get("mime_type") or att.get("content_type")
-
-                # 所有上传附件都通过 file_id 在服务端解析本地路径。
-                # 社交模式会把本地图片编码为 Anthropic 原生 image block。
-                if att_file_id:
-                    try:
-                        from app.db.database import async_session
-                        from app.knowledge_base.models import UploadedFile
-                        from sqlalchemy import select
-
-                        async with async_session() as db:
-                            result = await db.execute(
-                                select(UploadedFile.file_path, UploadedFile.mime_type).where(UploadedFile.id == att_file_id)
-                            )
-                            row = result.one_or_none()
-                            if row:
-                                path, mime_type = row
-                                att_url = path
-                                normalized_att["local_path"] = path
-                                if mime_type:
-                                    normalized_att["mime_type"] = mime_type
-                                logger.info("using_local_file_path", file_id=att_file_id, path=path)
-                    except Exception as e:
-                        logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
-
-                normalized_att["url"] = att_url
-                if att_mime_type:
-                    normalized_att["mime_type"] = att_mime_type
-                runtime_attachments.append(normalized_att)
-
-                if att_type == "image":
-                    attachment_info += f"{i}. 图片: {att_name}\n"
-                    attachment_info += f"   路径: {att_url}\n"
-                else:
-                    attachment_info += f"{i}. 文件: {att_name}\n"
-                    attachment_info += f"   路径: {att_url}\n"
-            user_query = user_query + attachment_info  # ✅ 添加到查询中（保存到对话历史）
+            runtime_attachments.extend(dict(att) for att in attachments)
+            user_query += self._build_attachment_reference_context(attachments)
 
             logger.info(
-                "attachments_added_to_query",
+                "attachment_resources_added_to_query",
                 count=len(attachments),
                 attachment_types=[a.get("type") for a in attachments],
-                attachment_urls=[a.get("url") for a in attachments]
+                resource_ids=[
+                    a.get("resource_id") or a.get("ref_id")
+                    for a in attachments
+                ],
             )
 
         if supports_native_multimodal(manual_mode):

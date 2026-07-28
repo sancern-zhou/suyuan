@@ -31,6 +31,7 @@ class FakeNamingClient:
 def _settings(**overrides):
     values = {
         "_env_file": None,
+        "auth_mode": "company",
         "nacos_server_addresses": "http://10.10.204.80:8848",
         "nacos_namespace": "normcraft-ai",
         "nacos_group": "DEFAULT_GROUP",
@@ -97,7 +98,7 @@ async def test_production_registration_failure_aborts_startup():
         _settings(
             environment="production",
             auth_service_url="http://auth",
-            signed_media_secret="secret",
+            share_signing_secret="secret",
         ),
         naming_factory=factory,
     )

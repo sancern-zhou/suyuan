@@ -11,12 +11,15 @@ ReAct Agent 规划器 (Planner) - V4 按模式过滤
 """
 
 import json
-import structlog
-from typing import Dict, List, Optional, Any, AsyncGenerator
 from datetime import datetime
-from app.tools.base.registry import ToolRegistry
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+import structlog
+
 from app.agent.context.execution_context import ExecutionContext
+from app.services.llm_failover import is_media_fetch_failure_message
 from app.services.llm_service import llm_service
+from app.tools.base.registry import ToolRegistry
 from app.utils.llm_context_logger import get_llm_context_logger
 from config.settings import settings
 
@@ -73,7 +76,10 @@ class ReActPlanner:
         Returns:
             修复后的对话历史
         """
-        from app.agent.utils.anthropic_messages import detect_missing_tool_results, generate_missing_tool_result_messages
+        from app.agent.utils.anthropic_messages import (
+            detect_missing_tool_results,
+            generate_missing_tool_result_messages,
+        )
 
         missing_tool_use_ids = detect_missing_tool_results(conversation_history)
         if missing_tool_use_ids:
@@ -99,12 +105,7 @@ class ReActPlanner:
 
     @staticmethod
     def _is_fetch_url_failure(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return (
-            "fetch url failed" in message
-            or "fetch_url_failed" in message
-            or "failed to download url data" in message
-        )
+        return is_media_fetch_failure_message(str(exc))
 
     @staticmethod
     def _base64_retry_content(user_content: Any, attachments: Optional[List[Dict[str, Any]]]) -> Any:

@@ -76,6 +76,7 @@ class RuntimeEventBus:
         state: RunState,
         messages: list[str],
         input_ids: list[str] | None = None,
+        inputs: list[dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         return {
             "type": "steering_applied",
@@ -83,10 +84,26 @@ class RuntimeEventBus:
             "data": {
                 "messages": messages,
                 "input_ids": input_ids or [],
+                "inputs": inputs or [],
                 "count": len(messages),
                 "session_id": state.session_id,
                 "run_id": state.run_id,
                 "timestamp": datetime.now().isoformat(),
+            },
+        }
+
+    def steering_deferred(
+        self,
+        state: RunState,
+        inputs: list[dict[str, Any]],
+    ) -> Dict[str, Any]:
+        return {
+            "type": "steering_deferred",
+            "data": {
+                "inputs": inputs,
+                "count": len(inputs),
+                "session_id": state.session_id,
+                "run_id": state.run_id,
             },
         }
 

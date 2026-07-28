@@ -79,7 +79,7 @@ def get_share_access_service() -> ShareAccessService:
     global _service
     if _service is None:
         secret = (
-            settings.signed_media_secret
+            settings.share_signing_secret
             or settings.minimax_api_key
             or "development-share-grant-secret"
         )

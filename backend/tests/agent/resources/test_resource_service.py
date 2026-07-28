@@ -62,3 +62,18 @@ async def test_delete_is_idempotent_and_session_isolated():
     assert await service.delete_resource("session-a", item.resource_key()) is True
     assert await service.delete_resource("session-a", item.resource_key()) is False
     assert (await service.list_resources("session-b")).resources == []
+
+
+@pytest.mark.asyncio
+async def test_get_resource_is_scoped_to_session_and_status():
+    service = SessionResourceService.in_memory()
+    result = await service.upsert_run_resources(
+        "session-a",
+        "run-a",
+        [declaration("upload:image", "/tmp/image.jpg")],
+    )
+    resource_id = result.resources[0].resource_id
+
+    assert (await service.get_resource("session-a", resource_id)).resource_id == resource_id
+    assert await service.get_resource("session-b", resource_id) is None
+    assert await service.get_resource("session-a", resource_id, status="missing") is None

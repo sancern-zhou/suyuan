@@ -185,6 +185,29 @@ class SessionResourceService:
             files=sum(item.kind in {"file", "artifact"} for item in resources),
         )
 
+    async def get_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+        *,
+        status: str = "active",
+    ) -> StoredResource | None:
+        if self._repository is not None:
+            return await self._repository.get_resource(
+                session_id,
+                resource_id,
+                status=status,
+            )
+        return next(
+            (
+                item
+                for item in await self._resources_for(session_id)
+                if item.resource_id == resource_id
+                and (status is None or item.status == status)
+            ),
+            None,
+        )
+
     async def delete_resource(self, session_id: str, resource_key: str) -> bool:
         if self._repository is not None:
             return await self._repository.delete_resource(session_id, resource_key)

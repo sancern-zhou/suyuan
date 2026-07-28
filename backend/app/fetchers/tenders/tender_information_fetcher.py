@@ -115,24 +115,35 @@ class TenderInformationFetcher(DataFetcher):
 
     def _default_llm(self):
         clients: list[tuple[Any, int]] = []
-        if settings.tender_llm_api_key:
+        agnes_api_key = settings.agnes_api_key
+        if agnes_api_key:
             clients.append(
                 (
                     OpenAICompatibleTenderLLMClient(
-                        api_key=settings.tender_llm_api_key,
-                        base_url=settings.tender_llm_base_url,
-                        model=settings.tender_llm_model,
+                        api_key=agnes_api_key,
+                        base_url=settings.agnes_base_url,
+                        model=settings.agnes_model,
+                        provider="agnes",
+                        api_mode=settings.agnes_api_mode,
                     ),
                     settings.tender_llm_concurrency,
                 )
             )
-        if settings.tender_secondary_llm_api_key:
+        bailian_api_key = (
+            settings.tender_secondary_llm_api_key or settings.bailian_api_key
+        )
+        if bailian_api_key:
             clients.append(
                 (
                     OpenAICompatibleTenderLLMClient(
-                        api_key=settings.tender_secondary_llm_api_key,
-                        base_url=settings.tender_secondary_llm_base_url,
+                        api_key=bailian_api_key,
+                        base_url=(
+                            settings.tender_secondary_llm_base_url
+                            or settings.bailian_base_url
+                        ),
                         model=settings.tender_secondary_llm_model,
+                        provider="bailian",
+                        api_mode=settings.bailian_api_mode,
                     ),
                     settings.tender_secondary_llm_concurrency,
                 )

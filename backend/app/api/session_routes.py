@@ -5,8 +5,11 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from typing import Optional, Any, Dict, List
 from datetime import datetime
+import mimetypes
+from pathlib import Path
 import structlog
 
 from app.agent.session import get_session_manager
@@ -23,6 +26,7 @@ from app.boards.application import BoardApplicationService
 from app.boards.service import BoardNotFound, BoardVersionNotFound
 from app.db.database import async_session
 from app.agent.resources.resource_service import SessionResourceService
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -488,6 +492,53 @@ async def get_session_resources(
     }
 
 
+@router.get("/{session_id}/resources/{resource_id}/content")
+async def get_session_resource_content(
+    session_id: str,
+    resource_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """Serve one authorized file resource without exposing its storage locator."""
+    await catalog.require_read(session_id, user)
+    resource = await SessionResourceService.database().get_resource(
+        session_id,
+        resource_id,
+        status="active",
+    )
+    if resource is None or resource.kind not in {"file", "artifact"}:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+
+    path_value = (resource.locator or {}).get("path")
+    if not path_value:
+        raise HTTPException(status_code=404, detail="resource_content_unavailable")
+    path = Path(str(path_value)).expanduser().resolve()
+    registry_root = get_data_registry().resolve()
+    if not path.is_relative_to(registry_root):
+        raise HTTPException(status_code=403, detail="resource_path_forbidden")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="resource_content_missing")
+
+    media_type = str((resource.metadata or {}).get("mime_type") or "")
+    if not media_type:
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    inline = (
+        media_type.startswith(("image/", "audio/", "video/"))
+        or media_type == "application/pdf"
+    )
+    response_options = {
+        "path": path,
+        "media_type": media_type,
+        "headers": {
+            "Cache-Control": "private, max-age=300, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    }
+    if not inline:
+        response_options["filename"] = resource.label or path.name
+    return FileResponse(**response_options)
+
+
 @router.get("/{session_id}/drawio-board")
 async def get_session_drawio_board(
     session_id: str,
@@ -644,6 +695,25 @@ async def restore_session(
 
     normalized_session = result.get("normalized_session")
     if normalized_session is not None:
+        resource_counts = {"total": 0, "documents": 0, "visualizations": 0, "files": 0}
+        try:
+            counts = await SessionResourceService.database().resource_counts(session_id)
+            resource_counts = {
+                "total": counts.total,
+                "documents": counts.documents,
+                "visualizations": counts.visualizations,
+                "files": counts.files,
+            }
+        except Exception as exc:
+            logger.warning(
+                "normalized_session_resource_counts_failed",
+                session_id=session_id,
+                error=str(exc),
+            )
+        normalized_session["resource_counts"] = resource_counts
+        normalized_session["has_lazy_files"] = resource_counts["files"] > 0
+        normalized_session["has_lazy_office_documents"] = resource_counts["documents"] > 0
+        normalized_session["has_lazy_visualizations"] = resource_counts["visualizations"] > 0
         return {
             "message": f"Session {session_id} restored successfully",
             "session": normalized_session,

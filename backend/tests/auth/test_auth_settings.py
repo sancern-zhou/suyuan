@@ -4,7 +4,8 @@ from pydantic import ValidationError
 from config.settings import Settings
 
 
-def test_company_auth_contract_defaults():
+def test_company_auth_contract_defaults(monkeypatch):
+    monkeypatch.delenv("AUTH_MODE", raising=False)
     value = Settings(_env_file=None)
 
     assert value.auth_mode == "company"
@@ -55,7 +56,7 @@ def test_production_rejects_mock_authentication():
             environment="production",
             auth_mode="mock",
             auth_service_url="http://platform-gateway/api",
-            signed_media_secret="share-secret",
+            share_signing_secret="share-secret",
         )
 
 
@@ -64,7 +65,7 @@ def test_production_rejects_mock_authentication():
     [
         ({"nacos_register_enabled": False}, "Nacos registration"),
         ({"auth_service_url": ""}, "AUTH_SERVICE_URL"),
-        ({"signed_media_secret": ""}, "share-signing secret"),
+        ({"share_signing_secret": ""}, "share-signing secret"),
         ({"trusted_gateway_networks": "0.0.0.0/0"}, "trusted gateway network"),
     ],
 )
@@ -74,7 +75,7 @@ def test_production_fails_closed_for_insecure_configuration(overrides, message):
         "environment": "production",
         "auth_mode": "company",
         "auth_service_url": "http://platform-gateway/api",
-        "signed_media_secret": "share-secret",
+        "share_signing_secret": "share-secret",
         "nacos_register_enabled": True,
         "trusted_gateway_networks": "10.10.204.0/24",
     }
@@ -88,8 +89,9 @@ def test_valid_production_configuration_is_accepted():
     value = Settings(
         _env_file=None,
         environment="production",
+        auth_mode="company",
         auth_service_url="http://platform-gateway/api",
-        signed_media_secret="share-secret",
+        share_signing_secret="share-secret",
         trusted_gateway_networks="10.10.204.0/24",
     )
 

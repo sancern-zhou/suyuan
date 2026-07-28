@@ -9,13 +9,81 @@ import httpx
 import pytest
 from PIL import Image
 
+from app.agent.core.planner import ReActPlanner
 from app.agent.react_agent import ReActAgent
 from app.agent.runtime.mode_capabilities import supports_native_multimodal
+from app.agent.runtime.multimodal import build_anthropic_user_content
 from app.services import bailian_multimodal
+from app.services.llm_failover import classify_llm_failure, should_fallback
 from app.services.llm_service import LLMService
 from config.settings import Settings, settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_bailian_multimodal_download_timeout_is_not_provider_failure():
+    failure = classify_llm_failure(
+        RuntimeError("InvalidParameter: Download multimodal file timed out")
+    )
+
+    assert failure.reason == "media_fetch"
+    assert should_fallback(failure) is False
+
+
+@pytest.mark.asyncio
+async def test_planner_retries_bailian_media_fetch_failure_with_base64(tmp_path):
+    image_path = tmp_path / "sample.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+    attachment = {
+        "type": "image",
+        "name": "sample.png",
+        "local_path": str(image_path),
+        "url": "https://gateway.example/signed/sample.png",
+        "mime_type": "image/png",
+    }
+
+    class FakeLLMService:
+        def __init__(self):
+            self.calls = []
+
+        async def chat_anthropic_streaming(self, **kwargs):
+            self.calls.append(kwargs)
+            raise RuntimeError("InvalidParameter: Download multimodal file timed out")
+            yield  # pragma: no cover
+
+        async def chat_anthropic(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "content": [SimpleNamespace(type="text", text="看到了")],
+                "model": kwargs["model"],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "stop_reason": "end_turn",
+            }
+
+    fake_llm = FakeLLMService()
+    planner = ReActPlanner(llm_client=fake_llm)
+    user_content = build_anthropic_user_content("看图", [attachment])
+
+    events = [
+        event
+        async for event in planner.think_and_action_streaming(
+            query="看图",
+            system_prompt="system",
+            user_conversation="user",
+            tools=[],
+            iteration=1,
+            mode="social",
+            user_content=user_content,
+            attachments=[attachment],
+            llm_provider="bailian",
+            llm_model="qwen3.8-max-preview",
+        )
+    ]
+
+    assert [call["provider"] for call in fake_llm.calls] == ["bailian", "bailian"]
+    retry_content = fake_llm.calls[1]["messages"][-1]["content"]
+    assert retry_content[1]["source"]["type"] == "base64"
+    assert any(event["type"] == "action" for event in events)
 
 
 def test_mimo_anthropic_client_uses_sdk_api_key_authentication(monkeypatch):
