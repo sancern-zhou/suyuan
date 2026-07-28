@@ -2,10 +2,9 @@
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Optional
 
-from fastapi import FastAPI
 import structlog
+from fastapi import FastAPI
 
 logger = structlog.get_logger()
 
@@ -16,14 +15,24 @@ class RouterSpec:
 
     module: str
     attr: str = "router"
-    prefix: Optional[str] = None
+    prefix: str | None = None
     optional: bool = False
     description: str = ""
+    owner: str = "legacy"
 
 
 ROUTER_REGISTRY = [
-    RouterSpec("app.api.project_config_routes", description="Project runtime configuration"),
-    RouterSpec("app.auth.routes", prefix="/api", description="Authentication support"),
+    RouterSpec(
+        "app.api.project_config_routes",
+        description="Project runtime configuration",
+        owner="core",
+    ),
+    RouterSpec(
+        "app.auth.routes",
+        prefix="/api",
+        description="Authentication support",
+        owner="core",
+    ),
     RouterSpec("app.routers.admin", description="Admin interface"),
     RouterSpec("app.routers.agent", description="ReAct Agent API"),
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
@@ -57,13 +66,23 @@ ROUTER_REGISTRY = [
     ),
     RouterSpec("app.api.skills_routes", optional=True, description="Skills management"),
     # System routes are registered last to preserve app/main.py route ordering.
-    RouterSpec("app.routers.system", description="System routes"),
+    RouterSpec("app.routers.system", description="System routes", owner="core"),
 ]
 
 
+def select_router_specs(
+    specs: list[RouterSpec],
+    enabled_modules: frozenset[str],
+) -> list[RouterSpec]:
+    return [spec for spec in specs if spec.owner in enabled_modules]
+
+
 def include_routers(app: FastAPI) -> None:
-    """Register all application routers from a centralized registry."""
-    for spec in ROUTER_REGISTRY:
+    """Register routers enabled by the selected project manifest."""
+    from app.api.project_config_routes import get_project_context
+
+    context = get_project_context()
+    for spec in select_router_specs(ROUTER_REGISTRY, context.enabled_modules):
         try:
             module = import_module(spec.module)
             router = getattr(module, spec.attr)
@@ -74,15 +93,18 @@ def include_routers(app: FastAPI) -> None:
             logger.info(
                 "router_registered",
                 module=spec.module,
+                owner=spec.owner,
+                project=context.manifest.project,
                 prefix=spec.prefix,
                 description=spec.description,
             )
-        except Exception as e:
+        except Exception as exc:
             if spec.optional:
                 logger.warning(
                     "optional_router_registration_failed",
                     module=spec.module,
-                    error=str(e),
+                    owner=spec.owner,
+                    error=str(exc),
                 )
                 continue
             raise
