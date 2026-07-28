@@ -3,9 +3,14 @@
     <div class="sidebar-header">
       <template v-if="!isCollapsed">
         <div class="header-title-wrapper">
-          <img src="/wechat-screenshot.png" alt="企业微信截图" class="header-image">
+          <img
+            v-if="projectConfig.project === 'xuchang'"
+            class="header-image header-mark"
+            src="@/assets/xuchang-ai-agent-logo.png"
+            alt=""
+          />
           <div class="brand-copy">
-            <h2>风清气智</h2>
+            <h2>{{ projectConfig.project === 'xuchang' ? '许昌市AI应用智能体' : '风清气智' }}</h2>
           </div>
         </div>
       </template>
@@ -36,7 +41,58 @@
         >
           <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">新建任务</p>
+            <p class="module-title">新建对话</p>
+          </div>
+        </button>
+        <button
+          v-if="projectConfig.hasModule('xuchang-air-quality')"
+          class="module-card"
+          :class="{ active: isActive('air-quality-forecast') }"
+          type="button"
+          @click="handleModuleSelect('air-quality-forecast')"
+          :title="isCollapsed ? '预报预测' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('air-quality-forecast')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">预报预测</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('query-dashboard') }"
+          type="button"
+          @click="handleModuleSelect('query-dashboard')"
+          :title="isCollapsed ? '智能问数' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('query-dashboard')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">智能问数</p>
+          </div>
+        </button>
+        <button
+          v-for="task in taskWorkspaceEntries"
+          :key="task.task_id"
+          class="module-card"
+          :class="{ active: activeModule === `task-workspace:${task.task_id}` }"
+          type="button"
+          @click="$emit('action', { type: 'task-workspace', taskId: task.task_id })"
+          :title="isCollapsed ? task.workspace_entry?.title || task.name : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('scheduled-tasks')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">{{ task.workspace_entry?.title || task.name }}</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('knowledge-base') }"
+          type="button"
+          @click="handleModuleSelect('knowledge-base')"
+          :title="isCollapsed ? '知识管理' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('knowledge-base')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">知识管理</p>
           </div>
         </button>
       </div>
@@ -186,6 +242,10 @@ const props = defineProps({
   collapsed: {
     type: Boolean,
     default: false
+  },
+  taskWorkspaceEntries: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -336,20 +396,29 @@ const allModules = [
   },
   {
     id: 'restart-session',
-    name: '新建任务',
-    abbr: '新建任务',
+    name: '新建对话',
+    abbr: '新建对话',
     desc: '清空对话，开始新分析',
     badge: '操作',
     isAction: true
   },
   {
     id: 'query-dashboard',
-    name: '问数大屏',
+    name: '智能问数',
     abbr: '问数',
-    desc: '进入广东省数据总览与问数联动大屏',
+    desc: '进入AI智能问数对话与数据联动大屏',
     badge: '问数',
     isAction: true,
     requiredModule: 'legacy'
+  },
+  {
+    id: 'air-quality-forecast',
+    name: '预报预测',
+    abbr: '预报',
+    desc: '查看许昌市逐小时空气质量预报与观测',
+    badge: '预报',
+    isAction: true,
+    requiredModule: 'xuchang-air-quality'
   },
   {
     id: 'knowledge-base',
@@ -427,6 +496,9 @@ const allModules = [
 const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 
 const SETTINGS_MODULE_IDS = Object.freeze([
+  'session-history',
+  'skills-management',
+  'scheduled-tasks',
   'tools-management',
   'file-manager',
   'fetchers',
@@ -461,6 +533,16 @@ const moduleIcons = {
       <path d="M12 16V8" />
       <path d="M16 16v-7" />
       <path d="M20 8.5 16 6l-4 2-4-3" />
+    </svg>
+  `,
+  'air-quality-forecast': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="M7.5 16v-4" />
+      <path d="M11.5 16V8" />
+      <path d="M15.5 16v-6" />
+      <path d="m7 8 4-3 3 2 5-3" />
     </svg>
   `,
   'session-history': `
@@ -584,31 +666,7 @@ const toggleConversationView = (targetView) => {
   )
 }
 
-// 过滤后的模块列表（排除"新对话"）
-const moduleGroups = computed(() => {
-  const byId = new Map(modules.map(module => [module.id, module]))
-  const groups = [
-    {
-      id: 'work',
-      ids: ['session-history']
-    },
-    {
-      id: 'resources',
-      ids: ['knowledge-base', 'skills-management']
-    },
-    {
-      id: 'system',
-      ids: ['scheduled-tasks']
-    }
-  ]
-
-  return groups
-    .map(group => ({
-      ...group,
-      modules: group.ids.map(id => byId.get(id)).filter(Boolean)
-    }))
-    .filter(group => group.modules.length > 0)
-})
+const moduleGroups = computed(() => [])
 
 // 截断查询文本
 const truncateQuery = (query, maxLength = 30) => {
@@ -723,11 +781,13 @@ onUnmounted(() => {
   .header-image {
     width: 34px;
     height: 34px;
-    border-radius: 9px;
-    object-fit: contain;
+    border-radius: 8px;
     flex-shrink: 0;
-    background: #fff;
-    border: 1px solid #edf1f7;
+    object-fit: cover;
+  }
+
+  .header-mark {
+    display: block;
   }
 
   .collapsed & {

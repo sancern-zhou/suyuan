@@ -9,8 +9,10 @@ import os
 from dotenv import load_dotenv
 import structlog
 import asyncio
+from app.kingbase_dialect import register_kingbase_dialect
 
 load_dotenv()
+register_kingbase_dialect()
 logger = structlog.get_logger()
 
 # Database URL from environment

@@ -4,6 +4,7 @@
     <AssistantSidebar
       :activeModule="activeModule"
       :collapsed="leftSidebarCollapsed"
+      :task-workspace-entries="taskWorkspaceEntries"
       @update:collapsed="handleCollapseChange"
       @update:activeModule="handleActiveModuleChange"
       @select="handleAssistantSelect"
@@ -20,123 +21,10 @@
         :error="agentPlatformError"
         @select="$emit('select-agent', $event)"
       />
+      <AirQualityForecastView v-else-if="workspace === 'forecast'" class="forecast-workspace" embedded />
       <template v-else>
         <div class="conversation-workspace">
-          <QueryDashboardWorkspace
-            v-if="agentMode === 'query'"
-        :messages="messages"
-        :pending-steering-inputs="pendingSteeringInputs"
-        :is-analyzing="isAnalyzing"
-        :input-disabled="inputDisabled || conversationReadOnly"
-        :read-only="conversationReadOnly"
-        :read-only-notice="conversationReadOnlyNotice"
-        :current-message="currentMessage"
-        :session-id="sessionId"
-        :selected-message-id="selectedMessageId"
-        :show-reflexion="showReflexion"
-        :reflexion-count="reflexionCount"
-        :assistant-mode="activeModule"
-        :use-reranker="useReranker"
-        :has-more-messages="hasMoreMessages"
-        :total-message-count="totalMessageCount"
-        :loading-more="loadingMore"
-        :map-program="mapProgram"
-        :drag-over="chatAreaDragOver"
-        :right-panel-expanded="rightPanelExpanded"
-        :has-viz-content="hasVizContent"
-        :show-management-panel="!!managementPanel"
-        @send="handleSend"
-        @pause="handlePause"
-        @update:useReranker="handleRerankerChange"
-        @select-message="handleSelectMessage"
-        @load-more="handleLoadMore"
-        @drag-over="handleChatAreaDragOver"
-        @drag-leave="handleChatAreaDragLeave"
-        @drop="handleChatAreaDrop"
-        @toggle-viz-panel="handleToggleVizPanel"
-        @map-event="$emit('map-event', $event)"
-        @new-web-conversation="$emit('new-web-conversation')"
-      >
-        <template #management-panels>
-          <!-- 管理面板插槽 -->
-          <KnowledgeBasePanel
-            v-if="managementPanel === 'knowledge-base'"
-            @show-create-dialog="$emit('show-kb-create-dialog')"
-            @show-edit-dialog="$emit('show-kb-edit-dialog')"
-            @close="$emit('close-management-panel')"
-            @view-chunks="$emit('view-kb-chunks', $event)"
-            @retry-doc="$emit('retry-kb-doc', $event)"
-            @delete-doc="$emit('delete-kb-doc', $event)"
-          />
-
-          <FetchersPanel
-            v-else-if="managementPanel === 'fetchers'"
-            :fetcher-system-status="fetcherSystemStatus"
-            :fetcher-loading="fetcherLoading"
-            :fetcher-error="fetcherError"
-            :fetcher-operating="fetcherOperating"
-            :era5-historical-date="era5HistoricalDate"
-            :era5-fetch-result="era5FetchResult"
-            @close="$emit('close-management-panel')"
-            @fetch-era5="$emit('fetch-era5', $event)"
-            @refresh-status="$emit('refresh-fetcher-status')"
-            @trigger-fetcher="$emit('trigger-fetcher', $event)"
-            @pause-fetcher="$emit('pause-fetcher', $event)"
-            @resume-fetcher="$emit('resume-fetcher', $event)"
-            @update:era5-historical-date="handleEra5DateChange"
-          />
-
-          <ScheduledTasksPanel
-            v-else-if="managementPanel === 'scheduled-tasks'"
-            :tasks="scheduledTasks"
-            :stats="scheduledTasksStats"
-            :scheduled-tasks-refreshing="scheduledTasksRefreshing"
-            @close="$emit('close-management-panel')"
-            @refresh-tasks="$emit('refresh-scheduled-tasks')"
-            @toggle-task="$emit('toggle-scheduled-task', $event)"
-            @execute-task="$emit('execute-scheduled-task', $event)"
-            @edit-task="$emit('edit-scheduled-task', $event)"
-            @delete-task="$emit('delete-scheduled-task', $event)"
-            @restore-execution-session="$emit('restore-execution-session', $event)"
-          />
-
-          <SessionHistoryPanel
-            v-else-if="managementPanel === 'session-history'"
-            :sessions="sessionHistoryData"
-            :session-history-stats="sessionHistoryStats"
-            :session-history-loading="sessionHistoryLoading"
-            :is-admin="auth.user?.admin === true"
-            @close="$emit('close-management-panel')"
-            @refresh-sessions="$emit('refresh-session-history')"
-            @cleanup-sessions="$emit('cleanup-sessions')"
-            @restore-session="$emit('restore-session', $event)"
-            @toggle-session-case="$emit('toggle-session-case', $event)"
-            @delete-sessions="$emit('delete-sessions', $event)"
-          />
-
-          <SocialPlatformPanel
-            v-else-if="managementPanel === 'social-platform'"
-            @close="$emit('close-management-panel')"
-          />
-
-          <ToolsManagementPanel
-            v-else-if="managementPanel === 'tools-management'"
-            @close="$emit('close-management-panel')"
-          />
-
-          <SkillsManagementPanel
-            v-else-if="managementPanel === 'skills-management'"
-            @close="$emit('close-management-panel')"
-          />
-
-          <FileManagerPanel
-            v-else-if="managementPanel === 'file-manager'"
-            @close="$emit('close-management-panel')"
-          />
-        </template>
-      </QueryDashboardWorkspace>
           <ChatArea
-            v-else
         :agent-mode="agentMode"
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
@@ -212,6 +100,13 @@
             @restore-execution-session="$emit('restore-execution-session', $event)"
           />
 
+          <TaskExecutionWorkspace
+            v-else-if="managementPanel === 'task-workspace'"
+            :task="taskWorkspaceTask"
+            @close="$emit('close-management-panel')"
+            @restore-execution-session="$emit('restore-execution-session', $event)"
+          />
+
           <SessionHistoryPanel
             v-else-if="managementPanel === 'session-history'"
             :sessions="sessionHistoryData"
@@ -271,11 +166,13 @@
         :assistant-mode="agentMode"
         :visualization-content="visualizationContent"
         :board="board"
+        :task-workspace-task="taskWorkspaceTask"
         :messages="messages"
         :selected-message-id="selectedMessageId"
         :session-id="sessionId"
         :expert-results="expertResults"
         :knowledge-sources="knowledgeSources"
+        @restore-session="$emit('restore-execution-session', $event)"
         @tab-change="handleTabChange"
         @office-edit-submit="handleOfficeEditSubmit"
         @board-xml-change="handleBoardXmlChange"
@@ -291,13 +188,14 @@
 import { ref, computed, watch } from 'vue'
 import AssistantSidebar from '@/components/AssistantSidebar.vue'
 import AgentPlatform from '@/components/agentPlatform/AgentPlatform.vue'
+import AirQualityForecastView from '@/views/AirQualityForecastView.vue'
 import ChatArea from './ChatArea.vue'
-import QueryDashboardWorkspace from '@/components/queryDashboard/QueryDashboardWorkspace.vue'
 import RightPanelContainer from './RightPanelContainer.vue'
 import WidthResizer from './WidthResizer.vue'
 import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
 import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
+import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
@@ -308,6 +206,8 @@ import { useAuthStore } from '@/auth/authStore.js'
 const auth = useAuthStore()
 
 const props = defineProps({
+  taskWorkspaceEntries: { type: Array, default: () => [] },
+  taskWorkspaceTask: { type: Object, default: null },
   workspace: {
     type: String,
     default: 'platform'
@@ -385,11 +285,6 @@ const props = defineProps({
     type: Object,
     default: null
   },
-  mapProgram: {
-    type: Object,
-    default: null
-  },
-
   // 面板状态
   activeModule: {
     type: String,
@@ -535,7 +430,6 @@ const emit = defineEmits([
   'chat-area-drag-leave',
   'chat-area-drop',
   'toggle-viz-panel',
-  'map-event',
   'update:era5HistoricalDate',
   'close-management-panel',
   'show-kb-create-dialog',
@@ -748,6 +642,11 @@ defineExpose({ layoutRef })
   display: flex;
   height: 100%;
   overflow: hidden;
+}
+
+.forecast-workspace {
+  flex: 1 1 0%;
+  min-width: 0;
 }
 
 .conversation-workspace {

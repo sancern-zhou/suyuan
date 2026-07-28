@@ -51,6 +51,14 @@
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
         <button
+          v-if="taskWorkspaceTask"
+          :class="['tab-btn', { active: activeTab === 'task-files' }]"
+          @click="handleTabChange('task-files')"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7h6l2 2h9v9.5a2 2 0 0 1-2 2h-17v-13.5Z"/><path d="M3.5 10h17"/></svg>
+          <span>文件产出</span>
+        </button>
+        <button
           v-if="showBoardTab"
           :class="['tab-btn', { active: activeTab === 'board' }]"
           @click="handleTabChange('board')"
@@ -107,7 +115,6 @@
         key="board-panel"
         class="panel-content"
         :xml="board?.currentXml || board?.current_xml || board?.xml || ''"
-        :board-id="board?.activeBoardId || board?.active_board_id || board?.id || ''"
         :title="board?.title || '画板'"
         :version-files="board?.versions || []"
         :current-version-id="board?.currentVersionId || board?.current_version_id || ''"
@@ -116,6 +123,14 @@
         @xml-change="handleBoardXmlChange"
         @selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
+        @version-restore="handleBoardVersionRestore"
+      />
+
+      <TaskOutputFilesPanel
+        v-if="activeTab === 'task-files' && taskWorkspaceTask"
+        class="panel-content"
+        :task="taskWorkspaceTask"
+        @restore-session="emit('restore-session', $event)"
       />
     </template>
   </div>
@@ -128,6 +143,7 @@ import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
 import DrawioBoardPanel from '@/components/board/DrawioBoardPanel.vue'
+import TaskOutputFilesPanel from '@/components/management/TaskOutputFilesPanel.vue'
 
 const props = defineProps({
   visible: {
@@ -189,6 +205,10 @@ const props = defineProps({
   board: {
     type: Object,
     default: null
+  },
+  taskWorkspaceTask: {
+    type: Object,
+    default: null
   }
 })
 
@@ -197,7 +217,9 @@ const emit = defineEmits([
   'office-edit-submit',
   'board-xml-change',
   'board-selection-change',
-  'board-snapshot-confirm'
+  'board-snapshot-confirm',
+  'board-version-restore',
+  'restore-session'
 ])
 
 // 添加调试
@@ -223,7 +245,7 @@ const showBoardTab = computed(() => props.boardPanelVisible || hasBoardXml.value
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
+  return props.taskWorkspaceTask || props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
 })
 
 const visualizationCount = computed(() => {
@@ -264,6 +286,10 @@ const handleBoardSelectionChange = (selection) => {
 
 const handleBoardSnapshotConfirm = (snapshot) => {
   emit('board-snapshot-confirm', snapshot)
+}
+
+const handleBoardVersionRestore = (versionId) => {
+  emit('board-version-restore', versionId)
 }
 
 // 公开方法

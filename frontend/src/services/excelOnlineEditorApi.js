@@ -1,3 +1,5 @@
+import { authFetch } from '../auth/http.js'
+
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 function officeApiUrl(path, apiBaseUrl = API_BASE_URL) {
@@ -5,7 +7,7 @@ function officeApiUrl(path, apiBaseUrl = API_BASE_URL) {
   return `${baseUrl}/office/${path}`
 }
 
-export async function openExcelForEditing(filePath, fetchImpl = fetch, apiBaseUrl = API_BASE_URL) {
+export async function openExcelForEditing(filePath, fetchImpl = authFetch, apiBaseUrl = API_BASE_URL) {
   if (!filePath) {
     throw new Error('缺少文档路径')
   }
@@ -28,7 +30,7 @@ export async function saveEditedExcel({
   sessionId = '',
   buffer,
   fileName = 'document.xlsx',
-  fetchImpl = fetch,
+  fetchImpl = authFetch,
   formDataFactory = () => new FormData(),
   apiBaseUrl = API_BASE_URL
 }) {
@@ -70,7 +72,7 @@ export async function saveEditedExcel({
 export async function downloadExcelFile(filePath, {
   fallbackFileName = 'document.xlsx',
   fileName = fallbackFileName,
-  fetchImpl = fetch,
+  fetchImpl = authFetch,
   apiBaseUrl = API_BASE_URL
 } = {}) {
   if (!filePath) {

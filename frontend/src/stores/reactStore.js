@@ -44,6 +44,7 @@ import {
   queueIncomingBehindPendingAndTakeNext,
 } from './reactStoreQueue.js'
 import { restoreMapScene } from './reactStoreMapScene.js'
+import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
 const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops', 'graph']
@@ -963,7 +964,7 @@ export const useReactStore = defineStore('react', {
         console.warn('[setMessages] Invalid messages:', messages)
         return
       }
-      this.currentState.messages = messages
+      this.currentState.messages = normalizeRestoredMessages(messages)
       console.log(`[setMessages] Set ${messages.length} messages for mode ${this.currentMode}`)
     },
 
@@ -1178,6 +1179,8 @@ export const useReactStore = defineStore('react', {
      */
     prependMessages(messages) {
       if (!messages || messages.length === 0) return
+
+      messages = normalizeRestoredMessages(messages)
 
       // 【修复】过滤掉与现有消息重复内容的消息
       const existingContents = new Set()
@@ -3159,11 +3162,7 @@ export const useReactStore = defineStore('react', {
 
       try {
         const boardContext = actualMode === 'board' ? this.buildBoardContext(actualMode, sessionState) : null
-        const mapContext = actualMode === 'graph'
-          ? options.mapContext || null
-          : actualMode === 'query'
-            ? buildMapContext(sessionState)
-            : null
+        const mapContext = actualMode === 'graph' ? options.mapContext || null : null
         if (boardContext) {
           console.log('[drawio-board] board_context will be sent', {
             sessionId: sessionState.sessionId,

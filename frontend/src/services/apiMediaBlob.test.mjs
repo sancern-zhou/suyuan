@@ -65,6 +65,23 @@ test('loadApiMediaObjectUrl fetches API media through the supplied authenticated
   assert.equal(created[0].type, 'image/png')
 })
 
+test('loadApiMediaObjectUrl preserves an encoded Unicode image ID for the gateway request', async () => {
+  const source = '/api/image/%E8%AE%B8%E6%98%8C%E5%B8%827%E6%9C%88%E7%A9%BA%E6%B0%94%E8%B4%A8%E9%87%8F%E7%AD%89%E7%BA%A7%E5%88%86%E5%B8%83.png'
+  const calls = []
+
+  await loadApiMediaObjectUrl(source, {
+    fetchMedia: async path => {
+      calls.push(path)
+      return new Response(new Blob(['png'], { type: 'image/png' }), {
+        headers: { 'Content-Type': 'image/png' }
+      })
+    },
+    createObjectURL: () => 'blob:unicode-chart'
+  })
+
+  assert.deepEqual(calls, [source])
+})
+
 test('loadApiMediaObjectUrl rejects HTTP failures before creating an Object URL', async () => {
   await assert.rejects(
     () => loadApiMediaObjectUrl('/api/image/missing', {

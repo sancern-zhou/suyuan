@@ -4,6 +4,16 @@ import { defineStore } from 'pinia';
 
 const API_BASE = '/api/scheduled-tasks';
 
+const responseErrorMessage = async (response, fallback) => {
+  const payload = await response.json().catch(() => null)
+  const detail = payload?.detail
+  const message = Array.isArray(detail)
+    ? detail.map(item => item?.msg || String(item)).join('；')
+    : (typeof detail === 'string' ? detail : payload?.message)
+
+  return message || `${fallback}（HTTP ${response.status}）`
+}
+
 export const useScheduledTasksStore = defineStore('scheduledTasks', {
   state: () => ({
     tasks: [],
@@ -56,7 +66,9 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     },
 
     async fetchAvailableTools() {
-      const response = await authFetch(`${API_BASE}/tools`);
+      const response = await authFetch(`${API_BASE}/tools`, {
+        clearOnUnauthorized: false
+      });
       if (!response.ok) throw new Error('Failed to fetch available tools');
       const data = await response.json();
       this.availableTools = Array.isArray(data?.tools) ? data.tools : [];
@@ -220,7 +232,9 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       const response = await authFetch(`${API_BASE}/${taskId}/execute`, {
         method: 'POST'
       });
-      if (!response.ok) throw new Error('Failed to execute task');
+      if (!response.ok) {
+        throw new Error(await responseErrorMessage(response, '立即执行任务失败'))
+      }
       const data = await response.json();
       return data;
     }

@@ -59,6 +59,43 @@ test('401 clears the session while 403 preserves it', async () => {
 })
 
 
+test('a delayed 401 from an old token preserves a newer session', async () => {
+  let token = 'old-token'
+  const storage = {
+    readSession: () => ({ token, sysCode: 'SUYUAN' }),
+    clearCalls: 0,
+    clear() { this.clearCalls += 1 }
+  }
+  const authFetch = createAuthFetch({
+    storage,
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async () => {
+      token = 'new-token'
+      return new Response('{}', { status: 401 })
+    }
+  })
+
+  await authFetch('/api/old-session-request')
+
+  assert.equal(storage.clearCalls, 0)
+  assert.equal(token, 'new-token')
+})
+
+
+test('an optional request can preserve the session on 401', async () => {
+  const storage = sessionStorage()
+  const authFetch = createAuthFetch({
+    storage,
+    apiBaseUrl: '/api/suyuan',
+    fetchImpl: async () => new Response('{}', { status: 401 })
+  })
+
+  await authFetch('/api/optional-configuration', { clearOnUnauthorized: false })
+
+  assert.equal(storage.clearCalls, 0)
+})
+
+
 test('explicit signed-public and external requests never receive the company token', async () => {
   const seen = []
   const authFetch = createAuthFetch({

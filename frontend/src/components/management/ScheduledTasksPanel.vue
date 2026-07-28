@@ -324,6 +324,14 @@
               <span>标签</span>
               <input v-model="createForm.tagsText" type="text" placeholder="广播,提醒,日报" />
             </label>
+
+            <div class="form-field form-wide">
+              <label class="switch-field inline-switch">
+                <input v-model="createForm.workspaceEntryEnabled" type="checkbox" />
+                <span>在左侧显示业务入口</span>
+              </label>
+              <input v-if="createForm.workspaceEntryEnabled" v-model="createForm.workspaceEntryTitle" type="text" placeholder="例如：告警溯源" />
+            </div>
           </div>
 
           <div class="task-preview">
@@ -452,6 +460,8 @@ const defaultForm = () => ({
   run_at: '',
   channels: ['weixin'],
   tagsText: ''
+  ,workspaceEntryEnabled: false
+  ,workspaceEntryTitle: ''
 })
 
 const createForm = ref(defaultForm())
@@ -460,8 +470,11 @@ const setTriggerType = (triggerType) => {
   applyTriggerDefaults(createForm.value, triggerType, eventTypes.value)
 }
 
-const handleExecutionModeChange = () => {
+const handleExecutionModeChange = async () => {
   applyExecutionMode(createForm.value, createForm.value.execution_mode)
+  if (createForm.value.execution_mode === 'custom') {
+    await loadAvailableTools()
+  }
 }
 
 const refreshExecutionHistory = async () => {
@@ -602,8 +615,7 @@ const buildBroadcastPrompt = () => {
 const loadConfigurationOptions = async () => {
   const results = await Promise.allSettled([
     scheduledTasksStore.fetchEventTypes(),
-    scheduledTasksStore.fetchSocialUsers(),
-    scheduledTasksStore.fetchAvailableTools()
+    scheduledTasksStore.fetchSocialUsers()
   ])
   if (results.some(result => result.status === 'rejected')) {
     formError.value = '部分配置项加载失败，请关闭后重试'
@@ -614,6 +626,15 @@ const loadConfigurationOptions = async () => {
     eventTypes.value.length > 0
   ) {
     createForm.value.event_type = eventTypes.value[0].event_type
+  }
+}
+
+const loadAvailableTools = async () => {
+  try {
+    await scheduledTasksStore.fetchAvailableTools()
+  } catch (error) {
+    console.error('Failed to fetch custom task tools:', error)
+    formError.value = '自定义工具列表加载失败，请重新登录后重试'
   }
 }
 
@@ -651,9 +672,14 @@ const openEditDialog = async (task) => {
     interval_minutes: task.interval_minutes ?? 30,
     run_at: task.run_at || '',
     tagsText: (task.tags || []).join(',')
+    ,workspaceEntryEnabled: Boolean(task.workspace_entry?.enabled)
+    ,workspaceEntryTitle: task.workspace_entry?.title || ''
   }
   showCreateDialog.value = true
   await loadConfigurationOptions()
+  if (createForm.value.execution_mode === 'custom') {
+    await loadAvailableTools()
+  }
 }
 
 const closeDialog = () => {
