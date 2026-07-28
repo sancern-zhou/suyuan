@@ -24,6 +24,7 @@ class StrictModel(BaseModel):
 
 class FrontendManifest(StrictModel):
     theme: str = "default"
+    brand_name: str = "风清气智"
     features: dict[str, bool] = Field(default_factory=dict)
 
 

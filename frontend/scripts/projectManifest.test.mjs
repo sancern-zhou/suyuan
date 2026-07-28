@@ -13,14 +13,14 @@ test('default project enables core and legacy', () => {
 
   assert.equal(config.project, 'default')
   assert.deepEqual(config.modules, ['core', 'legacy'])
-  assert.deepEqual(config.frontend, { theme: 'default', features: {} })
+  assert.deepEqual(config.frontend, { theme: 'default', brandName: '风清气智', features: {} })
 })
 
 
 test('xuchang project enables only its declared business modules', () => {
   const config = loadProjectBuildConfig({ projectId: 'xuchang', repoRoot })
 
-  assert.deepEqual(config.modules, ['core', 'legacy', 'xuchang-air-quality', 'xuchang-satellite'])
+  assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'xuchang-air-quality', 'xuchang-satellite'])
 })
 
 
