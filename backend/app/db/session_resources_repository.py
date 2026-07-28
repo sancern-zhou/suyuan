@@ -8,7 +8,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.resources.contracts import ResourceDeclaration
-from app.agent.resources.resource_service import ResourceBatchResult, ResourceCounts, ResourcePage, StoredResource
+from app.agent.resources.resource_service import (
+    ResourceBatchResult,
+    ResourceCounts,
+    ResourcePage,
+    StoredResource,
+)
 from app.db.database import engine
 from app.db.models_session import SessionResourceDB, SessionResourceVersionDB
 
@@ -138,6 +143,23 @@ class SessionResourcesRepository:
             visualizations=sum(row.presentation_type == "visualization" for row in page.resources),
             files=sum(row.kind in {"file", "artifact"} for row in page.resources),
         )
+
+    async def get_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+        *,
+        status: str = "active",
+    ) -> StoredResource | None:
+        async with AsyncSession(self.engine) as db:
+            statement = select(SessionResourceDB).where(
+                SessionResourceDB.session_id == session_id,
+                SessionResourceDB.resource_id == resource_id,
+            )
+            if status:
+                statement = statement.where(SessionResourceDB.status == status)
+            row = (await db.execute(statement)).scalar_one_or_none()
+            return _stored(row) if row is not None else None
 
     async def delete_resource(self, session_id: str, resource_key: str) -> bool:
         async with AsyncSession(self.engine) as db:

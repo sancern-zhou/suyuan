@@ -62,6 +62,51 @@ def test_tender_llm_uses_bailian_anthropic_provider_when_selected(monkeypatch):
     assert client.model == "qwen3.8-max-preview"
 
 
+def test_explicit_agnes_chat_protocol_overrides_global_bailian(monkeypatch):
+    captured_kwargs = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return types.SimpleNamespace(
+                choices=[
+                    types.SimpleNamespace(
+                        message=types.SimpleNamespace(content='{"ok": true}')
+                    )
+                ]
+            )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            self.chat = types.SimpleNamespace(completions=FakeCompletions())
+
+    fake_openai = types.SimpleNamespace(
+        APIConnectionError=ConnectionError,
+        APITimeoutError=TimeoutError,
+        AsyncOpenAI=FakeAsyncOpenAI,
+        InternalServerError=RuntimeError,
+        RateLimitError=RuntimeError,
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setenv("LLM_PROVIDER", "bailian")
+
+    client = OpenAICompatibleTenderLLMClient(
+        api_key="agnes-key",
+        base_url="https://apihub.agnes-ai.com/v1/chat/completions",
+        model="agnes-2.0-flash",
+        provider="agnes",
+        api_mode="chat_completions",
+    )
+
+    data = asyncio.run(client._json_chat("test"))
+
+    assert data == {"ok": True}
+    assert client.provider == "agnes"
+    assert client.api_mode == "chat_completions"
+    assert client.base_url == "https://apihub.agnes-ai.com/v1"
+    assert captured_kwargs["base_url"] == "https://apihub.agnes-ai.com/v1"
+
+
 def test_tender_llm_does_not_use_legacy_qwen_text_environment(monkeypatch):
     for name in [
         "TENDER_LLM_API_KEY",
@@ -266,6 +311,55 @@ def test_json_chat_retries_agnes_upstream_not_found_once(monkeypatch):
 
     assert attempts == 2
     assert sleep_delays == [1]
+
+
+def test_json_chat_does_not_retry_transient_error_when_pool_controls_failover(
+    monkeypatch,
+):
+    attempts = 0
+
+    class FakeAPIConnectionError(Exception):
+        pass
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise FakeAPIConnectionError("connection failed")
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = types.SimpleNamespace(completions=FakeCompletions())
+
+    async def fake_sleep(_delay):
+        return None
+
+    fake_openai = types.SimpleNamespace(
+        APIConnectionError=FakeAPIConnectionError,
+        APITimeoutError=TimeoutError,
+        AsyncOpenAI=FakeAsyncOpenAI,
+        InternalServerError=RuntimeError,
+        RateLimitError=RuntimeError,
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setattr("app.services.tenders.llm.asyncio.sleep", fake_sleep)
+
+    client = OpenAICompatibleTenderLLMClient.__new__(
+        OpenAICompatibleTenderLLMClient
+    )
+    client.provider = "agnes"
+    client.api_mode = "chat_completions"
+    client.api_key = "test-key"
+    client.base_url = "https://apihub.agnes-ai.com/v1"
+    client.model = "agnes-2.0-flash"
+    client.temperature = 0.0
+    client.retry_rate_limits = False
+    client.retry_transient_errors = False
+
+    with pytest.raises(FakeAPIConnectionError):
+        asyncio.run(client._json_chat("test"))
+
+    assert attempts == 1
 
 
 def test_upstream_not_found_retry_is_limited_to_agnes():

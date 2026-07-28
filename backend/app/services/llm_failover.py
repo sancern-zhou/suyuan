@@ -9,7 +9,7 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass
-from typing import Optional, Iterable
+from typing import Iterable, Optional
 
 import structlog
 
@@ -164,6 +164,19 @@ def is_context_overflow_message(message: str) -> bool:
     )
 
 
+def is_media_fetch_failure_message(message: str) -> bool:
+    lower = message.lower()
+    return any(
+        marker in lower
+        for marker in (
+            "fetch url failed",
+            "fetch_url_failed",
+            "failed to download url data",
+            "download multimodal file timed out",
+        )
+    )
+
+
 def classify_llm_failure(err: object) -> LLMFailure:
     status = _read_status(err)
     code = _read_code(err)
@@ -173,6 +186,8 @@ def classify_llm_failure(err: object) -> LLMFailure:
 
     if is_context_overflow_message(message):
         return LLMFailure("context_overflow", status, code, message)
+    if is_media_fetch_failure_message(message):
+        return LLMFailure("media_fetch", status, code, message)
     if status == 429 or "rate limit" in lower or "too many requests" in lower or "throttl" in lower:
         return LLMFailure("rate_limit", status or 429, code, message)
     if status in {500, 502, 503, 504, 521, 522, 523, 524, 529} or "overloaded" in lower:

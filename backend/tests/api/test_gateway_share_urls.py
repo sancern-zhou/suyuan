@@ -1,3 +1,4 @@
+from importlib.util import find_spec
 import time
 
 import httpx
@@ -77,21 +78,30 @@ async def test_grant_permits_only_bound_asset_subtree_and_bad_grants_are_403():
     assert altered.status_code == 403
 
 
-def test_signed_media_uses_gateway_prefix(tmp_path):
-    from app.services.signed_media import SignedMediaService
+def test_legacy_social_media_transport_is_physically_removed():
+    from app.core.routing import ROUTER_REGISTRY
 
-    media = tmp_path / "image.png"
-    media.write_bytes(b"image")
-    service = SignedMediaService(
-        [tmp_path],
-        "secret",
-        "https://platform.example",
-        gateway_api_prefix="/api/suyuan",
-    )
+    assert find_spec("app.services.signed_media") is None
+    assert find_spec("app.services.media_object_store") is None
+    assert find_spec("app.api.signed_media_routes") is None
+    assert not any(spec.module == "app.api.signed_media_routes" for spec in ROUTER_REGISTRY)
 
-    url = service.create_url(media)
-
-    assert url.startswith("https://platform.example/api/suyuan/signed-media/image.png?")
+    settings = Settings(_env_file=None)
+    legacy_fields = {
+        "signed_media_base_url",
+        "signed_media_secret",
+        "signed_media_ttl_seconds",
+        "media_object_store_enabled",
+        "media_object_store_endpoint_url",
+        "media_object_store_access_key_id",
+        "media_object_store_secret_access_key",
+        "media_object_store_bucket",
+        "media_object_store_region",
+        "media_object_store_prefix",
+        "media_object_store_presign_ttl_seconds",
+    }
+    assert legacy_fields.isdisjoint(type(settings).model_fields)
+    assert Settings(_env_file=None, signed_media_secret="legacy-secret").share_signing_secret is None
 
 
 @pytest.mark.asyncio

@@ -72,10 +72,6 @@ def _app(service=None, **setting_overrides):
     async def asset(path: str):
         return {"path": path}
 
-    @app.get("/api/signed-media/{path:path}")
-    async def signed_media(path: str):
-        return {"path": path}
-
     @app.get("/api/reports/share/{token}")
     async def report(token: str):
         return {"token": token}
@@ -115,7 +111,6 @@ async def _get(app, path, *, client_host="127.0.0.1", headers=None):
         "/knowledge-base",
         "/session/session-1",
         "/assets/app.js",
-        "/api/signed-media/a/b.png?expires=1&signature=x",
         "/api/reports/share/grant",
         "/api/html-artifacts/share/grant",
     ],
@@ -140,6 +135,7 @@ async def test_exact_public_routes_do_not_authenticate(path):
         "/api/reports/share/grant/private",
         "/api/html-artifacts/share/grant/private",
         "/api/signed-media",
+        "/api/signed-media/a/b.png?expires=1&signature=x",
         "/api/auth/runtime-config/private",
     ],
 )

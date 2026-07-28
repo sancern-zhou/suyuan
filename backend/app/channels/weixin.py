@@ -1314,7 +1314,7 @@ class WeixinChannel(BaseChannel):
                 image_item = item.get("image_item") or {}
                 file_path = await self._download_media_item(image_item, "image")
                 if file_path:
-                    content_parts.append(f"[image]\n[Image: source: {file_path}]")
+                    content_parts.append("[image]")
                     media_paths.append(file_path)
                 else:
                     content_parts.append("[image]")
@@ -1327,7 +1327,7 @@ class WeixinChannel(BaseChannel):
                 else:
                     file_path = await self._download_media_item(voice_item, "voice")
                     if file_path:
-                        content_parts.append(f"[voice]\n[Audio: source: {file_path}]")
+                        content_parts.append("[voice]")
                         media_paths.append(file_path)
                     else:
                         content_parts.append("[voice]")
@@ -1341,7 +1341,7 @@ class WeixinChannel(BaseChannel):
                     file_name,
                 )
                 if file_path:
-                    content_parts.append(f"[file: {file_name}]\n[File: source: {file_path}]")
+                    content_parts.append(f"[file: {file_name}]")
                     media_paths.append(file_path)
                 else:
                     # 文件下载失败，明确提示
@@ -1352,7 +1352,7 @@ class WeixinChannel(BaseChannel):
                 video_item = item.get("video_item") or {}
                 file_path = await self._download_media_item(video_item, "video")
                 if file_path:
-                    content_parts.append(f"[video]\n[Video: source: {file_path}]")
+                    content_parts.append("[video]")
                     media_paths.append(file_path)
                 else:
                     content_parts.append("[video]")

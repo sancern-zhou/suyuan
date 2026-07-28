@@ -250,9 +250,8 @@ class SimplifiedContextBuilder:
         backend_host = None
         if self.current_mode == "social":
             # 优先使用 api_base_url（网关地址，如 http://219.135.180.51:56041）
-            # 其次使用 signed_media_base_url（公网后端地址）
             # 最后使用 backend_host（本地地址，仅开发环境）
-            backend_host = settings.api_base_url or settings.signed_media_base_url or settings.backend_host
+            backend_host = settings.api_base_url or settings.backend_host
 
         mode_prompt = build_react_system_prompt(
             mode=self.current_mode,

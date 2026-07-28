@@ -146,7 +146,9 @@ class AgentRuntime:
                     deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
-                    await self._close_steering(state)
+                    deferred_event = await self._close_steering_event(state)
+                    if deferred_event:
+                        yield deferred_event
                     yield self.events.interrupted(state)
                     return
                 except Exception as exc:
@@ -161,13 +163,17 @@ class AgentRuntime:
                     if self._is_terminal_quota_error(exc):
                         terminal_error = RuntimeError(f"模型额度已耗尽，运行已停止，避免无效重试：{exc}")
                         self._ensure_user_message_written(state)
-                        await self._close_steering(state)
+                        deferred_event = await self._close_steering_event(state)
+                        if deferred_event:
+                            yield deferred_event
                         async for event in self.finalizer.fatal_error(state, terminal_error):
                             yield event
                         return
                     if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
                         self._ensure_user_message_written(state)
-                        await self._close_steering(state)
+                        deferred_event = await self._close_steering_event(state)
+                        if deferred_event:
+                            yield deferred_event
                         async for event in self.finalizer.fatal_error(state, exc):
                             yield event
                         return
@@ -178,7 +184,9 @@ class AgentRuntime:
                             error_type = CustomAgentTerminalError if state.mode == "custom" else RuntimeError
                             terminal_error = error_type(f"{prefix} 模型请求连续失败，已熔断: {exc}")
                             self._ensure_user_message_written(state)
-                            await self._close_steering(state)
+                            deferred_event = await self._close_steering_event(state)
+                            if deferred_event:
+                                yield deferred_event
                             async for event in self.finalizer.fatal_error(state, terminal_error):
                                 yield event
                             return
@@ -189,7 +197,9 @@ class AgentRuntime:
 
             if not state.task_completed:
                 self._ensure_user_message_written(state)
-                await self._close_steering(state)
+                deferred_event = await self._close_steering_event(state)
+                if deferred_event:
+                    yield deferred_event
                 if state.mode == "custom":
                     error = CustomAgentTerminalError(
                         f"custom Agent 在 {state.iteration} 次迭代内未形成成功或失败终态"
@@ -203,12 +213,16 @@ class AgentRuntime:
         except Exception as exc:
             if isinstance(exc, AgentRunCancelled):
                 self._ensure_user_message_written(state)
-                await self._close_steering(state)
+                deferred_event = await self._close_steering_event(state)
+                if deferred_event:
+                    yield deferred_event
                 yield self.events.interrupted(state)
                 return
             logger.error("agent_runtime_fatal_error", error=str(exc), exc_info=True)
             self._ensure_user_message_written(state)
-            await self._close_steering(state)
+            deferred_event = await self._close_steering_event(state)
+            if deferred_event:
+                yield deferred_event
             async for event in self.finalizer.fatal_error(state, exc):
                 yield event
 
@@ -401,7 +415,7 @@ class AgentRuntime:
     def _attachment_key(attachment: Dict[str, Any]) -> Optional[str]:
         if not isinstance(attachment, dict):
             return None
-        for field in ("local_path", "path", "url", "signed_url"):
+        for field in ("local_path", "path", "url"):
             value = attachment.get(field)
             if isinstance(value, str) and value:
                 return f"{field}:{value}"
@@ -529,15 +543,23 @@ class AgentRuntime:
         self._ensure_user_message_written(state)
         messages: List[str] = []
         input_ids: List[str] = []
+        applied_inputs: List[Dict[str, Any]] = []
         attachment_count = 0
         for item in items:
             content = item.content
+            safe_attachments: List[Dict[str, str]] = []
             if item.attachments:
                 state.pending_attachments.extend(item.attachments)
                 attachment_count += len(item.attachments)
+                safe_attachments = self._resource_attachment_refs(item.attachments)
                 content = self._append_attachment_summary(content, item.attachments)
             messages.append(content)
             input_ids.append(item.input_id)
+            applied_inputs.append({
+                "message": item.content,
+                "input_id": item.input_id,
+                "attachments": safe_attachments,
+            })
             self.writer.add_user_message(f"【执行中用户补充】{content}")
 
         logger.info(
@@ -547,7 +569,7 @@ class AgentRuntime:
             count=len(messages),
             attachment_count=attachment_count,
         )
-        yield self.events.steering_applied(state, messages, input_ids)
+        yield self.events.steering_applied(state, messages, input_ids, applied_inputs)
 
     async def _close_steering(self, state: RunState) -> List[Any]:
         deferred = await steering_registry.close_and_drain(state.session_id, state.run_id)
@@ -561,6 +583,23 @@ class AgentRuntime:
             )
         return deferred
 
+    async def _close_steering_event(
+        self,
+        state: RunState,
+    ) -> Dict[str, Any] | None:
+        deferred = await self._close_steering(state)
+        if not deferred:
+            return None
+        inputs = [
+            {
+                "message": item.content,
+                "input_id": item.input_id,
+                "attachments": self._resource_attachment_refs(item.attachments),
+            }
+            for item in deferred
+        ]
+        return self.events.steering_deferred(state, inputs)
+
     @staticmethod
     def _append_attachment_summary(content: str, attachments: List[Dict[str, Any]]) -> str:
         if not attachments:
@@ -570,22 +609,40 @@ class AgentRuntime:
         for index, attachment in enumerate(attachments, 1):
             att_type = attachment.get("type") or "file"
             att_name = attachment.get("name") or "attachment"
-            att_path = (
-                attachment.get("local_path")
-                or attachment.get("path")
-                or attachment.get("url")
-                or attachment.get("signed_url")
-                or ""
-            )
+            resource_id = attachment.get("resource_id") or attachment.get("ref_id")
             att_mime_type = attachment.get("mime_type") or attachment.get("content_type")
             label = "图片" if att_type == "image" else "文件"
             lines.append(f"{index}. {label}: {att_name}")
-            if att_path:
-                lines.append(f"   路径: {att_path}")
+            if resource_id:
+                lines.append(f"   会话资源: {resource_id}")
             if att_mime_type:
                 lines.append(f"   类型: {att_mime_type}")
 
         return f"{content}{chr(10).join(lines)}"
+
+    @staticmethod
+    def _resource_attachment_refs(
+        attachments: List[Dict[str, Any]],
+    ) -> List[Dict[str, str]]:
+        refs: List[Dict[str, str]] = []
+        for attachment in attachments:
+            resource_id = str(
+                attachment.get("resource_id") or attachment.get("ref_id") or ""
+            )
+            if not resource_id:
+                continue
+            refs.append({
+                "type": str(attachment.get("type") or "file"),
+                "name": str(attachment.get("name") or "attachment"),
+                "mime_type": str(
+                    attachment.get("mime_type")
+                    or attachment.get("content_type")
+                    or "application/octet-stream"
+                ),
+                "resource_id": resource_id,
+                "ref_id": resource_id,
+            })
+        return refs
 
     async def _build_context(self, state: RunState) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         latest_observation = ""

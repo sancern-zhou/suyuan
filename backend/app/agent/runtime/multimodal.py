@@ -7,6 +7,8 @@ from mimetypes import guess_type
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
 
 def build_anthropic_user_content(
     text: str,
@@ -65,7 +67,13 @@ def build_base64_user_content(
 
 
 def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    url = attachment.get("url") or attachment.get("signed_url")
+    local_path = attachment.get("local_path") or attachment.get("path")
+    if local_path:
+        image_block = _build_local_base64_image_block(attachment)
+        if image_block:
+            return image_block
+
+    url = attachment.get("url")
     if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):
         return {
             "type": "image",
@@ -75,12 +83,6 @@ def _build_image_block(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             },
         }
 
-    local_path = attachment.get("local_path") or attachment.get("path")
-    if local_path:
-        image_block = _build_local_base64_image_block(attachment)
-        if image_block:
-            return image_block
-
     return None
 
 
@@ -89,6 +91,8 @@ def _build_local_base64_image_block(attachment: Dict[str, Any]) -> Optional[Dict
     if local_path:
         path = Path(str(local_path))
         if path.exists() and path.is_file():
+            if path.stat().st_size > MAX_INLINE_IMAGE_BYTES:
+                return None
             media_type = _media_type(attachment, path)
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
             return {
@@ -147,7 +151,7 @@ def extract_multimodal_attachments(observation: Dict[str, Any]) -> List[Dict[str
                         continue
                     if item.get("type") != "image":
                         continue
-                    if item.get("url") or item.get("signed_url") or item.get("local_path") or item.get("path"):
+                    if item.get("url") or item.get("local_path") or item.get("path"):
                         attachments.append(item)
 
         for item in value.get("tool_results", []) or []:

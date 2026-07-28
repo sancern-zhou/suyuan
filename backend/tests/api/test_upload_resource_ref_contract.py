@@ -1,13 +1,18 @@
 from datetime import UTC, datetime
 from inspect import signature
 from io import BytesIO
+from pathlib import Path
 
 import pytest
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 
 from app.agent.resources.contracts import ResourceDeclaration
-from app.agent.resources.resource_service import ResourceBatchResult, StoredResource
+from app.agent.resources.resource_service import (
+    ResourceBatchResult,
+    ResourceCounts,
+    StoredResource,
+)
 from app.api import session_routes, upload_routes
 
 
@@ -130,3 +135,124 @@ async def test_session_resource_list_exposes_ref_id_alias(monkeypatch):
 
     resource = result["resources"][0]
     assert resource["ref_id"] == resource["resource_id"]
+
+
+@pytest.mark.asyncio
+async def test_authorized_session_resource_content_serves_registered_file(tmp_path, monkeypatch):
+    image_path = tmp_path / "social" / "meal.jpg"
+    image_path.parent.mkdir()
+    image_path.write_bytes(b"jpg")
+    declaration = ResourceDeclaration.model_validate({
+        "kind": "file",
+        "role": "attachment",
+        "label": image_path.name,
+        "locator": {"path": str(image_path)},
+        "metadata": {"mime_type": "image/jpeg", "source": "social_inbound"},
+        "tool_name": "social_inbound",
+    })
+    resource = StoredResource.from_declaration(
+        "social-session",
+        "social-inbound:test",
+        declaration,
+        created_at=datetime.now(UTC),
+    )
+
+    class _ListService:
+        async def get_resource(self, *_args, **_kwargs):
+            return resource
+
+    monkeypatch.setattr(session_routes, "get_data_registry", lambda: tmp_path)
+    monkeypatch.setattr(
+        session_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: _ListService()),
+    )
+
+    response = await session_routes.get_session_resource_content(
+        session_id="social-session",
+        resource_id=resource.resource_id,
+        user=object(),
+        catalog=_Catalog(),
+    )
+
+    assert Path(response.path) == image_path.resolve()
+    assert response.media_type == "image/jpeg"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.asyncio
+async def test_session_resource_content_rejects_locator_outside_registry(tmp_path, monkeypatch):
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"jpg")
+    declaration = ResourceDeclaration.model_validate({
+        "kind": "file",
+        "role": "attachment",
+        "label": outside.name,
+        "locator": {"path": str(outside)},
+        "metadata": {"mime_type": "image/jpeg"},
+        "tool_name": "social_inbound",
+    })
+    resource = StoredResource.from_declaration(
+        "social-session",
+        "social-inbound:test",
+        declaration,
+        created_at=datetime.now(UTC),
+    )
+
+    class _ListService:
+        async def get_resource(self, *_args, **_kwargs):
+            return resource
+
+    monkeypatch.setattr(session_routes, "get_data_registry", lambda: registry)
+    monkeypatch.setattr(
+        session_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: _ListService()),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await session_routes.get_session_resource_content(
+            session_id="social-session",
+            resource_id=resource.resource_id,
+            user=object(),
+            catalog=_Catalog(),
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_social_restore_exposes_unified_resource_counts(monkeypatch):
+    class _RestoreCatalog:
+        async def require_read(self, *_args, **_kwargs):
+            return type("Row", (), {"source": "social"})()
+
+    class _Adapter:
+        async def restore(self, *_args, **_kwargs):
+            return {"normalized_session": {"session_id": "social-session"}}
+
+    class _Adapters:
+        def get(self, _source):
+            return _Adapter()
+
+    class _CountService:
+        async def resource_counts(self, _session_id):
+            return ResourceCounts(total=1, files=1)
+
+    monkeypatch.setattr(
+        session_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: _CountService()),
+    )
+
+    result = await session_routes.restore_session(
+        session_id="social-session",
+        user=object(),
+        catalog=_RestoreCatalog(),
+        adapters=_Adapters(),
+    )
+
+    assert result["session"]["resource_counts"]["files"] == 1
+    assert result["session"]["has_lazy_files"] is True
