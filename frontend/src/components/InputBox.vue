@@ -12,16 +12,29 @@
         >
           /{{ selectedSkill.name }} <span aria-hidden="true">×</span>
         </button>
-        <button
+        <div
           v-for="file in selectedFileRefs"
           :key="file.resourceRefId"
-          type="button"
           class="composer-chip file-chip"
-          :title="file.title || file.name"
-          @click="removeSelectedFile(file.resourceRefId)"
+          :class="{ 'active-policy-chip': file.pinnedPolicy }"
         >
-          @{{ file.name }} <span aria-hidden="true">×</span>
-        </button>
+          <button
+            type="button"
+            class="chip-policy-toggle"
+            :disabled="!canPinAsPolicy(file)"
+            :title="canPinAsPolicy(file) ? (file.pinnedPolicy ? '取消固定规范' : '固定为会话规范') : '仅文本类文档可固定为规范'"
+            @click="togglePolicyPin(file.resourceRefId)"
+          >
+            {{ file.pinnedPolicy ? '已固定' : '固定' }}
+          </button>
+          <span :title="file.title || file.name">@{{ file.name }}</span>
+          <button
+            type="button"
+            class="chip-remove"
+            :title="`移除 ${file.name}`"
+            @click="removeSelectedFile(file.resourceRefId)"
+          >×</button>
+        </div>
       </div>
 
       <!-- 附件预览区域 -->
@@ -265,7 +278,7 @@ import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
 import { getSkillsList } from '@/api/skillsManagement.js'
-import { getSessionResources } from '@/api/session.js'
+import { getSession, getSessionResources } from '@/api/session.js'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 import {
   buildComposerPayload,
@@ -441,6 +454,17 @@ const selectedFileRefs = computed(() => [
   ...attachments.value.filter(item => item.resourceRefId),
   ...(pendingBoardSnapshotAttachment.value?.resourceRefId ? [pendingBoardSnapshotAttachment.value] : [])
 ])
+const acceptedActiveContextSignature = ref('')
+const activeContextSignature = computed(() => JSON.stringify({
+  skillId: selectedSkill.value?.id || null,
+  policyFileIds: selectedFileRefs.value
+    .filter(file => file.pinnedPolicy)
+    .map(file => file.resourceRefId)
+    .sort()
+}))
+const hasActiveContextUpdate = computed(() => (
+  activeContextSignature.value !== acceptedActiveContextSignature.value
+))
 
 const resourceToAttachment = (item) => ({
   id: item.id,
@@ -455,14 +479,26 @@ const resourceToAttachment = (item) => ({
     : null,
   uploading: false,
   source: item.source,
+  pinnedPolicy: item.pinnedPolicy === true,
   title: `${item.group}${item.turnSequence !== null ? ` · 第 ${item.turnSequence} 轮` : ''}`
 })
+
+const POLICY_FILE_PATTERN = /\.(md|markdown|qmd|txt|json|ya?ml)$/i
+const canPinAsPolicy = (file) => POLICY_FILE_PATTERN.test(String(file?.name || ''))
+const togglePolicyPin = (resourceRefId) => {
+  const file = attachments.value.find(item => item.resourceRefId === resourceRefId)
+  if (!file || !canPinAsPolicy(file)) return
+  file.pinnedPolicy = !file.pinnedPolicy
+}
 
 const persistSelectionDraft = (sessionId = props.sessionId) => {
   if (restoringSelection) return
   writeSelectionDraft(sessionId, {
     skillId: selectedSkill.value?.id || null,
-    fileIds: selectedFileRefs.value.map(file => file.resourceRefId)
+    fileIds: selectedFileRefs.value.map(file => file.resourceRefId),
+    policyFileIds: selectedFileRefs.value
+      .filter(file => file.pinnedPolicy)
+      .map(file => file.resourceRefId)
   })
 }
 
@@ -471,25 +507,45 @@ const restoreSelectionDraft = async (sessionId) => {
   const token = selectionRestoreGuard.begin(sessionId, mode)
   restoringSelection = true
   try {
-    const [skillsResponse, resourcesResponse] = await Promise.all([
+    const [skillsResponse, resourcesResponse, sessionResponse] = await Promise.all([
       getSkillsList(null, reactStore.currentMode).catch(() => ({ data: { skills: [] } })),
       sessionId
         ? getSessionResources(sessionId).catch(() => ({ resources: [] }))
-        : Promise.resolve({ resources: [] })
+        : Promise.resolve({ resources: [] }),
+      sessionId ? getSession(sessionId).catch(() => null) : Promise.resolve(null)
     ])
     if (!selectionRestoreGuard.isCurrent(token, props.sessionId, reactStore.currentMode)) return
     availableSkills.value = normalizeSkills(skillsResponse)
     conversationResources.value = normalizeConversationResources(resourcesResponse)
+    const localDraft = readSelectionDraft(sessionId)
+    const serverPayload = sessionResponse?.metadata?.active_contexts
+    const serverItems = serverPayload?.version === 1 && Array.isArray(serverPayload.items)
+      ? serverPayload.items
+      : null
+    const activeSkill = serverItems?.find(item => item.type === 'skill')
+    const activePolicyIds = serverItems
+      ?.filter(item => item.type === 'fixed_policy')
+      .map(item => item.id) || []
     const restored = reconcileSelectionDraft(
-      readSelectionDraft(sessionId),
+      serverItems === null
+        ? localDraft
+        : {
+            skillId: activeSkill?.id || null,
+            fileIds: Array.from(new Set([...localDraft.fileIds, ...activePolicyIds])),
+            policyFileIds: activePolicyIds
+          },
       availableSkills.value,
       conversationResources.value
     )
     selectedSkill.value = restored.skill
     attachments.value = restored.files.map(resourceToAttachment)
+    if (serverItems !== null) {
+      acceptedActiveContextSignature.value = activeContextSignature.value
+    }
     writeSelectionDraft(sessionId, {
       skillId: restored.skill?.id || null,
-      fileIds: restored.files.map(file => file.id)
+      fileIds: restored.files.map(file => file.id),
+      policyFileIds: restored.files.filter(file => file.pinnedPolicy).map(file => file.id)
     })
   } finally {
     if (selectionRestoreGuard.isCurrent(token, props.sessionId, reactStore.currentMode)) {
@@ -546,7 +602,7 @@ const voiceButtonTitle = computed(() => {
 const actionButtonDisabled = computed(() => {
   if (boardSyncStatus.value === 'syncing') return true
   const hasContent = Boolean(
-    localValue.value.trim() || selectedSkill.value || selectedFileRefs.value.length > 0
+    localValue.value.trim() || hasActiveContextUpdate.value || selectedFileRefs.value.some(file => !file.pinnedPolicy)
   )
   if (attachments.value.some(item => item.uploading)) return true
   if (selectedSkill.value?.compatible === false) return true
@@ -690,7 +746,9 @@ watch(
 watch(
   [
     () => selectedSkill.value?.id || null,
-    () => selectedFileRefs.value.map(file => file.resourceRefId).join('\n')
+    () => selectedFileRefs.value
+      .map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`)
+      .join('\n')
   ],
   () => persistSelectionDraft()
 )
@@ -768,7 +826,7 @@ const handleBlur = () => {
 
 const handleSend = async () => {
   if (
-    (!localValue.value.trim() && !selectedSkill.value && selectedFileRefs.value.length === 0) ||
+    (!localValue.value.trim() && !hasActiveContextUpdate.value && !selectedFileRefs.value.some(file => !file.pinnedPolicy)) ||
     props.disabled ||
     boardSyncStatus.value === 'syncing'
   ) return
@@ -801,18 +859,18 @@ const handleSend = async () => {
   const sentSnapshot = {
     query: localValue.value,
     skillId: selectedSkill.value?.id || null,
-    fileIds: selectedFileRefs.value.map(file => file.resourceRefId)
+    fileIds: selectedFileRefs.value.map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`)
   }
   const clearAcceptedDraft = () => {
     const currentSnapshot = {
       query: localValue.value,
       skillId: selectedSkill.value?.id || null,
-      fileIds: selectedFileRefs.value.map(file => file.resourceRefId)
+      fileIds: selectedFileRefs.value.map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`)
     }
     if (!shouldClearAcceptedComposer(sentSnapshot, currentSnapshot)) return
     localValue.value = ''
-    attachments.value = []
-    selectedSkill.value = null
+    attachments.value = attachments.value.filter(file => file.pinnedPolicy)
+    acceptedActiveContextSignature.value = activeContextSignature.value
     if (pendingBoardSnapshotAttachment.value) reactStore.setDrawioBoardSnapshotAttachment(null)
     nextTick(() => {
       if (textareaRef.value) {
@@ -832,7 +890,8 @@ const handleSend = async () => {
         name: file.name,
         type: file.type,
         mimeType: file.mime_type || null,
-        url: file.url || (file.file_id ? getFileUrl(file.file_id) : null)
+        url: file.url || (file.file_id ? getFileUrl(file.file_id) : null),
+        pinnedPolicy: file.pinnedPolicy === true
       })),
       knowledgeBaseIds,
       agentMode: activeAgentMode,
@@ -1172,6 +1231,46 @@ defineExpose({
   border-color: #d4c3ee;
   background: #f8f3ff;
   color: #68429a;
+}
+
+.composer-chip.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+}
+
+.composer-chip.active-policy-chip {
+  border-color: #75a789;
+  background: #f1faf4;
+  color: #245c38;
+}
+
+.chip-policy-toggle,
+.chip-remove {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.chip-policy-toggle {
+  border-right: 1px solid currentColor;
+  padding-right: 5px;
+  opacity: 0.8;
+}
+
+.chip-policy-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.chip-remove {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .composer-chip.invalid {

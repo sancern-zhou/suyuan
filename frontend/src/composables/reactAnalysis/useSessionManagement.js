@@ -255,6 +255,7 @@ export function useSessionManagement(store) {
     const agentMode = payload.agentMode || store.agentMode
     const skillIds = payload.skillIds || []
     const contextRefs = payload.contextRefs || []
+    const activeContexts = Array.isArray(payload.activeContexts) ? payload.activeContexts : null
     const messageAttachments = payload.messageAttachments || []
     const modelTier = payload.modelTier || 'auto'
 
@@ -265,6 +266,7 @@ export function useSessionManagement(store) {
       modelTier,
       skillIds,
       contextRefs,
+      activeContexts,
       messageAttachments,
       onAccepted: payload.onAccepted
     }

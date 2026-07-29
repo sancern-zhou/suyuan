@@ -380,6 +380,7 @@ class ReActAgent:
         manual_mode: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         selected_skill_context: Optional[str] = None,
+        fixed_policy_context: Optional[str] = None,
         selected_resource_refs: Optional[List[StoredResource]] = None,
         user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
         social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
@@ -625,6 +626,13 @@ class ReActAgent:
                     "selected_skill_context_set",
                     session_id=actual_session_id,
                     context_length=len(selected_skill_context),
+                )
+            if fixed_policy_context:
+                react_loop.context_builder.fixed_policy_context = fixed_policy_context
+                logger.info(
+                    "fixed_policy_context_set",
+                    session_id=actual_session_id,
+                    context_length=len(fixed_policy_context),
                 )
 
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）

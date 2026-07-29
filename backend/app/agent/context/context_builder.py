@@ -95,6 +95,9 @@ class SimplifiedContextBuilder:
         # 用户为当前轮显式选择的技能正文。技能全模式通用，但不能改变工具权限。
         self.selected_skill_context = None
 
+        # 会话级固定规范。正文每轮从权威会话资源重新读取，不依赖对话历史。
+        self.fixed_policy_context = None
+
         # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
 
         logger.info(
@@ -278,6 +281,12 @@ class SimplifiedContextBuilder:
                 "<selected_skill>\n"
                 + self.selected_skill_context.strip()
                 + "\n</selected_skill>"
+            )
+        if self.fixed_policy_context:
+            sections.append(
+                "<fixed_policies>\n"
+                + self.fixed_policy_context.strip()
+                + "\n</fixed_policies>"
             )
         if self.session_resource_context:
             sections.append(
