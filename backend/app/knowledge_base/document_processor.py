@@ -20,6 +20,9 @@ from typing import List, Dict, Any, Optional, Literal
 from pathlib import Path
 from enum import Enum
 import structlog
+from config.settings import settings
+from app.services.bailian_multimodal import call_bailian_vision
+from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
 
@@ -29,12 +32,10 @@ LLM_CHUNK_LOG_FULL = os.getenv("LLM_CHUNK_LOG_FULL", "true").lower() == "true"
 
 class LLMMode(str, Enum):
     """LLM分块模式"""
-    LOCAL = "local"    # 本地千问3
     ONLINE = "online"  # 线上API（DeepSeek/MiniMax/Mimo等）
 
 
 # LLM分块的最大字符数限制（从.env配置读取）
-LLM_CHUNK_MAX_CHARS_LOCAL = int(os.getenv("LLM_CHUNK_MAX_CHARS_LOCAL"))
 LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE"))
 
 # 线上LLM配置
@@ -68,10 +69,8 @@ class DocumentProcessor:
         ".rtf": "rtf"
     }
 
-    # OCR 配置（阿里云百炼 - Qwen3-VL）
-    OCR_API_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-    OCR_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
-    OCR_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")  # 修复：统一使用QWEN_VL_MODEL
+    OCR_API_URL = settings.bailian_base_url
+    OCR_API_KEY = settings.bailian_api_key or ""
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
     OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "120"))
     
@@ -294,7 +293,7 @@ class DocumentProcessor:
             logger.error("pdf_to_images_failed", error=str(e), file_path=file_path)
             raise
 
-    # OCR 提示词（Qwen3-VL 通用多模态模型）
+    # OCR 提示词（百炼多模态模型）
     OCR_PROMPT_DEFAULT = """识别图片中的所有文字，要求：
 1. 按阅读顺序输出纯文本
 2. 表格用markdown格式（| 列1 | 列2 |）
@@ -321,7 +320,6 @@ class DocumentProcessor:
         Returns:
             (page_num, extracted_text)
         """
-        import httpx
         import base64
         import asyncio
         
@@ -333,55 +331,24 @@ class DocumentProcessor:
         
         for attempt in range(max_retries):
             try:
-                # 构建请求头（如果有API key则添加Authorization）
-                headers = {"Content-Type": "application/json"}
-                if self.OCR_API_KEY:  # 只有在有API key时才添加Authorization
-                    headers["Authorization"] = f"Bearer {self.OCR_API_KEY}"
-
-                async with httpx.AsyncClient(timeout=float(self.OCR_TIMEOUT)) as client:
-                    response = await client.post(
-                        f"{self.OCR_API_URL}/chat/completions",
-                        headers=headers,
-                        json={
-                            "model": self.OCR_MODEL,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
-                                        {"type": "text", "text": prompt}
-                                    ]
-                                }
-                            ],
-                            "max_tokens": 7000
-                        }
-                    )
-                    response.raise_for_status()
-                    result = response.json()
+                content, _ = await call_bailian_vision(
+                    image_url=f"data:image/png;base64,{base64_image}",
+                    prompt=prompt,
+                    api_key=self.OCR_API_KEY,
+                    base_url=self.OCR_API_URL,
+                    model=settings.bailian_model,
+                    timeout=float(self.OCR_TIMEOUT),
+                    max_tokens=7000,
+                )
+                content = self._clean_repeated_substrings(content)
+                logger.debug("ocr_page_success", page_num=page_num, content_length=len(content))
+                return (page_num, content)
                     
-                    content = result["choices"][0]["message"]["content"]
-                    # 清理可能的重复子串
-                    content = self._clean_repeated_substrings(content)
-                    
-                    logger.debug("ocr_page_success", page_num=page_num, content_length=len(content))
-                    return (page_num, content)
-                    
-            except httpx.ConnectError as e:
-                logger.warning("ocr_connection_failed", page_num=page_num, error=str(e))
-                return (page_num, f"[OCR失败: 连接错误 - 第{page_num + 1}页]")
-            except httpx.TimeoutException as e:
-                logger.warning("ocr_timeout", page_num=page_num, error=str(e))
-                return (page_num, f"[OCR超时 - 第{page_num + 1}页]")
-            except httpx.HTTPStatusError as e:
-                error_body = e.response.text if e.response else "No response body"
-                # 500 错误时重试
-                if e.response.status_code >= 500 and attempt < max_retries - 1:
-                    logger.warning("ocr_server_error_retrying", page_num=page_num, attempt=attempt+1, status=e.response.status_code)
-                    await asyncio.sleep(2 * (attempt + 1))  # 递增等待
-                    continue
-                logger.warning("ocr_http_error", page_num=page_num, status=e.response.status_code, error_body=error_body[:500])
-                return (page_num, f"[OCR失败: HTTP {e.response.status_code} - 第{page_num + 1}页]")
             except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning("ocr_retrying", page_num=page_num, attempt=attempt + 1, error=str(e))
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
                 logger.warning("ocr_failed", page_num=page_num, error=str(e), error_type=type(e).__name__)
                 return (page_num, f"[OCR失败: {str(e)} - 第{page_num + 1}页]")
         
@@ -647,7 +614,7 @@ class DocumentProcessor:
         chunk_size: int = 800,
         chunk_overlap: int = 100,
         filename: str = "",
-        llm_mode: str = "local"
+        llm_mode: str = "online"
     ) -> List[Dict[str, Any]]:
         """
         文档分块
@@ -658,7 +625,7 @@ class DocumentProcessor:
             chunk_size: 分块大小（字符数）
             chunk_overlap: 分块重叠
             filename: 文件名（用于LLM分块的上下文生成）
-            llm_mode: LLM模式 - "local"(本地千问3) / "online"(线上API)
+            llm_mode: LLM模式，仅支持 "online"（线上API）
 
         Returns:
             分块列表 [{"id": str, "content": str, "metadata": dict, ...}, ...]
@@ -744,29 +711,29 @@ class DocumentProcessor:
         content: str,
         chunk_size: int = 512,
         filename: str = "",
-        llm_mode: str = "local"
+        llm_mode: str = "online"
     ) -> List[Dict[str, Any]]:
         """
-        使用LLM进行智能分块（支持本地/线上模式）
+        使用线上LLM进行智能分块
 
         Args:
             content: 文档内容
             chunk_size: 目标分块大小（字符数，仅作参考）
             filename: 文件名（用于生成上下文）
-            llm_mode: LLM模式 - "local"(本地千问3) / "online"(线上API)
+            llm_mode: LLM模式，仅支持 "online"（线上API）
 
         Returns:
             分块列表（包含完整元数据）
         """
+        if llm_mode != "online":
+            raise ValueError(f"Unsupported LLM mode: {llm_mode}")
         if not content.strip():
             return []
 
         try:
             import asyncio
-            
-            # 根据模式选择配置
-            is_online = llm_mode == "online"
-            max_chars = LLM_CHUNK_MAX_CHARS_ONLINE if is_online else LLM_CHUNK_MAX_CHARS_LOCAL
+
+            max_chars = LLM_CHUNK_MAX_CHARS_ONLINE
             
             logger.info(
                 "llm_chunking_started",
@@ -1254,110 +1221,14 @@ class DocumentProcessor:
         
         Args:
             prompt: 提示词
-            llm_mode: "local" 或 "online"
+            llm_mode: 仅支持 "online"
             
         Returns:
             LLM响应文本
         """
-        import httpx
-        
-        if llm_mode == "online":
-            return await self._call_online_llm(prompt)
-        else:
-            return await self._call_local_llm(prompt)
-
-    async def _call_local_llm(self, prompt: str) -> str:
-        """调用本地千问3，带重试机制"""
-        import httpx
-        import asyncio
-
-        base_url = os.getenv("QWEN_BASE_URL")
-        model = os.getenv("QWEN_MODEL", "qwen3")
-
-        if not base_url:
-            raise ValueError("QWEN_BASE_URL not configured in .env")
-
-        # 重试配置：最多重试1次（总共2次尝试）
-        max_retries = 2
-        base_delay = 2
-
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    response = await client.post(
-                        f"{base_url}/chat/completions",
-                        headers={"Content-Type": "application/json"},
-                        json={
-                            "model": model,
-                            "messages": [
-                                {"role": "system", "content": "你是文档分析助手。直接返回JSON，不要解释。"},
-                                {"role": "user", "content": prompt}
-                            ],
-                            "temperature": 0.1
-                        }
-                    )
-                    response.raise_for_status()
-                    result = response.json()
-                    
-                    if attempt > 0:
-                        logger.info("local_llm_retry_success", attempt=attempt + 1)
-                    return result["choices"][0]["message"]["content"]
-                    
-            except httpx.HTTPStatusError as e:
-                is_retryable = e.response.status_code in [429, 500, 502, 503, 504]
-                is_last_attempt = attempt == max_retries - 1
-                
-                if is_retryable and not is_last_attempt:
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(
-                        "local_llm_http_error_retry",
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        status_code=e.response.status_code,
-                        retry_delay=delay
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    logger.error(
-                        "local_llm_http_error_final",
-                        attempt=attempt + 1,
-                        status_code=e.response.status_code
-                    )
-                    raise
-                    
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout) as e:
-                is_last_attempt = attempt == max_retries - 1
-                
-                if not is_last_attempt:
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(
-                        "local_llm_network_error_retry",
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        error_type=type(e).__name__,
-                        retry_delay=delay
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    logger.error(
-                        "local_llm_network_error_final",
-                        attempt=attempt + 1,
-                        error_type=type(e).__name__
-                    )
-                    raise
-                    
-            except Exception as e:
-                logger.error(
-                    "local_llm_unexpected_error",
-                    attempt=attempt + 1,
-                    error=str(e),
-                    error_type=type(e).__name__
-                )
-                raise
-        
-        raise RuntimeError(f"本地LLM调用失败，已尝试{max_retries}次")
+        if llm_mode != "online":
+            raise ValueError(f"Unsupported LLM mode: {llm_mode}")
+        return await self._call_online_llm(prompt)
 
     async def _call_online_llm(self, prompt: str) -> str:
         """调用线上LLM API（DeepSeek/MiniMax/OpenAI/Mimo），带重试机制"""
@@ -1365,6 +1236,22 @@ class DocumentProcessor:
         import asyncio
         
         provider = ONLINE_LLM_PROVIDER.lower()
+
+        if provider == "bailian":
+            response = await llm_service.chat_anthropic(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=8192,
+                temperature=0.1,
+                system="你是文档分析助手。直接返回JSON，不要解释。",
+            )
+            content = "\n".join(
+                str(getattr(block, "text", ""))
+                for block in response.get("content", [])
+                if getattr(block, "type", None) == "text"
+            ).strip()
+            if not content:
+                raise RuntimeError("Bailian document chunking response contained no text")
+            return content
         
         if provider == "deepseek":
             api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -1605,111 +1492,6 @@ class DocumentProcessor:
         
         # 超过60%的行符合目录特征
         return toc_line_count / len(lines) > 0.6
-
-    async def _llm_chunk_segment(
-        self,
-        proxy_url: str,
-        content: str,
-        chunk_size: int
-    ) -> List[Dict[str, Any]]:
-        """对单个片段调用本地千问3进行分块"""
-        import httpx
-        
-        # 预处理：清理格式标记
-        content = self._preprocess_content(content)
-        
-        # 检测并跳过目录
-        if self._is_toc_content(content):
-            logger.info("skipping_toc_content", content_length=len(content))
-            return []
-        
-        # 优化后的提示词
-        prompt = f"""将文档按语义分块，用于知识库检索。
-
-## 规则
-1. 分块大小：500-1500字符，宁大勿小
-2. 跳过：纯目录、页眉页脚、版权声明
-3. 公文格式：发文头(文号+标题+单位)合并，各附件独立
-4. 列表/步骤保持完整，不要拆散
-
-## 表格处理规则（重要）
-如果识别到表格内容（即使OCR后格式混乱），必须：
-1. 整理成Markdown表格格式，如：
-   | 污染物 | 限值 | 单位 |
-   |--------|------|------|
-   | SO2 | 50 | mg/m³ |
-2. 表格前的说明（如"表1 排放限值"）与表格合并
-3. type标记为"table"
-
-## 输出JSON
-{{"chunks":[{{"content":"完整内容（表格整理成Markdown格式）","topic":"主题","type":"paragraph|table|list"}}]}}
-
-## 文档
-{content}"""
-
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                response = await client.post(
-                    proxy_url,
-                    headers={"Content-Type": "application/json"},
-                    json={
-                        "model": "qwen3",
-                        "messages": [
-                            {"role": "system", "content": "你是文档分块助手。直接返回JSON，不要解释。"},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.1
-                    }
-                )
-                response.raise_for_status()
-                result = response.json()
-
-            result_text = result["choices"][0]["message"]["content"]
-            
-            # 提取JSON
-            json_match = re.search(r'\{[\s\S]*\}', result_text)
-            if json_match:
-                parsed = json.loads(json_match.group())
-            else:
-                logger.warning("llm_response_no_json_found")
-                return self._fallback_chunk(content, chunk_size)
-
-            chunks = []
-            for i, item in enumerate(parsed.get("chunks", [])):
-                chunk_content = item.get("content", "").strip()
-                # 过滤过小的块（小于100字符可能是噪音）
-                if chunk_content and len(chunk_content) >= 100:
-                    chunks.append({
-                        "id": f"chunk_{i}",
-                        "content": chunk_content,
-                        "metadata": {
-                            "topic": item.get("topic", ""),
-                            "type": item.get("type", "paragraph"),
-                            "chunking_method": "llm_qwen3"
-                        },
-                        "start_char": None,
-                        "end_char": None
-                    })
-            
-            # 合并过小的块
-            chunks = self._merge_small_chunks(chunks, min_size=150)
-
-            if not chunks:
-                raise ValueError("LLM分块结果为空，请重试")
-            return chunks
-
-        except json.JSONDecodeError as e:
-            logger.error("llm_response_parse_failed", error=str(e))
-            raise RuntimeError(f"LLM返回结果解析失败: {str(e)}")
-        except httpx.ConnectError as e:
-            logger.error("llm_proxy_connection_failed", error=str(e), proxy_url=proxy_url)
-            raise RuntimeError(f"LLM服务连接失败: {str(e)}")
-        except httpx.TimeoutException as e:
-            logger.error("llm_proxy_timeout", error=str(e), proxy_url=proxy_url)
-            raise RuntimeError(f"LLM服务超时: {str(e)}")
-        except Exception as e:
-            logger.error("llm_chunk_segment_failed", error=str(e), error_type=type(e).__name__)
-            raise RuntimeError(f"LLM分块失败: {str(e)}")
 
     def _split_large_chunks(self, chunks: List[Dict[str, Any]], max_size: int = 900) -> List[Dict[str, Any]]:
         """按条款、段落和表格行拆分过大的LLM chunk，避免粗粒度影响召回。"""

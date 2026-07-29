@@ -114,24 +114,47 @@ class TenderInformationFetcher(DataFetcher):
         )
 
     def _default_llm(self):
-        primary = OpenAICompatibleTenderLLMClient(
-            api_key=settings.tender_llm_api_key,
-            base_url=settings.tender_llm_base_url,
-            model=settings.tender_llm_model,
+        clients: list[tuple[Any, int]] = []
+        agnes_api_key = settings.agnes_api_key
+        if agnes_api_key:
+            clients.append(
+                (
+                    OpenAICompatibleTenderLLMClient(
+                        api_key=agnes_api_key,
+                        base_url=settings.agnes_base_url,
+                        model=settings.agnes_model,
+                        provider="agnes",
+                        api_mode=settings.agnes_api_mode,
+                    ),
+                    settings.tender_llm_concurrency,
+                )
+            )
+        bailian_api_key = (
+            settings.tender_secondary_llm_api_key or settings.bailian_api_key
         )
-        if not settings.tender_secondary_llm_api_key:
-            return primary
+        if bailian_api_key:
+            clients.append(
+                (
+                    OpenAICompatibleTenderLLMClient(
+                        api_key=bailian_api_key,
+                        base_url=(
+                            settings.tender_secondary_llm_base_url
+                            or settings.bailian_base_url
+                        ),
+                        model=settings.tender_secondary_llm_model,
+                        provider="bailian",
+                        api_mode=settings.bailian_api_mode,
+                    ),
+                    settings.tender_secondary_llm_concurrency,
+                )
+            )
 
-        secondary = OpenAICompatibleTenderLLMClient(
-            api_key=settings.tender_secondary_llm_api_key,
-            base_url=settings.tender_secondary_llm_base_url,
-            model=settings.tender_secondary_llm_model,
-        )
+        if not clients:
+            return OpenAICompatibleTenderLLMClient()
+        if len(clients) == 1:
+            return clients[0][0]
         return TenderLLMClientPool(
-            [
-                (primary, settings.tender_llm_concurrency),
-                (secondary, settings.tender_secondary_llm_concurrency),
-            ],
+            clients,
             screening_client_index=1,
         )
 

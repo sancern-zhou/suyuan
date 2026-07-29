@@ -1,13 +1,19 @@
 <template>
   <div class="management-panel scheduled-tasks-panel">
     <div class="panel-header">
-      <h3>定时任务管理</h3>
-      <button class="panel-btn small primary" @click="showCreateDialog = true">
-        新建广播任务
+      <h3>{{ selectedHistoryTask ? `${selectedHistoryTask.name} · 执行记录` : '任务管理' }}</h3>
+      <button v-if="!selectedHistoryTask" class="panel-btn small primary" @click="openCreateDialog">
+        新建任务
       </button>
+      <div v-else class="panel-actions">
+        <button class="panel-btn small" @click="closeExecutionHistory">返回任务列表</button>
+        <button class="panel-btn small primary" :disabled="executionHistoryLoading" @click="refreshExecutionHistory">
+          {{ executionHistoryLoading ? '刷新中...' : '刷新' }}
+        </button>
+      </div>
     </div>
 
-    <div class="scheduled-tasks-content">
+    <div v-if="!selectedHistoryTask" class="scheduled-tasks-content">
       <!-- 统计信息 -->
       <div class="scheduled-stats-card">
         <div class="scheduled-stat-item">
@@ -40,8 +46,8 @@
           <div class="scheduled-task-header">
             <div class="scheduled-task-title">
               <span class="scheduled-task-name">{{ task.name }}</span>
-              <span :class="['scheduled-task-tag', getScheduledTaskTagClass(task.schedule_type)]">
-                {{ getScheduledTaskLabel(task.schedule_type) }}
+              <span :class="['scheduled-task-tag', getTaskTriggerClass(task)]">
+                {{ getTaskTriggerLabel(task) }}
               </span>
             </div>
 
@@ -64,10 +70,12 @@
 
           <!-- 任务元信息 -->
           <div class="scheduled-task-meta">
-            <span class="scheduled-meta-item">⏰ {{ formatScheduledNextRun(task.next_run_at) }}</span>
+            <span v-if="task.trigger_type !== 'event'" class="scheduled-meta-item">⏰ {{ formatScheduledNextRun(task.next_run_at) }}</span>
+            <span v-else class="scheduled-meta-item">事件：{{ getEventLabel(task.event_type) }}</span>
             <span class="scheduled-meta-item">📋 {{ task.steps?.length || 0 }} 个步骤</span>
             <span class="scheduled-meta-item">✅ {{ task.success_runs || 0 }}/{{ task.total_runs || 0 }}</span>
             <span class="scheduled-meta-item">🧠 {{ getExecutionModeLabel(task.execution_mode) }}</span>
+            <span v-if="task.broadcast_enabled" class="scheduled-meta-item">接收人：{{ task.target_user_ids?.length || 0 }}</span>
           </div>
 
           <!-- 标签 -->
@@ -87,7 +95,10 @@
             >
               {{ task.executing ? '执行中...' : '▶️ 立即执行' }}
             </button>
-            <button class="scheduled-btn scheduled-btn-secondary" @click="$emit('edit-task', task)">
+            <button class="scheduled-btn scheduled-btn-secondary" @click="openExecutionHistory(task)">
+              执行记录
+            </button>
+            <button class="scheduled-btn scheduled-btn-secondary" @click="openEditDialog(task)">
               编辑
             </button>
             <button class="scheduled-btn scheduled-btn-danger" @click="$emit('delete-task', task)">
@@ -98,35 +109,132 @@
       </div>
     </div>
 
-    <!-- 新建广播任务弹窗 -->
-    <div v-if="showCreateDialog" class="modal-backdrop" @click.self="showCreateDialog = false">
+    <div v-else class="execution-history-view">
+      <div v-if="executionHistoryLoading" class="execution-history-state">
+        <span class="execution-history-spinner">⏳</span>
+        <p>加载执行记录...</p>
+      </div>
+
+      <div v-else-if="executionHistoryError" class="execution-history-state error">
+        <p>{{ executionHistoryError }}</p>
+        <button class="panel-btn small" @click="refreshExecutionHistory">重试</button>
+      </div>
+
+      <div v-else-if="executionHistory.length === 0" class="execution-history-state">
+        <span class="execution-history-empty-icon">📭</span>
+        <p>暂无执行记录</p>
+      </div>
+
+      <div v-else class="execution-history-list">
+        <button
+          v-for="execution in executionHistory"
+          :key="execution.execution_id"
+          type="button"
+          class="execution-history-item"
+          :class="{ disabled: !canRestoreExecution(execution) }"
+          :disabled="!canRestoreExecution(execution)"
+          :title="canRestoreExecution(execution) ? '查看执行对话' : '该记录未生成会话'"
+          @click="restoreExecutionSession(execution)"
+        >
+          <span class="execution-history-main">
+            <span :class="['execution-status', `status-${executionStatusMeta(execution.status).key}`]">
+              {{ executionStatusMeta(execution.status).label }}
+            </span>
+            <span class="execution-time">{{ formatExecutionTime(execution.started_at) }}</span>
+            <span class="execution-duration">{{ formatExecutionDuration(execution.duration_seconds) }}</span>
+          </span>
+          <span class="execution-history-meta">
+            <span>{{ execution.completed_steps || 0 }}/{{ execution.total_steps || 0 }} 个步骤</span>
+            <span>{{ execution.trigger_type === 'event' ? '事件触发' : '定时触发' }}</span>
+            <span v-if="execution.session_id">会话 {{ shortSessionId(execution.session_id) }}</span>
+            <span v-else>未生成会话</span>
+          </span>
+          <span v-if="execution.error_message" class="execution-error-summary">
+            {{ execution.error_message }}
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 新建/编辑任务弹窗 -->
+    <div v-if="showCreateDialog" class="modal-backdrop" @click.self="closeDialog">
       <div class="modal-panel">
         <div class="modal-header">
-          <h4>新建广播任务</h4>
-          <button class="panel-btn small" @click="showCreateDialog = false">关闭</button>
+          <h4>{{ editingTaskId ? '编辑任务' : '新建任务' }}</h4>
+          <button class="panel-btn small" @click="closeDialog">关闭</button>
         </div>
 
         <div class="modal-body">
           <div class="form-grid">
             <label class="form-field">
               <span>任务名称</span>
-              <input v-model="createForm.name" type="text" placeholder="例如：每日广播提醒" />
+              <input v-model="createForm.name" type="text" placeholder="例如：运城市告警推送" />
             </label>
+
+            <div class="form-field">
+              <span>触发方式</span>
+              <div class="trigger-segment" role="group" aria-label="触发方式">
+                <button
+                  type="button"
+                  :class="{ active: createForm.trigger_type === 'schedule' }"
+                  @click="setTriggerType('schedule')"
+                >定时触发</button>
+                <button
+                  type="button"
+                  :class="{ active: createForm.trigger_type === 'event' }"
+                  @click="setTriggerType('event')"
+                >事件触发</button>
+              </div>
+            </div>
 
             <label class="form-field">
               <span>执行模式</span>
-              <select v-model="createForm.execution_mode">
+              <select v-model="createForm.execution_mode" @change="handleExecutionModeChange">
                 <option value="assistant">assistant</option>
                 <option value="expert">expert</option>
+                <option value="query">query</option>
+                <option value="social">social</option>
+                <option value="custom">custom（自选工具）</option>
               </select>
             </label>
+
+            <div v-if="createForm.execution_mode === 'custom'" class="form-field form-wide">
+              <span>Agent 工具（本次任务所有步骤固定共享）</span>
+              <input v-model="createForm.toolSearch" type="search" placeholder="搜索工具名称或说明" />
+              <div class="tool-picker">
+                <label v-for="tool in filteredTools" :key="tool.name" class="tool-option">
+                  <input
+                    v-model="createForm.tool_names"
+                    type="checkbox"
+                    :value="tool.name"
+                    :disabled="tool.status !== 'enabled'"
+                  />
+                  <span class="tool-option-main">
+                    <strong>{{ tool.name }}</strong>
+                    <small>{{ tool.description || '暂无说明' }}</small>
+                  </span>
+                  <span v-if="tool.status !== 'enabled'" class="tool-disabled">已禁用</span>
+                </label>
+                <div v-if="filteredTools.length === 0" class="recipient-empty">没有匹配的工具</div>
+              </div>
+              <small class="form-hint">仅加载所选工具，不继承其他模式能力；系统不会自动补充依赖工具。</small>
+            </div>
 
             <label class="form-field form-wide">
               <span>任务描述</span>
               <textarea v-model="createForm.description" rows="4" placeholder="描述广播主题、语气、目标人群"></textarea>
             </label>
 
-            <label class="form-field">
+            <label v-if="createForm.trigger_type === 'event' || createForm.execution_mode === 'custom'" class="form-field form-wide">
+              <span>Agent 执行指令</span>
+              <textarea
+                v-model="createForm.agent_prompt"
+                rows="5"
+                placeholder="描述事件发生后 Agent 要执行的具体步骤、技能和产物要求"
+              ></textarea>
+            </label>
+
+            <label v-if="createForm.trigger_type === 'schedule'" class="form-field">
               <span>调度类型</span>
               <select v-model="createForm.schedule_type">
                 <option value="daily_8am">每天 8 点</option>
@@ -138,27 +246,52 @@
               </select>
             </label>
 
-            <label class="form-field" v-if="createForm.schedule_type === 'once'">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'once'">
               <span>执行时间</span>
               <input v-model="createForm.run_at" type="datetime-local" />
             </label>
 
-            <label class="form-field" v-if="createForm.schedule_type === 'interval'">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'interval'">
               <span>间隔分钟</span>
               <input v-model.number="createForm.interval_minutes" type="number" min="1" />
             </label>
 
-            <label class="form-field" v-if="createForm.schedule_type === 'daily_custom'">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'daily_custom'">
               <span>小时</span>
               <input v-model.number="createForm.hour" type="number" min="0" max="23" />
             </label>
 
-            <label class="form-field" v-if="createForm.schedule_type === 'daily_custom'">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'daily_custom'">
               <span>分钟</span>
               <input v-model.number="createForm.minute" type="number" min="0" max="59" />
             </label>
 
-            <div class="form-field form-wide">
+            <label v-if="createForm.trigger_type === 'event'" class="form-field">
+              <span>事件类型</span>
+              <select v-model="createForm.event_type">
+                <option value="" disabled>请选择事件</option>
+                <option v-for="eventType in eventTypes" :key="eventType.event_type" :value="eventType.event_type">
+                  {{ eventType.label }}
+                </option>
+              </select>
+            </label>
+
+            <label v-if="createForm.trigger_type === 'event'" class="form-field">
+              <span>城市过滤</span>
+              <input v-model="createForm.filterCity" type="text" placeholder="留空表示不过滤" />
+            </label>
+
+            <div v-if="createForm.trigger_type === 'event'" class="form-field form-wide">
+              <span>告警级别</span>
+              <div class="channel-checks">
+                <label v-for="level in alertLevelOptions" :key="level.value" class="channel-check">
+                  <input v-model="createForm.filterAlertLevels" type="checkbox" :value="level.value" />
+                  <span>{{ level.label }}</span>
+                </label>
+              </div>
+            </div>
+
+            <div v-if="createForm.trigger_type === 'schedule'" class="form-field form-wide">
               <span>目标渠道</span>
               <div class="channel-checks">
                 <label v-for="channel in channelOptions" :key="channel.value" class="channel-check">
@@ -168,18 +301,47 @@
               </div>
             </div>
 
+            <div class="form-field form-wide">
+              <label class="switch-field inline-switch">
+                <input v-model="createForm.broadcast_enabled" type="checkbox" />
+                <span>执行成功后广播</span>
+              </label>
+            </div>
+
+            <div v-if="createForm.broadcast_enabled" class="form-field form-wide">
+              <span>微信接收人（可多选）</span>
+              <div class="recipient-list">
+                <label v-for="user in weixinUsers" :key="user.id" class="recipient-option">
+                  <input v-model="createForm.target_user_ids" type="checkbox" :value="user.id" />
+                  <span class="recipient-name">{{ user.name }}</span>
+                  <span class="recipient-channel">{{ user.channel }}</span>
+                </label>
+                <div v-if="weixinUsers.length === 0" class="recipient-empty">暂无已绑定并启用的微信用户</div>
+              </div>
+            </div>
+
             <label class="form-field form-wide">
               <span>标签</span>
               <input v-model="createForm.tagsText" type="text" placeholder="广播,提醒,日报" />
             </label>
+
+            <div class="form-field form-wide">
+              <label class="switch-field inline-switch">
+                <input v-model="createForm.workspaceEntryEnabled" type="checkbox" />
+                <span>在左侧显示业务入口</span>
+              </label>
+              <input v-if="createForm.workspaceEntryEnabled" v-model="createForm.workspaceEntryTitle" type="text" placeholder="例如：告警溯源" />
+            </div>
           </div>
 
           <div class="task-preview">
             <div class="task-preview-title">执行步骤预览</div>
             <div class="task-preview-body">
-              <p>助手将先根据任务描述生成广播内容，再调用广播工具发送给选中的社交渠道。</p>
+              <p v-if="createForm.trigger_type === 'event'">事件匹配后只运行一次 Agent，结果由后台广播给所选微信用户并写入各自会话。</p>
+              <p v-else>任务将在设定时间运行，并按配置处理广播。</p>
             </div>
           </div>
+          <div v-if="formError" class="form-error" role="alert">{{ formError }}</div>
         </div>
 
         <div class="modal-actions">
@@ -187,9 +349,9 @@
             <input v-model="createForm.enabled" type="checkbox" />
             <span>启用任务</span>
           </label>
-          <button class="panel-btn" @click="showCreateDialog = false">取消</button>
-          <button class="panel-btn primary" :disabled="creatingTask" @click="createBroadcastTask">
-            {{ creatingTask ? '创建中...' : '创建任务' }}
+          <button class="panel-btn" @click="closeDialog">取消</button>
+          <button class="panel-btn primary" :disabled="creatingTask" @click="saveTask">
+            {{ creatingTask ? '保存中...' : (editingTaskId ? '保存修改' : '创建任务') }}
           </button>
         </div>
       </div>
@@ -198,8 +360,20 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import {
+  applyExecutionMode,
+  applyTriggerDefaults,
+  buildTaskPayload,
+  selectableWeixinUsers
+} from './scheduledTaskForm.js'
+import {
+  canRestoreExecution,
+  executionStatusMeta,
+  loadScheduledTaskExecutions,
+  sortExecutionsNewestFirst
+} from './scheduledTaskActions.js'
 
 // Props
 defineProps({
@@ -221,11 +395,36 @@ defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'refresh-tasks', 'toggle-task', 'execute-task', 'edit-task', 'delete-task'])
+const emit = defineEmits([
+  'close',
+  'refresh-tasks',
+  'toggle-task',
+  'execute-task',
+  'edit-task',
+  'delete-task',
+  'restore-execution-session'
+])
 
 const scheduledTasksStore = useScheduledTasksStore()
 const showCreateDialog = ref(false)
 const creatingTask = ref(false)
+const editingTaskId = ref(null)
+const formError = ref('')
+const selectedHistoryTask = ref(null)
+const executionHistory = ref([])
+const executionHistoryLoading = ref(false)
+const executionHistoryError = ref('')
+
+const eventTypes = computed(() => scheduledTasksStore.eventTypes)
+const weixinUsers = computed(() => selectableWeixinUsers(scheduledTasksStore.socialUsers))
+const filteredTools = computed(() => {
+  const query = createForm.value.toolSearch.trim().toLowerCase()
+  return scheduledTasksStore.availableTools.filter(tool => !query || [
+    tool.name,
+    tool.description,
+    tool.category
+  ].some(value => String(value || '').toLowerCase().includes(query)))
+})
 
 const channelOptions = [
   { label: '微信', value: 'weixin' },
@@ -233,23 +432,120 @@ const channelOptions = [
   { label: '钉钉', value: 'dingtalk' }
 ]
 
-const createForm = ref({
-  name: '广播任务',
-  description: '根据任务描述生成广播内容并发送给社交用户',
+const alertLevelOptions = [
+  { label: '低', value: 'low' },
+  { label: '中', value: 'medium' },
+  { label: '高', value: 'high' }
+]
+
+const defaultForm = () => ({
+  name: '',
+  description: '',
+  agent_prompt: '',
   execution_mode: 'assistant',
+  tool_names: [],
+  toolSearch: '',
+  trigger_type: 'schedule',
   schedule_type: 'daily_custom',
+  event_type: '',
+  event_filters: {},
+  filterCity: '',
+  filterAlertLevels: [],
+  broadcast_enabled: false,
+  target_user_ids: [],
   enabled: true,
   hour: 9,
   minute: 0,
   interval_minutes: 30,
   run_at: '',
   channels: ['weixin'],
-  tagsText: 'broadcast'
+  tagsText: ''
+  ,workspaceEntryEnabled: false
+  ,workspaceEntryTitle: ''
 })
+
+const createForm = ref(defaultForm())
+
+const setTriggerType = (triggerType) => {
+  applyTriggerDefaults(createForm.value, triggerType, eventTypes.value)
+}
+
+const handleExecutionModeChange = async () => {
+  applyExecutionMode(createForm.value, createForm.value.execution_mode)
+  if (createForm.value.execution_mode === 'custom') {
+    await loadAvailableTools()
+  }
+}
+
+const refreshExecutionHistory = async () => {
+  if (!selectedHistoryTask.value) return
+  executionHistoryLoading.value = true
+  executionHistoryError.value = ''
+  try {
+    const records = await loadScheduledTaskExecutions(
+      scheduledTasksStore,
+      selectedHistoryTask.value
+    )
+    executionHistory.value = sortExecutionsNewestFirst(records)
+  } catch (error) {
+    console.error('Failed to fetch task executions:', error)
+    executionHistoryError.value = '执行记录加载失败，请重试'
+  } finally {
+    executionHistoryLoading.value = false
+  }
+}
+
+const openExecutionHistory = async (task) => {
+  selectedHistoryTask.value = task
+  executionHistory.value = []
+  await refreshExecutionHistory()
+}
+
+const closeExecutionHistory = () => {
+  selectedHistoryTask.value = null
+  executionHistory.value = []
+  executionHistoryError.value = ''
+}
+
+const restoreExecutionSession = (execution) => {
+  if (!canRestoreExecution(execution)) return
+  emit('restore-execution-session', execution.session_id)
+}
+
+const formatExecutionTime = (timestamp) => {
+  if (!timestamp) return '时间未知'
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '时间无效'
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+const formatExecutionDuration = (seconds) => {
+  if (seconds == null) return '耗时计算中'
+  const value = Number(seconds)
+  if (!Number.isFinite(value) || value < 0) return '耗时未知'
+  if (value < 60) return `${value.toFixed(value < 10 ? 1 : 0)} 秒`
+  const minutes = Math.floor(value / 60)
+  const remainingSeconds = Math.round(value % 60)
+  return `${minutes} 分 ${remainingSeconds} 秒`
+}
+
+const shortSessionId = (sessionId) => sessionId.slice(0, 8)
 
 // Methods
 const getScheduledTaskLabel = (type) => {
   const labels = {
+    daily_8am: '每天 8 点',
+    every_2h: '每 2 小时',
+    every_30min: '每 30 分钟',
+    daily_custom: '每天自定义',
+    interval: '自定义间隔',
     once: '一次性',
     daily: '每天',
     weekly: '每周',
@@ -259,23 +555,23 @@ const getScheduledTaskLabel = (type) => {
   return labels[type] || type
 }
 
-const getScheduledTaskTagClass = (type) => {
-  const classMap = {
-    once: 'once',
-    daily: 'daily',
-    weekly: 'weekly',
-    monthly: 'monthly',
-    cron: 'cron'
-  }
-  return classMap[type] || 'default'
-}
+const getTaskTriggerClass = (task) => task.trigger_type === 'event' ? 'event' : 'schedule'
+
+const getTaskTriggerLabel = (task) => task.trigger_type === 'event'
+  ? '事件触发'
+  : getScheduledTaskLabel(task.schedule_type)
+
+const getEventLabel = (eventType) => eventTypes.value.find(
+  item => item.event_type === eventType
+)?.label || eventType || '未配置'
 
 const getExecutionModeLabel = (mode) => {
   const labels = {
     assistant: '助手模式',
     expert: '专家模式',
     query: '问数模式',
-    social: '社交模式'
+    social: '社交模式',
+    custom: '自定义工具模式'
   }
   return labels[mode] || mode || '默认'
 }
@@ -316,54 +612,132 @@ const buildBroadcastPrompt = () => {
   ].join('\n')
 }
 
-const createBroadcastTask = async () => {
+const loadConfigurationOptions = async () => {
+  const results = await Promise.allSettled([
+    scheduledTasksStore.fetchEventTypes(),
+    scheduledTasksStore.fetchSocialUsers()
+  ])
+  if (results.some(result => result.status === 'rejected')) {
+    formError.value = '部分配置项加载失败，请关闭后重试'
+  }
+  if (
+    createForm.value.trigger_type === 'event' &&
+    !createForm.value.event_type &&
+    eventTypes.value.length > 0
+  ) {
+    createForm.value.event_type = eventTypes.value[0].event_type
+  }
+}
+
+const loadAvailableTools = async () => {
+  try {
+    await scheduledTasksStore.fetchAvailableTools()
+  } catch (error) {
+    console.error('Failed to fetch custom task tools:', error)
+    formError.value = '自定义工具列表加载失败，请重新登录后重试'
+  }
+}
+
+const openCreateDialog = async () => {
+  editingTaskId.value = null
+  createForm.value = defaultForm()
+  formError.value = ''
+  showCreateDialog.value = true
+  await loadConfigurationOptions()
+}
+
+const openEditDialog = async (task) => {
+  editingTaskId.value = task.task_id
+  formError.value = ''
+  createForm.value = {
+    ...defaultForm(),
+    name: task.name || '',
+    description: task.description || '',
+    agent_prompt: task.steps?.[0]?.agent_prompt || task.description || '',
+    execution_mode: task.execution_mode || 'assistant',
+    tool_names: [...(task.tool_names || [])],
+    trigger_type: task.trigger_type || 'schedule',
+    schedule_type: task.schedule_type || 'daily_custom',
+    event_type: task.event_type || '',
+    event_filters: task.event_filters || {},
+    filterCity: task.event_filters?.city || '',
+    filterAlertLevels: Array.isArray(task.event_filters?.alert_level)
+      ? [...task.event_filters.alert_level]
+      : (task.event_filters?.alert_level ? [task.event_filters.alert_level] : []),
+    broadcast_enabled: Boolean(task.broadcast_enabled),
+    target_user_ids: [...(task.target_user_ids || [])],
+    enabled: Boolean(task.enabled),
+    hour: task.hour ?? 9,
+    minute: task.minute ?? 0,
+    interval_minutes: task.interval_minutes ?? 30,
+    run_at: task.run_at || '',
+    tagsText: (task.tags || []).join(',')
+    ,workspaceEntryEnabled: Boolean(task.workspace_entry?.enabled)
+    ,workspaceEntryTitle: task.workspace_entry?.title || ''
+  }
+  showCreateDialog.value = true
+  await loadConfigurationOptions()
+  if (createForm.value.execution_mode === 'custom') {
+    await loadAvailableTools()
+  }
+}
+
+const closeDialog = () => {
+  showCreateDialog.value = false
+  editingTaskId.value = null
+  formError.value = ''
+}
+
+const saveTask = async () => {
+  formError.value = ''
   if (!createForm.value.name.trim()) {
-    alert('请填写任务名称')
+    formError.value = '请填写任务名称'
     return
   }
   if (!createForm.value.description.trim()) {
-    alert('请填写任务描述')
+    formError.value = '请填写任务描述'
+    return
+  }
+  if (createForm.value.trigger_type === 'event' && !createForm.value.event_type) {
+    formError.value = '请选择事件类型'
+    return
+  }
+  if (createForm.value.broadcast_enabled && createForm.value.target_user_ids.length === 0) {
+    formError.value = '请至少选择一名微信接收人'
+    return
+  }
+  if (createForm.value.execution_mode === 'custom' && createForm.value.tool_names.length === 0) {
+    formError.value = '请至少选择一个 Agent 工具'
     return
   }
 
   creatingTask.value = true
   try {
-    const payload = {
-      name: createForm.value.name.trim(),
-      description: createForm.value.description.trim(),
-      execution_mode: createForm.value.execution_mode,
-      schedule_type: createForm.value.schedule_type,
-      enabled: createForm.value.enabled,
-      steps: [
-        {
-          step_id: 'step_1',
-          description: '生成并广播消息',
-          agent_prompt: buildBroadcastPrompt(),
-          timeout_seconds: 600,
-          retry_on_failure: false
-        }
-      ],
-      tags: createForm.value.tagsText
-        .split(',')
-        .map(tag => tag.trim())
-        .filter(Boolean),
+    const eventFilters = {}
+    if (createForm.value.filterCity.trim()) {
+      eventFilters.city = createForm.value.filterCity.trim()
     }
-
-    if (payload.schedule_type === 'once') {
-      payload.run_at = createForm.value.run_at
-    } else if (payload.schedule_type === 'interval') {
-      payload.interval_minutes = Number(createForm.value.interval_minutes) || 30
-    } else if (payload.schedule_type === 'daily_custom') {
-      payload.hour = Number(createForm.value.hour) || 9
-      payload.minute = Number(createForm.value.minute) || 0
+    if (createForm.value.filterAlertLevels.length > 0) {
+      eventFilters.alert_level = [...createForm.value.filterAlertLevels]
     }
+    const payload = buildTaskPayload({
+      ...createForm.value,
+      event_filters: eventFilters,
+      agent_prompt: createForm.value.trigger_type === 'event' || createForm.value.execution_mode === 'custom'
+        ? (createForm.value.agent_prompt || createForm.value.description)
+        : buildBroadcastPrompt()
+    })
 
-    await scheduledTasksStore.createTask(payload)
-    showCreateDialog.value = false
+    if (editingTaskId.value) {
+      await scheduledTasksStore.updateTask(editingTaskId.value, payload)
+    } else {
+      await scheduledTasksStore.createTask(payload)
+    }
+    closeDialog()
     emit('refresh-tasks')
   } catch (error) {
-    console.error('Failed to create broadcast task:', error)
-    alert('创建失败: ' + (error.message || '未知错误'))
+    console.error('Failed to save task:', error)
+    formError.value = '保存失败：' + (error.message || '未知错误')
   } finally {
     creatingTask.value = false
   }
@@ -393,6 +767,11 @@ const createBroadcastTask = async () => {
   font-size: 18px;
   font-weight: 600;
   color: #333;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .panel-btn {
@@ -556,6 +935,16 @@ const createBroadcastTask = async () => {
   color: #383d41;
 }
 
+.scheduled-task-tag.event {
+  background: #e8f5e9;
+  color: #237a3b;
+}
+
+.scheduled-task-tag.schedule {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
 .scheduled-switch {
   position: relative;
   display: inline-block;
@@ -693,6 +1082,132 @@ const createBroadcastTask = async () => {
   background: #f8d7da;
 }
 
+.execution-history-view {
+  min-height: 240px;
+}
+
+.execution-history-state {
+  display: flex;
+  min-height: 240px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #64748b;
+  text-align: center;
+}
+
+.execution-history-state.error {
+  color: #b42318;
+}
+
+.execution-history-state p {
+  margin: 0;
+}
+
+.execution-history-spinner,
+.execution-history-empty-icon {
+  font-size: 30px;
+}
+
+.execution-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-history-item {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.execution-history-item:hover:not(:disabled) {
+  border-color: #1976d2;
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.14);
+}
+
+.execution-history-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.execution-history-main,
+.execution-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-history-main {
+  margin-bottom: 8px;
+}
+
+.execution-history-meta {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.execution-status {
+  display: inline-flex;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-running,
+.status-pending {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.status-failed,
+.status-timeout {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-cancelled,
+.status-unknown {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.execution-time {
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.execution-duration {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.execution-error-summary {
+  display: block;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-left: 3px solid #dc2626;
+  background: #fff5f5;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -776,6 +1291,29 @@ const createBroadcastTask = async () => {
   grid-column: 1 / -1;
 }
 
+.tool-picker {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.tool-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.tool-option:last-child { border-bottom: 0; }
+.tool-option input { width: auto; }
+.tool-option-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tool-option-main strong { font-size: 13px; color: #0f172a; overflow-wrap: anywhere; }
+.tool-option-main small, .form-hint { font-size: 12px; color: #64748b; }
+.tool-disabled { font-size: 12px; color: #b42318; }
+
 .channel-checks {
   display: flex;
   flex-wrap: wrap;
@@ -788,6 +1326,90 @@ const createBroadcastTask = async () => {
   gap: 6px;
   font-size: 13px;
   color: #334155;
+}
+
+.channel-check input,
+.recipient-option input,
+.switch-field input {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.trigger-segment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.trigger-segment button {
+  border: 0;
+  border-right: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.trigger-segment button:last-child {
+  border-right: 0;
+}
+
+.trigger-segment button.active {
+  background: #1976d2;
+  color: #fff;
+}
+
+.inline-switch {
+  min-height: 34px;
+}
+
+.recipient-list {
+  max-height: 190px;
+  overflow-y: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.recipient-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(110px, auto);
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  cursor: pointer;
+}
+
+.recipient-option:last-child {
+  border-bottom: 0;
+}
+
+.recipient-name,
+.recipient-channel {
+  overflow-wrap: anywhere;
+}
+
+.recipient-channel {
+  color: #64748b;
+  text-align: right;
+}
+
+.recipient-empty {
+  padding: 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.form-error {
+  border-left: 3px solid #dc3545;
+  padding: 9px 12px;
+  background: #fff5f5;
+  color: #b42318;
+  font-size: 13px;
 }
 
 .task-preview {
@@ -816,5 +1438,36 @@ const createBroadcastTask = async () => {
   gap: 8px;
   font-size: 13px;
   color: #334155;
+}
+
+.modal-actions {
+  margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+  .management-panel {
+    padding: 14px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-wide {
+    grid-column: 1;
+  }
+
+  .recipient-option {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .recipient-channel {
+    grid-column: 2;
+    text-align: left;
+  }
+
+  .modal-actions {
+    flex-wrap: wrap;
+  }
 }
 </style>

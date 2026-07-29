@@ -1,15 +1,11 @@
-export const buildBindInstruction = (user) => {
-  if (!user) return ''
-  if (user.bind_instruction) return String(user.bind_instruction).trim()
-  if (user.bind_code) return String(user.bind_code).trim()
-  return ''
+export function getOnboardingStep({ scanCreated, scanConfirmed }) {
+  if (!scanCreated) return 'starting'
+  if (!scanConfirmed) return 'qrcode'
+  return 'complete'
 }
 
-export const isUserBound = (user) => user?.status === 'active'
-
-export const getOnboardingStep = ({ pendingUser, loginSuccess, bound }) => {
-  if (!pendingUser) return 'profile'
-  if (!loginSuccess) return 'qrcode'
-  if (bound) return 'complete'
-  return 'binding'
+export function scanOwnerLabel(scan) {
+  const username = scan?.platform_username || ''
+  const displayName = scan?.platform_display_name || username
+  return username && displayName !== username ? `${displayName}（${username}）` : displayName
 }

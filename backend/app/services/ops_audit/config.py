@@ -372,7 +372,23 @@ DEFAULT_RULE_CATALOG = [
         "category": "附件读数一致性",
         "default_severity": "高",
         "scope": "RF_HY_O3VALUEPASS/WO_COMMONFILE",
-        "rationale": "臭氧（O3）校准仪（工作标准）量值传递记录表的斜率、截距(ppb)、相对于前一次传递的改变(%)应与 XLS 附件第一个 sheet 中基于 D 列标签定位到的 F 列值一致；D 列为斜率或截距的同行 F 列分别比对表单斜率和截距，改变率比对截距行下方 1-3 行的 F 列值，任一候选单元格匹配即视为一致。",
+        "rationale": "O3量值传递表的斜率、截距、改变率及上级标准型号、设备号、序列号、传递日期、公式和有效期应与XLS附件按标签提取的值一致。",
+    },
+    {
+        "rule_id": "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW",
+        "name": "O3量值传递缺少XLS计算附件待复核",
+        "category": "附件证据复核",
+        "default_severity": "中",
+        "scope": "RF_HY_O3VALUEPASS/WO_COMMONFILE",
+        "rationale": "缺少XLS/XLSX时无法确定复核当前传递斜率和上级标准身份，只进入人工复核，不直接判定数值错误。",
+    },
+    {
+        "rule_id": "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW",
+        "name": "O3上级标准历史身份冲突待复核",
+        "category": "跨工单证据复核",
+        "default_severity": "中",
+        "scope": "RF_HY_O3VALUEPASS/device_history",
+        "rationale": "相同序列号、传递日期、公式和有效期的上级标准出现不同型号或设备号填法时，需要结合证书人工确认，不能按历史多数值自动判错。",
     },
     {
         "rule_id": "RF_PM_TEMP_ERROR_MISMATCH",
@@ -430,6 +446,14 @@ DEFAULT_RULE_CATALOG = [
         "scope": "RF_W_GASEOUSCHECK_CO/RF_W_GASEOUSCHECK_NOX/RF_W_GASEOUSCHECK_O3/RF_W_GASEOUSCHECK_SO2/RF_W_PMCHECK",
         "rationale": "检查值单位与配置范围单位不可换算时，不进行数值超限判断，应提示单位不一致、无法比对。",
     },
+    {
+        "rule_id": "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+        "name": "多点校准曲线梯度与表单浓度待复核",
+        "category": "附件内容质量",
+        "default_severity": "中",
+        "scope": "RF_Q_GASEOUSMULTIPOINT_*/多点曲线图片",
+        "rationale": "多点曲线应呈现与RF表单校准浓度点一致的明显梯度；疑似不一致和资料不足均需附图人工确认。",
+    },
 ]
 
 DEFAULT_RF_FIELD_PROFILES = {
@@ -473,6 +497,7 @@ DEFAULT_SEMANTIC_REVIEW_PROFILES = {
     "flow_visual_enabled_rule_ids": [
         "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
         "ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH",
+        "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
     ],
 }
 
@@ -493,6 +518,13 @@ DEFAULT_RULE_REVIEW_STAGES = {
             "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
             "ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH",
             "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
+        ],
+        "manual_visual_review": [
+            "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW",
+        ],
+        "manual_evidence_review": [
+            "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW",
+            "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW",
         ],
         "future_ocr": [
             "ATTACHMENT_CERT_INCOMPLETE",

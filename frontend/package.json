@@ -4,21 +4,33 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "vite build --mode standalone",
+    "build:standalone": "vite build --mode standalone",
+    "build:gateway": "vite build --mode production",
+    "preview": "vite preview",
+    "test:project-config": "node --test scripts/projectManifest.test.mjs src/config/projectConfig.test.js src/router/projectRoutes.test.js src/components/sidebarProjectModules.test.js",
+    "test:auth": "node --test src/auth/*.test.mjs",
+    "test:event-tasks": "node --test src/components/management/*.test.js",
+    "test:images": "node --test src/services/apiMediaBlob.test.mjs src/components/markdownApiImages.test.mjs src/components/messageAttachmentMedia.test.js",
+    "test:agent-platform": "node --test src/config/agentModes.test.js src/components/agentPlatform/*.test.js",
+    "test:composer": "node --test src/components/inputBoxAttachments.test.js src/components/inputBoxCommandPalette.test.js src/components/inputBoxPlaceholder.test.js src/components/inputBoxSelectionDraft.test.js src/services/reactRequestBody.test.js src/services/reactApi-map-context.test.mjs src/services/streamAcceptance.test.js src/stores/reactStoreQueue.test.js src/stores/reactStoreSteering.test.js"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",
+    "@antv/g6": "^5.1.1",
     "@eigenpal/docx-editor-vue": "^1.9.0",
     "@traptitech/markdown-it-katex": "^3.6.0",
     "axios": "^1.13.6",
     "echarts": "^5.5.1",
     "echarts-gl": "^2.0.9",
+    "gm-crypt": "^0.0.2",
     "html2canvas": "^1.4.1",
     "katex": "^0.16.9",
     "markdown-it": "^14.1.0",
     "markdown-it-multimd-table": "^4.2.3",
     "pinia": "^2.2.4",
+    "sm-crypto": "^0.3.11",
+    "uuid": "^9.0.1",
     "vue": "^3.5.12",
     "vue-router": "^4.4.5",
     "xlsx": "^0.18.5"
@@ -27,6 +39,7 @@
     "@vitejs/plugin-vue": "^5.1.4",
     "playwright": "^1.61.0",
     "sass": "^1.80.6",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "yaml": "^2.9.0"
   }
 }

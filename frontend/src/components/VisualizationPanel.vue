@@ -115,6 +115,7 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
 import MapPanel from './visualization/MapPanel.vue'
@@ -126,6 +127,7 @@ import MarkdownRenderer from './MarkdownRenderer.vue'
 import {
   buildArtifactDownloadPayload,
   hasRelatedArtifactFiles,
+  normalizeArtifactUrl,
   normalizeRelatedArtifactFiles
 } from '@/utils/artifactRelatedFiles'
 
@@ -215,7 +217,8 @@ defineExpose({
     console.log('[VisualizationPanel] chartIdToViz映射:', Array.from(chartIdToViz.keys()))
 
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+    authFetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+      external: true,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -290,7 +293,8 @@ defineExpose({
           }
 
           // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+          authFetch('http://127.0.0.1:7243/ingest/d7da9dc0-913c-4a71-877d-8ad5d396d494', {
+            external: true,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -876,7 +880,7 @@ const downloadRelatedFile = (file) => {
   }
 
   try {
-    const fileUrl = file.url || `/api/file/${encodeURIComponent(file.file_path)}`
+    const fileUrl = normalizeArtifactUrl(file.url || `/api/file/${encodeURIComponent(file.file_path)}`)
     const link = document.createElement('a')
     link.href = fileUrl
     link.download = file.file_path.replace(/\\/g, '/').split('/').pop() || file.downloadLabel || 'artifact'

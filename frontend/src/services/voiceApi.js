@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 export async function transcribeVoice(audioBlob, options = {}) {
@@ -10,7 +11,7 @@ export async function transcribeVoice(audioBlob, options = {}) {
   formData.append('file', audioBlob, filename)
   formData.append('language', language)
 
-  const response = await fetch(`${API_BASE_URL}/voice/transcribe`, {
+  const response = await authFetch(`${API_BASE_URL}/voice/transcribe`, {
     method: 'POST',
     body: formData
   })
@@ -31,7 +32,7 @@ export function buildSpeechSynthesisBody(text, options = {}) {
 }
 
 export async function synthesizeVoice(text, options = {}) {
-  const response = await fetch(`${API_BASE_URL}/voice/synthesize`, {
+  const response = await authFetch(`${API_BASE_URL}/voice/synthesize`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'

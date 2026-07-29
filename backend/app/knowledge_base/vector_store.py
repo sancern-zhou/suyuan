@@ -9,11 +9,14 @@
 - 按文档删除
 """
 
-import os
+import asyncio
 import hashlib
-from typing import List, Dict, Any, Optional
+import os
 from collections import Counter
 from threading import RLock
+from typing import Any, Dict, List, Optional
+from uuid import NAMESPACE_URL, uuid5
+
 import structlog
 
 logger = structlog.get_logger()
@@ -409,6 +412,185 @@ class KnowledgeVectorStore:
             )
             return False
 
+    @staticmethod
+    def typed_point_id(record_type: str, record_id: str) -> str:
+        """Return a stable Qdrant UUID namespaced by logical record type."""
+        if record_type not in {"chunk", "entity", "relation"}:
+            raise ValueError(f"Unsupported knowledge record type: {record_type}")
+        if not record_id:
+            raise ValueError("record_id is required")
+        return str(uuid5(NAMESPACE_URL, f"suyuan:knowledge:{record_type}:{record_id}"))
+
+    async def upsert_records(
+        self,
+        collection_name: str,
+        records: list[dict[str, Any]],
+    ) -> int:
+        """Upsert typed chunk/entity/relation records into one KB collection."""
+        return await asyncio.to_thread(
+            self._upsert_records_sync,
+            collection_name,
+            records,
+        )
+
+    def _upsert_records_sync(
+        self,
+        collection_name: str,
+        records: list[dict[str, Any]],
+    ) -> int:
+        if not records:
+            return 0
+
+        from qdrant_client.models import PointStruct, SparseVector
+
+        for record in records:
+            missing = {
+                key
+                for key in ("record_type", "record_id", "content", "embedding_text")
+                if not record.get(key)
+            }
+            if missing:
+                raise ValueError(f"Typed knowledge record missing fields: {sorted(missing)}")
+
+        embeddings = self.embedding_model.encode(
+            [record["embedding_text"] for record in records],
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        config = self._get_collection_vector_config(collection_name)
+        use_named_vectors = bool(config["has_named_vectors"])
+        use_sparse = bool(config["has_sparse"] and use_named_vectors)
+        points = []
+        for record, embedding in zip(records, embeddings, strict=True):
+            record_type = str(record["record_type"])
+            record_id = str(record["record_id"])
+            if record_type not in {"chunk", "entity", "relation"}:
+                raise ValueError(f"Unsupported knowledge record type: {record_type}")
+            payload = {
+                **dict(record.get("payload") or {}),
+                "record_type": record_type,
+                "record_id": record_id,
+                "content": record["content"],
+                "embedding_text": record["embedding_text"],
+            }
+            if use_sparse:
+                sparse_values = self._compute_sparse_vector(record["embedding_text"])
+                vector = {
+                    "dense": embedding.tolist(),
+                    "sparse": SparseVector(
+                        indices=list(sparse_values),
+                        values=list(sparse_values.values()),
+                    ),
+                }
+            elif use_named_vectors:
+                vector = {"dense": embedding.tolist()}
+            else:
+                vector = embedding.tolist()
+            points.append(
+                PointStruct(
+                    id=self.typed_point_id(record_type, record_id),
+                    vector=vector,
+                    payload=payload,
+                )
+            )
+
+        self.qdrant_client.upsert(collection_name=collection_name, points=points)
+        return len(points)
+
+    async def delete_records(
+        self,
+        collection_name: str,
+        record_type: str,
+        record_ids: list[str],
+    ) -> None:
+        if not record_ids:
+            return
+        from qdrant_client.models import PointIdsList
+
+        selector = PointIdsList(
+            points=[self.typed_point_id(record_type, record_id) for record_id in record_ids]
+        )
+        await asyncio.to_thread(
+            self.qdrant_client.delete,
+            collection_name=collection_name,
+            points_selector=selector,
+        )
+
+    async def search_records(
+        self,
+        collection_name: str,
+        query: str,
+        *,
+        record_types: set[str],
+        review_statuses: set[str] | None = None,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        if not record_types or not record_types <= {"chunk", "entity", "relation"}:
+            raise ValueError("record_types must contain supported knowledge record types")
+        return await asyncio.to_thread(
+            self._search_records_sync,
+            collection_name,
+            query,
+            record_types,
+            review_statuses,
+            top_k,
+        )
+
+    def _search_records_sync(
+        self,
+        collection_name: str,
+        query: str,
+        record_types: set[str],
+        review_statuses: set[str] | None,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        from qdrant_client.models import FieldCondition, Filter, MatchAny
+
+        must = [
+            FieldCondition(
+                key="record_type",
+                match=MatchAny(any=sorted(record_types)),
+            )
+        ]
+        if review_statuses:
+            must.append(
+                FieldCondition(
+                    key="review_status",
+                    match=MatchAny(any=sorted(review_statuses)),
+                )
+            )
+        query_filter = Filter(must=must)
+        embedding = self.embedding_model.encode(query, normalize_embeddings=True)
+        config = self._get_collection_vector_config(collection_name)
+        query_vector = (
+            ("dense", embedding.tolist())
+            if config["has_named_vectors"]
+            else embedding.tolist()
+        )
+        hits = self.qdrant_client.search(
+            collection_name=collection_name,
+            query_vector=query_vector,
+            limit=top_k,
+            query_filter=query_filter,
+        )
+        results = []
+        for hit in hits:
+            payload = dict(hit.payload or {})
+            if payload.get("record_type") not in record_types:
+                continue
+            if review_statuses and payload.get("review_status") not in review_statuses:
+                continue
+            results.append(
+                {
+                    "record_type": payload["record_type"],
+                    "record_id": payload.get("record_id"),
+                    "content": payload.get("content"),
+                    "score": float(hit.score or 0.0),
+                    "payload": payload,
+                }
+            )
+        return results
+
     async def add_chunks(
         self,
         collection_name: str,
@@ -428,7 +610,6 @@ class KnowledgeVectorStore:
         Returns:
             添加的向量数量
         """
-        import asyncio
         return await asyncio.to_thread(
             self._add_chunks_sync, collection_name, chunks, metadata, enable_hybrid
         )
@@ -517,20 +698,20 @@ class KnowledgeVectorStore:
 
             # 构建点
             points = []
-            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-                point_id = self._generate_point_id(
-                    metadata.get("document_id", ""),
-                    i
-                )
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
+                chunk_id = str(chunk.get("id") or f"chunk_{i}")
+                point_id = self.typed_point_id("chunk", chunk_id)
                 original_content = chunk.get("original_content") or chunk.get("content", "")
                 embedding_text = chunk.get("embedding_text") or original_content
                 common_payload = {
+                    "record_type": "chunk",
+                    "record_id": chunk_id,
                     "content": original_content,
                     "original_content": original_content,
                     "embedding_text": embedding_text,
                     "context_prefix": chunk.get("context_prefix", ""),
                     "chunk_index": i,
-                    "chunk_id": chunk.get("id", f"chunk_{i}"),
+                    "chunk_id": chunk_id,
                     "start_char": chunk.get("start_char"),
                     "end_char": chunk.get("end_char"),
                     "chunk_metadata": chunk.get("metadata", {}),
@@ -650,15 +831,28 @@ class KnowledgeVectorStore:
                 normalize_embeddings=True
             )
 
-            # 构建过滤条件
-            qdrant_filter = None
-            if filters:
-                from qdrant_client.models import Filter, FieldCondition, MatchValue
-                conditions = [
-                    FieldCondition(key=k, match=MatchValue(value=v))
-                    for k, v in filters.items()
-                ]
-                qdrant_filter = Filter(must=conditions)
+            # Explicit graph records are excluded while legacy untyped chunk
+            # points remain searchable until the backfill migration completes.
+            from qdrant_client.models import (
+                FieldCondition,
+                Filter,
+                MatchAny,
+                MatchValue,
+            )
+
+            conditions = [
+                FieldCondition(key=k, match=MatchValue(value=v))
+                for k, v in (filters or {}).items()
+            ]
+            qdrant_filter = Filter(
+                must=conditions,
+                must_not=[
+                    FieldCondition(
+                        key="record_type",
+                        match=MatchAny(any=["entity", "relation"]),
+                    )
+                ],
+            )
 
             # 检测Collection是否使用命名向量
             use_named_vectors = False
@@ -805,8 +999,14 @@ class KnowledgeVectorStore:
     ) -> List[Dict[str, Any]]:
         """同步混合检索方法（在线程池中执行）"""
         from qdrant_client.models import (
-            Filter, FieldCondition, MatchValue,
-            SparseVector, Prefetch, FusionQuery, Fusion
+            FieldCondition,
+            Filter,
+            Fusion,
+            FusionQuery,
+            MatchAny,
+            MatchValue,
+            Prefetch,
+            SparseVector,
         )
 
         # 生成查询向量
@@ -817,13 +1017,19 @@ class KnowledgeVectorStore:
         sparse_vector = self._compute_sparse_vector(query)
 
         # 构建过滤条件
-        qdrant_filter = None
-        if filters:
-            conditions = [
-                FieldCondition(key=k, match=MatchValue(value=v))
-                for k, v in filters.items()
-            ]
-            qdrant_filter = Filter(must=conditions)
+        conditions = [
+            FieldCondition(key=k, match=MatchValue(value=v))
+            for k, v in (filters or {}).items()
+        ]
+        qdrant_filter = Filter(
+            must=conditions,
+            must_not=[
+                FieldCondition(
+                    key="record_type",
+                    match=MatchAny(any=["entity", "relation"]),
+                )
+            ],
+        )
 
         prefetch_limit = min(max(top_k, 10), 50)
 

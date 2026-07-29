@@ -45,6 +45,8 @@ class TenderLLMClientPool:
             for entry in self.entries:
                 if hasattr(entry.client, "retry_rate_limits"):
                     entry.client.retry_rate_limits = False
+                if hasattr(entry.client, "retry_transient_errors"):
+                    entry.client.retry_transient_errors = False
         if screening_client_index < 0 or screening_client_index >= len(self.entries):
             raise ValueError("screening_client_index is out of range")
         self.screening_client_index = screening_client_index
@@ -61,7 +63,7 @@ class TenderLLMClientPool:
 
     @property
     def screening_entry_count(self) -> int:
-        return len(self.entries)
+        return self._screening_max_attempts()
 
     async def review_candidates(
         self,
@@ -71,13 +73,39 @@ class TenderLLMClientPool:
         timeout_seconds = float(
             os.getenv("TENDER_LLM_SCREENING_TIMEOUT_SECONDS", "75")
         )
-        return await self._call_with_rate_limit_failover(
-            self.screening_client_index,
+        return await self._call_screening_client(
             "review_candidates",
             candidates,
             rule_decision,
             timeout_seconds=timeout_seconds if timeout_seconds > 0 else None,
         )
+
+    async def _call_screening_client(
+        self,
+        method_name: str,
+        *args,
+        timeout_seconds: float | None = None,
+        **kwargs,
+    ):
+        entry = self.entries[self.screening_client_index]
+        max_attempts = self._screening_max_attempts()
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with entry.semaphore:
+                    method = getattr(entry.client, method_name)
+                    call = method(*args, **kwargs)
+                    if timeout_seconds is not None:
+                        return await asyncio.wait_for(call, timeout=timeout_seconds)
+                    return await call
+            except Exception as exc:
+                if not _is_retryable_failover_error(exc) or attempt >= max_attempts:
+                    raise
+                await asyncio.sleep(_llm_rate_limit_delay_seconds(exc, attempt))
+        raise RuntimeError("初筛 LLM 没有可用模型")
+
+    @staticmethod
+    def _screening_max_attempts() -> int:
+        return max(1, int(os.getenv("TENDER_LLM_SCREENING_MAX_ATTEMPTS", "3")))
 
     async def review_candidate(
         self,
@@ -132,8 +160,7 @@ class TenderLLMClientPool:
         timeout_seconds: float | None = None,
         **kwargs,
     ):
-        last_rate_limit_error: Exception | None = None
-        last_timeout_error: asyncio.TimeoutError | None = None
+        last_failover_error: Exception | None = None
         for offset in range(len(self.entries)):
             entry_index = (start_index + offset) % len(self.entries)
             entry = self.entries[entry_index]
@@ -145,21 +172,19 @@ class TenderLLMClientPool:
                         return await asyncio.wait_for(call, timeout=timeout_seconds)
                     return await call
             except asyncio.TimeoutError as exc:
-                last_timeout_error = exc
+                last_failover_error = exc
                 if offset >= len(self.entries) - 1:
                     break
                 await asyncio.sleep(_llm_rate_limit_delay_seconds(exc, offset + 1))
             except Exception as exc:
-                if not _is_rate_limit_error(exc):
+                if not _is_retryable_failover_error(exc):
                     raise
-                last_rate_limit_error = exc
+                last_failover_error = exc
                 if offset >= len(self.entries) - 1:
                     break
                 await asyncio.sleep(_llm_rate_limit_delay_seconds(exc, offset + 1))
-        if last_rate_limit_error is not None:
-            raise last_rate_limit_error
-        if last_timeout_error is not None:
-            raise last_timeout_error
+        if last_failover_error is not None:
+            raise last_failover_error
         raise RuntimeError("LLM池没有可用模型")
 
     async def _select_entry(self) -> TenderLLMPoolEntry:
@@ -179,6 +204,27 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     if status_code == 429 or response_status == 429:
         return True
     return exc.__class__.__name__ == "RateLimitError" or "429" in str(exc)
+
+
+def _is_retryable_failover_error(exc: Exception) -> bool:
+    if _is_rate_limit_error(exc):
+        return True
+    if isinstance(exc, (asyncio.TimeoutError, ConnectionError)):
+        return True
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    effective_status = status_code or response_status
+    if effective_status in {408, 429}:
+        return True
+    if isinstance(effective_status, int) and effective_status >= 500:
+        return True
+    return exc.__class__.__name__ in {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+    }
 
 
 def _llm_rate_limit_delay_seconds(exc: Exception, attempt: int) -> float:
@@ -227,6 +273,24 @@ def _retry_after_seconds(exc: Exception) -> float | None:
     return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
 
+def _is_retryable_agnes_not_found(
+    exc: Exception, base_url: str | None
+) -> bool:
+    if "apihub.agnes-ai.com" not in (base_url or "").lower():
+        return False
+    response = getattr(exc, "response", None)
+    status_code = getattr(exc, "status_code", None) or getattr(
+        response, "status_code", None
+    )
+    if status_code != 404:
+        return False
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in ("upstream_error", "notfounderror", "not found")
+    )
+
+
 class OpenAICompatibleTenderLLMClient:
     def __init__(
         self,
@@ -234,37 +298,41 @@ class OpenAICompatibleTenderLLMClient:
         base_url: str | None = None,
         model: str | None = None,
         temperature: float = 0.0,
+        provider: str | None = None,
+        api_mode: str | None = None,
     ):
         self._load_environment()
-        provider = self._selected_provider()
+        selected_provider = provider or self._selected_provider()
+        self.provider = selected_provider.strip().lower()
+        self.api_mode = (
+            api_mode or self._provider_api_mode(self.provider)
+        ).strip().lower()
         self.api_key = api_key or self._first_configured_value(
             [
                 "TENDER_LLM_API_KEY",
-                *self._provider_key_names(provider),
+                *self._provider_key_names(self.provider),
                 "OPENAI_API_KEY",
-                "DASHSCOPE_API_KEY",
-                "QWEN_API_KEY",
             ]
         )
         self.base_url = self._normalize_base_url(
             base_url
             or os.getenv("TENDER_LLM_BASE_URL")
-            or self._provider_base_url(provider)
+            or self._provider_base_url(self.provider)
             or self._default_base_url()
         )
         self.model = (
             model
             or os.getenv("TENDER_LLM_MODEL")
-            or self._provider_model(provider)
-            or os.getenv("QWEN_MODEL")
-            or os.getenv("DASHSCOPE_MODEL")
+            or self._provider_model(self.provider)
+            or os.getenv("OPENAI_MODEL")
             or self._default_model(self.base_url)
         )
         self.temperature = temperature
         self.retry_rate_limits = True
+        self.retry_transient_errors = True
         if not self.api_key:
             raise RuntimeError(
-                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、GLM_API_KEY、OPENAI_API_KEY、DASHSCOPE_API_KEY 或 QWEN_API_KEY"
+                "启用 LLM 时需要配置 TENDER_LLM_API_KEY、BAILIAN_API_KEY、GLM_API_KEY 或 OPENAI_API_KEY"
             )
 
     async def review_candidate(
@@ -446,6 +514,9 @@ class OpenAICompatibleTenderLLMClient:
         return notice
 
     async def _json_chat(self, prompt: str) -> Dict[str, Any]:
+        if getattr(self, "api_mode", "chat_completions") == "anthropic_messages":
+            return await self._anthropic_json_chat(prompt)
+
         from openai import (
             APIConnectionError,
             APITimeoutError,
@@ -457,16 +528,22 @@ class OpenAICompatibleTenderLLMClient:
         client_kwargs = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
-        client_kwargs["timeout"] = float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "60"))
+        client_kwargs["timeout"] = float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "120"))
         client_kwargs["max_retries"] = 0
         client = AsyncOpenAI(**client_kwargs)
-        max_retries = int(os.getenv("TENDER_LLM_MAX_RETRIES", "3"))
+        max_retries = (
+            int(os.getenv("TENDER_LLM_MAX_RETRIES", "3"))
+            if getattr(self, "retry_transient_errors", True)
+            else 1
+        )
         rate_limit_max_retries = (
             int(os.getenv("TENDER_LLM_RATE_LIMIT_MAX_RETRIES", "3"))
             if getattr(self, "retry_rate_limits", True)
             else 1
         )
         max_attempts = max(max_retries, rate_limit_max_retries)
+        agnes_not_found_max_retries = 1
+        max_attempts = max(max_attempts, agnes_not_found_max_retries + 1)
         response = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -494,6 +571,13 @@ class OpenAICompatibleTenderLLMClient:
                 if attempt >= max_retries:
                     raise
                 await asyncio.sleep(min(2 * attempt, 8))
+            except Exception as exc:
+                if (
+                    not _is_retryable_agnes_not_found(exc, self.base_url)
+                    or attempt > agnes_not_found_max_retries
+                ):
+                    raise
+                await asyncio.sleep(attempt)
         if response is None:
             raise RuntimeError("LLM响应为空")
         content = response.choices[0].message.content or "{}"
@@ -502,6 +586,39 @@ class OpenAICompatibleTenderLLMClient:
             content = content.strip("`")
             content = content.removeprefix("json").strip()
         return json.loads(content)
+
+    async def _anthropic_json_chat(self, prompt: str) -> Dict[str, Any]:
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(
+            api_key=self.api_key,
+            base_url=(self.base_url or "").rstrip("/"),
+            timeout=float(os.getenv("TENDER_LLM_TIMEOUT_SECONDS", "120")),
+            max_retries=(
+                int(os.getenv("TENDER_LLM_MAX_RETRIES", "3"))
+                if getattr(self, "retry_transient_errors", True)
+                else 0
+            ),
+        )
+        try:
+            response = await client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                temperature=self.temperature,
+                system="你是招投标项目筛选和结构化抽取助手。只输出JSON。",
+                messages=[{"role": "user", "content": prompt}],
+            )
+        finally:
+            await client.close()
+
+        content = "\n".join(
+            str(getattr(block, "text", ""))
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip()
+        if content.startswith("```"):
+            content = content.strip("`").removeprefix("json").strip()
+        return json.loads(content or "{}")
 
     def _load_environment(self) -> None:
         try:
@@ -516,12 +633,9 @@ class OpenAICompatibleTenderLLMClient:
                 in {
                     "TENDER_LLM_API_KEY",
                     "OPENAI_API_KEY",
-                    "DASHSCOPE_API_KEY",
-                    "QWEN_API_KEY",
                     "TENDER_LLM_BASE_URL",
                     "TENDER_LLM_MODEL",
-                    "QWEN_MODEL",
-                    "DASHSCOPE_MODEL",
+                    "OPENAI_MODEL",
                 }
                 and value
                 and (key not in os.environ or self._looks_placeholder(os.environ[key]))
@@ -533,28 +647,42 @@ class OpenAICompatibleTenderLLMClient:
         return provider.strip().split("#", 1)[0].strip().lower()
 
     def _provider_key_names(self, provider: str) -> list[str]:
+        if provider == "bailian":
+            return ["BAILIAN_API_KEY"]
         if provider == "glm":
             return ["GLM_API_KEY"]
         return []
 
     def _provider_base_url(self, provider: str) -> str | None:
+        if provider == "bailian":
+            return os.getenv("BAILIAN_BASE_URL")
         if provider == "glm":
             return os.getenv("GLM_BASE_URL")
         return None
 
     def _provider_model(self, provider: str) -> str | None:
+        if provider == "bailian":
+            return os.getenv("BAILIAN_MODEL")
         if provider == "glm":
             return os.getenv("GLM_MODEL")
         return None
 
+    def _provider_api_mode(self, provider: str) -> str:
+        env_name = {
+            "agnes": "AGNES_API_MODE",
+            "bailian": "BAILIAN_API_MODE",
+            "glm": "GLM_API_MODE",
+        }.get(provider)
+        if env_name:
+            configured = os.getenv(env_name)
+            if configured:
+                return configured
+        return "anthropic_messages" if provider == "bailian" else "chat_completions"
+
     def _default_base_url(self) -> str | None:
-        if os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY"):
-            return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         return None
 
     def _default_model(self, base_url: str | None = None) -> str:
-        if base_url and "dashscope.aliyuncs.com" in base_url:
-            return "qwen-plus"
         return "gpt-4.1-mini"
 
     def _normalize_base_url(self, value: str | None) -> str | None:

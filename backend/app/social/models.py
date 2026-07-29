@@ -58,6 +58,11 @@ class SocialUser(Base):
     updated_at = Column(DateTime, default=datetime.now, nullable=False)
     bound_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
+    platform_user_id = Column(String(255), nullable=True)
+    platform_username = Column(String(255), nullable=True)
+    platform_display_name = Column(String(255), nullable=True)
+    account_id = Column(String(255), nullable=True)
+    ilink_user_id = Column(String(255), nullable=True)
 
     __table_args__ = (
         Index("idx_social_users_status", "status"),
@@ -66,3 +71,23 @@ class SocialUser(Base):
 
     def __repr__(self):
         return f"<SocialUser(id={self.id}, name={self.name}, status={self.status})>"
+
+
+class WeixinScanTask(Base):
+    """Server-owned QR scan lifecycle associated with a platform user."""
+
+    __tablename__ = "weixin_scan_tasks"
+
+    id = Column(String(36), primary_key=True, nullable=False)
+    account_id = Column(String(255), unique=True, nullable=False)
+    owner_user_id = Column(String(255), nullable=False)
+    owner_username = Column(String(255), nullable=False)
+    owner_display_name = Column(String(255), nullable=False)
+    status = Column(String(30), default="created", nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("idx_weixin_scan_tasks_owner_status", "owner_user_id", "status"),
+    )

@@ -8,13 +8,16 @@ LLM可调用的天气形势图解读工具
 - 使用通义千问VL模型进行图片解读
 - 返回当前气象形势分析结果和图片URL
 """
-from typing import Dict, Any, Optional
 from datetime import datetime
-import os
-import structlog
-import httpx
+from typing import Any, Dict, Optional
 
+import httpx
+import structlog
+from anthropic import APIStatusError, APITimeoutError
+
+from app.services.bailian_multimodal import call_bailian_vision
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -26,10 +29,8 @@ class GetWeatherSituationMapTool(LLMTool):
     获取中央气象台天气形势图并使用AI进行专业解读
     """
 
-    # 通义千问VL API配置（从环境变量读取）
-    QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
-    QWEN_VL_BASE_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-    QWEN_VL_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")
+    BAILIAN_API_KEY = settings.bailian_api_key or ""
+    BAILIAN_BASE_URL = settings.bailian_base_url
 
     # 天气形势图URL模板
     WEATHER_MAP_BASE_URL = "http://10.10.10.112:8313/1001"
@@ -185,7 +186,7 @@ class GetWeatherSituationMapTool(LLMTool):
                     "metadata": {
                         "schema_version": "v2.0",
                         "generator": "get_weather_situation_map",
-                        "model": self.QWEN_VL_MODEL,
+                        "model": settings.bailian_model,
                         "image_source": "中央气象台"
                     },
                     "summary": f"{date}天气形势图AI解读失败"
@@ -212,7 +213,7 @@ class GetWeatherSituationMapTool(LLMTool):
                     "schema_version": "v2.0",
                     "generator": "get_weather_situation_map",
                     "generator_version": "1.0.0",
-                    "model": self.QWEN_VL_MODEL,
+                    "model": settings.bailian_model,
                     "image_source": "中央气象台",
                     "field_mapping_applied": False,
                     "record_count": 1
@@ -273,76 +274,50 @@ class GetWeatherSituationMapTool(LLMTool):
 请用专业但易懂的语言进行分析，输出内容精练简洁，不要太长，重点关注当前气象形势，不需要预测未来趋势。
 """
 
-            # 调用通义千问VL API
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{self.QWEN_VL_BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.QWEN_VL_API_KEY}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": self.QWEN_VL_MODEL,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": image_url}
-                                    },
-                                    {
-                                        "type": "text",
-                                        "text": prompt
-                                    }
-                                ]
-                            }
-                        ],
-                        "max_tokens": 2000,
-                        "temperature": 0.3  # 较低温度，确保分析准确性
-                    }
-                )
+            analysis, _ = await call_bailian_vision(
+                image_url=image_url,
+                prompt=prompt,
+                api_key=self.BAILIAN_API_KEY,
+                base_url=self.BAILIAN_BASE_URL,
+                model=settings.bailian_model,
+                timeout=120.0,
+                max_tokens=2000,
+            )
 
-                response.raise_for_status()
-                result = response.json()
+            logger.info(
+                "bailian_vision_analysis_success",
+                date=date,
+                analysis_length=len(analysis)
+            )
 
-                analysis = result["choices"][0]["message"]["content"]
+            return {
+                "success": True,
+                "analysis": analysis.strip(),
+                "error": None
+            }
 
-                logger.info(
-                    "qwen_vl_analysis_success",
-                    date=date,
-                    analysis_length=len(analysis)
-                )
-
-                return {
-                    "success": True,
-                    "analysis": analysis.strip(),
-                    "error": None
-                }
-
-        except httpx.TimeoutException as e:
-            logger.error("qwen_vl_timeout", date=date, error=str(e))
+        except APITimeoutError as e:
+            logger.error("bailian_vision_timeout", date=date, error=str(e))
             return {
                 "success": False,
                 "analysis": None,
                 "error": "AI解读超时（120秒）"
             }
-        except httpx.HTTPStatusError as e:
-            error_body = e.response.text if e.response else "No response body"
+        except APIStatusError as e:
             logger.error(
-                "qwen_vl_http_error",
+                "bailian_vision_http_error",
                 date=date,
-                status=e.response.status_code,
-                error_body=error_body[:500]
+                status=e.status_code,
+                error_body=str(e)[:500],
             )
             return {
                 "success": False,
                 "analysis": None,
-                "error": f"AI解读失败: HTTP {e.response.status_code}"
+                "error": f"AI解读失败: HTTP {e.status_code}"
             }
         except Exception as e:
             logger.error(
-                "qwen_vl_analysis_failed",
+                "bailian_vision_analysis_failed",
                 date=date,
                 error=str(e),
                 exc_info=True

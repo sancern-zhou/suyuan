@@ -27,7 +27,6 @@ class ChunkingStrategyEnum(str, Enum):
 
 class LLMModeEnum(str, Enum):
     """LLM分块模式枚举"""
-    LOCAL = "local"    # 本地千问3（默认，25000字符阈值）
     ONLINE = "online"  # 线上API（60000字符阈值）
 
 
@@ -131,6 +130,10 @@ class DocumentResponse(BaseModel):
     extra_metadata: Dict[str, Any] = Field(default_factory=dict, alias="extra_metadata")
     created_at: datetime
     processed_at: Optional[datetime]
+    content_generation: int = 1
+    ingestion_status: str = "pending"
+    graph_status: str = "pending"
+    processing_error: Optional[str] = None
     # 溯源相关字段
     file_storage_type: Optional[str] = Field(default=None, description="存储类型：database/local/oss")
     file_mime_type: Optional[str] = Field(default=None, description="MIME类型")
@@ -172,6 +175,11 @@ class SearchRequest(BaseModel):
         default=None,
         description="元数据过滤条件"
     )
+    use_graph_retrieval: bool = True
+    graph_depth: int = Field(default=2, ge=1, le=2)
+    graph_seed_top_k: int = Field(default=10, ge=1, le=50)
+    graph_chunk_top_k: int = Field(default=20, ge=1, le=100)
+    graph_weight: float = Field(default=1.0, ge=0.0, le=5.0)
 
 
 class SearchResultItem(BaseModel):
@@ -195,6 +203,12 @@ class SearchResultItem(BaseModel):
     download_url: Optional[str] = Field(default=None, description="原文件下载链接")
     preview_url: Optional[str] = Field(default=None, description="文档预览链接")
     has_original_file: bool = Field(default=False, description="是否有原文件可下载")
+    chunk_id: Optional[str] = None
+    fusion_sources: List[str] = Field(default_factory=list)
+    matched_entity_ids: List[str] = Field(default_factory=list)
+    matched_relation_ids: List[str] = Field(default_factory=list)
+    graph_paths: List[Dict[str, Any]] = Field(default_factory=list)
+    rrf_score: Optional[float] = None
 
 
 class SearchResult(BaseModel):

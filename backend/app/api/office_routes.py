@@ -349,81 +349,11 @@ def _upsert_office_document(documents: list, document: dict) -> list:
 
 
 async def _persist_office_document_version(session_id: str, document: dict) -> dict:
-    if not session_id:
-        return document
-
-    persisted = False
-    repo = None
-    session_data = None
-    office_documents = []
-    agent = None
-    session_store = None
-    memory_documents = []
-    try:
-        repo = get_session_repository()
-        session_data = await repo.get_session_with_messages(
-            session_id,
-            include_messages=False,
-            include_artifacts=True,
-        )
-        if session_data:
-            office_documents = session_data.get("office_documents") or []
-    except Exception as e:
-        logger.warning(
-            "office_document_history_load_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-
-    try:
-        agent = _get_multi_expert_agent_instance()
-        if agent is not None and hasattr(agent, "_session_store"):
-            session_store = agent._session_store.setdefault(session_id, {})
-            memory_documents = session_store.get("office_documents") or []
-    except Exception as e:
-        logger.warning(
-            "office_document_history_memory_load_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-
-    base_documents = office_documents or memory_documents
-    versioned_documents, versioned_document = _with_office_version_metadata(
-        base_documents,
-        document,
-        session_id,
-    )
+    # 版本信息由统一资源提交链路负责；这里仅给当前响应补充稳定版本元数据，
+    # 不再读取或写入会话内的 office_documents 快照。
+    _, versioned_document = _with_office_version_metadata([], document, session_id)
     document.clear()
     document.update(versioned_document)
-
-    try:
-        if repo is not None and session_data:
-            await repo.update_session(session_id, office_documents=versioned_documents)
-            persisted = True
-        elif repo is not None:
-            logger.warning(
-                "office_document_history_session_missing",
-                extra={"session_id": session_id},
-            )
-    except Exception as e:
-        logger.warning(
-            "office_document_history_persist_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-
-    try:
-        if session_store is not None:
-            session_store["office_documents"] = versioned_documents
-            persisted = True
-    except Exception as e:
-        logger.warning(
-            "office_document_history_memory_update_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-
-    if not persisted:
-        logger.warning(
-            "office_document_history_not_persisted",
-            extra={"session_id": session_id, "file_path": document.get("file_path")},
-        )
     return document
 
 

@@ -1,9 +1,9 @@
 """
 Application settings and configuration management.
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, model_validator
 import yaml
 from pathlib import Path
 
@@ -27,9 +27,25 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", description="Environment name")
     debug: bool = Field(default=True, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
+    project_id: str = Field(
+        default="default",
+        validation_alias="PROJECT",
+        pattern=r"^[a-z][a-z0-9_-]*$",
+        description="Deployment manifest selected from projects/<id>/project.yaml",
+    )
     app_role: str = Field(
         default="web",
         description="Application role: web, worker, or all. Web workers must not start background schedulers.",
+    )
+    sse_heartbeat_interval_seconds: float = Field(
+        default=15.0,
+        gt=0,
+        description="Interval between transparent SSE comment heartbeats",
+    )
+    sse_send_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Maximum duration of one SSE socket send operation",
     )
 
     # Backend URL Configuration (用于生成图片等资源的完整URL)
@@ -37,49 +53,9 @@ class Settings(BaseSettings):
         default="http://localhost:8000",
         description="Backend server host URL (for generating image URLs)"
     )
-    signed_media_base_url: Optional[str] = Field(
+    share_signing_secret: Optional[str] = Field(
         default=None,
-        description="Public backend URL for temporary signed media links"
-    )
-    signed_media_secret: Optional[str] = Field(
-        default=None,
-        description="Secret used to sign temporary media URLs"
-    )
-    signed_media_ttl_seconds: int = Field(
-        default=600,
-        description="Temporary signed media URL lifetime in seconds"
-    )
-    media_object_store_enabled: bool = Field(
-        default=False,
-        description="Upload social media to an S3-compatible object store before sending to multimodal LLMs"
-    )
-    media_object_store_endpoint_url: Optional[str] = Field(
-        default=None,
-        description="S3-compatible object store endpoint URL"
-    )
-    media_object_store_access_key_id: Optional[str] = Field(
-        default=None,
-        description="S3-compatible object store access key ID"
-    )
-    media_object_store_secret_access_key: Optional[str] = Field(
-        default=None,
-        description="S3-compatible object store secret access key"
-    )
-    media_object_store_bucket: Optional[str] = Field(
-        default=None,
-        description="S3-compatible object store bucket"
-    )
-    media_object_store_region: str = Field(
-        default="auto",
-        description="S3-compatible object store region"
-    )
-    media_object_store_prefix: str = Field(
-        default="social-media",
-        description="Object key prefix for uploaded social media"
-    )
-    media_object_store_presign_ttl_seconds: int = Field(
-        default=600,
-        description="Object store presigned URL lifetime in seconds"
+        description="Secret used to sign scoped share grants",
     )
     api_base_url: Optional[str] = Field(
         default=None,
@@ -102,6 +78,128 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    # Company Gateway Authentication
+    auth_mode: Literal["company", "mock"] = Field(
+        default="company",
+        description="Authentication mode; mock is restricted to non-production development",
+    )
+    auth_sys_code: str = Field(default="SUYUAN", description="Company system code")
+    auth_platform_sys_code: str = Field(
+        default="JCXT",
+        description="Application code sent to the company authentication service",
+    )
+    auth_service_url: str = Field(
+        default="",
+        description="Internal or gateway base URL for the company authentication service",
+    )
+    auth_login_path: str = Field(
+        default="/auth/token/authentication",
+        description="Company username/password authentication path",
+    )
+    auth_current_user_path: str = Field(
+        default="/auth/account/getCurrentUser",
+        description="Company current-user lookup path",
+    )
+    auth_logout_path: str = Field(
+        default="/auth/token/logout",
+        description="Company logout path",
+    )
+    auth_admin_role_codes: str = Field(
+        default="",
+        description="Comma-separated company role codes treated as Suyuan administrators",
+    )
+    auth_identity_cache_ttl_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        description="Maximum Redis lifetime for resolved company identities",
+    )
+    auth_identity_cache_key_prefix: str = Field(
+        default="suyuan:auth:",
+        description="Redis prefix for authentication state",
+    )
+    auth_ws_ticket_ttl_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=120,
+        description="Single-use WebSocket ticket lifetime",
+    )
+    auth_share_grant_ttl_seconds: int = Field(
+        default=600,
+        ge=30,
+        le=86400,
+        description="Signed anonymous share grant lifetime",
+    )
+    auth_docs_public: bool = Field(
+        default=False,
+        description="Allow anonymous Swagger/OpenAPI access",
+    )
+    auth_mock_user_id: str = Field(default="local-developer")
+    auth_mock_username: str = Field(default="local-developer")
+    auth_mock_display_name: str = Field(default="本地开发用户")
+    auth_mock_role_codes: str = Field(default="")
+
+    # Gateway routing and trust boundary
+    gateway_api_prefix: str = Field(default="/api/suyuan")
+    trusted_gateway_networks: str = Field(
+        default="127.0.0.1/32,::1/128,10.10.204.0/24",
+        description="Immediate socket-peer networks allowed to call company-auth mode",
+    )
+
+    # Nacos service registration
+    nacos_server_addresses: str = Field(default="http://10.10.204.80:8848")
+    nacos_namespace: str = Field(default="normcraft-ai")
+    nacos_group: str = Field(default="DEFAULT_GROUP")
+    nacos_service_name: str = Field(default="suyuan-agent")
+    nacos_cluster_name: str = Field(default="DEFAULT")
+    nacos_register_enabled: bool = Field(default=True)
+    nacos_instance_enabled: bool = Field(default=True)
+    nacos_instance_ip: str = Field(default="127.0.0.1")
+    nacos_instance_port: int = Field(default=8000, ge=1, le=65535)
+    nacos_username: str = Field(default="nacos")
+    nacos_password: str = Field(default="")
+    nacos_access_key: str = Field(default="")
+    nacos_secret_key: str = Field(default="")
+
+    @staticmethod
+    def _split_unique_csv(value: str) -> List[str]:
+        return list(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+
+    @property
+    def auth_admin_role_codes_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_admin_role_codes))
+
+    @property
+    def auth_mock_role_codes_set(self) -> set[str]:
+        return set(self._split_unique_csv(self.auth_mock_role_codes))
+
+    @property
+    def trusted_gateway_networks_list(self) -> List[str]:
+        return self._split_unique_csv(self.trusted_gateway_networks)
+
+    @property
+    def nacos_server_addresses_list(self) -> List[str]:
+        return self._split_unique_csv(self.nacos_server_addresses)
+
+    @model_validator(mode="after")
+    def validate_authentication_safety(self):
+        if self.environment.strip().lower() != "production":
+            return self
+
+        if self.auth_mode == "mock":
+            raise ValueError("production cannot enable mock authentication")
+        if not self.nacos_register_enabled:
+            raise ValueError("production requires Nacos registration")
+        if not self.auth_service_url.strip():
+            raise ValueError("production requires AUTH_SERVICE_URL")
+        if not (self.share_signing_secret or "").strip():
+            raise ValueError("production requires a share-signing secret")
+
+        networks = set(self.trusted_gateway_networks_list)
+        if not networks or networks.intersection({"*", "0.0.0.0/0", "::/0"}):
+            raise ValueError("production requires a restricted trusted gateway network")
+        return self
 
     # External API Endpoints
     station_api_base_url: str = Field(
@@ -150,7 +248,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="openai",
-        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, qwen, glm"
+        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian"
     )
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: str = Field(
@@ -178,6 +276,20 @@ class Settings(BaseSettings):
     deepseek_api_mode: str = Field(
         default="anthropic_messages",
         description="DeepSeek API protocol mode: anthropic_messages or chat_completions"
+    )
+
+    bailian_api_key: Optional[str] = Field(default=None, description="Alibaba Cloud Bailian Token Plan API key")
+    bailian_base_url: str = Field(
+        default="https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        description="Alibaba Cloud Bailian Anthropic-compatible API base URL",
+    )
+    bailian_model: str = Field(
+        default="qwen3.8-max-preview",
+        description="Default Bailian model used by Auto mode",
+    )
+    bailian_api_mode: str = Field(
+        default="anthropic_messages",
+        description="Bailian API protocol mode: anthropic_messages",
     )
 
     anthropic_api_key: Optional[str] = Field(default=None, description="Anthropic API key")
@@ -302,47 +414,26 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="",
+        default="minimax/MiniMax-M3,deepseek/deepseek-v4-flash",
         description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_flash_models: str = Field(
-        default="",
+        default="bailian/qwen3.6-flash,minimax/MiniMax-M3,deepseek/deepseek-v4-flash",
         description="Comma-separated Flash model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
-        default="",
+        default="bailian/deepseek-v4-pro,minimax/MiniMax-M3,deepseek/deepseek-v4-pro",
         description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
-        default="mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
-        description="Comma-separated Auto multimodal model priority chain; used by social and chart modes"
+        default="bailian/qwen3.8-max-preview,mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+        description="Comma-separated multimodal model priority chain used by all Agent modes"
     )
     llm_failover_cooldown_seconds: int = Field(
         default=60,
         description="Cooldown seconds for transiently failing LLM providers"
     )
 
-    # 千问3配置
-    qwen_api_key: Optional[str] = Field(default=None, description="Qwen3 API key")
-    qwen_base_url: str = Field(
-        default="https://public-1960182902053687299-iaaa.ksai.scnet.cn:58043/v1",
-        description="Qwen3 API base URL"
-    )
-    qwen_model: str = Field(
-        default="qwen3",
-        description="Qwen3 model name"
-    )
-    qwen_api_mode: str = Field(
-        default="chat_completions",
-        description="Qwen API protocol mode: chat_completions"
-    )
-    qwen_vl_api_key: Optional[str] = Field(default=None, description="Qwen VL API key for OCR/image analysis")
-    qwen_vl_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        description="Qwen VL OpenAI-compatible API base URL"
-    )
-    qwen_vl_model: str = Field(default="qwen-vl-ocr", description="Qwen OCR model name")
-    qwen_vision_model: str = Field(default="qwen-vl-max", description="Qwen model for visual understanding tasks")
     mimo_vl_api_key: Optional[str] = Field(default=None, description="Mimo VL API key for flow visual checks")
     mimo_vl_base_url: Optional[str] = Field(
         default=None,
@@ -369,6 +460,15 @@ class Settings(BaseSettings):
     redis_port: int = Field(default=6379, description="Redis port")
     redis_db: int = Field(default=0, description="Redis database number")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
+    agent_steering_redis_prefix: str = Field(
+        default="suyuan:agent:steering",
+        description="Redis key prefix for cross-worker active-run steering",
+    )
+    agent_steering_ttl_seconds: int = Field(
+        default=7200,
+        ge=60,
+        description="TTL for active-run steering metadata and pending inputs",
+    )
 
     # Cache TTL (seconds)
     cache_ttl_config: int = Field(default=3600, description="Config cache TTL")
@@ -499,8 +599,8 @@ class Settings(BaseSettings):
         description="OpenAI-compatible base URL for secondary tender detail LLM"
     )
     tender_secondary_llm_model: str = Field(
-        default="agnes-2.0-flash",
-        description="Model name for secondary tender detail LLM"
+        default="qwen3.6-flash",
+        description="Model name for secondary tender screening and detail LLM"
     )
     tender_secondary_llm_concurrency: int = Field(
         default=5,
@@ -630,6 +730,14 @@ class Settings(BaseSettings):
                 "model": self.deepseek_model,
                 "api_mode": self.deepseek_api_mode,
             }
+        elif self.llm_provider == "bailian":
+            return {
+                "provider": "bailian",
+                "api_key": self.bailian_api_key,
+                "base_url": self.bailian_base_url,
+                "model": self.bailian_model,
+                "api_mode": self.bailian_api_mode,
+            }
         elif self.llm_provider == "anthropic":
             return {
                 "provider": "anthropic",
@@ -659,14 +767,6 @@ class Settings(BaseSettings):
                 "base_url": self.agnes_base_url,
                 "model": self.agnes_model,
                 "api_mode": self.agnes_api_mode,
-            }
-        elif self.llm_provider == "qwen":
-            return {
-                "provider": "qwen",
-                "api_key": self.qwen_api_key,
-                "base_url": self.qwen_base_url,
-                "model": self.qwen_model,
-                "api_mode": self.qwen_api_mode,
             }
         elif self.llm_provider == "glm":
             return {

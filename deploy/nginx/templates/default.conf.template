@@ -1,0 +1,80 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen ${LISTEN_PORT} default_server;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 100m;
+
+    location ^~ /api/auth/ {
+        proxy_pass ${AUTH_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header SysCode $http_syscode;
+        proxy_set_header Sign $http_sign;
+        proxy_set_header encryptType $http_encrypttype;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-User-Id "";
+        proxy_set_header X-Is-Admin "";
+    }
+
+    location ^~ /api/suyuan/ws/ {
+        proxy_pass ${BUSINESS_UPSTREAM}/ws/;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header SysCode $http_syscode;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-User-Id "";
+        proxy_set_header X-Is-Admin "";
+    }
+
+    location ^~ /api/suyuan/ {
+        proxy_pass ${BUSINESS_UPSTREAM}/api/;
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header SysCode $http_syscode;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-User-Id "";
+        proxy_set_header X-Is-Admin "";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store" always;
+    }
+
+    location ~* \.(?:css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf)$ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

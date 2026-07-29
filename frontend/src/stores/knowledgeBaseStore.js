@@ -5,6 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as api from '@/api/knowledgeBase'
+import { collectGraphSnapshot } from './knowledgeGraphSnapshot.js'
 
 export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   // 状态
@@ -20,6 +21,16 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   const chunksError = ref(null)
   const stats = ref(null)
   const strategies = ref([])
+  const graphStatus = ref(null)
+  const graphEntities = ref([])
+  const graphRelations = ref([])
+  const graphLoading = ref(false)
+  const graphProgress = ref({ loadedEntities: 0, loadedRelations: 0, entityTotal: 0, relationTotal: 0 })
+  const graphSnapshotVersion = ref(null)
+  const knowledgeScene = ref(null)
+  const sceneLoading = ref(false)
+  let graphRequestGeneration = 0
+  let graphAbortController = null
 
   // 计算属性
   const publicKbs = computed(() =>
@@ -148,6 +159,98 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
+  async function replaceDocument(kbId, docId, file) {
+    loading.value = true
+    error.value = null
+    try {
+      const doc = await api.replaceDocument(kbId, docId, file)
+      const index = documents.value.findIndex(item => item.id === docId)
+      if (index !== -1) documents.value[index] = doc
+      return doc
+    } catch (e) {
+      error.value = e.message || '替换文档失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadGraph(kbId, { includeHistory = false } = {}) {
+    graphAbortController?.abort()
+    graphAbortController = new AbortController()
+    const generation = ++graphRequestGeneration
+    const signal = graphAbortController.signal
+    graphLoading.value = true
+    error.value = null
+    try {
+      const statuses = includeHistory
+        ? ['candidate', 'confirmed', 'published', 'rejected', 'archived', 'merged']
+        : ['candidate', 'confirmed', 'published']
+      const [status, snapshot] = await Promise.all([
+        api.getKnowledgeGraphStatus(kbId),
+        collectGraphSnapshot(
+          params => api.getKnowledgeGraphSnapshotPage(kbId, params),
+          {
+            statuses,
+            signal,
+            onProgress: progress => {
+              if (generation === graphRequestGeneration) graphProgress.value = progress
+            }
+          }
+        )
+      ])
+      if (generation !== graphRequestGeneration || signal.aborted) return null
+      graphStatus.value = status
+      graphEntities.value = snapshot.entities
+      graphRelations.value = snapshot.relations
+      graphSnapshotVersion.value = snapshot.snapshotVersion
+      return { status, entities: snapshot.entities, relations: snapshot.relations }
+    } catch (e) {
+      if (e?.name === 'AbortError') return null
+      error.value = e.message || '加载知识图谱失败'
+      throw e
+    } finally {
+      if (generation === graphRequestGeneration) graphLoading.value = false
+    }
+  }
+
+  async function loadKnowledgeScene(kbId) {
+    sceneLoading.value = true
+    try {
+      knowledgeScene.value = await api.getKnowledgeScene(kbId)
+      return knowledgeScene.value
+    } finally {
+      sceneLoading.value = false
+    }
+  }
+
+  async function discoverKnowledgeScene(kbId, payload) {
+    sceneLoading.value = true
+    try {
+      const profile = await api.discoverKnowledgeScene(kbId, payload)
+      knowledgeScene.value = {
+        ...(knowledgeScene.value || {}),
+        knowledge_base_id: kbId,
+        scene_status: 'awaiting_confirmation',
+        profile
+      }
+      return profile
+    } finally {
+      sceneLoading.value = false
+    }
+  }
+
+  async function confirmKnowledgeScene(kbId, profileId, payload) {
+    sceneLoading.value = true
+    try {
+      const result = await api.confirmKnowledgeScene(kbId, profileId, payload)
+      knowledgeScene.value = { ...result, profile: result.profile || result }
+      return result
+    } finally {
+      sceneLoading.value = false
+    }
+  }
+
   async function retryDocument(kbId, docId) {
     loading.value = true
     try {
@@ -179,7 +282,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
-  async function fetchDocumentChunks(kbId, docId) {
+  async function fetchDocumentChunks(kbId, docId, targetChunkId = null) {
     chunksLoading.value = true
     chunksError.value = null
     try {
@@ -188,7 +291,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       currentDoc.value = {
         id: data.document_id,
         filename: data.filename,
-        total: data.total
+        total: data.total,
+        targetChunkId
       }
       return data
     } catch (e) {
@@ -244,6 +348,14 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     chunksError,
     stats,
     strategies,
+    graphStatus,
+    graphEntities,
+    graphRelations,
+    graphLoading,
+    graphProgress,
+    graphSnapshotVersion,
+    knowledgeScene,
+    sceneLoading,
 
     // Computed
     publicKbs,
@@ -259,11 +371,16 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     deleteKnowledgeBase,
     fetchDocuments,
     uploadDocument,
+    replaceDocument,
     deleteDocument,
     retryDocument,
     fetchStats,
     fetchStrategies,
     fetchDocumentChunks,
+    loadGraph,
+    loadKnowledgeScene,
+    discoverKnowledgeScene,
+    confirmKnowledgeScene,
     clearCurrentDoc,
     toggleSelection,
     selectKnowledgeBase,

@@ -28,6 +28,8 @@ from app.agent.runtime.mode_capabilities import supports_native_multimodal
 
 logger = structlog.get_logger()
 
+NATIVE_MULTIMODAL_HIDDEN_TOOLS = frozenset({"analyze_image"})
+
 
 def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Expose native multimodal image attachment while hiding legacy image analysis."""
@@ -45,7 +47,7 @@ def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any
     properties.pop("analysis_type", None)
     properties["as_multimodal_attachment"] = {
         "type": "boolean",
-        "description": "社交模式/图表模式等原生多模态模式下，仅在需要查看历史或工具生成的本地图片时设置为 true；本轮用户上传图片已经由输入自动挂载，不需要再读取。",
+        "description": "所有Agent模式均支持原生多模态；仅在需要查看历史或工具生成的本地图片时设置为 true。本轮用户上传图片已经由输入自动挂载，不需要再读取。",
         "default": False,
     }
     return multimodal_schema
@@ -405,6 +407,7 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             standard_result["data_id"] = data_id
 
         passthrough_fields = (
+            "resources",
             "refs",
             "llm_resume",
             "context_refs",
@@ -789,7 +792,10 @@ def get_react_agent_tool_registry() -> Dict[str, Callable]:
 # 工具Schema定义（用于LLM Function Calling）
 # ========================================
 
-def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_tool_schemas(
+    mode: Optional[str] = None,
+    allowed_tool_names: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """
     获取工具Schema定义（单一注册源）
 
@@ -798,8 +804,9 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     schemas = []
 
-    allowed_tools = None
-    if mode:
+    requested_order = list(dict.fromkeys(allowed_tool_names or []))
+    allowed_tools = set(requested_order) if allowed_tool_names is not None else None
+    if allowed_tools is None and mode:
         from app.agent.prompts.tool_registry import get_tools_by_mode
         allowed_tools = set(get_tools_by_mode(mode).keys())
 
@@ -809,6 +816,8 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
     for tool_data in global_tool_registry.get_all_tools():
         tool = tool_data["tool"]
         if tool.is_available():
+            if tool.name in NATIVE_MULTIMODAL_HIDDEN_TOOLS:
+                continue
             if allowed_tools is not None and tool.name not in allowed_tools:
                 continue
             schema = tool.get_function_schema()
@@ -889,6 +898,10 @@ def get_tool_schemas(mode: Optional[str] = None) -> List[Dict[str, Any]]:
             "required": ["data_id"]
         }
         })
+
+    if allowed_tool_names is not None:
+        schemas_by_name = {schema["name"]: schema for schema in schemas}
+        schemas = [schemas_by_name[name] for name in requested_order if name in schemas_by_name]
 
     logger.info("tool_schemas_generated", count=len(schemas))
 

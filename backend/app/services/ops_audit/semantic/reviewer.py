@@ -280,6 +280,7 @@ def build_semantic_review_tasks(audit: dict[str, Any]) -> dict[str, Any]:
                 "finish_time": record["finish_time"],
                 "review_kind": review_kind,
                 "semantic_focus": focus,
+                "review_issues": matched_issues,
                 "evidence_summary": _build_evidence_summary(record, matched_issues),
                 "confidence_hint": _confidence_hint(record, matched_issues),
                 "model_judgment": "needs_review",
@@ -380,12 +381,7 @@ def _review_batch_semantic_tasks(
         task for task in tasks
         if "ATTACHMENT_STATION_MAINTAIN_PHOTO_SEMANTIC_MISSING" in set(task.get("semantic_focus", []))
     ]
-    remark_tasks = [
-        _task_with_semantic_focus(task, sorted(set(task.get("semantic_focus", [])) & GENERIC_REMARK_REVIEW_RULE_IDS))
-        for task in tasks
-        if task.get("review_kind") == "remark_semantics"
-        and set(task.get("semantic_focus", [])) & GENERIC_REMARK_REVIEW_RULE_IDS
-    ]
+    remark_tasks = _expand_generic_remark_tasks(tasks)
 
     batch_calls = [
         (
@@ -464,6 +460,7 @@ def _fallback_semantic_results(
         reason = f"{reason} {type(exc).__name__}: {str(exc)[:200]}"
     for task in tasks:
         code = str(task.get("working_order_code") or "")
+        result_key = str(task.get("review_item_id") or code)
         result = _build_semantic_task_result(
             task,
             audit_records.get(code, {}),
@@ -484,7 +481,7 @@ def _fallback_semantic_results(
             "",
         )
         result["review_status"] = status
-        results[code] = result
+        results[result_key] = result
     return results
 
 
@@ -690,8 +687,11 @@ def _review_remark_tasks_batch(
     results: dict[str, dict[str, Any]] = {}
     for task in tasks:
         code = str(task.get("working_order_code") or "")
-        text = _compose_review_text(dataset_orders.get(code, {}), details_by_code.get(code, []), rf_forms_by_code.get(code, []))
-        text_by_code[code] = text
+        review_item_id = str(task.get("review_item_id") or code)
+        issue_payload = _generic_remark_issue_payload(task)
+        relevant_forms = _rf_forms_for_issue(rf_forms_by_code.get(code, []), issue_payload.get("rf_table"))
+        text = _compose_review_text(dataset_orders.get(code, {}), details_by_code.get(code, []), relevant_forms)
+        text_by_code[review_item_id] = text
         deterministic = _deterministic_remark_semantic_result(
             task,
             audit_records.get(code, {}),
@@ -699,12 +699,14 @@ def _review_remark_tasks_batch(
             text,
         )
         if deterministic is not None:
-            results[code] = deterministic
+            results[review_item_id] = deterministic
             continue
         items.append(
             {
+                "review_item_id": review_item_id,
                 "working_order_code": code,
                 "semantic_focus": task.get("semantic_focus", []),
+                "issue": issue_payload,
                 "text": text,
                 "evidence_summary": task.get("evidence_summary", {}),
             }
@@ -716,14 +718,17 @@ def _review_remark_tasks_batch(
         json.dumps({"items": items}, ensure_ascii=False, default=str),
         context={"review_kind": "remark_semantics_batch"},
     )
+    parsed_by_item = _batch_results_by_key(raw, "review_item_id")
     parsed_by_code = _batch_results_by_key(raw, "working_order_code")
     for task in tasks:
         code = str(task.get("working_order_code") or "")
-        if code in results:
+        review_item_id = str(task.get("review_item_id") or code)
+        if review_item_id in results:
             continue
-        parsed = _normalize_remark_result(parsed_by_code.get(code, {}), text_by_code.get(code, ""))
+        raw_result = parsed_by_item.get(review_item_id) or parsed_by_code.get(code, {})
+        parsed = _normalize_remark_result(raw_result, text_by_code.get(review_item_id, ""))
         judgment, conclusion, confidence = _judge_semantic_result("remark_semantics", parsed, [], task)
-        results[code] = _build_semantic_task_result(
+        results[review_item_id] = _build_semantic_task_result(
             task,
             audit_records.get(code, {}),
             dataset_orders.get(code, {}),
@@ -732,7 +737,7 @@ def _review_remark_tasks_batch(
             confidence,
             parsed,
             [],
-            text_by_code.get(code, ""),
+            text_by_code.get(review_item_id, ""),
         )
     return results
 
@@ -804,6 +809,8 @@ def _has_range_mismatch_explanation(text: str) -> bool:
             "表格参数有误",
             "表单范围有误",
             "厂家实际参数",
+            "厂家备案参数",
+            "厂家备案范围",
             "实际参数范围",
             "厂家参数",
             "参数范围是",
@@ -1174,6 +1181,10 @@ def _build_semantic_task_result(
         "audit_level": audit_record.get("audit_level"),
         "workflow_steps": audit_record.get("workflow_steps", []),
     }
+    if task.get("review_item_id"):
+        reviewed_result["review_item_id"] = task.get("review_item_id")
+    if isinstance(task.get("source_issue"), dict):
+        reviewed_result["source_issue"] = task.get("source_issue")
     if order:
         reviewed_result["order_title"] = order.get("ORDERTITLE") or order.get("title")
         reviewed_result["order_content"] = order.get("ORDERCONTENT") or order.get("content")
@@ -1236,6 +1247,62 @@ def _task_with_semantic_focus(task: dict[str, Any], focus: list[str]) -> dict[st
     summary["sample_issues"] = sample_issues
     narrowed["evidence_summary"] = summary
     return narrowed
+
+
+def _expand_generic_remark_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    for task in tasks:
+        if task.get("review_kind") != "remark_semantics":
+            continue
+        issues = task.get("review_issues") or task.get("evidence_summary", {}).get("sample_issues", [])
+        for index, issue in enumerate(issues):
+            if not isinstance(issue, dict):
+                continue
+            rule_id = str(issue.get("rule_id") or "")
+            if rule_id not in GENERIC_REMARK_REVIEW_RULE_IDS:
+                continue
+            evidence = _issue_evidence(issue)
+            code = str(task.get("working_order_code") or "")
+            rf_table = str(evidence.get("rf_table") or "")
+            field = str(evidence.get("abnormal_field") or issue.get("field") or "")
+            review_item_id = "::".join([code, rule_id, rf_table, field, str(index)])
+            narrowed = _task_with_semantic_focus(task, [rule_id])
+            summary = dict(narrowed.get("evidence_summary") or {})
+            summary["issue_count"] = 1
+            summary["matched_rules"] = [rule_id]
+            summary["sample_issues"] = [issue]
+            narrowed["evidence_summary"] = summary
+            narrowed["review_item_id"] = review_item_id
+            narrowed["source_issue"] = issue
+            expanded.append(narrowed)
+    return expanded
+
+
+def _generic_remark_issue_payload(task: dict[str, Any]) -> dict[str, Any]:
+    source_issue = task.get("source_issue")
+    if not isinstance(source_issue, dict):
+        sample_issues = task.get("evidence_summary", {}).get("sample_issues", [])
+        source_issue = sample_issues[0] if sample_issues and isinstance(sample_issues[0], dict) else {}
+    evidence = _issue_evidence(source_issue)
+    return {
+        "rule_id": source_issue.get("rule_id"),
+        "rf_table": evidence.get("rf_table"),
+        "field": source_issue.get("field"),
+        "message": source_issue.get("message"),
+        "abnormal_field": evidence.get("abnormal_field"),
+        "abnormal_message": evidence.get("abnormal_message"),
+        "remark_candidates": evidence.get("remark_candidates") or {},
+    }
+
+
+def _rf_forms_for_issue(
+    rf_forms: list[tuple[str, dict[str, Any]]],
+    rf_table: Any,
+) -> list[tuple[str, dict[str, Any]]]:
+    table = str(rf_table or "").strip()
+    if not table:
+        return rf_forms
+    return [(name, form) for name, form in rf_forms if name == table]
 
 
 def _call_semantic_llm_json(prompt: str, text: str, *, context: dict[str, Any] | None = None) -> dict[str, Any] | None:

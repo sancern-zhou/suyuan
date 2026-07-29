@@ -228,6 +228,14 @@ class DataRegistryService:
             return entry
         return self._reload_and_get_entry(data_id)
 
+    def list_metadata(self, *, schema: Optional[str] = None) -> List[DataRegistryEntry]:
+        """List registered entries, newest first, optionally constrained to one schema."""
+        with self._lock:
+            entries = list(self._index.values())
+        if schema:
+            entries = [entry for entry in entries if entry.schema == schema]
+        return sorted(entries, key=lambda entry: entry.created_at, reverse=True)
+
     def load_sample(self, data_id: str) -> List[Dict[str, Any]]:
         entry = self._require_entry(data_id)
         with entry.sample_path.open("r", encoding="utf-8") as f:

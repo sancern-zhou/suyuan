@@ -4,16 +4,15 @@
     <div v-if="messages.length === 0 && !hideWelcome" class="welcome-message">
       <h2>{{ welcomeContent.title }}</h2>
       <p>{{ welcomeContent.description }}</p>
-      <div class="welcome-capabilities">
-        <button
+      <ul class="welcome-capabilities">
+        <li
           v-for="(feature, index) in welcomeContent.features"
           :key="index"
           class="welcome-capability"
-          type="button"
         >
           {{ feature }}
-        </button>
-      </div>
+        </li>
+      </ul>
       <p class="hint">{{ welcomeContent.example }}</p>
     </div>
 
@@ -52,9 +51,9 @@
         <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
           <div v-for="(attachment, idx) in message.attachments" :key="idx" class="message-attachment">
             <!-- 图片附件 -->
-            <img
+            <AuthenticatedImage
               v-if="attachment.type === 'image'"
-              :src="attachment.url"
+              :source="attachment.url"
               :alt="attachment.name"
               :title="attachment.name"
               class="attachment-image"
@@ -275,10 +274,15 @@
     <!-- 图片预览模态框 -->
     <div v-if="previewedImage" class="image-preview-modal" @click="closeImagePreview">
       <div class="image-preview-content" @click.stop>
-        <img :src="previewedImage.url" :alt="previewedImage.name" class="preview-image" />
+        <AuthenticatedImage
+          :source="previewedImage.url"
+          :alt="previewedImage.name"
+          class="preview-image"
+          @resolved="setPreviewResolvedUrl"
+        />
         <div class="preview-info">
           <span class="preview-filename">{{ previewedImage.name }}</span>
-          <a :href="previewedImage.url" :download="previewedImage.name" class="preview-download" @click.stop>
+          <a v-if="previewedImage.resolvedUrl" :href="previewedImage.resolvedUrl" :download="previewedImage.name" class="preview-download" @click.stop>
             下载
           </a>
         </div>
@@ -294,9 +298,12 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
+import { getAgentMode } from '@/config/agentModes.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
+import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   getExecutingProcessMessages,
   getMessageType,
@@ -354,6 +361,10 @@ const props = defineProps({
   assistantMode: {
     type: String,
     default: 'general-agent'
+  },
+  agentMode: {
+    type: String,
+    default: 'assistant'
   },
   hideWelcome: {
     type: Boolean,
@@ -609,57 +620,17 @@ const reportContentCacheMap = computed(() => {
   return cacheMap
 })
 
-// 根据助手模式返回欢迎消息内容
+// 根据所选智能体返回欢迎消息内容
 const welcomeContent = computed(() => {
-  const contentMap = {
-    'meteorology-expert': {
-      title: '气象分析场景',
-      description: '面向大气环境业务的气象数据分析与过程诊断：',
-      features: [
-        '补采、读取并分析 ERA5 等历史气象数据',
-        '开展气象条件、边界层、风场与污染过程关联分析',
-        '生成轨迹、时序、风玫瑰等专业图表',
-        '输出可复用的分析结论和图表说明'
-      ],
-      example: '例如："分析广州天河站 2025-11-01 前后的气象扩散条件"'
-    },
-    'data-visualization-expert': {
-      title: '数据可视化场景',
-      description: '根据数据结构和业务目标生成可解释的专业图表：',
-      features: [
-        '识别数据字段并推荐合适的图表类型',
-        '绘制空气质量、气象、组分和对比分析图表',
-        '支持图表样式、配色、标题和布局调整',
-        '将图表沉淀到右侧面板，便于查看和复用'
-      ],
-      example: '例如："绘制广州 11 月 PM2.5 与 O3 的日变化对比图"'
-    },
-    'report-generation-expert': {
-      title: '报告生成场景',
-      description: '面向业务汇报和专项分析的报告生成与编辑：',
-      features: [
-        '按模板组织背景、数据、图表、结论和建议',
-        '整合对话中的分析结果与可视化图表',
-        '支持 Word、Excel、PPT 等办公文件处理',
-        '生成可继续编辑的阶段性报告内容'
-      ],
-      example: '例如："根据本轮分析结果生成一份污染过程溯源简报"'
-    },
-    'general-agent': {
-      title: '大气环境智能分析与决策支持平台',
-      description: '集数据查询、专家分析、图表生成、报告撰写和办公处理于一体的智能工作台：',
-      features: [
-        '助手：处理文件、表格、文档、PPT 和通用办公任务',
-        '专家：开展空气质量、气象、组分、污染过程和溯源分析',
-        '问数：查询本地业务数据，生成 SQL、汇总统计和结果解释',
-        '报告：整合分析结论、图表和模板，生成可编辑报告内容',
-        '图表：基于已有数据生成趋势、对比、分布、地图和专题图表',
-        '支持知识库检索、文件上传、历史会话恢复和多轮追问'
-      ],
-      example: '例如："查询广州天河站 2025-11-01 的 O3 过程，分析气象影响并生成图表和简报"'
-    }
+  const selectedAgent = getAgentMode(props.agentMode)
+  const agent = selectedAgent?.welcome ? selectedAgent : getAgentMode('assistant')
+
+  return {
+    title: agent.name,
+    description: agent.welcome.description,
+    features: agent.welcome.features,
+    example: agent.welcome.example
   }
-  return contentMap[props.assistantMode] || contentMap['general-agent']
 })
 
 // 执行中的过程消息：只显示当前用户消息之后、最终答案到达之前的过程。
@@ -1226,7 +1197,7 @@ const fetchImageFromApi = async (imageId) => {
   try {
     const apiUrl = `/api/image/${imageId}`
     console.log(`[ReActMessageList] 从API获取图片: ${apiUrl}`)
-    const response = await fetch(apiUrl)
+    const response = await authFetch(apiUrl)
     if (response.ok) {
       const data = await response.json()
       if (data.data) {
@@ -1805,7 +1776,13 @@ const previewedImage = ref(null)
 
 const previewAttachment = (attachment) => {
   if (attachment.type === 'image') {
-    previewedImage.value = attachment
+    previewedImage.value = { ...attachment, resolvedUrl: '' }
+  }
+}
+
+const setPreviewResolvedUrl = (url) => {
+  if (previewedImage.value) {
+    previewedImage.value.resolvedUrl = url
   }
 }
 
@@ -1911,25 +1888,21 @@ const closeImagePreview = () => {
   }
 
   .welcome-capabilities {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
     margin: 22px auto 0;
-    text-align: left;
+    padding: 0;
+    list-style: none;
+    text-align: center;
   }
 
   .welcome-capability {
-    min-height: 42px;
-    padding: 9px 12px;
-    border: 1px solid #d8deea;
-    border-radius: 8px;
-    background: #fff;
     color: #35425f;
-    font: inherit;
     font-size: 13px;
-    line-height: 1.45;
-    text-align: left;
-    cursor: default;
+    line-height: 1.6;
+    text-align: center;
   }
 
   .hint {

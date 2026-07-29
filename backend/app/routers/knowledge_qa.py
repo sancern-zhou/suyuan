@@ -18,15 +18,24 @@ import asyncio
 import time
 from typing import Optional, List
 from collections import OrderedDict
-from fastapi import APIRouter, HTTPException, Depends, Header
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.knowledge_base.conversation_store import ConversationStore, get_conversation_store
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.knowledge_base.conversation_store import (
+    ConversationAccessDenied,
+    ConversationStore,
+    get_conversation_store,
+)
 from app.knowledge_base.models import ConversationSessionStatus
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.schemas import ConversationSource
+from app.conversations.service import ConversationCatalogService
+from app.core.sse import create_sse_response
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/knowledge-qa", tags=["Knowledge QA"])
@@ -584,10 +593,6 @@ async def generate_streaming_answer(
             "stream": True
         }
 
-        # 千问3特殊处理：禁用思考模式
-        if llm_service.provider == "qwen":
-            payload["enable_thinking"] = False
-
         full_answer = ""
 
         async with httpx.AsyncClient(timeout=600.0) as client:
@@ -673,7 +678,8 @@ async def generate_streaming_answer(
 @router.post("/stream")
 async def knowledge_qa_stream(
     request: KnowledgeQARequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
 ):
     """
     知识问答流式接口（推荐使用）
@@ -694,17 +700,21 @@ async def knowledge_qa_stream(
     """
     start_time = time.time()
 
-    # 获取用户ID（从请求头）
-    user_id = None  # 实际应从请求头获取，如：x-user-id
+    user_id = user.id
 
     # 获取或创建会话
     conversation_store = await get_conversation_store(db)
-    session_id, existing_turns, is_new = await conversation_store.get_or_create_session(
-        session_id=request.session_id,
-        user_id=user_id,
-        knowledge_base_ids=request.knowledge_base_ids,
-        first_query=request.query
-    )
+    try:
+        session_id, existing_turns, is_new = await conversation_store.get_or_create_session(
+            session_id=request.session_id,
+            user_id=user_id,
+            knowledge_base_ids=request.knowledge_base_ids,
+            first_query=request.query,
+            owner_username=user.username,
+            owner_display_name=user.display_name,
+        )
+    except ConversationAccessDenied as exc:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
 
     logger.info(
         "knowledge_qa_request",
@@ -761,15 +771,7 @@ async def knowledge_qa_stream(
                 }
                 yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
+        return create_sse_response(event_generator())
 
     except Exception as e:
         logger.error("knowledge_qa_failed", error=str(e), exc_info=True)
@@ -780,7 +782,10 @@ async def knowledge_qa_stream(
 
 
 @router.post("", response_model=KnowledgeQAResponse)
-async def knowledge_qa_non_stream(request: KnowledgeQARequest):
+async def knowledge_qa_non_stream(
+    request: KnowledgeQARequest,
+    user: CurrentUser = Depends(require_current_user),
+):
     """
     知识问答非流式接口（简化版）
 
@@ -791,8 +796,7 @@ async def knowledge_qa_non_stream(request: KnowledgeQARequest):
     """
     start_time = time.time()
 
-    # 获取用户ID
-    user_id = None
+    user_id = user.id
 
     # 生成会话ID
     session_id = request.session_id or f"kqa_{int(time.time() * 1000)}"
@@ -821,7 +825,7 @@ async def knowledge_qa_non_stream(request: KnowledgeQARequest):
             max_tokens=4096
         )
 
-        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+        elapsed_ms = round((time.time() - start_time) * 1000)
 
         # 格式化来源
         sources = []
@@ -861,16 +865,69 @@ async def knowledge_qa_health():
 # 会话管理 API
 # ========================================
 
+@router.get("/history/list")
+async def list_user_sessions(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    user_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """列出当前用户的会话；管理员可列出全部会话。"""
+    conversation_store = await get_conversation_store(db)
+
+    status_filter = None
+    if status:
+        try:
+            status_filter = ConversationSessionStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="无效的状态值")
+
+    if user.is_admin:
+        sessions = await conversation_store.list_all_sessions(
+            status=status_filter, limit=limit, offset=offset
+        )
+    else:
+        sessions = await conversation_store.list_user_sessions(
+            user_id=user.id,
+            status=status_filter,
+            limit=limit,
+            offset=offset
+        )
+
+    return {
+        "sessions": [
+            {
+                "session_id": s.id,
+                "title": s.title,
+                "status": s.status.value,
+                "total_turns": s.total_turns,
+                "last_query": s.last_query,
+                "created_at": s.created_at.isoformat(),
+                "updated_at": s.updated_at.isoformat()
+            }
+            for s in sessions
+        ],
+        "total": len(sessions)
+    }
+
+
 @router.get("/history/{session_id}")
 async def get_conversation_history(
     session_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     获取对话历史
 
     返回会话的所有对话轮次
     """
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
     conversation_store = await get_conversation_store(db)
     session = await conversation_store.get_session(session_id)
 
@@ -904,7 +961,9 @@ async def get_conversation_history(
 async def get_recent_turns(
     session_id: str,
     limit: int = 10,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     获取最近的对话轮次
@@ -913,6 +972,9 @@ async def get_recent_turns(
         session_id: 会话ID
         limit: 返回数量（默认10）
     """
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
     conversation_store = await get_conversation_store(db)
     turns = await conversation_store.get_recent_turns(session_id, limit=limit)
 
@@ -935,18 +997,25 @@ async def get_recent_turns(
 @router.delete("/history/{session_id}")
 async def delete_conversation_session(
     session_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     删除会话
 
     级联删除所有对话轮次
     """
+    row = await catalog.require_write(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
     conversation_store = await get_conversation_store(db)
     success = await conversation_store.delete_session(session_id)
 
     if not success:
         raise HTTPException(status_code=404, detail="会话不存在")
+
+    await catalog.delete(session_id)
 
     return {"message": "会话已删除", "session_id": session_id}
 
@@ -954,11 +1023,16 @@ async def delete_conversation_session(
 @router.post("/history/{session_id}/archive")
 async def archive_conversation_session(
     session_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """
     归档会话
     """
+    row = await catalog.require_write(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
     conversation_store = await get_conversation_store(db)
     success = await conversation_store.archive_session(session_id)
 
@@ -966,57 +1040,3 @@ async def archive_conversation_session(
         raise HTTPException(status_code=404, detail="会话不存在")
 
     return {"message": "会话已归档", "session_id": session_id}
-
-
-@router.get("/history/list")
-async def list_user_sessions(
-    status: Optional[str] = None,
-    limit: int = 20,
-    offset: int = 0,
-    user_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    列出用户的会话
-
-    Args:
-        status: 状态过滤 (active/archived/expired)
-        limit: 返回数量
-        offset: 偏移量
-        user_id: 用户ID（从请求头获取）
-    """
-    # 从请求头获取用户ID
-    user_id = user_id or None
-
-    conversation_store = await get_conversation_store(db)
-
-    # 解析状态
-    status_filter = None
-    if status:
-        try:
-            status_filter = ConversationSessionStatus(status)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="无效的状态值")
-
-    sessions = await conversation_store.list_user_sessions(
-        user_id=user_id,
-        status=status_filter,
-        limit=limit,
-        offset=offset
-    )
-
-    return {
-        "sessions": [
-            {
-                "session_id": s.id,
-                "title": s.title,
-                "status": s.status.value,
-                "total_turns": s.total_turns,
-                "last_query": s.last_query,
-                "created_at": s.created_at.isoformat(),
-                "updated_at": s.updated_at.isoformat()
-            }
-            for s in sessions
-        ],
-        "total": len(sessions)
-    }

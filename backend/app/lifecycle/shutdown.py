@@ -14,10 +14,12 @@ import structlog
 
 from app.lifecycle.database import close_database, stop_data_fetchers
 from app.lifecycle.knowledge_base import stop_knowledge_base_services
+from app.lifecycle.nacos import stop_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import stop_scheduled_task_service
 from app.lifecycle.social import stop_social_platform_service
 from app.lifecycle.social_worker_api import stop_social_worker_api_service
+from app.agent.runtime.steering import steering_registry
 from app.utils.http_client import http_client
 from config.settings import settings
 
@@ -29,6 +31,8 @@ async def run_shutdown(app: FastAPI) -> None:
     app_role = normalize_app_role(settings.app_role)
     logger.info("application_shutting_down", app_role=app_role)
 
+    await stop_nacos(app)
+
     if starts_background_services(app_role):
         await stop_social_worker_api_service(app)
         await stop_scheduled_task_service()
@@ -37,3 +41,10 @@ async def run_shutdown(app: FastAPI) -> None:
         await stop_knowledge_base_services()
     await close_database()
     await http_client.close()
+    auth_service = getattr(app.state, "auth_service", None)
+    if auth_service is not None:
+        await auth_service.close()
+    auth_redis = getattr(app.state, "auth_redis", None)
+    if auth_redis is not None:
+        await auth_redis.aclose()
+    await steering_registry.aclose()

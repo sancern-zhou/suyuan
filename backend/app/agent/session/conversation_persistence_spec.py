@@ -19,7 +19,6 @@ def test_conversation_persistence_does_not_store_thought_events():
             {"type": "thought", "content": "运行时思考不应持久化", "timestamp": "2026-07-08T16:01:01"},
             {"type": "final", "content": "最终回答", "timestamp": "2026-07-08T16:01:02"},
         ],
-        collected_data_ids=[],
         collected_visuals=[],
     )
 
@@ -30,3 +29,13 @@ def test_conversation_persistence_does_not_store_thought_events():
     ]
     assert "运行时思考不应持久化" not in str(session.conversation_history)
     assert "旧思考不应保留" not in str(session.conversation_history)
+
+
+def test_transcript_persistence_does_not_own_or_clear_resource_compatibility_fields():
+    session = Session(session_id="session-a", query="q", data_ids=["data:v1:existing"])
+    ConversationPersistenceService().apply_complete(
+        session,
+        display_history=[],
+        collected_visuals=[],
+    )
+    assert session.data_ids == ["data:v1:existing"]

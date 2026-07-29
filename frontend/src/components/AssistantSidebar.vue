@@ -3,10 +3,8 @@
     <div class="sidebar-header">
       <template v-if="!isCollapsed">
         <div class="header-title-wrapper">
-          <img src="/wechat-screenshot.png" alt="企业微信截图" class="header-image">
           <div class="brand-copy">
-            <h2>风清气智</h2>
-            <span>智能体平台</span>
+            <h2>{{ projectConfig.brandName }}</h2>
           </div>
         </div>
       </template>
@@ -15,87 +13,219 @@
       </button>
     </div>
 
-    <!-- 新对话按钮固定在header下方 -->
-    <div class="new-session-section">
-      <button
-        class="module-card new-session-btn"
-        type="button"
-        @click="handleModuleSelect('restart-session')"
-      >
-        <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
-        <div v-if="!isCollapsed" class="module-info">
-          <p class="module-title">新对话</p>
-        </div>
-      </button>
-    </div>
-
-    <div class="module-list">
-      <div
-        v-for="group in moduleGroups"
-        :key="group.id"
-        class="module-group"
-      >
-        <div v-if="!isCollapsed" class="module-group-title">{{ group.title }}</div>
+    <!-- 核心工作入口固定在 header 下方 -->
+    <div class="primary-navigation">
+      <div class="new-session-section">
         <button
-          v-for="module in group.modules"
-          :key="module.id"
           class="module-card"
-          :class="{ active: isActive(module.id) }"
+          :class="{ active: isActive('agent-platform') }"
           type="button"
-          @click="handleModuleSelect(module.id)"
-          :title="isCollapsed ? module.name : ''"
+          @click="handleModuleSelect('agent-platform')"
+          :title="isCollapsed ? '智能体平台' : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+          <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">{{ module.name }}</p>
+            <p class="module-title">智能体平台</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
+          type="button"
+          @click="handleModuleSelect('restart-session')"
+        >
+          <span class="module-icon" v-html="getModuleIcon('restart-session')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">新建对话</p>
+          </div>
+        </button>
+        <button
+          v-if="projectConfig.hasModule('xuchang-air-quality')"
+          class="module-card"
+          :class="{ active: isActive('air-quality-forecast') }"
+          type="button"
+          @click="handleModuleSelect('air-quality-forecast')"
+          :title="isCollapsed ? '预报预测' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('air-quality-forecast')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">预报预测</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('query-dashboard') }"
+          type="button"
+          @click="handleModuleSelect('query-dashboard')"
+          :title="isCollapsed ? '智能问数' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('query-dashboard')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">智能问数</p>
+          </div>
+        </button>
+        <button
+          v-for="task in taskWorkspaceEntries"
+          :key="task.task_id"
+          class="module-card"
+          :class="{ active: activeModule === `task-workspace:${task.task_id}` }"
+          type="button"
+          @click="$emit('action', { type: 'task-workspace', taskId: task.task_id })"
+          :title="isCollapsed ? task.workspace_entry?.title || task.name : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('scheduled-tasks')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">{{ task.workspace_entry?.title || task.name }}</p>
+          </div>
+        </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('knowledge-base') }"
+          type="button"
+          @click="handleModuleSelect('knowledge-base')"
+          :title="isCollapsed ? '知识管理' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('knowledge-base')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">知识管理</p>
           </div>
         </button>
       </div>
+
+      <div class="module-list">
+        <div
+          v-for="group in moduleGroups"
+          :key="group.id"
+          class="module-group"
+        >
+          <button
+            v-for="module in group.modules"
+            :key="module.id"
+            class="module-card"
+            :class="{ active: isActive(module.id) }"
+            type="button"
+            @click="handleModuleSelect(module.id)"
+            :title="isCollapsed ? module.name : ''"
+          >
+            <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+            <div v-if="!isCollapsed" class="module-info">
+              <p class="module-title">{{ module.name }}</p>
+            </div>
+          </button>
+        </div>
+      </div>
     </div>
 
-    <!-- 最近对话列表 -->
-    <div v-if="!isCollapsed && displayedRecentSessions.length > 0" class="recent-sessions-section">
-      <div class="recent-sessions-header">
-        <span class="recent-sessions-title">{{ showCaseLibrary ? '案例库' : '最近对话' }}</span>
+    <div class="sidebar-scroll-area">
+      <!-- 最近对话列表 -->
+      <div v-if="!isCollapsed" class="recent-sessions-section">
+        <div class="recent-sessions-header">
+          <span class="recent-sessions-title">{{ conversationListTitle }}</span>
+          <div class="conversation-view-actions">
+            <button
+              class="conversation-view-icon"
+              :class="{ active: conversationListView === CONVERSATION_LIST_VIEW.CASES }"
+              type="button"
+              @click="toggleConversationView(CONVERSATION_LIST_VIEW.CASES)"
+              title="查看案例库"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 4.5h12a1 1 0 0 1 1 1v14l-7-3.5-7 3.5v-14a1 1 0 0 1 1-1Z" />
+                <path d="M9 8h6" />
+                <path d="M9 11h4" />
+              </svg>
+            </button>
+            <button
+              class="conversation-view-icon"
+              :class="{ active: conversationListView === CONVERSATION_LIST_VIEW.IM }"
+              type="button"
+              @click="toggleConversationView(CONVERSATION_LIST_VIEW.IM)"
+              title="查看IM对话"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 5.5h14v10H9l-4 3v-13Z" />
+                <path d="M8.5 9h7" />
+                <path d="M8.5 12h4.5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="recent-sessions-list">
+          <div v-if="activeSessionList.length === 0" class="recent-session-empty">
+            {{ conversationListEmptyText }}
+          </div>
+          <div
+            v-for="session in activeSessionList"
+            :key="session.session_id"
+            class="recent-session-item"
+            :class="{ running: session.is_running }"
+            @click="loadSession(session)"
+          >
+            <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
+            <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div ref="settingsFooterRef" class="user-settings-footer">
+      <div
+        v-if="settingsMenuOpen"
+        id="sidebar-user-settings-menu"
+        class="user-settings-menu"
+        role="menu"
+        aria-label="系统管理"
+      >
         <button
-          class="case-library-icon"
-          :class="{ active: showCaseLibrary }"
+          v-for="module in settingsModules"
+          :key="module.id"
+          class="settings-menu-item"
+          :class="{ active: isActive(module.id) }"
           type="button"
-          @click="toggleCaseLibrary"
-          :title="showCaseLibrary ? '返回最近对话' : '查看案例库'"
+          role="menuitem"
+          @click="handleSettingsSelect(module.id)"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M6 4.5h12a1 1 0 0 1 1 1v14l-7-3.5-7 3.5v-14a1 1 0 0 1 1-1Z" />
-            <path d="M9 8h6" />
-            <path d="M9 11h4" />
-          </svg>
+          <span class="module-icon" v-html="getModuleIcon(module.id)"></span>
+          <span>{{ module.name }}</span>
         </button>
       </div>
-      <div class="recent-sessions-list">
-        <div v-if="showCaseLibrary && caseLibrarySessions.length === 0" class="recent-session-empty">
-          暂无案例
-        </div>
-        <div
-          v-for="session in activeSessionList"
-          :key="session.session_id"
-          class="recent-session-item"
-          :class="{ running: session.is_running }"
-          @click="loadSession(session)"
-        >
-          <span class="session-query">{{ truncateQuery(session.query, 30) }}</span>
-          <span class="session-time">{{ session.is_running ? '运行中' : formatTime(session.updated_at) }}</span>
-        </div>
+
+      <div class="user-identity" :title="userDisplayName">
+        <span v-if="isCollapsed" class="user-initial" aria-hidden="true">{{ userInitial }}</span>
+        <span v-else class="user-name">{{ userDisplayName }}</span>
       </div>
+      <button
+        class="settings-toggle"
+        type="button"
+        aria-label="打开系统设置"
+        aria-controls="sidebar-user-settings-menu"
+        :aria-expanded="settingsMenuOpen"
+        @click.stop="toggleSettingsMenu"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.55v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.86-2.86.06-.06A1.7 1.7 0 0 0 4.1 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2.3V9.55h.1A1.7 1.7 0 0 0 4.1 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06L6.56 3.7l.06.06A1.7 1.7 0 0 0 8.5 4.1a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V2.3h4.05v.1A1.7 1.7 0 0 0 15 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.4 8.5a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4.05h-.1A1.7 1.7 0 0 0 19.4 15Z" />
+        </svg>
+      </button>
     </div>
   </aside>
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/auth/authStore.js'
 import { useReactStore } from '@/stores/reactStore'
+import {
+  CONVERSATION_LIST_VIEW,
+  filterSidebarConversations,
+  toggleConversationListView
+} from './conversationListPolicy.js'
+import { filterSidebarModules } from './sidebarProjectModules.js'
 
 const router = useRouter()
+const auth = useAuthStore()
 const store = useReactStore()
 
 const props = defineProps({
@@ -106,6 +236,10 @@ const props = defineProps({
   collapsed: {
     type: Boolean,
     default: false
+  },
+  taskWorkspaceEntries: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -113,7 +247,16 @@ const emit = defineEmits(['update:activeModule', 'select', 'action', 'loadSessio
 
 // 内部折叠状态，优先使用外部传入的props
 const isCollapsed = ref(props.collapsed)
+const settingsFooterRef = ref(null)
+const settingsMenuOpen = ref(false)
+const closeSettingsMenu = () => {
+  settingsMenuOpen.value = false
+}
+const toggleSettingsMenu = () => {
+  settingsMenuOpen.value = !settingsMenuOpen.value
+}
 const toggleCollapse = () => {
+  closeSettingsMenu()
   const newValue = !isCollapsed.value
   isCollapsed.value = newValue
   emit('update:collapsed', newValue)
@@ -122,33 +265,51 @@ const toggleCollapse = () => {
 // 监听外部props变化
 watch(() => props.collapsed, (newValue) => {
   isCollapsed.value = newValue
+  closeSettingsMenu()
 })
+
+const userDisplayName = computed(() => {
+  const name = auth.user?.name || auth.user?.userName || '当前用户'
+  return String(name).trim() || '当前用户'
+})
+const userInitial = computed(() => Array.from(userDisplayName.value)[0] || '用')
 
 const recentSessions = ref([])
 const refreshingSessions = ref(false)
-const showCaseLibrary = ref(false)
+const conversationListView = ref(CONVERSATION_LIST_VIEW.RECENT)
 const RECENT_SESSIONS_LIMIT = 30
 const SESSION_FETCH_LIMIT = 200
 let recentSessionsTimer = null
-
-const isSessionCase = (session) => session?.metadata?.is_case === true
 
 const handleSessionCaseUpdated = () => {
   refreshRecentSessions({ silent: true })
 }
 
-const displayedRecentSessions = computed(() => {
+const mergedRecentSessions = computed(() => {
   const localSessions = Object.values(store.sessionStates || {})
     .filter(session => session.sessionId)
     .map(session => {
       const firstUser = session.messages?.find(m => m.type === 'user')
       const lastMessage = session.messages?.[session.messages.length - 1]
+
+      // 获取会话标题：优先使用文本内容，其次使用附件名称，最后使用默认标题
+      let queryTitle = '新对话'
+      if (firstUser?.content && firstUser.content.trim()) {
+        queryTitle = firstUser.content.trim()
+      } else if (firstUser?.attachments && firstUser.attachments.length > 0) {
+        const firstAttachment = firstUser.attachments[0]
+        queryTitle = firstAttachment.name || firstAttachment.filename || '附件'
+      }
+
       return {
         session_id: session.sessionId,
-        query: firstUser?.content || '新对话',
+        query: queryTitle,
         updated_at: lastMessage?.timestamp || new Date().toISOString(),
         is_running: !!session.isAnalyzing,
-        is_local: true
+        is_local: true,
+        ...(session.conversationAccess?.source
+          ? { source: session.conversationAccess.source }
+          : {})
       }
     })
 
@@ -168,12 +329,20 @@ const displayedRecentSessions = computed(() => {
       if (a.is_running !== b.is_running) return a.is_running ? -1 : 1
       return new Date(b.updated_at) - new Date(a.updated_at)
     })
-    .slice(0, RECENT_SESSIONS_LIMIT)
+})
+
+const displayedRecentSessions = computed(() => {
+  return filterSidebarConversations(
+    mergedRecentSessions.value,
+    CONVERSATION_LIST_VIEW.RECENT
+  ).slice(0, RECENT_SESSIONS_LIMIT)
 })
 
 const caseLibrarySessions = computed(() => {
-  return recentSessions.value
-    .filter(isSessionCase)
+  return filterSidebarConversations(
+    mergedRecentSessions.value,
+    CONVERSATION_LIST_VIEW.CASES
+  )
     .sort((a, b) => {
       const aMarked = a.metadata?.case_marked_at || a.updated_at || 0
       const bMarked = b.metadata?.case_marked_at || b.updated_at || 0
@@ -181,26 +350,69 @@ const caseLibrarySessions = computed(() => {
     })
 })
 
-const activeSessionList = computed(() => {
-  return showCaseLibrary.value ? caseLibrarySessions.value : displayedRecentSessions.value
+const imConversationSessions = computed(() => {
+  return filterSidebarConversations(
+    mergedRecentSessions.value,
+    CONVERSATION_LIST_VIEW.IM
+  ).slice(0, RECENT_SESSIONS_LIMIT)
 })
 
-const modules = [
+const activeSessionList = computed(() => {
+  if (conversationListView.value === CONVERSATION_LIST_VIEW.CASES) {
+    return caseLibrarySessions.value
+  }
+  if (conversationListView.value === CONVERSATION_LIST_VIEW.IM) {
+    return imConversationSessions.value
+  }
+  return displayedRecentSessions.value
+})
+
+const conversationListTitle = computed(() => ({
+  [CONVERSATION_LIST_VIEW.RECENT]: '最近对话',
+  [CONVERSATION_LIST_VIEW.CASES]: '案例库',
+  [CONVERSATION_LIST_VIEW.IM]: 'IM对话'
+})[conversationListView.value])
+
+const conversationListEmptyText = computed(() => ({
+  [CONVERSATION_LIST_VIEW.RECENT]: '暂无最近对话',
+  [CONVERSATION_LIST_VIEW.CASES]: '暂无案例',
+  [CONVERSATION_LIST_VIEW.IM]: '暂无IM对话'
+})[conversationListView.value])
+
+const allModules = [
+  {
+    id: 'agent-platform',
+    name: '智能体平台',
+    abbr: '平台',
+    desc: '选择适合任务的智能体',
+    badge: '工作台',
+    isAction: true
+  },
   {
     id: 'restart-session',
-    name: '新对话',
-    abbr: '新对话',
+    name: '新建对话',
+    abbr: '新建对话',
     desc: '清空对话，开始新分析',
     badge: '操作',
     isAction: true
   },
   {
     id: 'query-dashboard',
-    name: '问数大屏',
+    name: '智能问数',
     abbr: '问数',
-    desc: '进入广东省数据总览与问数联动大屏',
+    desc: '进入AI智能问数对话与数据联动大屏',
     badge: '问数',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
+  },
+  {
+    id: 'air-quality-forecast',
+    name: '预报预测',
+    abbr: '预报',
+    desc: '查看许昌市逐小时空气质量预报与观测',
+    badge: '预报',
+    isAction: true,
+    requiredModule: 'xuchang-air-quality'
   },
   {
     id: 'knowledge-base',
@@ -208,15 +420,8 @@ const modules = [
     abbr: '知识',
     desc: '管理文档与知识检索',
     badge: '管理',
-    isAction: true
-  },
-  {
-    id: 'cognitive-map',
-    name: '认知地图',
-    abbr: '地图',
-    desc: '管理实体、关系、规则与证据',
-    badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'tools-management',
@@ -224,7 +429,8 @@ const modules = [
     abbr: '工具',
     desc: '查看和管理分析工具',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'skills-management',
@@ -232,7 +438,8 @@ const modules = [
     abbr: '技能',
     desc: '查看和管理技能文档',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'fetchers',
@@ -240,7 +447,8 @@ const modules = [
     abbr: '数据',
     desc: '管理数据源和Fetchers',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'scheduled-tasks',
@@ -248,7 +456,8 @@ const modules = [
     abbr: '任务',
     desc: '创建和管理定时任务',
     badge: '工具',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'session-history',
@@ -264,7 +473,8 @@ const modules = [
     abbr: '社交',
     desc: '管理QQ、微信等社交机器人',
     badge: '管理',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'file-manager',
@@ -272,11 +482,37 @@ const modules = [
     abbr: '文件',
     desc: '浏览和下载/tmp目录文件',
     badge: '工具',
-    isAction: true
+    isAction: true,
+    requiredModule: 'legacy'
   }
 ]
 
+const modules = filterSidebarModules(allModules, projectConfig.hasModule)
+
+const SETTINGS_MODULE_IDS = Object.freeze([
+  'session-history',
+  'skills-management',
+  'scheduled-tasks',
+  'tools-management',
+  'file-manager',
+  'fetchers',
+  'social-platform'
+])
+
+const settingsModules = computed(() => {
+  const byId = new Map(modules.map(module => [module.id, module]))
+  return SETTINGS_MODULE_IDS.map(id => byId.get(id)).filter(Boolean)
+})
+
 const moduleIcons = {
+  'agent-platform': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" />
+      <path d="m4.5 8 7.5 4.2L19.5 8" />
+      <path d="M12 12.2v8" />
+      <path d="m8.5 6 7 4" />
+    </svg>
+  `,
   'restart-session': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5v14" />
@@ -291,6 +527,16 @@ const moduleIcons = {
       <path d="M12 16V8" />
       <path d="M16 16v-7" />
       <path d="M20 8.5 16 6l-4 2-4-3" />
+    </svg>
+  `,
+  'air-quality-forecast': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="M7.5 16v-4" />
+      <path d="M11.5 16V8" />
+      <path d="M15.5 16v-6" />
+      <path d="m7 8 4-3 3 2 5-3" />
     </svg>
   `,
   'session-history': `
@@ -308,18 +554,6 @@ const moduleIcons = {
       <path d="M8 8h8" />
       <path d="M8 11.5h8" />
       <path d="M8 15h5" />
-    </svg>
-  `,
-  'cognitive-map': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="6" cy="7" r="2.5" />
-      <circle cx="17" cy="6" r="2.5" />
-      <circle cx="18" cy="17" r="2.5" />
-      <circle cx="7" cy="18" r="2.5" />
-      <path d="M8.3 6.7 14.5 6.2" />
-      <path d="M15.8 8.1 8.8 16.1" />
-      <path d="M8.9 8.6 16.1 15.3" />
-      <path d="M9.5 18h6" />
     </svg>
   `,
   'file-manager': `
@@ -378,6 +612,20 @@ const handleModuleSelect = (moduleId) => {
   emit('action', moduleId)
 }
 
+const handleSettingsSelect = (moduleId) => {
+  handleModuleSelect(moduleId)
+  closeSettingsMenu()
+}
+
+const handleDocumentPointerDown = (event) => {
+  if (!settingsMenuOpen.value) return
+  if (!settingsFooterRef.value?.contains(event.target)) closeSettingsMenu()
+}
+
+const handleDocumentKeydown = (event) => {
+  if (event.key === 'Escape') closeSettingsMenu()
+}
+
 const isActive = (moduleId) => props.activeModule === moduleId
 
 // 获取最近会话
@@ -385,7 +633,7 @@ const refreshRecentSessions = async (options = {}) => {
   const { silent = false } = options
   if (!silent) refreshingSessions.value = true
   try {
-    const response = await fetch(`/api/sessions?limit=${SESSION_FETCH_LIMIT}`)
+    const response = await authFetch(`/api/sessions?limit=${SESSION_FETCH_LIMIT}`)
     if (!response.ok) throw new Error('Failed to fetch sessions')
     const data = await response.json()
     // 按更新时间排序，取最近会话
@@ -405,38 +653,14 @@ const loadSession = (session) => {
   emit('loadSession', session.session_id)
 }
 
-const toggleCaseLibrary = () => {
-  showCaseLibrary.value = !showCaseLibrary.value
+const toggleConversationView = (targetView) => {
+  conversationListView.value = toggleConversationListView(
+    conversationListView.value,
+    targetView
+  )
 }
 
-// 过滤后的模块列表（排除"新对话"）
-const moduleGroups = computed(() => {
-  const byId = new Map(modules.map(module => [module.id, module]))
-  const groups = [
-    {
-      id: 'work',
-      title: '工作',
-      ids: ['session-history']
-    },
-    {
-      id: 'resources',
-      title: '资源',
-      ids: ['knowledge-base', 'cognitive-map', 'file-manager']
-    },
-    {
-      id: 'system',
-      title: '系统',
-      ids: ['tools-management', 'skills-management', 'fetchers', 'scheduled-tasks', 'social-platform']
-    }
-  ]
-
-  return groups
-    .map(group => ({
-      ...group,
-      modules: group.ids.map(id => byId.get(id)).filter(Boolean)
-    }))
-    .filter(group => group.modules.length > 0)
-})
+const moduleGroups = computed(() => [])
 
 // 截断查询文本
 const truncateQuery = (query, maxLength = 30) => {
@@ -471,6 +695,8 @@ const formatTime = (timestamp) => {
 // 组件挂载时加载最近会话
 onMounted(() => {
   refreshRecentSessions()
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
+  document.addEventListener('keydown', handleDocumentKeydown)
   window.addEventListener('session-case-updated', handleSessionCaseUpdated)
   recentSessionsTimer = window.setInterval(() => {
     refreshRecentSessions({ silent: true })
@@ -478,6 +704,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  document.removeEventListener('keydown', handleDocumentKeydown)
   window.removeEventListener('session-case-updated', handleSessionCaseUpdated)
   if (recentSessionsTimer) {
     window.clearInterval(recentSessionsTimer)
@@ -493,7 +721,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   padding: 0 12px 14px;
-  overflow-y: auto;
+  overflow: visible;
   transition: width 0.2s ease, padding 0.2s ease;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   border-right: 1px solid #edf1f7;
@@ -502,6 +730,13 @@ onUnmounted(() => {
     width: 60px;
     padding: 0 8px 14px;
   }
+}
+
+.sidebar-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .sidebar-header {
@@ -525,9 +760,7 @@ onUnmounted(() => {
   }
 
   .brand-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: block;
     min-width: 0;
   }
 
@@ -539,21 +772,16 @@ onUnmounted(() => {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   }
 
-  span {
-    font-size: 11px;
-    color: #7a86a0;
-    white-space: nowrap;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
-  }
-
   .header-image {
     width: 34px;
     height: 34px;
-    border-radius: 9px;
-    object-fit: contain;
+    border-radius: 8px;
     flex-shrink: 0;
-    background: #fff;
-    border: 1px solid #edf1f7;
+    object-fit: cover;
+  }
+
+  .header-mark {
+    display: block;
   }
 
   .collapsed & {
@@ -562,19 +790,24 @@ onUnmounted(() => {
   }
 }
 
+.primary-navigation {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .new-session-section {
-  position: sticky;
-  top: 54px;
-  z-index: 19;
   background: #f8fafc;
-  padding-bottom: 10px;
-  margin-bottom: 4px;
-  box-shadow: 0 8px 0 #f8fafc;
+  padding-bottom: 0;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 
   .collapsed & {
-    position: static;
-    margin-bottom: 12px;
     padding-bottom: 0;
+    margin-bottom: 0;
   }
 }
 
@@ -616,12 +849,13 @@ onUnmounted(() => {
 
 .module-list {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
-  gap: 14px;
+  gap: 4px;
 
   .collapsed & {
     align-items: center;
-    gap: 8px;
+    gap: 4px;
   }
 }
 
@@ -632,16 +866,8 @@ onUnmounted(() => {
 
   .collapsed & {
     align-items: center;
-    gap: 6px;
+    gap: 4px;
   }
-}
-
-.module-group-title {
-  padding: 0 8px;
-  font-size: 11px;
-  color: #8a96a8;
-  line-height: 1.8;
-  letter-spacing: 0;
 }
 
 .module-card {
@@ -721,17 +947,144 @@ onUnmounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
-.new-session-btn {
-  background: #1976d2;
-  color: #fff;
+.user-settings-footer {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  margin-top: 10px;
+  padding: 9px 4px 0;
+  border-top: 1px solid #e4eaf2;
+  background: #f8fafc;
 
-  &:hover {
-    background: #1565c0;
-    color: #fff;
+  .collapsed & {
+    gap: 0;
+    justify-content: space-between;
+    padding-right: 0;
+    padding-left: 0;
+  }
+}
+
+.user-identity {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+}
+
+.user-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #35425f;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #526173;
+  background: #e8eef6;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  color: #69758c;
+  background: transparent;
+  cursor: pointer;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.55;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
-  .module-title {
-    color: inherit;
+  &:hover,
+  &[aria-expanded='true'] {
+    color: #1976d2;
+    background: #eaf2fb;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #8abfff;
+    outline-offset: 2px;
+  }
+}
+
+.user-settings-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 196px;
+  padding: 6px;
+  border: 1px solid #e0e7f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(31, 42, 68, 0.14);
+
+  .collapsed & {
+    right: auto;
+    bottom: 0;
+    left: 52px;
+    width: 196px;
+  }
+}
+
+.settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  color: #526173;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+
+  &:hover,
+  &:focus-visible {
+    color: #1976d2;
+    background: #eef4fb;
+    outline: none;
+  }
+
+  &.active {
+    color: #1976d2;
+    background: #e3f2fd;
   }
 }
 
@@ -756,7 +1109,13 @@ onUnmounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
-.case-library-icon {
+.conversation-view-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conversation-view-icon {
   width: 26px;
   height: 26px;
   display: inline-flex;

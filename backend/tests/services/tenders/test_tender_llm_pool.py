@@ -2,7 +2,10 @@ import asyncio
 
 import pytest
 
-from app.services.tenders.llm import TenderLLMClientPool
+from app.services.tenders.llm import (
+    TenderLLMClientPool,
+    _is_retryable_failover_error,
+)
 from app.services.tenders.models import (
     NoticeType,
     TenderCandidate,
@@ -120,6 +123,29 @@ class HangingBatchLLM:
         return {}
 
 
+class ConnectionFailedOnceBatchLLM(RecordingLLM):
+    def __init__(self, name):
+        super().__init__(name, delay=0)
+        self.review_candidates_calls = 0
+
+    async def review_candidates(self, candidates, rule_decision):
+        self.review_candidates_calls += 1
+        if self.review_candidates_calls == 1:
+            raise ConnectionError("temporary screening connection failure")
+        return await super().review_candidates(candidates, rule_decision)
+
+
+class ServiceUnavailableLLM:
+    def __init__(self):
+        self.review_extracted = []
+
+    async def review_and_extract_notice(self, candidate, detail_text, decision):
+        self.review_extracted.append(candidate.url)
+        error = RuntimeError("upstream unavailable")
+        error.status_code = 503
+        raise error
+
+
 @pytest.mark.asyncio
 async def test_llm_pool_limits_each_client_concurrency():
     primary = RecordingLLM("primary")
@@ -158,6 +184,26 @@ async def test_llm_pool_limits_each_client_concurrency():
     assert secondary.max_active <= 2
     assert len(primary.extracted) == 6
     assert len(secondary.extracted) == 6
+
+
+def test_llm_pool_delegates_internal_transient_retries_to_failover():
+    primary = RecordingLLM("primary")
+    secondary = RecordingLLM("secondary")
+    primary.retry_rate_limits = True
+    primary.retry_transient_errors = True
+    secondary.retry_rate_limits = True
+    secondary.retry_transient_errors = True
+
+    TenderLLMClientPool([(primary, 1), (secondary, 1)])
+
+    assert primary.retry_rate_limits is False
+    assert primary.retry_transient_errors is False
+    assert secondary.retry_rate_limits is False
+    assert secondary.retry_transient_errors is False
+
+
+def test_retryable_failover_recognizes_wrapped_429_message():
+    assert _is_retryable_failover_error(RuntimeError("upstream returned 429"))
 
 
 @pytest.mark.asyncio
@@ -217,6 +263,32 @@ async def test_llm_pool_uses_configured_screening_client_for_batch_screening():
 
 
 @pytest.mark.asyncio
+async def test_llm_pool_retries_only_configured_screening_client(monkeypatch):
+    async def fake_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("app.services.tenders.llm.asyncio.sleep", fake_sleep)
+    monkeypatch.setenv("TENDER_LLM_SCREENING_MAX_ATTEMPTS", "2")
+    agnes = RecordingLLM("agnes", delay=0)
+    glm = ConnectionFailedOnceBatchLLM("glm")
+    pool = TenderLLMClientPool(
+        [(agnes, 1), (glm, 1)],
+        screening_client_index=1,
+    )
+    candidates = [
+        TenderCandidate(title="环境监测服务", url="https://example.test/retry-glm")
+    ]
+
+    decisions = await pool.review_candidates(
+        candidates,
+        TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
+    )
+
+    assert decisions["https://example.test/retry-glm"].decision_source == "glm"
+    assert glm.review_candidates_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_llm_pool_switches_to_next_client_after_rate_limit(monkeypatch):
     sleep_calls = []
 
@@ -246,7 +318,35 @@ async def test_llm_pool_switches_to_next_client_after_rate_limit(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_llm_pool_switches_batch_screening_after_rate_limit(monkeypatch):
+async def test_llm_pool_switches_to_next_client_after_server_error(monkeypatch):
+    async def fake_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("app.services.tenders.llm.asyncio.sleep", fake_sleep)
+    primary = ServiceUnavailableLLM()
+    secondary = RecordingLLM("secondary", delay=0)
+    pool = TenderLLMClientPool([(primary, 1), (secondary, 1)])
+    candidate = TenderCandidate(
+        title="环境监测服务",
+        url="https://example.test/server-error",
+        notice_type=NoticeType.TENDER,
+    )
+
+    notice = await pool.review_and_extract_notice(
+        candidate,
+        "详情正文",
+        TenderFilterDecision(is_relevant=True, reason="detail keep", confidence=0.9),
+    )
+
+    assert notice.url == candidate.url
+    assert primary.review_extracted == [candidate.url]
+    assert secondary.review_extracted == [candidate.url]
+
+
+@pytest.mark.asyncio
+async def test_llm_pool_keeps_batch_screening_on_configured_client_after_rate_limit(
+    monkeypatch,
+):
     sleep_calls = []
 
     async def fake_sleep(seconds):
@@ -263,19 +363,20 @@ async def test_llm_pool_switches_batch_screening_after_rate_limit(monkeypatch):
         TenderCandidate(title="环境监测服务", url="https://example.test/batch")
     ]
 
-    decisions = await pool.review_candidates(
-        candidates,
-        TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
-    )
+    with pytest.raises(FakeRateLimitError):
+        await pool.review_candidates(
+            candidates,
+            TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
+        )
 
-    assert decisions["https://example.test/batch"].decision_source == "secondary"
-    assert primary.review_candidates_calls == 1
-    assert sleep_calls == [1.0]
+    assert primary.review_candidates_calls == 3
+    assert sleep_calls == [1.0, 1.0]
 
 
 @pytest.mark.asyncio
-async def test_llm_pool_switches_batch_screening_after_timeout(monkeypatch):
+async def test_llm_pool_retries_configured_screening_client_after_timeout(monkeypatch):
     monkeypatch.setenv("TENDER_LLM_SCREENING_TIMEOUT_SECONDS", "0.01")
+    monkeypatch.setenv("TENDER_LLM_SCREENING_MAX_ATTEMPTS", "2")
     primary = HangingBatchLLM()
     secondary = RecordingLLM("secondary", delay=0)
     pool = TenderLLMClientPool(
@@ -286,10 +387,10 @@ async def test_llm_pool_switches_batch_screening_after_timeout(monkeypatch):
         TenderCandidate(title="环境监测服务", url="https://example.test/timeout")
     ]
 
-    decisions = await pool.review_candidates(
-        candidates,
-        TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
-    )
+    with pytest.raises(asyncio.TimeoutError):
+        await pool.review_candidates(
+            candidates,
+            TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
+        )
 
-    assert decisions["https://example.test/timeout"].decision_source == "secondary"
-    assert primary.calls == 1
+    assert primary.calls == 2

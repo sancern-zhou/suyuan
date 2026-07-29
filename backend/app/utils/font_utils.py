@@ -12,7 +12,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ class FontManager:
 
     # 字体配置优先级（从高到低）
     FONT_FALLBACK_CHAIN = [
+        'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_report_chart优先字体
         # Linux 系统字体
         'Noto Sans CJK SC',     # 简体中文（推荐）
         'Noto Sans CJK TC',     # 繁体中文
@@ -45,9 +46,9 @@ class FontManager:
 
     # 字体文件路径（Linux）
     FONT_FILE_PATHS = [
+        Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
         Path('/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'),
         Path('/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc'),
-        Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
     ]
 
     def __init__(self):
@@ -184,6 +185,32 @@ def get_font_manager() -> FontManager:
 def configure_chinese_font() -> bool:
     """快捷函数：配置中文字体"""
     return get_font_manager().configure_chinese_font()
+
+
+def chinese_font_prop() -> fm.FontProperties | None:
+    """Return the preferred Chinese font, aligned with create_report_chart."""
+    font_manager = get_font_manager()
+    for font_path in font_manager.FONT_FILE_PATHS:
+        if not font_path.exists():
+            continue
+        try:
+            fm.fontManager.addfont(str(font_path))
+            return fm.FontProperties(fname=str(font_path))
+        except Exception as exc:
+            logger.debug(f"注册字体文件失败 {font_path}: {exc}")
+    font_name = font_manager._find_best_chinese_font()
+    if font_name:
+        return fm.FontProperties(family=[font_name])
+    return None
+
+
+def apply_font_to_figure(fig: Any) -> None:
+    """Apply the configured Chinese font to all text objects in a matplotlib figure."""
+    prop = chinese_font_prop()
+    if prop is None:
+        return
+    for text in fig.findobj(match=matplotlib.text.Text):
+        text.set_fontproperties(prop)
 
 
 # 自动配置（模块导入时执行）

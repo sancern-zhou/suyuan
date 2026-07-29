@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 // API客户端 - 处理与后端的所有通信
 
 // API基础配置
@@ -24,7 +25,7 @@ class ApiClient {
     }
 
     try {
-      const response = await fetch(url, config)
+      const response = await authFetch(url, config)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -39,7 +40,7 @@ class ApiClient {
   async post(endpoint, data = {}) {
     const url = `${this.baseURL}${endpoint}`
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -139,7 +140,7 @@ class ApiClient {
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -129,8 +129,8 @@ class ReadFileTool(LLMTool):
 
         Args:
             path: 文件路径（绝对路径或相对路径）
-            offset: 起始行号（从0开始，默认0）
-            limit: 读取行数（默认不限制；大文件应显式分页读取）
+            offset: 文本起始行号或DOCX非空段落偏移量（从0开始，默认0）
+            limit: 文本行数或DOCX非空段落数（默认不限制；大文件应显式分页读取）
             max_size: 最大文件大小（字节，默认100KB）
             encoding: 文本文件编码（默认 utf-8）
             auto_analyze: 是否自动分析图片（默认 True）
@@ -142,7 +142,7 @@ class ReadFileTool(LLMTool):
             extract_tables: PDF是否提取表格（默认 True）
             extract_images: PDF是否提取图片（默认 False）
             enable_preview: PDF/DOCX是否生成预览（默认 True）
-            as_multimodal_attachment: 图片文件是否返回原生多模态附件（社交模式专用）
+            as_multimodal_attachment: 图片文件是否返回原生多模态附件（所有Agent模式可用）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}
@@ -194,7 +194,13 @@ class ReadFileTool(LLMTool):
                 )
             elif is_docx:
                 return await self._read_docx_delegated(
-                    resolved_path, file_size, pages, max_paragraphs, enable_preview
+                    resolved_path,
+                    file_size,
+                    offset,
+                    limit,
+                    pages,
+                    max_paragraphs,
+                    enable_preview,
                 )
             elif is_doc:
                 return await self._read_doc_delegated(
@@ -811,6 +817,8 @@ class ReadFileTool(LLMTool):
         self,
         file_path: Path,
         file_size: int,
+        offset: int = 0,
+        limit: Optional[int] = None,
         pages: Optional[str] = None,
         max_paragraphs: Optional[int] = None,
         enable_preview: bool = True
@@ -833,6 +841,8 @@ class ReadFileTool(LLMTool):
             # 构造参数
             read_docx_args = {
                 "path": str(file_path),
+                "offset": offset,
+                "limit": limit,
                 "max_paragraphs": max_paragraphs or 100,
                 "include_tables": True
             }
@@ -1040,6 +1050,7 @@ class ReadFileTool(LLMTool):
                 return {
                     "success": True,
                     "data": result["data"],
+                    "resources": result.get("data", {}).get("resources", []),
                     "summary": result["summary"],
                     "metadata": {
                         "generator": "read_file",
@@ -1443,12 +1454,12 @@ class ReadFileTool(LLMTool):
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "起始行",
+                        "description": "文本起始行或DOCX非空段落偏移量",
                         "default": 0
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "行数"
+                        "description": "文本行数或DOCX非空段落数"
                     },
                     "max_size": {
                         "type": "integer",

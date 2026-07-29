@@ -47,9 +47,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 import { createImagePanelLightboxImage } from './imagePanelLightbox.js'
+import {
+  createLatestMediaObjectUrlLoader,
+  objectUrlToDataUrl,
+  sameOriginApiMediaPath
+} from '@/services/apiMediaBlob.js'
 
 const props = defineProps({
   src: {
@@ -73,37 +78,33 @@ const loadError = ref(false)
 const lightboxVisible = ref(false)
 const lightboxImages = ref([])
 
-// 用于等待图片加载完成的 Promise
-let imageLoadPromise = null
+const apiMediaLoader = createLatestMediaObjectUrlLoader()
+let activeApiLoad = null
+
+const getCaptureImage = async (source) => {
+  return source.startsWith('blob:') ? objectUrlToDataUrl(source) : source
+}
 
 // 暴露方法给父组件（用于截图捕获）
 const getChartImage = async () => {
-  // 如果图片已加载且没有错误，直接返回数据URL
+  // 页面使用Blob URL显示；截图收集仍返回下游需要的data URL。
   if (imageSrc.value && !loadError.value) {
-    return imageSrc.value
+    return getCaptureImage(imageSrc.value)
   }
 
   // 如果正在加载中，等待加载完成
-  if (isLoading.value) {
-    return new Promise((resolve) => {
-      const unwatch = watch(isLoading, (loading) => {
-        if (!loading) {
-          unwatch()
-          resolve(imageSrc.value || null)
-        }
-      })
-    })
+  if (isLoading.value && activeApiLoad) {
+    await activeApiLoad
+    return imageSrc.value ? getCaptureImage(imageSrc.value) : null
   }
 
   // 如果还没开始加载（isLoading为false且imageSrc为空），可能是组件刚创建
   // 主动触发加载并等待
   if (!imageSrc.value && !isLoading.value && !loadError.value) {
     const src = props.src
-    if (isImagePlaceholder(src)) {
-      const imageId = src.slice(7, -1)
-      // 重新触发加载
-      await fetchImage(imageId)
-      return imageSrc.value || null
+    if (sameOriginApiMediaPath(src)) {
+      await fetchImage(src)
+      return imageSrc.value ? getCaptureImage(imageSrc.value) : null
     }
   }
 
@@ -115,70 +116,42 @@ defineExpose({
   getChartImage
 })
 
-// 检测是否是 [IMAGE:xxx] 格式的占位符
-const isImagePlaceholder = (src) => {
-  return typeof src === 'string' && src.startsWith('[IMAGE:') && src.endsWith(']')
-}
-
-// 检测是否是 /api/image/xxx 格式的URL
-const isApiImageUrl = (src) => {
-  return typeof src === 'string' && src.startsWith('/api/image/')
-}
-
-// 补充URL基础地址（处理相对路径）
-const resolveImageUrl = (src) => {
-  if (src.startsWith('http')) {
-    return src  // 已是完整URL
-  }
-  if (src.startsWith('/api/image/')) {
-    // 使用相对路径，让浏览器自动处理协议、主机名和端口
-    // 这样可以适配端口映射、反向代理等各种场景
-    return src
-  }
-  return src  // 其他情况（如data URL）
-}
-
 // 从API获取图片数据
-const fetchImage = async (imageId) => {
-  try {
-    isLoading.value = true
-    loadError.value = false
-    const response = await fetch(`/api/image/${imageId}`)
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+const fetchImage = (source) => {
+  apiMediaLoader.clear()
+  isLoading.value = true
+  loadError.value = false
+  imageSrc.value = ''
+
+  activeApiLoad = apiMediaLoader.start(source, {
+    onSuccess: (url) => {
+      imageSrc.value = url
+    },
+    onError: (error) => {
+      console.error('图片加载失败:', error)
+      loadError.value = true
+      imageSrc.value = ''
+    },
+    onSettled: () => {
+      isLoading.value = false
+      emit('ready')
     }
-    const data = await response.json()
-    if (data.data) {
-      imageSrc.value = data.data
-    } else {
-      throw new Error('Invalid response format')
-    }
-  } catch (error) {
-    console.error('图片加载失败:', error)
-    loadError.value = true
-    imageSrc.value = ''
-  } finally {
-    isLoading.value = false
-    emit('ready')
-  }
+  })
+
+  return activeApiLoad
 }
 
 // 处理图片源变化
 const updateImageSrc = () => {
   const src = props.src
 
-  // 如果是 [IMAGE:xxx] 格式，从API获取base64数据
-  if (isImagePlaceholder(src)) {
-    const imageId = src.slice(7, -1) // 提取 "[IMAGE:xxx]" 中的 xxx
-    fetchImage(imageId)
-  }
-  // 如果是 /api/image/xxx 格式，补充基础URL后作为图片URL
-  else if (isApiImageUrl(src)) {
-    imageSrc.value = resolveImageUrl(src)
-    emit('ready')
-  }
-  // 否则，直接使用完整 data URL 或其他格式
-  else {
+  if (sameOriginApiMediaPath(src)) {
+    fetchImage(src)
+  } else {
+    apiMediaLoader.clear()
+    activeApiLoad = null
+    isLoading.value = false
+    loadError.value = false
     imageSrc.value = src
     emit('ready')
   }
@@ -198,6 +171,8 @@ const onLoad = () => {
 
 const onError = () => {
   console.error('图片加载失败:', imageSrc.value)
+  apiMediaLoader.clear()
+  imageSrc.value = ''
   loadError.value = true
   emit('ready')
 }
@@ -212,6 +187,11 @@ const openLightbox = () => {
 
 onMounted(() => {
   updateImageSrc()
+})
+
+onUnmounted(() => {
+  apiMediaLoader.clear()
+  activeApiLoad = null
 })
 </script>
 

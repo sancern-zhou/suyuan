@@ -36,7 +36,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import { authAxios } from '@/auth/http.js'
 
 const props = defineProps({
   accountId: {
@@ -89,7 +89,7 @@ const fetchQRCode = async () => {
   errorMessage.value = ''
 
   try {
-    const response = await axios.get(
+    const response = await authAxios.get(
       `/api/social/accounts/weixin/${props.accountId}/qrcode`,
       { responseType: 'blob' }
     )
@@ -106,7 +106,7 @@ const fetchQRCode = async () => {
 
 const checkStatus = async () => {
   try {
-    const response = await axios.get(
+    const response = await authAxios.get(
       `/api/social/accounts/weixin/${props.accountId}/status`
     )
 
@@ -126,7 +126,7 @@ const refreshQRCode = async () => {
   refreshing.value = true
   try {
     // 先刷新QR码
-    await axios.post(`/api/social/accounts/weixin/${props.accountId}/refresh-qrcode`)
+    await authAxios.post(`/api/social/accounts/weixin/${props.accountId}/refresh-qrcode`)
     // 重新获取
     await fetchQRCode()
   } catch (error) {

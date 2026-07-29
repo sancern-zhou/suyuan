@@ -13,14 +13,19 @@ AnalyzeImage 工具 - 使用通义千问 VL 模型分析图片
 1. 本地文件路径：D:/work_dir/image.png 或 ./image.png
 2. HTTP URL：http://localhost:8000/api/image/xxx（自动下载）
 """
-import httpx
 import base64
-import tempfile
 import os
+import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional
-from app.tools.base.tool_interface import LLMTool, ToolCategory
+from typing import Any, Dict, Optional
+
+import httpx
 import structlog
+from anthropic import APIStatusError, APITimeoutError
+
+from app.services.bailian_multimodal import call_bailian_vision
+from app.tools.base.tool_interface import LLMTool, ToolCategory
+from config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -38,11 +43,8 @@ class AnalyzeImageTool(LLMTool):
     配置：使用项目中已配置的通义千问 VL API
     """
 
-    # 通义千问VL API配置（从环境变量读取）
-    QWEN_VL_API_KEY = os.getenv("QWEN_VL_API_KEY", "")
-    QWEN_VL_BASE_URL = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-    QWEN_VL_MODEL = os.getenv("QWEN_VL_MODEL", "qwen-vl-max-latest")
-    QWEN_OCR_MODEL = os.getenv("QWEN_OCR_MODEL", "qwen-vl-ocr-latest")
+    BAILIAN_API_KEY = settings.bailian_api_key or ""
+    BAILIAN_BASE_URL = settings.bailian_base_url
 
     def __init__(self):
         super().__init__(
@@ -112,7 +114,7 @@ class AnalyzeImageTool(LLMTool):
                     "status": "failed",
                     "success": False,
                     "error": f"图片文件过大: {file_size} bytes",
-                    "summary": f"❌ 图片过大，超过5MB限制"
+                    "summary": "❌ 图片过大，超过5MB限制"
                 }
 
             # 3. 读取图片并转换为 base64
@@ -187,10 +189,8 @@ class AnalyzeImageTool(LLMTool):
         return prompts.get(operation, prompts["analyze"])
 
     def _get_model_for_operation(self, operation: str) -> str:
-        """根据操作类型选择模型。OCR 使用专用 OCR 模型，其它图片理解任务使用 VL 模型。"""
-        if operation == "ocr":
-            return self.QWEN_OCR_MODEL
-        return self.QWEN_VL_MODEL
+        """All image operations follow the global Bailian Auto model."""
+        return settings.bailian_model
 
     async def _call_vision_api(
         self,
@@ -211,62 +211,36 @@ class AnalyzeImageTool(LLMTool):
             分析结果文本
         """
         try:
-            # 构造 data URL
             data_url = f"data:image/{file_format};base64,{base64_data}"
-
-            # 调用通义千问 VL API
-            async with httpx.AsyncClient(timeout=240.0) as client:
-                response = await client.post(
-                    f"{self.QWEN_VL_BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.QWEN_VL_API_KEY}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": data_url}
-                                    },
-                                    {
-                                        "type": "text",
-                                        "text": prompt
-                                    }
-                                ]
-                            }
-                        ],
-                        "temperature": 0.3
-                    }
-                )
-
-                response.raise_for_status()
-                result = response.json()
-                analysis = result["choices"][0]["message"]["content"]
-
-                logger.info(
-                    "qwen_vl_analysis_success",
-                    model=model,
-                    analysis_length=len(analysis)
-                )
-
-                return analysis
-
-        except httpx.TimeoutException:
-            logger.error("qwen_vl_timeout")
-            return "图片分析超时（240秒）"
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "qwen_vl_http_error",
-                status=e.response.status_code,
-                error=e.response.text[:500] if e.response else "No response"
+            analysis, _ = await call_bailian_vision(
+                image_url=data_url,
+                prompt=prompt,
+                api_key=self.BAILIAN_API_KEY,
+                base_url=self.BAILIAN_BASE_URL,
+                model=model,
+                timeout=240.0,
             )
-            return f"图片分析失败: HTTP {e.response.status_code}"
+
+            logger.info(
+                "bailian_vision_analysis_success",
+                model=model,
+                analysis_length=len(analysis)
+            )
+
+            return analysis
+
+        except APITimeoutError:
+            logger.error("bailian_vision_timeout")
+            return "图片分析超时（240秒）"
+        except APIStatusError as e:
+            logger.error(
+                "bailian_vision_http_error",
+                status=e.status_code,
+                error=str(e)[:500],
+            )
+            return f"图片分析失败: HTTP {e.status_code}"
         except Exception as e:
-            logger.error("qwen_vl_analysis_failed", error=str(e))
+            logger.error("bailian_vision_analysis_failed", error=str(e))
             return f"图片分析失败: {str(e)[:100]}"
 
     async def _resolve_input(self, path: str) -> tuple[Optional[Path], bool]:

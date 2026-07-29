@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 知识库API模块
  */
@@ -17,27 +18,24 @@ async function request(url, options = {}) {
     headers['Content-Type'] = 'application/json'
   }
 
-  // 添加用户ID（如果有）
-  const userId = localStorage.getItem('userId') || 'anonymous'
-  headers['X-User-Id'] = userId
-
-  // 添加管理员标识（如果有）
-  const isAdmin = localStorage.getItem('isAdmin') === 'true'
-  if (isAdmin) {
-    headers['X-Is-Admin'] = 'true'
-  }
-
   const config = {
     ...options,
     method,
     headers
   }
 
-  const response = await fetch(url, config)
+  const response = await authFetch(url, config)
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(errorText || `HTTP error! status: ${response.status}`)
+    const error = new Error(errorText || `HTTP error! status: ${response.status}`)
+    error.status = response.status
+    try {
+      const payload = JSON.parse(errorText)
+      error.code = payload.detail
+      error.message = typeof payload.detail === 'string' ? payload.detail : error.message
+    } catch {}
+    throw error
   }
 
   // 204 No Content
@@ -155,6 +153,15 @@ export async function deleteDocument(kbId, docId) {
   })
 }
 
+export async function replaceDocument(kbId, docId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return await request(`${BASE_URL}/${kbId}/documents/${docId}/content`, {
+    method: 'PUT',
+    body: formData
+  })
+}
+
 /**
  * 重试处理失败的文档
  */
@@ -179,4 +186,191 @@ export async function searchKnowledgeBase(params) {
  */
 export async function getDocumentChunks(kbId, docId) {
   return await request(`${BASE_URL}/${kbId}/documents/${docId}/chunks`)
+}
+
+const graphUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/graph${path}`
+const sceneUrl = (kbId, path = '') => `${BASE_URL}/${kbId}/scene${path}`
+
+export async function getKnowledgeScene(kbId) {
+  return await request(sceneUrl(kbId))
+}
+
+export async function discoverKnowledgeScene(kbId, params) {
+  return await request(sceneUrl(kbId, '/discover'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function confirmKnowledgeScene(kbId, profileId, params) {
+  return await request(sceneUrl(kbId, `/profiles/${profileId}/confirm`), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function listKnowledgeSceneSuggestions(kbId) {
+  return await request(sceneUrl(kbId, '/suggestions'))
+}
+
+export async function acceptKnowledgeSceneSuggestion(kbId, suggestionId) {
+  return await request(sceneUrl(kbId, `/suggestions/${suggestionId}/accept`), { method: 'POST' })
+}
+
+export async function rejectKnowledgeSceneSuggestion(kbId, suggestionId) {
+  return await request(sceneUrl(kbId, `/suggestions/${suggestionId}/reject`), { method: 'POST' })
+}
+
+export async function listKnowledgeBusinessRules(kbId, includeArchived = false) {
+  return await request(sceneUrl(kbId, `/rules?include_archived=${includeArchived}`))
+}
+
+export async function parseKnowledgeBusinessRule(kbId, text) {
+  return await request(sceneUrl(kbId, '/rules/parse'), { method: 'POST', body: JSON.stringify({ text }) })
+}
+
+export async function confirmKnowledgeBusinessRule(kbId, ruleId, expectedVersion) {
+  return await request(sceneUrl(kbId, `/rules/${ruleId}/confirm`), { method: 'POST', body: JSON.stringify({ expected_version: expectedVersion }) })
+}
+
+export async function archiveKnowledgeBusinessRule(kbId, ruleId) {
+  return await request(sceneUrl(kbId, `/rules/${ruleId}`), { method: 'DELETE' })
+}
+
+export async function listKnowledgeUserFacts(kbId) {
+  return await request(sceneUrl(kbId, '/facts'))
+}
+
+export async function parseKnowledgeUserFact(kbId, text) {
+  return await request(sceneUrl(kbId, '/facts/parse'), { method: 'POST', body: JSON.stringify({ text }) })
+}
+
+export async function confirmKnowledgeUserFact(kbId, factId, resolutions = {}) {
+  return await request(sceneUrl(kbId, `/facts/${factId}/confirm`), { method: 'POST', body: JSON.stringify({ resolutions }) })
+}
+
+export async function getKnowledgeGraphStatus(kbId) {
+  return await request(graphUrl(kbId, '/status'))
+}
+
+export async function getKnowledgeGraphSchema(kbId) {
+  return await request(graphUrl(kbId, '/schema'))
+}
+
+export async function updateKnowledgeGraphSchema(kbId, params) {
+  return await request(graphUrl(kbId, '/schema'), {
+    method: 'PUT',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function queryKnowledgeGraph(kbId, params = {}) {
+  return await request(graphUrl(kbId, '/query'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function getKnowledgeGraphSnapshotPage(kbId, {
+  statuses = ['candidate', 'confirmed', 'published'], cursor = null,
+  snapshotVersion = null, pageSize = 1000, signal
+} = {}) {
+  const query = new URLSearchParams({ page_size: String(pageSize) })
+  statuses.forEach(value => query.append('review_statuses', value))
+  if (cursor) query.set('cursor', cursor)
+  if (snapshotVersion !== null) query.set('snapshot_version', String(snapshotVersion))
+  return await request(graphUrl(kbId, `/snapshot?${query}`), { signal })
+}
+
+export async function getKnowledgeGraphEntityMentions(kbId, entityId, { signal } = {}) {
+  return await request(graphUrl(kbId, `/entities/${encodeURIComponent(entityId)}/mentions`), { signal })
+}
+
+export async function getKnowledgeGraphRelationMentions(kbId, relationId, { signal } = {}) {
+  return await request(graphUrl(kbId, `/relations/${encodeURIComponent(relationId)}/mentions`), { signal })
+}
+
+export async function listKnowledgeGraphEntities(kbId, statuses = []) {
+  const query = statuses.length ? `?${statuses.map(status => `review_statuses=${encodeURIComponent(status)}`).join('&')}` : ''
+  return await request(graphUrl(kbId, `/entities${query}`))
+}
+
+export async function createKnowledgeGraphEntity(kbId, params) {
+  return await request(graphUrl(kbId, '/entities'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function updateKnowledgeGraphEntity(kbId, entityId, params) {
+  return await request(graphUrl(kbId, `/entities/${entityId}`), {
+    method: 'PATCH',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function deleteKnowledgeGraphEntity(kbId, entityId) {
+  return await request(graphUrl(kbId, `/entities/${entityId}`), { method: 'DELETE' })
+}
+
+export async function listKnowledgeGraphRelations(kbId, statuses = []) {
+  const query = statuses.length ? `?${statuses.map(status => `review_statuses=${encodeURIComponent(status)}`).join('&')}` : ''
+  return await request(graphUrl(kbId, `/relations${query}`))
+}
+
+export async function createKnowledgeGraphRelation(kbId, params) {
+  return await request(graphUrl(kbId, '/relations'), {
+    method: 'POST',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function updateKnowledgeGraphRelation(kbId, relationId, params) {
+  return await request(graphUrl(kbId, `/relations/${relationId}`), {
+    method: 'PATCH',
+    body: JSON.stringify(params)
+  })
+}
+
+export async function deleteKnowledgeGraphRelation(kbId, relationId) {
+  return await request(graphUrl(kbId, `/relations/${relationId}`), { method: 'DELETE' })
+}
+
+export async function mergeKnowledgeGraphEntities(kbId, sourceId, targetId) {
+  return await request(graphUrl(kbId, '/merge'), {
+    method: 'POST',
+    body: JSON.stringify({ source_id: sourceId, target_id: targetId })
+  })
+}
+
+export async function retryFailedKnowledgeGraph(kbId) {
+  return await request(graphUrl(kbId, '/retry-failed'), { method: 'POST' })
+}
+
+export async function reindexKnowledgeGraph(kbId) {
+  return await request(graphUrl(kbId, '/reindex'), { method: 'POST' })
+}
+
+export async function createKnowledgeGraphBuild(kbId, params = {}) {
+  return await request(graphUrl(kbId, '/build'), {
+    method: 'POST',
+    body: JSON.stringify({ mode: params.mode || 'pending', batch_size: params.batch_size || 20 })
+  })
+}
+
+export async function getKnowledgeGraphBuild(kbId, taskId = null) {
+  const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''
+  return await request(graphUrl(kbId, `/build${query}`))
+}
+
+export async function cancelKnowledgeGraphBuild(kbId, taskId) {
+  return await request(graphUrl(kbId, `/build/${encodeURIComponent(taskId)}/cancel`), { method: 'POST' })
+}
+
+export async function retryKnowledgeGraphBuild(kbId, taskId) {
+  return await request(graphUrl(kbId, `/build/${encodeURIComponent(taskId)}/retry`), { method: 'POST' })
+}
+
+export async function recoverKnowledgeGraphBuilds(kbId) {
+  return await request(graphUrl(kbId, '/build/recover-expired'), { method: 'POST' })
 }

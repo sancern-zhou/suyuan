@@ -10,7 +10,6 @@ from zoneinfo import ZoneInfo
 
 import structlog
 
-
 logger = structlog.get_logger()
 
 
@@ -26,8 +25,13 @@ class PendingFaultConclusion:
 
 
 class FaultDiagnosisService:
-    def __init__(self, output_root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        output_root: str | Path | None = None,
+        knowledge_graph_guidance_provider=None,
+    ) -> None:
         self.output_root = Path(output_root or self._default_output_root()).resolve()
+        self.knowledge_graph_guidance_provider = knowledge_graph_guidance_provider
 
     def run(self, *, limit: int = 20) -> dict[str, Any]:
         pending = self.discover_pending(limit=limit)
@@ -77,8 +81,12 @@ class FaultDiagnosisService:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         cognitive_guidance = self._cognitive_guidance(conclusion, evidence_pack)
-        diagnosis = self._build_diagnosis(conclusion, evidence_pack, evidence_pack_path, cognitive_guidance)
-        evidence_output = self._build_fault_evidence_pack(conclusion, evidence_pack, diagnosis, evidence_pack_path)
+        diagnosis = self._build_diagnosis(
+            conclusion, evidence_pack, evidence_pack_path, cognitive_guidance
+        )
+        evidence_output = self._build_fault_evidence_pack(
+            conclusion, evidence_pack, diagnosis, evidence_pack_path
+        )
         self._write_json(output_dir / "fault_diagnosis.json", diagnosis)
         self._write_json(output_dir / "fault_evidence_pack.json", evidence_output)
         (output_dir / "fault_diagnosis.md").write_text(self._markdown(diagnosis), encoding="utf-8")
@@ -113,7 +121,9 @@ class FaultDiagnosisService:
         created_at = datetime.now(TZ_SHANGHAI).isoformat()
         return {
             "schema_version": "fault_diagnosis/v1",
-            "source_event_conclusion": str(Path(evidence_pack_path).with_name("event_conclusion.json")),
+            "source_event_conclusion": str(
+                Path(evidence_pack_path).with_name("event_conclusion.json")
+            ),
             "event_id": event_id,
             "diagnosis_status": "completed",
             "diagnosis_window": time_range,
@@ -146,7 +156,9 @@ class FaultDiagnosisService:
             "created_at": diagnosis["created_at"],
         }
 
-    def _ranked_cause(self, reason_codes: list[str], evidence_pack: dict[str, Any]) -> dict[str, Any]:
+    def _ranked_cause(
+        self, reason_codes: list[str], evidence_pack: dict[str, Any]
+    ) -> dict[str, Any]:
         codes = set(reason_codes)
         supporting: list[str] = []
         contradicting: list[str] = []
@@ -171,7 +183,9 @@ class FaultDiagnosisService:
             if codes <= {"single_station_dominant", "weather_missing"}:
                 cause = "单站局地影响或数据链路异常待复核"
                 cause_type = "needs_review"
-                missing.append("分钟级原始数据、数采状态、仪器运行状态、站点周边局地源和近期运维记录")
+                missing.append(
+                    "分钟级原始数据、数采状态、仪器运行状态、站点周边局地源和近期运维记录"
+                )
                 action = "先复核同城站点时序和站点周边局地源，再核查分钟级原始数据、数采状态和仪器运行状态。"
             supporting.append("污染事件由单站或少数站点主导")
         if "peer_trend_inconsistent" in codes:
@@ -207,15 +221,23 @@ class FaultDiagnosisService:
             "recommended_action": action,
         }
 
-    def _queried_data(self, evidence_pack: dict[str, Any], cognitive_guidance: dict[str, Any]) -> list[dict[str, Any]]:
-        data_files = evidence_pack.get("data_files") if isinstance(evidence_pack.get("data_files"), dict) else {}
+    def _queried_data(
+        self, evidence_pack: dict[str, Any], cognitive_guidance: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        data_files = (
+            evidence_pack.get("data_files")
+            if isinstance(evidence_pack.get("data_files"), dict)
+            else {}
+        )
         queried = []
         for name, path in sorted(data_files.items()):
             queried.append({"name": name, "status": "referenced", "path": path})
         for requirement in cognitive_guidance.get("data_requirements", []) or []:
             queried.append(
                 {
-                    "name": requirement.get("data_name") or requirement.get("name") or "cognitive_map_requirement",
+                    "name": requirement.get("data_name")
+                    or requirement.get("name")
+                    or "cognitive_map_requirement",
                     "status": "required_by_cognitive_map",
                     "path": "",
                     "reason": requirement.get("reason", ""),
@@ -235,8 +257,16 @@ class FaultDiagnosisService:
         return [str(hint) for hint in hints if hint]
 
     def _affected_stations(self, evidence_pack: dict[str, Any]) -> list[dict[str, Any]]:
-        event_summary = evidence_pack.get("event_summary") if isinstance(evidence_pack.get("event_summary"), dict) else {}
-        signal = evidence_pack.get("observed_signal_summary") if isinstance(evidence_pack.get("observed_signal_summary"), dict) else {}
+        event_summary = (
+            evidence_pack.get("event_summary")
+            if isinstance(evidence_pack.get("event_summary"), dict)
+            else {}
+        )
+        signal = (
+            evidence_pack.get("observed_signal_summary")
+            if isinstance(evidence_pack.get("observed_signal_summary"), dict)
+            else {}
+        )
         station_peaks = event_summary.get("station_peaks") or signal.get("top_station_peaks") or []
         if not isinstance(station_peaks, list):
             return []
@@ -255,90 +285,76 @@ class FaultDiagnosisService:
             )
         return [station for station in stations if station["station_name"]]
 
-    def _event_context(self, evidence_pack: dict[str, Any], affected_stations: list[dict[str, Any]]) -> dict[str, Any]:
+    def _event_context(
+        self, evidence_pack: dict[str, Any], affected_stations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         event = evidence_pack.get("event") if isinstance(evidence_pack.get("event"), dict) else {}
-        event_summary = evidence_pack.get("event_summary") if isinstance(evidence_pack.get("event_summary"), dict) else {}
+        event_summary = (
+            evidence_pack.get("event_summary")
+            if isinstance(evidence_pack.get("event_summary"), dict)
+            else {}
+        )
         return {
             "city": evidence_pack.get("city") or event.get("city") or "",
-            "main_pollutant": event.get("main_pollutant") or event_summary.get("main_pollutant") or "",
-            "city_peak": event_summary.get("city_peak") if isinstance(event_summary.get("city_peak"), dict) else {},
+            "main_pollutant": event.get("main_pollutant")
+            or event_summary.get("main_pollutant")
+            or "",
+            "city_peak": event_summary.get("city_peak")
+            if isinstance(event_summary.get("city_peak"), dict)
+            else {},
             "top_station_names": [station["station_name"] for station in affected_stations[:5]],
             "station_count_in_evidence": len(affected_stations),
         }
 
-    def _diagnosis_summary(self, cause: dict[str, Any], affected_stations: list[dict[str, Any]] | None = None) -> str:
-        station_names = [station.get("station_name") for station in (affected_stations or [])[:3] if station.get("station_name")]
+    def _diagnosis_summary(
+        self, cause: dict[str, Any], affected_stations: list[dict[str, Any]] | None = None
+    ) -> str:
+        station_names = [
+            station.get("station_name")
+            for station in (affected_stations or [])[:3]
+            if station.get("station_name")
+        ]
         station_text = f"；重点站点：{'、'.join(station_names)}" if station_names else ""
-        return f"疑似故障首要原因：{cause['cause']}{station_text}；建议：{cause['recommended_action']}"
+        return (
+            f"疑似故障首要原因：{cause['cause']}{station_text}；建议：{cause['recommended_action']}"
+        )
 
-    def _cognitive_guidance(self, conclusion: dict[str, Any], evidence_pack: dict[str, Any]) -> dict[str, Any]:
+    def _cognitive_guidance(
+        self, conclusion: dict[str, Any], evidence_pack: dict[str, Any]
+    ) -> dict[str, Any]:
         hints = self._entity_hints(conclusion, evidence_pack)
+        task = "污染告警疑似设备或数据故障原因诊断"
         fallback = {
             "used": False,
             "map_ids": [],
             "entity_hints": hints,
             "analysis_directions": [],
             "data_requirements": [],
-            "suggested_tools": [],
+            "suggested_tools": ["knowledge_graph_query"],
+            "fallback_reason": "deferred_to_unified_knowledge_graph",
         }
-        try:
-            from app.api.cognitive_map_routes import (
-                CognitiveMapGraphQueryRequest,
-                _build_graph_query_view,
-                _enabled_binding_map_ids,
-                _load_json,
-                _meta_path,
-            )
-            from app.tools.analysis.cognitive_map_guidance.tool import build_guidance_from_views
-        except Exception as exc:
-            logger.warning("fault_diagnosis_cognitive_import_failed", error=str(exc))
-            fallback["fallback_reason"] = "cognitive_map_import_failed"
+        if self.knowledge_graph_guidance_provider is None:
             return fallback
-
-        map_ids = _enabled_binding_map_ids("ops")
-        if not map_ids:
-            fallback["fallback_reason"] = "no_enabled_ops_cognitive_map"
+        guidance = self.knowledge_graph_guidance_provider(task=task, entity_hints=hints)
+        if not isinstance(guidance, dict):
+            fallback["fallback_reason"] = "invalid_knowledge_graph_guidance"
             return fallback
-
-        views: list[dict[str, Any]] = []
-        sources: dict[str, str] = {}
-        task = "污染告警疑似设备或数据故障原因诊断"
-        for map_id in map_ids[:5]:
-            try:
-                payload = CognitiveMapGraphQueryRequest(
-                    task=task,
-                    agent_mode="ops",
-                    entity_hints=hints,
-                    depth=2,
-                    limit=30,
-                    max_entities=30,
-                    max_relations=50,
-                )
-                view, source = _build_graph_query_view(map_id, payload)
-            except Exception as exc:
-                logger.warning("fault_diagnosis_cognitive_view_failed", map_id=map_id, error=str(exc))
-                continue
-            item = view.model_dump(mode="json")
-            meta = _load_json(_meta_path(map_id), {})
-            item["map_name"] = meta.get("name") or map_id
-            item["source"] = source
-            views.append(item)
-            sources[map_id] = source
-
-        guidance = build_guidance_from_views(views=views, task=task, agent_mode="ops")
         return {
-            "used": bool(guidance.get("matched")),
-            "map_ids": map_ids,
+            "used": bool(guidance.get("used") or guidance.get("matched")),
+            "map_ids": [],
+            "knowledge_base_ids": list(guidance.get("knowledge_base_ids") or []),
             "entity_hints": hints,
             "analysis_directions": guidance.get("analysis_directions", []),
             "data_requirements": guidance.get("data_requirements", []),
-            "suggested_tools": guidance.get("suggested_tools", []),
-            "sources": sources,
-            "fallback_reason": "" if guidance.get("matched") else "no_graph_matches",
+            "suggested_tools": guidance.get("suggested_tools", ["knowledge_graph_query"]),
+            "sources": guidance.get("sources", {}),
+            "fallback_reason": guidance.get("fallback_reason", ""),
         }
 
     def _requires_fault_diagnosis(self, conclusion: dict[str, Any]) -> bool:
-        downstream = conclusion.get("downstream") if isinstance(conclusion.get("downstream"), dict) else {}
+        downstream = (
+            conclusion.get("downstream") if isinstance(conclusion.get("downstream"), dict) else {}
+        )
         return (
             conclusion.get("classification") == "suspected_device_or_data_fault"
             and downstream.get("requires_fault_diagnosis") is True
@@ -402,4 +418,8 @@ class FaultDiagnosisService:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _default_output_root(self) -> Path:
-        return Path(__file__).resolve().parents[2] / "backend_data_registry" / "pollution_process_events"
+        return (
+            Path(__file__).resolve().parents[2]
+            / "backend_data_registry"
+            / "pollution_process_events"
+        )

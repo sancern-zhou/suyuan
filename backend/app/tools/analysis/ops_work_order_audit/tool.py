@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import fcntl
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -16,8 +18,43 @@ from app.services.ops_work_order_audit import (
     run_ops_audit_rules,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_refs import build_data_ref, build_file_ref, merge_refs
 
 logger = structlog.get_logger()
+
+_OUTPUT_PATH_FIELDS = (
+    "dataset_path",
+    "audit_result_path",
+    "semantic_candidates_path",
+    "semantic_review_tasks_path",
+    "semantic_review_results_path",
+    "final_issue_list_path",
+)
+
+
+def _declared_resource_refs(data: Dict[str, Any]) -> Dict[str, list[Dict[str, Any]]]:
+    files = []
+    for field in _OUTPUT_PATH_FIELDS:
+        path = data.get(field)
+        if not isinstance(path, str) or not path:
+            continue
+        metadata: Dict[str, Any] = {
+            "label": field.replace("_", " ").title(),
+            "role": "output",
+        }
+        if field == "final_issue_list_path":
+            metadata.update({
+                "logical_key": "ops_audit.final_issue_list",
+                "label": "Final issue list",
+                "importance": "high",
+            })
+        files.append(build_file_ref(path, **metadata))
+    data_refs = []
+    if isinstance(data.get("data_id"), str) and data["data_id"]:
+        ref = build_data_ref(data["data_id"], usage="primary")
+        ref.update({"label": "Operations audit summary", "role": "primary"})
+        data_refs.append(ref)
+    return merge_refs({"files": files}, {"data": data_refs})
 
 
 def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -35,6 +72,7 @@ def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dic
         "summary": summary,
         "data": data,
         "metadata": metadata,
+        "refs": _declared_resource_refs(data),
     }
     if data_id:
         result["data_id"] = data_id
@@ -231,6 +269,26 @@ def _resolve_dataset_path(dataset_path: Path) -> Path:
     return resolved
 
 
+def _run_ops_audit_rules_with_lock(
+    dataset_path: Path,
+    *,
+    output_dir: Optional[Path],
+    evidence_level: str,
+    enable_visual: bool,
+) -> Dict[str, Any]:
+    effective_output_dir = (output_dir or dataset_path.parent).resolve()
+    effective_output_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = effective_output_dir / ".ops_audit_run_rules.lock"
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        return run_ops_audit_rules(
+            dataset_path,
+            output_dir=output_dir,
+            evidence_level=evidence_level,
+            enable_visual=enable_visual,
+        )
+
+
 class OpsAuditRunRulesTool(LLMTool):
     """Run deterministic audit rules against an existing dataset."""
 
@@ -278,7 +336,8 @@ class OpsAuditRunRulesTool(LLMTool):
                     {"dataset_path": dataset_path, "latest_dataset_path": str(_latest_dataset_path()) if _latest_dataset_path() else None},
                 )
             visual_enabled = _coerce_bool(enable_visual, default=True)
-            result = run_ops_audit_rules(
+            result = await asyncio.to_thread(
+                _run_ops_audit_rules_with_lock,
                 resolved_dataset_path,
                 output_dir=Path(output_dir) if output_dir else None,
                 evidence_level=evidence_level,

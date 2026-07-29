@@ -19,7 +19,7 @@ def test_graph_mode_exposes_existing_safe_tools_only():
     tools = get_tools_by_mode("graph")
 
     assert list(tools.keys()) == [
-        "cognitive_map_guidance",
+        "knowledge_graph_query",
         "read_file",
         "edit_file",
         "grep",
@@ -33,7 +33,7 @@ def test_graph_mode_exposes_existing_safe_tools_only():
 
 def test_graph_mode_tool_order_matches_registry_order():
     assert get_tool_order_by_mode("graph") == [
-        "cognitive_map_guidance",
+        "knowledge_graph_query",
         "read_file",
         "edit_file",
         "grep",
@@ -51,14 +51,11 @@ def test_present_artifact_tool_is_available_in_expert_and_chart_modes():
 def test_graph_prompt_routes_from_prompt_builder():
     prompt = build_react_system_prompt("graph")
 
-    assert "认知地图图谱编辑 Agent" in prompt
-    assert "文件优先" in prompt
-    assert "读取/检查图谱文件" in prompt
-    assert "优先使用 read_file" in prompt
-    assert "必须先使用 read_file" in prompt
+    assert "知识库图谱编辑 Agent" in prompt
+    assert "知识库优先" in prompt
     assert "解释/查看/总结类任务" in prompt
-    assert 'agent_mode="graph"' in prompt
-    assert "禁止默认直接编辑 `extraction.json`" in prompt
+    assert "knowledge_graph_query" in prompt
+    assert "禁止读取或修改旧 cognitive_maps" in prompt
     assert "execute_python" not in prompt
     assert "/api/cognitive-maps" not in prompt
     assert "edit_file" in prompt
@@ -80,8 +77,7 @@ def test_graph_mode_preserves_map_context_and_builds_summary():
     builder = SimplifiedContextBuilder(None, None)
     builder.current_mode = "graph"
     builder.map_context = {
-        "active_map_id": "map_123",
-        "active_map_name": "站点故障图谱",
+        "knowledge_base_id": "kb_123",
         "selected_item": {
             "kind": "relation",
             "id": "relation_abc",
@@ -97,14 +93,9 @@ def test_graph_mode_preserves_map_context_and_builds_summary():
     summary = builder._build_graph_map_context_user_summary()
 
     assert builder.map_context is not None
-    assert "当前认知地图上下文" in summary
-    assert "map_123" in summary
-    assert "站点故障图谱" in summary
-    assert "backend_data_registry/cognitive_maps/map_123/" in summary
-    assert "backend/backend_data_registry/cognitive_maps/map_123/" not in summary
-    assert "extraction.json" in summary
-    assert "evaluation.json" in summary
-    assert "map.json" in summary
+    assert "当前知识库图谱上下文" in summary
+    assert "kb_123" in summary
+    assert "不读取独立 JSON 文件" in summary
     assert "relation_abc" in summary
     assert "visible_entity_ids=3" in summary
 

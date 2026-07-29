@@ -14,6 +14,8 @@ from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
+from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
+from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
@@ -30,6 +32,8 @@ from app.fetchers.consultation.monthly_supplement_fetchers import (
 )
 # 导入单一工具注册源
 from app.tools import global_tool_registry
+from app.project_config.loader import load_project_context
+from config.settings import settings
 
 import structlog
 import os
@@ -57,6 +61,11 @@ def initialize_fetchers():
 
         # 注册Satellite Fetchers
         fetcher_scheduler.register(NASAFirmsFetcher())
+        enabled_modules = load_project_context(settings.project_id).enabled_modules
+        if "xuchang-satellite" in enabled_modules:
+            fetcher_scheduler.register(GemsImageFetcher())
+            if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
+                fetcher_scheduler.register(GemsHchoDataFetcher())
 
         # 注册Dust Fetchers
         fetcher_scheduler.register(CAMSDustFetcher())

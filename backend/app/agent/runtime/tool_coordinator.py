@@ -35,7 +35,10 @@ class ToolCoordinator:
         board_context: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         normalized = tool_input or {}
-        if self.knowledge_base_ids and tool_name == "knowledge_qa_workflow":
+        if self.knowledge_base_ids and tool_name in {
+            "knowledge_qa_workflow",
+            "knowledge_graph_query",
+        }:
             normalized = {**normalized, "knowledge_base_ids": self.knowledge_base_ids}
         normalized = self._inject_drawio_board_context(tool_name, normalized, mode, board_context)
         return normalized
@@ -46,12 +49,45 @@ class ToolCoordinator:
         tool_input: Dict[str, Any],
         state: RunState,
     ) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
+        if state.mode == "board":
+            from app.agent.prompts.tool_registry import get_tools_by_mode
+
+            allowed_tools = set(get_tools_by_mode("board"))
+            if tool_name not in allowed_tools:
+                return tool_input or {}, {
+                    "status": "error",
+                    "success": False,
+                    "error": "tool_not_allowed_for_mode",
+                    "data": {
+                        "error_code": "tool_not_allowed_for_mode",
+                        "tool_name": tool_name,
+                        "allowed_tools": sorted(allowed_tools),
+                        "retryable": True,
+                    },
+                    "summary": f"工具 {tool_name} 不在画板模式白名单中，请改用画板模式允许的工具。",
+                }
         normalized = self.normalize_tool_input(
             tool_name,
             tool_input,
             mode=state.mode,
             board_context=state.board_context,
         )
+        if state.mode == "board" and tool_name in {
+            "create_drawio_board",
+            "render_drawio_board_candidate",
+            "accept_drawio_board_candidate",
+        }:
+            board_context = state.board_context if isinstance(state.board_context, dict) else {}
+            normalized = {
+                **normalized,
+                "_session_id": state.session_id,
+                "_agent_run_id": state.run_id,
+                "_board_id": board_context.get("board_id") or board_context.get("active_board_id"),
+            }
+            if tool_name == "create_drawio_board":
+                normalized["_base_revision"] = int(board_context.get("revision") or 0)
+            elif tool_name == "accept_drawio_board_candidate":
+                normalized["_expected_board_revision"] = int(board_context.get("revision") or 0)
         if self._is_drawio_edit_without_current_xml(tool_name, normalized, state.mode):
             return normalized, self._missing_drawio_current_xml_observation()
         return normalized, None
@@ -63,7 +99,7 @@ class ToolCoordinator:
         mode: str | None,
         board_context: Dict[str, Any] | None,
     ) -> Dict[str, Any]:
-        if mode != "chart" or tool_name != "create_drawio_board":
+        if mode != "board" or tool_name != "create_drawio_board":
             return tool_input
         operation = str(tool_input.get("operation") or "create").strip().lower()
         if operation != "edit":
@@ -100,7 +136,7 @@ class ToolCoordinator:
         tool_input: Dict[str, Any],
         mode: str | None,
     ) -> bool:
-        if mode != "chart" or tool_name != "create_drawio_board":
+        if mode != "board" or tool_name != "create_drawio_board":
             return False
         operation = str(tool_input.get("operation") or "create").strip().lower()
         return operation == "edit" and not (tool_input.get("current_xml") or tool_input.get("currentXml"))
@@ -110,8 +146,16 @@ class ToolCoordinator:
             "status": "error",
             "success": False,
             "error": "missing_current_xml_for_edit",
+            "metadata": {"tool_name": "create_drawio_board"},
             "summary": "当前请求没有可编辑画板 current_xml，无法执行局部编辑。",
         }
+
+    def _tag_board_tool_result(self, tool_name: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_name != "create_drawio_board" or not isinstance(result, dict):
+            return result
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        result["metadata"] = {**metadata, "tool_name": "create_drawio_board"}
+        return result
 
     async def execute_legacy_action(
         self,
@@ -126,12 +170,24 @@ class ToolCoordinator:
         if action_type == "TOOL_CALLS":
             tools = action.get("tools", [])
             for tool in tools:
-                tool["args"] = self.normalize_tool_input(
+                tool["args"], preparation_error = self.prepare_tool_input_for_state(
                     tool.get("tool", ""),
                     tool.get("args", {}),
-                    mode=state.mode,
-                    board_context=state.board_context,
+                    state,
                 )
+                if preparation_error is not None:
+                    tool_call_id = tool.get("tool_call_id", f"fallback_{tool.get('tool', '')}")
+                    tool_records.append({
+                        "tool_name": tool.get("tool", ""),
+                        "tool_use_id": tool_call_id,
+                        "tool_input": tool.get("args", {}),
+                        "result": preparation_error,
+                        "is_error": True,
+                    })
+                    tool_events.append(self.events.tool_result(
+                        state, tool_call_id, preparation_error, True, tool.get("tool", "")
+                    ))
+                    return preparation_error, tool_records, tool_events
 
             # ⚠️ 方案A：检测并发的 call_sub_agent 调用，强制 session 隔离
             sub_agent_tools = [t for t in tools if t.get("tool") == "call_sub_agent"]
@@ -148,6 +204,7 @@ class ToolCoordinator:
                     tool["args"]["_force_isolated_session"] = True
 
             parallel_result = await self.executor.execute_tools_parallel(tools=tools, iteration=state.iteration)
+            parallel_result = self._normalize_parallel_tool_results(parallel_result, tools)
             observation = self._observation_from_parallel_result(parallel_result)
             for tool_result in observation.get("tool_results", []):
                 result = tool_result.get("result", {})
@@ -223,6 +280,7 @@ class ToolCoordinator:
                 tool_args=tool_args,
                 iteration=state.iteration,
             )
+        observation = self._tag_board_tool_result(tool_name, observation)
         self._inject_schema_if_needed(tool_name, observation)
         is_error = not observation.get("success", False)
         tool_call_id = action.get("tool_call_id", f"fallback_{tool_name}")
@@ -255,6 +313,8 @@ class ToolCoordinator:
                     "error": execution.error or "工具执行被取消",
                     "summary": f"工具 {execution.tool_name} 执行失败",
                 }
+
+            result_data = self._tag_board_tool_result(execution.tool_name, result_data)
 
             self._inject_schema_if_needed(execution.tool_name, result_data)
 
@@ -371,3 +431,46 @@ class ToolCoordinator:
             "success_count": parallel_result.get("success_count", 0),
             "total_count": parallel_result.get("total_count", 0),
         }
+
+    def _normalize_parallel_tool_results(
+        self,
+        parallel_result: Dict[str, Any],
+        requested_tools: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Preserve tool identity for both successful and failed legacy parallel calls."""
+        raw_results = list(parallel_result.get("tool_results") or [])
+        raw_results.extend(parallel_result.get("failed_tools") or [])
+        normalized_results: List[Dict[str, Any]] = []
+        unused_indices = list(range(len(requested_tools)))
+
+        for raw in raw_results:
+            if not isinstance(raw, dict):
+                continue
+            tool_name = raw.get("tool_name") or raw.get("tool") or ""
+            match_index = next(
+                (
+                    index for index in unused_indices
+                    if requested_tools[index].get("tool") == tool_name
+                ),
+                None,
+            )
+            requested = requested_tools[match_index] if match_index is not None else {}
+            if match_index is not None:
+                unused_indices.remove(match_index)
+
+            result = raw.get("result") if isinstance(raw.get("result"), dict) else None
+            if result is None:
+                result = {
+                    "success": bool(raw.get("success", False)),
+                    "error": raw.get("error") or "parallel_tool_failed",
+                    "summary": raw.get("summary") or f"工具 {tool_name} 执行失败",
+                }
+            result = self._tag_board_tool_result(tool_name, result)
+            normalized_results.append({
+                "tool_call_id": raw.get("tool_call_id") or requested.get("tool_call_id", ""),
+                "tool_name": tool_name,
+                "result": result,
+                "metadata": result.get("metadata", {}),
+            })
+
+        return {**parallel_result, "tool_results": normalized_results}

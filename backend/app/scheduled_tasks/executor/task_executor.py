@@ -9,14 +9,29 @@ from typing import Optional
 from uuid import uuid4
 
 from ..models.task import ScheduledTask
+from ..models.event import TaskEvent
 from ..models.execution import (
     TaskExecution,
     StepExecution,
     ExecutionStatus
 )
 from ..storage import TaskStorage, ExecutionStorage
+from ..conversation_persistence import ScheduledTaskConversationPersistence
 
 logger = structlog.get_logger()
+
+
+def build_runtime_custom_tool_registry(tool_names):
+    """Validate and freeze the selected global tools for one custom task run."""
+    from app.agent.tool_adapter import get_react_agent_tool_registry
+    from app.services.lifecycle_manager import get_tool_registry
+    from ..custom_agent import build_custom_tool_registry
+
+    return build_custom_tool_registry(
+        tool_names,
+        get_tool_registry(),
+        get_react_agent_tool_registry(),
+    )
 
 
 class ScheduledTaskExecutor:
@@ -26,13 +41,23 @@ class ScheduledTaskExecutor:
         self,
         task_storage: TaskStorage,
         execution_storage: ExecutionStorage,
-        agent_factory: Optional[callable] = None
+        agent_factory: Optional[callable] = None,
+        conversation_persistence=None,
     ):
         self.task_storage = task_storage
         self.execution_storage = execution_storage
         self.agent_factory = agent_factory  # 用于创建ReAct Agent实例
+        self.conversation_persistence = (
+            conversation_persistence or ScheduledTaskConversationPersistence()
+        )
+        self._persisted_execution_ids: set[str] = set()
 
-    async def execute_task(self, task: ScheduledTask) -> TaskExecution:
+    async def execute_task(
+        self,
+        task: ScheduledTask,
+        event: TaskEvent | None = None,
+        update_stats: bool = True,
+    ) -> TaskExecution:
         """执行任务"""
         # 为整个任务创建统一的 session_id（保持所有步骤的上下文连续）
         task_session_id = self._generate_session_id(task.task_id)
@@ -46,7 +71,11 @@ class ScheduledTaskExecutor:
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
             total_steps=len(task.steps),
-            scheduled_time=task.next_run_at
+            scheduled_time=task.next_run_at if event is None else None,
+            trigger_type="event" if event else "scheduled",
+            event_id=event.event_id if event else None,
+            event_type=event.event_type if event else None,
+            event_attributes=event.attributes if event else {},
         )
 
         # 保存执行记录
@@ -57,6 +86,16 @@ class ScheduledTaskExecutor:
         )
 
         try:
+            shared_agent = None
+            if task.execution_mode == "custom":
+                if not self.agent_factory:
+                    raise RuntimeError("Agent factory not configured")
+                fixed_tools = build_runtime_custom_tool_registry(task.tool_names or [])
+                shared_agent = self.agent_factory(
+                    tool_registry=fixed_tools,
+                    enable_memory=False,
+                )
+
             # 顺序执行步骤（所有步骤共享同一个 session_id）
             for i, step in enumerate(task.steps):
                 execution.current_step_index = i
@@ -67,18 +106,25 @@ class ScheduledTaskExecutor:
                     step,
                     execution,
                     task_session_id,
-                    task.execution_mode
+                    task.execution_mode,
+                    task=task,
+                    agent=shared_agent,
+                    prompt=(
+                        self._build_event_prompt(step.agent_prompt, event)
+                        if event
+                        else step.agent_prompt
+                    ),
                 )
                 execution.steps.append(step_result)
 
                 # 更新统计
                 if step_result.status == ExecutionStatus.SUCCESS:
                     execution.completed_steps += 1
-                elif step_result.status == ExecutionStatus.FAILED:
+                elif step_result.status in {ExecutionStatus.FAILED, ExecutionStatus.TIMEOUT}:
                     execution.failed_steps += 1
 
                     # 如果步骤失败且不重试，终止任务
-                    if not step.retry_on_failure:
+                    if task.execution_mode == "custom" or not step.retry_on_failure:
                         logger.warning(
                             f"Step {step.step_id} failed and retry_on_failure=False, "
                             f"stopping task execution"
@@ -106,15 +152,35 @@ class ScheduledTaskExecutor:
                 execution.completed_at - execution.started_at
             ).total_seconds()
 
+            try:
+                if execution.execution_id not in self._persisted_execution_ids:
+                    await self.conversation_persistence.ensure_terminal_session(
+                        task=task,
+                        execution=execution,
+                    )
+                if execution.execution_id in self._persisted_execution_ids or execution.session_id:
+                    await self.conversation_persistence.publish_conversation(
+                        task=task,
+                        execution=execution,
+                    )
+            except Exception as publish_error:
+                execution.status = ExecutionStatus.FAILED
+                execution.error_message = (
+                    f"Scheduled conversation publication failed: {publish_error}"
+                )
+            finally:
+                self._persisted_execution_ids.discard(execution.execution_id)
+
             # 保存最终状态
             self.execution_storage.update(execution)
 
             # 更新任务统计
-            self.task_storage.update_run_stats(
-                task_id=task.task_id,
-                success=(execution.status == ExecutionStatus.SUCCESS),
-                next_run_at=None  # 由调度器更新
-            )
+            if update_stats:
+                self.task_storage.update_run_stats(
+                    task_id=task.task_id,
+                    success=(execution.status == ExecutionStatus.SUCCESS),
+                    next_run_at=None  # 由调度器更新
+                )
 
             logger.info(
                 f"Execution completed: {execution.execution_id}, "
@@ -129,14 +195,17 @@ class ScheduledTaskExecutor:
         step,
         execution: TaskExecution,
         session_id: str,  # ✅ 接收 session_id 参数
-        manual_mode: str
+        manual_mode: str,
+        task: ScheduledTask,
+        prompt: str,
+        agent=None,
     ) -> StepExecution:
         """执行单个步骤"""
         step_exec = StepExecution(
             step_id=step.step_id,
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
-            agent_prompt=step.agent_prompt
+            agent_prompt=prompt
         )
 
         logger.info(
@@ -147,7 +216,14 @@ class ScheduledTaskExecutor:
         try:
             # 执行步骤（带超时，并传入 session_id）
             result = await asyncio.wait_for(
-                self._run_agent_step(step.agent_prompt, session_id, manual_mode=manual_mode),
+                self._run_agent_step(
+                    prompt,
+                    session_id,
+                    manual_mode=manual_mode,
+                    task=task,
+                    execution=execution,
+                    agent=agent,
+                ),
                 timeout=step.timeout_seconds
             )
 
@@ -182,7 +258,15 @@ class ScheduledTaskExecutor:
 
         return step_exec
 
-    async def _run_agent_step(self, prompt: str, session_id: str, manual_mode: str) -> dict:
+    async def _run_agent_step(
+        self,
+        prompt: str,
+        session_id: str,
+        manual_mode: str,
+        task: ScheduledTask | None = None,
+        execution: TaskExecution | None = None,
+        agent=None,
+    ) -> dict:
         """
         运行Agent步骤
 
@@ -196,8 +280,8 @@ class ScheduledTaskExecutor:
         if not self.agent_factory:
             raise RuntimeError("Agent factory not configured")
 
-        # 创建Agent实例
-        agent = self.agent_factory()
+        # custom 模式由任务执行器创建一个固定工具集的 Agent 并在所有步骤间复用。
+        agent = agent or self.agent_factory()
 
         logger.info(
             f"Running agent step with session_id: {session_id}, "
@@ -211,59 +295,111 @@ class ScheduledTaskExecutor:
         thoughts = []
         tool_calls = []
         iterations = 0
+        display_history = [{
+            "type": "user",
+            "content": prompt,
+            "timestamp": datetime.now().isoformat(),
+        }]
 
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
-        async for event in agent.analyze(
-            prompt,
-            session_id=session_id,
-            manual_mode=manual_mode
-        ):
-            event_type = event.get("type")
+        try:
+            async for event in agent.analyze(
+                prompt,
+                session_id=session_id,
+                manual_mode=manual_mode,
+                session_storage_mode=("custom" if manual_mode == "custom" else "assistant"),
+            ):
+                event_type = event.get("type")
+                event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
 
-            # 记录思考过程
-            if event_type == "thought":
-                thought = event.get("content", "")
-                if thought:
-                    thoughts.append(thought)
+                if event_type in {"thought", "tool_use", "tool_result"}:
+                    frontend_message = {
+                        "type": event_type,
+                        "data": event_data,
+                        "timestamp": event_data.get("timestamp") or datetime.now().isoformat(),
+                    }
+                    if event_type == "thought":
+                        frontend_message["content"] = event_data.get("thought") or event.get("content", "")
+                    elif event_type == "tool_use":
+                        tool_name = event_data.get("tool_name") or event.get("tool_name", "")
+                        frontend_message["content"] = f"调用工具: {tool_name}" if tool_name else "执行行动"
+                    else:
+                        result = event_data.get("result")
+                        if isinstance(result, dict):
+                            frontend_message["content"] = result.get("summary_text") or result.get("summary") or "获得结果"
+                        else:
+                            frontend_message["content"] = str(result or event.get("summary") or "获得结果")
+                    display_history.append(frontend_message)
 
-            # 记录工具调用
-            elif event_type == "tool_call":
-                tool_name = event.get("tool_name", "")
-                tool_args = event.get("args", {})
-                tool_calls.append({
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "timestamp": datetime.now().isoformat()
+                # 记录思考过程
+                if event_type == "thought":
+                    thought = event_data.get("thought") or event.get("content", "")
+                    if thought:
+                        thoughts.append(thought)
+
+                # 记录工具调用
+                elif event_type in {"tool_call", "tool_use"}:
+                    tool_name = event_data.get("tool_name") or event.get("tool_name", "")
+                    tool_args = event_data.get("input") or event.get("args", {})
+                    tool_calls.append({
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+                # 记录工具结果
+                elif event_type == "tool_result":
+                    result = event_data.get("result")
+                    if tool_calls:
+                        tool_calls[-1]["success"] = not event_data.get("is_error", False)
+                        tool_calls[-1]["result"] = result or event.get("summary", "")
+
+                elif event_type == "iteration":
+                    iterations = event.get("iteration", 0)
+                elif event_type == "data_saved":
+                    data_id = event.get("data_id")
+                    if data_id:
+                        data_ids.append(data_id)
+                elif event_type == "visual_generated":
+                    visual = event.get("visual")
+                    if visual:
+                        visuals.append(visual)
+                elif event_type == "final_response":
+                    summary_parts[:] = [event.get("content", "")]
+                elif event_type == "agent_finish":
+                    summary_parts[:] = [event.get("answer") or event_data.get("answer", "")]
+                elif event_type == "complete":
+                    data = event.get("data") or {}
+                    summary_parts[:] = [data.get("answer") or data.get("response") or ""]
+                elif event_type == "fatal_error":
+                    error = event_data.get("error") or event.get("error") or "Agent execution failed"
+                    raise RuntimeError(error)
+        except BaseException as analysis_error:
+            display_history.append({
+                "type": "error",
+                "content": str(analysis_error) or type(analysis_error).__name__,
+                "timestamp": datetime.now().isoformat(),
+            })
+            raise
+        finally:
+            final_answer = "\n".join(summary_parts)
+            if final_answer:
+                display_history.append({
+                    "type": "final",
+                    "role": "assistant",
+                    "content": final_answer,
+                    "data": {"answer": final_answer},
+                    "timestamp": datetime.now().isoformat(),
                 })
-
-            # 记录工具结果
-            elif event_type == "tool_result":
-                tool_name = event.get("tool_name", "")
-                success = event.get("success", False)
-                summary = event.get("summary", "")
-                # 将结果添加到最后一个工具调用
-                if tool_calls:
-                    tool_calls[-1]["success"] = success
-                    tool_calls[-1]["result"] = summary
-
-            # 记录迭代
-            elif event_type == "iteration":
-                iterations = event.get("iteration", 0)
-
-            # 数据保存
-            elif event_type == "data_saved":
-                data_id = event.get("data_id")
-                if data_id:
-                    data_ids.append(data_id)
-
-            # 可视化生成
-            elif event_type == "visual_generated":
-                visual = event.get("visual")
-                if visual:
-                    visuals.append(visual)
-
-            elif event_type == "final_response":
-                summary_parts.append(event.get("content", ""))
+            if task is not None and execution is not None:
+                persisted = await self.conversation_persistence.persist_agent_session(
+                    agent=agent,
+                    task=task,
+                    execution=execution,
+                    display_history=display_history,
+                )
+                if persisted:
+                    self._persisted_execution_ids.add(execution.execution_id)
 
         return {
             "summary": "\n".join(summary_parts),
@@ -273,6 +409,21 @@ class ScheduledTaskExecutor:
             "tool_calls": tool_calls,
             "iterations": iterations
         }
+
+    @staticmethod
+    def _build_event_prompt(prompt: str, event: TaskEvent) -> str:
+        event_json = event.model_dump_json(indent=2)
+        return f"""{prompt}
+
+## 可信事件上下文
+{event_json}
+
+## 输出与投递约束
+- 完成任务，但不要直接发送通知或调用广播工具。
+- 最终只返回 JSON：
+  {{"success":true,"broadcast":{{"message":"广播正文","media":["绝对附件路径"]}}}}
+- 失败时只返回：{{"success":false,"error":"失败原因"}}
+"""
 
     def _generate_execution_id(self, task_id: str) -> str:
         """生成执行ID"""

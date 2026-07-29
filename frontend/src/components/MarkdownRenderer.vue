@@ -19,6 +19,12 @@ import markdownItKatex from '@traptitech/markdown-it-katex'
 import markdownItMultimdTable from 'markdown-it-multimd-table'
 import 'katex/dist/katex.min.css'
 import ImageLightbox from './ImageLightbox.vue'
+import {
+  createMarkdownApiImageHydrator,
+  escapeRawHtmlImageTags,
+  renderDeferredApiImage
+} from './markdownApiImages.js'
+import { normalizeRestoredContent } from '@/stores/sessionContent.js'
 
 // 预处理后的内容
 const processedContent = ref('')
@@ -28,6 +34,7 @@ const markdownRef = ref(null)
 const lightboxVisible = ref(false)
 const lightboxImages = ref([])
 const currentImageIndex = ref(0)
+const markdownImageHydrator = createMarkdownApiImageHydrator()
 
 const md = new MarkdownIt({
   html: true,
@@ -40,6 +47,20 @@ const md = new MarkdownIt({
 }).use(markdownItKatex, {
   throwOnError: false,
   errorColor: '#cc0000'
+})
+
+// 原始HTML图片无法安全附加业务请求头，统一转义；Markdown图片语法走下方受控规则。
+md.core.ruler.after('inline', 'escape_raw_html_images', (state) => {
+  state.tokens.forEach((token) => {
+    if (token.type === 'html_block') {
+      token.content = escapeRawHtmlImageTags(token.content)
+    }
+    token.children?.forEach((child) => {
+      if (child.type === 'html_inline') {
+        child.content = escapeRawHtmlImageTags(child.content)
+      }
+    })
+  })
 })
 
 // 自定义图片渲染规则，支持base64图片和相对路径图片
@@ -71,15 +92,13 @@ md.renderer.rules.image = function (tokens, idx, options, env, self) {
       </div>`
     }
 
-    // 处理相对路径图片（/api/image/xxx）
-    // 注意：后端现在返回完整URL，所以这个分支可能不会执行
-    if (src && src.startsWith('/api/image/')) {
-      // 使用相对路径，让浏览器自动处理（通过vite代理或同域访问）
-      return `<div class="md-image-wrapper">
-        <img src="${src}" alt="${alt}" class="md-external-image" />
-        <p class="md-image-caption">${alt}</p>
-      </div>`
-    }
+    // 所有同源 API 图片先不设置 src，DOM 渲染后通过统一鉴权媒体层转换为 Blob URL。
+    const deferredImage = renderDeferredApiImage({
+      src,
+      alt,
+      cssClass: 'md-external-image'
+    })
+    if (deferredImage) return deferredImage
   }
 
   return defaultImageRender(tokens, idx, options, env, self)
@@ -185,7 +204,7 @@ const renderedHtml = computed(() => {
   const _content = props.content
   const _streaming = props.streaming
 
-  let content = processedContent.value || _content || ''
+  let content = normalizeRestoredContent(processedContent.value || _content || '')
 
   // 【调试】
   if (content.includes('|') && content.includes('------')) {
@@ -300,50 +319,58 @@ const renderedHtml = computed(() => {
 
 // 收集Markdown中的所有图片
 const collectImages = () => {
-  nextTick(() => {
-    if (!markdownRef.value) return
+  if (!markdownRef.value) return
 
-    // 等待所有图片加载完成后再收集
-    const imgElements = markdownRef.value.querySelectorAll('img')
-    const images = []
+  const imgElements = markdownRef.value.querySelectorAll('img')
+  const images = []
 
-    imgElements.forEach((img, index) => {
-      // 使用 getAttribute 确保获取到完整的 src
-      const src = img.getAttribute('src') || img.currentSrc || img.src
-      const alt = img.getAttribute('alt') || img.alt || `图片 ${index + 1}`
+  imgElements.forEach((img, index) => {
+    // 使用 getAttribute 确保获取到完整的 src
+    const src = img.getAttribute('src') || img.currentSrc || img.src
+    const alt = img.getAttribute('alt') || img.alt || `图片 ${index + 1}`
 
-      console.log(`[MarkdownRenderer] 图片 ${index + 1}:`, {
-        tagName: img.tagName,
-        src: src,
-        getAttribute_src: img.getAttribute('src'),
-        img_src: img.src,
-        img_currentSrc: img.currentSrc,
-        complete: img.complete,
-        naturalWidth: img.naturalWidth,
-        naturalHeight: img.naturalHeight
-      })
-
-      if (src) {
-        images.push({ src, alt })
-      }
+    console.log(`[MarkdownRenderer] 图片 ${index + 1}:`, {
+      tagName: img.tagName,
+      src: src,
+      getAttribute_src: img.getAttribute('src'),
+      img_src: img.src,
+      img_currentSrc: img.currentSrc,
+      complete: img.complete,
+      naturalWidth: img.naturalWidth,
+      naturalHeight: img.naturalHeight
     })
 
-    lightboxImages.value = images
-    console.log('[MarkdownRenderer] 收集到图片:', images.length, images)
+    if (src) {
+      images.push({ src, alt })
+    }
   })
+
+  lightboxImages.value = images
+  console.log('[MarkdownRenderer] 收集到图片:', images.length, images)
+}
+
+const refreshImages = async () => {
+  await nextTick()
+  await markdownImageHydrator.hydrate(markdownRef.value)
+  collectImages()
 }
 
 // 监听内容变化，重新收集图片
 watch(renderedHtml, () => {
-  // 等待下一帧，确保 DOM 完全渲染
-  nextTick(() => {
-    collectImages()
+  refreshImages()
+})
 
-    // 再次等待，确保图片开始加载
-    setTimeout(() => {
-      collectImages()
-    }, 100)
-  })
+onMounted(() => {
+  refreshImages()
+})
+
+onUnmounted(() => {
+  markdownImageHydrator.clear()
+  if (throttleTimer) {
+    clearTimeout(throttleTimer)
+    throttleTimer = null
+  }
+  throttlePendingContent = null
 })
 
 // 处理图片点击 - 实时收集，确保获取最新状态

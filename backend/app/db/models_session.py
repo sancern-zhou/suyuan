@@ -14,11 +14,46 @@
 """
 
 from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
 Base = declarative_base()
+
+
+class SessionResourceDB(Base):
+    """One current resource row for the unified session resource service."""
+
+    __tablename__ = "session_resources"
+
+    session_id = Column(String(255), primary_key=True)
+    resource_key = Column(String(255), primary_key=True)
+    resource_id = Column(String(64), nullable=False, unique=True, index=True)
+    kind = Column(String(32), nullable=False, index=True)
+    role = Column(String(32), nullable=False)
+    logical_key = Column(String(255), nullable=True)
+    label = Column(String(512), nullable=False)
+    locator = Column(JSONB, nullable=False)
+    presentation_type = Column(String(32), nullable=True, index=True)
+    presentation = Column(JSONB, nullable=True)
+    resource_metadata = Column("metadata", JSONB, nullable=False, default=dict)
+    tool_name = Column(String(255), nullable=False)
+    run_id = Column(String(255), nullable=False)
+    turn_sequence = Column(Integer, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class SessionResourceVersionDB(Base):
+    """Monotonic coordination version; it contains no resource payload."""
+
+    __tablename__ = "session_resource_versions"
+
+    session_id = Column(String(255), primary_key=True)
+    version = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class SessionDB(Base):
@@ -43,11 +78,6 @@ class SessionDB(Base):
     mode = Column(String(50), nullable=True)  # 助手模式/专家模式
     current_step = Column(String(255), nullable=True)
     current_expert = Column(String(100), nullable=True)
-
-    # 结果数据引用
-    data_ids = Column(JSON, nullable=True)  # List[str]
-    visual_ids = Column(JSON, nullable=True)  # List[str]
-    office_documents = Column(JSON, nullable=True)  # List[Dict[str, Any]] - Office文档PDF预览数据
 
     # 错误信息
     error = Column(JSON, nullable=True)  # Dict[str, Any]

@@ -11,6 +11,7 @@ from app.services.ops_audit.evidence_builder import build_dataset_evidence, buil
 from app.services.ops_audit.final_issue_list import build_final_issue_list
 from app.services.ops_audit.semantic.reviewer import build_semantic_review_results, build_semantic_review_tasks
 from app.services.ops_audit.semantic_candidates import build_semantic_candidates
+from app.services.ops_audit.visual_evidence import archive_visual_evidence
 from app.services.ops_work_order_audit_engine import OUTPUT_DIR, audit_dataset
 
 
@@ -35,15 +36,20 @@ def run_rule_engine(
 ) -> dict[str, Any]:
     """Run deterministic rules, classify issues, and persist audit outputs."""
 
-    audit = audit_dataset(dataset, enable_visual=enable_visual)
+    output_dir = (output_dir or OUTPUT_DIR).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit = audit_dataset(
+        dataset,
+        enable_visual=enable_visual,
+        visual_evidence_dir=output_dir / "visual_evidence" / "multipoint_curves",
+    )
     audit["evidence"] = build_dataset_evidence(dataset, evidence_level=evidence_level)
     semantic_candidates = build_semantic_candidates(audit)
     semantic_review_tasks = build_semantic_review_tasks(audit)
     semantic_review_results = build_semantic_review_results(audit, dataset)
+    visual_evidence = archive_visual_evidence(audit, output_dir)
     final_issue_list = build_final_issue_list(audit, semantic_review_results)
 
-    output_dir = (output_dir or OUTPUT_DIR).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     audit_path = output_dir / "latest_finished_work_orders_deterministic_audit.json"
     candidates_path = output_dir / "latest_finished_work_orders_semantic_candidates.json"
     semantic_review_path = output_dir / "latest_finished_work_orders_semantic_review_tasks.json"
@@ -64,6 +70,7 @@ def run_rule_engine(
         "semantic_review_tasks_path": str(semantic_review_path),
         "semantic_review_results_path": str(semantic_review_results_path),
         "final_issue_list_path": str(final_issue_list_path),
+        "visual_evidence_manifest_path": visual_evidence["manifest_path"],
         "summary": audit.get("summary", {}),
         "audit_info": audit.get("audit_info", {}),
         "enable_visual": enable_visual,
@@ -72,6 +79,8 @@ def run_rule_engine(
         "semantic_review_result_count": semantic_review_results.get("result_count", 0),
         "final_issue_count": final_issue_list.get("issue_count", 0),
         "final_affected_order_count": final_issue_list.get("affected_order_count", 0),
+        "visual_evidence_success_count": visual_evidence["success_count"],
+        "visual_evidence_failed_count": visual_evidence["failed_count"],
         "device_consistency_issue_count": audit.get("summary", {}).get("device_consistency_issue_count", 0),
         "attachment_review_candidate_count": audit.get("summary", {}).get("attachment_review_candidate_count", 0),
         "attachment_issue_count": audit.get("summary", {}).get("attachment_issue_count", 0),

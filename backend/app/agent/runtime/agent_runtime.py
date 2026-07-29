@@ -29,13 +29,16 @@ from ..context.context_diagnostics import ContextDiagnostics
 logger = structlog.get_logger()
 
 
+class CustomAgentTerminalError(RuntimeError):
+    """A custom scheduled Agent reached a non-retryable terminal failure."""
+
+
 @dataclass
 class AgentRuntimeConfig:
     memory_manager: Any
     planner: Any
     tool_executor: Any
     context_builder: Any
-    task_completion_guard: Any
     max_iterations: int = 120
     enhance_with_history: bool = True
     enable_reasoning: bool = False
@@ -111,6 +114,7 @@ class AgentRuntime:
         state: RunState,
         initial_messages: Optional[List[Dict[str, Any]]],
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        deterministic_error_count = 0
         try:
             if self.config.agent_logger:
                 run_id = self.config.agent_logger.start_new_run(
@@ -139,8 +143,12 @@ class AgentRuntime:
                     async for event in self._run_iteration(state):
                         self._raise_if_cancelled()
                         yield event
+                    deterministic_error_count = 0
                 except AgentRunCancelled:
                     self._ensure_user_message_written(state)
+                    deferred_event = await self._close_steering_event(state)
+                    if deferred_event:
+                        yield deferred_event
                     yield self.events.interrupted(state)
                     return
                 except Exception as exc:
@@ -152,21 +160,69 @@ class AgentRuntime:
                         exc_info=True,
                     )
                     yield self.events.error(state, exc)
+                    if self._is_terminal_quota_error(exc):
+                        terminal_error = RuntimeError(f"模型额度已耗尽，运行已停止，避免无效重试：{exc}")
+                        self._ensure_user_message_written(state)
+                        deferred_event = await self._close_steering_event(state)
+                        if deferred_event:
+                            yield deferred_event
+                        async for event in self.finalizer.fatal_error(state, terminal_error):
+                            yield event
+                        return
+                    if state.mode == "custom" and isinstance(exc, CustomAgentTerminalError):
+                        self._ensure_user_message_written(state)
+                        deferred_event = await self._close_steering_event(state)
+                        if deferred_event:
+                            yield deferred_event
+                        async for event in self.finalizer.fatal_error(state, exc):
+                            yield event
+                        return
+                    if self._is_deterministic_model_error(exc):
+                        deterministic_error_count += 1
+                        if deterministic_error_count >= 2:
+                            prefix = "custom Agent" if state.mode == "custom" else f"{state.mode} Agent"
+                            error_type = CustomAgentTerminalError if state.mode == "custom" else RuntimeError
+                            terminal_error = error_type(f"{prefix} 模型请求连续失败，已熔断: {exc}")
+                            self._ensure_user_message_written(state)
+                            deferred_event = await self._close_steering_event(state)
+                            if deferred_event:
+                                yield deferred_event
+                            async for event in self.finalizer.fatal_error(state, terminal_error):
+                                yield event
+                            return
+                    else:
+                        deterministic_error_count = 0
                     if "fatal" in str(exc).lower():
                         break
 
             if not state.task_completed:
                 self._ensure_user_message_written(state)
-                async for event in self.finalizer.timeout(state):
-                    yield event
+                deferred_event = await self._close_steering_event(state)
+                if deferred_event:
+                    yield deferred_event
+                if state.mode == "custom":
+                    error = CustomAgentTerminalError(
+                        f"custom Agent 在 {state.iteration} 次迭代内未形成成功或失败终态"
+                    )
+                    async for event in self.finalizer.fatal_error(state, error):
+                        yield event
+                else:
+                    async for event in self.finalizer.timeout(state):
+                        yield event
 
         except Exception as exc:
             if isinstance(exc, AgentRunCancelled):
                 self._ensure_user_message_written(state)
+                deferred_event = await self._close_steering_event(state)
+                if deferred_event:
+                    yield deferred_event
                 yield self.events.interrupted(state)
                 return
             logger.error("agent_runtime_fatal_error", error=str(exc), exc_info=True)
             self._ensure_user_message_written(state)
+            deferred_event = await self._close_steering_event(state)
+            if deferred_event:
+                yield deferred_event
             async for event in self.finalizer.fatal_error(state, exc):
                 yield event
 
@@ -243,6 +299,7 @@ class AgentRuntime:
             self._ensure_user_message_written(state)
             self.writer.add_tool_exchange(records, planner_result)
             self.writer.add_iteration(planner_result.thought, action, observation)
+            self._enforce_custom_tool_terminal_rules(state, action, records)
             for event in tool_events:
                 yield event
             async for event in self.observation_processor.process(state, planner_result, action, observation):
@@ -292,7 +349,7 @@ class AgentRuntime:
         state.pending_attachments.clear()
 
     def _should_consume_initial_attachments_after_planner(self, state: RunState) -> bool:
-        if state.mode == "chart":
+        if state.mode == "board":
             return False
         return True
 
@@ -313,18 +370,9 @@ class AgentRuntime:
             self._consume_effective_attachments(state)
 
     def _should_suppress_initial_attachments(self, state: RunState) -> bool:
-        if state.mode != "chart":
-            return False
-        if state.board_context_updated_in_run:
-            return True
-        if not isinstance(state.board_context, dict):
-            return False
-        return bool(
-            state.board_context.get("current_xml")
-            or state.board_context.get("currentXml")
-            or state.board_context.get("xml")
-            or state.board_context.get("drawio_xml")
-        )
+        # Explicit current-turn uploads are never filtered because of restored
+        # state. Images are consumed only after they have actually been sent.
+        return False
 
     def _capture_multimodal_attachments(self, state: RunState, observation: Dict[str, Any]) -> None:
         if not supports_native_multimodal(state.mode) or not isinstance(observation, dict):
@@ -367,7 +415,7 @@ class AgentRuntime:
     def _attachment_key(attachment: Dict[str, Any]) -> Optional[str]:
         if not isinstance(attachment, dict):
             return None
-        for field in ("local_path", "path", "url", "signed_url"):
+        for field in ("local_path", "path", "url"):
             value = attachment.get(field)
             if isinstance(value, str) and value:
                 return f"{field}:{value}"
@@ -377,7 +425,7 @@ class AgentRuntime:
         return None
 
     def _capture_drawio_board_context(self, state: RunState, observation: Dict[str, Any]) -> None:
-        if state.mode != "chart" or not isinstance(observation, dict):
+        if state.mode != "board" or not isinstance(observation, dict):
             return
 
         for result in self._iter_drawio_observation_results(observation):
@@ -393,6 +441,15 @@ class AgentRuntime:
                     continue
 
             previous = state.board_context if isinstance(state.board_context, dict) else {}
+            candidate_version_id = data.get("candidate_version_id")
+            candidate_accepted = bool(data.get("candidate_accepted"))
+            previous_candidate_id = previous.get("candidate_version_id")
+            if candidate_version_id and previous_candidate_id and candidate_version_id != previous_candidate_id:
+                state.board_quality_repair_count += 1
+            if data.get("requires_visual_review") and candidate_version_id:
+                state.pending_board_candidate_id = str(candidate_version_id)
+            elif candidate_accepted or data.get("lifecycle_status") == "rejected":
+                state.pending_board_candidate_id = None
             state.board_context = {
                 **previous,
                 "current_xml": xml,
@@ -400,6 +457,16 @@ class AgentRuntime:
                 "artifact_id": data.get("artifact_id") or previous.get("artifact_id"),
                 "board_id": data.get("board_id") or previous.get("board_id"),
                 "title": data.get("title") or previous.get("title"),
+                "revision": data.get("revision", previous.get("revision", 0)),
+                "candidate_version_id": candidate_version_id or previous.get("candidate_version_id"),
+                "current_version_id": data.get("current_version_id") or previous.get("current_version_id"),
+                "version_id": data.get("version_id") or previous.get("version_id"),
+                "quality_status": data.get("quality_status") or previous.get("quality_status"),
+                "quality_report": data.get("quality_report") or previous.get("quality_report"),
+                "render_status": data.get("render_status") or previous.get("render_status"),
+                "lifecycle_status": data.get("lifecycle_status") or previous.get("lifecycle_status"),
+                "screenshot_ref": data.get("screenshot_ref") or previous.get("screenshot_ref"),
+                "requires_visual_review": bool(data.get("requires_visual_review", False)),
             }
             state.board_context_updated_in_run = True
             self._consume_initial_attachments_after_drawio_board_created(state)
@@ -460,21 +527,39 @@ class AgentRuntime:
             if isinstance(result, dict):
                 yield result
 
-    async def _apply_steering_inputs(self, state: RunState) -> AsyncGenerator[Dict[str, Any], None]:
-        items = await steering_registry.drain(state.session_id, state.run_id)
+    async def _apply_steering_inputs(
+        self,
+        state: RunState,
+        *,
+        completion_boundary: bool = False,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        if completion_boundary:
+            items = await steering_registry.begin_completion(state.session_id, state.run_id)
+        else:
+            items = await steering_registry.drain(state.session_id, state.run_id)
         if not items:
             return
 
         self._ensure_user_message_written(state)
         messages: List[str] = []
+        input_ids: List[str] = []
+        applied_inputs: List[Dict[str, Any]] = []
         attachment_count = 0
         for item in items:
             content = item.content
+            safe_attachments: List[Dict[str, str]] = []
             if item.attachments:
                 state.pending_attachments.extend(item.attachments)
                 attachment_count += len(item.attachments)
+                safe_attachments = self._resource_attachment_refs(item.attachments)
                 content = self._append_attachment_summary(content, item.attachments)
             messages.append(content)
+            input_ids.append(item.input_id)
+            applied_inputs.append({
+                "message": item.content,
+                "input_id": item.input_id,
+                "attachments": safe_attachments,
+            })
             self.writer.add_user_message(f"【执行中用户补充】{content}")
 
         logger.info(
@@ -484,7 +569,36 @@ class AgentRuntime:
             count=len(messages),
             attachment_count=attachment_count,
         )
-        yield self.events.steering_applied(state, messages)
+        yield self.events.steering_applied(state, messages, input_ids, applied_inputs)
+
+    async def _close_steering(self, state: RunState) -> List[Any]:
+        deferred = await steering_registry.close_and_drain(state.session_id, state.run_id)
+        if deferred:
+            logger.info(
+                "steering_inputs_deferred_by_terminal_event",
+                session_id=state.session_id,
+                run_id=state.run_id,
+                count=len(deferred),
+                input_ids=[item.input_id for item in deferred],
+            )
+        return deferred
+
+    async def _close_steering_event(
+        self,
+        state: RunState,
+    ) -> Dict[str, Any] | None:
+        deferred = await self._close_steering(state)
+        if not deferred:
+            return None
+        inputs = [
+            {
+                "message": item.content,
+                "input_id": item.input_id,
+                "attachments": self._resource_attachment_refs(item.attachments),
+            }
+            for item in deferred
+        ]
+        return self.events.steering_deferred(state, inputs)
 
     @staticmethod
     def _append_attachment_summary(content: str, attachments: List[Dict[str, Any]]) -> str:
@@ -495,22 +609,40 @@ class AgentRuntime:
         for index, attachment in enumerate(attachments, 1):
             att_type = attachment.get("type") or "file"
             att_name = attachment.get("name") or "attachment"
-            att_path = (
-                attachment.get("local_path")
-                or attachment.get("path")
-                or attachment.get("url")
-                or attachment.get("signed_url")
-                or ""
-            )
+            resource_id = attachment.get("resource_id") or attachment.get("ref_id")
             att_mime_type = attachment.get("mime_type") or attachment.get("content_type")
             label = "图片" if att_type == "image" else "文件"
             lines.append(f"{index}. {label}: {att_name}")
-            if att_path:
-                lines.append(f"   路径: {att_path}")
+            if resource_id:
+                lines.append(f"   会话资源: {resource_id}")
             if att_mime_type:
                 lines.append(f"   类型: {att_mime_type}")
 
         return f"{content}{chr(10).join(lines)}"
+
+    @staticmethod
+    def _resource_attachment_refs(
+        attachments: List[Dict[str, Any]],
+    ) -> List[Dict[str, str]]:
+        refs: List[Dict[str, str]] = []
+        for attachment in attachments:
+            resource_id = str(
+                attachment.get("resource_id") or attachment.get("ref_id") or ""
+            )
+            if not resource_id:
+                continue
+            refs.append({
+                "type": str(attachment.get("type") or "file"),
+                "name": str(attachment.get("name") or "attachment"),
+                "mime_type": str(
+                    attachment.get("mime_type")
+                    or attachment.get("content_type")
+                    or "application/octet-stream"
+                ),
+                "resource_id": resource_id,
+                "ref_id": resource_id,
+            })
+        return refs
 
     async def _build_context(self, state: RunState) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         latest_observation = ""
@@ -540,7 +672,14 @@ class AgentRuntime:
         from ..core.streaming_tool_executor import StreamingToolExecutor
 
         # 按模式过滤工具 schema（节省 token）
-        tool_schemas = get_tool_schemas(mode=state.mode)
+        tool_schemas = get_tool_schemas(
+            mode=state.mode,
+            allowed_tool_names=(
+                list(self.executor.tool_registry.keys())
+                if state.mode == "custom" and hasattr(self.executor, "tool_registry")
+                else None
+            ),
+        )
         suppressed_tool_names = self._tool_names_to_suppress(state)
         state.suppress_tool_names_current_turn = suppressed_tool_names
         if suppressed_tool_names:
@@ -852,9 +991,75 @@ class AgentRuntime:
         self._ensure_user_message_written(state)
         self.writer.add_tool_exchange(records, planner_result)
         self.writer.add_iteration(planner_result.thought, action, observation)
+        self._enforce_custom_tool_terminal_rules(state, action, records)
 
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
+
+    @staticmethod
+    def _is_deterministic_model_error(error: Exception) -> bool:
+        message = str(error).lower()
+        markers = (
+            "http 400", "status code: 400", "status_code=400", "error code: 400",
+            "400 client error", "bad request",
+            "http 401", "http 403", "error code: 401", "error code: 403",
+            "unauthorized", "forbidden",
+            "authentication", "invalid request", "request format",
+        )
+        return any(marker in message for marker in markers)
+
+    @staticmethod
+    def _is_terminal_quota_error(error: Exception) -> bool:
+        """Identify billing/plan exhaustion that cannot recover inside this run."""
+        message = str(error).lower()
+        markers = (
+            "token plan 用量上限",
+            "insufficient_quota",
+            "billing limit",
+            "payment required",
+            "http 402",
+            "error code: 402",
+        )
+        return any(marker in message for marker in markers)
+
+    @staticmethod
+    def _enforce_custom_tool_terminal_rules(
+        state: RunState,
+        action: Dict[str, Any],
+        records: List[Dict[str, Any]],
+    ) -> None:
+        if state.mode != "custom":
+            return
+        unavailable = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and str(record["result"].get("error", "")).startswith(("工具不可用:", "工具不存在:"))
+        ), None)
+        if unavailable is not None:
+            raise CustomAgentTerminalError(
+                f"custom Agent 工具状态已变化: {unavailable['result'].get('error')}"
+            )
+        blocked = next((
+            record for record in records
+            if isinstance(record.get("result"), dict)
+            and record["result"].get("loop_guard") is True
+            and record["result"].get("severity") == "block"
+        ), None)
+        if blocked is None:
+            if records:
+                state.last_loop_block_signature = None
+            return
+        signature = json.dumps(
+            {"tool": blocked.get("tool_name"), "args": blocked.get("tool_input", {})},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        if state.last_loop_block_signature == signature:
+            raise CustomAgentTerminalError(
+                f"工具循环已终止: {blocked.get('tool_name')} 使用相同参数重复请求"
+            )
+        state.last_loop_block_signature = signature
 
     async def _complete_response(
         self,
@@ -862,23 +1067,8 @@ class AgentRuntime:
         planner_result: PlannerResult,
         answer: str,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        guard_result = await self.config.task_completion_guard.check(state.session_id)
-        if guard_result.get("has_incomplete"):
-            observation = {
-                "success": False,
-                "warning": True,
-                "incomplete_tasks": guard_result["incomplete_tasks"],
-                "summary": f"有 {guard_result['incomplete_count']} 个任务尚未完成，不能结束任务。请先完成所有任务。",
-                "guard_warning": guard_result["warning_message"],
-            }
-            action = {"type": "PLAIN_TEXT_REPLY", "answer": answer}
-            self._ensure_user_message_written(state)
-            self.writer.add_iteration(planner_result.thought, action, observation)
-            yield self.events.tool_result(state, "task_guard", observation, True, "task_guard")
-            return
-
         late_steering_applied = False
-        async for event in self._apply_steering_inputs(state):
+        async for event in self._apply_steering_inputs(state, completion_boundary=True):
             late_steering_applied = True
             yield event
         if late_steering_applied:
@@ -901,6 +1091,10 @@ class AgentRuntime:
             thought=planner_result.thought,
         ):
             yield event
+
+    @staticmethod
+    def _board_completion_block_reason(state: RunState) -> Optional[str]:
+        return None
 
     def _ensure_user_message_written(self, state: RunState) -> None:
         """Persist the current user turn exactly once, after planning context is built."""

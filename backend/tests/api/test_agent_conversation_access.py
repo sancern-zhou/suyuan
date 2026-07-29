@@ -1,0 +1,290 @@
+import inspect
+
+import pytest
+from fastapi import HTTPException
+from sse_starlette import EventSourceResponse
+
+from app.auth.models import CurrentUser
+from app.agent.react_agent import ReActAgent
+from app.agent.session.conversation_persistence import ConversationPersistenceService
+from app.agent.session.models import Session
+from config.settings import settings
+from app.conversations import ConversationSource
+from app.routers.agent import (
+    AgentAnalyzeRequest,
+    AgentSteerRequest,
+    analyze_stream,
+    cancel_analysis,
+    persist_new_web_session,
+    steer_analysis,
+)
+
+
+class DenyingCatalog:
+    def __init__(self):
+        self.write_checks = []
+
+    async def find(self, session_id):
+        return object()
+
+    async def require_write(self, session_id, user):
+        self.write_checks.append((session_id, user.id))
+        raise HTTPException(status_code=404, detail="session_not_found")
+
+
+class RecordingCatalog:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.registrations = []
+
+    async def register(self, **values):
+        self.registrations.append(values)
+        if self.fail:
+            raise RuntimeError("catalog unavailable")
+
+
+class LookupCatalog:
+    def __init__(self, record=None):
+        self.record = record
+        self.write_checks = []
+
+    async def find(self, session_id):
+        return self.record
+
+    async def require_write(self, session_id, user):
+        self.write_checks.append((session_id, user.id))
+        raise AssertionError("new sessions must not require an existing catalog row")
+
+
+class LookupSessionManager:
+    def __init__(self, session=None):
+        self.session = session
+        self.lookups = []
+
+    async def load_session_light(self, session_id):
+        self.lookups.append(session_id)
+        return self.session
+
+
+class RecordingSessionManager:
+    def __init__(self, save_result=True):
+        self.save_result = save_result
+        self.deleted = []
+
+    async def save_session_metadata(self, session):
+        return self.save_result
+
+    async def delete_session(self, session_id):
+        self.deleted.append(session_id)
+
+
+class UnusedRequest:
+    async def json(self):
+        raise AssertionError("denied sessions must be rejected before body processing")
+
+
+class EmptyRequest:
+    async def json(self):
+        return {}
+
+
+ordinary_user = CurrentUser(id="u1", username="u1", display_name="U1")
+
+
+def test_agent_metadata_persistence_merges_existing_visualizations_by_id():
+    session = Session(
+        session_id="assistant_session_existing",
+        query="old query",
+        metadata={
+            "visualizations": [
+                {"id": "visual_old", "title": "历史图表"},
+                {"id": "visual_shared", "title": "旧标题"},
+            ],
+            "visuals_count": 2,
+        },
+        visual_ids=["visual_old", "visual_shared"],
+    )
+    entry = {
+        "collected_visuals": [
+            {"id": "visual_shared", "title": "新标题"},
+            {"id": "visual_new", "title": "本轮图表"},
+        ],
+    }
+
+    ReActAgent._apply_session_store_entry_for_persistence(session, entry)
+
+    assert session.metadata["visualizations"] == [
+        {"id": "visual_old", "title": "历史图表"},
+        {"id": "visual_shared", "title": "新标题"},
+        {"id": "visual_new", "title": "本轮图表"},
+    ]
+    assert session.visual_ids == ["visual_old", "visual_shared", "visual_new"]
+    assert session.metadata["visuals_count"] == 3
+
+
+def test_route_and_agent_finally_do_not_duplicate_anonymous_visualizations():
+    session = Session(
+        session_id="assistant_session_existing",
+        query="old query",
+        metadata={
+            "visualizations": [{"type": "table", "title": "历史无ID图表"}],
+            "visuals_count": 1,
+        },
+    )
+    current_visuals = [{"type": "chart", "title": "本轮无ID图表"}]
+
+    ConversationPersistenceService().append_complete(
+        session,
+        display_history=[],
+        collected_visuals=current_visuals,
+    )
+    ReActAgent._apply_session_store_entry_for_persistence(
+        session,
+        {"collected_visuals": current_visuals, "display_history_persisted": True},
+    )
+
+    assert session.metadata["visualizations"] == [
+        {"type": "table", "title": "历史无ID图表"},
+        {"type": "chart", "title": "本轮无ID图表"},
+    ]
+    assert session.metadata["visuals_count"] == 2
+
+
+def test_web_route_uses_append_persistence_for_all_terminal_paths():
+    source = inspect.getsource(analyze_stream)
+
+    assert "persistence.apply_complete(" not in source
+    assert "persistence.apply_terminal(" not in source
+    assert source.count("persistence.append_complete(") == 1
+    assert source.count("persistence.append_terminal(") == 3
+
+
+@pytest.mark.asyncio
+async def test_reusing_session_requires_write_access_before_body_processing():
+    catalog = DenyingCatalog()
+
+    with pytest.raises(HTTPException) as exc:
+        await analyze_stream(
+            AgentAnalyzeRequest(
+                query="continue", session_id="other-session", skill_ids=[], context_refs=[]
+            ),
+            UnusedRequest(),
+            user=ordinary_user,
+            catalog=catalog,
+        )
+
+    assert exc.value.status_code == 404
+    assert catalog.write_checks == [("other-session", "u1")]
+
+
+@pytest.mark.asyncio
+async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_absent(monkeypatch):
+    catalog = LookupCatalog()
+    manager = LookupSessionManager()
+    monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
+
+    response = await analyze_stream(
+        AgentAnalyzeRequest(
+            query="first message", session_id="new-session", skill_ids=[], context_refs=[]
+        ),
+        EmptyRequest(),
+        user=ordinary_user,
+        catalog=catalog,
+    )
+
+    assert isinstance(response, EventSourceResponse)
+    assert response.media_type == "text/event-stream"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.ping_interval == settings.sse_heartbeat_interval_seconds
+    assert manager.lookups == ["new-session"]
+    assert catalog.write_checks == []
+
+
+@pytest.mark.asyncio
+async def test_uncataloged_existing_source_session_cannot_be_claimed(monkeypatch):
+    catalog = LookupCatalog()
+    manager = LookupSessionManager(session=object())
+    monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
+
+    with pytest.raises(HTTPException) as exc:
+        await analyze_stream(
+            AgentAnalyzeRequest(
+                query="continue", session_id="legacy-session", skill_ids=[], context_refs=[]
+            ),
+            UnusedRequest(),
+            user=ordinary_user,
+            catalog=catalog,
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "session_not_found"
+    assert manager.lookups == ["legacy-session"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_requires_write_access_before_runtime_lookup():
+    catalog = DenyingCatalog()
+
+    with pytest.raises(HTTPException) as exc:
+        await cancel_analysis("other-session", user=ordinary_user, catalog=catalog)
+
+    assert exc.value.status_code == 404
+    assert catalog.write_checks == [("other-session", "u1")]
+
+
+@pytest.mark.asyncio
+async def test_steer_requires_write_access_before_runtime_lookup():
+    catalog = DenyingCatalog()
+
+    with pytest.raises(HTTPException) as exc:
+        await steer_analysis(
+            "other-session",
+            AgentSteerRequest(message="next"),
+            user=ordinary_user,
+            catalog=catalog,
+        )
+
+    assert exc.value.status_code == 404
+    assert catalog.write_checks == [("other-session", "u1")]
+
+
+@pytest.mark.asyncio
+async def test_new_web_session_is_persisted_then_registered_to_authenticated_user():
+    from app.agent.session import Session
+
+    manager = RecordingSessionManager()
+    catalog = RecordingCatalog()
+    session = Session(session_id="new-session", query="hello")
+
+    await persist_new_web_session(
+        manager=manager,
+        session=session,
+        catalog=catalog,
+        user=ordinary_user,
+        mode="expert",
+    )
+
+    assert catalog.registrations[0]["session_id"] == "new-session"
+    assert catalog.registrations[0]["user"] == ordinary_user
+    assert catalog.registrations[0]["source"] == ConversationSource.WEB
+
+
+@pytest.mark.asyncio
+async def test_catalog_failure_removes_new_source_session():
+    from app.agent.session import Session
+
+    manager = RecordingSessionManager()
+    catalog = RecordingCatalog(fail=True)
+    session = Session(session_id="new-session", query="hello")
+
+    with pytest.raises(RuntimeError, match="catalog unavailable"):
+        await persist_new_web_session(
+            manager=manager,
+            session=session,
+            catalog=catalog,
+            user=ordinary_user,
+            mode="expert",
+        )
+
+    assert manager.deleted == ["new-session"]

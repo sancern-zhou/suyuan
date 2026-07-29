@@ -16,14 +16,20 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import structlog
 
-from app.services.quarto_report_renderer import ReportRenderError, quarto_report_renderer
+from app.services.quarto_report_renderer import (
+    ReportRenderError,
+    format_report_image_validation_error,
+    inspect_report_image_refs,
+    quarto_report_renderer,
+)
 from app.services.report_preview_refresh import (
     build_html_preview as build_report_html_preview,
+)
+from app.services.report_preview_refresh import (
     record_report_update,
 )
 from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_refs import build_file_ref, build_url_ref, merge_refs
 from app.utils.path_config import get_images_dir
 
 logger = structlog.get_logger()
@@ -95,32 +101,12 @@ def _normalize_asset_specs(assets: Optional[List[Any]]) -> List[Dict[str, Any]]:
     return normalized
 
 
-def _extract_markdown_image_refs(qmd_content: str) -> List[str]:
-    refs = []
-    for match in MARKDOWN_IMAGE_PATTERN.finditer(qmd_content or ""):
-        src = match.group("src").strip()
-        if src and not src.startswith(("http://", "https://", "data:")):
-            refs.append(src)
-    return refs
-
-
 def _validate_image_refs(report_dir: Path, qmd_content: str) -> Dict[str, Any]:
-    refs = _extract_markdown_image_refs(qmd_content)
-    missing = []
-    api_refs = []
-    for ref in refs:
-        if ref.startswith("/api/image/"):
-            api_refs.append(ref)
-            continue
-        candidate = (report_dir / ref).resolve()
-        try:
-            candidate.relative_to(report_dir.resolve())
-        except ValueError:
-            missing.append(ref)
-            continue
-        if not candidate.exists():
-            missing.append(ref)
-    return {"refs": refs, "missing": missing, "api_image_refs": api_refs}
+    return inspect_report_image_refs(
+        report_dir,
+        qmd_content,
+        qmd_path=report_dir / "report.qmd",
+    )
 
 
 def _copied_asset_ref_map(copied_assets: Iterable[Dict[str, Any]]) -> Dict[str, str]:
@@ -155,8 +141,23 @@ def _rewrite_image_refs_to_copied_assets(
 
     def replace(match: re.Match[str]) -> str:
         src = match.group("src").strip()
-        if not src or src.startswith(("http://", "https://", "data:", "/api/image/")):
+        if not src or src.startswith(("http://", "https://", "data:")):
             return match.group(0)
+
+        if src.startswith("/api/image/"):
+            image_key = src[len("/api/image/") :].split("#", 1)[0].split("?", 1)[0]
+            rewritten = ref_map.get(image_key) or ref_map.get(Path(image_key).name)
+            if not rewritten and not Path(image_key).suffix:
+                matching_assets = {
+                    relative_path
+                    for key, relative_path in ref_map.items()
+                    if Path(key).stem == Path(image_key).name
+                }
+                if len(matching_assets) == 1:
+                    rewritten = matching_assets.pop()
+            if not rewritten:
+                return match.group(0)
+            return match.group(0).replace(match.group("src"), rewritten, 1)
 
         candidate = (report_dir / src).resolve()
         try:
@@ -470,7 +471,11 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "source_qmd_path": {
                         "type": "string",
-                        "description": "原始 QMD 文件路径。提供后，HTML 预览和 QMD 下载以该原始文件为准，报告目录只作为渲染输出缓存。",
+                        "description": (
+                            "可编辑的原始 QMD 文件路径，仅作为来源元数据记录；不会直接覆盖"
+                            "报告包内 report.qmd。HTML、DOCX 和 QMD 下载始终使用经 assets "
+                            "复制及路径规范化后的报告包发布稿。"
+                        ),
                     },
                     "title": {"type": "string", "description": "报告标题，可选。"},
                     "report_type": {
@@ -680,6 +685,24 @@ format:
                     meta[key] = value
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        if validation.get("issues"):
+            validation_error = format_report_image_validation_error(validation)
+            return {
+                "success": False,
+                "data": {
+                    "error": validation_error,
+                    "report_id": safe_id,
+                    "report_dir": str(report_dir),
+                    "validation": validation,
+                    "copied_assets": copied_assets,
+                },
+                "metadata": {
+                    "generator": "create_report_package",
+                    "schema_version": "report_package.v1",
+                },
+                "summary": "报告包创建失败：图片引用无法解析，请按错误提示修复后重试。",
+            }
+
         html_preview = None
         render_error = None
         if render_html:
@@ -724,6 +747,7 @@ format:
             }
         if render_error:
             data["render_error"] = render_error
+            data["error"] = render_error
 
         attach_document_artifact(
             data,
@@ -735,35 +759,6 @@ format:
             generator="create_report_package",
             metadata={"report_id": safe_id},
         )
-        extra_refs = {}
-        extra_file_refs = []
-        if source_qmd:
-            extra_file_refs.append(
-                build_file_ref(
-                    source_qmd,
-                    type="document",
-                    format=source_qmd.suffix.lstrip(".") or "qmd",
-                    usage="source",
-                )
-            )
-        if html_preview and html_path:
-            extra_file_refs.append(
-                build_file_ref(
-                    html_path,
-                    type="document",
-                    format="html",
-                    usage="preview",
-                    report_id=safe_id,
-                )
-            )
-            html_url = html_preview.get("html_url") if isinstance(html_preview, dict) else None
-            if html_url:
-                extra_refs["urls"] = [build_url_ref(html_url, usage="display", source="html_preview")]
-        if extra_file_refs:
-            extra_refs["files"] = extra_file_refs
-        if extra_refs:
-            data["refs"] = merge_refs(data.get("refs"), extra_refs)
-
         primary_artifact_path = str(html_path) if html_preview and html_path else str(qmd_path)
         resume_context = build_artifact_resume_context(
             data,
@@ -781,13 +776,18 @@ format:
         )
 
         return {
-            "success": True,
+            "success": not bool(render_error),
             "data": data,
             **resume_context,
             "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
             "summary": (
-                f"报告包已创建：{safe_id}。右侧预览已生成，预览和下载由右侧文档面板处理。"
-                if html_preview else f"报告包已创建：{safe_id}。HTML预览尚未生成，右侧文档面板显示QMD预览。"
+                f"报告包创建失败：{render_error}。请按错误提示修复后重新打包。"
+                if render_error
+                else (
+                    f"报告包已创建：{safe_id}。右侧预览已生成，预览和下载由右侧文档面板处理。"
+                    if html_preview
+                    else f"报告包已创建：{safe_id}。HTML预览尚未生成，右侧文档面板显示QMD预览。"
+                )
             ),
         }
 
@@ -939,6 +939,8 @@ class ValidateReportPackageTool(LLMTool):
             errors.append("qmd 包含 /api/image/ 引用，建议改为报告包内相对图片路径以保证 Word/PPT 导出")
 
         checks["errors"] = errors
+        if checks["image_refs"]["issues"]:
+            checks["error"] = format_report_image_validation_error(checks["image_refs"])
         return {
             "success": not errors,
             "data": checks,

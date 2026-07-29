@@ -7,6 +7,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from app.auth.internal_identity import INTERNAL_USER_HEADER, encode_internal_user
+from app.auth.models import CurrentUser
+
 
 SOCIAL_ACCOUNTS_PREFIX = "/api/social/accounts"
 
@@ -63,10 +66,13 @@ class SocialAccountWorkerProxyMiddleware:
         headers = {
             key: value
             for key, value in request.headers.items()
-            if key.lower() not in {"host", "content-length"}
+            if key.lower() not in {"host", "content-length", INTERNAL_USER_HEADER}
         }
         if self.worker_token:
             headers["x-social-worker-token"] = self.worker_token
+        current_user = (scope.get("state") or {}).get("current_user")
+        if isinstance(current_user, CurrentUser):
+            headers[INTERNAL_USER_HEADER] = encode_internal_user(current_user)
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:

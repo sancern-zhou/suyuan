@@ -79,6 +79,10 @@ class TaskExecution(BaseModel):
     # 触发信息
     trigger_type: str = Field(default="scheduled", description="触发类型")
     scheduled_time: Optional[datetime] = Field(default=None, description="计划执行时间")
+    event_id: Optional[str] = Field(default=None, description="业务事件ID")
+    event_type: Optional[str] = Field(default=None, description="业务事件类型")
+    event_attributes: Dict[str, Any] = Field(default_factory=dict, description="业务事件属性")
+    delivery_results: List[Dict[str, Any]] = Field(default_factory=list, description="逐用户投递结果")
 
     # 结果摘要
     total_steps: int = Field(..., description="总步骤数")

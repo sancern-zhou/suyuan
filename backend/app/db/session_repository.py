@@ -171,6 +171,17 @@ class SessionRepository:
                 msg_data.setdefault(key, value)
         return SessionRepository._convert_decimal_to_float(msg_data)
 
+    @staticmethod
+    def _message_attachments(metadata: Any) -> List[Dict[str, Any]]:
+        """Read only the lightweight attachment contract from message metadata."""
+        if not isinstance(metadata, dict):
+            return []
+        return [
+            dict(attachment)
+            for attachment in metadata.get("attachments") or []
+            if isinstance(attachment, dict)
+        ]
+
     async def create_session(
         self,
         session_id: str,
@@ -186,7 +197,6 @@ class SessionRepository:
                 query=query,
                 mode=mode,
                 session_metadata=metadata or {},
-                office_documents=office_documents or []
             )
             session.add(db_session)
             await session.commit()
@@ -196,7 +206,7 @@ class SessionRepository:
                 "session_created_in_db",
                 session_id=session_id,
                 mode=mode,
-                office_documents_count=len(office_documents) if office_documents else 0
+                resource_store="unified"
             )
             return db_session
 
@@ -208,28 +218,8 @@ class SessionRepository:
             return result.scalar_one_or_none()
 
     async def find_office_document_by_pdf_id(self, pdf_id: str) -> Optional[Dict[str, Any]]:
-        """Find a persisted office document preview by historical PDF id."""
-        async with AsyncSession(self.engine) as session:
-            stmt = (
-                select(SessionDB.session_id, SessionDB.office_documents)
-                .where(SessionDB.office_documents.is_not(None))
-                .where(cast(SessionDB.office_documents, Text).contains(pdf_id))
-                .order_by(SessionDB.updated_at.desc())
-                .limit(20)
-            )
-            result = await session.execute(stmt)
-
-            for session_id, office_documents in result.all():
-                for document in office_documents or []:
-                    if not isinstance(document, dict):
-                        continue
-                    pdf_preview = document.get("pdf_preview") or {}
-                    if isinstance(pdf_preview, dict) and pdf_preview.get("pdf_id") == pdf_id:
-                        return {
-                            "session_id": session_id,
-                            "document": SessionRepository._convert_decimal_to_float(document),
-                        }
-            return None
+        """Legacy lookup removed; query session_resources instead."""
+        return None
 
     async def get_session_with_messages(
         self,
@@ -259,8 +249,6 @@ class SessionRepository:
                         SessionDB.mode,
                         SessionDB.current_step,
                         SessionDB.current_expert,
-                        SessionDB.data_ids,
-                        SessionDB.visual_ids,
                         SessionDB.error,
                     )
                 )
@@ -291,9 +279,6 @@ class SessionRepository:
                 "mode": db_session.mode,
                 "current_step": db_session.current_step,
                 "current_expert": db_session.current_expert,
-                "data_ids": db_session.data_ids or [],
-                "visual_ids": db_session.visual_ids or [],
-                "office_documents": db_session.office_documents or [] if include_artifacts else [],
                 "error": db_session.error,
                 "metadata": db_session.session_metadata or {} if include_artifacts else {},
                 "conversation_history": []
@@ -353,7 +338,7 @@ class SessionRepository:
         # 过滤掉无效的字段名（只保留 SessionDB 模型中定义的字段）
         valid_fields = {
             "query", "mode", "current_step", "current_expert",
-            "data_ids", "visual_ids", "office_documents", "error", "session_metadata"
+            "error", "session_metadata"
         }
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_fields}
 
@@ -405,8 +390,6 @@ class SessionRepository:
                 SessionDB.created_at,
                 SessionDB.updated_at,
                 SessionDB.mode,
-                SessionDB.data_ids,
-                SessionDB.visual_ids,
                 SessionDB.error,
                 SessionDB.session_metadata,
             )
@@ -439,6 +422,27 @@ class SessionRepository:
 
             return summaries
 
+    async def get_session_summary_metadata(
+        self,
+        session_ids: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return lightweight list metadata for the requested Web sessions."""
+        unique_ids = list(dict.fromkeys(session_ids))
+        if not unique_ids:
+            return {}
+
+        async with AsyncSession(self.engine) as session:
+            stmt = select(
+                SessionDB.session_id,
+                SessionDB.session_metadata,
+            ).where(SessionDB.session_id.in_(unique_ids))
+            rows = (await session.execute(stmt)).all()
+
+        return {
+            row.session_id: self._session_summary_metadata(row.session_metadata)
+            for row in rows
+        }
+
     def _session_summary_metadata(self, metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Keep list metadata lightweight while preserving fields used by list features."""
         if not isinstance(metadata, dict):
@@ -458,14 +462,8 @@ class SessionRepository:
         async with AsyncSession(self.engine) as session:
             stmt = select(
                 func.count().label("total"),
-                func.coalesce(
-                    func.sum(func.coalesce(func.json_array_length(SessionDB.data_ids), 0)),
-                    0,
-                ).label("total_data_count"),
-                func.coalesce(
-                    func.sum(func.coalesce(func.json_array_length(SessionDB.visual_ids), 0)),
-                    0,
-                ).label("total_visual_count"),
+                func.literal(0).label("total_data_count"),
+                func.literal(0).label("total_visual_count"),
                 func.count(SessionDB.error).label("error_count"),
             )
             result = await session.execute(stmt)
@@ -785,6 +783,9 @@ class SessionRepository:
         }
         if include_data and getattr(row, "data", None):
             message["data"] = row.data
+        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        if attachments:
+            message["attachments"] = attachments
         return message
 
     async def get_llm_history_messages(self, session_id: str) -> List[Dict[str, Any]]:
@@ -896,7 +897,7 @@ class SessionRepository:
         )
 
     async def get_display_history_messages_light(self, session_id: str) -> List[Dict[str, Any]]:
-        """Load a full-length display transcript stub without data/metadata JSON."""
+        """Load display text plus the small attachment contract, without result data."""
         async with AsyncSession(self.engine) as session:
             stmt = (
                 select(
@@ -904,6 +905,7 @@ class SessionRepository:
                     SessionMessageDB.role,
                     SessionMessageDB.msg_type,
                     SessionMessageDB.content,
+                    SessionMessageDB.msg_metadata,
                     SessionMessageDB.timestamp,
                     SessionMessageDB.sequence_number,
                 )
@@ -935,6 +937,9 @@ class SessionRepository:
             "sequence_number": row.sequence_number,
             "is_lightweight": True,
         }
+        attachments = self._message_attachments(getattr(row, "msg_metadata", None))
+        if attachments:
+            msg_dict["attachments"] = attachments
 
         # ✅ 从 content_preview 中提取工具名称（用于前端显示）
         # tool_use 消息的 content 通常包含："调用工具：check_order" 等信息
@@ -994,6 +999,7 @@ class SessionRepository:
                         SessionMessageDB.id,
                         SessionMessageDB.role,
                         SessionMessageDB.msg_type,
+                        SessionMessageDB.msg_metadata,
                         SessionMessageDB.timestamp,
                         SessionMessageDB.sequence_number,
                         func.substring(content_text, 1, 2000).label("content_preview"),
