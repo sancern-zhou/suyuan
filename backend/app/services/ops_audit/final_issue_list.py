@@ -96,7 +96,7 @@ def _required_field_issue_is_remark_only(issue: dict[str, Any]) -> bool:
 def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> dict[str, Any]:
     evidence_data = _parse_evidence(issue.get("evidence"))
     rf_table = _rf_table_from_evidence(evidence_data) or _rf_table_from_field(issue.get("field"))
-    return {
+    item = {
         "working_order_code": record.get("working_order_code"),
         "station_id": record.get("station_id"),
         "station_name": record.get("station_name"),
@@ -117,6 +117,24 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
         "message": issue.get("message"),
         "evidence": issue.get("evidence"),
     }
+    for key in (
+        "report_classification",
+        "needs_manual_review",
+        "attachment_filename",
+        "attachment_local_path",
+        "attachment_original_path",
+        "attachment_url",
+        "model_result_path",
+        "reason_code",
+        "reason",
+        "observed_summary",
+        "form_concentrations",
+        "concentration_unit",
+        "evidence_images",
+    ):
+        if key in evidence_data:
+            item[key] = evidence_data[key]
+    return item
 
 
 def _semantic_item(
@@ -287,6 +305,9 @@ def _specialized_semantic_source_message(source_issue: dict[str, Any]) -> str | 
 
 
 def _source_issue_for_rule(result: dict[str, Any], rule_id: str) -> dict[str, Any] | None:
+    source_issue = result.get("source_issue")
+    if isinstance(source_issue, dict) and source_issue.get("rule_id") == rule_id:
+        return source_issue
     evidence_summary = result.get("evidence_summary") or {}
     sample_issues = evidence_summary.get("sample_issues") or []
     if not isinstance(sample_issues, list):

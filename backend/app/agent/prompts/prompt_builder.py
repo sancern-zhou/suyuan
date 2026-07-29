@@ -6,13 +6,16 @@ ReAct系统提示词构建器（多模式架构）
 
 from typing import Literal, List, Optional
 from .assistant_prompt import build_assistant_prompt
+from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_prompt
 from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .chart_prompt import build_chart_prompt
+from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
+from .custom_prompt import build_custom_prompt
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -26,13 +29,16 @@ logger = structlog.get_logger()
 
 AgentMode = Literal[
     "assistant",
+    "ppt",
     "expert",
     "query",
     "report",
     "social",
     "chart",
+    "board",
     "ops",
     "graph",
+    "custom",
     "memory_consolidator",
     "deliberation_meteorology",
     "deliberation_monitoring",
@@ -54,13 +60,13 @@ def build_react_system_prompt(
     user_context: Optional[str] = None,  # ✅ 新增：用户上下文内容（USER.md）
     heartbeat_context: Optional[str] = None,  # ✅ 新增：HEARTBEAT.md 当前内容
     backend_host: Optional[str] = None,  # ✅ 新增：网关地址（仅social模式使用）
-    board_context: Optional[dict] = None,  # 图表模式 draw.io 画板上下文
+    board_context: Optional[dict] = None,  # 画板模式 draw.io 上下文
 ) -> str:
     """
     构建ReAct系统提示词（多模式架构）
 
     Args:
-        mode: Agent模式 ("assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops")
+        mode: Agent模式 ("assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "ops")
         available_tools: 可用工具列表（如果为None，自动加载该模式的所有工具）
         user_preferences: 用户偏好配置（仅social模式使用）
         memory_file_path: 用户记忆文件路径（仅social模式使用）
@@ -77,13 +83,16 @@ def build_react_system_prompt(
         系统提示词字符串
     """
     # 如果未指定工具，加载该模式的默认工具
-    if available_tools is None:
+    if available_tools is None and mode != "custom":
         tools_dict = get_tools_by_mode(mode)
         available_tools = list(tools_dict.keys())
 
     # 过滤：只保留该模式支持的工具
-    mode_tools = get_tools_by_mode(mode)
-    filtered_tools = [t for t in available_tools if t in mode_tools]
+    if mode == "custom":
+        filtered_tools = list(available_tools or [])
+    else:
+        mode_tools = get_tools_by_mode(mode)
+        filtered_tools = [t for t in available_tools if t in mode_tools]
 
     logger.info(
         "building_prompt",
@@ -101,8 +110,12 @@ def build_react_system_prompt(
     )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
+    if mode == "custom":
+        return build_custom_prompt(filtered_tools)
     if mode == "assistant":
         return build_assistant_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "ppt":
+        return build_ppt_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "expert":
         return build_expert_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "query":
@@ -124,7 +137,14 @@ def build_react_system_prompt(
             backend_host,
         )
     elif mode == "chart":
-        return build_chart_prompt(filtered_tools, memory_context, memory_file_path, board_context)
+        return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
+    elif mode == "board":
+        return build_board_prompt(
+            filtered_tools,
+            memory_context,
+            memory_file_path,
+            board_context,
+        )
     elif mode == "ops":
         return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
     elif mode == "graph":

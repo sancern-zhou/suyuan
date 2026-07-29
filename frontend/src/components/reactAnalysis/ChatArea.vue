@@ -30,6 +30,7 @@
       :reflexion-count="reflexionCount"
       :use-markdown="true"
       :assistant-mode="assistantMode"
+      :agent-mode="agentMode"
       :selected-message-id="selectedMessageId"
       :visualization-panel-ref="null"
       :on-message-click="handleMessageClick"
@@ -39,6 +40,11 @@
       @load-more="$emit('load-more')"
     />
 
+    <div v-if="readOnly && !showManagementPanel" class="read-only-notice">
+      <span>{{ readOnlyNotice }}</span>
+      <button type="button" @click="$emit('new-web-conversation')">新建 Web 对话</button>
+    </div>
+
     <!-- 输入框 -->
     <InputBox
       v-show="!showManagementPanel"
@@ -46,7 +52,7 @@
       v-model="inputValue"
       :pending-steering-inputs="pendingSteeringInputs"
       :session-id="sessionId"
-      :disabled="inputDisabled"
+      :disabled="inputDisabled || readOnly"
       :is-analyzing="isAnalyzing"
       :placeholder="inputPlaceholder"
       :assistant-mode="assistantMode"
@@ -54,7 +60,6 @@
       @send="$emit('send', $event)"
       @pause="$emit('pause')"
       @update:useReranker="$emit('update:useReranker', $event)"
-      @update:agentMode="$emit('update:agentMode', $event)"
     />
   </div>
 </template>
@@ -63,6 +68,7 @@
 import { ref, computed, nextTick } from 'vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
+import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 
 const props = defineProps({
   messages: {
@@ -96,6 +102,10 @@ const props = defineProps({
   assistantMode: {
     type: String,
     default: 'general-agent'
+  },
+  agentMode: {
+    type: String,
+    default: 'assistant'
   },
   useReranker: {
     type: Boolean,
@@ -136,6 +146,14 @@ const props = defineProps({
   showManagementPanel: {
     type: Boolean,
     default: false
+  },
+  readOnly: {
+    type: Boolean,
+    default: false
+  },
+  readOnlyNotice: {
+    type: String,
+    default: ''
   }
 })
 
@@ -143,13 +161,13 @@ const emit = defineEmits([
   'send',
   'pause',
   'update:useReranker',
-  'update:agentMode',
   'select-message',
   'load-more',
   'toggle-viz-panel',
   'drag-over',
   'drag-leave',
-  'drop'
+  'drop',
+  'new-web-conversation'
 ])
 
 const inputBoxRef = ref(null)
@@ -170,7 +188,7 @@ const inputPlaceholder = computed(() => {
     'report-generation-expert': '输入报告生成需求...',
     'office-assistant': '输入您需要处理的办公任务...'
   }
-  return placeholders[props.assistantMode] || '输入您的问题...'
+  return withComposerShortcutGuide(placeholders[props.assistantMode])
 })
 
 // 事件处理
@@ -183,6 +201,7 @@ const handleToggleVizPanel = () => {
 }
 
 const handleDragOver = (e) => {
+  if (props.readOnly) return
   emit('drag-over', e)
 }
 
@@ -191,6 +210,7 @@ const handleDragLeave = (e) => {
 }
 
 const handleDrop = (e) => {
+  if (props.readOnly) return
   emit('drop', e)
 }
 
@@ -202,6 +222,7 @@ const focusInput = () => {
 }
 
 const handleFilesDrop = async (files) => {
+  if (props.readOnly) return
   if (inputBoxRef.value && typeof inputBoxRef.value.handleFilesDrop === 'function') {
     await inputBoxRef.value.handleFilesDrop(files)
   }
@@ -276,5 +297,25 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+}
+
+.read-only-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 9px 14px;
+  color: #8a5a00;
+  background: #fff6df;
+  border-top: 1px solid #f1d48a;
+}
+
+.read-only-notice button {
+  padding: 5px 10px;
+  border: 1px solid #1976d2;
+  border-radius: 4px;
+  color: #1976d2;
+  background: #fff;
+  cursor: pointer;
 }
 </style>

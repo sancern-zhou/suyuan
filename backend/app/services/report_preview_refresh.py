@@ -1,15 +1,22 @@
 """Helpers for refreshing report previews after report.qmd file edits."""
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import structlog
 
-from app.services.quarto_report_renderer import quarto_report_renderer
+from app.auth.share_access import external_api_path
+from app.services.quarto_report_renderer import (
+    MARKDOWN_IMAGE_PATTERN,
+    markdown_image_path,
+    quarto_report_renderer,
+)
 
 logger = structlog.get_logger()
 
@@ -65,7 +72,7 @@ def build_html_preview(report_id: str, html_path: Path) -> Dict[str, Any]:
     )
     return {
         "html_id": report_id,
-        "html_url": f"/api/reports/{report_id}/html",
+        "html_url": external_api_path(f"/api/reports/{report_id}/html"),
         "file_type": "report",
         "schema_version": "report_package.v1",
         "preview_version": preview_version,
@@ -92,6 +99,30 @@ def write_report_meta(report_id: str, meta: Dict[str, Any]) -> None:
 def _source_qmd_report_id(qmd_path: Path) -> str:
     digest = hashlib.sha1(str(qmd_path).encode("utf-8")).hexdigest()[:12]
     return f"source_qmd_{digest}"
+
+
+def _initialize_transient_source_preview(qmd_path: Path, report_dir: Path) -> None:
+    """Create a disposable package for presenting an otherwise unmapped QMD."""
+    source_dir = qmd_path.parent.resolve()
+    report_dir.mkdir(parents=True, exist_ok=True)
+    text = qmd_path.read_text(encoding="utf-8", errors="replace")
+    (report_dir / "report.qmd").write_text(text, encoding="utf-8")
+
+    for match in MARKDOWN_IMAGE_PATTERN.finditer(text):
+        ref = markdown_image_path(match.group("src")).split("#", 1)[0].split("?", 1)[0]
+        if not ref or re.match(r"^(?:https?://|data:|/api/)", ref, re.IGNORECASE):
+            continue
+        source_asset = (source_dir / ref).resolve()
+        target_asset = (report_dir / ref).resolve()
+        try:
+            source_asset.relative_to(source_dir)
+            target_asset.relative_to(report_dir.resolve())
+        except ValueError:
+            continue
+        if not source_asset.is_file():
+            continue
+        target_asset.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_asset, target_asset)
 
 
 def record_report_update(
@@ -133,10 +164,13 @@ def record_report_update(
             "docx": str(report_dir / "report.docx"),
         }
     )
-    if qmd_path != (report_dir / "report.qmd").resolve():
-        files["source_qmd"] = str(qmd_path)
-    else:
-        files.pop("source_qmd", None)
+    raw_source_qmd = files.get("source_qmd")
+    if raw_source_qmd:
+        try:
+            if Path(raw_source_qmd).expanduser().resolve() == (report_dir / "report.qmd").resolve():
+                files.pop("source_qmd", None)
+        except OSError:
+            pass
 
     history.append(event)
     meta.update(
@@ -146,8 +180,8 @@ def record_report_update(
             "version": next_version,
             "files": files,
             "download_urls": {
-                "qmd": f"/api/reports/{report_id}/download/qmd",
-                "docx": f"/api/reports/{report_id}/download/docx",
+                "qmd": external_api_path(f"/api/reports/{report_id}/download/qmd"),
+                "docx": external_api_path(f"/api/reports/{report_id}/download/docx"),
             },
             "history": history[-20:],
         }
@@ -170,6 +204,29 @@ def refresh_report_preview_for_qmd_path(path: str | Path) -> Optional[Dict[str, 
         return None
 
     qmd_path = Path(path).expanduser().resolve()
+    package_qmd = (quarto_report_renderer.get_report_dir(report_id) / "report.qmd").resolve()
+    if qmd_path != package_qmd:
+        error = (
+            "External source QMD changed; rebuild the normalized report package with "
+            "create_report_package (including the real image paths in assets) before "
+            "rendering again."
+        )
+        return {
+            "report_id": report_id,
+            "file_path": str(qmd_path),
+            "file_type": "report",
+            "report_preview_refresh": {
+                "success": False,
+                "report_id": report_id,
+                "error": error,
+            },
+            "render_error": error,
+            "markdown_preview": {
+                "content": qmd_path.read_text(encoding="utf-8", errors="replace"),
+                "file_type": "report",
+                "schema_version": "report_package.v1",
+            },
+        }
     try:
         html_path = quarto_report_renderer.render_preview_html(report_id)
         preview = build_html_preview(report_id, html_path)
@@ -230,6 +287,7 @@ def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any
     qmd_path = Path(path).expanduser().resolve()
     report_id = _source_qmd_report_id(qmd_path)
     report_dir = quarto_report_renderer.get_report_dir(report_id)
+    _initialize_transient_source_preview(qmd_path, report_dir)
     now = _now_iso()
     existing_meta = read_report_meta(report_id)
     meta = {
@@ -246,8 +304,8 @@ def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any
             "docx": str(report_dir / "report.docx"),
         },
         "download_urls": {
-            "qmd": f"/api/reports/{report_id}/download/qmd",
-            "docx": f"/api/reports/{report_id}/download/docx",
+            "qmd": external_api_path(f"/api/reports/{report_id}/download/qmd"),
+            "docx": external_api_path(f"/api/reports/{report_id}/download/docx"),
         },
     }
     write_report_meta(report_id, meta)

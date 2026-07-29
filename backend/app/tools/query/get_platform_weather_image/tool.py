@@ -529,7 +529,7 @@ class GetPlatformWeatherImageTool(LLMTool):
                 type="image",
                 format=product_spec.file_extension,
                 usage="tool_input",
-                preferred_for=["analyze_image", "read_file"],
+                preferred_for=["read_file"],
             )
             url_refs = [build_url_ref(source_url, usage="source", source="source_url")]
             visual_refs = []
@@ -569,7 +569,10 @@ class GetPlatformWeatherImageTool(LLMTool):
                 },
                 "refs": refs,
                 "llm_resume": {
-                    "tool_hint": f"Use analyze_image(path='{local_path}') for image analysis.",
+                    "tool_hint": (
+                        f"Use read_file(path='{local_path}', as_multimodal_attachment=true) "
+                        "to inspect this image."
+                    ),
                 },
                 "metadata": {
                     "schema_version": "v1.0",

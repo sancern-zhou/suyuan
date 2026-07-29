@@ -11,7 +11,7 @@ import os
 
 import structlog
 
-from app.db.database import close_db, init_db
+from app.db.database import check_db_connection, close_db, init_db
 from app.services.lifecycle_manager import initialize_fetchers, stop_fetchers
 
 logger = structlog.get_logger()
@@ -30,8 +30,15 @@ async def init_database() -> bool:
         return False
 
     try:
-        await init_db()
-        logger.info("database_initialized")
+        initialize_schema = os.getenv(
+            "DATABASE_SCHEMA_INIT_ON_STARTUP", "true"
+        ).lower() in {"1", "true", "yes", "on"}
+        if initialize_schema:
+            await init_db()
+            logger.info("database_initialized")
+        else:
+            await check_db_connection()
+            logger.info("database_connection_verified", schema_managed_externally=True)
         return True
     except Exception as e:
         logger.error("database_initialization_failed", error=str(e), exc_info=True)
@@ -40,7 +47,11 @@ async def init_database() -> bool:
 
 
 async def init_database_and_fetchers() -> bool:
-    """Initialize database and optionally start data fetchers."""
+    """Initialize the database and optionally start data fetchers.
+
+    The return value represents database readiness. Fetcher startup failures do
+    not make other database-backed services unavailable.
+    """
     database_ready = await init_database()
     if not database_ready:
         return False
@@ -55,7 +66,7 @@ async def init_database_and_fetchers() -> bool:
     except Exception as e:
         logger.error("data_fetchers_initialization_failed", error=str(e), exc_info=True)
         logger.warning("continuing_without_data_fetchers")
-        return False
+        return True
 
 
 async def stop_data_fetchers() -> None:

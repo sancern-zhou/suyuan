@@ -5,6 +5,166 @@ from app.services.ops_audit.rules import attachment_ocr_rules
 from app.services.ops_audit.semantic import reviewer
 
 
+def test_manufacturer_filed_range_note_is_a_range_mismatch_explanation():
+    assert reviewer._has_range_mismatch_explanation("厂家备案参数0-4.096V") is True
+
+
+def test_generic_remark_review_is_per_issue_and_final_mapping_is_exact(monkeypatch):
+    def issue(table, field, message, remark_candidates):
+        return {
+            "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+            "category": "异常说明问题",
+            "severity": "高",
+            "field": f"rf.{table}.remark",
+            "message": message,
+            "evidence": json.dumps(
+                {
+                    "working_order_code": "WO-MULTI",
+                    "rf_table": table,
+                    "reason_rule_id": "RF_RANGE_OUT_OF_SPEC",
+                    "abnormal_field": f"rf.{table}.{field}",
+                    "abnormal_message": message,
+                    "remark_candidates": remark_candidates,
+                    "needs_semantic_review": True,
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    cleared_issue = issue(
+        "RF_W_GASEOUSCHECK_NOX",
+        "PMTCHECKVALUE",
+        "NOx参考PMT信号值0.001超出通用范围",
+        {"PMTCHECKROW": "厂家备案参数0-4.096V"},
+    )
+    confirmed_issue = issue(
+        "RF_W_GASEOUSCHECK_SO2",
+        "PMTCHECKVALUE",
+        "SO2参考PMT信号值异常且未说明",
+        {"REMARK": "正常"},
+    )
+    record = {
+        "working_order_code": "WO-MULTI",
+        "station_id": "ST-1",
+        "station_name": "测试站",
+        "order_type": "Check",
+        "maintenance_type": "Week",
+        "finish_time": "2026-07-10 12:00:00",
+        "audit_level": "有问题",
+        "workflow_steps": [],
+        "rf_tables": ["RF_W_GASEOUSCHECK_NOX", "RF_W_GASEOUSCHECK_SO2"],
+        "scoring_issues": [cleared_issue, confirmed_issue],
+    }
+    base_task = reviewer.build_semantic_review_tasks({"records": [record]})["tasks"][0]
+    tasks = reviewer._expand_generic_remark_tasks([base_task])
+
+    assert len(tasks) == 2
+    assert len({task["review_item_id"] for task in tasks}) == 2
+    assert all(len(task["evidence_summary"]["sample_issues"]) == 1 for task in tasks)
+
+    pending_task = next(
+        task for task in tasks
+        if task["source_issue"]["field"] == "rf.RF_W_GASEOUSCHECK_SO2.remark"
+    )
+
+    def fake_call(prompt, text, *, context=None):
+        payload = json.loads(text)
+        assert [item["review_item_id"] for item in payload["items"]] == [pending_task["review_item_id"]]
+        item = payload["items"][0]
+        assert item["issue"]["rf_table"] == "RF_W_GASEOUSCHECK_SO2"
+        assert item["issue"]["remark_candidates"] == {"REMARK": "正常"}
+        return {
+            "results": [
+                {
+                    "review_item_id": pending_task["review_item_id"],
+                    "working_order_code": "WO-MULTI",
+                    "is_complete": False,
+                    "has_cause": False,
+                    "has_action": False,
+                    "has_result": False,
+                    "problem_description": "SO2字段备注未解释该异常值。",
+                    "confidence": 0.95,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", fake_call)
+    results = reviewer._review_remark_tasks_batch(
+        tasks,
+        {"WO-MULTI": record},
+        {"WO-MULTI": {"ORDERTITLE": "任务检查单"}},
+        {},
+        {"WO-MULTI": []},
+    )
+
+    assert len(results) == 2
+    assert sorted(result["judgment"] for result in results.values()) == ["cleared", "confirmed_issue"]
+
+    final = build_final_issue_list(
+        {"records": [record]},
+        {"results": list(results.values())},
+    )
+    assert final["issue_count"] == 1
+    assert final["items"][0]["rf_table"] == "RF_W_GASEOUSCHECK_SO2"
+    assert final["items"][0]["message"] == "SO2参考PMT信号值异常且未说明"
+
+
+def test_generic_remark_review_expands_every_issue_beyond_summary_sample_limit():
+    issues = []
+    for index in range(9):
+        issues.append(
+            {
+                "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+                "field": f"rf.RF_W_GASEOUSCHECK_NOX.FIELD{index}",
+                "message": f"异常项{index}",
+                "evidence": json.dumps(
+                    {
+                        "rf_table": "RF_W_GASEOUSCHECK_NOX",
+                        "abnormal_field": f"rf.RF_W_GASEOUSCHECK_NOX.FIELD{index}",
+                        "remark_candidates": {"REMARK": ""},
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+    record = {
+        "working_order_code": "WO-NINE",
+        "station_id": "ST-1",
+        "order_type": "Check",
+        "maintenance_type": "Week",
+        "finish_time": "2026-07-10 12:00:00",
+        "scoring_issues": issues,
+    }
+
+    base_task = reviewer.build_semantic_review_tasks({"records": [record]})["tasks"][0]
+    expanded = reviewer._expand_generic_remark_tasks([base_task])
+
+    assert len(expanded) == 9
+
+
+def test_generic_remark_batch_failure_keeps_each_review_item_separate():
+    tasks = [
+        {
+            "review_item_id": f"WO-FAIL::ITEM::{index}",
+            "working_order_code": "WO-FAIL",
+            "semantic_focus": ["RF_ABNORMAL_VALUE_NO_REMARK"],
+            "evidence_summary": {"sample_issues": []},
+        }
+        for index in range(2)
+    ]
+
+    results = reviewer._fallback_semantic_results(
+        tasks,
+        {"WO-FAIL": {}},
+        {"WO-FAIL": {}},
+        "failed",
+        RuntimeError("boom"),
+    )
+
+    assert set(results) == {"WO-FAIL::ITEM::0", "WO-FAIL::ITEM::1"}
+    assert all(result["judgment"] == "needs_followup" for result in results.values())
+
+
 def test_field_level_range_note_clears_abnormal_value_remark_review(monkeypatch):
     def fail_llm_call(*args, **kwargs):
         raise AssertionError("field-level range note should be handled before LLM review")

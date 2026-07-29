@@ -752,6 +752,10 @@ class NOAAHysplitAPI:
                 configure_chinese_font()
             except Exception as font_error:
                 logger.debug("configure_chinese_font_failed", error=str(font_error))
+            try:
+                from app.utils.font_utils import apply_font_to_figure
+            except Exception:
+                apply_font_to_figure = None
 
             logger.info("local_trajectory_plot_start", endpoints_count=len(endpoints))
 
@@ -1008,6 +1012,8 @@ class NOAAHysplitAPI:
             )
 
             # 保存到内存（不使用bbox_inches='tight'，确保上下图宽度一致）
+            if apply_font_to_figure is not None:
+                apply_font_to_figure(fig)
             buffer = BytesIO()
             plt.savefig(buffer, format='png', dpi=100, facecolor='white', pad_inches=0.0)
             plt.close(fig)

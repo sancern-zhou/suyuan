@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 会话管理API模块
  */
@@ -23,7 +24,7 @@ async function request(url, options = {}) {
     headers
   }
 
-  const response = await fetch(url, config)
+  const response = await authFetch(url, config)
 
   if (!response.ok) {
     const errorText = await response.text()
@@ -96,17 +97,28 @@ export async function getSessionMessages(sessionId, beforeSequence, limit = 30) 
 }
 
 /**
+ * 获取当前对话可通过 @ 引用的上传文件和 Agent 生成文件。
+ */
+export async function getSessionResources(sessionId) {
+  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources`)
+}
+
+/**
  * 按需加载会话图表数据
  */
 export async function getSessionVisualizations(sessionId) {
-  return await request(`${BASE_URL}/${sessionId}/visualizations`)
+  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=visualization`)
 }
 
 /**
  * 按需加载会话文档/报告预览元数据
  */
-export async function getSessionOfficeDocuments(sessionId) {
-  return await request(`${BASE_URL}/${sessionId}/office-documents`)
+export async function getSessionOfficeDocuments(sessionId, options = {}) {
+  const { cursor = null, limit = null } = options
+  let url = `${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=document`
+  if (limit) url += `&limit=${encodeURIComponent(limit)}`
+  if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`
+  return await request(url)
 }
 
 /**

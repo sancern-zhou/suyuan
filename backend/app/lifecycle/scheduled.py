@@ -17,7 +17,7 @@ async def start_scheduled_task_service() -> None:
         from app.agent.react_agent import create_react_agent
         from app.scheduled_tasks import init_service, start_service
 
-        init_service(agent_factory=lambda: create_react_agent())
+        init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
         start_service()
         logger.info("scheduled_task_service_started")
     except Exception as e:
@@ -28,10 +28,9 @@ async def start_scheduled_task_service() -> None:
 async def stop_scheduled_task_service() -> None:
     """Stop scheduled task service."""
     try:
-        from app.scheduled_tasks import stop_service
+        from app.scheduled_tasks import stop_service_async
 
-        stop_service()
+        await stop_service_async()
         logger.info("scheduled_task_service_stopped")
     except Exception as e:
         logger.warning("scheduled_task_service_stop_failed", error=str(e))
-

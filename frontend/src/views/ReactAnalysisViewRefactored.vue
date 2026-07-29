@@ -22,7 +22,6 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
-      :map-program="store.currentState.currentMapProgram"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
@@ -49,6 +48,8 @@
       :session-history-data="sessionHistoryData"
       :session-history-stats="sessionHistoryStats"
       :session-history-loading="sessionHistoryLoading"
+      :conversation-read-only="currentConversationPolicy.readOnly"
+      :conversation-read-only-notice="currentConversationPolicy.notice"
       @update:active-module="handleAssistantSelect"
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="setLayoutRef"
@@ -95,7 +96,7 @@
       @restore-session="handleSessionRestore"
       @toggle-session-case="handleToggleSessionCase"
       @delete-sessions="deleteSessions"
-      @map-event="handleMapEvent"
+      @new-web-conversation="startNewWebConversation"
     />
 
     <!-- 知识库创建对话框 -->
@@ -127,13 +128,19 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import {
+  deleteScheduledTask as deleteScheduledTaskAction,
+  executeScheduledTask as executeScheduledTaskAction,
+  refreshScheduledTaskManagement,
+  toggleScheduledTask
+} from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
-import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -199,7 +206,9 @@ const {
   refreshSessionHistory,
   handleSessionCleanup,
   deleteSessions,
-  handleToggleSessionCase
+  handleToggleSessionCase,
+  currentConversationPolicy,
+  startNewWebConversation
 } = useSessionManagement(store)
 
 // 知识库操作
@@ -347,9 +356,6 @@ const handleSidebarAction = async (actionId) => {
       showManagementPanel('knowledge-base')
       await kbStore.fetchKnowledgeBases()
       break
-    case 'cognitive-map':
-      showManagementPanel('cognitive-map')
-      break
     case 'fetchers':
       showManagementPanel('fetchers')
       await refreshFetcherStatus()
@@ -408,7 +414,7 @@ const handleChatAreaDrop = async (e) => {
 
 const handleOfficeEditSubmit = async (editData) => {
   try {
-    const response = await fetch('/api/office/apply-edit', {
+    const response = await authFetch('/api/office/apply-edit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -458,30 +464,9 @@ const handleBoardVersionRestore = (versionId) => {
   }
 }
 
-const handleMapEvent = (event) => {
-  if (typeof store.recordMapEvent === 'function') {
-    store.recordMapEvent(event)
-  }
-  if (event?.receipt) {
-    postMapProgramReceipt({
-      sessionId: event.session_id || currentModeSessionId.value,
-      receipt: event.receipt
-    }).catch(error => {
-      console.warn('Failed to post map program receipt:', error)
-    })
-  }
-}
-
 const handleKbCreateConfirm = async (formData) => {
   // 使用知识库composable的创建方法
   try {
-    // 同步管理员标识到 localStorage
-    if (formData.kb_type === 'public' && formData.adminConfirm) {
-      localStorage.setItem('isAdmin', 'true')
-    } else if (!formData.adminConfirm) {
-      localStorage.removeItem('isAdmin')
-    }
-
     await kbStore.createKnowledgeBase(formData)
     closeDialog('kbCreate')
   } catch (e) {
@@ -508,18 +493,24 @@ const viewKbChunksRetry = async () => {
 const refreshScheduledTasks = async () => {
   scheduledTasksRefreshing.value = true
   try {
-    await scheduledTasksStore.fetchTasks()
+    await refreshScheduledTaskManagement(scheduledTasksStore)
   } finally {
     scheduledTasksRefreshing.value = false
   }
 }
 
 const handleScheduledTaskToggle = async (task) => {
-  await scheduledTasksStore.toggleTask(task.id)
+  await toggleScheduledTask(scheduledTasksStore, task)
 }
 
 const executeScheduledTask = async (task) => {
-  await scheduledTasksStore.executeTask(task.id)
+  try {
+    await executeScheduledTaskAction(scheduledTasksStore, task)
+    await refreshScheduledTasks()
+  } catch (error) {
+    console.error('Failed to execute scheduled task:', error)
+    alert('立即执行失败: ' + (error.message || '未知错误'))
+  }
 }
 
 const editScheduledTask = (task) => {
@@ -527,7 +518,7 @@ const editScheduledTask = (task) => {
 }
 
 const deleteScheduledTask = async (task) => {
-  await scheduledTasksStore.deleteTask(task.id)
+  await deleteScheduledTaskAction(scheduledTasksStore, task)
 }
 
 // ========== 生命周期 ==========

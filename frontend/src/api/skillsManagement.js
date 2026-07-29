@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 技能管理 API
  */
@@ -8,9 +9,12 @@ const API_BASE = '/api'
  * @param {string} keyword - 可选，过滤关键词
  * @returns {Promise<Object>}
  */
-export async function getSkillsList(keyword = null) {
-  const params = keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''
-  const response = await fetch(`${API_BASE}/skills${params}`)
+export async function getSkillsList(keyword = null, mode = null) {
+  const search = new URLSearchParams()
+  if (keyword) search.set('keyword', keyword)
+  if (mode) search.set('mode', mode)
+  const params = search.toString() ? `?${search}` : ''
+  const response = await authFetch(`${API_BASE}/skills${params}`)
   if (!response.ok) {
     throw new Error(`获取技能列表失败: ${response.statusText}`)
   }
@@ -23,7 +27,7 @@ export async function getSkillsList(keyword = null) {
  * @returns {Promise<Object>}
  */
 export async function getSkillDetail(skillName) {
-  const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`)
+  const response = await authFetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`)
   if (!response.ok) {
     throw new Error(`获取技能详情失败: ${response.statusText}`)
   }
@@ -35,7 +39,7 @@ export async function getSkillDetail(skillName) {
  * @returns {Promise<Object>}
  */
 export async function getSkillDraftsList() {
-  const response = await fetch(`${API_BASE}/skills/drafts`)
+  const response = await authFetch(`${API_BASE}/skills/drafts`)
   if (!response.ok) {
     throw new Error(`获取待审核技能列表失败: ${response.statusText}`)
   }
@@ -48,7 +52,7 @@ export async function getSkillDraftsList() {
  * @returns {Promise<Object>}
  */
 export async function getSkillDraftDetail(draftName) {
-  const response = await fetch(`${API_BASE}/skills/drafts/${encodeURIComponent(draftName)}`)
+  const response = await authFetch(`${API_BASE}/skills/drafts/${encodeURIComponent(draftName)}`)
   if (!response.ok) {
     throw new Error(`获取待审核技能详情失败: ${response.statusText}`)
   }
@@ -60,7 +64,7 @@ export async function getSkillDraftDetail(draftName) {
  * @returns {Promise<Object>}
  */
 export async function refreshSkillsIndex() {
-  const response = await fetch(`${API_BASE}/skills/refresh-index`, {
+  const response = await authFetch(`${API_BASE}/skills/refresh-index`, {
     method: 'POST'
   })
   if (!response.ok) {
@@ -76,7 +80,7 @@ export async function refreshSkillsIndex() {
  * @returns {Promise<Object>}
  */
 export async function saveSkillDetail(skillName, content) {
-  const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`, {
+  const response = await authFetch(`${API_BASE}/skills/${encodeURIComponent(skillName)}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json'
@@ -96,7 +100,7 @@ export async function saveSkillDetail(skillName, content) {
  * @returns {Promise<Object>}
  */
 export async function saveSkillDraftDetail(draftName, content) {
-  const response = await fetch(`${API_BASE}/skills/drafts/${encodeURIComponent(draftName)}`, {
+  const response = await authFetch(`${API_BASE}/skills/drafts/${encodeURIComponent(draftName)}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json'

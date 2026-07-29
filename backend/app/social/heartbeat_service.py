@@ -427,17 +427,14 @@ class HeartbeatService:
             "manual_mode": manual_mode,
         }
 
-    def _parse_tasks(self, content: str) -> list[Dict[str, Any]]:
-        """
-        解析HEARTBEAT.md文件中的任务列表
+    def parse_all_tasks(self, content: str, *, include_computed_next_run: bool = False) -> list[Dict[str, Any]]:
+        """Parse all HEARTBEAT.md task blocks, including disabled tasks.
 
-        Args:
-            content: HEARTBEAT.md文件内容
-
-        Returns:
-            任务列表（包含next_run_at字段）
+        This is the read-side representation used by management tools. The
+        scheduler still calls _parse_tasks(), which filters to enabled tasks.
         """
         tasks = []
+        current_time = datetime.now(self.timezone)
 
         for block in self._extract_task_blocks(content):
             parsed = self._parse_task_block_with_yaml(block) or self._parse_task_block_with_regex(block)
@@ -448,8 +445,6 @@ class HeartbeatService:
             enabled = parsed.get("enabled", True)
             if isinstance(enabled, str):
                 enabled = enabled.strip().lower() == "true"
-            if not enabled:
-                continue
 
             name = str(parsed.get("name", "")).strip()
             schedule = str(parsed.get("schedule", "")).strip()
@@ -466,15 +461,44 @@ class HeartbeatService:
                 "name": name,
                 "schedule": schedule,
                 "description": description,
-                "enabled": True,
+                "enabled": bool(enabled),
                 "channels": channels,
             }
             if manual_mode:
                 task["manual_mode"] = manual_mode
             if next_run_at:
                 task["next_run_at"] = next_run_at
+            elif include_computed_next_run:
+                next_run = self._compute_next_run(schedule, current_time)
+                if next_run:
+                    task["next_run_at"] = next_run.isoformat()
+                    task["next_run_computed"] = True
 
             tasks.append(task)
+
+        logger.info(
+            "all_heartbeat_tasks_parsed",
+            count=len(tasks),
+            enabled=sum(1 for task in tasks if task.get("enabled")),
+            disabled=sum(1 for task in tasks if not task.get("enabled")),
+        )
+        return tasks
+
+    def _parse_tasks(self, content: str) -> list[Dict[str, Any]]:
+        """
+        解析HEARTBEAT.md文件中的任务列表
+
+        Args:
+            content: HEARTBEAT.md文件内容
+
+        Returns:
+            任务列表（包含next_run_at字段）
+        """
+        tasks = [
+            task
+            for task in self.parse_all_tasks(content)
+            if task.get("enabled")
+        ]
 
         logger.info("tasks_parsed", count=len(tasks), with_next_run=sum(1 for t in tasks if t.get("next_run_at")))
         return tasks
@@ -741,13 +765,15 @@ class HeartbeatService:
         """
         try:
             content = self.heartbeat_file.read_text(encoding="utf-8")
+            match = self._find_task_block(content, task_name)
+            if not match:
+                logger.info("task_not_found_for_remove", name=task_name)
+                return False
 
-            # 使用正则表达式移除任务
-            import re
-            pattern = rf'-\s*name:\s*{re.escape(task_name)}.*?(?=-\s*name:|$)'
-            new_content = re.sub(pattern, '', content, flags=re.DOTALL)
+            new_content = content[:match.start()] + content[match.end():]
 
             self._atomic_write_text(self.heartbeat_file, new_content)
+            self._task_changed_event.set()
 
             logger.info("task_removed_from_heartbeat", name=task_name)
             return True
@@ -759,3 +785,59 @@ class HeartbeatService:
                 error=str(e)
             )
             return False
+
+    def set_task_enabled(self, task_name: str, enabled: bool) -> bool:
+        """
+        启用或禁用 HEARTBEAT.md 中的任务。
+
+        Args:
+            task_name: 任务名称
+            enabled: True 启用，False 禁用
+
+        Returns:
+            是否成功更新
+        """
+        try:
+            content = self.heartbeat_file.read_text(encoding="utf-8")
+            match = self._find_task_block(content, task_name)
+            if not match:
+                logger.info("task_not_found_for_enabled_update", name=task_name, enabled=enabled)
+                return False
+
+            block = match.group(0)
+            enabled_value = "true" if enabled else "false"
+            import re
+            if re.search(r"(?m)^\s*enabled:\s*(?:true|false)\s*$", block):
+                updated_block = re.sub(
+                    r"(?m)^(\s*enabled:\s*)(?:true|false)\s*$",
+                    rf"\g<1>{enabled_value}",
+                    block,
+                    count=1,
+                )
+            else:
+                updated_block = block.rstrip() + f"\n  enabled: {enabled_value}\n"
+
+            new_content = content[:match.start()] + updated_block + content[match.end():]
+            self._atomic_write_text(self.heartbeat_file, new_content)
+            self._task_changed_event.set()
+
+            logger.info("task_enabled_updated", name=task_name, enabled=enabled)
+            return True
+        except Exception as e:
+            logger.error(
+                "failed_to_update_task_enabled",
+                task_name=task_name,
+                enabled=enabled,
+                error=str(e)
+            )
+            return False
+
+    def _find_task_block(self, content: str, task_name: str):
+        """Find a task block by parsed exact task name."""
+        import re
+        for match in re.finditer(r"(?ms)^-\s*name:\s*.*?(?=^- name:|\Z)", content):
+            block = match.group(0)
+            parsed = self._parse_task_block_with_yaml(block) or self._parse_task_block_with_regex(block)
+            if parsed and parsed.get("name") == task_name:
+                return match
+        return None

@@ -109,7 +109,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import { authAxios } from '@/auth/http.js'
 import QRCodeModal from '@/components/social/QRCodeModal.vue'
 import CreateAccountModal from '@/components/social/CreateAccountModal.vue'
 
@@ -128,7 +128,7 @@ const loadAccounts = async (showLoading = false) => {
   }
 
   try {
-    const response = await axios.get('/api/social/accounts')
+    const response = await authAxios.get('/api/social/accounts')
     const newAccounts = response.data
 
     // 只在数据真正变化时更新（避免不必要的重渲染）
@@ -155,7 +155,7 @@ const loadAccounts = async (showLoading = false) => {
 const startAccount = async (accountId) => {
   actionLoading.value[accountId] = true
   try {
-    await axios.post(`/api/social/accounts/weixin/${accountId}/start`)
+    await authAxios.post(`/api/social/accounts/weixin/${accountId}/start`)
     await loadAccounts()
   } catch (error) {
     console.error('Failed to start account:', error)
@@ -170,7 +170,7 @@ const stopAccount = async (accountId) => {
 
   actionLoading.value[accountId] = true
   try {
-    await axios.post(`/api/social/accounts/weixin/${accountId}/stop`)
+    await authAxios.post(`/api/social/accounts/weixin/${accountId}/stop`)
     await loadAccounts()
   } catch (error) {
     console.error('Failed to stop account:', error)
@@ -185,7 +185,7 @@ const deleteAccount = async (accountId) => {
 
   actionLoading.value[accountId] = true
   try {
-    await axios.delete(`/api/social/accounts/weixin/${accountId}`)
+    await authAxios.delete(`/api/social/accounts/weixin/${accountId}`)
     await loadAccounts()
   } catch (error) {
     console.error('Failed to delete account:', error)

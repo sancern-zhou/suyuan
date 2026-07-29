@@ -277,6 +277,9 @@ class ValidatePptxTool(LLMTool):
             "rendered_content_overflow",
             "rendered_low_margin",
             "rendered_visual_overcrowding",
+            "rendered_sparse_or_blank",
+            "rendered_nearly_blank",
+            "rendered_corner_cluster",
             "high_text_density",
             "validation_error",
             "rendered_visual_qa_unavailable",
@@ -302,6 +305,9 @@ class ValidatePptxTool(LLMTool):
             "rendered_content_overflow": "渲染后页面边缘检测到非背景内容。",
             "rendered_low_margin": "渲染内容距离页面边缘过近。",
             "rendered_visual_overcrowding": "渲染视觉占用过高。",
+            "rendered_sparse_or_blank": "渲染结果内容过少或接近空白。",
+            "rendered_nearly_blank": "渲染结果接近完全空白。",
+            "rendered_corner_cluster": "渲染内容异常集中在页面左上角。",
             "high_text_density": "页面文字行数或字符数超过高密度阈值。",
             "moderate_text_density": "页面文字行数或字符数接近密集阈值。",
             "text_only_slide": "页面主要由文本框组成，缺少图表、图片、表格或形状等视觉元素。",
@@ -372,8 +378,16 @@ class ValidatePptxTool(LLMTool):
             diff = ImageChops.difference(sample, bg_image).convert("L")
             threshold = 18
             changed = diff.point(lambda value: 255 if value > threshold else 0)
-            bbox = changed.getbbox()
             width, height = sample.size
+            # LibreOffice may emit a one-pixel white seam on the right edge
+            # (for example a 1921px raster for a 16:9 slide). Ignore only the
+            # outer sample pixel; substantive edge content remains visible in
+            # the adjacent pixels and is still flagged.
+            changed.paste(0, (0, 0, width, 1))
+            changed.paste(0, (0, height - 1, width, height))
+            changed.paste(0, (0, 0, 1, height))
+            changed.paste(0, (width - 1, 0, width, height))
+            bbox = changed.getbbox()
             changed_pixels = sum(1 for value in changed.getdata() if value)
             ink_ratio = changed_pixels / float(width * height)
 
@@ -392,6 +406,18 @@ class ValidatePptxTool(LLMTool):
                             "margin_ratio": round(margin_ratio, 4),
                         }
                     )
+                if left / width < 0.05 and top / height < 0.08 and right / width < 0.55 and bottom / height < 0.5:
+                    score -= 25
+                    slide_issues.append(
+                        {
+                            "type": "rendered_corner_cluster",
+                            "slide": slide_index,
+                            "content_bbox_ratio": [
+                                round(left / width, 4), round(top / height, 4),
+                                round(right / width, 4), round(bottom / height, 4),
+                            ],
+                        }
+                    )
             else:
                 score -= 35
                 slide_issues.append({"type": "rendered_nearly_blank", "slide": slide_index, "ink_ratio": 0})
@@ -406,8 +432,12 @@ class ValidatePptxTool(LLMTool):
                 slide_issues.append(
                     {"type": "rendered_dense_composition", "slide": slide_index, "ink_ratio": round(ink_ratio, 4)}
                 )
-            elif ink_ratio < 0.01:
-                score -= 25
+            # Keep the threshold low enough to catch failed renders while
+            # allowing intentional title covers with generous negative space.
+            # Real blank/near-blank pages and tiny corner clusters remain
+            # blocking via this threshold and the bbox checks above.
+            elif ink_ratio < 0.018:
+                score -= 45
                 slide_issues.append(
                     {"type": "rendered_sparse_or_blank", "slide": slide_index, "ink_ratio": round(ink_ratio, 4)}
                 )
@@ -416,7 +446,13 @@ class ValidatePptxTool(LLMTool):
             issues.extend(
                 issue
                 for issue in slide_issues
-                if issue["type"] in {"rendered_visual_overcrowding", "rendered_low_margin", "rendered_nearly_blank"}
+                if issue["type"] in {
+                    "rendered_visual_overcrowding",
+                    "rendered_low_margin",
+                    "rendered_nearly_blank",
+                    "rendered_sparse_or_blank",
+                    "rendered_corner_cluster",
+                }
             )
             slides.append(
                 {
@@ -455,10 +491,17 @@ class ValidatePptxTool(LLMTool):
         recommendations: List[str] = []
         if any(item["ink_ratio"] > 0.48 for item in slides):
             recommendations.append("渲染结果视觉占用过高，建议减少同页元素、拆页或把正文改成图表/流程。")
-        if any((item["margin_ratio"] is not None and item["margin_ratio"] < 0.015) for item in slides):
+        if any(
+            item["margin_ratio"] is not None
+            and item["margin_ratio"] < 0.015
+            and item["ink_ratio"] > 0.08
+            for item in slides
+        ):
             recommendations.append("渲染结果贴边明显，建议增加页边距并缩小主内容区域。")
-        if any(item["ink_ratio"] < 0.01 for item in slides):
+        if any(item["ink_ratio"] < 0.018 for item in slides):
             recommendations.append("渲染结果接近空白，建议检查图片、图表或文字是否成功输出。")
+        if any(any(issue["type"] == "rendered_corner_cluster" for issue in item["issues"]) for item in slides):
+            recommendations.append("内容集中在左上角，建议检查 CSS/主题是否加载，并重新建立页面视觉层级。")
         return recommendations
 
     def _inspect_design_quality(self, pptx_path: Path) -> Dict[str, Any]:
@@ -520,6 +563,11 @@ class ValidatePptxTool(LLMTool):
                 if shape_type == MSO_SHAPE_TYPE.PICTURE:
                     pictures += 1
                     visual_shapes += 1
+                elif shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+                    # Native rectangles, circles, cards, and other drawn shapes
+                    # expose an (often empty) text frame in python-pptx. They are
+                    # still visual structure and must not be mistaken for text boxes.
+                    visual_shapes += 1
                 elif not getattr(shape, "has_text_frame", False):
                     visual_shapes += 1
 
@@ -530,12 +578,14 @@ class ValidatePptxTool(LLMTool):
 
             score = 100
             slide_issues: List[Dict[str, Any]] = []
-            if text_chars > 900 or text_lines > 14:
+            # A card/dashboard layout commonly uses many short text boxes. Count
+            # it as high density only when line count and actual copy volume agree.
+            if text_chars > 900 or (text_lines > 30 and text_chars > 600):
                 score -= 25
                 slide_issues.append(
                     {"type": "high_text_density", "slide": slide_index, "chars": text_chars, "lines": text_lines}
                 )
-            elif text_chars > 620 or text_lines > 10:
+            elif text_chars > 620 or (text_lines > 20 and text_chars > 320):
                 score -= 15
                 slide_issues.append(
                     {"type": "moderate_text_density", "slide": slide_index, "chars": text_chars, "lines": text_lines}

@@ -17,11 +17,12 @@ from typing import Dict, Iterable, List
 
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
+    "list_session_resources",
     # 浏览
     "list_directory", "search_files", "read_file",
 
     # Office
-    "create_pptx_with_ppt_master", "validate_pptx",
+    "manage_editable_ppt", "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
     "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
@@ -31,7 +32,7 @@ ASSISTANT_TOOL_NAMES = [
 
     # 执行
     "bash", "create_report_chart", "execute_python",
-    "get_platform_weather_image", "analyze_image", "browser",
+    "get_platform_weather_image", "browser",
 
     # 知识库检索
     "knowledge_qa_workflow", "knowledge_document_reader",
@@ -52,8 +53,23 @@ ASSISTANT_TOOL_NAMES = [
     "call_sub_agent",
 ]
 
+# ===== 幻灯片模式工具 =====
+PPT_TOOL_NAMES = [
+    "list_session_resources",
+    # PPT 源码项目和交付
+    "manage_editable_ppt", "validate_pptx", "create_pptx_with_ppt_master",
+    # 文件读取与直接源码编辑
+    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    # 图表、图片检查和必要计算
+    "create_report_chart", "execute_python", "present_artifact",
+    # 用户材料、知识库与外部资料
+    "knowledge_qa_workflow", "knowledge_document_reader",
+    "web_search", "web_fetch", "browser",
+]
+
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
+    "list_session_resources",
     # 数据查询工具
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
@@ -84,6 +100,7 @@ EXPERT_TOOL_NAMES = [
 
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
+    "list_session_resources",
     # === 源码查看工具 ===
     "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
 
@@ -98,9 +115,7 @@ QUERY_TOOL_NAMES = [
     "query_station_standard_report", "query_station_standard_yoy_report",
     "query_gd_suncere_district_report",
     "analyze_city_pollutant_rankings",
-    "cognitive_map_guidance",
-    "cognitive_map_entity_query",
-    "cognitive_map_graph_traverse",
+    "knowledge_graph_query",
     "resolve_station_geo",
 
     # === 全国省份空气质量查询 ===
@@ -119,6 +134,7 @@ QUERY_TOOL_NAMES = [
 
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
+    "list_session_resources",
     # 规划工具
     "complex_query_planner",
 
@@ -149,12 +165,13 @@ REPORT_TOOL_NAMES = [
 
 # ===== 图表模式工具 =====
 CHART_TOOL_NAMES = [
+    "list_session_resources",
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash", "present_artifact",
 
     # 代码执行和原生多模态视觉参考
-    "create_drawio_board", "create_report_chart", "execute_python", "execute_echarts_python",
+    "create_report_chart", "execute_python", "execute_echarts_python",
 
     # 数据读取
     "read_data_registry",
@@ -168,14 +185,24 @@ CHART_TOOL_NAMES = [
     "execute_sql_query",
 ]
 
+# ===== 画板模式工具 =====
+BOARD_TOOL_NAMES = [
+    "list_session_resources",
+    "read_file",
+    "create_drawio_board",
+    "render_drawio_board_candidate",
+    "accept_drawio_board_candidate",
+]
+
 # ===== 运维管理模式工具 =====
 OPS_TOOL_NAMES = [
+    "list_session_resources",
     # 技能发现与按需读取
     "list_skills", "view_skill", "read_file",
 
     # 工单查询
     "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
-    "cognitive_map_guidance", "execute_ops_sql_query",
+    "knowledge_graph_query", "execute_ops_sql_query",
 
     # 展示型流程图
     "create_diagram_artifact", "create_report_chart", "present_artifact",
@@ -199,9 +226,11 @@ OPS_TOOL_NAMES = [
     "grep", "write_file", "edit_file", "list_directory", "search_files",
 ]
 
-# ===== 认知地图图谱编辑模式工具 =====
+# ===== 知识库图谱编辑模式工具 =====
 GRAPH_TOOL_NAMES = [
-    "cognitive_map_guidance",
+    "list_session_resources",
+    "knowledge_graph_query",
+    "knowledge_graph_build",
     "read_file",
     "edit_file",
     "grep",
@@ -211,6 +240,7 @@ GRAPH_TOOL_NAMES = [
 
 # ===== 社交模式工具（移动端助理） =====
 SOCIAL_TOOL_NAMES = [
+    "list_session_resources",
     # 文件操作
     "read_file", "edit_file", "grep", "write_file",
     "list_directory", "search_files", "list_skills", "view_skill",
@@ -236,6 +266,7 @@ SOCIAL_TOOL_NAMES = [
 
 # ===== 记忆整合器工具（后台专用） =====
 MEMORY_CONSOLIDATOR_TOOL_NAMES = [
+    "list_session_resources",
     # 文件操作（只保留读取和搜索）
     "read_file", "grep",
 
@@ -245,6 +276,7 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
 
 # ===== 会商专用模式工具 =====
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
+    "list_session_resources",
     "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
@@ -252,6 +284,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
+    "list_session_resources",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
@@ -260,6 +293,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = [
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
+    "list_session_resources",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
@@ -268,6 +302,7 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = [
 ]
 
 DELIBERATION_REVIEWER_TOOL_NAMES = [
+    "list_session_resources",
     "read_file", "write_file", "edit_file", "grep",
     "list_directory", "search_files", "execute_python",
     "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
@@ -286,10 +321,12 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
 
 
 ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
+PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
+BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
@@ -301,10 +338,12 @@ DELIBERATION_REVIEWER_TOOLS = _build_tool_dict(DELIBERATION_REVIEWER_TOOL_NAMES)
 
 # Backward-compatible order aliases used by tests and older callers.
 ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
+PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
+BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
 SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
@@ -316,18 +355,20 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "expert" | "query" | "report" | "social" | "chart" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
     """
     mode_mapping = {
         "assistant": ASSISTANT_TOOLS,
+        "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "chart": CHART_TOOLS,
+        "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
         "graph": GRAPH_TOOLS,
         "memory_consolidator": MEMORY_CONSOLIDATOR_TOOLS,

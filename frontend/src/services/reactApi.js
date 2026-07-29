@@ -1,53 +1,11 @@
+import { authFetch } from '@/auth/http.js'
+import { buildAnalyzeRequestBody } from './reactRequestBody.js'
+import { acceptStreamResponse } from './streamAcceptance.js'
+export { buildAnalyzeRequestBody } from './reactRequestBody.js'
 // ReAct Agent API客户端
 // 处理与ReAct Agent的SSE流式通信
 
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
-
-export function buildAnalyzeRequestBody(query, options = {}) {
-  const {
-    sessionId = null,
-    enhanceWithHistory = true,
-    maxIterations = 120,
-    debugMode = false,
-    assistantMode = null,
-    agentMode = 'expert',
-    knowledgeBaseIds = null,
-    modelTier = 'auto',
-    attachments = null,
-    boardContext = null,
-    mapContext = null,
-    userIdentifier = null,
-    isInterruption = false,
-    skipAutoFollowup = false
-  } = options
-
-  const body = {
-    query,
-    session_id: sessionId,
-    user_id: userIdentifier,
-    enhance_with_history: enhanceWithHistory,
-    max_iterations: maxIterations,
-    debug_mode: debugMode,
-    assistant_mode: assistantMode,
-    mode: agentMode,
-    knowledge_base_ids: knowledgeBaseIds,
-    model_tier: modelTier,
-    modelTier,
-    attachments,
-    is_interruption: isInterruption,
-    skip_auto_followup: skipAutoFollowup,
-    skipAutoFollowup
-  }
-
-  if (boardContext !== null) {
-    body.board_context = boardContext
-  }
-  if (mapContext !== null) {
-    body.map_context = mapContext
-  }
-
-  return body
-}
 
 class ReactAgentAPI {
   constructor() {
@@ -70,18 +28,19 @@ class ReactAgentAPI {
       sessionId = null,
       enhanceWithHistory = true,
       maxIterations = 120,
-      debugMode = false,
       assistantMode = null,  // 助手模式
       agentMode = 'expert',  // ✅ 双模式架构：assistant | expert
       knowledgeBaseIds = null,  // ✅ 知识库ID列表
       modelTier = 'auto',
-      attachments = null,  // ✅ 附件列表
+      skillIds = [],
+      contextRefs = [],
       boardContext = null,
       mapContext = null,
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
       skipAutoFollowup = false,
       requestKey = sessionId,
+      onAccepted,
       onEvent
     } = options
 
@@ -90,12 +49,12 @@ class ReactAgentAPI {
       sessionId,
       enhanceWithHistory,
       maxIterations,
-      debugMode,
       assistantMode,
       agentMode,
       knowledgeBaseIds,
       modelTier,
-      attachments,
+      skillIds,
+      contextRefs,
       boardContext,
       mapContext,
       userIdentifier,
@@ -103,11 +62,17 @@ class ReactAgentAPI {
       skipAutoFollowup
     })
 
-    return this._streamRequest(url, body, onEvent, requestKey || sessionId || `request_${Date.now()}`)
+    return this._streamRequest(
+      url,
+      body,
+      onEvent,
+      requestKey || sessionId || `request_${Date.now()}`,
+      onAccepted
+    )
   }
 
   // ✅ 新增：内部方法 - 统一的SSE流处理
-  async _streamRequest(url, body, onEvent, requestKey = 'default') {
+  async _streamRequest(url, body, onEvent, requestKey = 'default', onAccepted) {
     if (this.controllers.has(requestKey)) {
       this.controllers.get(requestKey).abort()
       this.controllers.delete(requestKey)
@@ -118,7 +83,7 @@ class ReactAgentAPI {
     this.controller = controller
 
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,13 +92,7 @@ class ReactAgentAPI {
         signal: controller.signal
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      if (!response.body) {
-        throw new Error('Response body is null')
-      }
+      acceptStreamResponse(response, onAccepted)
 
       // 处理SSE流
       const reader = response.body.getReader()
@@ -199,7 +158,7 @@ class ReactAgentAPI {
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -223,7 +182,7 @@ class ReactAgentAPI {
     const url = `${API_BASE_URL}/agent/tools`
 
     try {
-      const response = await fetch(url)
+      const response = await authFetch(url)
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
@@ -236,14 +195,14 @@ class ReactAgentAPI {
     }
   }
 
-  async steer(sessionId, message) {
+  async steer(sessionId, message, inputId = null) {
     const url = `${API_BASE_URL}/agent/${encodeURIComponent(sessionId)}/steer`
-    const response = await fetch(url, {
+    const response = await authFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message, input_id: inputId })
     })
 
     if (!response.ok) {
@@ -264,7 +223,7 @@ class ReactAgentAPI {
       if (this.controller === controller) {
         this.controller = null
       }
-      const backendCancelPromise = fetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
+      const backendCancelPromise = authFetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
         method: 'POST'
       }).catch((error) => {
         console.warn('Failed to cancel backend analysis:', error)

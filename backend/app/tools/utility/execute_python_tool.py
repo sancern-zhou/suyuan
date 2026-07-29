@@ -985,7 +985,10 @@ class ExecutePythonTool(LLMTool):
         if visual_refs and "tool_hint" not in llm_resume:
             first_visual_path = visual_refs[0].get("tool_path")
             if first_visual_path:
-                llm_resume["tool_hint"] = f"Use analyze_image(path='{first_visual_path}') for image analysis."
+                llm_resume["tool_hint"] = (
+                    f"Use read_file(path='{first_visual_path}', as_multimodal_attachment=true) "
+                    "to inspect this image."
+                )
         if llm_resume:
             result["llm_resume"] = llm_resume
 
@@ -2362,7 +2365,10 @@ def merge_excel_with_charts(file_paths, output_path):
         return {
             "name": "execute_python",
             "description": (
-                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理中间资源生成。"
+                "通用 Python 代码执行工具，不限制于数据分析、Excel或可视化。"
+                "适合需要复杂逻辑、结构化数据处理、数值计算、调用 Python 库、网络请求、文件读写或文件生成的任务。"
+                "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
+                "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
                 "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
                 "每次调用是独立环境；跨调用复用请用 save_data(...) 保存 data_id。"
                 "使用 data_id 前先通过 read_data_registry 读取。"

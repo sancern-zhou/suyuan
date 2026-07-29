@@ -4,9 +4,8 @@ ReAct Agent API Routes
 ReAct Agent 的 REST API 路由
 """
 
-from fastapi import APIRouter, HTTPException, Body, Request
-from fastapi.responses import StreamingResponse
-from pydantic import AliasChoices, BaseModel, Field
+from fastapi import APIRouter, HTTPException, Body, Depends, Request
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +19,23 @@ from app.agent.session.conversation_persistence import ConversationPersistenceSe
 from app.agent.runtime.cancellation import cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
+from app.agent.selection_context import (
+    InvalidContextReference,
+    load_skill_selection,
+    resource_refs_to_message_attachments,
+    select_conversation_files,
+)
+from app.agent.resources.resource_service import SessionResourceService
+from app.agent.prompts.tool_registry import get_tools_by_mode
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.boards.application import BoardApplicationService
+from app.boards.service import BoardNotFound, BoardVersionConflict, BoardVersionNotFound
+from app.conversations import ConversationSource
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.service import ConversationCatalogService
+from app.core.sse import create_sse_response
+from app.db.database import async_session
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -38,11 +54,33 @@ def _safe_preview(value: Any, max_chars: int = 100) -> str:
         return repr(value)[:max_chars]
 
 
+def _build_user_message_for_history(
+    query: str,
+    attachments: Optional[List[dict]],
+    *,
+    timestamp: str,
+) -> Dict[str, Any]:
+    """Build the canonical persisted user-message contract."""
+    message: Dict[str, Any] = {
+        "type": "user",
+        "content": query,
+        "timestamp": timestamp,
+    }
+    normalized_attachments = [
+        dict(attachment)
+        for attachment in attachments or []
+        if isinstance(attachment, dict)
+    ]
+    if normalized_attachments:
+        message["attachments"] = normalized_attachments
+    return message
+
+
 def _append_attachment_text_for_history(
     query: str,
     attachments: Optional[List[dict]],
 ) -> str:
-    """Append lightweight attachment path text for restored display history."""
+    """Legacy formatter retained for non-persistence compatibility callers."""
     if not attachments:
         return query
 
@@ -50,7 +88,6 @@ def _append_attachment_text_for_history(
     for index, attachment in enumerate(attachments, start=1):
         if not isinstance(attachment, dict):
             continue
-
         attachment_type = attachment.get("type", "file")
         name = attachment.get("name") or attachment.get("filename") or "unknown"
         path = (
@@ -61,15 +98,11 @@ def _append_attachment_text_for_history(
             or attachment.get("file_id")
             or ""
         )
-
-        label = "图片" if attachment_type == "image" else "文件"
-        lines.append(f"{index}. {label}: {name}")
+        lines.append(f"{index}. {'图片' if attachment_type == 'image' else '文件'}: {name}")
         if path:
             lines.append(f"   路径: {path}")
 
-    if len(lines) <= 3:
-        return query
-    return query + "\n".join(lines)
+    return query if len(lines) <= 3 else query + "\n".join(lines)
 
 
 def merge_map_scene_metadata(
@@ -278,8 +311,33 @@ def is_drawio_board_tool_result(result: Any) -> bool:
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     return (
         metadata.get("generator") == "create_drawio_board"
+        or metadata.get("tool_name") == "create_drawio_board"
         or data.get("artifact_kind") == "drawio_board"
     )
+
+
+def merge_board_execution_context(
+    board_context: Optional[Dict[str, Any]],
+    result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Persist a compact, structured board execution receipt for the next turn."""
+    merged = dict(board_context or {})
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    merged["last_execution"] = {
+        "success": result.get("success") is True,
+        "changed": bool(data.get("changed", False)),
+        "changed_cells": list(data.get("changed_cells") or []),
+        "applied_operations": int(data.get("applied_operations") or 0),
+        "error_code": data.get("error_code"),
+        "operation_index": data.get("operation_index"),
+        "field": data.get("field"),
+        "retryable": bool(data.get("retryable", False)),
+    }
+    return merged
+
+
+def is_incompatible_chart_board_session(stored_mode: Optional[str], requested_mode: Optional[str]) -> bool:
+    return {stored_mode, requested_mode} == {"chart", "board"}
 
 
 # ========================================
@@ -290,15 +348,43 @@ DEFAULT_MAX_ITERATIONS = 120
 MAX_ITERATIONS_CAP = 200
 
 
+class ConversationFileContextRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(pattern="^conversation_file$")
+    resource_id: str = Field(min_length=1, max_length=255)
+    display_name: str = Field(min_length=1, max_length=512)
+
+
 class AgentAnalyzeRequest(BaseModel):
     """Agent 分析请求"""
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "query": "分析广州天河站2025-08-09的O3污染",
+                "skill_ids": [],
+                "context_refs": [],
+                "session_id": None,
+                "mode": "expert",
+                "user_id": "john_doe",
+                "enhance_with_history": True,
+                "max_iterations": 10,
+                "knowledge_base_ids": ["kb_123", "kb_456"],
+            }
+        },
+    )
+
     query: str = Field(..., description="用户自然语言查询")
+    skill_ids: List[str] = Field(..., max_length=1, description="本轮显式选择的技能，最多一个")
+    context_refs: List[ConversationFileContextRef] = Field(..., description="本轮引用的会话文件")
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式（办公任务），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化），'ops' - 运维管理模式（工单审核、异常分析）"
+        description="✅ Agent模式：'assistant' - 助手模式（办公任务），'ppt' - 幻灯片模式（可编辑演示文稿），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化），'ops' - 运维管理模式（工单审核、异常分析）"
     )
     user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
 - 如果提供：同一用户在不同session共享记忆
@@ -324,14 +410,10 @@ class AgentAnalyzeRequest(BaseModel):
         False,
         description="是否为用户中断后的对话（默认False，用户暂停后继续对话时为True）"
     )
-    attachments: Optional[List[dict]] = Field(
-        None,
-        description="附件列表，包含用户上传的文件信息 [{file_id, name, type, url}]"
-    )
     board_context: Optional[Dict[str, Any]] = Field(
         None,
         validation_alias=AliasChoices("board_context", "boardContext"),
-        description="图表模式画板上下文，仅 mode=chart 时传入，例如 {current_xml, selected_cells}"
+        description="画板模式上下文，仅 mode=board 时传入，例如 {current_xml, selected_cells}"
     )
     map_context: Optional[Dict[str, Any]] = Field(
         None,
@@ -349,19 +431,11 @@ class AgentAnalyzeRequest(BaseModel):
         description="是否跳过报告模式自动复核钩子，用于自动复核轮防止递归触发"
     )
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "分析广州天河站2025-08-09的O3污染",
-                "session_id": None,
-                "mode": "expert",
-                "user_id": "john_doe",
-                "enhance_with_history": True,
-                "max_iterations": 10,
-                "knowledge_base_ids": ["kb_123", "kb_456"]
-            }
-        }
-
+    @model_validator(mode="after")
+    def validate_turn_content(self) -> "AgentAnalyzeRequest":
+        if not self.query.strip() and not self.skill_ids and not self.context_refs:
+            raise ValueError("query, skill_ids and context_refs cannot all be empty")
+        return self
 
 class AgentQueryRequest(BaseModel):
     """Agent 简单查询请求（非流式）"""
@@ -391,6 +465,32 @@ class AgentQueryRequest(BaseModel):
 class AgentSteerRequest(BaseModel):
     """执行中用户补充/纠偏输入。"""
     message: str = Field(..., description="追加到当前 active run 的用户输入")
+    input_id: Optional[str] = Field(default=None, description="客户端追加输入唯一标识")
+
+
+async def persist_new_web_session(
+    *,
+    manager,
+    session: Session,
+    catalog: ConversationCatalogService,
+    user: CurrentUser,
+    mode: str,
+) -> None:
+    """Persist a new source session and roll it back if cataloging fails."""
+    saved = await manager.save_session_metadata(session)
+    if not saved:
+        raise RuntimeError("session_create_failed")
+    try:
+        await catalog.register(
+            session_id=session.session_id,
+            user=user,
+            source=ConversationSource.WEB,
+            mode=mode,
+            title=session.query[:256],
+        )
+    except Exception:
+        await manager.delete_session(session.session_id)
+        raise
 
 
 class AgentQueryResponse(BaseModel):
@@ -446,6 +546,35 @@ data_viz_agent_instance = create_react_agent(
     max_working_memory=15
 )
 
+# 幻灯片模式独立实例：隔离 PPT 源码项目、质量闭环与会话工作记忆。
+ppt_agent_instance = create_react_agent(
+    with_test_tools=False,
+    max_iterations=80,
+    max_working_memory=32,
+)
+
+# 画板模式独立实例：共享运行框架，但使用 board 专属 prompt、工具和完成协议。
+board_agent_instance = create_react_agent(
+    with_test_tools=False,
+    max_iterations=12,
+    max_working_memory=20,
+)
+
+
+def select_agent_instance(request):
+    """Select the dedicated top-level agent for an analyze request."""
+    if request.mode == "board":
+        return board_agent_instance
+    if request.mode == "chart":
+        return data_viz_agent_instance
+    if request.mode == "ppt":
+        return ppt_agent_instance
+    if request.assistant_mode == "meteorology-expert":
+        return meteorology_expert_agent_instance
+    if request.assistant_mode == "data-visualization-expert":
+        return data_viz_agent_instance
+    return multi_expert_agent_instance
+
 logger.info(
     "agent_instances_created",
     multi_expert_tools=len(multi_expert_agent_instance.get_available_tools()),
@@ -459,7 +588,12 @@ logger.info(
 # ========================================
 
 @router.post("/analyze")
-async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
+async def analyze_stream(
+    request: AgentAnalyzeRequest,
+    raw_request: Request,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """
     流式分析接口（Server-Sent Events）
 
@@ -496,6 +630,46 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
     - `error`: 迭代错误
     - `fatal_error`: 致命错误
     """
+    # The frontend assigns an ID before the first analyze request. An absent ID
+    # is therefore a creation request, while a cataloged ID is a continuation
+    # and must pass the normal ownership check. Never let an uncataloged source
+    # session be claimed through the creation path.
+    session_manager = get_session_manager()
+    preloaded_source_session = None
+    source_session_checked = False
+    if request.session_id:
+        catalog_record = await catalog.find(request.session_id)
+        if catalog_record is not None:
+            await catalog.require_write(request.session_id, user)
+            if is_incompatible_chart_board_session(catalog_record.mode, request.mode):
+                raise HTTPException(status_code=409, detail="session_mode_mismatch")
+        else:
+            load_session = getattr(session_manager, "load_session_light", None)
+            if load_session is None:
+                load_session = session_manager.load_session
+            preloaded_source_session = await load_session(request.session_id)
+            source_session_checked = True
+            if preloaded_source_session is not None:
+                raise HTTPException(status_code=404, detail="session_not_found")
+
+    if request.mode == "board" and request.board_context:
+        try:
+            request.board_context = await BoardApplicationService(
+                async_session
+            ).resolve_context_reference(
+                request.board_context,
+                expected_session_id=request.session_id,
+            )
+        except BoardVersionConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "current_revision": exc.current_revision},
+            ) from exc
+        except (BoardNotFound, BoardVersionNotFound) as exc:
+            raise HTTPException(status_code=404, detail=exc.code) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail="board_version_load_failed") from exc
+
     raw_body = await raw_request.json()
     if request.model_tier is None and isinstance(raw_body, dict):
         raw_model_tier = raw_body.get("model_tier") or raw_body.get("modelTier")
@@ -533,12 +707,16 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
         knowledge_base_ids=request.knowledge_base_ids,
         is_interruption=request.is_interruption,
         model_tier=request.model_tier,
-        mode=request.mode
+        mode=request.mode,
+        context_refs_count=len(request.context_refs),
     )
 
     try:
         # 根据助手模式选择 Agent
-        if request.assistant_mode == 'meteorology-expert':
+        if request.mode in {"board", "chart", "ppt"}:
+            agent = select_agent_instance(request)
+            logger.info("使用独立模式智能体", mode=request.mode, session_id=request.session_id, agent_id=id(agent))
+        elif request.assistant_mode == 'meteorology-expert':
             agent = meteorology_expert_agent_instance
             logger.info(
                 "使用气象专家模式",
@@ -584,17 +762,20 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             "enable_reasoning": request.enable_reasoning,
             "is_interruption": request.is_interruption,
             "manual_mode": request.mode,
-            "attachments": request.attachments,  # ✅ 传递附件信息
+            # Web conversations always use the canonical DB store. Runtime
+            # behavior (including social prompts/tools) is an independent axis.
+            "session_storage_mode": "assistant",
+            "attachments": None,
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
             "skip_auto_followup": request.skip_auto_followup
         }
-        if request.mode == "chart" and request.board_context:
+        if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
             current_xml = request.board_context.get("current_xml") or request.board_context.get("currentXml") or ""
             previous_xml = request.board_context.get("previous_xml") or request.board_context.get("previousXml") or ""
             selected_cells = request.board_context.get("selected_cells") or request.board_context.get("selectedCells") or []
             logger.info(
-                "chart_board_context_received",
+                "board_context_received",
                 session_id=request.session_id,
                 current_xml_length=len(current_xml),
                 previous_xml_length=len(previous_xml),
@@ -614,14 +795,12 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 program_id=current_program.get("program_id") if isinstance(current_program, dict) else None,
                 event_count=len(map_events) if isinstance(map_events, list) else 0,
             )
-        drawio_board_context = request.board_context if request.mode == "chart" else None
+        drawio_board_context = request.board_context if request.mode == "board" else None
 
         # 初始化会话管理器（使用全局单例，确保内存缓存一致）
-        session_manager = get_session_manager()
         persistence = ConversationPersistenceService()
         actual_session_id = request.session_id
         conversation_history = []
-        collected_data_ids = []
         collected_visuals = []
         latest_drawio_board = None
         seen_visual_ids = set()  # ✅ 用于去重：记录已添加的图表ID
@@ -631,9 +810,77 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
             actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
             analyze_kwargs["session_id"] = actual_session_id
 
+        selected_skill = None
+        if request.skill_ids:
+            try:
+                selected_skill = load_skill_selection(
+                    request.skill_ids[0],
+                    available_tools=set(get_tools_by_mode(request.mode or "expert")),
+                )
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=422, detail="selected_skill_not_found") from exc
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "selected_skill_incompatible", "message": str(exc)},
+                ) from exc
+
+        selected_resource_refs = []
+        if request.context_refs:
+            try:
+                page = await SessionResourceService.database().list_resources(actual_session_id, limit=1000)
+                requested_ids = {ref.resource_id for ref in request.context_refs}
+                selected_resource_refs = [ref for ref in page.resources if ref.resource_id in requested_ids]
+                if len(selected_resource_refs) != len(requested_ids):
+                    raise InvalidContextReference("one or more context resources were not found")
+            except InvalidContextReference as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "invalid_context_reference", "message": str(exc)},
+                ) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
+
+        analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
+        analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
+
+        load_session = getattr(session_manager, "load_session_light", None)
+        if load_session is None:
+            load_session = session_manager.load_session
+        preloaded_session = (
+            preloaded_source_session
+            if source_session_checked and actual_session_id == request.session_id
+            else await load_session(actual_session_id) if actual_session_id else None
+        )
+        if (
+            preloaded_session
+            and request.mode == "board"
+            and drawio_board_context is None
+            and isinstance(preloaded_session.metadata, dict)
+        ):
+            stored_drawio_board = preloaded_session.metadata.get("drawio_board")
+            if isinstance(stored_drawio_board, dict):
+                try:
+                    drawio_board_context = await BoardApplicationService(
+                        async_session
+                    ).resolve_context_reference(
+                        stored_drawio_board,
+                        expected_session_id=actual_session_id,
+                    )
+                    analyze_kwargs["board_context"] = drawio_board_context
+                except BoardVersionConflict as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": exc.code, "current_revision": exc.current_revision},
+                    ) from exc
+                except (BoardNotFound, BoardVersionNotFound) as exc:
+                    raise HTTPException(status_code=404, detail=exc.code) from exc
+                except FileNotFoundError as exc:
+                    raise HTTPException(status_code=409, detail="board_version_load_failed") from exc
+
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, collected_data_ids, collected_visuals, latest_drawio_board, drawio_board_context, seen_visual_ids
+            nonlocal actual_session_id, conversation_history, collected_visuals, latest_drawio_board, drawio_board_context, seen_visual_ids
             cancel_event = None
             latest_event_run_id = None
 
@@ -648,10 +895,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                     session_id=actual_session_id,
                     include_messages="display_light",
                 )
-                if hasattr(session_manager, "load_session_light"):
-                    session = await session_manager.load_session_light(actual_session_id)
-                else:
-                    session = await session_manager.load_session(actual_session_id)
+                session = preloaded_session
                 if session:
                     session_already_exists = True
                     logger.info(
@@ -659,37 +903,28 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                         session_id=actual_session_id,
                         has_conversation_history=bool(session.conversation_history),
                         conversation_history_length=len(session.conversation_history) if session.conversation_history else 0,
-                        has_data_ids=bool(session.data_ids),
-                        data_ids_count=len(session.data_ids) if session.data_ids else 0
+                        resource_store="unified",
                     )
                     conversation_history = session.conversation_history or []
-                    if (
-                        request.mode == "chart"
-                        and drawio_board_context is None
-                        and isinstance(session.metadata, dict)
-                    ):
-                        stored_drawio_board = session.metadata.get("drawio_board")
-                        if isinstance(stored_drawio_board, dict):
-                            drawio_board_context = stored_drawio_board
-                            analyze_kwargs["board_context"] = stored_drawio_board
-                            logger.info(
-                                "chart_board_context_restored_from_session_metadata",
-                                session_id=actual_session_id,
-                                current_xml_length=len(
-                                    stored_drawio_board.get("current_xml")
-                                    or stored_drawio_board.get("currentXml")
-                                    or stored_drawio_board.get("xml")
-                                    or ""
-                                ),
-                                selected_count=len(
-                                    stored_drawio_board.get("selected_cells")
-                                    or stored_drawio_board.get("selectedCells")
-                                    or []
-                                ),
-                                version=stored_drawio_board.get("version"),
-                                updated_at=stored_drawio_board.get("updated_at")
-                                or stored_drawio_board.get("updatedAt"),
-                            )
+                    if request.mode == "board" and drawio_board_context is not None:
+                        logger.info(
+                            "board_context_restored_from_session_metadata",
+                            session_id=actual_session_id,
+                            current_xml_length=len(
+                                drawio_board_context.get("current_xml")
+                                or drawio_board_context.get("currentXml")
+                                or drawio_board_context.get("xml")
+                                or ""
+                            ),
+                            selected_count=len(
+                                drawio_board_context.get("selected_cells")
+                                or drawio_board_context.get("selectedCells")
+                                or []
+                            ),
+                            version=drawio_board_context.get("version"),
+                            updated_at=drawio_board_context.get("updated_at")
+                            or drawio_board_context.get("updatedAt"),
+                        )
 
                     # ✅ 不再传递 initial_messages，因为 react_agent._get_or_create_session 会自动从 SessionManager 恢复会话
                     # 避免重复加载历史消息
@@ -735,17 +970,22 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
                 asyncio.create_task(_save_initial_session_metadata())
             else:
-                await session_manager.save_session_metadata(session)
+                await persist_new_web_session(
+                    manager=session_manager,
+                    session=session,
+                    catalog=catalog,
+                    user=user,
+                    mode=request.mode or "assistant",
+                )
 
             # ✅ 添加用户消息到对话历史
-            user_message = {
-                "type": "user",
-                "content": _append_attachment_text_for_history(
-                    request.query,
-                    request.attachments,
-                ),
-                "timestamp": datetime.now().isoformat()
-            }
+            user_message = _build_user_message_for_history(
+                request.query,
+                resource_refs_to_message_attachments(selected_resource_refs),
+                timestamp=datetime.now().isoformat(),
+            )
+            user_message["skill_ids"] = list(request.skill_ids)
+            user_message["context_refs"] = [ref.model_dump(mode="json") for ref in request.context_refs]
             conversation_history.append(user_message)
             logger.debug("user_message_added", query_preview=request.query[:100])
 
@@ -781,7 +1021,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                     visuals_count=len(result.get("visuals") or [])
                                 )
                                 if (
-                                    request.mode == "chart"
+                                    request.mode == "board"
                                     and is_drawio_board_tool_result(result)
                                 ):
                                     result_data = result.get("data") or {}
@@ -793,6 +1033,16 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                                 "current_xml": drawio_xml,
                                                 "xml": drawio_xml,
                                             }
+                                            latest_drawio_board = merge_board_execution_context(
+                                                latest_drawio_board,
+                                                result,
+                                            )
+                                            drawio_board_context = latest_drawio_board
+                                        else:
+                                            drawio_board_context = merge_board_execution_context(
+                                                latest_drawio_board or drawio_board_context,
+                                                result,
+                                            )
 
                             frontend_message = {
                                 "type": event["type"],
@@ -849,7 +1099,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 content_preview=synthetic_message["content"][:100]
                             )
 
-                        # 收集数据ID
+                        # 地图程序仍由传输层负责即时展示；资源引用由 ReActAgent 统一持久化。
                         if event["type"] == "tool_result" and "data" in event:
                             data = event.get("data", {})
                             map_program = extract_map_program_from_tool_result_event(data)
@@ -858,10 +1108,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                     session.metadata,
                                     map_program,
                                 )
-                            if "data_id" in data:
-                                collected_data_ids.append(data["data_id"])
-                            if "data_ids" in data:
-                                collected_data_ids.extend(data["data_ids"])
 
                         # 收集可视化（基于ID去重）
                         if "visuals" in event.get("data", {}):
@@ -929,26 +1175,22 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             logger.info("saving_session_on_complete",
                                        session_id=actual_session_id,
                                        conversation_history_length=len(conversation_history),
-                                       collected_data_ids_count=len(collected_data_ids),
                                        collected_visuals_count=len(collected_visuals))
 
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
                                 agent._session_store[actual_session_id] = {}
 
-                            agent._session_store[actual_session_id]["collected_data_ids"] = list(dict.fromkeys(collected_data_ids))
                             agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                             logger.info(
                                 "collected_data_stored",
                                 session_id=actual_session_id,
-                                data_ids_count=len(collected_data_ids),
                                 visuals_count=len(collected_visuals)
                             )
 
-                            persistence.apply_complete(
+                            persistence.append_complete(
                                 session,
                                 display_history=conversation_history,
-                                collected_data_ids=collected_data_ids,
                                 collected_visuals=collected_visuals,
                                 office_documents=office_documents,
                                 drawio_board=latest_drawio_board or drawio_board_context,
@@ -972,7 +1214,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             if actual_session_id not in agent._session_store:
                                 agent._session_store[actual_session_id] = {}
 
-                            agent._session_store[actual_session_id]["collected_data_ids"] = list(dict.fromkeys(collected_data_ids))
                             agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
@@ -988,7 +1229,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 )
                             else:
                                 terminal_content = event_data.get("error") or event_data.get("message") or "分析失败"
-                            persistence.apply_terminal(
+                            persistence.append_terminal(
                                 session,
                                 display_history=conversation_history,
                                 terminal_message={
@@ -997,7 +1238,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                     "data": event_data,
                                     "timestamp": event_data.get("timestamp") or datetime.now().isoformat(),
                                 },
-                                collected_data_ids=collected_data_ids,
                                 collected_visuals=collected_visuals,
                                 drawio_board=latest_drawio_board or drawio_board_context,
                             )
@@ -1019,7 +1259,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 if actual_session_id:
                     await cancellation_registry.cancel(actual_session_id)
                     if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
-                        persistence.apply_terminal(
+                        persistence.append_terminal(
                             session,
                             display_history=conversation_history,
                             terminal_message={
@@ -1027,7 +1267,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                                 "content": "客户端已断开，本轮分析已取消",
                                 "timestamp": datetime.now().isoformat(),
                             },
-                            collected_data_ids=collected_data_ids,
                             collected_visuals=collected_visuals,
                             drawio_board=latest_drawio_board or drawio_board_context,
                         )
@@ -1044,7 +1283,7 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 )
                 if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
                     # 保存失败会话
-                    persistence.apply_terminal(
+                    persistence.append_terminal(
                         session,
                         display_history=conversation_history,
                         terminal_message={
@@ -1052,7 +1291,6 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                             "content": str(e),
                             "timestamp": datetime.now().isoformat(),
                         },
-                        collected_data_ids=collected_data_ids,
                         collected_visuals=collected_visuals,
                         drawio_board=latest_drawio_board or drawio_board_context,
                     )
@@ -1080,16 +1318,10 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
                 if actual_session_id and cancel_event is not None:
                     await cancellation_registry.unregister(actual_session_id, cancel_event)
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
+        return create_sse_response(event_generator())
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             "agent_analyze_failed",
@@ -1103,8 +1335,13 @@ async def analyze_stream(request: AgentAnalyzeRequest, raw_request: Request):
 
 
 @router.post("/{session_id}/cancel")
-async def cancel_analysis(session_id: str):
+async def cancel_analysis(
+    session_id: str,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """Cancel an in-flight streaming analysis for a session."""
+    await catalog.require_write(session_id, user)
     active_run_id = await run_ownership_registry.current_run_id(session_id)
     cancelled = await cancellation_registry.cancel(session_id)
     return {
@@ -1117,13 +1354,24 @@ async def cancel_analysis(session_id: str):
 
 
 @router.post("/{session_id}/steer")
-async def steer_analysis(session_id: str, request: AgentSteerRequest):
+async def steer_analysis(
+    session_id: str,
+    request: AgentSteerRequest,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
     """Append user steering input to an active steerable run."""
-    accepted = await steering_registry.add_input(session_id, request.message)
+    await catalog.require_write(session_id, user)
+    accepted = await steering_registry.add_input(
+        session_id,
+        request.message,
+        input_id=request.input_id,
+    )
     return {
         "success": True,
         "accepted": accepted,
         "session_id": session_id,
+        "reason": None if accepted else "no_active_steerable_run_or_store_unavailable",
         "message": "已追加到当前执行任务" if accepted else "没有找到可追加的运行中任务",
     }
 

@@ -51,14 +51,13 @@ CHUNKING_STRATEGIES: Dict[str, Dict[str, Any]] = {
     "llm": {
         "id": "llm",
         "name": "LLM智能分块",
-        "description": "使用大语言模型进行智能语义分块，理解文档结构和主题边界，分块质量最高。支持本地(千问3)和线上(DeepSeek等)两种模式。",
-        "pros": ["分块质量最高", "理解语义主题", "自动识别文档结构", "每段附带主题标签和上下文前缀", "支持本地/线上切换"],
+        "description": "使用线上大语言模型进行智能语义分块，理解文档结构和主题边界，分块质量最高。",
+        "pros": ["分块质量最高", "理解语义主题", "自动识别文档结构", "每段附带主题标签和上下文前缀"],
         "cons": ["速度较慢", "需要LLM服务"],
         "recommended_for": ["环保政策法规", "技术规范", "重要文档", "高质量检索需求"],
         "default_chunk_size": 800,
         "default_overlap": 0,
         "llm_modes": {
-            "local": {"name": "本地千问3", "max_chars": 25000, "description": "使用本地部署的千问3模型，速度快，无额外成本"},
             "online": {"name": "线上API", "max_chars": 60000, "description": "使用DeepSeek/MiniMax等线上API，上下文更长，适合超长文档"}
         }
     }

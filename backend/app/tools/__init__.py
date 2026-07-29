@@ -40,10 +40,26 @@ LLM Tools
 - 原始数据 → generate_chart
 """
 
-from app.tools.base.registry import ToolRegistry
 import structlog
 
+from app.project_config.loader import load_project_context
+from app.project_config.models import ProjectContext
+from app.tools.base.registry import ToolRegistry
+from config.settings import settings
+
 logger = structlog.get_logger()
+
+
+def is_project_tool_enabled(
+    context: ProjectContext,
+    owner: str,
+    tool_name: str,
+) -> bool:
+    """Return whether a project explicitly enables a tool owned by a module."""
+    return (
+        owner in context.enabled_modules
+        and tool_name in context.manifest.backend.tools
+    )
 
 
 def create_global_tool_registry() -> ToolRegistry:
@@ -54,6 +70,7 @@ def create_global_tool_registry() -> ToolRegistry:
         ToolRegistry: 已注册所有可用工具的注册表
     """
     registry = ToolRegistry(registry_name="global")
+    context = load_project_context(settings.project_id)
 
     # ========================================
     # Query Tools（查询工具）
@@ -301,6 +318,22 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_satellite_data", error=str(e))
 
+    if is_project_tool_enabled(context, "satellite", "get_gems_image"):
+        try:
+            from app.tools.query.get_gems_image.tool import GetGemsImageTool
+            registry.register(GetGemsImageTool(), priority=43)
+            logger.info("tool_loaded", tool="get_gems_image")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_gems_image", error=str(e))
+
+    if is_project_tool_enabled(context, "satellite", "get_sentinel5p_image"):
+        try:
+            from app.tools.query.get_sentinel5p_image.tool import GetSentinel5PImageTool
+            registry.register(GetSentinel5PImageTool(), priority=43)
+            logger.info("tool_loaded", tool="get_sentinel5p_image")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_sentinel5p_image", error=str(e))
+
     # XcAiDb SQL Server 城市历史数据查询工具
     try:
         from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool
@@ -344,25 +377,18 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
     try:
-        from app.tools.analysis.cognitive_map_guidance.tool import CognitiveMapGuidanceTool
-        registry.register(CognitiveMapGuidanceTool(), priority=51)
-        logger.info("tool_loaded", tool="cognitive_map_guidance")
+        from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool
+        registry.register(KnowledgeGraphQueryTool(), priority=51)
+        logger.info("tool_loaded", tool="knowledge_graph_query")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="cognitive_map_guidance", error=str(e))
+        logger.warning("tool_import_failed", tool="knowledge_graph_query", error=str(e))
 
     try:
-        from app.tools.cognition.cognitive_map_entity_query.tool import CognitiveMapEntityQueryTool
-        registry.register(CognitiveMapEntityQueryTool(), priority=52)
-        logger.info("tool_loaded", tool="cognitive_map_entity_query")
+        from app.tools.knowledge.knowledge_graph_build.tool import KnowledgeGraphBuildTool
+        registry.register(KnowledgeGraphBuildTool(), priority=52)
+        logger.info("tool_loaded", tool="knowledge_graph_build")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="cognitive_map_entity_query", error=str(e))
-
-    try:
-        from app.tools.cognition.cognitive_map_graph_traverse.tool import CognitiveMapGraphTraverseTool
-        registry.register(CognitiveMapGraphTraverseTool(), priority=53)
-        logger.info("tool_loaded", tool="cognitive_map_graph_traverse")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="cognitive_map_graph_traverse", error=str(e))
+        logger.warning("tool_import_failed", tool="knowledge_graph_build", error=str(e))
 
     try:
         from app.tools.query.resolve_station_geo.tool import ResolveStationGeoTool
@@ -543,6 +569,20 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="create_drawio_board", error=str(e))
 
     try:
+        from app.tools.visualization.create_drawio_board import RenderDrawioBoardCandidateTool
+        registry.register(RenderDrawioBoardCandidateTool(), priority=213)
+        logger.info("tool_loaded", tool="render_drawio_board_candidate")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="render_drawio_board_candidate", error=str(e))
+
+    try:
+        from app.tools.visualization.create_drawio_board import AcceptDrawioBoardCandidateTool
+        registry.register(AcceptDrawioBoardCandidateTool(), priority=214)
+        logger.info("tool_loaded", tool="accept_drawio_board_candidate")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="accept_drawio_board_candidate", error=str(e))
+
+    try:
         from app.tools.visualization.create_report_chart import CreateReportChartTool
         registry.register(CreateReportChartTool(), priority=213)
         logger.info("tool_loaded", tool="create_report_chart")
@@ -603,6 +643,13 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
     # Utility Tools（实用工具）
     # ========================================
+
+    try:
+        from app.tools.utility.list_session_resources_tool import ListSessionResourcesTool
+        registry.register(ListSessionResourcesTool(), priority=299)
+        logger.info("tool_loaded", tool="list_session_resources")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="list_session_resources", error=str(e))
 
     try:
         from app.tools.utility.bash_tool import BashTool
@@ -739,6 +786,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="create_pptx_with_ppt_master")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_pptx_with_ppt_master", error=str(e))
+
+    try:
+        from app.tools.office.editable_ppt.tool import ManageEditablePptTool
+        registry.register(ManageEditablePptTool(), priority=353)
+        logger.info("tool_loaded", tool="manage_editable_ppt")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="manage_editable_ppt", error=str(e))
 
     try:
         from app.tools.office.wecom_cli import WeComCliTool

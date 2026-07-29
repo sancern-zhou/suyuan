@@ -1170,10 +1170,25 @@ class CreatePptxWithPptMasterTool(LLMTool):
         paragraph = text_frame.paragraphs[0]
         run = paragraph.add_run()
         run.text = text
-        run.font.name = "Microsoft YaHei"
+        self._set_run_font(run, "Microsoft YaHei")
         run.font.size = Pt(font_size)
         run.font.bold = bold
         run.font.color.rgb = self._rgb(color, RGBColor)
+
+    def _set_run_font(self, run: Any, typeface: str) -> None:
+        from pptx.oxml.ns import qn
+
+        run.font.name = typeface
+        run_properties = run._r.get_or_add_rPr()
+        east_asian_font = run_properties.find(qn("a:ea"))
+        if east_asian_font is None:
+            east_asian_font = run_properties.makeelement(qn("a:ea"))
+            latin_font = run_properties.find(qn("a:latin"))
+            if latin_font is None:
+                run_properties.append(east_asian_font)
+            else:
+                run_properties.insert(run_properties.index(latin_font) + 1, east_asian_font)
+        east_asian_font.set("typeface", typeface)
 
     def _apply_plan_shape_identity(self, rendered_shape: Any, plan_shape: Dict[str, Any]) -> None:
         if rendered_shape is None:
@@ -1232,7 +1247,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
             paragraph.alignment = align
         run = paragraph.add_run()
         run.text = text
-        run.font.name = "Microsoft YaHei"
+        self._set_run_font(run, "Microsoft YaHei")
         run.font.size = Pt(font_size)
         run.font.bold = bold
         run.font.color.rgb = self._rgb(color, RGBColor)

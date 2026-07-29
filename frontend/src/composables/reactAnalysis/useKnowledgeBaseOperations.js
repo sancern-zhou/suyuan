@@ -26,8 +26,6 @@ export function useKnowledgeBaseOperations() {
     is_default: false
   })
 
-  const kbAdminConfirm = ref(localStorage.getItem('isAdmin') === 'true')
-
   const kbUploadOptions = ref({
     chunking_strategy: 'llm',
     chunk_size: KB_DEFAULTS.CHUNK_SIZE,
@@ -97,20 +95,7 @@ export function useKnowledgeBaseOperations() {
       return
     }
 
-    // 公共知识库需要管理员确认
-    if (kbCreateForm.value.kb_type === 'public' && !kbAdminConfirm.value) {
-      alert('创建公共知识库需要管理员权限，请勾选确认。')
-      return
-    }
-
     try {
-      // 同步管理员标识到 localStorage
-      if (kbCreateForm.value.kb_type === 'public' && kbAdminConfirm.value) {
-        localStorage.setItem('isAdmin', 'true')
-      } else if (!kbAdminConfirm.value) {
-        localStorage.removeItem('isAdmin')
-      }
-
       await kbStore.createKnowledgeBase(kbCreateForm.value)
 
       // 重置表单
@@ -259,7 +244,7 @@ export function useKnowledgeBaseOperations() {
     }
 
     try {
-      await kbStore.fetchDocumentChunks(currentKb.value.id, doc.id)
+      await kbStore.fetchDocumentChunks(currentKb.value.id, doc.id, doc.targetChunkId || null)
       return true
     } catch (e) {
       alert('获取分块失败: ' + e.message)
@@ -338,7 +323,6 @@ export function useKnowledgeBaseOperations() {
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
     }
-    kbAdminConfirm.value = localStorage.getItem('isAdmin') === 'true'
   }
 
   /**
@@ -386,7 +370,6 @@ export function useKnowledgeBaseOperations() {
     // 状态
     kbCreateForm,
     kbEditForm,
-    kbAdminConfirm,
     kbUploadOptions,
     kbIsDragging,
     kbIsUploading,

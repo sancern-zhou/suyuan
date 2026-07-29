@@ -7,7 +7,7 @@
 - DELETE /api/upload/{file_id} - 删除上传文件
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import FileResponse, Response
 from typing import Optional, List
 import os
@@ -23,6 +23,13 @@ import structlog
 from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.utils.path_config import get_uploads_dir
+from app.agent.resources.contracts import ResourceDeclaration, ResourceLocator
+from app.agent.resources.models import ResourceKind, ResourceRole
+from app.agent.resources.resource_service import SessionResourceService
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.service import ConversationCatalogService
 
 logger = structlog.get_logger()
 
@@ -41,18 +48,9 @@ def _content_disposition(disposition: str, filename: str) -> str:
     encoded_name = quote(safe_name, safe="")
     return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_name}"
 
-# 获取API基础URL（用于返回完整URL给LLM）
-def get_api_base_url(request: Request) -> str:
-    """从请求中获取API基础URL"""
-    # 优先使用环境变量配置
-    env_base_url = os.getenv("API_BASE_URL")
-    if env_base_url:
-        return env_base_url.rstrip("/")
-
-    # 否则从请求头构建
-    host = request.headers.get("host", "localhost:8000")
-    scheme = request.url.scheme
-    return f"{scheme}://{host}"
+def _uploaded_file_url(file_id: str) -> str:
+    """Return the canonical gateway-relative URL for an uploaded resource."""
+    return f"/api/upload/{file_id}"
 
 # 配置
 # 统一使用 backend/backend_data_registry/uploads，避免附件路径诱导 Agent 写到仓库根目录。
@@ -148,9 +146,11 @@ def get_max_size(content_type: str, filename: str = None) -> int:
 @router.post("/chat")
 async def upload_chat_file(
     file: UploadFile = File(...),
-    session_id: Optional[str] = Form(None),
-    request: Request = None,
-    db: AsyncSession = Depends(get_db)
+    session_id: str = Form(..., min_length=1),
+    mode: str = Form("assistant"),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """上传文件用于对话
 
@@ -174,6 +174,8 @@ async def upload_chat_file(
             "upload_time": "2024-03-10T12:00:00"
         }
     """
+    await catalog.claim_web_draft(session_id=session_id, user=user, mode=mode)
+
     # 添加调试日志
     logger.info("upload_chat_file_called",
                 filename=file.filename,
@@ -227,9 +229,6 @@ async def upload_chat_file(
     # 保存文件元信息到数据库
     file_category = get_file_category(file.content_type or "", file.filename or "")
 
-    # 文件的绝对路径（用于工具访问）
-    file_path_abs = os.path.abspath(file_path)
-
     uploaded_file = UploadedFile(
         id=file_id,
         filename=file.filename or "unnamed",
@@ -251,6 +250,50 @@ async def upload_chat_file(
             os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"数据库保存失败: {e}")
 
+    resource_ref = None
+    if session_id:
+        try:
+            declaration = ResourceDeclaration(
+                kind=ResourceKind.FILE,
+                logical_key=f"upload:{file_id}",
+                role=ResourceRole.SOURCE,
+                label=file.filename or "unnamed",
+                locator=ResourceLocator(path=file_path),
+                metadata={
+                    "mime_type": file.content_type or "application/octet-stream",
+                    "file_id": file_id,
+                    "source": "user_upload",
+                },
+                tool_name="upload_chat",
+            )
+            resource_batch = await SessionResourceService.database().upsert_run_resources(
+                session_id, f"upload:{file_id}", [declaration]
+            )
+            resource_ref = next(
+                (
+                    item
+                    for item in resource_batch.resources
+                    if item.resource_key == declaration.resource_key()
+                ),
+                None,
+            )
+            if resource_ref is None:
+                raise RuntimeError("uploaded resource missing from resource store result")
+        except Exception as exc:
+            logger.error(
+                "session_resource_registration_failed",
+                file_id=file_id,
+                session_id=session_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
+            await db.execute(delete(UploadedFile).where(UploadedFile.id == file_id))
+            await db.commit()
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
+
     logger.info(
         "file_uploaded",
         file_id=file_id,
@@ -259,16 +302,9 @@ async def upload_chat_file(
         file_size=file_size
     )
 
-    # 根据文件类型返回不同格式的URL
-    # 图片：返回完整HTTP URL（用于前端显示和analyze_image工具）
-    # 文档：返回本地文件的绝对路径（工具直接使用，无需解析）
-    if file_category == "image":
-        # 图片返回完整HTTP URL
-        api_base = get_api_base_url(request) if request else "http://localhost:8000"
-        file_url = f"{api_base}/api/upload/{file_id}"
-    else:
-        # 文档返回绝对路径（简单直接，LLM无需理解相对路径概念）
-        file_url = file_path_abs
+    # 对外协议只暴露稳定的网关相对资源地址。本地路径由 Agent 通过 file_id
+    # 在服务端解析，避免把部署主机或文件系统细节泄漏到消息与前端状态中。
+    file_url = _uploaded_file_url(file_id)
 
     return {
         "file_id": file_id,
@@ -277,7 +313,21 @@ async def upload_chat_file(
         "mime_type": file.content_type or "application/octet-stream",
         "file_size": file_size,
         "url": file_url,
-        "upload_time": uploaded_file.created_at.isoformat()
+        "upload_time": uploaded_file.created_at.isoformat(),
+        "resource_ref": (
+            {
+                "ref_id": resource_ref.resource_id,
+                "resource_id": resource_ref.resource_id,
+                "resource_key": resource_ref.resource_key,
+                "kind": resource_ref.kind,
+                "role": resource_ref.role,
+                "label": resource_ref.label,
+                "status": resource_ref.status,
+                "created_at": resource_ref.created_at.isoformat(),
+                "metadata": resource_ref.metadata,
+            }
+            if resource_ref else None
+        ),
     }
 
 
@@ -369,7 +419,11 @@ async def get_file_info(file_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{file_id}")
-async def delete_uploaded_file(file_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_uploaded_file(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    _user: CurrentUser = Depends(require_current_user),
+):
     """删除上传的文件
 
     Args:
@@ -400,6 +454,19 @@ async def delete_uploaded_file(file_id: str, db: AsyncSession = Depends(get_db))
         delete(UploadedFile).where(UploadedFile.id == file_id)
     )
     await db.commit()
+
+    if uploaded_file.session_id:
+        try:
+            await SessionResourceService.database().delete_resource(
+                uploaded_file.session_id, f"upload:{file_id}"
+            )
+        except Exception as exc:
+            logger.error(
+                "deleted_upload_resource_update_failed",
+                file_id=file_id,
+                session_id=uploaded_file.session_id,
+                error=str(exc),
+            )
 
     logger.info("file_deleted", file_id=file_id)
 

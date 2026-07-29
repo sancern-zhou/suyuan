@@ -1,9 +1,12 @@
 """社交 Agent 桥接模块，负责连接消息总线与 ReActAgent。"""
 
 import asyncio
+import hashlib
 import json
 import mimetypes
+import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -11,7 +14,10 @@ from typing import Optional, List, Dict, Any
 import structlog
 
 from app.agent.react_agent import ReActAgent
-from app.services.media_object_store import get_media_object_store
+from app.agent.resources.contracts import ResourceDeclaration, ResourceLocator
+from app.agent.resources.models import ResourceKind, ResourceRole
+from app.agent.resources.resource_service import SessionResourceService
+from app.utils.path_config import get_data_registry
 from app.social.events import InboundMessage, OutboundMessage
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
@@ -26,8 +32,16 @@ from app.agent.session.session_resolver import (
     append_session_transcript_for_mode,
     load_session_for_mode,
 )
+from app.auth.models import CurrentUser
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.schemas import ConversationSource
+from app.social.binding_service import get_social_binding_service
 
 logger = structlog.get_logger(__name__)
+
+SOCIAL_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+SOCIAL_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
+SOCIAL_STEERING_READY_TIMEOUT_SECONDS = 5.0
 
 
 def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -89,7 +103,11 @@ class AgentBridge:
         session_mapper: SessionMapper,
         mode: str = "social",  
         enable_heartbeat: bool = True,  
-        enable_memory: bool = True  
+        enable_memory: bool = True,
+        binding_service=None,
+        catalog=None,
+        resource_service=None,
+        resource_storage_root=None,
     ):
         """初始化 AgentBridge 及社交模式需要的心跳、记忆和子 Agent 管理器。"""
         self.message_bus = message_bus
@@ -98,11 +116,19 @@ class AgentBridge:
         self.mode = mode
         self.enable_heartbeat = enable_heartbeat
         self.enable_memory = enable_memory
+        self.binding_service = binding_service or get_social_binding_service()
+        self.catalog = catalog or get_conversation_catalog()
+        self.resource_service = resource_service or SessionResourceService.database()
+        self.resource_storage_root = Path(
+            resource_storage_root
+            or (get_data_registry() / "session_resources" / "social")
+        ).resolve()
 
         self._running = False
         self._consume_task: Optional[asyncio.Task] = None
         self._message_tasks: set[asyncio.Task] = set()
-        self._active_social_sessions: set[str] = set()
+        self._active_social_sessions: Dict[str, object] = {}
+        self._social_route_lock = asyncio.Lock()
 
         
         # 初始化用户心跳管理器
@@ -304,7 +330,7 @@ class AgentBridge:
         }
 
     def _build_agent_attachments(self, media: Optional[List[str]]) -> List[Dict[str, Any]]:
-        """Convert social channel media references into agent attachments."""
+        """Convert trusted channel media references into local runtime inputs."""
         attachments: List[Dict[str, Any]] = []
         for item in media or []:
             if not item:
@@ -317,50 +343,164 @@ class AgentBridge:
             if item.startswith(("http://", "https://")):
                 attachment["url"] = item
             else:
-                attachment["local_path"] = item
-                mime_type, _ = mimetypes.guess_type(item)
-                if media_type == "image":
-                    try:
-                        object_url = get_media_object_store().upload_and_presign(
-                            item,
-                            content_type=mime_type,
-                        )
-                        if object_url:
-                            attachment["url"] = object_url
-                    except Exception as exc:
-                        logger.warning(
-                            "media_object_store_upload_failed",
-                            path=item,
-                            error=str(exc),
-                        )
-                    try:
-                        from app.services.signed_media import get_signed_media_service
-
-                        signed_url = get_signed_media_service().create_url(item)
-                        if signed_url and not attachment.get("url"):
-                            attachment["url"] = signed_url
-                    except Exception as exc:
-                        logger.warning(
-                            "signed_media_url_generation_failed",
-                            path=item,
-                            error=str(exc),
-                        )
+                attachment["local_path"] = str(Path(item).expanduser().resolve())
             mime_type, _ = mimetypes.guess_type(item)
             if mime_type:
                 attachment["mime_type"] = mime_type
             attachments.append(attachment)
         return attachments
 
-    @staticmethod
-    def _strip_media_source_markers(content: str) -> str:
-        """Remove local/remote media source paths that are supplied as attachments."""
-        cleaned = re.sub(
-            r"(?im)^\[(?:Image|Audio|Video|File):\s*source:\s*[^\]]+\]\s*$",
-            "",
-            content or "",
+    async def _prepare_social_attachments(
+        self,
+        *,
+        session_id: str,
+        channel: str,
+        media: Optional[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """Register inbound media once, then return current-call runtime projections."""
+        attachments = self._build_agent_attachments(media)
+        if not attachments:
+            return []
+
+        declarations: List[ResourceDeclaration] = []
+        for attachment in attachments:
+            local_path = attachment.get("local_path")
+            if local_path:
+                path, digest, size = await asyncio.to_thread(
+                    self._materialize_social_resource,
+                    Path(str(local_path)),
+                    session_id,
+                    str(attachment.get("type") or "file"),
+                )
+                attachment["local_path"] = str(path)
+                kind = ResourceKind.FILE
+                locator = ResourceLocator(path=str(path))
+            else:
+                raise ValueError(
+                    f"social_attachment_requires_local_file: {attachment['name']}"
+                )
+
+            declarations.append(ResourceDeclaration(
+                kind=kind,
+                logical_key=f"social-attachment:{digest}",
+                role=ResourceRole.ATTACHMENT,
+                label=str(attachment["name"]),
+                locator=locator,
+                metadata={
+                    "source": "social_inbound",
+                    "channel": channel,
+                    "mime_type": str(attachment.get("mime_type") or "application/octet-stream"),
+                    "attachment_type": str(attachment.get("type") or "file"),
+                    "sha256": digest,
+                    "size": size,
+                },
+                tool_name="social_inbound",
+            ))
+
+        identity = "\n".join(item.resource_key() for item in declarations)
+        run_id = f"social-inbound:{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
+        batch = await self.resource_service.upsert_run_resources(
+            session_id,
+            run_id,
+            declarations,
         )
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        return cleaned.strip()
+        stored_by_key = {item.resource_key: item for item in batch.resources}
+        prepared: List[Dict[str, Any]] = []
+        for attachment, declaration in zip(attachments, declarations):
+            stored = stored_by_key.get(declaration.resource_key())
+            if stored is None:
+                raise RuntimeError("social_attachment_resource_missing_after_upsert")
+            prepared.append({
+                **attachment,
+                "resource_id": stored.resource_id,
+                "ref_id": stored.resource_id,
+                "resource_key": stored.resource_key,
+            })
+
+        logger.info(
+            "social_attachments_registered",
+            session_id=session_id,
+            channel=channel,
+            resource_ids=[item["resource_id"] for item in prepared],
+            attachment_count=len(prepared),
+            resource_version=batch.version,
+        )
+        return prepared
+
+    def _materialize_social_resource(
+        self,
+        source: Path,
+        session_id: str,
+        attachment_type: str,
+    ) -> tuple[Path, str, int]:
+        """Copy channel media into immutable, session-scoped resource storage."""
+        source = source.expanduser().resolve()
+        if not source.is_file():
+            raise ValueError(f"social_attachment_missing: {source.name}")
+        max_bytes = (
+            SOCIAL_IMAGE_MAX_BYTES
+            if attachment_type == "image"
+            else SOCIAL_ATTACHMENT_MAX_BYTES
+        )
+        session_scope = hashlib.sha256(session_id.encode()).hexdigest()[:24]
+        target_dir = self.resource_storage_root / session_scope
+        target_dir.mkdir(parents=True, exist_ok=True)
+        digest_builder = hashlib.sha256()
+        size = 0
+        with tempfile.NamedTemporaryFile(
+            dir=target_dir,
+            prefix=".social-resource.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            try:
+                with source.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise ValueError(
+                                f"social_attachment_too_large: {source.name} "
+                                f"({size} > {max_bytes})"
+                            )
+                        digest_builder.update(chunk)
+                        temporary.write(chunk)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            except Exception:
+                temporary_path.unlink(missing_ok=True)
+                raise
+
+        digest = digest_builder.hexdigest()
+        target = target_dir / f"{digest}{source.suffix.lower()}"
+        try:
+            if target.exists():
+                temporary_path.unlink(missing_ok=True)
+            else:
+                os.replace(temporary_path, target)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return target.resolve(), digest, size
+
+    @staticmethod
+    def _public_message_attachments(
+        session_id: str,
+        attachments: Optional[List[Dict[str, Any]]],
+    ) -> List[Dict[str, str]]:
+        projected: List[Dict[str, str]] = []
+        for attachment in attachments or []:
+            resource_id = str(attachment.get("resource_id") or "")
+            if not resource_id:
+                continue
+            projected.append({
+                "type": str(attachment.get("type") or "file"),
+                "name": str(attachment.get("name") or "attachment"),
+                "mime_type": str(attachment.get("mime_type") or "application/octet-stream"),
+                "resource_id": resource_id,
+                "ref_id": resource_id,
+                "url": f"/api/sessions/{session_id}/resources/{resource_id}/content",
+            })
+        return projected
 
     async def _consume_loop(self) -> None:
         """Main consumption loop."""
@@ -393,8 +533,69 @@ class AgentBridge:
     async def _route_message(self, msg: InboundMessage) -> None:
         bot_account = await self._get_bot_account(msg.channel)
         social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
+        is_weixin = msg.channel == "weixin" or msg.channel.startswith("weixin:")
 
-        if self.mode == "social":
+        if self.mode == "social" and is_weixin:
+            binding = await self.binding_service.resolve_sender(
+                channel=msg.channel,
+                bot_account=bot_account,
+                sender_id=msg.sender_id,
+            )
+            if binding is None:
+                await self.message_bus.publish_outbound(OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content="请先登录 Web 端，在微信账号管理中完成扫码绑定。",
+                    reply_to=msg.sender_id,
+                ))
+                return
+
+            session_id = await self.session_mapper.get_session(social_user_id)
+            catalog_user = CurrentUser(
+                id=binding.platform_user_id,
+                username=binding.platform_username,
+                display_name=binding.platform_display_name,
+            )
+            if session_id:
+                try:
+                    row = await self.catalog.require_read(session_id, catalog_user)
+                    if row.source != ConversationSource.SOCIAL:
+                        session_id = None
+                except Exception:
+                    session_id = None
+
+            if session_id is None:
+                session_id = self.session_mapper.new_session_id(self.mode)
+                registered = False
+                try:
+                    await self.catalog.register_identity(
+                        session_id=session_id,
+                        owner_user_id=binding.platform_user_id,
+                        owner_username=binding.platform_username,
+                        owner_display_name=binding.platform_display_name,
+                        source=ConversationSource.SOCIAL,
+                        mode=self.mode,
+                        title=(msg.content or "微信会话")[:256],
+                        read_only_on_web=True,
+                    )
+                    registered = True
+                    await self.session_mapper.save_mapping(social_user_id, session_id)
+                except Exception:
+                    if registered:
+                        await self.catalog.delete(session_id)
+                    logger.exception(
+                        "social_session_registration_failed",
+                        social_user_id=social_user_id,
+                    )
+                    await self.message_bus.publish_outbound(OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="会话初始化失败，请稍后重试。",
+                        reply_to=msg.sender_id,
+                    ))
+                    return
+
+        elif self.mode == "social":
             from app.social.user_registry import BIND_CODE_PATTERN, get_social_user_registry
 
             registry = get_social_user_registry()
@@ -448,27 +649,46 @@ class AgentBridge:
                 )
                 return
 
-        session_id = await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
+        else:
+            session_id = await self.session_mapper.get_or_create_session(
+                social_user_id, mode=self.mode
+            )
 
-        if self.mode == "social" and session_id in self._active_social_sessions:
-            agent_attachments = self._build_agent_attachments(msg.media)
-            agent_content = (
-                self._strip_media_source_markers(msg.content)
-                if agent_attachments
-                else msg.content
+        if self.mode == "social" and not is_weixin:
+            session_id = await self.session_mapper.get_or_create_session(
+                social_user_id, mode=self.mode
             )
-            accepted = await steering_registry.add_input(
-                session_id,
-                agent_content,
-                attachments=agent_attachments,
+
+        prepared_attachments: Optional[List[Dict[str, Any]]] = None
+        claimed_active_token: object | None = None
+        active_token: object | None = None
+        if self.mode == "social":
+            async with self._social_route_lock:
+                active_token = self._active_social_sessions.get(session_id)
+                if active_token is None:
+                    claimed_active_token = object()
+                    self._active_social_sessions[session_id] = claimed_active_token
+
+        if self.mode == "social" and active_token is not None:
+            agent_attachments = await self._prepare_social_attachments(
+                session_id=session_id,
+                channel=msg.channel,
+                media=msg.media,
             )
-            if not accepted:
-                await asyncio.sleep(0.2)
+            agent_content = msg.content
+            deadline = asyncio.get_running_loop().time() + SOCIAL_STEERING_READY_TIMEOUT_SECONDS
+            accepted = False
+            while not accepted:
                 accepted = await steering_registry.add_input(
                     session_id,
                     agent_content,
                     attachments=agent_attachments,
                 )
+                if accepted or asyncio.get_running_loop().time() >= deadline:
+                    break
+                if self._active_social_sessions.get(session_id) is not active_token:
+                    break
+                await asyncio.sleep(0.1)
             if accepted:
                 logger.info(
                     "social_message_steered_to_active_run",
@@ -479,12 +699,18 @@ class AgentBridge:
                     attachment_count=len(agent_attachments),
                 )
                 return
+            prepared_attachments = agent_attachments
+            async with self._social_route_lock:
+                claimed_active_token = object()
+                self._active_social_sessions[session_id] = claimed_active_token
 
         await self._process_message(
             msg,
             bot_account=bot_account,
             social_user_id=social_user_id,
             session_id=session_id,
+            prepared_attachments=prepared_attachments,
+            claimed_active_token=claimed_active_token,
         )
 
     async def _process_message(
@@ -493,6 +719,8 @@ class AgentBridge:
         bot_account: Optional[str] = None,
         social_user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        prepared_attachments: Optional[List[Dict[str, Any]]] = None,
+        claimed_active_token: object | None = None,
     ) -> None:
         """
         Process an inbound message through the agent.
@@ -500,6 +728,7 @@ class AgentBridge:
         Args:
             msg: Inbound message from social platform
         """
+        active_token: object | None = claimed_active_token
         try:
             logger.info("Starting to process message",
                        channel=msg.channel,
@@ -512,8 +741,10 @@ class AgentBridge:
 
             
             session_id = session_id or await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
-            if self.mode == "social":
-                self._active_social_sessions.add(session_id)
+            if self.mode == "social" and active_token is None:
+                async with self._social_route_lock:
+                    active_token = object()
+                    self._active_social_sessions[session_id] = active_token
 
             logger.info("Session obtained",
                        channel=msg.channel,
@@ -558,12 +789,17 @@ class AgentBridge:
                 social_soul_context = social_context["social_soul_context"]
                 social_user_context = social_context["social_user_context"]
 
-            agent_attachments = self._build_agent_attachments(msg.media) if self.mode == "social" else []
-            agent_content = (
-                self._strip_media_source_markers(msg.content)
-                if agent_attachments
-                else msg.content
-            )
+            if self.mode == "social":
+                agent_attachments = prepared_attachments
+                if agent_attachments is None:
+                    agent_attachments = await self._prepare_social_attachments(
+                        session_id=session_id,
+                        channel=msg.channel,
+                        media=msg.media,
+                    )
+            else:
+                agent_attachments = []
+            agent_content = msg.content
 
             # ✅ 加载 Session 对象，用于持久化对话历史
             session = await load_session_for_mode(session_id, mode=self.mode)
@@ -656,8 +892,12 @@ class AgentBridge:
             )
             await self.message_bus.publish_outbound(error_msg)
         finally:
-            if self.mode == "social" and session_id:
-                self._active_social_sessions.discard(session_id)
+            if (
+                self.mode == "social"
+                and session_id
+                and self._active_social_sessions.get(session_id) is active_token
+            ):
+                self._active_social_sessions.pop(session_id, None)
 
     async def _aggregate_agent_events(
         self,
@@ -691,7 +931,6 @@ class AgentBridge:
         sent_text_contents = set()
 
         conversation_history = []
-        collected_data_ids = []
         collected_visuals = []
         seen_visual_ids = set()
 
@@ -702,6 +941,17 @@ class AgentBridge:
             "content": content,
             "timestamp": datetime.now().isoformat()
         }
+        public_attachments = self._public_message_attachments(session_id, attachments)
+        if public_attachments:
+            user_message["attachments"] = public_attachments
+            user_message["context_refs"] = [
+                {
+                    "type": "conversation_file",
+                    "resource_id": attachment["resource_id"],
+                    "display_name": attachment["name"],
+                }
+                for attachment in public_attachments
+            ]
         conversation_history.append(user_message)
         logger.debug("user_message_added_to_history",
                     session_id=session_id,
@@ -720,7 +970,6 @@ class AgentBridge:
                 persistence.append_complete(
                     session,
                     display_history=conversation_history,
-                    collected_data_ids=collected_data_ids,
                     collected_visuals=collected_visuals,
                     office_documents=office_documents,
                 )
@@ -729,7 +978,6 @@ class AgentBridge:
                     session,
                     display_history=conversation_history,
                     terminal_message=terminal_message,
-                    collected_data_ids=collected_data_ids,
                     collected_visuals=collected_visuals,
                     office_documents=office_documents,
                 )
@@ -737,9 +985,6 @@ class AgentBridge:
 
             if session_id not in self.agent._session_store:
                 self.agent._session_store[session_id] = {}
-            self.agent._session_store[session_id]["collected_data_ids"] = list(
-                dict.fromkeys(collected_data_ids)
-            )
             self.agent._session_store[session_id]["collected_visuals"] = collected_visuals
             self.agent._session_store[session_id]["display_history_persisted"] = True
 
@@ -747,7 +992,6 @@ class AgentBridge:
                 log_event,
                 session_id=session_id,
                 conversation_history_length=len(conversation_history),
-                collected_data_ids_count=len(collected_data_ids),
                 collected_visuals_count=len(collected_visuals),
                 **log_fields,
             )
@@ -805,13 +1049,32 @@ class AgentBridge:
                                 event_type=event_type,
                                 history_length=len(conversation_history))
 
-                # 收集数据ID
-                if event_type == "tool_result" and "data" in event:
-                    data = event.get("data", {})
-                    if "data_id" in data:
-                        collected_data_ids.append(data["data_id"])
-                    if "data_ids" in data:
-                        collected_data_ids.extend(data["data_ids"])
+                if event_type in {"steering_applied", "steering_deferred"}:
+                    steering_data = event.get("data") or {}
+                    for item in steering_data.get("inputs") or []:
+                        if not isinstance(item, dict):
+                            continue
+                        steering_attachments = self._public_message_attachments(
+                            session_id,
+                            item.get("attachments") or [],
+                        )
+                        steering_message = {
+                            "type": "user",
+                            "content": str(item.get("message") or ""),
+                            "timestamp": steering_data.get("timestamp") or datetime.now().isoformat(),
+                            "input_id": str(item.get("input_id") or ""),
+                        }
+                        if steering_attachments:
+                            steering_message["attachments"] = steering_attachments
+                            steering_message["context_refs"] = [
+                                {
+                                    "type": "conversation_file",
+                                    "resource_id": attachment["resource_id"],
+                                    "display_name": attachment["name"],
+                                }
+                                for attachment in steering_attachments
+                            ]
+                        conversation_history.append(steering_message)
 
                 # 收集可视化（基于ID去重）
                 if "visuals" in event.get("data", {}):

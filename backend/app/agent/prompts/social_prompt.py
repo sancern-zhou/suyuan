@@ -102,27 +102,11 @@ def build_social_prompt(
         file_lines.append(f"- soul.md：`{soul_file_path}`（非空后写保护，不再修改）")
     if user_file_path:
         file_lines.append(f"- USER.md：`{user_file_path}`")
-    if heartbeat_file_path:
-        file_lines.append(f"- HEARTBEAT.md：`{heartbeat_file_path}`（定时任务配置）")
-
     if file_lines:
         prompt_parts.extend([
             "## 专属文件",
             "",
             *file_lines,
-            "",
-        ])
-
-    if heartbeat_context and heartbeat_context.strip():
-        prompt_parts.extend([
-            "## 当前 HEARTBEAT.md 内容快照",
-            "",
-            "以下内容是本轮加载的当前定时任务配置快照；当用户询问定时任务、HEARTBEAT.md、任务开关或下次执行时间时，以这里为准，不要沿用过往对话里的旧结论。",
-            "如果用户明确要求重新核对文件原文，先调用 `read_file` 读取上方 HEARTBEAT.md 路径后再回答。",
-            "",
-            "```markdown",
-            heartbeat_context.strip(),
-            "```",
             "",
         ])
 

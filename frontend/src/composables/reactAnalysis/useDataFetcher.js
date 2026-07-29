@@ -1,3 +1,4 @@
+import { authFetch } from '@/auth/http.js'
 /**
  * 数据抓取 Composable
  * 管理数据抓取器的状态和操作
@@ -25,7 +26,7 @@ export function useDataFetcher() {
     fetcherError.value = null
 
     try {
-      const response = await fetch('/api/fetchers/status')
+      const response = await authFetch('/api/fetchers/status')
       if (!response.ok) throw new Error('Failed to fetch status')
 
       const data = await response.json()
@@ -58,7 +59,7 @@ export function useDataFetcher() {
       }
 
       const backendAction = actionPathMap[action] || 'trigger'
-      const response = await fetch(`/api/fetchers/${backendAction}/${fetcherId}`, {
+      const response = await authFetch(`/api/fetchers/${backendAction}/${fetcherId}`, {
         method: 'POST'
       })
 
@@ -117,7 +118,7 @@ export function useDataFetcher() {
     era5FetchResult.value = null
 
     try {
-      const response = await fetch('/api/fetchers/era5/historical', {
+      const response = await authFetch('/api/fetchers/era5/historical', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date })

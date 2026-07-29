@@ -9,14 +9,22 @@ import os
 from dotenv import load_dotenv
 import structlog
 import asyncio
+from app.kingbase_dialect import register_kingbase_dialect
 
 load_dotenv()
+register_kingbase_dialect()
 logger = structlog.get_logger()
 
 # Database URL from environment
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://user:password@localhost:5432/weather_db"
+def _normalize_async_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    return url
+
+
+DATABASE_URL = _normalize_async_database_url(
+    os.getenv("DATABASE_URL")
+    or "postgresql+asyncpg://user:password@localhost:5432/weather_db"
 )
 
 # Create async engine
@@ -49,6 +57,13 @@ async_session = async_sessionmaker(
 Base = declarative_base()
 
 
+def _schema_init_lock_sql(dialect_name: str) -> str | None:
+    """Serialize schema initialization across multi-worker process startup."""
+    if dialect_name == "postgresql":
+        return "SELECT pg_advisory_xact_lock(hashtext('suyuan_schema_init'))"
+    return None
+
+
 def _uploaded_files_session_id_alter_sql(dialect_name: str) -> str | None:
     """Return dialect-specific SQL for widening uploaded_files.session_id."""
     if dialect_name == "postgresql":
@@ -72,6 +87,109 @@ async def _ensure_uploaded_files_schema(conn) -> None:
         if "uploaded_files" in message and ("does not exist" in message or "undefinedtable" in message):
             return
         logger.warning("uploaded_files_session_id_column_migration_failed", error=str(exc))
+
+
+async def _ensure_social_binding_schema(conn) -> None:
+    """Apply compatibility fixes for social binding tables."""
+    if conn.dialect.name != "postgresql":
+        return
+
+    statements = (
+        """
+        ALTER TABLE social_users
+            ADD COLUMN IF NOT EXISTS platform_user_id VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS platform_username VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS platform_display_name VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS account_id VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS ilink_user_id VARCHAR(255)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS weixin_scan_tasks (
+            id VARCHAR(36) PRIMARY KEY,
+            account_id VARCHAR(255) NOT NULL UNIQUE,
+            owner_user_id VARCHAR(255) NOT NULL,
+            owner_username VARCHAR(255) NOT NULL,
+            owner_display_name VARCHAR(255) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'created',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_weixin_scan_tasks_owner_status
+            ON weixin_scan_tasks(owner_user_id, status)
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_platform_user
+            ON social_users(platform_user_id)
+            WHERE status = 'active' AND platform_user_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_social_users_active_ilink_user
+            ON social_users(ilink_user_id)
+            WHERE status = 'active' AND ilink_user_id IS NOT NULL
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_social_users_active_account
+            ON social_users(account_id, status)
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+
+    logger.info("social_binding_schema_ensured", dialect=conn.dialect.name)
+
+
+async def _ensure_session_resources_schema(conn) -> None:
+    """Ensure the unified row-oriented session resource store exists on startup."""
+    if conn.dialect.name != "postgresql":
+        return
+    statements = (
+        """
+        CREATE TABLE IF NOT EXISTS session_resources (
+            session_id VARCHAR(255) NOT NULL,
+            resource_key VARCHAR(255) NOT NULL,
+            resource_id VARCHAR(64) NOT NULL UNIQUE,
+            kind VARCHAR(32) NOT NULL,
+            role VARCHAR(64) NOT NULL,
+            logical_key VARCHAR(255),
+            label VARCHAR(512) NOT NULL,
+            locator JSONB NOT NULL,
+            presentation_type VARCHAR(32),
+            presentation JSONB,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            tool_name VARCHAR(255) NOT NULL DEFAULT '',
+            run_id VARCHAR(255),
+            turn_sequence INTEGER NOT NULL DEFAULT 0,
+            status VARCHAR(32) NOT NULL DEFAULT 'active',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (session_id, resource_key)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS session_resource_versions (
+            session_id VARCHAR(255) PRIMARY KEY,
+            version INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        ALTER TABLE IF EXISTS session_resources
+            ALTER COLUMN resource_id TYPE VARCHAR(64)
+            USING resource_id::text
+        """,
+        """
+        ALTER TABLE IF EXISTS session_resources
+            ALTER COLUMN logical_key DROP NOT NULL,
+            ALTER COLUMN presentation_type DROP NOT NULL,
+            ALTER COLUMN presentation DROP NOT NULL
+        """,
+    )
+    for statement in statements:
+        await conn.execute(text(statement))
+    logger.info("session_resources_schema_ensured")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -147,11 +265,26 @@ async def init_db():
     # before create_all runs.
     import app.social.models  # noqa: F401
     import app.knowledge_base.models  # noqa: F401
+    import app.knowledge_base.graph_models  # noqa: F401
+    import app.knowledge_base.graph_build_models  # noqa: F401
+    import app.boards.models  # noqa: F401
 
     async with engine.begin() as conn:
+        dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
+        lock_sql = _schema_init_lock_sql(dialect_name)
+        if lock_sql:
+            await conn.execute(text(lock_sql))
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
+        await _ensure_social_binding_schema(conn)
+        await _ensure_session_resources_schema(conn)
     logger.info("database_initialized")
+
+
+async def check_db_connection() -> None:
+    """Verify database availability without mutating the schema."""
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
 
 
 async def close_db():

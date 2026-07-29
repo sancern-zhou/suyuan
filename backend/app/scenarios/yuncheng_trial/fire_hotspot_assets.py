@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from app.scenarios.yuncheng_trial.config import YUNCHENG_TRIAL_CONFIG
+from app.utils.font_utils import apply_font_to_figure, chinese_font_prop
 
 EARTH_RADIUS_KM = 6371.0088
 MAX_SUMMARY_HOTSPOTS = 20
@@ -229,6 +230,7 @@ def render_fire_hotspot_map(
         fontsize=7.5,
         fontproperties=chinese_font,
     )
+    apply_font_to_figure(fig)
     fig.savefig(output_path, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return output_path
@@ -290,7 +292,7 @@ def _hours_before_alert(acquisition_time: str, alert_time: datetime) -> float | 
     try:
         parsed = datetime.fromisoformat(acquisition_time.replace("Z", "+00:00"))
         if parsed.tzinfo is not None:
-            parsed = parsed.replace(tzinfo=None)
+            parsed = parsed.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
     except ValueError:
         return None
     return (alert_time - parsed).total_seconds() / 3600
@@ -426,13 +428,10 @@ def _draw_line(
 
 
 def _configure_chinese_font(plt: Any) -> Any:
-    from matplotlib import font_manager
-
-    font_path = "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"
-    if Path(font_path).exists():
-        prop = font_manager.FontProperties(fname=font_path)
-    else:
-        prop = font_manager.FontProperties(family="Droid Sans Fallback")
+    prop = chinese_font_prop()
+    family = prop.get_name() if prop is not None else "Droid Sans Fallback"
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["font.sans-serif"] = [family, "Noto Sans CJK SC", "Droid Sans Fallback", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
     return prop
 

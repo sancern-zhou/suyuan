@@ -1527,7 +1527,7 @@ class SessionMemory:
 
         has_reference = any(
             lightweight.get(key)
-            for key in ("data_id", "data_ids", "report_data_id", "report_data_ids", "visual_ids")
+            for key in ("data_id", "data_ids", "report_data_id", "report_data_ids")
         )
         if "summary" not in lightweight and "summary_text" not in lightweight:
             if lightweight.get("data_id"):
@@ -1538,8 +1538,6 @@ class SessionMemory:
                 lightweight["summary"] = (
                     f"结果已保存为 data_ids={lightweight['data_ids']}，可用 read_data_registry 读取。"
                 )
-            elif lightweight.get("visual_ids"):
-                lightweight["summary"] = f"结果包含 visual_ids={lightweight['visual_ids']}，可在前端查看。"
             elif result:
                 lightweight["summary"] = _safe_content_preview(result, 800)
             else:
@@ -1720,6 +1718,10 @@ class SessionMemory:
                 if "role" in msg and "content" in msg:
                     content = msg["content"]
                     role = msg["role"]
+
+                    if msg_type == "scheduled_task_event":
+                        skipped_count += 1
+                        continue
 
                     # 若 content 为 content blocks 列表，根据 block 类型修正 role 和 type
                     if isinstance(content, list):

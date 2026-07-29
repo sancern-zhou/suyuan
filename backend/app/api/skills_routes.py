@@ -21,7 +21,7 @@ SKILLS_DIR = Path(__file__).parent.parent.parent / "docs" / "skills"
 
 
 @router.get("")
-async def list_skills(keyword: str = None):
+async def list_skills(keyword: str = None, mode: str = None):
     """
     列出所有技能文档
 
@@ -45,9 +45,20 @@ async def list_skills(keyword: str = None):
         result = await tool.execute(keyword=keyword)
 
         if result.get("success"):
+            from app.agent.prompts.tool_registry import get_tools_by_mode
+            from app.agent.selection_context import describe_skill_item
+
+            available_tools = set(get_tools_by_mode(mode)) if mode else None
+            data = dict(result["data"])
+            data["skills"] = [
+                describe_skill_item(item, available_tools=available_tools)
+                for item in data.get("skills", [])
+            ]
+            data["skills"] = [item for item in data["skills"] if item["enabled"]]
+            data["count"] = len(data["skills"])
             return {
                 "success": True,
-                "data": result["data"],
+                "data": data,
                 "summary": result["summary"]
             }
         else:

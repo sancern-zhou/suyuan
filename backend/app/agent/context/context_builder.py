@@ -83,14 +83,19 @@ class SimplifiedContextBuilder:
         # ✅ 新增：HEARTBEAT文件内容快照（仅social模式使用）
         self.heartbeat_context = None
 
-        # 图表模式 draw.io 画板上下文，仅 chart 模式允许注入。
+        # draw.io 画板上下文仅允许注入 board 模式。
         self.board_context = None
 
         # 问数模式地图交互上下文，仅 query 模式允许注入。
         self.map_context = None
 
-        # 认知地图上下文，由 Agent 入口按模式绑定注入。
-        self.cognitive_map_context = None
+        # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
+        self.session_resource_context = None
+
+        # 用户为当前轮显式选择的技能正文。技能全模式通用，但不能改变工具权限。
+        self.selected_skill_context = None
+
+        # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
 
         logger.info(
             "context_builder_initialized",
@@ -245,12 +250,16 @@ class SimplifiedContextBuilder:
         backend_host = None
         if self.current_mode == "social":
             # 优先使用 api_base_url（网关地址，如 http://219.135.180.51:56041）
-            # 其次使用 signed_media_base_url（公网后端地址）
             # 最后使用 backend_host（本地地址，仅开发环境）
-            backend_host = settings.api_base_url or settings.signed_media_base_url or settings.backend_host
+            backend_host = settings.api_base_url or settings.backend_host
 
         mode_prompt = build_react_system_prompt(
             mode=self.current_mode,
+            available_tools=(
+                list(self.tool_registry.keys())
+                if self.current_mode == "custom" and isinstance(self.tool_registry, dict)
+                else None
+            ),
             user_preferences=self.user_preferences,  # ✅ 传递用户偏好（仅social模式使用）
             memory_file_path=self.memory_file_path,  # ✅ 传递记忆文件路径（仅social模式使用）
             soul_file_path=self.soul_file_path,  # ✅ 传递 soul.md 文件路径
@@ -261,9 +270,21 @@ class SimplifiedContextBuilder:
             user_context=self.user_context,  # ✅ 传递用户上下文内容（USER.md）
             heartbeat_context=self.heartbeat_context,  # ✅ 传递 HEARTBEAT.md 当前内容
             backend_host=backend_host,  # ✅ 传递网关地址（仅social模式使用）
-            board_context=self.board_context if self.current_mode == "chart" else None,
+            board_context=self.board_context if self.current_mode == "board" else None,
         )
         sections = [mode_prompt.rstrip()]
+        if self.selected_skill_context:
+            sections.append(
+                "<selected_skill>\n"
+                + self.selected_skill_context.strip()
+                + "\n</selected_skill>"
+            )
+        if self.session_resource_context:
+            sections.append(
+                "<session_resources>\n"
+                + self.session_resource_context.strip()
+                + "\n</session_resources>"
+            )
         if self.current_mode == "query" and self.map_context:
             sections.append(
                 "## Agentic GIS 视觉交互说明\n"
@@ -274,13 +295,11 @@ class SimplifiedContextBuilder:
             )
         if self.current_mode == "graph" and self.map_context:
             sections.append(
-                "## 认知地图图谱编辑上下文\n"
-                "- 当前请求来自认知地图面板右侧的对话编辑入口。\n"
-                "- 用户可能用“这个节点”“这条关系”“刚才那个实体”等表达指代，优先结合用户消息中的“当前认知地图上下文”。\n"
-                "- 修改图谱时默认通过认知地图 REST API 完成，不要直接改内部 JSON 文件。"
+                "## 知识库图谱编辑上下文\n"
+                "- 当前请求来自知识库图谱详情面板的对话编辑入口。\n"
+                "- 用户可能用“这个节点”“这条关系”“刚才那个实体”等表达指代，优先结合用户消息中的“当前知识库图谱上下文”。\n"
+                "- 修改图谱时使用知识库图谱工具和 API，所有操作限定在当前 knowledge_base_id。"
             )
-        if self.cognitive_map_context:
-            sections.append(str(self.cognitive_map_context).strip())
         sections.append(self._build_runtime_metadata_prompt())
         sections.append(self._build_agent_control_prompt())
         return "\n\n".join(section for section in sections if section)
@@ -347,9 +366,9 @@ class SimplifiedContextBuilder:
         self.heartbeat_file_path = None
         self.heartbeat_context = None
 
-        if mode != "chart" and self.board_context is not None:
+        if mode != "board" and self.board_context is not None:
             logger.warning(
-                "non_chart_board_context_stripped",
+                "non_board_context_stripped",
                 mode=mode,
             )
             self.board_context = None
@@ -381,8 +400,8 @@ class SimplifiedContextBuilder:
         return f"**可用工具**：{', '.join(tool_names[:20])}..."
 
     def _build_board_selection_user_summary(self) -> str:
-        """Build a compact current-turn summary for chart board selection."""
-        if self.current_mode != "chart" or not isinstance(self.board_context, dict):
+        """Build a compact current-turn summary for board selection."""
+        if self.current_mode != "board" or not isinstance(self.board_context, dict):
             return ""
 
         selected_cells = (
@@ -498,32 +517,16 @@ class SimplifiedContextBuilder:
         return "\n".join(lines)
 
     def _build_graph_map_context_user_summary(self) -> str:
-        """Build a compact current-turn summary for cognitive-map graph editing."""
+        """Build a compact current-turn summary for knowledge-base graph editing."""
         if self.current_mode != "graph" or not isinstance(self.map_context, dict):
             return ""
 
-        active_map_id = self.map_context.get("active_map_id") or self.map_context.get("map_id")
-        if not active_map_id:
-            return "## 当前认知地图上下文\n未收到 active_map_id；请先在认知地图面板选择地图。"
+        knowledge_base_id = self.map_context.get("knowledge_base_id")
+        if not knowledge_base_id:
+            return "## 当前知识库图谱上下文\n未收到 knowledge_base_id；请先在知识库面板选择知识库。"
 
-        lines = ["## 当前认知地图上下文", f"active_map_id={active_map_id}"]
-        active_map_name = self.map_context.get("active_map_name") or self.map_context.get("map_name")
-        if active_map_name:
-            lines.append(f"active_map_name={active_map_name}")
-
-        map_dir = f"backend_data_registry/cognitive_maps/{active_map_id}/"
-        lines.extend([
-            "",
-            "文件优先路径:",
-            f"- map_dir={map_dir}",
-            f"- extraction={map_dir}extraction.json",
-            f"- evaluation={map_dir}evaluation.json",
-            f"- map={map_dir}map.json",
-            f"- files={map_dir}files.json",
-            f"- build_runs={map_dir}build_runs.json",
-            f"- property_graph_store={map_dir}property_graph_store.json",
-            "解释/查看/总结时优先 read_file 读取这些文件；编辑时先 read_file 再 edit_file。",
-        ])
+        lines = ["## 当前知识库图谱上下文", f"knowledge_base_id={knowledge_base_id}"]
+        lines.append("图谱事实通过知识库图谱子资源查询和修改，不读取独立 JSON 文件。")
 
         selected_item = self.map_context.get("selected_item")
         if isinstance(selected_item, dict):
@@ -652,11 +655,7 @@ class SimplifiedContextBuilder:
 
         if conversation_history:
             # 已有对话历史：结构化 history 已通过 messages 单独传递。
-            # 此处只放当前轮状态，不重复展开工具调用、工具结果或通用控制规则。
-            status_section = (
-                "## 当前状态"
-            )
-            sections.append(status_section)
+            # 此处不重复展开工具调用、工具结果或通用控制规则。
 
             board_selection_summary = self._build_board_selection_user_summary()
             if board_selection_summary:

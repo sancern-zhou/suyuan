@@ -1,0 +1,25 @@
+schema_version: 1
+project: xuchang
+modules:
+  - legacy
+  - satellite
+  - xuchang-air-quality
+  - xuchang-satellite
+frontend:
+  theme: default
+  brand_name: 许昌市AI应用智能体
+  features: {}
+  agent_modes:
+    - query
+    - expert
+    - report
+    - chart
+  agent_platform_layout: environment-grid
+backend:
+  tools:
+    - get_gems_image
+    - get_sentinel5p_image
+knowledge:
+  collections:
+  - xuchang
+scheduled_tasks: []

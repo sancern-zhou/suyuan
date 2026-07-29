@@ -3,12 +3,16 @@
     <!-- 会话管理模态框 -->
     <SessionManagerModal
       v-model="showSessionManager"
-      @restore="handleSessionRestore"
+      @restore="handleSessionRestoreAndClosePanel"
     />
 
     <!-- 主布局 -->
     <MainLayout
       ref="mainLayoutRef"
+      :workspace="workspace"
+      :running-agent-modes="runningAgentModes"
+      :selecting-agent-mode="selectingAgentMode"
+      :agent-platform-error="agentPlatformError"
       :messages="currentModeMessages"
       :pending-steering-inputs="currentModePendingSteeringInputs"
       :is-analyzing="currentModeIsAnalyzing"
@@ -23,8 +27,9 @@
       :session-id="currentModeSessionId"
       :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
-      :map-program="store.currentState.currentMapProgram"
-      :active-module="activeAssistant"
+      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
+      :task-workspace-entries="taskWorkspaceEntries"
+      :task-workspace-task="taskWorkspaceTask"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
@@ -51,18 +56,20 @@
       :session-history-data="sessionHistoryData"
       :session-history-stats="sessionHistoryStats"
       :session-history-loading="sessionHistoryLoading"
+      :conversation-read-only="currentConversationPolicy.readOnly"
+      :conversation-read-only-notice="currentConversationPolicy.notice"
       @update:active-module="handleAssistantSelect"
       @update:left-sidebar-collapsed="leftSidebarCollapsed = $event"
       @update:layout-ref="layoutRef = $event"
       @send="handleSend"
       @pause="handlePause"
       @update:use-reranker="handleRerankerChange"
-      @update:agent-mode="handleAgentModeChange"
       @select-message="selectMessage"
       @load-more="handleLoadMore"
       @update:era5-historical-date="era5HistoricalDate = $event"
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
+      @select-agent="handleAgentSelect"
       @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
@@ -92,13 +99,14 @@
       @execute-scheduled-task="executeScheduledTask"
       @edit-scheduled-task="editScheduledTask"
       @delete-scheduled-task="deleteScheduledTask"
+      @restore-execution-session="handleSessionRestoreAndClosePanel"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
       @toggle-session-case="handleToggleSessionCase"
       @delete-sessions="deleteSessions"
+      @new-web-conversation="startNewWebConversation"
       @toggle-viz-panel="toggleVizPanel"
-      @map-event="handleMapEvent"
     />
 
     <!-- 知识库创建对话框 -->
@@ -130,13 +138,25 @@
 </template>
 
 <script setup>
+import { authFetch } from '@/auth/http.js'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import {
+  deleteScheduledTask as deleteScheduledTaskAction,
+  executeScheduledTask as executeScheduledTaskAction,
+  refreshScheduledTaskManagement,
+  toggleScheduledTask
+} from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
-import { postMapProgramReceipt } from '@/services/mapProgramReceiptApi.js'
+import { AGENT_MODE_IDS } from '@/config/agentModes.js'
+import {
+  getRunningAgentSessionId,
+  isAgentModeRunning,
+  resolveAgentSelection
+} from '@/components/agentPlatform/workspacePolicy.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -154,10 +174,12 @@ import KnowledgeBaseEditDialog from '@/components/reactAnalysis/dialogs/Knowledg
 import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/KnowledgeBaseChunksDialog.vue'
 
 // Stores
-const router = useRouter()
+const route = useRoute()
 const store = useReactStore()
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
+const taskWorkspaceTask = ref(null)
+const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
 
 // ========== 使用Composables ==========
 
@@ -200,7 +222,9 @@ const {
   refreshSessionHistory,
   handleSessionCleanup,
   deleteSessions,
-  handleToggleSessionCase
+  handleToggleSessionCase,
+  currentConversationPolicy,
+  startNewWebConversation
 } = useSessionManagement(store)
 
 // 知识库操作
@@ -270,6 +294,9 @@ const chatAreaDragOver = ref(false)
 const useReranker = ref(false)
 const scheduledTasksRefreshing = ref(false)
 const mainLayoutRef = ref(null)
+const workspace = ref('platform')
+const selectingAgentMode = ref('')
+const agentPlatformError = ref('')
 
 // 对话框状态（从dialogManager获取）
 const showKbCreateDialog = computed(() => dialogs.value.kbCreate)
@@ -307,6 +334,9 @@ const currentModeSessionId = computed(() => store.currentState.sessionId)
 const currentModeIsAnalyzing = computed(() => store.currentState.isAnalyzing)
 const currentModeCurrentMessage = computed(() => store.currentState.currentMessage)
 const currentModePendingSteeringInputs = computed(() => store.currentState.pendingSteeringInputs || [])
+const runningAgentModes = computed(() => (
+  AGENT_MODE_IDS.filter(mode => isAgentModeRunning(mode, store))
+))
 
 const inputDisabled = computed(() => {
   // 执行中允许用户预编辑下一条消息；发送由 InputBox 的 isAnalyzing 保护阻止。
@@ -319,15 +349,46 @@ const handleRerankerChange = (value) => {
   useReranker.value = value
 }
 
-const handleAgentModeChange = (value) => {
-  store.switchMode(value)
-  console.log('[ReactAnalysisView] Agent模式切换:', value)
+const handleAgentSelect = async (mode) => {
+  if (selectingAgentMode.value) return
+
+  const decision = resolveAgentSelection(mode, store)
+  if (decision.action === 'invalid') {
+    agentPlatformError.value = '暂不支持该智能体模式'
+    return
+  }
+
+  selectingAgentMode.value = mode
+  agentPlatformError.value = ''
+
+  try {
+    if (decision.action === 'open-running') {
+      const runningSessionId = getRunningAgentSessionId(mode, store)
+      if (runningSessionId) {
+        store._activateSession(runningSessionId, mode)
+      } else {
+        store.switchMode(mode)
+      }
+    } else {
+      store.switchMode(mode)
+      store.reset()
+    }
+    hideManagementPanel()
+    resetPanelState()
+    activeAssistant.value = 'general-agent'
+    workspace.value = 'chat'
+  } catch (error) {
+    agentPlatformError.value = error?.message || '智能体初始化失败，请重试'
+  } finally {
+    selectingAgentMode.value = ''
+  }
 }
 
 const handleLoadSessionAndClosePanel = async (sessionId) => {
   const restored = await handleLoadSession(sessionId)
   if (restored) {
     hideManagementPanel()
+    workspace.value = 'chat'
   }
   return restored
 }
@@ -336,9 +397,41 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   const restored = await handleSessionRestore(sessionId)
   if (restored) {
     hideManagementPanel()
+    workspace.value = 'chat'
+    if (taskWorkspaceTask.value) {
+      rightPanelVisible.value = true
+      activeRightTab.value = 'task-files'
+    }
   }
   return restored
 }
+
+let routeSessionRestoreQueue = Promise.resolve()
+const queueRouteSessionRestore = (sessionId) => {
+  routeSessionRestoreQueue = routeSessionRestoreQueue
+    .then(async () => {
+      if (!sessionId || sessionId !== route.params.id) return false
+      return handleSessionRestoreAndClosePanel(sessionId)
+    })
+    .catch((error) => {
+      console.error('[ReactAnalysisView] 路由会话恢复失败:', error)
+      return false
+    })
+  return routeSessionRestoreQueue
+}
+
+watch(
+  () => route.params.id,
+  (sessionId) => {
+    if (sessionId) {
+      queueRouteSessionRestore(sessionId)
+      return
+    }
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'platform'
+  }
+)
 
 const handleAssistantSelect = async (moduleId) => {
   if (moduleId !== 'general-agent' && store.currentState.isAnalyzing) {
@@ -347,7 +440,37 @@ const handleAssistantSelect = async (moduleId) => {
 }
 
 const handleSidebarAction = async (actionId) => {
+  if (typeof actionId === 'object' && actionId?.type === 'task-workspace') {
+    await scheduledTasksStore.fetchTasks()
+    const task = scheduledTasksStore.tasks.find(item => item.task_id === actionId.taskId)
+    if (!task) return
+    taskWorkspaceTask.value = task
+    workspace.value = 'chat'
+    showManagementPanel('task-workspace')
+    rightPanelVisible.value = false
+    return
+  }
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
+  const newTaskMode = actionId === 'restart-session'
+    ? (workspace.value === 'platform' ? 'assistant' : store.currentMode)
+    : null
+
+  if (actionId === 'agent-platform') {
+    hideManagementPanel()
+    resetPanelState()
+    agentPlatformError.value = ''
+    workspace.value = 'platform'
+    return
+  }
+
+  if (actionId === 'air-quality-forecast') {
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'forecast'
+    return
+  }
+
+  workspace.value = 'chat'
   switch (actionId) {
     case 'query-dashboard':
       store.switchMode('query')
@@ -366,10 +489,6 @@ const handleSidebarAction = async (actionId) => {
       console.log('[ReactAnalysisView] Showing knowledge-base panel')
       showManagementPanel('knowledge-base')
       await kbStore.fetchKnowledgeBases()
-      break
-    case 'cognitive-map':
-      console.log('[ReactAnalysisView] Showing cognitive-map panel')
-      showManagementPanel('cognitive-map')
       break
     case 'fetchers':
       console.log('[ReactAnalysisView] Showing fetchers panel')
@@ -396,9 +515,11 @@ const handleSidebarAction = async (actionId) => {
       break
     case 'restart-session':
       console.log('[ReactAnalysisView] Restarting session')
+      if (newTaskMode !== store.currentMode) store.switchMode(newTaskMode)
       store.restart()
       hideManagementPanel()
       resetPanelState()
+      agentPlatformError.value = ''
       break
   }
   console.log('[ReactAnalysisView] managementPanel value after action:', managementPanel.value)
@@ -432,7 +553,7 @@ const handleChatAreaDrop = async (e) => {
 
 const handleOfficeEditSubmit = async (editData) => {
   try {
-    const response = await fetch('/api/office/apply-edit', {
+    const response = await authFetch('/api/office/apply-edit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -482,30 +603,9 @@ const handleBoardVersionRestore = (versionId) => {
   }
 }
 
-const handleMapEvent = (event) => {
-  if (typeof store.recordMapEvent === 'function') {
-    store.recordMapEvent(event)
-  }
-  if (event?.receipt) {
-    postMapProgramReceipt({
-      sessionId: event.session_id || currentModeSessionId.value,
-      receipt: event.receipt
-    }).catch(error => {
-      console.warn('Failed to post map program receipt:', error)
-    })
-  }
-}
-
 const handleKbCreateConfirm = async (formData) => {
   // 使用知识库composable的创建方法
   try {
-    // 同步管理员标识到 localStorage
-    if (formData.kb_type === 'public' && formData.adminConfirm) {
-      localStorage.setItem('isAdmin', 'true')
-    } else if (!formData.adminConfirm) {
-      localStorage.removeItem('isAdmin')
-    }
-
     await kbStore.createKnowledgeBase(formData)
     closeDialog('kbCreate')
   } catch (e) {
@@ -534,7 +634,7 @@ const handleViewKbChunks = async (doc) => {
   }
 
   try {
-    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, doc.id)
+    await kbStore.fetchDocumentChunks(kbStore.currentKb.id, doc.id, doc.targetChunkId || null)
     openDialog('kbChunks')
   } catch (e) {
     alert('获取分块失败: ' + e.message)
@@ -551,18 +651,24 @@ const viewKbChunksRetry = async () => {
 const refreshScheduledTasks = async () => {
   scheduledTasksRefreshing.value = true
   try {
-    await scheduledTasksStore.fetchTasks()
+    await refreshScheduledTaskManagement(scheduledTasksStore)
   } finally {
     scheduledTasksRefreshing.value = false
   }
 }
 
 const handleScheduledTaskToggle = async (task) => {
-  await scheduledTasksStore.toggleTask(task.id)
+  await toggleScheduledTask(scheduledTasksStore, task)
 }
 
 const executeScheduledTask = async (task) => {
-  await scheduledTasksStore.executeTask(task.id)
+  try {
+    await executeScheduledTaskAction(scheduledTasksStore, task)
+    await refreshScheduledTasks()
+  } catch (error) {
+    console.error('Failed to execute scheduled task:', error)
+    alert('立即执行失败: ' + (error.message || '未知错误'))
+  }
 }
 
 const editScheduledTask = (task) => {
@@ -570,12 +676,12 @@ const editScheduledTask = (task) => {
 }
 
 const deleteScheduledTask = async (task) => {
-  await scheduledTasksStore.deleteTask(task.id)
+  await deleteScheduledTaskAction(scheduledTasksStore, task)
 }
 
 // ========== 生命周期 ==========
 
-onMounted(() => {
+onMounted(async () => {
   setupPanelWatchers()
   setupGlobalListeners()
 
@@ -593,6 +699,11 @@ onMounted(() => {
   // 初始化日期
   const today = new Date()
   era5HistoricalDate.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  await refreshScheduledTasks()
+
+  if (route.params.id) {
+    await queueRouteSessionRestore(route.params.id)
+  }
 })
 
 onBeforeUnmount(() => {

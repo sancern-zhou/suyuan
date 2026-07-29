@@ -19,6 +19,7 @@ pause >nul
 
 echo.
 echo [Step 3] Starting backend server...
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+REM Authentication must see the raw TCP peer; the reverse proxy logs public client IPs.
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-proxy-headers
 
 pause

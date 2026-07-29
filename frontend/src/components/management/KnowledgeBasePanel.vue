@@ -71,8 +71,12 @@
         <span>分块数: {{ kbStore.currentKb.chunk_count }}</span>
       </div>
 
+      <div class="kb-tabs">
+        <button v-for="tab in tabs" :key="tab.value" :class="{ active: activeTab === tab.value }" @click="activeTab = tab.value">{{ tab.label }}</button>
+      </div>
+
       <!-- 文档上传 -->
-      <div class="kb-upload-section">
+      <div v-show="activeTab === 'documents'" class="kb-upload-section">
         <div class="kb-section-title">上传文档</div>
 
         <!-- 分块策略选择 -->
@@ -135,7 +139,7 @@
       </div>
 
       <!-- 文档列表 -->
-      <div class="kb-documents-section">
+      <div v-show="activeTab === 'documents'" class="kb-documents-section">
         <div class="kb-section-title">文档列表 ({{ kbStore.documents.length }})</div>
         <div v-if="kbStore.documents.length === 0" class="kb-empty-docs">暂无文档</div>
         <div v-else class="kb-doc-list">
@@ -156,6 +160,10 @@
               </span>
             </div>
             <div class="kb-doc-actions" @click.stop>
+              <label class="kb-btn-text replace-button">
+                替换
+                <input type="file" hidden @change="replaceDocument(doc, $event)" />
+              </label>
               <button
                 v-if="doc.status === 'failed'"
                 class="kb-btn-text"
@@ -173,6 +181,13 @@
           </div>
         </div>
       </div>
+      <div v-if="activeTab === 'retrieval'" class="kb-tab-placeholder">检索默认融合普通分块召回与可信图谱路径。</div>
+      <KnowledgeGraphTab
+        v-if="activeTab === 'graph'"
+        :kb-id="kbStore.currentKb.id"
+        @open-document-chunk="$emit('view-chunks', { id: $event.documentId, targetChunkId: $event.chunkId })"
+      />
+      <div v-if="activeTab === 'schema'" class="kb-tab-placeholder">图谱 schema 与抽取配置由当前知识库独立维护。</div>
     </div>
   </div>
 </template>
@@ -180,8 +195,16 @@
 <script setup>
 import { ref } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
+import KnowledgeGraphTab from './knowledge-base/KnowledgeGraphTab.vue'
 
 const kbStore = useKnowledgeBaseStore()
+const activeTab = ref('documents')
+const tabs = [
+  { value: 'documents', label: '文档' },
+  { value: 'retrieval', label: '检索' },
+  { value: 'graph', label: '图谱' },
+  { value: 'schema', label: 'Schema' }
+]
 
 // State
 const kbUploadOptions = ref({
@@ -257,6 +280,13 @@ const uploadDocuments = async (files) => {
       kbFileInput.value.value = ''
     }
   }
+}
+
+const replaceDocument = async (doc, event) => {
+  const file = event.target.files?.[0]
+  if (!file || !kbStore.currentKb) return
+  await kbStore.replaceDocument(kbStore.currentKb.id, doc.id, file)
+  event.target.value = ''
 }
 
 const getKbStrategyName = (strategy) => {

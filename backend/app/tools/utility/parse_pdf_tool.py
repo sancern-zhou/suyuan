@@ -32,6 +32,8 @@ from datetime import datetime
 import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import get_data_registry
+from config.settings import settings
+from app.services.bailian_multimodal import call_bailian_vision
 
 logger = structlog.get_logger()
 
@@ -66,7 +68,7 @@ class ParsePDFTool(LLMTool):
 
 特性：
 - 自动检测文本型/扫描型PDF
-- 支持多种OCR引擎（Qwen/PaddleOCR/Tesseract）
+- 支持多种OCR引擎（Bailian/PaddleOCR/Tesseract）
 - 支持分页读取
 - 提取表格和图片信息
 - 获取PDF元数据
@@ -85,7 +87,7 @@ class ParsePDFTool(LLMTool):
 - pages: 页面范围（如"1-5", "3"）
 - extract_tables: 是否提取表格（默认False）
 - extract_images: 是否提取图片信息（默认False）
-- ocr_engine: OCR引擎（auto/tesseract/paddleocr/qwen）
+- ocr_engine: OCR引擎（auto/tesseract/paddleocr/bailian）
 
 限制：
 - 文件大小限制：100MB
@@ -402,7 +404,7 @@ class ParsePDFTool(LLMTool):
             pages: 页面范围（如 "1-5", "3", "10-20"）
             extract_tables: 是否提取表格
             extract_images: 是否提取图片
-            ocr_engine: OCR引擎（auto/tesseract/paddleocr/qwen）
+            ocr_engine: OCR引擎（auto/tesseract/paddleocr/bailian）
 
         Returns:
             简化格式：{"success": bool, "data": dict, "summary": str}
@@ -664,8 +666,8 @@ class ParsePDFTool(LLMTool):
             if ocr_engine == "auto":
                 ocr_engine = await self._detect_ocr_engine()
 
-            if ocr_engine == "qwen":
-                return await self._ocr_with_qwen(file_path, page_numbers)
+            if ocr_engine == "bailian":
+                return await self._ocr_with_bailian(file_path, page_numbers)
             elif ocr_engine == "paddleocr":
                 return await self._ocr_with_paddleocr(file_path, page_numbers)
             elif ocr_engine == "tesseract":
@@ -683,10 +685,10 @@ class ParsePDFTool(LLMTool):
 
     async def _detect_ocr_engine(self) -> str:
         """检测可用的OCR引擎"""
-        # 优先使用Qwen（从环境变量读取API key）
-        api_key = os.getenv("QWEN_VL_API_KEY", "")
+        # 优先使用百炼多模态模型
+        api_key = settings.bailian_api_key or ""
         if api_key:
-            return "qwen"
+            return "bailian"
 
         # 尝试PaddleOCR
         try:
@@ -704,11 +706,10 @@ class ParsePDFTool(LLMTool):
 
         return "none"
 
-    async def _ocr_with_qwen(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
-        """使用Qwen-VL进行OCR识别"""
+    async def _ocr_with_bailian(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
+        """使用百炼多模态模型进行OCR识别"""
         try:
             import pdf2image
-            import httpx
             import base64
 
             # 转换PDF为图片
@@ -718,23 +719,17 @@ class ParsePDFTool(LLMTool):
                 last_page=max(page_numbers)
             )
 
-            # API配置（从环境变量读取）
-            api_url = os.getenv("QWEN_VL_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            api_key = os.getenv("QWEN_VL_API_KEY", "")
+            api_url = settings.bailian_base_url
+            api_key = settings.bailian_api_key or ""
 
             if not api_key:
                 return {
                     "success": False,
-                    "data": {"error": "未配置QWEN_VL_API_KEY"},
-                    "summary": "Qwen OCR API密钥未配置"
+                    "data": {"error": "未配置BAILIAN_API_KEY"},
+                    "summary": "百炼 OCR API密钥未配置"
                 }
 
             text_content = []
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-
             # 对每一页进行OCR
             for idx, image in enumerate(images):
                 page_num = idx + 1
@@ -747,37 +742,21 @@ class ParsePDFTool(LLMTool):
                 image.save(img_buffer, format='PNG')
                 img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
 
-                # 调用API
-                payload = {
-                    "model": os.getenv("OCR_MODEL", "qwen-vl-plus"),
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{img_base64}"}
-                                },
-                                {"type": "text", "text": "请识别图片中的所有文字内容，保持原有格式和排版。"}
-                            ]
-                        }
-                    ]
-                }
-
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    response = await client.post(f"{api_url}/chat/completions", headers=headers, json=payload)
-                    response.raise_for_status()
-                    result = response.json()
-
-                # 提取文本
-                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                text, _ = await call_bailian_vision(
+                    image_url=f"data:image/png;base64,{img_base64}",
+                    prompt="请识别图片中的所有文字内容，保持原有格式和排版。",
+                    api_key=api_key,
+                    base_url=api_url,
+                    model=settings.bailian_model,
+                    timeout=120.0,
+                )
                 text_content.append(f"--- 第 {page_num} 页 ---\n{text}")
 
             content = "\n\n".join(text_content)
 
             result_data = {
                 "type": "pdf_ocr",
-                "ocr_engine": "qwen",
+                "ocr_engine": "bailian",
                 "file_path": str(file_path),
                 "file_name": file_path.name,
                 "pages_processed": len(page_numbers),
@@ -805,7 +784,7 @@ class ParsePDFTool(LLMTool):
             return result
 
         except Exception as e:
-            logger.error("ocr_qwen_failed", path=str(file_path), error=str(e))
+            logger.error("ocr_bailian_failed", path=str(file_path), error=str(e))
             raise
 
     async def _ocr_with_paddleocr(self, file_path: Path, page_numbers: List[int]) -> Dict[str, Any]:
@@ -1202,7 +1181,7 @@ class ParsePDFTool(LLMTool):
                     },
                     "ocr_engine": {
                         "type": "string",
-                        "enum": ["auto", "qwen", "paddleocr", "tesseract"],
+                        "enum": ["auto", "bailian", "paddleocr", "tesseract"],
                         "description": "OCR引擎，仅ocr模式有效",
                         "default": "auto"
                     }

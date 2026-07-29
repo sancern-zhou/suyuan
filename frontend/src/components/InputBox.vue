@@ -1,6 +1,29 @@
 <template>
   <div class="input-area">
     <div class="input-container">
+      <div v-if="selectedSkill || selectedFileRefs.length" class="composer-selection-bar">
+        <button
+          v-if="selectedSkill"
+          type="button"
+          class="composer-chip skill-chip"
+          :class="{ invalid: !selectedSkill.compatible }"
+          :title="selectedSkill.compatible ? selectedSkill.description : `当前模式缺少：${selectedSkill.missingTools.join('、')}`"
+          @click="selectedSkill = null"
+        >
+          /{{ selectedSkill.name }} <span aria-hidden="true">×</span>
+        </button>
+        <button
+          v-for="file in selectedFileRefs"
+          :key="file.resourceRefId"
+          type="button"
+          class="composer-chip file-chip"
+          :title="file.title || file.name"
+          @click="removeSelectedFile(file.resourceRefId)"
+        >
+          @{{ file.name }} <span aria-hidden="true">×</span>
+        </button>
+      </div>
+
       <!-- 附件预览区域 -->
       <div v-if="visibleAttachments.length > 0" class="attachments-preview">
         <div
@@ -10,9 +33,9 @@
           :class="{ 'context-attachment': attachment.readonlySource === 'drawio_board_selection' }"
           :title="attachment.title || attachment.name"
         >
-          <img
+          <AuthenticatedImage
             v-if="attachment.type === 'image' && attachment.preview"
-            :src="attachment.preview"
+            :source="attachment.preview"
             :title="attachment.name"
             class="attachment-preview-image"
             @click="previewImage(attachment)"
@@ -48,18 +71,29 @@
         @dragleave.prevent="handleDragLeave"
         @drop.prevent="handleDrop"
       >
-        <!-- 工作流工具提示 -->
-        <div v-if="showWorkflowTools" class="workflow-tools-hint">
-          <span
-            v-for="tool in workflowTools"
-            :key="tool.id"
-            class="workflow-tool-item"
-            :class="{ active: highlightedTool === tool.id }"
-            @mousedown="selectWorkflowTool(tool, $event)"
-            @mouseenter="highlightedTool = tool.id"
-          >
-            {{ tool.name }}
-          </span>
+        <div v-if="showCommandPalette" class="workflow-tools-hint" role="listbox">
+          <div class="palette-header">
+            {{ activeTrigger?.type === 'skill' ? '选择技能' : '引用对话文件' }}
+          </div>
+          <div v-if="paletteLoading" class="palette-empty">加载中…</div>
+          <div v-else-if="paletteError" class="palette-empty error">{{ paletteError }}</div>
+          <div v-else-if="paletteItems.length === 0" class="palette-empty">没有匹配项</div>
+          <template v-else>
+            <button
+              v-for="(item, index) in paletteItems"
+              :key="item.id"
+              type="button"
+              class="workflow-tool-item"
+              :class="{ active: highlightedPaletteIndex === index, disabled: item.compatible === false }"
+              :disabled="item.compatible === false"
+              @mousedown="selectPaletteItem(item, $event)"
+              @mouseenter="highlightedPaletteIndex = index"
+            >
+              <span class="palette-item-name">{{ item.name }}</span>
+              <small>{{ item.description || item.group }}</small>
+              <small v-if="item.compatible === false">当前模式缺少：{{ item.missingTools.join('、') }}</small>
+            </button>
+          </template>
         </div>
 
         <div
@@ -96,16 +130,16 @@
           @focus="handleFocus"
           @blur="handleBlur"
           @paste="handlePaste"
+          @compositionstart="isComposing = true"
+          @compositionend="handleCompositionEnd"
           rows="1"
         />
 
-        <div class="input-footer">
-          <AgentModeSelector
-            v-if="assistantMode === 'general-agent' && showAgentModeSelector"
-            v-model="agentMode"
-            @update:modelValue="handleAgentModeChange"
-          />
+        <div v-if="boardSyncMessage" class="board-sync-message" :class="{ error: boardSyncError }" role="status">
+          {{ boardSyncMessage }}
+        </div>
 
+        <div class="input-footer">
           <div class="action-group">
             <div v-if="showModelTierSelector" class="model-tier-wrapper">
               <select
@@ -226,10 +260,29 @@ import { ref, watch, nextTick, computed } from 'vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useReactStore } from '@/stores/reactStore'
 import KnowledgeBaseSelector from '@/components/knowledge/KnowledgeBaseSelector.vue'
-import AgentModeSelector from '@/components/AgentModeSelector.vue'
+import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
 import { uploadChatFile, validateFile, createImagePreview, getFileUrl } from '@/services/uploadApi'
 import { transcribeVoice } from '@/services/voiceApi.js'
 import { getPendingSteeringDisplay } from '@/components/inputBoxPendingSteering.js'
+import { getSkillsList } from '@/api/skillsManagement.js'
+import { getSessionResources } from '@/api/session.js'
+import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
+import {
+  buildComposerPayload,
+  filterPaletteItems,
+  findComposerTrigger,
+  normalizeConversationResources,
+  normalizeSkills,
+  removeComposerTrigger,
+  shouldClearAcceptedComposer
+} from '@/components/inputBoxCommandPalette.js'
+import {
+  createSelectionRestoreGuard,
+  readSelectionDraft,
+  reconcileSelectionDraft,
+  writeSelectionDraft
+} from '@/components/inputBoxSelectionDraft.js'
+import { completeUploadedAttachment } from '@/components/inputBoxAttachments.js'
 import {
   createVoiceFilename,
   getPreferredRecordingMimeType,
@@ -251,7 +304,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: '输入您的问题... (支持Ctrl+V粘贴图片和文件)'
+    default: withComposerShortcutGuide('输入您的问题')
   },
   disabled: {
     type: Boolean,
@@ -276,30 +329,27 @@ const props = defineProps({
   sessionId: {
     type: String,
     default: ''
-  },
-  showAgentModeSelector: {
-    type: Boolean,
-    default: true
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReranker', 'update:agentMode'])
+const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReranker'])
 
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
 const showKnowledgeBaseSelector = ref(false)
-const showWorkflowTools = ref(false)
-const atSymbolIndex = ref(-1)  // 记录@符号的位置
-const highlightedTool = ref(null)  // 高亮的工具
+const activeTrigger = ref(null)
+const highlightedPaletteIndex = ref(0)
+const paletteLoading = ref(false)
+const paletteError = ref('')
+const availableSkills = ref([])
+const conversationResources = ref([])
+const selectedSkill = ref(null)
+const selectionRestoreGuard = createSelectionRestoreGuard()
+let restoringSelection = false
+const isComposing = ref(false)
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
-const validAgentModes = ['assistant', 'expert', 'query', 'report', 'chart', 'ops', 'graph']
-// ✅ 使用统一的模式键名，与 store.currentMode 保持一致
-const cachedMode = localStorage.getItem('current-mode') || 'assistant'
-const initialAgentMode = validAgentModes.includes(reactStore.currentMode)
-  ? reactStore.currentMode
-  : (validAgentModes.includes(cachedMode) ? cachedMode : 'assistant')
-const agentMode = ref(initialAgentMode)
+const validAgentModes = ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops', 'graph']
 const validModelTiers = ['auto', 'flash', 'pro']
 const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
 const draftModelTierKey = 'llm-model-tier:draft'
@@ -338,7 +388,7 @@ const voiceOutputEnabled = ref(
   localStorage.getItem('query-voice-output-enabled') === 'true'
 )
 const pendingBoardSnapshotAttachment = computed(() => {
-  if (reactStore.currentMode !== 'chart') return null
+  if (reactStore.currentMode !== 'board') return null
   const attachment = reactStore.currentState?.board?.pendingSnapshotAttachment
   if (!attachment) return null
   return {
@@ -348,6 +398,7 @@ const pendingBoardSnapshotAttachment = computed(() => {
     type: attachment.type || attachment.file_type || 'image',
     preview: attachment.preview || attachment.url || null,
     uploading: false,
+    resourceRefId: attachment.resourceRefId || attachment.resource_ref?.ref_id || null,
     readonlySource: 'drawio_board_snapshot'
   }
 })
@@ -357,7 +408,7 @@ const getSelectedCellLabel = (cell = {}) => {
 }
 
 const boardSelectionContextAttachment = computed(() => {
-  if (reactStore.currentMode !== 'chart') return null
+  if (reactStore.currentMode !== 'board') return null
   const selectedCells = reactStore.currentState?.board?.selectedCells || []
   if (!Array.isArray(selectedCells) || selectedCells.length === 0) return null
 
@@ -386,15 +437,104 @@ const visibleAttachments = computed(() => [
   ...(boardSelectionContextAttachment.value ? [boardSelectionContextAttachment.value] : []),
   ...(pendingBoardSnapshotAttachment.value ? [pendingBoardSnapshotAttachment.value] : [])
 ])
-const sendableAttachmentCount = computed(() => (
-  attachments.value.length + (pendingBoardSnapshotAttachment.value ? 1 : 0)
-))
+const selectedFileRefs = computed(() => [
+  ...attachments.value.filter(item => item.resourceRefId),
+  ...(pendingBoardSnapshotAttachment.value?.resourceRefId ? [pendingBoardSnapshotAttachment.value] : [])
+])
+
+const resourceToAttachment = (item) => ({
+  id: item.id,
+  resourceRefId: item.id,
+  file_id: item.metadata?.file_id || null,
+  name: item.name,
+  type: item.metadata?.mime_type?.startsWith('image/') ? 'image' : 'file',
+  mime_type: item.metadata?.mime_type || null,
+  url: item.metadata?.file_id ? getFileUrl(item.metadata.file_id) : null,
+  preview: item.metadata?.file_id && item.metadata?.mime_type?.startsWith('image/')
+    ? getFileUrl(item.metadata.file_id)
+    : null,
+  uploading: false,
+  source: item.source,
+  title: `${item.group}${item.turnSequence !== null ? ` · 第 ${item.turnSequence} 轮` : ''}`
+})
+
+const persistSelectionDraft = (sessionId = props.sessionId) => {
+  if (restoringSelection) return
+  writeSelectionDraft(sessionId, {
+    skillId: selectedSkill.value?.id || null,
+    fileIds: selectedFileRefs.value.map(file => file.resourceRefId)
+  })
+}
+
+const restoreSelectionDraft = async (sessionId) => {
+  const mode = reactStore.currentMode
+  const token = selectionRestoreGuard.begin(sessionId, mode)
+  restoringSelection = true
+  try {
+    const [skillsResponse, resourcesResponse] = await Promise.all([
+      getSkillsList(null, reactStore.currentMode).catch(() => ({ data: { skills: [] } })),
+      sessionId
+        ? getSessionResources(sessionId).catch(() => ({ resources: [] }))
+        : Promise.resolve({ resources: [] })
+    ])
+    if (!selectionRestoreGuard.isCurrent(token, props.sessionId, reactStore.currentMode)) return
+    availableSkills.value = normalizeSkills(skillsResponse)
+    conversationResources.value = normalizeConversationResources(resourcesResponse)
+    const restored = reconcileSelectionDraft(
+      readSelectionDraft(sessionId),
+      availableSkills.value,
+      conversationResources.value
+    )
+    selectedSkill.value = restored.skill
+    attachments.value = restored.files.map(resourceToAttachment)
+    writeSelectionDraft(sessionId, {
+      skillId: restored.skill?.id || null,
+      fileIds: restored.files.map(file => file.id)
+    })
+  } finally {
+    if (selectionRestoreGuard.isCurrent(token, props.sessionId, reactStore.currentMode)) {
+      restoringSelection = false
+    }
+  }
+}
+const paletteItems = computed(() => {
+  if (!activeTrigger.value) return []
+  const source = activeTrigger.value.type === 'skill'
+    ? availableSkills.value
+    : conversationResources.value.filter(item => (
+      !selectedFileRefs.value.some(selected => selected.resourceRefId === item.id)
+    ))
+  return filterPaletteItems(source, activeTrigger.value.search)
+})
+const showCommandPalette = computed(() => activeTrigger.value !== null)
 const activeModelTierMode = computed(() => (
-  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : agentMode.value
+  validAgentModes.includes(reactStore.currentMode) ? reactStore.currentMode : 'assistant'
 ))
 const showModelTierSelector = computed(() => shouldShowModelTierSelector(activeModelTierMode.value))
 const showVoiceControls = computed(() => shouldShowVoiceControls(reactStore.currentMode))
 const canSteerWhileRunning = computed(() => props.isAnalyzing && reactStore.currentMode === 'assistant')
+const boardSyncStatus = computed(() => (
+  reactStore.currentMode === 'board'
+    ? reactStore.currentState?.board?.syncStatus || 'idle'
+    : 'idle'
+))
+const boardSyncError = computed(() => reactStore.currentMode === 'board' ? reactStore.currentState?.board?.syncError : null)
+const boardSyncMessage = computed(() => {
+  if (reactStore.currentMode !== 'board') return ''
+  const status = boardSyncStatus.value
+  if (status === 'syncing') return '正在同步画板…'
+  if (status === 'error') {
+    const labels = {
+      board_editor_not_ready: '画板编辑器尚未就绪，请稍后重试',
+      board_sync_timeout: '同步画板超时，消息未发送',
+      board_sync_invalid_xml: '画板 XML 无效，消息未发送',
+      board_version_conflict: '画板版本已更新，请重新加载后再发送',
+      board_manual_commit_failed: '保存手工画板版本失败，消息未发送'
+    }
+    return labels[boardSyncError.value] || '同步画板失败，消息未发送'
+  }
+  return ''
+})
 const runningActionLabel = computed(() => canSteerWhileRunning.value ? '追加' : '排队')
 const runningActionTitle = computed(() => canSteerWhileRunning.value ? '追加指令 (Enter)' : '排队发送 (Enter)')
 const pendingSteeringDisplay = computed(() => getPendingSteeringDisplay(props.pendingSteeringInputs))
@@ -404,36 +544,21 @@ const voiceButtonTitle = computed(() => {
 })
 
 const actionButtonDisabled = computed(() => {
+  if (boardSyncStatus.value === 'syncing') return true
+  const hasContent = Boolean(
+    localValue.value.trim() || selectedSkill.value || selectedFileRefs.value.length > 0
+  )
+  if (attachments.value.some(item => item.uploading)) return true
+  if (selectedSkill.value?.compatible === false) return true
   if (props.isAnalyzing) {
     if (!canSteerWhileRunning.value) return false
-    return (!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled
+    return !hasContent || props.disabled
   }
-  return (!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled
+  return !hasContent || props.disabled
 })
-
-// 工作流工具列表
-const workflowTools = [
-  { id: 'standard_analysis_workflow', name: '标准分析' },
-  { id: 'knowledge_qa_workflow', name: '知识问答' }
-]
 
 const toggleKnowledgeBase = () => {
   showKnowledgeBaseSelector.value = !showKnowledgeBaseSelector.value
-}
-
-const handleAgentModeChange = (newMode) => {
-  if (!validAgentModes.includes(newMode)) {
-    console.warn('[InputBox] Invalid agent mode:', newMode)
-    return
-  }
-
-  // ✅ 处理Agent模式变化
-  agentMode.value = newMode
-  if (reactStore.currentMode !== newMode) {
-    reactStore.switchMode(newMode)
-  }
-  emit('update:agentMode', newMode)
-  console.log('[InputBox] Agent mode changed:', newMode)
 }
 
 const autoResize = () => {
@@ -446,93 +571,86 @@ const autoResize = () => {
   }
 }
 
-const handleInput = (e) => {
-  autoResize()
-
-  const textarea = textareaRef.value
-  if (!textarea) return
-
-  const value = localValue.value
-  const cursorPosition = textarea.selectionStart
-
-  console.log('[InputBox] handleInput:', {
-    value,
-    cursorPosition,
-    charAtCursor: value[cursorPosition - 1],
-    showWorkflowTools: showWorkflowTools.value
-  })
-
-  // 检查是否刚输入了@符号（且在行首或前面有空格）
-  if (value[cursorPosition - 1] === '@' && (cursorPosition === 1 || value[cursorPosition - 2] === ' ' || value[cursorPosition - 2] === '\n')) {
-    atSymbolIndex.value = cursorPosition - 1
-    showWorkflowTools.value = true
-    highlightedTool.value = null
-    console.log('[InputBox] @ detected, atSymbolIndex:', atSymbolIndex.value)
-  } else if (showWorkflowTools.value) {
-    // 如果工具列表已显示，检查是否删除了@符号
-    if (atSymbolIndex.value >= 0 && value[atSymbolIndex.value] !== '@') {
-      showWorkflowTools.value = false
-      atSymbolIndex.value = -1
-      highlightedTool.value = null
-      console.log('[InputBox] @ removed, hiding tools')
+const loadPaletteSource = async (type) => {
+  paletteLoading.value = true
+  paletteError.value = ''
+  try {
+    if (type === 'skill') {
+      availableSkills.value = normalizeSkills(await getSkillsList(null, reactStore.currentMode))
+    } else if (props.sessionId) {
+      conversationResources.value = normalizeConversationResources(await getSessionResources(props.sessionId))
+    } else {
+      conversationResources.value = []
     }
+  } catch (error) {
+    if (type === 'skill' || conversationResources.value.length === 0) {
+      paletteError.value = type === 'skill' ? '技能加载失败' : '对话文件加载失败'
+    }
+    console.error('[InputBox] palette load failed:', error)
+  } finally {
+    paletteLoading.value = false
   }
 }
 
-const selectWorkflowTool = (tool, event) => {
-  const toolName = tool.name
+const updateActiveTrigger = () => {
+  if (isComposing.value || !textareaRef.value) return
+  const nextTrigger = findComposerTrigger(localValue.value, textareaRef.value.selectionStart)
+  const typeChanged = nextTrigger?.type && nextTrigger.type !== activeTrigger.value?.type
+  activeTrigger.value = nextTrigger
+  highlightedPaletteIndex.value = 0
+  if (typeChanged || (
+    nextTrigger?.type === 'skill' && availableSkills.value.length === 0
+  ) || (
+    nextTrigger?.type === 'file' && conversationResources.value.length === 0
+  )) {
+    void loadPaletteSource(nextTrigger.type)
+  }
+}
 
-  console.log('[InputBox] selectWorkflowTool called:', {
-    toolName,
-    currentLocalValue: localValue.value,
-    event
-  })
+const handleInput = () => {
+  autoResize()
+  updateActiveTrigger()
+}
 
-  // 阻止默认行为和冒泡，防止输入框失去焦点
+const selectPaletteItem = (item, event) => {
+  if (item.compatible === false) return
   if (event) {
     event.preventDefault()
     event.stopPropagation()
   }
-
-  const replaceStart = atSymbolIndex.value >= 0 ? atSymbolIndex.value : localValue.value.indexOf('@')
-  const before = replaceStart >= 0 ? localValue.value.slice(0, replaceStart) : localValue.value
-  const after = replaceStart >= 0 ? localValue.value.slice(replaceStart + 1) : ''
-  const insertedText = '@' + toolName + ' '
-  const newValue = before + insertedText + after
-
-  console.log('[InputBox] New value:', newValue)
-
-  // 更新 localValue
-  localValue.value = newValue
-
-  showWorkflowTools.value = false
-  atSymbolIndex.value = -1
-  highlightedTool.value = null
-
-  // 设置光标位置到工具名称后面
+  const cursorPosition = textareaRef.value?.selectionStart ?? localValue.value.length
+  const removed = removeComposerTrigger(localValue.value, activeTrigger.value, cursorPosition)
+  localValue.value = removed.value
+  if (activeTrigger.value?.type === 'skill') {
+    selectedSkill.value = item
+  } else if (!attachments.value.some(file => file.resourceRefId === item.id)) {
+    attachments.value.push(resourceToAttachment(item))
+  }
+  activeTrigger.value = null
   nextTick(() => {
-    const newPosition = before.length + insertedText.length
-    console.log('[InputBox] Setting cursor position:', newPosition, 'value:', localValue.value)
     if (textareaRef.value) {
-      textareaRef.value.setSelectionRange(newPosition, newPosition)
+      textareaRef.value.setSelectionRange(removed.cursor, removed.cursor)
       textareaRef.value.focus()
     }
   })
 }
 
+const removeSelectedFile = (resourceRefId) => {
+  const index = attachments.value.findIndex(file => file.resourceRefId === resourceRefId)
+  if (index >= 0) attachments.value.splice(index, 1)
+  if (pendingBoardSnapshotAttachment.value?.resourceRefId === resourceRefId) {
+    reactStore.setDrawioBoardSnapshotAttachment(null)
+  }
+}
+
+const handleCompositionEnd = () => {
+  isComposing.value = false
+  nextTick(updateActiveTrigger)
+}
+
 watch(() => props.modelValue, (newValue) => {
   localValue.value = newValue
 })
-
-watch(
-  () => reactStore.currentMode,
-  (newMode) => {
-    if (validAgentModes.includes(newMode) && agentMode.value !== newMode) {
-      agentMode.value = newMode
-    }
-  },
-  { immediate: true }
-)
 
 watch(localValue, async (newValue) => {
   emit('update:modelValue', newValue)
@@ -542,10 +660,39 @@ watch(localValue, async (newValue) => {
 
 watch(
   () => props.sessionId,
-  (newSessionId) => {
+  (newSessionId, oldSessionId) => {
+    if (oldSessionId && oldSessionId !== newSessionId) persistSelectionDraft(oldSessionId)
     modelTier.value = readStoredModelTier(newSessionId)
+    activeTrigger.value = null
+    if (
+      !oldSessionId &&
+      newSessionId &&
+      (attachments.value.length > 0 || selectedSkill.value)
+    ) {
+      selectionRestoreGuard.invalidate()
+      restoringSelection = false
+      persistSelectionDraft(newSessionId)
+      return
+    }
+    void restoreSelectionDraft(newSessionId)
   },
   { immediate: true }
+)
+
+watch(
+  () => reactStore.currentMode,
+  () => {
+    persistSelectionDraft()
+    void restoreSelectionDraft(props.sessionId)
+  }
+)
+
+watch(
+  [
+    () => selectedSkill.value?.id || null,
+    () => selectedFileRefs.value.map(file => file.resourceRefId).join('\n')
+  ],
+  () => persistSelectionDraft()
 )
 
 watch([modelTier, () => props.sessionId], ([newTier, newSessionId]) => {
@@ -559,37 +706,45 @@ watch([modelTier, () => props.sessionId], ([newTier, newSessionId]) => {
 })
 
 const handleKeydown = (e) => {
-  // 如果工作流工具列表显示，处理键盘导航
-  if (showWorkflowTools.value) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+  if (isComposing.value || e.isComposing) return
+  if (showCommandPalette.value) {
+    if (e.key === 'ArrowDown') {
       e.preventDefault()
-      const currentIndex = workflowTools.findIndex(t => t.id === highlightedTool.value)
-      const nextIndex = currentIndex < workflowTools.length - 1 ? currentIndex + 1 : 0
-      highlightedTool.value = workflowTools[nextIndex].id
+      highlightedPaletteIndex.value = paletteItems.value.length
+        ? (highlightedPaletteIndex.value + 1) % paletteItems.value.length
+        : 0
       return
     }
-    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+    if (e.key === 'ArrowUp') {
       e.preventDefault()
-      const currentIndex = workflowTools.findIndex(t => t.id === highlightedTool.value)
-      const prevIndex = currentIndex > 0 ? currentIndex - 1 : workflowTools.length - 1
-      highlightedTool.value = workflowTools[prevIndex].id
+      highlightedPaletteIndex.value = paletteItems.value.length
+        ? (highlightedPaletteIndex.value - 1 + paletteItems.value.length) % paletteItems.value.length
+        : 0
       return
     }
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (highlightedTool.value) {
-        const tool = workflowTools.find(t => t.id === highlightedTool.value)
-        if (tool) selectWorkflowTool(tool)
-      }
+      const item = paletteItems.value[highlightedPaletteIndex.value]
+      if (item) selectPaletteItem(item)
       return
     }
     if (e.key === 'Escape') {
       e.preventDefault()
-      showWorkflowTools.value = false
-      atSymbolIndex.value = -1
-      highlightedTool.value = null
+      activeTrigger.value = null
       return
     }
+  }
+
+  if (
+    (e.key === 'Backspace' || e.key === 'Delete') &&
+    localValue.value.length === 0 &&
+    (selectedFileRefs.value.length > 0 || selectedSkill.value)
+  ) {
+    e.preventDefault()
+    const lastFile = selectedFileRefs.value.at(-1)
+    if (lastFile) removeSelectedFile(lastFile.resourceRefId)
+    else selectedSkill.value = null
+    return
   }
 
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -606,16 +761,17 @@ const handleFocus = () => {
 }
 
 const handleBlur = () => {
-  // 延迟关闭工作流工具列表，允许点击
   setTimeout(() => {
-    showWorkflowTools.value = false
-    atSymbolIndex.value = -1
-    highlightedTool.value = null
+    activeTrigger.value = null
   }, 200)
 }
 
-const handleSend = () => {
-  if ((!localValue.value.trim() && sendableAttachmentCount.value === 0) || props.disabled) return
+const handleSend = async () => {
+  if (
+    (!localValue.value.trim() && !selectedSkill.value && selectedFileRefs.value.length === 0) ||
+    props.disabled ||
+    boardSyncStatus.value === 'syncing'
+  ) return
 
   // 检查是否有附件还在上传中
   const uploadingAttachments = attachments.value.filter(a => a.uploading)
@@ -624,44 +780,65 @@ const handleSend = () => {
     return
   }
 
-  // 关闭工作流工具列表
-  showWorkflowTools.value = false
-  atSymbolIndex.value = -1
-  highlightedTool.value = null
+  activeTrigger.value = null
 
   // 获取选中的知识库ID列表
   const knowledgeBaseIds = kbStore.selectedIds
 
-  // 准备附件信息
-  const attachmentsData = attachments.value.map(a => ({
-    file_id: a.file_id,
-    name: a.name,
-    type: a.type,
-    url: a.url
-  }))
-
-  // 将查询、知识库ID、Agent模式、附件一起发送
   const activeAgentMode = validAgentModes.includes(reactStore.currentMode)
     ? reactStore.currentMode
-    : agentMode.value
-  agentMode.value = activeAgentMode
+    : 'assistant'
+
+  if (activeAgentMode === 'board' && reactStore.currentState?.board?.currentXml) {
+    try {
+      await reactStore.prepareDrawioBoardForSend(activeAgentMode)
+    } catch (error) {
+      console.error('[drawio-board] pre-send synchronization blocked send', error)
+      return
+    }
+  }
+
+  const sentSnapshot = {
+    query: localValue.value,
+    skillId: selectedSkill.value?.id || null,
+    fileIds: selectedFileRefs.value.map(file => file.resourceRefId)
+  }
+  const clearAcceptedDraft = () => {
+    const currentSnapshot = {
+      query: localValue.value,
+      skillId: selectedSkill.value?.id || null,
+      fileIds: selectedFileRefs.value.map(file => file.resourceRefId)
+    }
+    if (!shouldClearAcceptedComposer(sentSnapshot, currentSnapshot)) return
+    localValue.value = ''
+    attachments.value = []
+    selectedSkill.value = null
+    if (pendingBoardSnapshotAttachment.value) reactStore.setDrawioBoardSnapshotAttachment(null)
+    nextTick(() => {
+      if (textareaRef.value) {
+        textareaRef.value.style.height = 'auto'
+        textareaRef.value.style.overflowY = 'hidden'
+      }
+    })
+  }
 
   emit('send', {
-    query: localValue.value,
-    knowledgeBaseIds: knowledgeBaseIds,
-    agentMode: activeAgentMode,
-    modelTier: getEffectiveModelTier(modelTier.value, activeAgentMode),
-    attachments: attachmentsData
-  })
-
-  localValue.value = ''
-  attachments.value = []
-
-  nextTick(() => {
-    if (textareaRef.value) {
-      textareaRef.value.style.height = 'auto'
-      textareaRef.value.style.overflowY = 'hidden'
-    }
+    ...buildComposerPayload({
+      query: localValue.value,
+      skill: selectedSkill.value,
+      files: selectedFileRefs.value.map(file => ({
+        id: file.resourceRefId,
+        fileId: file.file_id || null,
+        name: file.name,
+        type: file.type,
+        mimeType: file.mime_type || null,
+        url: file.url || (file.file_id ? getFileUrl(file.file_id) : null)
+      })),
+      knowledgeBaseIds,
+      agentMode: activeAgentMode,
+      modelTier: getEffectiveModelTier(modelTier.value, activeAgentMode)
+    }),
+    onAccepted: clearAcceptedDraft
   })
 }
 
@@ -917,10 +1094,21 @@ const processFiles = async (files) => {
 
     // 上传文件
     try {
-      const result = await uploadChatFile(file)
-      attachment.file_id = result.file_id
-      attachment.url = result.url
-      attachment.uploading = false
+      if (!reactStore.currentState?.sessionId) {
+        selectionRestoreGuard.invalidate()
+        restoringSelection = false
+        reactStore.createSessionId()
+      }
+      const result = await uploadChatFile(
+        file,
+        reactStore.currentState?.sessionId,
+        reactStore.currentMode
+      )
+      completeUploadedAttachment(attachments.value, attachment, result)
+      const [resource] = normalizeConversationResources({ resources: [result.resource_ref] })
+      if (resource && !conversationResources.value.some(item => item.id === resource.id)) {
+        conversationResources.value.push(resource)
+      }
 
       console.log('[InputBox] File uploaded:', result)
     } catch (error) {
@@ -963,6 +1151,35 @@ defineExpose({
   gap: 10px;
 }
 
+.composer-selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.composer-chip {
+  border: 1px solid #c9d8ee;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: #f4f8ff;
+  color: #28517a;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.composer-chip.skill-chip {
+  border-color: #d4c3ee;
+  background: #f8f3ff;
+  color: #68429a;
+}
+
+.composer-chip.invalid {
+  border-color: #ef9a9a;
+  background: #fff4f4;
+  color: #b42318;
+}
+
 .input-wrapper {
   display: flex;
   flex-direction: column;
@@ -998,7 +1215,26 @@ defineExpose({
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   z-index: 10;
-  min-width: 120px;
+  width: min(420px, 100%);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.palette-header {
+  padding: 4px 8px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.palette-empty {
+  padding: 10px 12px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.palette-empty.error {
+  color: #b42318;
 }
 
 .workflow-tool-item {
@@ -1006,10 +1242,19 @@ defineExpose({
   font-size: 14px;
   color: #6b7a99;
   background: transparent;
+  border: 0;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
   text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  small {
+    color: #7b879b;
+    font-weight: 400;
+  }
 
   &:hover {
     background: #f5f5f5;
@@ -1020,6 +1265,11 @@ defineExpose({
     background: #e3f2fd;
     color: #1976D2;
     font-weight: 500;
+  }
+
+  &.disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 }
 
@@ -1440,6 +1690,16 @@ defineExpose({
   border-color: #b7d6ff;
   background: #f4f9ff;
   color: #23527c;
+}
+
+.board-sync-message {
+  padding: 2px 14px 0;
+  color: #526173;
+  font-size: 12px;
+}
+
+.board-sync-message.error {
+  color: #c62828;
 }
 
 .attachment-item.context-attachment .attachment-file-name {

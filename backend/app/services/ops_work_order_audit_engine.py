@@ -51,10 +51,17 @@ from app.services.ops_audit.rules.attachment_rules import (  # noqa: E402
     check_attachment_requirements,
 )
 from app.services.ops_audit.rules.attachment_ocr_rules import build_flow_visual_tasks, run_flow_visual_task  # noqa: E402
+from app.services.ops_audit.rules.multipoint_curve_visual_rules import (  # noqa: E402
+    build_multipoint_curve_visual_tasks,
+    run_multipoint_curve_visual_task,
+)
 from app.services.ops_audit.semantic.ocr_adapter import flow_visual_provider_summary  # noqa: E402
 from app.services.ops_audit.rules.lifecycle_rules import check_lifecycle_closure as check_modular_lifecycle_closure  # noqa: E402
 from app.services.ops_audit.rules.o3_transfer_quality_rules import check_o3_transfer_quality_values  # noqa: E402
-from app.services.ops_audit.rules.o3_value_pass_xls_rules import check_o3_value_pass_xls_values  # noqa: E402
+from app.services.ops_audit.rules.o3_value_pass_xls_rules import (  # noqa: E402
+    build_o3_upper_standard_history_conflicts,
+    check_o3_value_pass_xls_values,
+)
 from app.services.ops_audit.rules.rf_abnormal_remark_rules import check_rf_abnormal_remarks  # noqa: E402
 from app.services.ops_audit.rules.rf_calibration_date_rules import check_rf_calibration_dates  # noqa: E402
 from app.services.ops_audit.rules.rf_enum_rules import check_rf_enum_values  # noqa: E402
@@ -1615,11 +1622,20 @@ def _run_flow_visual_tasks(
 
 def _run_one_flow_visual_task(task: dict[str, Any]) -> list[Issue]:
     issues: list[Issue] = []
-    run_flow_visual_task(task, issues)
+    if task.get("task_type") == "multipoint_curve_visual":
+        run_multipoint_curve_visual_task(task, issues)
+    else:
+        run_flow_visual_task(task, issues)
     return issues
 
 
-def audit_dataset(dataset: dict[str, Any], *, enable_visual: bool = True) -> dict[str, Any]:
+def audit_dataset(
+    dataset: dict[str, Any],
+    *,
+    enable_visual: bool = True,
+    visual_evidence_dir: Path | None = None,
+) -> dict[str, Any]:
+    visual_evidence_dir = (visual_evidence_dir or (OUTPUT_DIR / "visual_evidence" / "multipoint_curves")).resolve()
     details_by_code = defaultdict(list)
     for detail in dataset.get("details", []):
         details_by_code[detail.get("WORKINGORDERCODE")].append(detail)
@@ -1645,6 +1661,15 @@ def audit_dataset(dataset: dict[str, Any], *, enable_visual: bool = True) -> dic
     attachments_by_code = _group_records_by_order_code(dataset.get("attachments", []), ["refid", "REFID", "remark", "REMARK"])
     wo_commonfile_by_code = _group_records_by_order_code(dataset.get("wo_commonfile", []), ["REFID", "refid"])
     all_orders_for_device_consistency, all_forms_by_code = merge_device_history(dataset)
+    current_order_codes = {
+        str(order.get("WORKINGORDERCODE"))
+        for order in dataset.get("orders", [])
+        if order.get("WORKINGORDERCODE")
+    }
+    o3_history_conflicts_by_code = build_o3_upper_standard_history_conflicts(
+        all_forms_by_code,
+        current_order_codes,
+    )
 
     records = []
     record_issues_by_code: dict[str, list[Issue]] = {}
@@ -1652,7 +1677,7 @@ def audit_dataset(dataset: dict[str, Any], *, enable_visual: bool = True) -> dic
     for order in dataset.get("orders", []):
         code = order.get("WORKINGORDERCODE")
         station_meta = station_meta_by_id.get(str(order.get("STATIONID") or ""), {})
-        issues: list[Issue] = []
+        issues: list[Issue] = list(o3_history_conflicts_by_code.get(str(code), []))
         forms = forms_by_code.get(code, [])
         details = details_by_code.get(code, [])
         attachment_rf_typecodes = _rf_attachment_typecodes(attachments_by_code.get(str(code), [])) + _rf_attachment_typecodes(
@@ -1730,6 +1755,16 @@ def audit_dataset(dataset: dict[str, Any], *, enable_visual: bool = True) -> dic
             for task in order_flow_tasks:
                 task["working_order_code"] = code
             flow_visual_tasks.extend(order_flow_tasks)
+            multipoint_tasks = build_multipoint_curve_visual_tasks(
+                order,
+                forms,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+                evidence_dir=visual_evidence_dir,
+            )
+            for task in multipoint_tasks:
+                task["working_order_code"] = code
+            flow_visual_tasks.extend(multipoint_tasks)
         record_issues_by_code[str(code)] = issues
         issues_for_record = [issue for issue in dedupe_issues(issues) if not is_excluded_rule(issue.rule_id)]
         attachment_review_rules = sorted(

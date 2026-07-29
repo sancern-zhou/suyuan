@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -86,11 +86,13 @@ class KnowledgeBaseService:
     def __init__(
         self,
         db: AsyncSession = None,
-        vector_store = None
+        vector_store = None,
+        ingestion_service_factory=None,
     ):
         self.db = db
         self.processor = get_document_processor()
         self.vector_store = vector_store or get_vector_store()
+        self.ingestion_service_factory = ingestion_service_factory
         self._reranker = None
 
     def _get_reranker(self):
@@ -291,7 +293,7 @@ class KnowledgeBaseService:
             chunking_strategy: 分块策略 (llm/sentence/semantic/markdown/hybrid)
             chunk_size: 分块大小
             chunk_overlap: 分块重叠
-            llm_mode: LLM模式 - "local"(本地千问3) / "online"(线上API)
+            llm_mode: LLM模式，仅支持 "online"（线上API）
 
         Returns:
             文档对象
@@ -361,6 +363,37 @@ class KnowledgeBaseService:
             )
             return doc_result.scalar_one()
 
+    async def ingest_document(
+        self,
+        document_id: str,
+        **processing_options,
+    ):
+        """Run the unified Chunk + graph ingestion state machine."""
+        ingestion = self._create_ingestion_service(processing_options)
+        return await ingestion.ingest_document(document_id)
+
+    def _create_ingestion_service(self, processing_options: dict | None = None):
+        if self.ingestion_service_factory is not None:
+            return self.ingestion_service_factory(processing_options or {})
+
+        from app.db.database import async_session
+        from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
+        from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
+        from app.knowledge_base.graph_repository import KnowledgeGraphRepository
+        from app.knowledge_base.index_outbox import KnowledgeIndexOutboxRepository
+        from app.knowledge_base.ingestion_service import KnowledgeIngestionService
+
+        return KnowledgeIngestionService(
+            session_factory=async_session,
+            processor=self.processor,
+            chunk_repository_factory=KnowledgeChunkRepository,
+            graph_repository_factory=KnowledgeGraphRepository,
+            extractor=KnowledgeGraphExtractor(),
+            outbox_factory=KnowledgeIndexOutboxRepository.for_session,
+            file_storage=SmartFileStorage,
+            processing_options=processing_options,
+        )
+
     async def _process_document(
         self,
         doc: Document,
@@ -368,145 +401,16 @@ class KnowledgeBaseService:
         chunking_strategy: str = "llm",
         chunk_size: int = 800,
         chunk_overlap: int = 100,
-        llm_mode: str = "local"
+        llm_mode: str = "online",
     ):
-        """处理文档：解析、分块、向量化、存储原文件（支持LLM模式选择）"""
-        # 先提取所有需要的值（避免在线程中访问 SQLAlchemy 对象）
-        doc_id = doc.id
-        doc_file_path = doc.file_path
-        doc_filename = doc.filename
-        doc_file_size = doc.file_size
-        doc_extra_metadata = dict(doc.extra_metadata) if doc.extra_metadata else {}
-
-        kb_id = kb.id
-        kb_collection = kb.qdrant_collection
-
-        try:
-            # 1. 解析文档（在线程池中执行）
-            content = await self.processor.parse(doc_file_path)
-
-            # 2. 分块（使用传入的分块策略参数和LLM模式）
-            chunks = await self.processor.chunk(
-                content=content,
-                strategy=chunking_strategy,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                filename=doc_filename,
-                llm_mode=llm_mode
-            )
-
-            # 3. 向量化并存储（在线程池中执行）
-            chunk_count = await self.vector_store.add_chunks(
-                collection_name=kb_collection,
-                chunks=chunks,
-                metadata={
-                    "document_id": doc_id,
-                    "filename": doc_filename,
-                    "knowledge_base_id": kb_id,
-                    **doc_extra_metadata
-                }
-            )
-
-            # 4. 存储原文件到数据库（使用智能存储策略）
-            storage_info = None
-            try:
-                from app.db.database import async_session
-                async with async_session() as storage_db:
-                    file_storage = SmartFileStorage(storage_db)
-                    storage_info = await file_storage.store_file(
-                        temp_file_path=doc_file_path,
-                        original_filename=doc_filename,
-                        document_id=doc_id,
-                        knowledge_base_id=kb_id
-                    )
-                    await storage_db.commit()
-                    logger.info(
-                        "original_file_stored",
-                        doc_id=doc_id,
-                        storage_type=storage_info.get("storage_type"),
-                        size=storage_info.get("size")
-                    )
-            except Exception as storage_err:
-                # 文件存储失败不应阻止文档处理完成
-                logger.warning(
-                    "original_file_storage_failed",
-                    doc_id=doc_id,
-                    error=str(storage_err)
-                )
-
-            # 5. 生成文件预览文本（取前500字符）
-            preview_text = content[:500] if content else None
-
-            # 6. 使用新的数据库会话更新状态（避免长时间操作导致连接超时）
-            from app.db.database import async_session
-            async with async_session() as fresh_db:
-                doc_result = await fresh_db.execute(
-                    select(Document).where(Document.id == doc_id)
-                )
-                doc_fresh = doc_result.scalar_one()
-                doc_fresh.status = DocumentStatus.COMPLETED
-                doc_fresh.chunk_count = chunk_count
-                doc_fresh.processed_at = datetime.utcnow()
-                doc_fresh.file_preview_text = preview_text
-
-                # 更新文件存储信息
-                if storage_info:
-                    doc_fresh.file_storage_type = storage_info.get("storage_type", "none")
-                    doc_fresh.file_mime_type = storage_info.get("mime_type")
-                    doc_fresh.file_checksum = storage_info.get("checksum")
-                    doc_fresh.storage_size = storage_info.get("size", 0)
-                    if storage_info.get("storage_type") == "database":
-                        loid = storage_info.get("loid")
-                        if loid:
-                            doc_fresh.original_file_oid = int(loid)
-                    elif storage_info.get("storage_type") == "local":
-                        doc_fresh.file_path = storage_info.get("storage_path", doc_file_path)
-
-                kb_result = await fresh_db.execute(
-                    select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
-                )
-                kb_fresh = kb_result.scalar_one()
-                kb_fresh.document_count += 1
-                kb_fresh.chunk_count += chunk_count
-                kb_fresh.total_size += doc_file_size
-
-                await fresh_db.commit()
-
-            logger.info(
-                "document_processed",
-                doc_id=doc_id,
-                filename=doc_filename,
-                chunk_count=chunk_count,
-                storage_type=storage_info.get("storage_type") if storage_info else "none"
-            )
-
-        except Exception as e:
-            # 使用新的数据库会话更新失败状态（避免连接超时问题）
-            try:
-                from app.db.database import async_session
-                async with async_session() as fresh_db:
-                    doc_result = await fresh_db.execute(
-                        select(Document).where(Document.id == doc_id)
-                    )
-                    doc_fresh = doc_result.scalar_one_or_none()
-                    if doc_fresh:
-                        doc_fresh.status = DocumentStatus.FAILED
-                        doc_fresh.error_message = str(e)[:500]  # 限制错误信息长度
-                        doc_fresh.retry_count += 1
-                        await fresh_db.commit()
-            except Exception as update_error:
-                logger.error(
-                    "failed_to_update_document_status",
-                    doc_id=doc_id,
-                    error=str(update_error)
-                )
-
-            logger.error(
-                "document_process_failed",
-                doc_id=doc_id,
-                error=str(e)
-            )
-            raise
+        """Compatibility wrapper around the unified ingestion service."""
+        return await self.ingest_document(
+            doc.id,
+            chunking_strategy=chunking_strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            llm_mode=llm_mode,
+        )
 
     async def delete_document(
         self,
@@ -520,7 +424,7 @@ class KnowledgeBaseService:
         if not kb:
             raise ValueError(f"Knowledge base not found: {kb_id}")
 
-        if not KnowledgeBasePermissions.can_manage(kb, user_id, is_admin):
+        if not KnowledgeBasePermissions.can_manage_documents(kb, user_id, is_admin):
             raise PermissionError("No permission to delete document")
 
         # 获取文档
@@ -534,20 +438,67 @@ class KnowledgeBaseService:
         if not doc:
             raise ValueError(f"Document not found: {doc_id}")
 
-        # 删除向量
-        await self.vector_store.delete_by_document(kb.qdrant_collection, doc_id)
-
-        # 更新知识库统计
-        kb.document_count = max(0, kb.document_count - 1)
-        kb.chunk_count = max(0, kb.chunk_count - doc.chunk_count)
-        kb.total_size = max(0, kb.total_size - doc.file_size)
-
-        # 删除数据库记录
-        await self.db.delete(doc)
-        await self.db.commit()
+        await self._create_ingestion_service().delete_document(kb_id, doc_id)
 
         logger.info("document_deleted", kb_id=kb_id, doc_id=doc_id)
         return True
+
+    async def replace_document_content(
+        self,
+        *,
+        kb_id: str,
+        doc_id: str,
+        upload,
+        user_id: str,
+        is_admin: bool = False,
+    ) -> Document:
+        """Replace a document in place without retaining an old version."""
+        kb = await self.get_knowledge_base(kb_id)
+        if not kb:
+            raise ValueError(f"Knowledge base not found: {kb_id}")
+        if not KnowledgeBasePermissions.can_manage_documents(kb, user_id, is_admin):
+            raise PermissionError("No permission to replace document")
+        result = await self.db.execute(
+            select(Document).where(
+                Document.id == doc_id,
+                Document.knowledge_base_id == kb_id,
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            raise ValueError(f"Document not found: {doc_id}")
+
+        storage_dir = Path(os.getenv("KNOWLEDGE_BASE_STORAGE_DIR", "data/knowledge_base"))
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        suffix = Path(upload.filename or "replacement").suffix
+        temp_path = storage_dir / f"{kb_id}_{doc_id}_{uuid4().hex}{suffix}"
+        data = await upload.read()
+        temp_path.write_bytes(data)
+        try:
+            await self._create_ingestion_service().replace_document(
+                doc_id,
+                str(temp_path),
+                {
+                    "filename": upload.filename or "replacement",
+                    "file_type": self.processor.get_file_type(str(temp_path)),
+                    "file_size": len(data),
+                    "file_hash": self._calculate_file_hash(str(temp_path)),
+                    "mime_type": getattr(upload, "content_type", None),
+                },
+            )
+            if temp_path.exists():
+                temp_path.unlink()
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+        from app.db.database import async_session
+
+        async with async_session() as session:
+            document = await session.get(Document, doc_id)
+            if document is None:
+                raise ValueError(f"Document not found after replacement: {doc_id}")
+            return document
 
     async def list_documents(self, kb_id: str) -> List[Document]:
         """列出知识库中的文档"""
@@ -610,7 +561,12 @@ class KnowledgeBaseService:
         filters: Optional[Dict[str, Any]] = None,
         use_reranker: bool | str = True,
         use_hybrid: bool = True,
-        alpha: float = 0.7
+        alpha: float = 0.7,
+        use_graph_retrieval: bool = True,
+        graph_depth: int = 2,
+        graph_seed_top_k: int = 10,
+        graph_chunk_top_k: int = 20,
+        graph_weight: float = 1.0,
     ) -> List[Dict[str, Any]]:
         """
         检索知识库（支持混合检索）
@@ -654,6 +610,30 @@ class KnowledgeBaseService:
 
         if not kbs:
             return []
+
+        if use_graph_retrieval:
+            from app.db.database import async_session
+            from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
+
+            rerank_mode = self._normalize_rerank_mode(use_reranker)
+            retrieval = KnowledgeRetrievalService(
+                session_factory=async_session,
+                vector_store=self.vector_store,
+                reranker=self._rerank if rerank_mode != "never" else None,
+            )
+            results = await retrieval.search(
+                query=query,
+                kb_ids=[kb.id for kb in kbs],
+                top_k=top_k,
+                use_graph_retrieval=True,
+                graph_depth=graph_depth,
+                graph_seed_top_k=graph_seed_top_k,
+                graph_chunk_top_k=graph_chunk_top_k,
+                graph_weight=graph_weight,
+            )
+            await self._enrich_results_with_document_info(results)
+            self._attach_chunk_source_fields(results)
+            return results
 
         search_started_at = time.time()
 
@@ -938,6 +918,8 @@ class KnowledgeBaseService:
 
                 doc = docs_map.get(doc_id)
                 if doc:
+                    r.setdefault("filename", doc.filename)
+                    r.setdefault("metadata", {})
                     # 检查是否有原文件
                     has_original_file = bool(
                         doc.original_file_oid or

@@ -30,11 +30,11 @@
 2. 校验 `{report_dir}`、`{alert_json_path}`、`{tracing_context_manifest_path}` 均存在，且 `report_dir` 就是证据目录。
 3. 阅读告警 JSON：`{alert_json_path}`。只做输入一致性校验，不重新判断告警是否成立；若不是 `has_alert=true` 且 `status=pending_trace`，返回失败 JSON。
 4. 阅读 tracing_context_manifest.json 和其中列出的资产。
-5. 使用同步 `call_sub_agent(target_mode="expert")` 调用 expert 模式子 Agent 作为气象分析专家，要求其先阅读 `weather_expert_skill_file`，生成 `{report_dir}/weather_analysis_draft.md`，并仅返回包含 `expert_type` 和 `draft_path` 的 JSON。禁止使用 `spawn`、`wait_task` 或后台任务方式。
-6. 使用同步 `call_sub_agent(target_mode="expert")` 调用 expert 模式子 Agent 作为常规分析专家，要求其先阅读 `routine_expert_skill_file`，生成 `{report_dir}/routine_analysis_draft.md`，并仅返回包含 `expert_type` 和 `draft_path` 的 JSON。禁止使用 `spawn`、`wait_task` 或后台任务方式。
+5. 使用同步 `call_sub_agent(target_mode="expert")` 调用 expert 模式子 Agent 作为气象分析专家。prompt 必须列出其负责的实际资产路径，要求其先阅读 `weather_expert_skill_file`，按实际时间顺序写明气象资产的实际有效时次、轨迹受体时刻、预报起报时间和预报时效，并为图片给出建议挂接的时间节点；生成 `{report_dir}/weather_analysis_draft.md`，仅返回包含 `expert_type` 和 `draft_path` 的 JSON。禁止使用 `spawn`、`wait_task` 或后台任务方式。
+6. 使用同步 `call_sub_agent(target_mode="expert")` 调用 expert 模式子 Agent 作为常规分析专家。prompt 必须列出其负责的实际资产路径，要求其先阅读 `routine_expert_skill_file`，以目标城市小时数据作为主时间轴，按实际时间顺序写明各阶段的污染变化、周边情况和业务关注点，并标明火点、预报及图片的实际有效时次；生成 `{report_dir}/routine_analysis_draft.md`，仅返回包含 `expert_type` 和 `draft_path` 的 JSON。禁止使用 `spawn`、`wait_task` 或后台任务方式。
 7. 读取两个专家草稿，审核是否存在越界结论、AQI 口径错误、缺失资产未说明、驻场建议不可执行等问题。
-8. 将告警 JSON 的 `rule_hits` 作为告警触发依据，将 `supporting_rule_hits` 作为辅助证据写入监测事实和初步溯源研判。
-9. 按 skill 的报告结构整合生成 `{report_dir}/report.qmd`。
+8. 将告警 JSON 的 `rule_hits` 作为告警触发依据，将 `supporting_rule_hits` 作为辅助证据写入监测事实和可能影响因素。
+9. 以目标城市小时数据作为主时间轴，读取所有资产的实际有效时次，动态划分污染阶段。将两个专家草稿按实际时间挂接；时间不同必须说明时间差，不强行对齐。按“变化—同期情况—业务意义”生成以“污染过程时间线”为核心的 `{report_dir}/report.qmd`，图片紧跟其对应的时间节点。实况、轨迹和预报必须分别标明实际时次、受体时刻、起报时间或预报时效。
 10. 使用标准报告包能力导出 `{report_dir}/report.docx`：读取 `backend/app/tools/report/report_package/references/index.md`，调用 `create_report_package` 保存报告包，调用 `render_report_package(format="docx")` 导出 Word，并用 `validate_report_package(require_docx=true)` 验收。
 11. 验收 `{report_dir}/report.docx` 必须存在；不存在时返回失败 JSON，不允许返回成功。
 12. 生成微信摘要，摘要必须短于 500 字。
@@ -71,5 +71,5 @@
 - 区分监测事实、气象提示、溯源推断、需本地数据核实。
 - 没有本地污染源、门禁、卡口、移动源轨迹、执法巡查数据时，不得确认具体污染源。
 - 第一版未接入站点小时数据，不得输出站点质控结论。
-- 缺失的图像或数据必须写入“数据缺口与不确定性”。
+- 缺失的图像或数据必须写入“需要补充确认的信息”，不要使用“数据缺口与不确定性”作为业务报告章节标题。
 - 报告产物必须写回同一证据目录，便于后续 Agent 回顾检索。

@@ -2,17 +2,33 @@
 定时任务API路由
 提供RESTful API接口
 """
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field, ValidationError
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 from app.scheduled_tasks import (
     get_scheduled_task_service,
     ScheduledTask,
     TaskExecution,
-    ScheduleType
+    ScheduleType,
+    TriggerType,
 )
-from app.scheduled_tasks.models import TaskStep
+from app.scheduled_tasks.models import TaskStep, WorkspaceEntry
+from app.scheduled_tasks.event_catalog import (
+    EventDefinition,
+    get_event_definition,
+    get_event_definitions,
+)
+from app.social.user_registry import get_social_user_registry
+from app.services.lifecycle_manager import get_tool_registry
+from app.scheduled_tasks.custom_agent import (
+    CustomToolValidationError,
+    authorized_tool_names_for_user,
+    validate_custom_tool_names,
+)
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -23,11 +39,22 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social）")
-    schedule_type: ScheduleType = Field(..., description="调度类型")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social/custom）")
+    tool_names: Optional[List[str]] = None
+    trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
+    schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
+    run_at: Optional[datetime] = None
+    interval_minutes: Optional[int] = None
+    hour: Optional[int] = None
+    minute: Optional[int] = None
+    event_type: Optional[str] = None
+    event_filters: Dict[str, Any] = Field(default_factory=dict)
+    broadcast_enabled: bool = False
+    target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
     steps: List[TaskStep] = Field(..., description="任务步骤")
     tags: List[str] = Field(default_factory=list, description="标签")
+    workspace_entry: Optional[WorkspaceEntry] = None
 
 
 class UpdateTaskRequest(BaseModel):
@@ -35,10 +62,21 @@ class UpdateTaskRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     execution_mode: Optional[str] = None
+    tool_names: Optional[List[str]] = None
+    trigger_type: Optional[TriggerType] = None
     schedule_type: Optional[ScheduleType] = None
+    run_at: Optional[datetime] = None
+    interval_minutes: Optional[int] = None
+    hour: Optional[int] = None
+    minute: Optional[int] = None
+    event_type: Optional[str] = None
+    event_filters: Optional[Dict[str, Any]] = None
+    broadcast_enabled: Optional[bool] = None
+    target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
     steps: Optional[List[TaskStep]] = None
     tags: Optional[List[str]] = None
+    workspace_entry: Optional[WorkspaceEntry] = None
 
 
 class TaskResponse(BaseModel):
@@ -67,8 +105,76 @@ class StatisticsResponse(BaseModel):
 
 # ===== API端点 =====
 
+
+async def _validate_event_task_config(task: ScheduledTask) -> None:
+    if task.trigger_type == TriggerType.EVENT and not get_event_definition(
+        task.event_type or ""
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unregistered event_type: {task.event_type}",
+        )
+
+    if not task.broadcast_enabled:
+        return
+
+    registry = get_social_user_registry()
+    for user_id in task.target_user_ids:
+        user = await registry.get_user(user_id)
+        if (
+            not user
+            or user.status != "active"
+            or not user.social_user_id
+            or not str(user.channel or "").startswith("weixin")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"User {user_id} is not an active bound WeChat user",
+            )
+
+
+def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
+    if task.execution_mode != "custom":
+        return
+    try:
+        registry = get_tool_registry()
+        validate_custom_tool_names(
+            task.tool_names or [],
+            registry,
+            authorized_tool_names_for_user(user, registry),
+        )
+    except CustomToolValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_custom_task_tools", "items": exc.items},
+        ) from exc
+
+
+@router.get("/event-types", response_model=List[EventDefinition])
+async def list_event_types():
+    return get_event_definitions()
+
+
+@router.get("/tools")
+async def list_custom_task_tools(
+    user: CurrentUser = Depends(require_current_user),
+):
+    """List tools the authenticated user may select for custom task mode."""
+    registry = get_tool_registry()
+    authorized = authorized_tool_names_for_user(user, registry)
+    tools = registry.get_tools_info()
+    return {
+        "tools": [
+            tool for tool in tools
+            if tool.get("status") == "enabled" and tool.get("name") in authorized
+        ]
+    }
+
 @router.post("", response_model=TaskResponse)
-async def create_task(request: CreateTaskRequest):
+async def create_task(
+    request: CreateTaskRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
     """创建定时任务"""
     try:
         service = get_scheduled_task_service()
@@ -83,11 +189,27 @@ async def create_task(request: CreateTaskRequest):
             name=request.name,
             description=request.description,
             execution_mode=request.execution_mode,
+            tool_names=request.tool_names,
+            trigger_type=request.trigger_type,
             schedule_type=request.schedule_type,
+            run_at=request.run_at,
+            interval_minutes=request.interval_minutes,
+            hour=request.hour,
+            minute=request.minute,
+            event_type=request.event_type,
+            event_filters=request.event_filters,
+            broadcast_enabled=request.broadcast_enabled,
+            target_user_ids=request.target_user_ids,
             enabled=request.enabled,
             steps=request.steps,
-            tags=request.tags
+            tags=request.tags,
+            workspace_entry=request.workspace_entry,
+            owner_user_id=user.id,
+            owner_username=user.username,
+            owner_display_name=user.display_name,
         )
+        await _validate_event_task_config(task)
+        _validate_custom_task_tools(task, user)
 
         created_task = service.create_task(task)
 
@@ -105,6 +227,10 @@ async def create_task(request: CreateTaskRequest):
             is_running=False
         )
 
+    except HTTPException:
+        raise
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -169,7 +295,11 @@ async def get_task(task_id: str):
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, request: UpdateTaskRequest):
+async def update_task(
+    task_id: str,
+    request: UpdateTaskRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
     """更新任务"""
     try:
         service = get_scheduled_task_service()
@@ -178,21 +308,14 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        # 更新字段
-        if request.name is not None:
-            task.name = request.name
-        if request.description is not None:
-            task.description = request.description
-        if request.execution_mode is not None:
-            task.execution_mode = request.execution_mode
-        if request.schedule_type is not None:
-            task.schedule_type = request.schedule_type
-        if request.enabled is not None:
-            task.enabled = request.enabled
-        if request.steps is not None:
-            task.steps = request.steps
-        if request.tags is not None:
-            task.tags = request.tags
+        updates = request.model_dump(exclude_unset=True)
+        if updates.get("execution_mode") != "custom" and "execution_mode" in updates:
+            updates.setdefault("tool_names", None)
+        task_data = task.model_dump()
+        task_data.update(updates)
+        task = ScheduledTask.model_validate(task_data)
+        await _validate_event_task_config(task)
+        _validate_custom_task_tools(task, user)
 
         updated_task = service.update_task(task)
 
@@ -200,6 +323,8 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
 
     except HTTPException:
         raise
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -255,7 +380,31 @@ async def execute_task_now(task_id: str):
     """立即执行任务（手动触发）"""
     try:
         service = get_scheduled_task_service()
-        execution = await service.execute_task_now(task_id)
+        task = service.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        if task.trigger_type == TriggerType.EVENT:
+            event = service.claim_storage.latest_event(task.event_type or "")
+            if not event:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No recorded event available for manual execution",
+                )
+            dispatch = await service.publish_event(
+                event,
+                wait=True,
+                force_retry=True,
+                target_task_id=task_id,
+            )
+            if not dispatch.execution_ids:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Event has already been processed and is not retryable",
+                )
+            execution = service.get_execution(dispatch.execution_ids[0])
+        else:
+            execution = await service.execute_task_now(task_id)
 
         return {
             "success": True,
@@ -266,8 +415,19 @@ async def execute_task_now(task_id: str):
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/executions/{execution_id}/retry-delivery")
+async def retry_failed_delivery(execution_id: str):
+    try:
+        service = get_scheduled_task_service()
+        return await service.retry_failed_delivery(execution_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{task_id}/executions", response_model=ExecutionListResponse)

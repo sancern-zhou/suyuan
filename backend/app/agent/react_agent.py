@@ -22,6 +22,17 @@ from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
+from .session.conversation_persistence import ConversationPersistenceService
+from .resources.runtime import (
+    RunResourceAccumulator,
+    event_turn_sequence,
+    flush_resource_accumulator,
+)
+from .resources.resource_service import SessionResourceService, StoredResource
+from .selection_context import (
+    resource_refs_to_runtime_attachments,
+    selected_resource_projection,
+)
 
 logger = structlog.get_logger()
 
@@ -155,6 +166,22 @@ class ReActAgent:
         return "\n".join(lines)
 
     @staticmethod
+    def _build_attachment_reference_context(
+        attachments: List[Dict[str, Any]],
+    ) -> str:
+        if not attachments:
+            return ""
+        lines = ["", "", "**本轮会话资源**："]
+        for index, attachment in enumerate(attachments, 1):
+            label = "图片" if attachment.get("type") == "image" else "文件"
+            name = attachment.get("name") or "attachment"
+            resource_id = attachment.get("resource_id") or attachment.get("ref_id")
+            lines.append(f"{index}. {label}: {name}")
+            if resource_id:
+                lines.append(f"   会话资源: {resource_id}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _apply_session_store_entry_for_persistence(session, entry: Dict[str, Any]) -> None:
         """Apply non-transcript runtime state to a persisted Session.
 
@@ -190,26 +217,7 @@ class ReActAgent:
         collected_data_ids = entry.get("collected_data_ids", [])
         collected_visuals = entry.get("collected_visuals", [])
 
-        if collected_data_ids:
-            session.data_ids = collected_data_ids
-            logger.debug("data_ids_set_from_store", count=len(collected_data_ids))
-
-        if collected_visuals:
-            session.visual_ids = [v.get("id") for v in collected_visuals if v.get("id")]
-            session.metadata["visualizations"] = collected_visuals
-            session.metadata["visuals_count"] = len(collected_visuals)
-            logger.info(
-                "visualizations_set_in_metadata",
-                session_id=session.session_id,
-                visuals_count=len(collected_visuals)
-            )
-
-        office_docs = entry.get("office_documents", [])
-        if office_docs:
-            session.office_documents = ReActAgent._trim_office_documents(
-                office_docs,
-                ReActAgent.OFFICE_DOCUMENT_STORE_LIMIT,
-            )
+        # 图表资源已由 SessionResourceService 持久化；不再复制到 metadata.visualizations。
 
         if entry.get("has_error"):
             session.error = {
@@ -217,6 +225,28 @@ class ReActAgent:
                 "message": entry.get("error_message", "Unknown error"),
                 "timestamp": datetime.now().isoformat()
             }
+
+    def export_runtime_session(
+        self,
+        session_id: str,
+        *,
+        query: str,
+        mode: str,
+    ):
+        """Export a direct-call runtime as a complete persistable Session."""
+        entry = self._session_store.get(session_id)
+        if entry is None:
+            return None
+
+        from app.agent.session.models import Session
+
+        session = Session(
+            session_id=session_id,
+            query=query,
+            metadata={"mode": mode},
+        )
+        self._apply_session_store_entry_for_persistence(session, entry)
+        return session
 
     @staticmethod
     def _set_mode_memory_tool_context(
@@ -349,6 +379,8 @@ class ReActAgent:
         initial_messages: Optional[List[Dict[str, Any]]] = None,
         manual_mode: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
+        selected_skill_context: Optional[str] = None,
+        selected_resource_refs: Optional[List[StoredResource]] = None,
         user_identifier: Optional[str] = None,  # ✅ 新增：用户标识（可选）
         social_memory_store: Optional[Any] = None,  # ✅ 新增：社交模式外部传入的memory_store（用户隔离）
         social_user_preferences: Optional[dict] = None,  # ✅ 新增：社交模式用户偏好（仅social模式使用）
@@ -357,10 +389,11 @@ class ReActAgent:
         social_heartbeat_file_path: Optional[str] = None,  # ✅ 新增：社交模式 HEARTBEAT.md 文件路径
         social_soul_context: Optional[str] = None,  # ✅ 新增：社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
-        board_context: Optional[Dict[str, Any]] = None,  # 图表模式 draw.io 画板上下文
+        board_context: Optional[Dict[str, Any]] = None,  # 画板模式 draw.io 上下文
         map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
-        cancel_event: Optional[Any] = None
+        cancel_event: Optional[Any] = None,
+        session_storage_mode: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -450,80 +483,67 @@ class ReActAgent:
 
         runtime_attachments = []
 
-        # ✅ 如果有附件，添加到查询中（保存到对话历史，确保后续能访问文件）
+        if selected_resource_refs and supports_native_multimodal(manual_mode):
+            runtime_attachments.extend(
+                resource_refs_to_runtime_attachments(selected_resource_refs)
+            )
+
+        # 当前调用使用附件实体；提示词只保留稳定会话资源身份，不复制路径或临时 URL。
         if attachments and len(attachments) > 0:
-            attachment_info = "\n\n**用户上传的附件**：\n"
-            for i, att in enumerate(attachments, 1):
-                normalized_att = dict(att)
-                att_type = att.get("type", "file")
-                att_name = att.get("name", "unknown")
-                att_file_id = att.get("file_id")
-                att_url = att.get("url") or ""
-                att_mime_type = att.get("mime_type") or att.get("content_type")
-
-                # 对于图片和有file_id的附件，优先使用本地文件路径。
-                # 社交模式会把本地图片编码为 Anthropic 原生 image block。
-                if att_file_id and (att_type == "image" or not att_url.startswith("/")):
-                    try:
-                        from app.db.database import async_session
-                        from app.knowledge_base.models import UploadedFile
-                        from sqlalchemy import select
-
-                        async with async_session() as db:
-                            result = await db.execute(
-                                select(UploadedFile.file_path, UploadedFile.mime_type).where(UploadedFile.id == att_file_id)
-                            )
-                            row = result.one_or_none()
-                            if row:
-                                path, mime_type = row
-                                att_url = path
-                                normalized_att["local_path"] = path
-                                if mime_type:
-                                    normalized_att["mime_type"] = mime_type
-                                logger.info("using_local_file_path", file_id=att_file_id, path=path)
-                    except Exception as e:
-                        logger.warning("failed_to_get_file_path", file_id=att_file_id, error=str(e))
-
-                normalized_att["url"] = att_url
-                if att_mime_type:
-                    normalized_att["mime_type"] = att_mime_type
-                runtime_attachments.append(normalized_att)
-
-                if att_type == "image":
-                    attachment_info += f"{i}. 图片: {att_name}\n"
-                    attachment_info += f"   路径: {att_url}\n"
-                else:
-                    attachment_info += f"{i}. 文件: {att_name}\n"
-                    attachment_info += f"   路径: {att_url}\n"
-            user_query = user_query + attachment_info  # ✅ 添加到查询中（保存到对话历史）
+            runtime_attachments.extend(dict(att) for att in attachments)
+            user_query += self._build_attachment_reference_context(attachments)
 
             logger.info(
-                "attachments_added_to_query",
+                "attachment_resources_added_to_query",
                 count=len(attachments),
                 attachment_types=[a.get("type") for a in attachments],
-                attachment_urls=[a.get("url") for a in attachments]
+                resource_ids=[
+                    a.get("resource_id") or a.get("ref_id")
+                    for a in attachments
+                ],
+            )
+
+        if supports_native_multimodal(manual_mode):
+            logger.info(
+                "current_turn_multimodal_attachments_prepared",
+                session_id=session_id,
+                mode=manual_mode,
+                selected_resource_count=len(selected_resource_refs or []),
+                image_count=sum(
+                    1
+                    for attachment in runtime_attachments
+                    if isinstance(attachment, dict) and attachment.get("type") == "image"
+                ),
             )
 
         actual_session_id, memory_manager, created_new = await self._get_or_create_session(
             session_id,
             reset_session,
             manual_mode=manual_mode,
+            storage_mode=session_storage_mode or manual_mode,
         )
-        session_document_context = self._build_session_document_context(
-            self._session_store.get(actual_session_id, {}).get("office_documents", []),
+        # 上下文资源唯一来源为持久化资源目录；不再读取会话内存中的旧
+        # office_documents 快照，避免重启前后 Agent 上下文不一致。
+        session_resources = await SessionResourceService.database().list_resources(
+            actual_session_id, presentation_type="document", limit=100
         )
+        resource_documents = [
+            {
+                "file_name": resource.label,
+                "file_path": (resource.locator or {}).get("path"),
+                "file_type": (resource.presentation or {}).get("format") if resource.presentation else None,
+                "summary": (resource.metadata or {}).get("summary"),
+            }
+            for resource in session_resources.resources
+        ]
+        session_document_context = self._build_session_document_context(resource_documents)
         if session_document_context:
             user_query = f"{user_query}\n\n{session_document_context}"
             logger.info(
                 "session_document_context_added",
                 session_id=actual_session_id,
                 context_length=len(session_document_context),
-                document_count=len(
-                    self._trim_office_documents(
-                        self._session_store.get(actual_session_id, {}).get("office_documents", []),
-                        self.SESSION_DOCUMENT_CONTEXT_LIMIT,
-                    )
-                ),
+                document_count=len(resource_documents[: self.SESSION_DOCUMENT_CONTEXT_LIMIT]),
             )
 
         from .task.task_models import TaskList
@@ -541,6 +561,9 @@ class ReActAgent:
         )
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
+        resource_service = SessionResourceService.database()
+        resource_accumulator = RunResourceAccumulator(run_id="")
+        resource_flushed = False
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
@@ -586,6 +609,24 @@ class ReActAgent:
                 auto_profile=auto_profile,
             )
 
+            try:
+                resource_page = await resource_service.list_resources(actual_session_id, limit=100)
+                if resource_page.resources:
+                    react_loop.context_builder.session_resource_context = "\n".join(
+                        f"- {item.resource_id} | {item.kind} | {item.label} | {next(iter(item.locator.values()))}"
+                        for item in resource_page.resources
+                    )
+            except Exception as exc:
+                logger.error("session_resource_context_load_failed", session_id=actual_session_id, error=str(exc))
+
+            if selected_skill_context:
+                react_loop.context_builder.selected_skill_context = selected_skill_context
+                logger.info(
+                    "selected_skill_context_set",
+                    session_id=actual_session_id,
+                    context_length=len(selected_skill_context),
+                )
+
             # ✅ 设置记忆上下文到上下文构建器（用于系统提示词注入）
             if memory_context:
                 react_loop.context_builder.memory_context = memory_context
@@ -594,37 +635,24 @@ class ReActAgent:
                     context_length=len(memory_context)
                 )
 
-            try:
-                from app.api.cognitive_map_routes import build_cognitive_map_prompt_context
-
-                cognitive_map_context = build_cognitive_map_prompt_context(
-                    task=user_query,
-                    agent_mode=manual_mode or "expert",
-                )
-                if cognitive_map_context:
-                    react_loop.context_builder.cognitive_map_context = cognitive_map_context
-                    logger.info(
-                        "cognitive_map_context_set_to_context_builder",
-                        mode=manual_mode or "expert",
-                        context_length=len(cognitive_map_context),
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "cognitive_map_context_injection_failed",
-                    mode=manual_mode or "expert",
-                    error=str(exc),
-                )
-
-            if manual_mode == "chart" and board_context:
-                react_loop.context_builder.board_context = board_context
+            if manual_mode == "board":
+                effective_board_context = dict(board_context or {})
+                effective_board_context["current_request_images"] = [
+                    {
+                        "name": attachment.get("name") or attachment.get("filename") or "image",
+                        "mime_type": attachment.get("mime_type") or attachment.get("content_type") or "image",
+                        "source": "current_turn_upload",
+                    }
+                    for attachment in runtime_attachments
+                    if isinstance(attachment, dict) and attachment.get("type") == "image"
+                ]
+                react_loop.context_builder.board_context = effective_board_context
                 logger.info(
                     "board_context_set_to_context_builder",
-                    has_current_xml=bool(board_context.get("current_xml") or board_context.get("currentXml")),
-                    current_xml_length=len(board_context.get("current_xml") or board_context.get("currentXml") or ""),
-                    previous_xml_length=len(board_context.get("previous_xml") or board_context.get("previousXml") or ""),
-                    selected_count=len(board_context.get("selected_cells") or board_context.get("selectedCells") or []),
-                    version=board_context.get("version"),
-                    dirty=board_context.get("dirty"),
+                    has_current_xml=bool(effective_board_context.get("current_xml") or effective_board_context.get("currentXml")),
+                    current_xml_length=len(effective_board_context.get("current_xml") or effective_board_context.get("currentXml") or ""),
+                    selected_count=len(effective_board_context.get("selected_cells") or effective_board_context.get("selectedCells") or []),
+                    current_request_image_count=len(effective_board_context["current_request_images"]),
                 )
 
             if manual_mode in {"query", "graph"} and map_context:
@@ -706,7 +734,58 @@ class ReActAgent:
             ):
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
                 active_run_id = event_data.get("run_id") or event.get("run_id") or active_run_id
-                self._capture_office_document(actual_session_id, event)
+                resource_accumulator.run_id = str(active_run_id or resource_accumulator.run_id)
+                resource_accumulator.capture(
+                    event,
+                    turn_sequence=event_turn_sequence(event_data),
+                )
+
+                if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
+                    terminal_data = event.setdefault("data", {})
+                    from app.agent.runtime.ownership import run_ownership_registry
+
+                    owns_run = await run_ownership_registry.can_write(
+                        actual_session_id,
+                        active_run_id,
+                    )
+                    manifest = None
+                    if owns_run:
+                        result = await flush_resource_accumulator(
+                            resource_service,
+                            actual_session_id,
+                            resource_accumulator,
+                            terminal_data,
+                        )
+                        resource_flushed = bool(resource_accumulator.resources)
+                    elif resource_accumulator.resources:
+                        resource_flushed = True
+                        terminal_data["resource_durable"] = False
+                        terminal_data["resource_error"] = "stale_run_write_skipped"
+                        logger.info(
+                            "stale_run_resource_manifest_merge_skipped",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                        )
+                    if result is not None:
+                        logger.info(
+                            "session_resources_merged",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                            mode=manual_mode or "expert",
+                            version=result.version,
+                            resource_count=len(result.resources),
+                            extracted_count=len(resource_accumulator.resources),
+                            rejected_count=len(resource_accumulator.rejected),
+                        )
+                    elif terminal_data.get("resource_durable") is False:
+                        logger.error(
+                            "session_resources_merge_failed",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                            mode=manual_mode or "expert",
+                            extracted_count=len(resource_accumulator.resources),
+                            error=terminal_data.get("resource_error_detail"),
+                        )
 
                 if self._should_run_report_auto_followup(
                     manual_mode,
@@ -736,7 +815,7 @@ class ReActAgent:
                 exc_info=True
             )
 
-            yield {
+            fatal_event = {
                 "type": "fatal_error",
                 "data": {
                     "error": str(e),
@@ -744,7 +823,48 @@ class ReActAgent:
                     "timestamp": datetime.now().isoformat()
                 }
             }
+            from app.agent.runtime.ownership import run_ownership_registry
+
+            if await run_ownership_registry.can_write(actual_session_id, active_run_id):
+                await flush_resource_accumulator(
+                    resource_service,
+                    actual_session_id,
+                    resource_accumulator,
+                    fatal_event["data"],
+                )
+            elif resource_accumulator.resources:
+                fatal_event["data"].update({
+                    "resource_durable": False,
+                    "resource_error": "stale_run_write_skipped",
+                })
+            resource_flushed = bool(resource_accumulator.resources)
+            yield fatal_event
         finally:
+            if resource_accumulator.resources and not resource_flushed:
+                try:
+                    from app.agent.runtime.ownership import run_ownership_registry
+
+                    if await run_ownership_registry.can_write(actual_session_id, active_run_id):
+                        await resource_service.upsert_run_resources(
+                            actual_session_id,
+                            resource_accumulator.run_id,
+                            resource_accumulator.resources,
+                        )
+                    else:
+                        logger.info(
+                            "stale_run_resources_finally_flush_skipped",
+                            session_id=actual_session_id,
+                            run_id=active_run_id,
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "session_resources_finally_flush_failed",
+                        session_id=actual_session_id,
+                        run_id=active_run_id,
+                        mode=manual_mode or "expert",
+                        error=str(exc),
+                    )
+
             # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
@@ -768,7 +888,7 @@ class ReActAgent:
                         # ✅ 从数据库加载 session
                         session = await load_session_for_mode(
                             actual_session_id,
-                            mode=manual_mode,
+                            mode=session_storage_mode or manual_mode,
                             include_messages=False,
                         )
 
@@ -782,7 +902,7 @@ class ReActAgent:
                             # runtime tools.
                             await save_session_metadata_for_mode(
                                 session,
-                                mode=manual_mode,
+                                mode=session_storage_mode or manual_mode,
                             )
                             logger.info(
                                 "session_saved_after_analysis",
@@ -837,76 +957,6 @@ class ReActAgent:
                     logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
             await self._mark_session_used(actual_session_id)
-
-    def _capture_office_document(self, session_id: str, event: Dict[str, Any]) -> None:
-        """Persist document preview metadata emitted during a run."""
-        if event.get("type") not in {"office_document", "html_document"} or not event.get("data"):
-            return
-
-        office_doc_data = event["data"]
-        if session_id not in self._session_store:
-            self._session_store[session_id] = {}
-        if "office_documents" not in self._session_store[session_id]:
-            self._session_store[session_id]["office_documents"] = []
-
-        doc_entry = {
-            "pdf_preview": office_doc_data.get("pdf_preview"),
-            "markdown_preview": office_doc_data.get("markdown_preview"),
-            "html_preview": office_doc_data.get("html_preview"),
-            "svg_preview": office_doc_data.get("svg_preview"),
-            "spreadsheet_preview": office_doc_data.get("spreadsheet_preview"),
-            "file_name": office_doc_data.get("file_name"),
-            "file_path": office_doc_data.get("file_path"),
-            "file_type": office_doc_data.get("file_type"),
-            "generator": office_doc_data.get("generator"),
-            "summary": office_doc_data.get("summary"),
-            "timestamp": office_doc_data.get("timestamp", datetime.now().isoformat()),
-            "related_files": office_doc_data.get("related_files"),
-            "artifacts": office_doc_data.get("artifacts"),
-            "refs": office_doc_data.get("refs"),
-            "assets": office_doc_data.get("assets"),
-            "metadata": office_doc_data.get("metadata"),
-        }
-        doc_entry = {k: v for k, v in doc_entry.items() if v is not None}
-
-        file_path = (
-            doc_entry.get("file_path")
-            or doc_entry.get("html_preview", {}).get("html_id")
-            or doc_entry.get("pdf_preview", {}).get("pdf_id")
-            or doc_entry.get("svg_preview", {}).get("svg_path")
-        )
-        if file_path:
-            doc_entry["file_path"] = file_path
-        existing = self._session_store[session_id]["office_documents"]
-        existing_index = next(
-            (index for index, item in enumerate(existing) if item.get("file_path") == file_path),
-            -1,
-        )
-        if existing_index >= 0:
-            existing[existing_index] = {
-                **existing[existing_index],
-                **doc_entry,
-            }
-            logger.info(
-                "office_document_updated_in_session",
-                session_id=session_id,
-                file_path=file_path,
-                generator=doc_entry["generator"],
-                total_documents=len(existing),
-            )
-        else:
-            existing.append(doc_entry)
-            logger.info(
-                "office_document_saved_to_session",
-                session_id=session_id,
-                file_path=file_path,
-                generator=doc_entry["generator"],
-                total_documents=len(existing),
-            )
-        self._session_store[session_id]["office_documents"] = self._trim_office_documents(
-            existing,
-            self.OFFICE_DOCUMENT_STORE_LIMIT,
-        )
 
     def _should_run_report_auto_followup(
         self,
@@ -1289,6 +1339,7 @@ class ReActAgent:
         session_id: Optional[str],
         reset_session: bool = False,
         manual_mode: Optional[str] = None,
+        storage_mode: Optional[str] = None,
     ) -> Tuple[str, HybridMemoryManager, bool]:
         """
         获取或创建会话记忆管理器
@@ -1323,12 +1374,12 @@ class ReActAgent:
                     logger.info(
                         "react_session_restore_load_start",
                         session_id=session_id,
-                        mode=manual_mode,
+                        mode=storage_mode or manual_mode,
                         include_messages="llm_light",
                     )
                     saved_session = await load_session_for_llm_mode(
                         session_id,
-                        mode=manual_mode,
+                        mode=storage_mode or manual_mode,
                     )
 
                     if saved_session:
@@ -1336,8 +1387,7 @@ class ReActAgent:
                             "react_session_restored_from_manager",
                             session_id=session_id,
                             history_length=len(saved_session.conversation_history),
-                            has_data_ids=bool(saved_session.data_ids),
-                            data_ids_count=len(saved_session.data_ids) if saved_session.data_ids else 0
+                            resource_store="unified",
                         )
 
                         # 创建新的 memory_manager（但会从 saved_session 恢复历史）
@@ -1369,8 +1419,6 @@ class ReActAgent:
                             )
 
                         saved_visualizations = []
-                        if isinstance(saved_session.metadata, dict):
-                            saved_visualizations = saved_session.metadata.get("visualizations") or []
 
                         # 保存到内存缓存。即使历史消息为空，也要缓存已存在的
                         # session，避免含 data/visual/office 状态的会话被当作新会话。
@@ -1378,9 +1426,8 @@ class ReActAgent:
                             "memory": memory_manager,
                             "created": datetime.utcnow(),
                             "last_used": datetime.utcnow(),
-                            "collected_data_ids": list(saved_session.data_ids or []),
-                            "collected_visuals": saved_visualizations,
-                            "office_documents": list(saved_session.office_documents or []),
+                            "collected_data_ids": [],
+                            "collected_visuals": [],
                         }
 
                         return session_id, memory_manager, False  # False 表示不是新建，是恢复的
@@ -1482,7 +1529,14 @@ def create_react_agent(
     Returns:
         配置好的 ReActAgent 实例
     """
-    if with_test_tools:
+    explicit_tool_registry = kwargs.pop("tool_registry", None)
+    if explicit_tool_registry is not None:
+        agent = ReActAgent(tool_registry=explicit_tool_registry, **kwargs)
+        logger.info(
+            "react_agent_created_with_explicit_tools",
+            tool_count=len(explicit_tool_registry),
+        )
+    elif with_test_tools:
         from .core.executor import create_test_executor
 
         # 创建包含测试工具的执行器

@@ -2,48 +2,13 @@
 图表模式系统提示词 - LLM 驱动的灵活图表生成
 """
 
-import json
-from typing import Any, Dict, List, Optional
-
-
-DRAWIO_GUIDE_PATHS = [
-    "app/agent/guides/drawio_board_workflow.md",
-    "app/agent/guides/drawio_xml_rules.md",
-    "app/agent/guides/drawio_edit_policy.md",
-]
-
-
-def _build_board_context_prompt(board_context: Optional[Dict[str, Any]]) -> str:
-    if not board_context:
-        return ""
-
-    current_xml = board_context.get("current_xml") or board_context.get("currentXml") or ""
-    selected_cells = board_context.get("selected_cells") or board_context.get("selectedCells") or []
-    viewport = board_context.get("viewport") or {}
-
-    selected_json = json.dumps(selected_cells, ensure_ascii=False, indent=2, default=str)
-    viewport_json = json.dumps(viewport, ensure_ascii=False, indent=2, default=str)
-
-    return (
-        "## Draw.io 画板上下文（仅图表模式）\n\n"
-        "- `board_context.current_xml` 是前端 draw.io 编辑器当前画布的权威状态；如果它与历史工具结果冲突，以这里为准。\n"
-        "- 如果用户要求修改现有画板，必须基于当前 XML 增量更新，不要凭历史重新生成旧版本。\n"
-        "- 调用 `create_drawio_board(operation=\"edit\")` 时，只传结构化 `operations`。\n"
-        "- 如果存在选中元素，优先把用户的“这个/这里/选中的模块”等指代绑定到 selected_cells。\n"
-        "- `selected_cells[*].id` 是选中 mxCell 的精确 ID；`selected_cells[*].xml` 是该 mxCell 的完整 XML；`selected_cells[*].geometry` 是其当前位置和尺寸。\n"
-        "- 修改选中模块时，优先使用 `target=\"selected\"` 和结构化操作 `update_label`、`update_style`、`move_resize`、`connect`、`delete_with_edges`；只有复杂替换时才写完整 `new_xml`。\n"
-        "- 需要创建或更新可编辑画板时，输出应保持为前端画板模块可继续编辑的 draw.io XML。\n\n"
-        f"### selected_cells\n```json\n{selected_json}\n```\n\n"
-        f"### viewport\n```json\n{viewport_json}\n```\n\n"
-        f"### current_xml\n```xml\n{current_xml}\n```\n\n"
-    )
+from typing import List, Optional
 
 
 def build_chart_prompt(
     available_tools: List[str],
     memory_context: Optional[str] = None,
     memory_file_path: Optional[str] = None,
-    board_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     构建图表模式系统提示词
@@ -67,19 +32,6 @@ def build_chart_prompt(
             "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`\n",
             "- 禁止操作其他路径的 MEMORY.md 文件\n",
             "\n",
-        ])
-
-    board_context_prompt = _build_board_context_prompt(board_context)
-    if board_context_prompt:
-        prompt_parts.append(board_context_prompt)
-
-    if "create_drawio_board" in available_tools:
-        prompt_parts.extend([
-            "## Draw.io 画板截图与原生多模态输入\n\n",
-            "- 用户在前端点击“确认画板修改”后，下一轮图表模式请求可能会附带当前画板 PNG 截图。\n",
-            "- 本轮上传图片和画板截图已经作为原生多模态输入提供；直接基于可见图片理解图表类型、样式、配色和布局。\n",
-            "- 截图只用于视觉质量检查和参考复刻；XML 仍然是权威状态，继续编辑画板必须基于 `board_context.current_xml` 理解现状。\n",
-            "- 只有当需要读取历史文件路径或工具生成的本地图片时，才调用 `read_file(as_multimodal_attachment=true)` 将图片挂载到下一轮原生多模态输入。\n\n",
         ])
 
     prompt_parts.extend([

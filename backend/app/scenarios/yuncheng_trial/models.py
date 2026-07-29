@@ -31,7 +31,7 @@ class AlertState:
     alert_type: str | None = None
     target_pollutant: str | None = None
     target_time: str | None = None
-    lookback_hours: int = 6
+    lookback_hours: int = 12
     source_files: list[str] = field(default_factory=list)
     status: str = "silent"
 

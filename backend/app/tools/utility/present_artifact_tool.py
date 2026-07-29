@@ -17,7 +17,7 @@ from app.services.report_preview_refresh import (
     refresh_report_preview_for_qmd_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_refs import build_artifact_ref, build_file_ref, merge_refs
+from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 
 logger = structlog.get_logger()
 
@@ -76,6 +76,14 @@ class PresentArtifactTool(LLMTool):
         resolved_type = self._resolve_artifact_type(suffix, artifact_type)
         if resolved_type == "unsupported":
             return self._failure(f"不支持预览的文件类型: {suffix or '无扩展名'}")
+        if suffix == ".pptx":
+            delivery = validate_editable_ppt_delivery(resolved_path)
+            if not delivery.get("allowed", False):
+                return self._failure(
+                    delivery["message"],
+                    code=delivery["code"],
+                    project_dir=delivery.get("project_dir"),
+                )
 
         try:
             artifact: Optional[Dict[str, Any]] = None
@@ -173,27 +181,28 @@ class PresentArtifactTool(LLMTool):
                 artifact.setdefault("title", html_artifact_id or resolved_path.stem)
             preview = (
                 data.get("html_preview")
-                or data.get("ppt_preview")
                 or data.get("spreadsheet_preview")
                 or data.get("pdf_preview")
+                or data.get("ppt_preview")
                 or data.get("markdown_preview")
             )
             if isinstance(preview, dict):
                 artifact["preview"] = preview
-            data["refs"] = merge_refs(
-                data.get("refs"),
-                {
-                    "files": [
-                        build_file_ref(
-                            resolved_path,
-                            type="document",
-                            format=artifact_format,
-                            usage="artifact",
-                        )
-                    ],
-                    "artifacts": [build_artifact_ref(artifact)],
+            logical_key = html_artifact_id or artifact.get("artifact_id") or resolved_path.stem
+            data["resources"] = [{
+                "kind": "file",
+                "logical_key": str(logical_key),
+                "role": "output",
+                "label": artifact.get("title") or resolved_path.name,
+                "locator": {"path": str(resolved_path)},
+                "presentation_type": "document",
+                "presentation": {
+                    "format": artifact_format,
+                    "preview": preview or {},
+                    "editable": bool(artifact.get("preview_panel", False)),
                 },
-            )
+                "metadata": {"generator": "present_artifact", "file_type": resolved_type},
+            }]
 
             logger.info(
                 "artifact_presented",
@@ -206,13 +215,13 @@ class PresentArtifactTool(LLMTool):
                 if artifact and artifact.get("preview_panel") is False
                 else f"已推送到右侧预览面板: {resolved_path.name}"
             )
-            refs = data.get("refs", {})
+            resources = data.get("resources", [])
             return {
                 "status": "success",
                 "success": True,
                 "data": data,
                 **({"artifact": artifact, "artifacts": [artifact]} if artifact else {}),
-                "refs": refs,
+                "resources": resources,
                 "llm_resume": {
                     "file_path": str(resolved_path),
                     "tool_hint": f"Use present_artifact(file_path='{resolved_path}') to preview this artifact.",
@@ -311,8 +320,8 @@ class PresentArtifactTool(LLMTool):
             logger.warning("present_artifact_ppt_preview_failed", path=str(path), error=str(exc))
             return None
 
-    def _failure(self, message: str) -> Dict[str, Any]:
-        return {
+    def _failure(self, message: str, code: str | None = None, project_dir: str | None = None) -> Dict[str, Any]:
+        result = {
             "status": "failed",
             "success": False,
             "error": message,
@@ -322,6 +331,13 @@ class PresentArtifactTool(LLMTool):
             },
             "summary": f"不支持预览: {message}" if "不支持预览" not in message else message,
         }
+        if code:
+            result["data"] = {
+                "project_dir": project_dir,
+                "issues": [{"code": code, "message": message}],
+                "next_actions": ["重新 strict 编译、验证并 finalize 后再交付"],
+            }
+        return result
 
     def get_function_schema(self) -> Dict[str, Any]:
         return {
