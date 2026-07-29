@@ -210,6 +210,15 @@ class SessionManagerDB:
             if key in existing_metadata and key not in merged:
                 merged[key] = existing_metadata[key]
 
+        existing_active = existing_metadata.get("active_contexts")
+        incoming_active = merged.get("active_contexts")
+        if isinstance(existing_active, dict) and (
+            not isinstance(incoming_active, dict)
+            or str(existing_active.get("updated_at") or "")
+            > str(incoming_active.get("updated_at") or "")
+        ):
+            merged["active_contexts"] = existing_active
+
         return merged
 
     async def load_session(

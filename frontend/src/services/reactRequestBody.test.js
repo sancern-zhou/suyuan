@@ -9,11 +9,13 @@ test('builds the breaking structured analyze protocol', () => {
     agentMode: 'query',
     modelTier: 'pro',
     skillIds: ['trend'],
+    activeContexts: [{ type: 'skill', id: 'trend' }],
     contextRefs: [{ type: 'conversation_file', resource_id: 'ref-1', display_name: '数据.xlsx' }]
   })
 
   assert.equal(body.query, '分析数据')
   assert.deepEqual(body.skill_ids, ['trend'])
+  assert.deepEqual(body.active_contexts, [{ type: 'skill', id: 'trend' }])
   assert.equal(body.context_refs[0].resource_id, 'ref-1')
   assert.equal(body.model_tier, 'pro')
   assert.equal('attachments' in body, false)
@@ -25,4 +27,5 @@ test('always includes empty selection arrays', () => {
   const body = buildAnalyzeRequestBody('继续', {})
   assert.deepEqual(body.skill_ids, [])
   assert.deepEqual(body.context_refs, [])
+  assert.equal(body.active_contexts, null)
 })

@@ -6,14 +6,20 @@ ReAct Agent 的 REST API 路由
 
 from fastapi import APIRouter, HTTPException, Body, Depends, Request
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+from typing import Optional, List, Dict, Any, Literal
+from datetime import datetime, timezone
 from pathlib import Path
 import asyncio
 import json
 import structlog
 
 from app.agent import create_react_agent
+from app.agent.active_contexts import (
+    ACTIVE_CONTEXTS_KEY,
+    active_contexts_metadata,
+    effective_active_context_items,
+    resolve_active_contexts,
+)
 from app.agent.session import Session, get_session_manager
 from app.agent.session.conversation_persistence import ConversationPersistenceService
 from app.agent.runtime.cancellation import cancellation_registry
@@ -21,12 +27,10 @@ from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
 from app.agent.selection_context import (
     InvalidContextReference,
-    load_skill_selection,
     resource_refs_to_message_attachments,
     select_conversation_files,
 )
 from app.agent.resources.resource_service import SessionResourceService
-from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.boards.application import BoardApplicationService
@@ -356,6 +360,14 @@ class ConversationFileContextRef(BaseModel):
     display_name: str = Field(min_length=1, max_length=512)
 
 
+class ActiveContextRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["skill", "fixed_policy"]
+    id: str = Field(min_length=1, max_length=255)
+    label: Optional[str] = Field(default=None, max_length=512)
+
+
 class AgentAnalyzeRequest(BaseModel):
     """Agent 分析请求"""
     model_config = ConfigDict(
@@ -379,6 +391,11 @@ class AgentAnalyzeRequest(BaseModel):
     query: str = Field(..., description="用户自然语言查询")
     skill_ids: List[str] = Field(..., max_length=1, description="本轮显式选择的技能，最多一个")
     context_refs: List[ConversationFileContextRef] = Field(..., description="本轮引用的会话文件")
+    active_contexts: Optional[List[ActiveContextRef]] = Field(
+        default=None,
+        max_length=20,
+        description="会话级活动上下文；null 表示沿用，空数组表示清除，非空数组表示替换",
+    )
     session_id: Optional[str] = Field(None, description="会话ID（可选，用于会话恢复）")
     enhance_with_history: bool = Field(True, description="是否使用长期记忆增强")
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
@@ -711,6 +728,7 @@ async def analyze_stream(
         context_refs_count=len(request.context_refs),
     )
 
+    active_context_request_started_at = datetime.now(timezone.utc)
     try:
         # 根据助手模式选择 Agent
         if request.mode in {"board", "chart", "ppt"}:
@@ -810,40 +828,6 @@ async def analyze_stream(
             actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
             analyze_kwargs["session_id"] = actual_session_id
 
-        selected_skill = None
-        if request.skill_ids:
-            try:
-                selected_skill = load_skill_selection(
-                    request.skill_ids[0],
-                    available_tools=set(get_tools_by_mode(request.mode or "expert")),
-                )
-            except FileNotFoundError as exc:
-                raise HTTPException(status_code=422, detail="selected_skill_not_found") from exc
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "selected_skill_incompatible", "message": str(exc)},
-                ) from exc
-
-        selected_resource_refs = []
-        if request.context_refs:
-            try:
-                page = await SessionResourceService.database().list_resources(actual_session_id, limit=1000)
-                requested_ids = {ref.resource_id for ref in request.context_refs}
-                selected_resource_refs = [ref for ref in page.resources if ref.resource_id in requested_ids]
-                if len(selected_resource_refs) != len(requested_ids):
-                    raise InvalidContextReference("one or more context resources were not found")
-            except InvalidContextReference as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "invalid_context_reference", "message": str(exc)},
-                ) from exc
-            except Exception as exc:
-                raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
-
-        analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
-        analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
-
         load_session = getattr(session_manager, "load_session_light", None)
         if load_session is None:
             load_session = session_manager.load_session
@@ -852,6 +836,63 @@ async def analyze_stream(
             if source_session_checked and actual_session_id == request.session_id
             else await load_session(actual_session_id) if actual_session_id else None
         )
+
+        requested_active_contexts = (
+            [item.model_dump(exclude_none=True) for item in request.active_contexts]
+            if request.active_contexts is not None
+            else None
+        )
+        effective_active_contexts = effective_active_context_items(
+            preloaded_session.metadata if preloaded_session else None,
+            requested_active_contexts,
+            request.skill_ids,
+        )
+
+        try:
+            requested_ids = {ref.resource_id for ref in request.context_refs}
+            needs_resources = bool(requested_ids) or any(
+                item["type"] == "fixed_policy" for item in effective_active_contexts
+            )
+            resource_page = (
+                await SessionResourceService.database().list_resources(actual_session_id, limit=1000)
+                if needs_resources
+                else None
+            )
+            available_resources = resource_page.resources if resource_page else []
+            selected_resource_refs = [
+                ref for ref in available_resources if ref.resource_id in requested_ids
+            ]
+            if len(selected_resource_refs) != len(requested_ids):
+                raise InvalidContextReference("one or more context resources were not found")
+            resolved_active_contexts = resolve_active_contexts(
+                effective_active_contexts,
+                mode=request.mode or "expert",
+                resources=available_resources,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=422, detail="selected_skill_not_found") from exc
+        except InvalidContextReference as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "invalid_context_reference", "message": str(exc)},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "active_context_incompatible", "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            logger.error("active_context_resolution_failed", error=str(exc))
+            raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
+
+        selected_skill = resolved_active_contexts.skill
+        active_contexts_payload = active_contexts_metadata(
+            resolved_active_contexts.items,
+            updated_at=active_context_request_started_at,
+        )
+        analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
+        analyze_kwargs["fixed_policy_context"] = resolved_active_contexts.fixed_policy_context
+        analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
         if (
             preloaded_session
             and request.mode == "board"
@@ -947,6 +988,8 @@ async def analyze_stream(
 
             if request.mode == "query" and request.map_context:
                 session.metadata = merge_map_scene_metadata(session.metadata, request.map_context)
+            session.metadata = dict(session.metadata or {})
+            session.metadata[ACTIVE_CONTEXTS_KEY] = active_contexts_payload
 
             cancel_event = await cancellation_registry.register(actual_session_id)
             current_task = asyncio.current_task()
@@ -984,8 +1027,11 @@ async def analyze_stream(
                 resource_refs_to_message_attachments(selected_resource_refs),
                 timestamp=datetime.now().isoformat(),
             )
-            user_message["skill_ids"] = list(request.skill_ids)
+            user_message["skill_ids"] = (
+                [selected_skill.skill_id] if selected_skill else []
+            )
             user_message["context_refs"] = [ref.model_dump(mode="json") for ref in request.context_refs]
+            user_message["active_contexts"] = list(resolved_active_contexts.items)
             conversation_history.append(user_message)
             logger.debug("user_message_added", query_preview=request.query[:100])
 

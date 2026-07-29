@@ -31,6 +31,7 @@ test('preserves structured selection options when dequeuing', () => {
     query: '',
     options: {
       skillIds: ['skill-1'],
+      activeContexts: [{ type: 'skill', id: 'skill-1' }],
       contextRefs: ['file-1']
     }
   })
@@ -38,6 +39,7 @@ test('preserves structured selection options when dequeuing', () => {
   const next = takeNextQueuedInput(state)
 
   assert.deepEqual(next.options.skillIds, ['skill-1'])
+  assert.deepEqual(next.options.activeContexts, [{ type: 'skill', id: 'skill-1' }])
   assert.deepEqual(next.options.contextRefs, ['file-1'])
   assert.equal(next.options.queuedAlreadyShown, true)
 })

@@ -8,12 +8,13 @@ import {
 
 test('restores only skills and files still valid in the target session and mode', () => {
   const result = reconcileSelectionDraft(
-    { skillId: 'trend', fileIds: ['f1', 'missing'] },
+    { skillId: 'trend', fileIds: ['f1', 'missing'], policyFileIds: ['f1'] },
     [{ id: 'trend', compatible: true }],
     [{ id: 'f1', name: '数据.xlsx' }]
   )
   assert.equal(result.skill.id, 'trend')
   assert.deepEqual(result.files.map(file => file.id), ['f1'])
+  assert.equal(result.files[0].pinnedPolicy, true)
 })
 
 test('drops a skill that is unavailable or incompatible in the new mode', () => {

@@ -2979,6 +2979,7 @@ export const useReactStore = defineStore('react', {
         modelTier = 'auto',
         skillIds = [],
         contextRefs = [],
+        activeContexts = null,
         messageAttachments = [],
         skipAutoFollowup = false,
         preserveCurrentMode = false,
@@ -3033,11 +3034,13 @@ export const useReactStore = defineStore('react', {
             agentMode: actualMode,
             skillIds,
             contextRefs,
+            activeContexts,
           },
           data: {
             ...(syntheticMeta || {}),
             skill_ids: skillIds,
-            context_refs: contextRefs
+            context_refs: contextRefs,
+            active_contexts: activeContexts
           },
           attachments: messageAttachments.length > 0 ? messageAttachments : null
         })
@@ -3059,12 +3062,14 @@ export const useReactStore = defineStore('react', {
             onAccepted: undefined,
             agentMode: actualMode,
             skillIds,
-            contextRefs
+            contextRefs,
+            activeContexts
           },
           data: {
             ...(syntheticMeta || {}),
             skill_ids: skillIds,
-            context_refs: contextRefs
+            context_refs: contextRefs,
+            active_contexts: activeContexts
           },
           attachments: messageAttachments.length > 0 ? messageAttachments : null
         })
@@ -3124,7 +3129,8 @@ export const useReactStore = defineStore('react', {
           {
             ...(syntheticMeta || {}),
             skill_ids: skillIds,
-            context_refs: contextRefs
+            context_refs: contextRefs,
+            active_contexts: activeContexts
           },
           messageAttachments.length > 0 ? messageAttachments : null,
           {
@@ -3190,6 +3196,7 @@ export const useReactStore = defineStore('react', {
           modelTier,
           skillIds,
           contextRefs,
+          activeContexts,
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
           skipAutoFollowup,

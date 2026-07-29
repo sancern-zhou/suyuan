@@ -34,6 +34,7 @@ class ReactAgentAPI {
       modelTier = 'auto',
       skillIds = [],
       contextRefs = [],
+      activeContexts = null,
       boardContext = null,
       mapContext = null,
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
@@ -55,6 +56,7 @@ class ReactAgentAPI {
       modelTier,
       skillIds,
       contextRefs,
+      activeContexts,
       boardContext,
       mapContext,
       userIdentifier,

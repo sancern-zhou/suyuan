@@ -120,6 +120,15 @@ def test_selected_skill_context_is_injected_once_for_every_mode(mode):
     assert "<selected_skill>" in prompt
 
 
+def test_fixed_policy_context_is_injected_outside_compressible_history():
+    builder = SimplifiedContextBuilder(Mock(), Mock(), {})
+    builder.current_mode = "assistant"
+    builder.fixed_policy_context = "fixed-policy-marker"
+    prompt = builder._build_system_prompt()
+    assert prompt.count("fixed-policy-marker") == 1
+    assert "<fixed_policies>" in prompt
+
+
 def test_select_conversation_files_validates_type_status_and_order():
     refs = [
         _ref("one"),

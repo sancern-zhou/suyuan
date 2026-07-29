@@ -58,14 +58,25 @@ test('builds structured context refs and safe message attachments', () => {
   const payload = buildComposerPayload({
     query: '分析数据',
     skill: { id: 'trend', name: '趋势分析' },
-    files: [{
-      id: 'upload-1',
-      fileId: 'file-1',
-      name: '现场.png',
-      type: 'image',
-      mimeType: 'image/png',
-      url: '/api/upload/file-1'
-    }],
+    files: [
+      {
+        id: 'upload-1',
+        fileId: 'file-1',
+        name: '验收规范.md',
+        type: 'file',
+        mimeType: 'text/markdown',
+        url: '/api/upload/file-1',
+        pinnedPolicy: true
+      },
+      {
+        id: 'upload-2',
+        fileId: 'file-2',
+        name: '本轮数据.csv',
+        type: 'file',
+        mimeType: 'text/csv',
+        url: '/api/upload/file-2'
+      }
+    ],
     agentMode: 'query',
     modelTier: 'auto',
     knowledgeBaseIds: ['kb-1']
@@ -74,13 +85,17 @@ test('builds structured context refs and safe message attachments', () => {
   assert.deepEqual(payload, {
     query: '分析数据',
     skillIds: ['trend'],
-    contextRefs: [{ type: 'conversation_file', resource_id: 'upload-1', display_name: '现场.png' }],
+    activeContexts: [
+      { type: 'skill', id: 'trend', label: '趋势分析' },
+      { type: 'fixed_policy', id: 'upload-1', label: '验收规范.md' }
+    ],
+    contextRefs: [{ type: 'conversation_file', resource_id: 'upload-2', display_name: '本轮数据.csv' }],
     messageAttachments: [{
-      file_id: 'file-1',
-      name: '现场.png',
-      type: 'image',
-      mime_type: 'image/png',
-      url: '/api/upload/file-1'
+      file_id: 'file-2',
+      name: '本轮数据.csv',
+      type: 'file',
+      mime_type: 'text/csv',
+      url: '/api/upload/file-2'
     }],
     agentMode: 'query',
     modelTier: 'auto',

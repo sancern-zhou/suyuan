@@ -87,7 +87,8 @@ export function buildComposerPayload({
   modelTier,
   knowledgeBaseIds
 }) {
-  const messageAttachments = (files || []).map(file => ({
+  const turnFiles = (files || []).filter(file => !file.pinnedPolicy)
+  const messageAttachments = turnFiles.map(file => ({
     ...(file.fileId ? { file_id: file.fileId } : {}),
     name: file.name,
     type: file.type === 'image' ? 'image' : 'file',
@@ -97,7 +98,13 @@ export function buildComposerPayload({
   return {
     query: String(query || ''),
     skillIds: skill ? [skill.id] : [],
-    contextRefs: (files || []).map(file => ({
+    activeContexts: [
+      ...(skill ? [{ type: 'skill', id: skill.id, label: skill.name }] : []),
+      ...(files || [])
+        .filter(file => file.pinnedPolicy)
+        .map(file => ({ type: 'fixed_policy', id: file.id, label: file.name }))
+    ],
+    contextRefs: turnFiles.map(file => ({
       type: 'conversation_file',
       resource_id: file.id,
       display_name: file.name
