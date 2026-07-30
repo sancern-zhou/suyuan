@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14,6 +16,9 @@ from config.settings import settings
 
 class QianlimaRealtimeTenderTool(LLMTool):
     """实时检索千里马招投标信息，不读取本地 SQL 入库数据。"""
+
+    # 类级别的信号量，确保全局并发控制
+    _detail_semaphore = asyncio.Semaphore(2)
 
     def __init__(
         self,
@@ -91,6 +96,10 @@ class QianlimaRealtimeTenderTool(LLMTool):
         self.output_dir = Path(output_dir) if output_dir else _default_output_dir()
         self.client_factory = client_factory
 
+        # 从 settings 读取并发数并初始化信号量
+        concurrency = settings.qianlima_realtime_concurrency
+        QianlimaRealtimeTenderTool._detail_semaphore = asyncio.Semaphore(concurrency)
+
     async def execute(
         self,
         mode: str = "search",
@@ -136,93 +145,132 @@ class QianlimaRealtimeTenderTool(LLMTool):
 
         dates = _date_range(start_date, end_date)
         result_limit = min(max(int(max_results or 50), 1), 200)
-        client = self._make_client()
-        try:
-            candidates: list[TenderCandidate] = []
-            if dates:
-                for publish_date in dates:
-                    candidates.extend(
-                        await client.search(
-                            keyword=search_query,
-                            notice_type=NoticeType.OTHER,
-                            publish_date=publish_date,
-                            max_pages=int(max_pages),
-                        )
-                    )
-            else:
-                candidates.extend(
-                    await client.search(
-                        keyword=search_query,
-                        notice_type=NoticeType.OTHER,
-                        publish_date=None,
-                        max_pages=max(1, int(max_pages or 1)),
-                    )
-                )
-        finally:
-            await _close_client(client)
 
-        records = [_candidate_to_record(item) for item in _dedupe(candidates)]
-        records = records[:result_limit]
-        payload = {
-            "mode": "search",
-            "query": search_query,
-            "start_date": start_date,
-            "end_date": end_date,
-            "max_pages": int(max_pages),
-            "count": len(records),
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "results": records,
-        }
-        output_file, markdown_file = self._write_search_files(payload)
-        return {
-            "success": True,
-            "mode": "search",
-            "query": search_query,
-            "count": len(records),
-            "results": records,
-            "output_file": str(output_file),
-            "markdown_file": str(markdown_file),
-            "summary": f"实时检索到 {len(records)} 条千里马招投标结果，已写入 {output_file}",
-        }
+        # 添加重试机制
+        max_retries = settings.qianlima_realtime_max_retries
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 请求前延迟
+                await self._delay_before_request("search")
+
+                client = self._make_client()
+                try:
+                    candidates: list[TenderCandidate] = []
+                    if dates:
+                        for publish_date in dates:
+                            candidates.extend(
+                                await client.search(
+                                    keyword=search_query,
+                                    notice_type=NoticeType.OTHER,
+                                    publish_date=publish_date,
+                                    max_pages=int(max_pages),
+                                )
+                            )
+                    else:
+                        candidates.extend(
+                            await client.search(
+                                keyword=search_query,
+                                notice_type=NoticeType.OTHER,
+                                publish_date=None,
+                                max_pages=max(1, int(max_pages or 1)),
+                            )
+                        )
+                finally:
+                    await _close_client(client)
+
+                records = [_candidate_to_record(item) for item in _dedupe(candidates)]
+                records = records[:result_limit]
+                payload = {
+                    "mode": "search",
+                    "query": search_query,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "max_pages": int(max_pages),
+                    "count": len(records),
+                    "generated_at": datetime.now().isoformat(timespec="seconds"),
+                    "results": records,
+                }
+                output_file, markdown_file = self._write_search_files(payload)
+                return {
+                    "success": True,
+                    "mode": "search",
+                    "query": search_query,
+                    "count": len(records),
+                    "results": records,
+                    "output_file": str(output_file),
+                    "markdown_file": str(markdown_file),
+                    "summary": f"实时检索到 {len(records)} 条千里马招投标结果，已写入 {output_file}",
+                }
+            except Exception as exc:
+                if attempt < max_retries:
+                    delay = _retry_delay_seconds(attempt)
+                    await asyncio.sleep(delay)
+                else:
+                    return {
+                        "success": False,
+                        "error": str(exc),
+                        "summary": f"搜索失败: {str(exc)}",
+                    }
 
     async def _execute_detail(self, url: str | None, title: str | None) -> dict[str, Any]:
         detail_url = (url or "").strip()
         if not detail_url:
             return {"success": False, "summary": "detail 模式需要 url"}
+
         candidate = TenderCandidate(
             title=(title or detail_url).strip(),
             url=detail_url,
             notice_type=NoticeType.OTHER,
             source="qianlima",
         )
-        client = self._make_client()
-        try:
-            html = await client.fetch_detail(candidate)
-        finally:
-            await _close_client(client)
 
-        text = _html_to_text(html)
-        payload = {
-            "mode": "detail",
-            "url": detail_url,
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "detail": {
-                "title": candidate.title,
-                "url": detail_url,
-                "text": text,
-            },
-        }
-        output_file, html_file = self._write_detail_files(payload, html)
-        return {
-            "success": True,
-            "mode": "detail",
-            "url": detail_url,
-            "title": candidate.title,
-            "text_preview": text[:1000],
-            "output_file": str(output_file),
-            "html_file": str(html_file),
-            "summary": f"详情页已抓取并写入 {output_file}",
-        }
+        # 使用信号量控制并发
+        async with QianlimaRealtimeTenderTool._detail_semaphore:
+            # 添加重试机制
+            max_retries = settings.qianlima_realtime_max_retries
+            for attempt in range(1, max_retries + 1):
+                try:
+                    # 请求前延迟
+                    await self._delay_before_request("detail")
+
+                    client = self._make_client()
+                    try:
+                        html = await client.fetch_detail(candidate)
+                    finally:
+                        await _close_client(client)
+
+                    text = _html_to_text(html)
+                    payload = {
+                        "mode": "detail",
+                        "url": detail_url,
+                        "generated_at": datetime.now().isoformat(timespec="seconds"),
+                        "detail": {
+                            "title": candidate.title,
+                            "url": detail_url,
+                            "text": text,
+                        },
+                    }
+                    output_file, html_file = self._write_detail_files(payload, html)
+                    return {
+                        "success": True,
+                        "mode": "detail",
+                        "url": detail_url,
+                        "title": candidate.title,
+                        "text_preview": text[:1000],
+                        "output_file": str(output_file),
+                        "html_file": str(html_file),
+                        "summary": f"详情页已抓取并写入 {output_file}",
+                    }
+                except Exception as exc:
+                    if attempt < max_retries:
+                        delay = _retry_delay_seconds(attempt)
+                        await asyncio.sleep(delay)
+                    else:
+                        return {
+                            "success": False,
+                            "error": str(exc),
+                            "summary": f"详情页抓取失败: {str(exc)}",
+                        }
 
     def _make_client(self):
         return self.client_factory(
@@ -232,7 +280,19 @@ class QianlimaRealtimeTenderTool(LLMTool):
             accounts=settings.qianlima_accounts,
             storage_state_path=settings.qianlima_storage_state,
             headless=True,
+            # 传递反爬参数给客户端
+            request_delay_ms=settings.qianlima_realtime_request_delay_ms,
         )
+
+    async def _delay_before_request(self, mode: str) -> None:
+        """请求前延迟"""
+        if mode == "detail" and settings.qianlima_realtime_enable_detail_delay:
+            min_delay = settings.qianlima_realtime_detail_min_delay_seconds
+            max_delay = settings.qianlima_realtime_detail_max_delay_seconds
+            await asyncio.sleep(random.uniform(min_delay, max_delay))
+        elif mode == "search" and settings.qianlima_realtime_enable_search_delay:
+            delay_ms = settings.qianlima_realtime_request_delay_ms
+            await asyncio.sleep(delay_ms / 1000)
 
     def _write_search_files(self, payload: dict[str, Any]) -> tuple[Path, Path]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -257,6 +317,15 @@ class QianlimaRealtimeTenderTool(LLMTool):
         )
         html_path.write_text(html or "", encoding="utf-8")
         return json_path, html_path
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    """计算指数退避延迟时间"""
+    base = settings.qianlima_realtime_base_delay_seconds
+    max_delay = settings.qianlima_realtime_max_delay_seconds
+    exponential = base * (2 ** max(0, attempt - 1))
+    jitter = random.uniform(0, 0.5)  # 添加随机抖动
+    return min(max_delay, exponential) + jitter
 
 
 def _default_output_dir() -> Path:

@@ -64,11 +64,15 @@ SKILL_METADATA = {
         "aliases": [],
         "required_tools": ["browser", "write_file", "create_report_package"],
     },
-    "招投标市场日报生成": {
+    "生态环境招投标市场分析": {
         "enabled": True,
-        "aliases": ["招投标日报"],
+        "aliases": ["招投标市场分析", "招投标半月报", "招投标月报", "招投标市场日报生成", "招投标日报"],
         "required_tools": [
-            "execute_tender_sql_query", "create_report_chart", "create_report_package", "execute_python",
+            "call_sub_agent", "search_files", "read_file", "read_docx",
+            "list_session_resources", "web_search", "web_fetch", "write_file",
+            "execute_tender_sql_query", "query_national_province_air_quality",
+            "query_national_city_air_quality", "execute_python", "create_report_chart",
+            "create_report_package", "render_report_package", "validate_report_package",
         ],
     },
     "昨日污染特征与溯源分析": {
