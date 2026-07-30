@@ -37,6 +37,7 @@ def test_parse_list_page_extracts_xuchang_record_and_pagination():
 def test_parse_detail_preserves_blank_slash_and_version_history():
     detail = parse_detail_page(_fixture("detail_page.html"))
 
+    assert detail.production_site_address == "禹州市花石镇徐庄村"
     assert detail.pollution["main_pollutant_categories"] == ""
     assert detail.pollution["air_pollutant_types"] == "颗粒物,非甲烷总烃"
     assert detail.pollution["water_emission_standard"] == ""

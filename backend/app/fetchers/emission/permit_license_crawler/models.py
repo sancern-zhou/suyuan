@@ -52,6 +52,7 @@ class PermitLicense(Base):
     permit_number = Column(String(64), nullable=False, index=True)
     unified_social_credit_code = Column(String(18), index=True)
     enterprise_name = Column(Text, nullable=False)
+    production_site_address = Column(Text)
     industry_category = Column(Text)
     valid_from = Column(Date)
     valid_to = Column(Date)
