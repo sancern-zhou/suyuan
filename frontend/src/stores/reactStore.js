@@ -496,6 +496,7 @@ export const useReactStore = defineStore('react', {
         query: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
+        board: createEmptyModeState(),
         ops: createEmptyModeState(),
         graph: createEmptyModeState()
       },

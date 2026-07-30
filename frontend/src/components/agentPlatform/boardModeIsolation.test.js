@@ -17,6 +17,23 @@ test('board state and snapshots are isolated to board mode', () => {
   assert.match(sessionManagementSource, /restoredMode === 'board'/)
 })
 
+test('every valid mode has an initialized mode state for reset and restore', () => {
+  const validModesSource = storeSource.match(/const VALID_MODES = \[([^\]]+)\]/)?.[1]
+  const modeStatesSource = storeSource.match(/modeStates:\s*\{([\s\S]*?)\n\s*\},\n\n\s*\/\/ 同一模式下/)?.[1]
+
+  assert.ok(validModesSource, 'reactStore should declare VALID_MODES')
+  assert.ok(modeStatesSource, 'reactStore should initialize modeStates')
+
+  const validModes = [...validModesSource.matchAll(/'([^']+)'/g)].map(match => match[1])
+  for (const mode of validModes) {
+    assert.match(
+      modeStatesSource,
+      new RegExp(`\\b${mode}:\\s*createEmptyModeState\\(\\)`),
+      `modeStates.${mode} must exist before reset or session restore`
+    )
+  }
+})
+
 test('mode selector exposes a dedicated board entry', () => {
   assert.match(selectorSource, /selectMode\('board'\)/)
   assert.match(selectorSource, /<span>画板<\/span>/)
