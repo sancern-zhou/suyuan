@@ -24,10 +24,6 @@ def detect_document_kind(content_type: str, body: bytes) -> str:
     if sample.lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
         return "html"
     media_type = content_type.partition(";")[0].strip().lower()
-    if media_type == "application/pdf":
-        return "pdf"
-    if media_type.startswith("image/"):
-        return "image"
     if media_type in {"text/html", "application/xhtml+xml"}:
         return "html"
     return "unknown"
