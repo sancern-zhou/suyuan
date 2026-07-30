@@ -533,12 +533,9 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="generate_map", error=str(e))
 
-    try:
-        from app.tools.visualization.create_diagram_artifact.tool import CreateDiagramArtifactTool
-        registry.register(CreateDiagramArtifactTool(), priority=211)
-        logger.info("tool_loaded", tool="create_diagram_artifact")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_diagram_artifact", error=str(e))
+    # ===== create_diagram_artifact 已废弃，使用画板模式替代 =====
+    # 画板模式通过 call_sub_agent(target_mode="board") 调用
+    # 流程图、架构图、步骤图、决策树等由画板Agent生成draw.io图并返回图片文件
 
     try:
         from app.tools.visualization.create_drawio_board import CreateDrawioBoardTool

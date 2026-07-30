@@ -42,8 +42,10 @@ class CreateReportChartTool(LLMTool):
     def __init__(self):
         reference_paths = report_chart_reference_paths()
         description = (
-            "创建正式报告静态图表；先读 references/index.md="
-            f"{reference_paths['index']}，再按图型读取规则。"
+            "创建正式报告（Word/QMD）静态图表，支持17种预定义图表类型。"
+            f"先读 references/index.md={reference_paths['index']}，再按图型读取规则。"
+            "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
+            "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
         )
         function_schema = {
             "name": "create_report_chart",

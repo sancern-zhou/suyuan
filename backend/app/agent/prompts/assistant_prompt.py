@@ -41,6 +41,10 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
     ops_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "ops_agent_guide.md").resolve()
     ops_agent_guide_path_str = str(ops_agent_guide_path).replace("\\", "/")
 
+    # 画板模式Agent调用指南路径
+    board_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "board_agent_guide.md").resolve()
+    board_agent_guide_path_str = str(board_agent_guide_path).replace("\\", "/")
+
     # Excel技能文档路径
     excel_guide_path = (current_dir.parent.parent.parent / "docs" / "skills" / "excel.md").resolve()
     excel_guide_path_str = str(excel_guide_path).replace("\\", "/")
@@ -107,6 +111,7 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         f"- 数据查询、统计报表、同比环比、排名、站点数据 → `target_mode=\"query\"`，调用前先阅读：`{query_agent_guide_path_str}`\n",
         f"- 污染溯源、源解析、专业环境分析、技术咨询、综合报告 → `target_mode=\"expert\"`，调用前先阅读：`{expert_agent_guide_path_str}`\n",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`\n",
+        f"- 流程图、架构图、步骤图、决策树、技术图表 → `target_mode=\"board\"`（画板Agent），调用前先阅读：`{board_agent_guide_path_str}`，画板Agent返回draw.io图片文件\n",
         "\n",
         "调用时必须完整保留用户提供的城市、时间、污染物、文件路径、sheet索引等关键信息；不要把工具名、技术参数或执行步骤强加给子Agent。\n",
         "\n",
