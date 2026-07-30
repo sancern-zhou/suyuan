@@ -8,7 +8,7 @@
           class="composer-chip skill-chip"
           :class="{ invalid: !selectedSkill.compatible }"
           :title="selectedSkill.compatible ? selectedSkill.description : `当前模式缺少：${selectedSkill.missingTools.join('、')}`"
-          @click="selectedSkill = null"
+          @click="clearSelectedSkill"
         >
           /{{ selectedSkill.name }} <span aria-hidden="true">×</span>
         </button>
@@ -287,6 +287,8 @@ import {
   normalizeConversationResources,
   normalizeSkills,
   removeComposerTrigger,
+  resolveAcceptedActiveContextState,
+  shouldApplyActiveContextRestore,
   shouldClearAcceptedComposer
 } from '@/components/inputBoxCommandPalette.js'
 import {
@@ -454,7 +456,10 @@ const selectedFileRefs = computed(() => [
   ...attachments.value.filter(item => item.resourceRefId),
   ...(pendingBoardSnapshotAttachment.value?.resourceRefId ? [pendingBoardSnapshotAttachment.value] : [])
 ])
-const acceptedActiveContextSignature = ref('')
+const activeContextsLoaded = ref(!props.sessionId)
+const activeContextsDirty = ref(false)
+const activeContextsEditVersion = ref(0)
+const activeContextsSessionId = ref(props.sessionId || null)
 const activeContextSignature = computed(() => JSON.stringify({
   skillId: selectedSkill.value?.id || null,
   policyFileIds: selectedFileRefs.value
@@ -462,9 +467,12 @@ const activeContextSignature = computed(() => JSON.stringify({
     .map(file => file.resourceRefId)
     .sort()
 }))
-const hasActiveContextUpdate = computed(() => (
-  activeContextSignature.value !== acceptedActiveContextSignature.value
-))
+const hasActiveContextUpdate = computed(() => activeContextsDirty.value)
+
+const markActiveContextsDirty = () => {
+  activeContextsDirty.value = true
+  activeContextsEditVersion.value += 1
+}
 
 const resourceToAttachment = (item) => ({
   id: item.id,
@@ -489,6 +497,7 @@ const togglePolicyPin = (resourceRefId) => {
   const file = attachments.value.find(item => item.resourceRefId === resourceRefId)
   if (!file || !canPinAsPolicy(file)) return
   file.pinnedPolicy = !file.pinnedPolicy
+  markActiveContextsDirty()
 }
 
 const persistSelectionDraft = (sessionId = props.sessionId) => {
@@ -506,13 +515,35 @@ const restoreSelectionDraft = async (sessionId) => {
   const mode = reactStore.currentMode
   const token = selectionRestoreGuard.begin(sessionId, mode)
   restoringSelection = true
+  const targetSessionId = sessionId || null
+  if (activeContextsSessionId.value !== targetSessionId) {
+    activeContextsSessionId.value = targetSessionId
+    activeContextsDirty.value = false
+    activeContextsEditVersion.value += 1
+  }
+  activeContextsLoaded.value = !sessionId
+  const restoreEditVersion = activeContextsEditVersion.value
+  let restoreSucceeded = true
+  const recoverRestoreDependency = async (promise, fallback) => {
+    try {
+      return await promise
+    } catch {
+      restoreSucceeded = false
+      return fallback
+    }
+  }
   try {
     const [skillsResponse, resourcesResponse, sessionResponse] = await Promise.all([
-      getSkillsList(null, reactStore.currentMode).catch(() => ({ data: { skills: [] } })),
+      recoverRestoreDependency(
+        getSkillsList(null, reactStore.currentMode),
+        { data: { skills: [] } }
+      ),
       sessionId
-        ? getSessionResources(sessionId).catch(() => ({ resources: [] }))
+        ? recoverRestoreDependency(getSessionResources(sessionId), { resources: [] })
         : Promise.resolve({ resources: [] }),
-      sessionId ? getSession(sessionId).catch(() => null) : Promise.resolve(null)
+      sessionId
+        ? recoverRestoreDependency(getSession(sessionId), null)
+        : Promise.resolve(null)
     ])
     if (!selectionRestoreGuard.isCurrent(token, props.sessionId, reactStore.currentMode)) return
     availableSkills.value = normalizeSkills(skillsResponse)
@@ -537,16 +568,23 @@ const restoreSelectionDraft = async (sessionId) => {
       availableSkills.value,
       conversationResources.value
     )
-    selectedSkill.value = restored.skill
-    attachments.value = restored.files.map(resourceToAttachment)
-    if (serverItems !== null) {
-      acceptedActiveContextSignature.value = activeContextSignature.value
-    }
-    writeSelectionDraft(sessionId, {
-      skillId: restored.skill?.id || null,
-      fileIds: restored.files.map(file => file.id),
-      policyFileIds: restored.files.filter(file => file.pinnedPolicy).map(file => file.id)
+    const shouldApplyRestore = shouldApplyActiveContextRestore({
+      restoreEditVersion,
+      currentEditVersion: activeContextsEditVersion.value,
+      dirty: activeContextsDirty.value
     })
+    if (shouldApplyRestore) {
+      selectedSkill.value = restored.skill
+      attachments.value = restored.files.map(resourceToAttachment)
+      writeSelectionDraft(sessionId, {
+        skillId: restored.skill?.id || null,
+        fileIds: restored.files.map(file => file.id),
+        policyFileIds: restored.files.filter(file => file.pinnedPolicy).map(file => file.id)
+      })
+    }
+    if (restoreEditVersion === activeContextsEditVersion.value) {
+      activeContextsLoaded.value = !sessionId || restoreSucceeded
+    }
   } finally {
     if (selectionRestoreGuard.isCurrent(token, props.sessionId, reactStore.currentMode)) {
       restoringSelection = false
@@ -679,6 +717,7 @@ const selectPaletteItem = (item, event) => {
   localValue.value = removed.value
   if (activeTrigger.value?.type === 'skill') {
     selectedSkill.value = item
+    markActiveContextsDirty()
   } else if (!attachments.value.some(file => file.resourceRefId === item.id)) {
     attachments.value.push(resourceToAttachment(item))
   }
@@ -693,10 +732,19 @@ const selectPaletteItem = (item, event) => {
 
 const removeSelectedFile = (resourceRefId) => {
   const index = attachments.value.findIndex(file => file.resourceRefId === resourceRefId)
-  if (index >= 0) attachments.value.splice(index, 1)
+  if (index >= 0) {
+    const [removed] = attachments.value.splice(index, 1)
+    if (removed?.pinnedPolicy) markActiveContextsDirty()
+  }
   if (pendingBoardSnapshotAttachment.value?.resourceRefId === resourceRefId) {
     reactStore.setDrawioBoardSnapshotAttachment(null)
   }
+}
+
+const clearSelectedSkill = () => {
+  if (!selectedSkill.value) return
+  selectedSkill.value = null
+  markActiveContextsDirty()
 }
 
 const handleCompositionEnd = () => {
@@ -801,7 +849,7 @@ const handleKeydown = (e) => {
     e.preventDefault()
     const lastFile = selectedFileRefs.value.at(-1)
     if (lastFile) removeSelectedFile(lastFile.resourceRefId)
-    else selectedSkill.value = null
+    else clearSelectedSkill()
     return
   }
 
@@ -859,7 +907,9 @@ const handleSend = async () => {
   const sentSnapshot = {
     query: localValue.value,
     skillId: selectedSkill.value?.id || null,
-    fileIds: selectedFileRefs.value.map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`)
+    fileIds: selectedFileRefs.value.map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`),
+    activeContextsExplicit: activeContextsLoaded.value || activeContextsDirty.value,
+    activeContextSignature: activeContextSignature.value
   }
   const clearAcceptedDraft = () => {
     const currentSnapshot = {
@@ -867,10 +917,21 @@ const handleSend = async () => {
       skillId: selectedSkill.value?.id || null,
       fileIds: selectedFileRefs.value.map(file => `${file.resourceRefId}:${file.pinnedPolicy ? 'pinned' : 'turn'}`)
     }
+    const acceptedActiveContextState = resolveAcceptedActiveContextState({
+      explicit: sentSnapshot.activeContextsExplicit,
+      sentSignature: sentSnapshot.activeContextSignature,
+      currentSignature: activeContextSignature.value,
+      dirty: activeContextsDirty.value,
+      currentEditVersion: activeContextsEditVersion.value
+    })
+    if (acceptedActiveContextState) {
+      activeContextsLoaded.value = acceptedActiveContextState.loaded
+      activeContextsDirty.value = acceptedActiveContextState.dirty
+      activeContextsEditVersion.value = acceptedActiveContextState.editVersion
+    }
     if (!shouldClearAcceptedComposer(sentSnapshot, currentSnapshot)) return
     localValue.value = ''
     attachments.value = attachments.value.filter(file => file.pinnedPolicy)
-    acceptedActiveContextSignature.value = activeContextSignature.value
     if (pendingBoardSnapshotAttachment.value) reactStore.setDrawioBoardSnapshotAttachment(null)
     nextTick(() => {
       if (textareaRef.value) {
@@ -895,7 +956,9 @@ const handleSend = async () => {
       })),
       knowledgeBaseIds,
       agentMode: activeAgentMode,
-      modelTier: getEffectiveModelTier(modelTier.value, activeAgentMode)
+      modelTier: getEffectiveModelTier(modelTier.value, activeAgentMode),
+      activeContextsLoaded: activeContextsLoaded.value,
+      activeContextsDirty: activeContextsDirty.value
     }),
     onAccepted: clearAcceptedDraft
   })
