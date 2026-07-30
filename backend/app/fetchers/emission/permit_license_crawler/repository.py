@@ -76,15 +76,29 @@ class PermitRepository:
 
     async def list_pending_licenses(self, *, limit: int, resume: bool = True) -> list[PermitLicense]:
         del resume
+        failure_counts = (
+            select(
+                PermitCrawlFailure.license_id.label("license_id"),
+                func.count(PermitCrawlFailure.id).label("failure_count"),
+            )
+            .where(PermitCrawlFailure.license_id.is_not(None))
+            .group_by(PermitCrawlFailure.license_id)
+            .subquery()
+        )
         result = await self.session.scalars(
             select(PermitLicense)
+            .outerjoin(failure_counts, failure_counts.c.license_id == PermitLicense.id)
             .where(
                 or_(
                     PermitLicense.detail_status != "complete",
                     PermitLicense.documents_status != "complete",
                 )
             )
-            .order_by(PermitLicense.list_page_no, PermitLicense.id)
+            .order_by(
+                func.coalesce(failure_counts.c.failure_count, 0),
+                PermitLicense.list_page_no,
+                PermitLicense.id,
+            )
             .limit(limit)
         )
         return list(result)

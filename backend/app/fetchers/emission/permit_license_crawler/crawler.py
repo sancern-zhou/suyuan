@@ -76,10 +76,13 @@ class XuchangPermitCrawler:
     ) -> PermitCrawlRun:
         run_id = run.id
         rows = await self.repository.list_pending_licenses(limit=max_licenses, resume=resume)
-        for license_row in rows:
-            license_id = license_row.id
-            detail_url = license_row.detail_url
+        pending_items = [(row.id, row.detail_url) for row in rows]
+        for license_id, detail_url in pending_items:
             try:
+                license_row = await self.repository.session.get(PermitLicense, license_id)
+                if license_row is None:
+                    run.skipped_count += 1
+                    continue
                 await self._crawl_one_detail(license_row)
                 run.success_count += 1
                 await self.repository.session.commit()
@@ -129,10 +132,12 @@ class XuchangPermitCrawler:
         missing_documents: list[str] = []
         if detail.original_url:
             await self._download_original(license_row, directory, detail.original_url)
+            await self.repository.session.commit()
         else:
             missing_documents.append("排污许可证正本")
         if detail.copy_url:
             await self._download_copy(license_row, directory, detail.copy_url)
+            await self.repository.session.commit()
         else:
             missing_documents.append("排污许可证副本")
         if missing_documents:
