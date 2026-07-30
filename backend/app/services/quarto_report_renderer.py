@@ -67,6 +67,106 @@ def _disable_docx_quarto_auto_structure(qmd_content: str) -> tuple[str, bool]:
     return "".join(lines) + body, True
 
 
+def _normalize_chinese_ascii_quotes_in_prose_line(
+    text: str,
+    active_code_ticks: str = "",
+) -> tuple[str, str]:
+    """Normalize one prose line while carrying Markdown code-span state."""
+    chinese_char = r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+    content_char = (
+        rf"{chinese_char}A-Za-z0-9０-９Ａ-Ｚａ-ｚ一-龥、，。；：！？（）《》【】·"
+        r" \t.\-+%℃°μµ²³/"
+    )
+    pattern = re.compile(
+        rf'(?<=[{chinese_char}A-Za-z0-9，。：；！？、）】》])"'
+        rf'(?P<content>[{content_char}]*[{chinese_char}][{content_char}]*)"'
+        rf'(?=[{chinese_char}A-Za-z0-9，。：；！？、（【《*_~]|\r?$)'
+    )
+
+    def normalize_segment(segment: str) -> str:
+        return pattern.sub(lambda item: f"“{item.group('content')}”", segment)
+
+    def closing_ticks(delimiter: str, start: int) -> re.Match[str] | None:
+        return re.compile(rf"(?<!`){re.escape(delimiter)}(?!`)").search(text, start)
+
+    parts: list[str] = []
+    position = 0
+    if active_code_ticks:
+        closing = closing_ticks(active_code_ticks, 0)
+        if closing is None:
+            return text, active_code_ticks
+        parts.append(text[: closing.end()])
+        position = closing.end()
+        active_code_ticks = ""
+
+    while True:
+        opening = re.search(r"`+", text[position:])
+        if opening is None:
+            parts.append(normalize_segment(text[position:]))
+            return "".join(parts), ""
+
+        opening_start = position + opening.start()
+        opening_end = position + opening.end()
+        delimiter = opening.group(0)
+        parts.append(normalize_segment(text[position:opening_start]))
+        closing = closing_ticks(delimiter, opening_end)
+        if closing is None:
+            parts.append(text[opening_start:])
+            return "".join(parts), delimiter
+
+        parts.append(text[opening_start : closing.end()])
+        position = closing.end()
+
+
+def normalize_chinese_ascii_quotes(text: str) -> str:
+    """Normalize tight Chinese ASCII quotes only in Markdown prose."""
+    if '"' not in text:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    normalized: list[str] = []
+    index = 0
+
+    if lines and re.fullmatch(r"---\s*(?:\r?\n)?", lines[0]):
+        for candidate in range(1, len(lines)):
+            if re.fullmatch(r"(?:---|\.\.\.)\s*(?:\r?\n)?", lines[candidate]):
+                normalized.extend(lines[: candidate + 1])
+                index = candidate + 1
+                break
+
+    fence_char = ""
+    fence_length = 0
+    active_code_ticks = ""
+    fence_pattern = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
+    for line in lines[index:]:
+        fence_match = fence_pattern.match(line)
+        if fence_char:
+            closing_fence = re.fullmatch(
+                rf" {{0,3}}{re.escape(fence_char)}{{{fence_length},}}[ \t]*(?:\r?\n)?",
+                line,
+            )
+            if closing_fence:
+                fence_char = ""
+                fence_length = 0
+            normalized.append(line)
+        elif active_code_ticks:
+            prose, active_code_ticks = _normalize_chinese_ascii_quotes_in_prose_line(
+                line,
+                active_code_ticks,
+            )
+            normalized.append(prose)
+        elif fence_match:
+            fence = fence_match.group("fence")
+            fence_char = fence[0]
+            fence_length = len(fence)
+            normalized.append(line)
+        else:
+            prose, active_code_ticks = _normalize_chinese_ascii_quotes_in_prose_line(line)
+            normalized.append(prose)
+
+    return "".join(normalized)
+
+
 class ReportRenderError(RuntimeError):
     """Raised when Quarto rendering fails."""
 
@@ -342,25 +442,27 @@ class QuartoReportRenderer:
                 copied_count=len(image_process_result["copied"])
             )
 
-        qmd_for_render = self._prepare_docx_qmd(report_dir, qmd_path)
-        args = ["render", qmd_for_render.name, "--to", "docx", "--output", "report.docx"]
-        if not self._qmd_has_usable_reference_doc(qmd_path):
-            reference_docx = ensure_government_reference_docx()
-            args.extend(["-M", f"reference-doc:{reference_docx}"])
-
+        qmd_for_render = qmd_path
         try:
-            self._run_quarto(report_dir, args)
-            docx_path = report_dir / "report.docx"
-            image_cleanup = normalize_docx_image_paragraphs(docx_path)
-            logger.info("quarto_docx_image_paragraphs_normalized", **image_cleanup)
-            style_cleanup = finalize_government_docx(docx_path)
-            logger.info("quarto_docx_government_style_finalized", **style_cleanup)
-            return docx_path
-        except ReportRenderError:
-            raise
-        except Exception as exc:
-            logger.error("quarto_docx_render_failed", error=str(exc), fallback="using_html_conversion")
-            return self._render_docx_from_html_fallback(report_dir)
+            qmd_for_render = self._prepare_docx_qmd(report_dir, qmd_path)
+            args = ["render", qmd_for_render.name, "--to", "docx", "--output", "report.docx"]
+            if not self._qmd_has_usable_reference_doc(qmd_path):
+                reference_docx = ensure_government_reference_docx()
+                args.extend(["-M", f"reference-doc:{reference_docx}"])
+
+            try:
+                self._run_quarto(report_dir, args)
+                docx_path = report_dir / "report.docx"
+                image_cleanup = normalize_docx_image_paragraphs(docx_path)
+                logger.info("quarto_docx_image_paragraphs_normalized", **image_cleanup)
+                style_cleanup = finalize_government_docx(docx_path)
+                logger.info("quarto_docx_government_style_finalized", **style_cleanup)
+                return docx_path
+            except ReportRenderError:
+                raise
+            except Exception as exc:
+                logger.error("quarto_docx_render_failed", error=str(exc), fallback="using_html_conversion")
+                return self._render_docx_from_html_fallback(report_dir)
         finally:
             if qmd_for_render != qmd_path:
                 qmd_for_render.unlink(missing_ok=True)
@@ -509,6 +611,9 @@ class QuartoReportRenderer:
         )
         sanitized = pattern.sub("", text) if has_placeholder_reference_doc else text
         sanitized, structure_changed = _disable_docx_quarto_auto_structure(sanitized)
+        quote_normalized = normalize_chinese_ascii_quotes(sanitized)
+        quotes_changed = quote_normalized != sanitized
+        sanitized = quote_normalized
         if has_placeholder_reference_doc:
             sanitized = re.sub(
                 r"(?m)^(\s*)docx:\s*\n(?=(?:\1\S|\S|---))",
@@ -516,10 +621,10 @@ class QuartoReportRenderer:
                 sanitized,
             )
 
-        if not has_placeholder_reference_doc and not structure_changed:
+        if not has_placeholder_reference_doc and not structure_changed and not quotes_changed:
             return qmd_path
 
-        temp_qmd = report_dir / "report_docx_render.qmd"
+        temp_qmd = report_dir / f"report_docx_render_{uuid.uuid4().hex}.qmd"
         temp_qmd.write_text(sanitized, encoding="utf-8")
         return temp_qmd
 

@@ -20,6 +20,7 @@ from app.services.quarto_report_renderer import (
     ReportRenderError,
     format_report_image_validation_error,
     inspect_report_image_refs,
+    normalize_chinese_ascii_quotes,
     quarto_report_renderer,
 )
 from app.services.report_preview_refresh import (
@@ -388,26 +389,8 @@ def _normalize_static_qmd(qmd_content: str) -> str:
         normalized,
         flags=re.IGNORECASE,
     )
-    normalized = _normalize_chinese_ascii_quotes(normalized)
+    normalized = normalize_chinese_ascii_quotes(normalized)
     return normalized
-
-
-def _normalize_chinese_ascii_quotes(text: str) -> str:
-    """Avoid Pandoc misclassifying tight Chinese ASCII quotes as right quotes."""
-    if '"' not in text:
-        return text
-
-    chinese_char = r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
-    content_char = (
-        rf"{chinese_char}A-Za-z0-9０-９Ａ-Ｚａ-ｚ一-龥、，。；：！？（）《》【】·"
-        r"\s.\-+%℃°μµ²³/"
-    )
-    pattern = re.compile(
-        rf'(?<=[{chinese_char}A-Za-z0-9，。：；！？、）】》])"'
-        rf'(?P<content>[{content_char}]*[{chinese_char}][{content_char}]*)"'
-        rf'(?=[{chinese_char}A-Za-z0-9，。：；！？、（【《]|$)'
-    )
-    return pattern.sub(lambda match: f"“{match.group('content')}”", text)
 
 
 def _find_unsupported_r_qmd_features(qmd_content: str) -> List[str]:

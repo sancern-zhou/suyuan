@@ -23,6 +23,97 @@ def _write_report(report_root: Path, report_id: str, qmd: str) -> Path:
     return report_dir
 
 
+def test_prepare_docx_qmd_normalizes_tight_chinese_ascii_quotes_without_overwriting_source(
+    tmp_path,
+):
+    report_root = tmp_path / "reports"
+    source = (
+        "观察一：榆林\"量大价低\"，西安\"量少价高\"\n"
+        "观察二：榆林“维持运转”，西安“升级能力”\n"
+    )
+    report_dir = _write_report(report_root, "air_report", source)
+    qmd_path = report_dir / "report.qmd"
+    renderer = QuartoReportRenderer(report_root=report_root)
+
+    prepared = renderer._prepare_docx_qmd(report_dir, qmd_path)
+
+    assert prepared != qmd_path
+    assert prepared.read_text(encoding="utf-8") == (
+        "观察一：榆林“量大价低”，西安“量少价高”\n"
+        "观察二：榆林“维持运转”，西安“升级能力”\n"
+    )
+    assert qmd_path.read_text(encoding="utf-8") == source
+
+
+def test_prepare_docx_qmd_normalizes_only_markdown_prose(tmp_path):
+    report_root = tmp_path / "reports"
+    source = '''---
+title: 榆林"量大价低"
+---
+
+`榆林"量大价低"`
+
+```text
+榆林"量大价低"
+```
+
+````text
+围栏内榆林"量大价低"
+`````still code
+仍在围栏内西安"量少价高"
+````
+
+`跨行代码开始
+榆林"量大价低"
+跨行代码结束`
+
+未闭合：榆林"量大价低
+下一行西安"量少价高"
+
+**结论：榆林"量大价低"**
+'''
+    report_dir = _write_report(report_root, "air_report", source)
+    qmd_path = report_dir / "report.qmd"
+    renderer = QuartoReportRenderer(report_root=report_root)
+
+    prepared = renderer._prepare_docx_qmd(report_dir, qmd_path)
+    prepared_text = prepared.read_text(encoding="utf-8")
+
+    assert 'title: 榆林"量大价低"' in prepared_text
+    assert '`榆林"量大价低"`' in prepared_text
+    assert '```text\n榆林"量大价低"\n```' in prepared_text
+    assert '`````still code\n仍在围栏内西安"量少价高"\n````' in prepared_text
+    assert '`跨行代码开始\n榆林"量大价低"\n跨行代码结束`' in prepared_text
+    assert '未闭合：榆林"量大价低\n下一行西安“量少价高”' in prepared_text
+    assert '**结论：榆林“量大价低”**' in prepared_text
+
+
+def test_render_docx_removes_temporary_qmd_when_reference_doc_setup_fails(
+    tmp_path, monkeypatch
+):
+    report_root = tmp_path / "reports"
+    report_dir = _write_report(
+        report_root,
+        "air_report",
+        '观察一：榆林"量大价低"\n',
+    )
+    renderer = QuartoReportRenderer(report_root=report_root)
+
+    def fail_reference_doc_setup():
+        raise RuntimeError("reference doc setup failed")
+
+    monkeypatch.setattr(
+        renderer_module,
+        "ensure_government_reference_docx",
+        fail_reference_doc_setup,
+    )
+
+    with pytest.raises(RuntimeError, match="reference doc setup failed"):
+        renderer.render_docx("air_report")
+
+    assert list(report_dir.glob("report_docx_render*.qmd")) == []
+
+
 def test_preview_renders_normalized_package_qmd_without_source_overwrite(tmp_path):
     report_root = tmp_path / "reports"
     report_dir = _write_report(
