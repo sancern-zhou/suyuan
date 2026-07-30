@@ -182,6 +182,80 @@ class LLMService:
                 self._schedule_anthropic_client_close(temporary_client)
 
     @contextmanager
+    def use_provider_chain(
+        self,
+        provider: str,
+        model: Optional[str] = None,
+        fallbacks: Optional[str] = None,
+    ):
+        """Temporarily inherit an explicit provider/model fallback chain."""
+        selected_provider = (provider or "").strip().lower()
+        if not selected_provider:
+            yield
+            return
+
+        token = _llm_request_state.set({})
+        try:
+            state = _llm_request_state.get()
+            if state is not None:
+                state["selection_source"] = "inherited_chain"
+            self.provider = selected_provider
+            self._load_provider_config()
+            if model:
+                self.model = model
+            self.request_fallbacks = fallbacks
+            logger.info(
+                "llm_request_provider_chain_inherited",
+                provider=self.provider,
+                model=self.model,
+                fallbacks=self.request_fallbacks,
+            )
+            yield
+        finally:
+            temporary_client = self.anthropic_client
+            _llm_request_state.reset(token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
+
+    def resolve_model_chain(
+        self,
+        auto_profile: Optional[str] = None,
+    ) -> Tuple[str, str, Optional[str]]:
+        """Resolve the configured priority chain without opening a request context."""
+        active_state = _llm_request_state.get()
+        if (
+            active_state is not None
+            and active_state.get("selection_source") != "tier"
+            and (active_state.get("provider") or active_state.get("model"))
+        ):
+            return self.provider, self.model, self.request_fallbacks
+
+        profile = (auto_profile or "").strip().lower()
+        profile_config = {
+            "multimodal": getattr(settings, "llm_multimodal_models", "") or "",
+        }.get(profile)
+        if profile_config and profile_config.strip():
+            candidates = [
+                candidate
+                for candidate in parse_fallback_candidates("", "", profile_config)
+                if candidate.provider
+            ]
+            if candidates:
+                primary = candidates[0]
+                fallback_items = [
+                    f"{candidate.provider}/{candidate.model}"
+                    if candidate.model
+                    else candidate.provider
+                    for candidate in candidates[1:]
+                ]
+                return (
+                    primary.provider,
+                    primary.model or "",
+                    ",".join(fallback_items),
+                )
+        return self.provider, self.model, self.request_fallbacks
+
+    @contextmanager
     def use_model_tier(self, model_tier: Optional[str]):
         """Temporarily select the primary model for the current async request."""
         tier = (model_tier or "").strip().lower()

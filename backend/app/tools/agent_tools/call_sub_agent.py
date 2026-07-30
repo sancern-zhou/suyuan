@@ -11,6 +11,7 @@ Session支持：
 - 传入session_id则继续已有对话
 """
 
+from contextlib import nullcontext
 from typing import Dict, Any, Literal, Optional, List
 import structlog
 from datetime import datetime
@@ -313,20 +314,49 @@ class CallSubAgentTool(LLMTool):
                 tool_registry=tool_executor.tool_registry if tool_executor else None  # ✅ 传递工具注册表
             )
 
+            # 子Agent必须继承父Agent本次请求已经选定的完整模型优先级链。
+            # 先快照再进入新上下文，避免子Agent的 Auto 多模态 profile 重选模型链。
+            parent_llm_service = getattr(llm_planner, "llm_service", None)
+            child_planner = getattr(sub_agent, "planner", None)
+            child_llm_service = getattr(child_planner, "llm_service", None)
+            model_chain_context = nullcontext()
+            if parent_llm_service is not None and child_llm_service is not None:
+                inherited_chain = getattr(tool_executor, "llm_model_chain", None)
+                if inherited_chain:
+                    parent_provider, parent_model, parent_fallbacks = inherited_chain
+                else:
+                    parent_provider = parent_llm_service.provider
+                    parent_model = parent_llm_service.model
+                    parent_fallbacks = parent_llm_service.request_fallbacks
+                model_chain_context = child_llm_service.use_provider_chain(
+                    parent_provider,
+                    parent_model,
+                    parent_fallbacks,
+                )
+                logger.info(
+                    "sub_agent_model_chain_inherited",
+                    parent_mode=parent_mode,
+                    target_mode=target_mode,
+                    provider=parent_provider,
+                    model=parent_model,
+                    fallbacks=parent_fallbacks,
+                )
+
             # 5. 执行子Agent（传入所有必要参数）
             # ✅ 双重保障机制（参考Hermes）：
             #   - 系统提示（assistant_prompt.py已包含关键要求）
             #   - 用户消息（effective_goal）仍是纯净的原始任务
             result_events = []
-            async for event in sub_agent.analyze(
-                user_query=effective_goal,  # ✅ 纯净的原始任务（Hermes方案）
-                session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
-                manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
-                enhance_with_history=True,  # ✅ 启用记忆增强
-                initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
-                user_identifier=None  # ⚠️ 使用模式专属记忆（不跨模式共享）
-            ):
-                result_events.append(event)
+            with model_chain_context:
+                async for event in sub_agent.analyze(
+                    user_query=effective_goal,  # ✅ 纯净的原始任务（Hermes方案）
+                    session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
+                    manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
+                    enhance_with_history=True,  # ✅ 启用记忆增强
+                    initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
+                    user_identifier=None  # ⚠️ 使用模式专属记忆（不跨模式共享）
+                ):
+                    result_events.append(event)
 
             # 7. 提取最终结果
             final_result = self._extract_final_result(result_events)
@@ -378,13 +408,18 @@ class CallSubAgentTool(LLMTool):
             if "reasoning" in final_result.get("data", {}):
                 enhanced_metadata["reasoning"] = final_result["data"]["reasoning"]
 
+            succeeded = final_result["status"] == "success"
             return {
-                "status": "success",
-                "success": True,
+                "status": final_result["status"],
+                "success": succeeded,
                 "result": final_result["answer"],  # ✅ LLM的最终答案（最重要）
                 "data": structured_data,
                 "metadata": enhanced_metadata,
-                "summary": f"{self._get_mode_name(target_mode)}已完成任务"
+                "summary": (
+                    f"{self._get_mode_name(target_mode)}已完成任务"
+                    if succeeded
+                    else f"{self._get_mode_name(target_mode)}执行失败"
+                )
             }
 
         except Exception as e:
