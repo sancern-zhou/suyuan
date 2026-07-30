@@ -131,8 +131,8 @@ class GetJiangxiNoiseDataTool(LLMTool):
         function_schema = {
             "name": "get_jiangxi_noise_data",
             "description": (
-                "查询江西省噪声监测数据。支持站点小时值、站点日均值和城市小时聚合值；"
-                "城市日均接口暂未开放。无时区时间按北京时间解释，单次范围不超过30天。"
+                "查询江西省噪声监测数据。支持站点小时值、站点日均值和城市小时聚合值。"
+                "无时区时间按北京时间解释，单次范围不超过30天。"
             ),
             "parameters": {
                 "type": "object",
@@ -215,8 +215,8 @@ class GetJiangxiNoiseDataTool(LLMTool):
             raise ToolInputError("invalid_granularity", "granularity 必须是 hour 或 day")
         if scope == "city" and granularity == "day":
             raise ToolInputError(
-                "unsupported_city_day",
-                "城市日均接口暂未开放，请等待平台提供准确信息",
+                "invalid_granularity",
+                "城市查询的 granularity 只能是 hour",
             )
         if review_status not in REVIEW_STATUS_DATA_TYPE:
             raise ToolInputError(

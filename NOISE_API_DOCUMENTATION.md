@@ -25,8 +25,6 @@
 | 站点日均值 | `/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync` | 已验证 |
 | 城市小时聚合值 | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` | 已验证 |
 
-城市日均接口在 2026-07-30 的验证中返回 HTTP 404，当前客户端、工具 Schema 和项目能力均不开放。待平台提供准确端点及参数后再实现。
-
 区县接口、自动翻页、文件导出和站点名称模糊查询也不属于当前工具范围。
 
 ## 3. 运行配置
