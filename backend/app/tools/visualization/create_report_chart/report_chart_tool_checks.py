@@ -510,6 +510,97 @@ async def test_line_chart_thins_dense_daily_x_axis_labels_for_word_reports():
 
 
 @pytest.mark.asyncio
+async def test_text_layout_thins_measured_x_tick_collisions_and_preserves_endpoints():
+    labels = [f"第{index}个非常长的横坐标分类名称" for index in range(10)]
+
+    result = await CreateReportChartTool().execute(
+        chart_id="measured_dense_x_ticks_case",
+        chart_type="line",
+        title="密集横坐标",
+        data={"labels": labels, "values": list(range(10))},
+    )
+
+    layout = result["data"]["metadata"]["text_layout"]
+    omitted_ticks = [item["label"] for item in layout["omitted_items"] if item["role"] == "x_tick"]
+
+    assert result["success"] is True
+    assert layout["initial_conflicts"] > 0
+    assert layout["final_conflicts"] == 0
+    assert omitted_ticks
+    assert labels[0] not in omitted_ticks
+    assert labels[-1] not in omitted_ticks
+    assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
+async def test_text_layout_reaches_title_font_floor_before_declaring_unresolved():
+    result = await CreateReportChartTool().execute(
+        chart_id="long_title_font_floor_case",
+        chart_type="line",
+        title="超长正式报告图表标题" * 4,
+        data={"labels": ["A", "B", "C"], "values": [1, 2, 3]},
+        output_context="screen",
+    )
+
+    layout = result["data"]["metadata"]["text_layout"]
+
+    assert result["success"] is True
+    assert layout["initial_conflicts"] > 0
+    assert layout["actions"]["font_reductions"] > 3
+    assert layout["final_conflicts"] == 0
+    assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
+async def test_text_layout_can_omit_unreadable_x_tick_labels_after_reaching_font_floor():
+    labels = ["第一个极端超长横坐标端点标签" * 3, "第二个极端超长横坐标端点标签" * 3]
+
+    result = await CreateReportChartTool().execute(
+        chart_id="two_dense_x_ticks_case",
+        chart_type="line",
+        title="两个端点",
+        data={"labels": labels, "values": [1, 2]},
+        output_context="screen",
+    )
+
+    layout = result["data"]["metadata"]["text_layout"]
+    omitted = [item for item in layout["omitted_items"] if item["role"] == "x_tick"]
+
+    assert result["success"] is True
+    assert layout["initial_conflicts"] > 0
+    assert layout["final_conflicts"] == 0
+    assert {item["label"] for item in omitted} == set(labels)
+
+
+@pytest.mark.asyncio
+async def test_text_layout_omits_overlapping_reference_labels_but_keeps_reference_lines():
+    reference_lines = [
+        {"axis": "y", "value": 1.500 + index * 0.001, "label": f"参考线{index + 1}"}
+        for index in range(5)
+    ]
+
+    result = await CreateReportChartTool().execute(
+        chart_id="dense_reference_labels_case",
+        chart_type="line",
+        title="密集参考线",
+        data={"labels": ["A", "B", "C"], "values": [1.4, 1.6, 1.5]},
+        options={"reference_lines": reference_lines},
+    )
+
+    layout = result["data"]["metadata"]["text_layout"]
+    omitted = [item for item in layout["omitted_items"] if item["role"] == "reference_label"]
+
+    assert result["success"] is True
+    assert result["data"]["metadata"]["reference_line_count"] == len(reference_lines)
+    assert layout["initial_conflicts"] > 0
+    assert layout["final_conflicts"] == 0
+    assert layout["actions"]["omitted_reference_labels"] == len(omitted)
+    assert omitted
+    assert omitted == sorted(omitted, key=lambda item: item["label"], reverse=True)
+    assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
 async def test_stacked_area_renders_multi_pollutant_contribution_trend():
     result = await CreateReportChartTool().execute(
         chart_id="stacked_area_case",
@@ -839,6 +930,73 @@ async def test_pie_small_slices_use_outside_label_strategy_metadata():
 
 
 @pytest.mark.asyncio
+async def test_dense_pie_layout_omits_smallest_annotations_without_residual_overlap():
+    labels = [f"细分类项目{index:02d}文字说明" for index in range(1, 17)]
+    values = list(range(1, 17))
+
+    result = await CreateReportChartTool().execute(
+        chart_id="dense_pie_text_layout_case",
+        chart_type="pie",
+        title="细分类饼图",
+        data={"labels": labels, "values": values},
+    )
+
+    layout = result["data"]["metadata"]["text_layout"]
+    omitted = [item for item in layout["omitted_items"] if item["role"] == "pie_label"]
+
+    assert result["success"] is True
+    assert layout["status"] == "degraded", layout
+    assert layout["initial_conflicts"] > 0
+    assert layout["final_conflicts"] == 0
+    assert omitted
+    assert [item["share"] for item in omitted] == sorted(item["share"] for item in omitted)
+    assert labels[-1] not in {item["label"] for item in omitted}
+    assert len(layout["full_label_mapping"]) == len(labels)
+    assert [item["index"] for item in layout["pie_slices"]] == list(range(len(labels)))
+    assert [item["label"] for item in layout["pie_slices"]] == labels
+    assert [item["value"] for item in layout["pie_slices"]] == values
+    assert [item["share"] for item in layout["pie_slices"]] == pytest.approx(
+        [value / sum(values) for value in values]
+    )
+    assert sum(item["omitted"] for item in layout["pie_slices"]) == len(omitted)
+    assert all(item["visible"] != item["omitted"] for item in layout["pie_slices"])
+    assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
+async def test_dense_legend_layout_reflows_and_omits_overflow_items_deterministically():
+    series = [
+        {
+            "name": f"污染物超长名称监测系列{index:02d}",
+            "values": [index, index + 1, index + 2, index + 3],
+        }
+        for index in range(1, 31)
+    ]
+
+    result = await CreateReportChartTool().execute(
+        chart_id="dense_legend_text_layout_case",
+        chart_type="line",
+        title="多系列趋势",
+        data={"labels": ["一月", "二月", "三月", "四月"], "series": series},
+    )
+
+    layout = result["data"]["metadata"]["text_layout"]
+    omitted_legend = [item for item in layout["omitted_items"] if item["role"] == "legend"]
+
+    assert result["success"] is True
+    assert layout["status"] == "degraded", layout
+    assert layout["final_conflicts"] == 0
+    assert layout["actions"]["legend_reflows"] == 1
+    assert layout["actions"]["omitted_legend_items"] == len(omitted_legend)
+    assert omitted_legend
+    assert omitted_legend == sorted(
+        omitted_legend,
+        key=lambda item: item["label"],
+    )
+    assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
 async def test_multi_chart_request_is_split_into_separate_report_images():
     result = await CreateReportChartTool().execute(
         chart_id="split_case",
@@ -854,6 +1012,10 @@ async def test_multi_chart_request_is_split_into_separate_report_images():
 
     assert result["success"] is True
     assert result["data"]["metadata"]["render_strategy"] == "split_images"
+    assert all(
+        child["text_layout"]["status"] in {"resolved", "degraded"}
+        for child in result["data"]["metadata"]["child_charts"]
+    )
     assert "split_complex_multi_chart_request" in result["data"]["layout_warnings"]
     assert len(result["visuals"]) == 2
     for visual in result["visuals"]:
