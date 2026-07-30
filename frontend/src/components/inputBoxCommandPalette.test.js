@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
+import * as commandPalette from './inputBoxCommandPalette.js'
+
+const {
   buildComposerPayload,
   findComposerTrigger,
   normalizeConversationResources,
   normalizeSkills,
   shouldClearAcceptedComposer
-} from './inputBoxCommandPalette.js'
+} = commandPalette
 
 test('detects slash and at triggers only at token boundaries', () => {
   assert.deepEqual(findComposerTrigger('请使用 /趋势', 7), {
@@ -102,6 +104,55 @@ test('builds structured context refs and safe message attachments', () => {
     knowledgeBaseIds: ['kb-1']
   })
   assert.equal('attachments' in payload, false)
+})
+
+test('preserves server active contexts while authoritative restore state is unknown', () => {
+  const payload = buildComposerPayload({
+    query: '继续分析',
+    skill: { id: 'stale-local-skill', name: '本地旧选择' },
+    files: [],
+    activeContextsLoaded: false,
+    activeContextsDirty: false
+  })
+
+  assert.equal(payload.activeContexts, null)
+  assert.deepEqual(payload.skillIds, [])
+})
+
+test('sends an explicit replacement after the user edits unknown active contexts', () => {
+  const payload = buildComposerPayload({
+    query: '继续分析',
+    skill: { id: 'trend', name: '趋势分析' },
+    files: [],
+    activeContextsLoaded: false,
+    activeContextsDirty: true
+  })
+
+  assert.deepEqual(payload.activeContexts, [
+    { type: 'skill', id: 'trend', label: '趋势分析' }
+  ])
+})
+
+test('does not apply an in-flight restore after the active contexts were edited', () => {
+  assert.equal(commandPalette.shouldApplyActiveContextRestore?.({
+    restoreEditVersion: 2,
+    currentEditVersion: 3,
+    dirty: true
+  }), false)
+})
+
+test('accepts an explicit replacement independently from unrelated composer edits', () => {
+  assert.deepEqual(commandPalette.resolveAcceptedActiveContextState?.({
+    explicit: true,
+    sentSignature: 'skill:trend',
+    currentSignature: 'skill:trend',
+    dirty: true,
+    currentEditVersion: 4
+  }), {
+    loaded: true,
+    dirty: false,
+    editVersion: 5
+  })
 })
 
 test('only clears the composer if the accepted draft is still current', () => {

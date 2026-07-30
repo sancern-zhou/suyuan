@@ -79,13 +79,38 @@ export function removeComposerTrigger(value, trigger, cursorPosition) {
   }
 }
 
+export function shouldApplyActiveContextRestore({
+  restoreEditVersion,
+  currentEditVersion,
+  dirty
+}) {
+  return !dirty && restoreEditVersion === currentEditVersion
+}
+
+export function resolveAcceptedActiveContextState({
+  explicit,
+  sentSignature,
+  currentSignature,
+  dirty,
+  currentEditVersion = 0
+}) {
+  if (!explicit) return null
+  return {
+    loaded: true,
+    dirty: sentSignature === currentSignature ? false : dirty,
+    editVersion: currentEditVersion + 1
+  }
+}
+
 export function buildComposerPayload({
   query,
   skill,
   files,
   agentMode,
   modelTier,
-  knowledgeBaseIds
+  knowledgeBaseIds,
+  activeContextsLoaded = true,
+  activeContextsDirty = false
 }) {
   const turnFiles = (files || []).filter(file => !file.pinnedPolicy)
   const messageAttachments = turnFiles.map(file => ({
@@ -95,15 +120,17 @@ export function buildComposerPayload({
     ...(file.mimeType ? { mime_type: file.mimeType } : {}),
     ...(file.url ? { url: file.url } : {})
   }))
+  const activeContexts = [
+    ...(skill ? [{ type: 'skill', id: skill.id, label: skill.name }] : []),
+    ...(files || [])
+      .filter(file => file.pinnedPolicy)
+      .map(file => ({ type: 'fixed_policy', id: file.id, label: file.name }))
+  ]
+  const activeContextsExplicit = activeContextsLoaded || activeContextsDirty
   return {
     query: String(query || ''),
-    skillIds: skill ? [skill.id] : [],
-    activeContexts: [
-      ...(skill ? [{ type: 'skill', id: skill.id, label: skill.name }] : []),
-      ...(files || [])
-        .filter(file => file.pinnedPolicy)
-        .map(file => ({ type: 'fixed_policy', id: file.id, label: file.name }))
-    ],
+    skillIds: activeContextsExplicit && skill ? [skill.id] : [],
+    activeContexts: activeContextsExplicit ? activeContexts : null,
     contextRefs: turnFiles.map(file => ({
       type: 'conversation_file',
       resource_id: file.id,
