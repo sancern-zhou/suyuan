@@ -44,9 +44,12 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
     validate_args(args)
     async with async_session() as session:
         repository = PermitRepository(session)
+        effective_start_page = args.start_page
+        if args.phase == "list" and args.resume:
+            effective_start_page = await repository.next_list_page(start_page=args.start_page)
         run_row = await repository.create_run(
             phase=args.phase,
-            start_page=args.start_page if args.phase == "list" else None,
+            start_page=effective_start_page if args.phase == "list" else None,
             max_pages=args.max_pages,
             max_licenses=args.max_licenses,
         )
@@ -66,12 +69,12 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 )
                 if args.phase == "list":
                     await crawler.crawl_list(
-                        start_page=args.start_page,
+                        start_page=effective_start_page,
                         max_pages=args.max_pages,
                         run=run_row,
                     )
                 else:
-                    await crawler.crawl_details(
+                    run_row = await crawler.crawl_details(
                         max_licenses=args.max_licenses,
                         resume=args.resume,
                         run=run_row,

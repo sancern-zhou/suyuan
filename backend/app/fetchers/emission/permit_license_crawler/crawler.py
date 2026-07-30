@@ -71,7 +71,10 @@ class XuchangPermitCrawler:
             if page_no >= page.total_pages:
                 break
 
-    async def crawl_details(self, *, max_licenses: int, resume: bool, run: PermitCrawlRun) -> None:
+    async def crawl_details(
+        self, *, max_licenses: int, resume: bool, run: PermitCrawlRun
+    ) -> PermitCrawlRun:
+        run_id = run.id
         rows = await self.repository.list_pending_licenses(limit=max_licenses, resume=resume)
         for license_row in rows:
             license_id = license_row.id
@@ -85,6 +88,7 @@ class XuchangPermitCrawler:
                 raise
             except Exception as exc:
                 await self.repository.session.rollback()
+                run = await self.repository.session.get(PermitCrawlRun, run_id)
                 license_row = await self.repository.session.get(PermitLicense, license_id)
                 await self.repository.record_failure(
                     run,
@@ -95,6 +99,7 @@ class XuchangPermitCrawler:
                 )
                 run.failure_count += 1
                 await self.repository.session.commit()
+        return run
 
     async def _crawl_one_detail(self, license_row: PermitLicense) -> None:
         response = await self.client.get(license_row.detail_url, headers={"Referer": LIST_URL})
@@ -120,15 +125,23 @@ class XuchangPermitCrawler:
             latest_business_type=business_type,
             source_html_sha256=hashlib.sha256(response.content).hexdigest(),
         )
+        await self.repository.session.commit()
+        missing_documents: list[str] = []
         if detail.original_url:
             await self._download_original(license_row, directory, detail.original_url)
+        else:
+            missing_documents.append("排污许可证正本")
         if detail.copy_url:
             await self._download_copy(license_row, directory, detail.copy_url)
+        else:
+            missing_documents.append("排污许可证副本")
+        if missing_documents:
+            raise ValueError(f"detail page is missing: {', '.join(missing_documents)}")
         license_row.documents_status = "complete"
 
     async def _download_original(self, license_row: PermitLicense, directory: str, url: str) -> None:
         existing = await self.repository.get_complete_document(license_row.id, "original")
-        if existing and (self.storage.root / existing.relative_path).is_file():
+        if existing and _stored_document_is_valid(self.storage, existing):
             return
         response = await self.client.get(url, headers={"Referer": license_row.detail_url})
         kind = detect_document_kind(response.headers.get("content-type", ""), response.content)
@@ -150,7 +163,7 @@ class XuchangPermitCrawler:
 
     async def _download_copy(self, license_row: PermitLicense, directory: str, url: str) -> None:
         existing_pdf = await self.repository.get_complete_document(license_row.id, "copy_merged_pdf")
-        if existing_pdf and (self.storage.root / existing_pdf.relative_path).is_file():
+        if existing_pdf and _stored_document_is_valid(self.storage, existing_pdf):
             return
         response = await self.client.get(url, headers={"Referer": license_row.detail_url})
         kind = detect_document_kind(response.headers.get("content-type", ""), response.content)
@@ -174,7 +187,7 @@ class XuchangPermitCrawler:
             existing = await self.repository.get_complete_document(
                 license_row.id, "copy_page", page_no
             )
-            if existing and (self.storage.root / existing.relative_path).is_file():
+            if existing and _stored_document_is_valid(self.storage, existing):
                 page_paths.append(self.storage.root / existing.relative_path)
                 continue
             page_response = await self.client.get(page_url, headers={"Referer": url})
@@ -223,3 +236,14 @@ def _hidden_value(html: str, name: str) -> str:
 
 def _image_suffix(content: bytes) -> str:
     return ".jpg" if content.startswith(b"\xff\xd8\xff") else ".png"
+
+
+def _stored_document_is_valid(storage: FileStorage, document: object) -> bool:
+    relative_path = getattr(document, "relative_path", "")
+    expected_size = getattr(document, "size_bytes", -1)
+    expected_sha256 = getattr(document, "sha256", "")
+    try:
+        stored = storage.describe(relative_path)
+    except (FileNotFoundError, OSError, ValueError):
+        return False
+    return stored.size_bytes == expected_size and stored.sha256 == expected_sha256

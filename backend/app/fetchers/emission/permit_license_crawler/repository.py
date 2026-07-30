@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .detail_parser import PermitVersion
@@ -88,6 +88,10 @@ class PermitRepository:
             .limit(limit)
         )
         return list(result)
+
+    async def next_list_page(self, *, start_page: int) -> int:
+        last_page = await self.session.scalar(select(func.max(PermitLicense.list_page_no)))
+        return max(start_page, (last_page or 0) + 1)
 
     async def save_detail(
         self,
