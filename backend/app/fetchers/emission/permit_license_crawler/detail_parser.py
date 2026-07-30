@@ -33,6 +33,7 @@ class PermitVersion:
 
 @dataclass(frozen=True)
 class PermitDetail:
+    production_site_address: str | None
     pollution: dict[str, str | None]
     versions: tuple[PermitVersion, ...]
     original_url: str
@@ -52,6 +53,7 @@ class _DetailParser(HTMLParser):
         self._link_href = ""
         self._link_text: list[str] = []
         self.links: list[tuple[str, str]] = []
+        self.all_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
@@ -89,6 +91,7 @@ class _DetailParser(HTMLParser):
             self._link_text = []
 
     def handle_data(self, data: str) -> None:
+        self.all_text.append(data)
         if self.cell_tag:
             self._cell_text.append(data)
         if self._link_href:
@@ -115,6 +118,12 @@ def _validity(value: str) -> tuple[date | None, date | None]:
 def parse_detail_page(html: str) -> PermitDetail:
     parser = _DetailParser()
     parser.feed(html)
+    visible_text = " ".join("".join(parser.all_text).split())
+    address_match = re.search(
+        r"生产经营场所地址\s*[：:]\s*(.*?)\s*(?=行业类别\s*[：:]|所在地区\s*[：:]|发证机关\s*[：:]|$)",
+        visible_text,
+    )
+    production_site_address = address_match.group(1).strip() if address_match else None
     pollution: dict[str, str | None] = {value: None for value in POLLUTION_LABELS.values()}
     for row in parser.pollution_rows:
         if len(row) < 2:
@@ -154,6 +163,7 @@ def parse_detail_page(html: str) -> PermitDetail:
         elif "排污许可证副本" in text:
             copy_url = urljoin(BASE_URL, href)
     return PermitDetail(
+        production_site_address=production_site_address,
         pollution=pollution,
         versions=tuple(versions),
         original_url=original_url,

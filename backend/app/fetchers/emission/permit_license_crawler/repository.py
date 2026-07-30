@@ -113,6 +113,7 @@ class PermitRepository:
         *,
         versions: list[PermitVersion] | tuple[PermitVersion, ...],
         pollution: dict[str, str | None],
+        production_site_address: str | None,
         current_status: str,
         latest_business_type: str | None,
         source_html_sha256: str,
@@ -149,6 +150,7 @@ class PermitRepository:
                 setattr(detail, key, value)
         license_row.current_status = current_status
         license_row.latest_business_type = latest_business_type
+        license_row.production_site_address = production_site_address
         license_row.detail_status = "complete"
         await self.session.flush()
 

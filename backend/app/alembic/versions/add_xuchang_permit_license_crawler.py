@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 
+from sqlalchemy import text
+
 from app.db.database import engine
 from app.fetchers.emission.permit_license_crawler.models import PERMIT_TABLES
 
@@ -21,6 +23,12 @@ def _create_tables(sync_connection) -> None:
 async def upgrade() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(_create_tables)
+        await connection.execute(
+            text(
+                "ALTER TABLE permit_licenses "
+                "ADD COLUMN IF NOT EXISTS production_site_address TEXT"
+            )
+        )
 
 
 async def main() -> None:

@@ -124,6 +124,7 @@ class XuchangPermitCrawler:
             license_row,
             versions=detail.versions,
             pollution=detail.pollution,
+            production_site_address=detail.production_site_address,
             current_status=status,
             latest_business_type=business_type,
             source_html_sha256=hashlib.sha256(response.content).hexdigest(),

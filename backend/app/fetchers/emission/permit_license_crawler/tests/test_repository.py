@@ -99,6 +99,7 @@ async def test_detail_save_replaces_versions_and_preserves_field_semantics(sessi
         license_row,
         versions=versions,
         pollution=pollution,
+        production_site_address="禹州市花石镇徐庄村",
         current_status="valid",
         latest_business_type="重新申请",
         source_html_sha256="a" * 64,
@@ -107,6 +108,7 @@ async def test_detail_save_replaces_versions_and_preserves_field_semantics(sessi
         license_row,
         versions=versions,
         pollution=pollution,
+        production_site_address="禹州市花石镇徐庄村",
         current_status="valid",
         latest_business_type="重新申请",
         source_html_sha256="b" * 64,
@@ -120,6 +122,7 @@ async def test_detail_save_replaces_versions_and_preserves_field_semantics(sessi
     assert detail.air_emission_pattern is None
     assert detail.emission_rights_info == "/"
     assert detail.source_html_sha256 == "b" * 64
+    assert license_row.production_site_address == "禹州市花石镇徐庄村"
     assert license_row.detail_status == "complete"
 
 
