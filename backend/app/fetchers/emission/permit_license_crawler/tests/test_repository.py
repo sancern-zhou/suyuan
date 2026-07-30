@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.fetchers.emission.permit_license_crawler.detail_parser import PermitVersion
 from app.fetchers.emission.permit_license_crawler.list_parser import PermitListRecord
 from app.fetchers.emission.permit_license_crawler.models import (
+    PermitCrawlFailure,
+    PermitCrawlRun,
     PermitDocument,
     PermitLicense,
     PermitLicenseVersion,
@@ -21,10 +23,12 @@ from app.fetchers.emission.permit_license_crawler.repository import PermitReposi
 async def session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     tables = [
+        PermitCrawlRun.__table__,
         PermitLicense.__table__,
         PermitLicenseVersion.__table__,
         PermitPollutionDetail.__table__,
         PermitDocument.__table__,
+        PermitCrawlFailure.__table__,
     ]
     async with engine.begin() as connection:
         await connection.run_sync(lambda sync: PermitLicense.metadata.create_all(sync, tables=tables))
