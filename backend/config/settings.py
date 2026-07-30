@@ -607,6 +607,46 @@ class Settings(BaseSettings):
         description="Max concurrent tender LLM detail requests for the secondary provider"
     )
 
+    # qianlima_realtime_tender 工具反爬配置
+    qianlima_realtime_max_retries: int = Field(
+        default=3,
+        description="qianlima_realtime_tender 工具最大重试次数"
+    )
+    qianlima_realtime_base_delay_seconds: float = Field(
+        default=1.0,
+        description="qianlima_realtime_tender 工具重试基础延迟(秒)"
+    )
+    qianlima_realtime_max_delay_seconds: float = Field(
+        default=30.0,
+        description="qianlima_realtime_tender 工具重试最大延迟(秒)"
+    )
+    qianlima_realtime_request_delay_ms: int = Field(
+        default=800,
+        description="qianlima_realtime_tender 工具请求间延迟(毫秒)"
+    )
+    qianlima_realtime_detail_min_delay_seconds: float = Field(
+        default=1.0,
+        description="qianlima_realtime_tender 工具详情页最小延迟(秒)"
+    )
+    qianlima_realtime_detail_max_delay_seconds: float = Field(
+        default=3.0,
+        description="qianlima_realtime_tender 工具详情页最大延迟(秒)"
+    )
+    qianlima_realtime_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description="qianlima_realtime_tender 工具最大并发数"
+    )
+    qianlima_realtime_enable_search_delay: bool = Field(
+        default=True,
+        description="qianlima_realtime_tender 工具启用搜索页延迟"
+    )
+    qianlima_realtime_enable_detail_delay: bool = Field(
+        default=True,
+        description="qianlima_realtime_tender 工具启用详情页延迟"
+    )
+
     # SQL Server Configuration (History Database)
     sqlserver_host: str = Field(
         default="180.184.30.94",
