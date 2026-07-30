@@ -31,6 +31,7 @@ class ContextDiagnostics:
         context_tokens: Dict[str, Any],
         tool_schemas: List[Dict[str, Any]],
         conversation_history: Optional[List[Dict[str, Any]]],
+        context_layers: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Return a structured size report for the current planner call."""
         schema_items = self._analyze_tool_schemas(tool_schemas)
@@ -59,6 +60,7 @@ class ContextDiagnostics:
             "top_tool_schemas": schema_items[: self.top_n],
             "top_history_messages": message_items[: self.top_n],
             "top_tool_results": tool_result_items[: self.top_n],
+            "context_layers": list(context_layers or []),
         }
 
     def log_report(
@@ -69,6 +71,7 @@ class ContextDiagnostics:
         context_tokens: Dict[str, Any],
         tool_schemas: List[Dict[str, Any]],
         conversation_history: Optional[List[Dict[str, Any]]],
+        context_layers: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Build and emit diagnostics as a single structured log entry."""
         report = self.build_report(
@@ -77,6 +80,7 @@ class ContextDiagnostics:
             context_tokens=context_tokens,
             tool_schemas=tool_schemas,
             conversation_history=conversation_history,
+            context_layers=context_layers,
         )
         logger.info("context_diagnostics", **report)
         return report
