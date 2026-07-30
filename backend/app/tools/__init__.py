@@ -327,6 +327,24 @@ def create_global_tool_registry() -> ToolRegistry:
         except ImportError as e:
             logger.warning("tool_import_failed", tool="get_sentinel5p_image", error=str(e))
 
+    # 江西项目专属噪声数据查询工具
+    if is_project_tool_enabled(
+        context,
+        "jiangxi-noise",
+        "get_jiangxi_noise_data",
+    ):
+        try:
+            from app.tools.query.query_jiangxi_noise.tool import GetJiangxiNoiseDataTool
+
+            registry.register(GetJiangxiNoiseDataTool(), priority=48)
+            logger.info("tool_loaded", tool="get_jiangxi_noise_data")
+        except ImportError as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="get_jiangxi_noise_data",
+                error=str(e),
+            )
+
     # XcAiDb SQL Server 城市历史数据查询工具
     try:
         from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool

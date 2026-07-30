@@ -1,0 +1,21 @@
+schema_version: 1
+project: jiangxi
+modules:
+  - legacy
+  - jiangxi-noise
+frontend:
+  theme: default
+  brand_name: 江西省噪声智能分析平台
+  features: {}
+  agent_modes:
+    - query
+    - expert
+    - report
+    - chart
+  agent_platform_layout: environment-grid
+backend:
+  tools:
+    - get_jiangxi_noise_data
+knowledge:
+  collections: []
+scheduled_tasks: []
