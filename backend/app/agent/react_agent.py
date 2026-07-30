@@ -591,6 +591,9 @@ class ReActAgent:
 
         try:
             auto_profile = self._select_auto_profile(manual_mode)
+            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain(
+                auto_profile=auto_profile,
+            )
             # 使用标准 ReAct 循环（LLM 自主决策调用工具）
             # 工具池包括：
             # - 原子工具（基础能力）

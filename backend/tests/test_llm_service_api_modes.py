@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -222,6 +223,88 @@ def test_multimodal_profile_takes_priority_over_model_tier(monkeypatch, tier):
             assert service.request_fallbacks == "mimo/mimo-v2.5"
 
         assert service.provider == "deepseek"
+
+
+def test_inherited_chain_takes_priority_over_multimodal_profile(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(service, "_load_provider_config", lambda: None)
+
+    with service.use_provider_chain(
+        "bailian",
+        "qwen3.8-max-preview",
+        "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+    ):
+        with service.use_auto_profile("multimodal"):
+            assert service.resolve_model_chain("multimodal") == (
+                "bailian",
+                "qwen3.8-max-preview",
+                "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+            )
+
+
+@pytest.mark.asyncio
+async def test_call_sub_agent_inherits_chain_and_propagates_failure(monkeypatch):
+    from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
+
+    class RecordingService:
+        active_chain = None
+
+        @contextmanager
+        def use_provider_chain(self, provider, model, fallbacks):
+            self.active_chain = (provider, model, fallbacks)
+            try:
+                yield
+            finally:
+                self.active_chain = None
+
+    child_service = RecordingService()
+
+    class FakeReActAgent:
+        def __init__(self, **kwargs):
+            self.planner = SimpleNamespace(llm_service=child_service)
+
+        async def analyze(self, **kwargs):
+            assert child_service.active_chain == (
+                "bailian",
+                "qwen3.8-max-preview",
+                "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+            )
+            if False:
+                yield {}
+
+    monkeypatch.setattr("app.agent.react_agent.ReActAgent", FakeReActAgent)
+    tool = CallSubAgentTool()
+    monkeypatch.setattr(tool, "_update_session", lambda **kwargs: None)
+    tool_executor = SimpleNamespace(
+        tool_registry={},
+        llm_model_chain=(
+            "bailian",
+            "qwen3.8-max-preview",
+            "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+        ),
+    )
+    context = SimpleNamespace(
+        manual_mode="ops",
+        llm_planner=SimpleNamespace(
+            llm_service=SimpleNamespace(
+                provider="default",
+                model="default-model",
+                request_fallbacks=None,
+            )
+        ),
+        tool_executor=tool_executor,
+    )
+
+    result = await tool.execute(
+        context=context,
+        target_mode="ops",
+        goal="复核工单",
+        force_new_session=True,
+    )
+
+    assert result["status"] == "failed"
+    assert result["success"] is False
+    assert result["result"] == "子Agent未返回结果"
 
 
 def test_multimodal_profile_closes_temporary_client_on_exit(monkeypatch):
