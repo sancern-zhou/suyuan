@@ -17,6 +17,10 @@ from matplotlib import font_manager
 
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.tools.visualization.create_report_chart.text_layout import (
+    TextLayoutRegistry,
+    govern_text_layout,
+)
 
 
 WORD_TARGET_WIDTH_IN = 5.8
@@ -123,6 +127,7 @@ def _render_split_charts(
                 {
                     "chart_id": child.get("chart_id"),
                     "applied_chart_type": child.get("metadata", {}).get("applied_chart_type"),
+                    "text_layout": child.get("metadata", {}).get("text_layout"),
                 }
                 for child in child_results
             ],
@@ -168,6 +173,7 @@ def _render_single_chart(
         raise ChartDataError(f"不支持的 chart_type：{chart_type}。")
 
     fig, ax = _create_figure(output_context, style_profile)
+    text_registry = TextLayoutRegistry()
     _apply_fonts()
     metadata = {
         "requested_chart_type": chart_type,
@@ -187,7 +193,7 @@ def _render_single_chart(
     elif applied_chart_type == "scatter":
         draw_metadata = _draw_scatter(ax, title, data, options)
     elif applied_chart_type == "pie":
-        pie_warnings, pie_metadata = _draw_pie(ax, title, data, options)
+        pie_warnings, pie_metadata = _draw_pie(ax, title, data, options, text_registry)
         warnings.extend(pie_warnings)
         draw_metadata = pie_metadata
     elif applied_chart_type == "stacked_area":
@@ -212,19 +218,24 @@ def _render_single_chart(
 
     metadata.update(draw_metadata)
     warnings.extend(draw_metadata.get("layout_warnings", []))
-    option_warnings, option_metadata = _apply_common_options(ax, options)
+    option_warnings, option_metadata = _apply_common_options(ax, options, text_registry)
     warnings.extend(option_warnings)
     if "normalized_text" in option_metadata:
         metadata.setdefault("normalized_text", {}).update(option_metadata.pop("normalized_text"))
     metadata.update(option_metadata)
 
-    layout_warnings = _layout_warnings(fig)
-    warnings.extend(layout_warnings)
-
     try:
         fig.tight_layout(pad=1.1)
     except Exception:
         warnings.append("tight_layout_failed")
+
+    layout_warnings, text_layout_metadata = govern_text_layout(
+        fig,
+        text_registry,
+        output_context=output_context,
+    )
+    warnings.extend(layout_warnings)
+    metadata["text_layout"] = text_layout_metadata
 
     visual = _cache_figure(fig, chart_id or title, title)
     plt.close(fig)
@@ -509,7 +520,13 @@ def _draw_scatter(ax, title: str, data: Dict[str, Any], options: Dict[str, Any])
     return {"series_count": 1, "normalized_text": {"title": title}}
 
 
-def _draw_pie(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]):
+def _draw_pie(
+    ax,
+    title: str,
+    data: Dict[str, Any],
+    options: Dict[str, Any],
+    text_registry: TextLayoutRegistry,
+):
     labels = _string_list(data.get("labels") or [])
     labels = [str(normalize_matplotlib_label_text(label)) for label in labels]
     values = _number_list(data.get("values") or [])
@@ -528,13 +545,13 @@ def _draw_pie(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]):
     ax.axis("equal")
     title = str(normalize_matplotlib_label_text(title))
     ax.set_title(title, fontsize=_source_font(15), fontweight="bold", pad=14)
-    for wedge, label, share in zip(wedges, labels, shares):
+    for index, (wedge, label, value, share) in enumerate(zip(wedges, labels, values, shares)):
         angle = (wedge.theta2 + wedge.theta1) / 2
         x = math.cos(math.radians(angle))
         y = math.sin(math.radians(angle))
         text = f"{label} {share * 100:.1f}%"
         if outside:
-            ax.annotate(
+            annotation = ax.annotate(
                 text,
                 xy=(x * 0.85, y * 0.85),
                 xytext=(1.25 * (1 if x >= 0 else -1), 1.18 * y),
@@ -543,8 +560,45 @@ def _draw_pie(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]):
                 arrowprops={"arrowstyle": "-", "color": "#666", "lw": 0.8},
                 fontsize=_source_font(9.8),
             )
+            text_registry.register(
+                annotation,
+                role="pie_label",
+                domain=f"pie_labels:{'right' if x >= 0 else 'left'}",
+                priority=share,
+                payload={
+                    "index": index,
+                    "label": label,
+                    "value": value,
+                    "share": share,
+                    "placement": "outside",
+                    "side": 1 if x >= 0 else -1,
+                    "desired_y": 1.18 * y,
+                },
+            )
         else:
-            ax.text(0.62 * x, 0.62 * y, text, ha="center", va="center", fontsize=_source_font(9.8))
+            pie_text = ax.text(
+                0.62 * x,
+                0.62 * y,
+                text,
+                ha="center",
+                va="center",
+                fontsize=_source_font(9.8),
+            )
+            text_registry.register(
+                pie_text,
+                role="pie_label",
+                domain="pie_labels:inside",
+                priority=share,
+                payload={
+                    "index": index,
+                    "label": label,
+                    "value": value,
+                    "share": share,
+                    "placement": "inside",
+                    "side": 1 if x >= 0 else -1,
+                    "desired_y": 0.62 * y,
+                },
+            )
     metadata["normalized_text"] = {"title": title}
     return warnings, metadata
 
@@ -886,7 +940,11 @@ def _extract_labeled_series(data: Dict[str, Any], chart_type: str) -> tuple[List
     return labels, parsed
 
 
-def _apply_common_options(ax, options: Dict[str, Any]) -> tuple[List[str], Dict[str, Any]]:
+def _apply_common_options(
+    ax,
+    options: Dict[str, Any],
+    text_registry: TextLayoutRegistry,
+) -> tuple[List[str], Dict[str, Any]]:
     warnings: List[str] = []
     metadata: Dict[str, Any] = {}
 
@@ -925,11 +983,25 @@ def _apply_common_options(ax, options: Dict[str, Any]) -> tuple[List[str], Dict[
             if axis == "x":
                 ax.axvline(value, color=color, linestyle="--", linewidth=1, alpha=0.75)
                 if label:
-                    ax.text(value, 0.98, str(normalize_matplotlib_label_text(label)), transform=ax.get_xaxis_transform(), va="top", fontsize=_source_font(8.8), color=color)
+                    reference_text = ax.text(value, 0.98, str(normalize_matplotlib_label_text(label)), transform=ax.get_xaxis_transform(), va="top", fontsize=_source_font(8.8), color=color)
+                    text_registry.register(
+                        reference_text,
+                        role="reference_label",
+                        domain="reference_labels",
+                        priority=80.0,
+                        payload={"label": str(label), "axis": "x", "value": value},
+                    )
             else:
                 ax.axhline(value, color=color, linestyle="--", linewidth=1, alpha=0.75)
                 if label:
-                    ax.text(0.99, value, str(normalize_matplotlib_label_text(label)), transform=ax.get_yaxis_transform(), ha="right", va="bottom", fontsize=_source_font(8.8), color=color)
+                    reference_text = ax.text(0.99, value, str(normalize_matplotlib_label_text(label)), transform=ax.get_yaxis_transform(), ha="right", va="bottom", fontsize=_source_font(8.8), color=color)
+                    text_registry.register(
+                        reference_text,
+                        role="reference_label",
+                        domain="reference_labels",
+                        priority=80.0,
+                        payload={"label": str(label), "axis": "y", "value": value},
+                    )
             line_count += 1
     if line_count:
         metadata["reference_line_count"] = line_count
