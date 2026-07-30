@@ -26,7 +26,7 @@ class VisualMeta(BaseModel):
     描述可视化的生成信息、数据来源等辅助信息
     """
     schema_version: str = Field(default="v1.0", description="格式版本")
-    generator: Optional[str] = Field(default=None, description="生成工具名称（如execute_python、smart_chart_generator）")
+    generator: Optional[str] = Field(default=None, description="生成工具名称（如 execute_echarts_python、create_report_chart）")
     scenario: Optional[str] = Field(default=None, description="场景标识（如时序分析、空间分布）")
     source_data_ids: List[str] = Field(default_factory=list, description="源数据ID列表")
     created_at: Optional[str] = Field(default=None, description="创建时间（ISO 8601格式）")
@@ -173,7 +173,7 @@ def create_chart_visual(
             chart_id="chart_123",
             title="污染物浓度",
             chart_config={...ECharts配置},
-            generator="smart_chart_generator"
+            generator="execute_echarts_python"
         )
     """
     return create_visual(

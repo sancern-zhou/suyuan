@@ -304,7 +304,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                 }
 
             # 生成Chart v3.1可视化配置
-            chart_result = self.noaa_client.generate_chart_config(
+            chart_result = self.noaa_client.generate_trajectory_chart_config(
                 result=result,
                 station_name=f"站点({lat:.2f}, {lon:.2f})"
             )

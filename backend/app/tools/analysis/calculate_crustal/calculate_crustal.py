@@ -4,7 +4,7 @@ calculate_crustal: 地壳元素分析（氧化物转换、时间序列）
 支持 Context-Aware V2，使用 ExecutionContext 管理数据生命周期。
 计算完成后：
 - 地壳元素箱线图：由ParticulateVisualizer直接生成图片
-- 地壳元素时序图：由smart_chart_generator生成（需传入data_id）
+- 地壳元素时序图：可在图表模式中按需生成
 """
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 import hashlib
@@ -165,7 +165,7 @@ def calculate_crustal(
 ) -> Dict[str, Any]:
     """
     计算地壳元素氧化物转换和时间序列。
-    计算完成后，通过原始数据的data_id传递给smart_chart_generator生成可视化图表。
+    计算完成后保留原始 data_id，供图表模式按需生成可视化。
 
     支持两种输入格式：
     1. DataFrame: 地壳元素字段直接在顶层（如 Al, Si, Fe, Ca, Mg）
@@ -173,12 +173,12 @@ def calculate_crustal(
 
     Args:
         data: 输入数据（DataFrame 或 包含 components 的记录列表）
-        data_id: 原始数据ID（传递给smart_chart_generator生成图表）
+        data_id: 原始数据 ID（供下游读取与可视化）
         oxide_coeff_dict: dict mapping column -> oxide coefficient
         reconstruction_type: 时间聚合类型
 
     Returns:
-        遵循 UDF v2.0 的 dict，包含计算结果和原始data_id（用于smart_chart_generator）
+        遵循 UDF v2.0 的 dict，包含计算结果和原始 data_id
     """
     # 保存原始数据ID
     original_data_id = data_id
@@ -293,7 +293,7 @@ def calculate_crustal(
         "source_data_hash": _hash_dataframe(data),
         "schema_version": "v2.0",
         "scenario": "pm_crustal_analysis",
-        # 保留原始数据ID，用于smart_chart_generator生成图表
+        # 保留原始数据 ID，供下游读取与可视化。
         "source_data_id": original_data_id,
     }
 
@@ -373,13 +373,13 @@ def calculate_crustal(
 
     summary = "\n".join(summary_lines)
 
-    # 地壳元素时序图由smart_chart_generator通过data_id生成
+    # 时序图如有需要，由图表模式读取 source_data_id 后生成。
     logger.info(
         "[calculate_crustal] 计算完成",
         dust_df_columns=list(dust_df.columns),
         source_data_id=original_data_id,
         visuals_count=len(visuals),
-        note="地壳元素箱线图由ParticulateVisualizer生成，时序图由smart_chart_generator生成"
+        note="地壳元素箱线图由 ParticulateVisualizer 生成，时序图可在图表模式中按需生成"
     )
 
     return {
@@ -425,10 +425,10 @@ class CalculateCrustalTool(LLMTool):
 
     计算地壳元素（Al, Si, Fe, Ca, Mg等）的氧化物转换：
     - 地壳元素箱线图：由ParticulateVisualizer直接生成图片
-    - 地壳元素时序图：通过smart_chart_generator生成（需传入data_id）
+    - 地壳元素时序图：可在图表模式中按需生成
     """
     name = "calculate_crustal"
-    description = "计算地壳元素分析，自动生成地壳元素箱线图（ParticulateVisualizer）和时序图（smart_chart_generator）"
+    description = "计算地壳元素分析并生成地壳元素箱线图（ParticulateVisualizer）；时序图可在图表模式中按需生成"
     category = ToolCategory.ANALYSIS
     version = "1.0.0"
     requires_context = True

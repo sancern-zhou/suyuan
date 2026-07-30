@@ -61,7 +61,7 @@ TodoWrite(items=[...])  # 不推荐
      - PM2.5模式：`backend/config/prompts/chemical_expert_pm.md`
      - O3模式：`backend/config/prompts/chemical_expert_o3.md`
    - 专长：污染物组分分析、PMF源解析、OBM分析、组分重构
-   - 工具：get_vocs_data, get_pm25_component, calculate_pm_pmf, calculate_vocs_pmf, calculate_obm_full_chemistry, calculate_reconstruction, smart_chart_generator
+   - 工具：get_vocs_data, get_pm25_component, calculate_pm_pmf, calculate_vocs_pmf, calculate_obm_full_chemistry, calculate_reconstruction
 
 3. **报告专家**（report_expert）
    - 提示词文件：`backend/config/prompts/report_expert.md`
@@ -194,7 +194,7 @@ call_sub_agent(
        - 天气系统与环流
        - 气象预报与污染潜势
        - 控制建议与应对方案
-    4. 生成可视化图表（使用smart_chart_generator）
+    4. 汇总分析工具直接返回的可视化结果；额外图表转交图表模式生成
     """,
     context_data={
         "expert_prompt_file": "backend/config/prompts/weather_expert.md",
@@ -413,7 +413,7 @@ call_sub_agent(
        d) calculate_soluble - 水溶性离子分析
           - data_id: {ionic_data_id}
     4. 调用可视化工具：
-       a) smart_chart_generator - 生成专业图表
+       a) 复用分析工具返回的专业图表
           - data_id: {analysis_data_id}
           - chart_purpose: "PMF源解析和组分重构分析"
     5. 生成专业的组分分析报告（MD格式），包含：
@@ -459,7 +459,7 @@ call_sub_agent(
           - vocs_data_id: {vocs_data_id}
           - mode: "all"  # 完整分析
     4. 调用可视化工具：
-       a) smart_chart_generator - 生成专业图表
+       a) 复用分析工具返回的专业图表
           - data_id: {vocs_data_id}
           - chart_purpose: "VOCs组分和OFP分析"
     5. 生成专业的组分分析报告（MD格式），包含：

@@ -21,23 +21,16 @@ LLM Tools
    - calculate_vocs_pmf - VOCs挥发性有机物PMF源解析（仅用于臭氧溯源）
 
 3. Visualization Tools - 可视化工具（生成图表和地图配置）
-   **图表工具职责分工：**
-   - smart_chart_generator (智能工具) - 固定格式数据专用
-     * 适用：PMF/OBM分析结果、组分数据、已存储数据
-     * 特征：从统一存储加载（data_id）、智能推荐图表类型
-   - generate_chart (通用工具) - 动态数据专用
-     * 适用：直接传入数据、自定义场景、预定义场景模板
-     * 特征：直接传入数据（data）、模板库+LLM生成
+   - execute_echarts_python - 生成前端交互式 ECharts 图表
+   - create_report_chart - 生成正式报告静态图表
    - generate_map - 生成高德地图配置
 
 4. Task Management Tools - 任务管理工具（housekeeping状态管理）
    - TaskCreate / TaskUpdate / TaskList / TaskGet - 增量管理当前会话任务清单
 
 **工具选择决策：**
-- 有data_id → smart_chart_generator
-- 无data_id → generate_chart
-- PMF/OBM结果 → smart_chart_generator
-- 原始数据 → generate_chart
+- 前端交互式图表 → execute_echarts_python
+- QMD/Word/HTML 正式报告静态图表 → create_report_chart
 """
 
 import structlog
@@ -534,20 +527,6 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
 
     try:
-        from app.tools.visualization.generate_chart.tool import GenerateChartTool
-        registry.register(GenerateChartTool(), priority=200)
-        logger.info("tool_loaded", tool="generate_chart")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="generate_chart", error=str(e))
-
-    try:
-        from app.tools.visualization.generate_chart.revision_tool import GenerateChartRevisionTool
-        registry.register(GenerateChartRevisionTool(), priority=201)
-        logger.info("tool_loaded", tool="revise_chart")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="revise_chart", error=str(e))
-
-    try:
         from app.tools.visualization.generate_map.tool import GenerateMapTool
         registry.register(GenerateMapTool(), priority=210)
         logger.info("tool_loaded", tool="generate_map")
@@ -632,13 +611,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="spatial_interpolation")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="spatial_interpolation", error=str(e))
-
-    try:
-        from app.tools.analysis.smart_chart_generator.tool import SmartChartGenerator
-        registry.register(SmartChartGenerator(), priority=220)
-        logger.info("tool_loaded", tool="smart_chart_generator")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="smart_chart_generator", error=str(e))
 
     # ========================================
     # Utility Tools（实用工具）

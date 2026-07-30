@@ -54,9 +54,7 @@ class ReportPlanner:
                     "required": True,
                     "order": 5,
                     "use_visualization": True,
-                    "tools": ["generate_chart"],
-                    "requires_expert": True,
-                    "expert_type": "VizExpert"
+                    "tools": ["create_report_chart"]
                 },
                 {
                     "id": "discussion",
@@ -230,6 +228,6 @@ class ReportPlanner:
             tools.extend(["get_air_quality", "get_weather_data"])
 
         if section.use_visualization:
-            tools.append("generate_chart")
+            tools.append("create_report_chart")
 
         return list(set(tools))  # 去重

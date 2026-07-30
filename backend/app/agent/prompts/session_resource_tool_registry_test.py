@@ -1,3 +1,6 @@
+import importlib.util
+from pathlib import Path
+
 import pytest
 
 from app.agent.prompts import tool_registry
@@ -10,6 +13,7 @@ ALL_MODE_LISTS = [
     tool_registry.QUERY_TOOL_NAMES,
     tool_registry.REPORT_TOOL_NAMES,
     tool_registry.CHART_TOOL_NAMES,
+    tool_registry.BOARD_TOOL_NAMES,
     tool_registry.OPS_TOOL_NAMES,
     tool_registry.GRAPH_TOOL_NAMES,
     tool_registry.SOCIAL_TOOL_NAMES,
@@ -20,7 +24,51 @@ ALL_MODE_LISTS = [
     tool_registry.DELIBERATION_REVIEWER_TOOL_NAMES,
 ]
 
+RETIRED_CHART_TOOL_NAMES = {
+    "generate_chart",
+    "smart_chart_generator",
+    "revise_chart",
+}
+
 
 @pytest.mark.parametrize("tool_names", ALL_MODE_LISTS)
 def test_resource_discovery_is_available_exactly_once_in_every_mode(tool_names):
     assert tool_names.count("list_session_resources") == 1
+
+
+@pytest.mark.parametrize("tool_names", ALL_MODE_LISTS)
+def test_retired_chart_tools_are_not_exposed_by_any_agent_mode(tool_names):
+    assert RETIRED_CHART_TOOL_NAMES.isdisjoint(tool_names)
+
+
+def test_retired_chart_modules_and_runtime_references_are_removed():
+    assert importlib.util.find_spec("app.tools.visualization.generate_chart") is None
+    assert importlib.util.find_spec("app.tools.analysis.smart_chart_generator") is None
+    assert importlib.util.find_spec("app.prompts.chart_generation") is None
+
+    current_file = Path(__file__).resolve()
+    backend_root = current_file.parents[3]
+    retired_paths = (
+        backend_root / "app/utils/chart_converters",
+        backend_root / "app/utils/chart_data_converter.py",
+        backend_root / "app/agent/core/smart_visualization_recommender.py",
+    )
+    assert all(not path.exists() for path in retired_paths)
+
+    scan_roots = (backend_root / "app", backend_root / "config", backend_root / "schemas")
+    source_suffixes = {".py", ".md", ".yaml", ".yml", ".json"}
+    stale_references = []
+    for root in scan_roots:
+        for path in root.rglob("*"):
+            if path == current_file or path.suffix not in source_suffixes:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if any(tool_name in text for tool_name in RETIRED_CHART_TOOL_NAMES):
+                stale_references.append(path.relative_to(backend_root).as_posix())
+
+    assert stale_references == []
+
+
+def test_current_chart_tools_remain_exposed_after_legacy_cleanup():
+    assert "execute_echarts_python" in tool_registry.CHART_TOOL_NAMES
+    assert "create_report_chart" in tool_registry.CHART_TOOL_NAMES

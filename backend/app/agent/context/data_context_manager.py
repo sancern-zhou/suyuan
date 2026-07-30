@@ -757,7 +757,7 @@ class DataContextManager:
                     quality_report = entry.quality_report
                     # Convert field_stats from List[Dict] to List[FieldStats] objects
                     field_stats = [FieldStats(**stat_dict) for stat_dict in entry.field_stats] if entry.field_stats else []
-                    # Load metadata for pollutant inference in smart_chart_generator
+                    # Load registry metadata for downstream data interpretation.
                     metadata = entry.metadata if hasattr(entry, 'metadata') else None
                     logger.info(
                         "registry_metadata_loaded",
@@ -772,7 +772,7 @@ class DataContextManager:
                     error=str(exc)
                 )
 
-        # Create handle - 【修复】传递metadata以支持smart_chart_generator的污染物推断
+        # Create handle with registry metadata preserved for downstream consumers.
         handle = TypedDataHandle(
             data_id=short_id,
             schema=schema,

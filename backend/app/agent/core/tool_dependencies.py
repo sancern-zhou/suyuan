@@ -146,32 +146,6 @@ TOOL_DEPENDENCY_GRAPHS = {
                 "timeout": 600.0
             },
 
-            # ========================================
-            # 4. 默认可视化工具（核心层）
-            # ========================================
-            "smart_chart_generator": {
-                "depends_on": ["get_weather_data"],
-                "produces": "chart_visualization",
-                "input_bindings": {
-                    "data_id": "get_weather_data[FIRST].data_id",
-                    "chart_purpose": "{chart_purpose or '气象数据可视化'}"
-                },
-                "output_fields": ["data_id", "chart_config", "visuals"],
-                "description": "智能图表生成（默认可视化，自动选择图表类型）"
-            },
-
-            "generate_chart": {
-                "depends_on": ["get_weather_data"],
-                "produces": "custom_chart",
-                "input_bindings": {
-                    "weather_data_id": "get_weather_data[FIRST].data_id",
-                    "chart_type": "{chart_type}",
-                    "title": "{title or '气象数据分析图表'}"
-                },
-                "output_fields": ["data_id", "chart_config"],
-                "description": "自定义图表生成（指定图表类型）"
-            },
-
             "generate_map": {
                 "depends_on": ["analyze_upwind_enterprises"],
                 "produces": "map_visualization",
@@ -341,34 +315,6 @@ TOOL_DEPENDENCY_GRAPHS = {
             # ========================================
             # 完整化学机理OBM（依赖VOCs数据）
         },
-    },
-
-    "viz": {
-        "description": "可视化专家工具依赖",
-        "tools": {
-            "smart_chart_generator": {
-                "depends_on": ["weather:*, component:*"],  # 依赖所有weather和component的结果
-                "produces": "chart_visualization",
-                "output_fields": ["data_id", "chart_config", "visuals"]
-            },
-            "generate_chart": {
-                "depends_on": ["*"],  # 依赖所有上游结果
-                "produces": "custom_chart",
-                "output_fields": ["data_id", "chart_config"]
-            },
-            "generate_map": {
-                "depends_on": ["analyze_upwind_enterprises"],  # 依赖上风向企业分析结果
-                "produces": "map_visualization",
-                "input_bindings": {
-                    # 从analyze_upwind_enterprises获取站点和企业信息
-                    "station": "analyze_upwind_enterprises[FIRST].analysis_result.station_info",
-                    "enterprises": "analyze_upwind_enterprises[FIRST].enterprises",
-                    "upwind_paths": "analyze_upwind_enterprises[FIRST].analysis_result.upwind_paths",
-                    "sectors": "analyze_upwind_enterprises[FIRST].analysis_result.wind_sectors"
-                },
-                "output_fields": ["data_id", "chart_config", "visuals"]
-            }
-        }
     },
 
     "report": {
@@ -632,23 +578,6 @@ TOOL_OUTPUT_SCHEMAS = {
             "metadata": "Dict - 元数据信息"
         }
     },
-    "smart_chart_generator": {
-        "required_fields": ["data_id", "chart_config"],
-        "optional_fields": ["visuals"],
-        "data_structure": {
-            "data_id": "str - 图表配置ID",
-            "chart_config": "Dict - 图表配置数据",
-            "visuals": "List[Dict] - 可视化内容列表"
-        }
-    },
-    "generate_chart": {
-        "required_fields": ["data_id", "chart_config"],
-        "optional_fields": [],
-        "data_structure": {
-            "data_id": "str - 图表配置ID",
-            "chart_config": "Dict - 图表配置数据"
-        }
-    },
     "generate_synthesis_report": {
         "required_fields": ["data_id", "report_content"],
         "optional_fields": ["recommendations"],
@@ -715,4 +644,3 @@ def parse_binding_expression(expression: str) -> Dict[str, Any]:
 def get_common_binding_examples() -> Dict[str, List[str]]:
     """获取常见绑定表达式示例"""
     return COMMON_BINDING_EXAMPLES.copy()
-

@@ -103,17 +103,17 @@ def calculate_trace(
 ) -> Dict[str, Any]:
     """
     微量元素分析（铝归一化、Taylor 丰度对比、富集度）。
-    计算完成后，通过原始数据的data_id传递给smart_chart_generator生成可视化图表。
+    计算完成后保留原始 data_id，供图表模式按需生成可视化。
 
     Args:
         data: DataFrame 包含微量元素列与铝列（已通过DataStandardizer标准化）
-        data_id: 原始数据ID（传递给smart_chart_generator生成图表）
+        data_id: 原始数据 ID（供下游读取与可视化）
         al_column: 铝列名（用于归一化，默认"Al"，英文字段名）
         taylor_dict: Taylor丰度字典，如果不提供则使用默认字典（英文字段名）
         data_context_manager: 数据上下文管理器（包含DataStandardizer）
 
     Returns:
-        遵循 UDF v2.0 的 dict，包含计算结果和原始data_id（用于smart_chart_generator）
+        遵循 UDF v2.0 的 dict，包含计算结果和原始 data_id
 
     Note:
         - 数据字段应在DataStandardizer中标准化为英文字段名
@@ -298,7 +298,7 @@ def calculate_trace(
         "scenario": "pm_trace_analysis",
         "reference_column": al_column,
         "trace_elements": trace_cols,
-        # 保留原始数据ID，用于smart_chart_generator生成图表
+        # 保留原始数据 ID，供下游读取与可视化。
         "source_data_id": original_data_id,
     }
 

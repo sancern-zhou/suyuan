@@ -629,8 +629,9 @@ async def analyze_stream(
     - Analysis Tools (1个):
       - analyze_upwind_enterprises - 上风向企业分析（广东省）
 
-    - Visualization Tools (2个):
-      - generate_chart - 智能图表生成（模板库 + LLM）
+    - Visualization Tools:
+      - execute_echarts_python - 交互式 ECharts 图表生成
+      - create_report_chart - 正式报告静态图表生成
       - generate_map - 地图生成
 
     **助手模式**:

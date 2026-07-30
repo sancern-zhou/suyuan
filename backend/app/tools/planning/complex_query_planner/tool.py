@@ -133,7 +133,7 @@ GUANGDONG_QUERY_TOOLS_SCHEMAS = {
 - data字段：前24条记录预览（标准化后的空气质量数据）
 - data_id字段：完整数据存储标识符
   - 支持通过 aggregate_data 工具进行后续分析
-  - 支持通过 smart_chart_generator 工具生成图表
+  - 可在图表模式中通过 execute_echarts_python 生成交互式图表
 - metadata字段：
   - total_records：总记录数
   - data_type：hour 或 day
