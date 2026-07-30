@@ -358,7 +358,7 @@ Older history to compress:
         boundary_msg["content"] = (
             f"[系统提示] 上下文压缩失败，已保留原始任务锚点和最近消息。错误: {str(error)[:200]}"
         )
-        return anchor_messages + [boundary_msg] + recent_messages
+        return [boundary_msg] + anchor_messages + recent_messages
 
     async def _harness_compact(
         self,
@@ -416,7 +416,7 @@ Older history to compress:
         )
 
         recent_messages = self._flatten_groups(recent_groups)
-        final_messages = anchor_messages + [compact_memory] + recent_messages + protected_messages
+        final_messages = [compact_memory] + anchor_messages + recent_messages + protected_messages
 
         logger.info(
             "[ContextCompressor] Harness Compact 完成",

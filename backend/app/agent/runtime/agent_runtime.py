@@ -717,6 +717,7 @@ class AgentRuntime:
             context_tokens=context_tokens,
             tool_schemas=tool_schemas,
             conversation_history=conversation_history,
+            context_layers=context_result.get("context_layers"),
         )
         streaming_tool_executor = StreamingToolExecutor(
             tool_executor=self.executor,
