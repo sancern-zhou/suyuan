@@ -1,0 +1,229 @@
+# 江西省噪声平台 API 与项目工具说明
+
+## 1. 平台概述
+
+江西省噪声平台提供噪声、气象和车流量数据查询能力。江西项目通过异步 LLM 工具 `get_jiangxi_noise_data` 访问平台。
+
+平台访问要求：
+
+- Token 端点：`GET /api/auth/token/get`
+- Token 参数：`secretName`
+- 数据请求头：`Authorization: Bearer <token>`
+- 必需请求头：`syscode: NOISE`
+- 时间格式：`YYYY-MM-DD HH:MM:SS`
+- 平台目前提供的是 HTTP 地址；部署侧必须通过网络访问控制、VPN 或安全反向代理降低 Token 明文传输风险。
+
+代码和日志不得保存、输出或提交 `secretName`、Token 或 Token 前缀。
+
+## 2. 当前工具开放范围
+
+当前只开放三个已经验证的分页查询：
+
+| 能力 | 端点 | 状态 |
+|---|---|---|
+| 站点小时值 | `/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync` | 已验证 |
+| 站点日均值 | `/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync` | 已验证 |
+| 城市小时聚合值 | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` | 已验证 |
+
+城市日均接口在 2026-07-30 的验证中返回 HTTP 404，当前客户端、工具 Schema 和项目能力均不开放。待平台提供准确端点及参数后再实现。
+
+区县接口、自动翻页、文件导出和站点名称模糊查询也不属于当前工具范围。
+
+## 3. 运行配置
+
+江西部署环境必须配置：
+
+```bash
+export PROJECT="jiangxi"
+export JIANGXI_NOISE_BASE_URL="http://<平台地址>:<端口>"
+export JIANGXI_NOISE_SECRET_NAME="<由平台管理员提供>"
+export JIANGXI_NOISE_TIMEOUT_SECONDS="30"
+```
+
+`JIANGXI_NOISE_BASE_URL` 和 `JIANGXI_NOISE_SECRET_NAME` 没有代码内默认值。配置缺失时，工具返回 `configuration_error`，不会在服务启动阶段访问平台。
+
+Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客户端重新认证并重试一次；第二次仍为 401 时终止请求。
+
+## 4. LLM 工具参数
+
+### 4.1 公共参数
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `scope` | `station` / `city` | 查询范围 |
+| `granularity` | `hour` / `day` | 时间粒度；城市目前只支持 `hour` |
+| `review_status` | `raw` / `audited` | 原始数据或审核数据，默认 `raw` |
+| `start_time` | ISO 8601 字符串 | 开始时间 |
+| `end_time` | ISO 8601 字符串 | 结束时间 |
+| `max_results` | 1–100 整数 | 最多返回条数，默认 50 |
+
+无时区时间按 `Asia/Shanghai` 解释；有时区时间转换为 `Asia/Shanghai`。`start_time` 不能晚于 `end_time`，单次查询跨度不能超过 30 天。
+
+`review_status` 映射：
+
+- `raw` → 平台 `dataType=0`
+- `audited` → 平台 `dataType=1`
+
+### 4.2 站点查询
+
+站点查询必须提供 `station_codes`，不能同时提供 `city_names`。站点代码只接受字母、数字、下划线和短横线。
+
+```json
+{
+  "scope": "station",
+  "granularity": "hour",
+  "review_status": "raw",
+  "station_codes": ["1737A"],
+  "start_time": "2026-07-27T00:00:00+08:00",
+  "end_time": "2026-07-28T00:00:00+08:00",
+  "max_results": 50
+}
+```
+
+站点日均查询仅将 `granularity` 改为 `day`。
+
+### 4.3 城市查询
+
+城市查询必须提供 `city_names`，不能同时提供 `station_codes`，且 `granularity` 必须为 `hour`。`city_names` 接受下表中的城市名称或 6 位代码。
+
+```json
+{
+  "scope": "city",
+  "granularity": "hour",
+  "review_status": "audited",
+  "city_names": ["南昌市", "赣州市"],
+  "start_time": "2026-07-27T00:00:00+08:00",
+  "end_time": "2026-07-28T00:00:00+08:00",
+  "max_results": 50
+}
+```
+
+## 5. 江西省城市代码
+
+| 城市 | 代码 | 城市 | 代码 |
+|---|---:|---|---:|
+| 南昌市 | 360100 | 景德镇市 | 360200 |
+| 萍乡市 | 360300 | 九江市 | 360400 |
+| 新余市 | 360500 | 鹰潭市 | 360600 |
+| 赣州市 | 360700 | 吉安市 | 360800 |
+| 宜春市 | 360900 | 抚州市 | 361000 |
+| 上饶市 | 361100 |  |  |
+
+未知城市名称或代码会在本地被拒绝，不会转发到远端平台。
+
+## 6. 平台请求参数
+
+三个已开放端点使用相同的基础分页和时间参数：
+
+```text
+skipCount=0
+maxResultCount=<1..100>
+dataType=<0|1>
+timePoint[0]=YYYY-MM-DD HH:MM:SS
+timePoint[1]=YYYY-MM-DD HH:MM:SS
+```
+
+站点接口追加：
+
+```text
+codes[0]=1737A
+codes[1]=...
+```
+
+城市接口追加：
+
+```text
+CityCodes[0]=360100
+CityCodes[1]=...
+```
+
+平台分页成功响应结构：
+
+```json
+{
+  "success": true,
+  "result": {
+    "items": [],
+    "totalCount": 0
+  }
+}
+```
+
+## 7. 工具返回结构
+
+成功返回：
+
+```json
+{
+  "success": true,
+  "scope": "station",
+  "granularity": "hour",
+  "review_status": "raw",
+  "data": [],
+  "count": 0,
+  "total_count": 0,
+  "truncated": false,
+  "start_time": "2026-07-27T00:00:00+08:00",
+  "end_time": "2026-07-28T00:00:00+08:00"
+}
+```
+
+当 `total_count > count` 时，`truncated=true`，并返回提示要求缩小时间或地点范围。工具不会自动请求后续页面，也不会向 LLM 返回超过 100 条记录。
+
+失败返回：
+
+```json
+{
+  "success": false,
+  "error_code": "invalid_city",
+  "error": "不支持的江西省城市：不存在市"
+}
+```
+
+远端 HTTP 错误、认证错误和平台业务错误统一转换为稳定消息。远端 `msg`、原始响应、请求头及异常堆栈不会返回给 LLM。
+
+## 8. 主要数据字段
+
+站点小时值常见字段：`code`、`name`、`timePoint`、`leq`、`la`、`l5`、`l10`、`l50`、`l90`、`l95`、`lMin`、`lMax`、`vdr`、`sd`、`cityName`、`districtName`，以及气象和车流量字段。
+
+站点日均值常见字段：`code`、`name`、`timePoint`、`ld`、`ln`、`ldn`、`lnMax`、`vdRd`、`vdRn` 和达标标识字段。
+
+城市小时聚合值常见字段：`cityCode`、`cityName`、`timePointStr`、`leq_1`、`leq_2`、`leq_3`、`leq_4`。
+
+平台部分数值以字符串返回，调用方在计算前应显式转换并处理空值。
+
+## 9. Python 异步客户端示例
+
+```python
+import asyncio
+from datetime import datetime
+
+from app.external_apis.jiangxi_noise_api_client import JiangxiNoiseDataClient
+
+
+async def main():
+    client = JiangxiNoiseDataClient.from_env()
+    result = await client.query_station_hour_data(
+        station_codes=["1737A"],
+        start_time=datetime.fromisoformat("2026-07-27T00:00:00+08:00"),
+        end_time=datetime.fromisoformat("2026-07-28T00:00:00+08:00"),
+        data_type=0,
+        max_result_count=50,
+    )
+    print(result["total_count"], len(result["data"]))
+
+
+asyncio.run(main())
+```
+
+示例依赖运行环境预先设置第三节列出的环境变量。不要在脚本中写入真实 `secretName`。
+
+## 10. 项目与分支隔离
+
+- 专属分支：`project/jiangxi-noise`
+- 项目清单：`projects/jiangxi/project.yaml`
+- 模块清单：`modules/jiangxi-noise/module.yaml`
+- 工具仅在项目同时启用 `jiangxi-noise` 模块和 `get_jiangxi_noise_data` 时注册。
+- `default` 项目不会注册该工具，其他项目无需拉取江西专属分支。
+
+江西部署应直接检出并更新 `project/jiangxi-noise` 分支，不要把该分支拉取合并到其他项目分支。
