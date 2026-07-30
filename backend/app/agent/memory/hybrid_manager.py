@@ -255,7 +255,7 @@ class HybridMemoryManager:
             "thought": f"图表已生成：{chart_info.get('chart_title', '无标题')}",
             "action": {
                 "type": "CHART_GENERATED",
-                "tool": chart_info.get("source_tool", "smart_chart_generator"),
+                "tool": chart_info.get("source_tool", "execute_echarts_python"),
                 "chart_id": chart_info.get("chart_id", "未知图表"),
                 "chart_type": chart_info.get("chart_type", "unknown")
             },

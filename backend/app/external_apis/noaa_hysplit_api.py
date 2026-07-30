@@ -556,7 +556,7 @@ class NOAAHysplitAPI:
         """获取图片访问URL"""
         return f"/api/image/{image_id}"
 
-    def generate_chart_config(
+    def generate_trajectory_chart_config(
         self,
         result: Dict[str, Any],
         station_name: str = "Unknown"

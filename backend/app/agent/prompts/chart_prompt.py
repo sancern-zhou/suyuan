@@ -292,7 +292,7 @@ def build_chart_prompt(
         "|---------|-------------|-----------|\n",
         "| 极坐标污染玫瑰图 | `backend/app/tools/visualization/create_report_chart/references/pollutant-wind-rose.md` | 污染玫瑰、极坐标、风向玫瑰、风场图、风场-污染物浓度 |\n",
         "| AQI日历热力图 | `backend/app/tools/visualization/create_report_chart/references/aqi-calendar.md` | AQI日历、日历热力图、月度日历、月度回顾 |\n",
-        "| ECharts示例检索 | `app/tools/visualization/generate_chart/echarts_search_guide.md` | ECharts示例、官方示例、查找示例、参考样式 |\n\n",
+        "| ECharts 自定义图表 | 使用 `execute_echarts_python` 输出标准 ECharts option | ECharts示例、参考样式、自定义交互图 |\n\n",
         "**使用方法**：\n",
         "调用 read_file 工具读取对应设计文档，如 `read_file(path=\"backend/app/tools/visualization/create_report_chart/references/pollutant-wind-rose.md\")`，然后调用 `create_report_chart`。\n\n",
         "**⚠️ 查阅时机**：\n",

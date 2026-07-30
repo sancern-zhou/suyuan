@@ -165,16 +165,16 @@ def test_current_turn_image_ref_must_resolve_to_an_existing_file(tmp_path):
 def test_skill_loading_and_mode_compatibility(tmp_path):
     skill = tmp_path / "trend.md"
     skill.write_text(
-        "# 趋势分析\n\n## 概述\n比较数据趋势。\n\n## 所需工具\n- `read_file`\n- `generate_chart`\n",
+        "# 趋势分析\n\n## 概述\n比较数据趋势。\n\n## 所需工具\n- `read_file`\n- `execute_echarts_python`\n",
         encoding="utf-8",
     )
     (tmp_path / "skills_metadata.json").write_text(
         '{"skills":{"trend":{"enabled":true,"aliases":["趋势"],'
-        '"required_tools":["read_file","generate_chart"]}}}',
+        '"required_tools":["read_file","execute_echarts_python"]}}}',
         encoding="utf-8",
     )
-    selection = load_skill_selection("trend", skills_dir=tmp_path, available_tools={"read_file", "generate_chart"})
-    assert selection.required_tools == ["read_file", "generate_chart"]
+    selection = load_skill_selection("trend", skills_dir=tmp_path, available_tools={"read_file", "execute_echarts_python"})
+    assert selection.required_tools == ["read_file", "execute_echarts_python"]
     assert "比较数据趋势" in selection.content
     descriptor = describe_skill_item(
         {"name": "趋势分析", "file": str(skill), "description": "比较趋势"},
@@ -182,7 +182,7 @@ def test_skill_loading_and_mode_compatibility(tmp_path):
     )
     assert descriptor["id"] == "trend"
     assert descriptor["compatible"] is False
-    assert descriptor["missing_tools"] == ["generate_chart"]
+    assert descriptor["missing_tools"] == ["execute_echarts_python"]
     assert descriptor["aliases"] == ["趋势"]
     with pytest.raises(ValueError, match="missing required tools"):
         load_skill_selection("trend", skills_dir=tmp_path, available_tools={"read_file"})

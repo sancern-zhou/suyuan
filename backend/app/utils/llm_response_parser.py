@@ -794,14 +794,9 @@ if __name__ == "__main__":
         '''```json
 {
     "type": "TOOL_CALL",
-    "tool": "generate_chart",
+    "tool": "execute_echarts_python",
     "args": {
-        "data": {
-            "records": [
-                {"time": "2025-11-07T00:00:00", "AQI": 45, "PM2.5": 25.0},
-                {"time": "2025-11-07T01:00:00", "AQI": 48, "PM2.5": 27.0}
-            ]
-        }
+        "code": "import json; print(json.dumps({'series': [{'type': 'line', 'data': [45, 48]}]}))"
     },
     "reasoning": "需要生成图表"
 }

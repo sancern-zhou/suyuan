@@ -307,25 +307,6 @@ CALCULATE_PMF_ARGS_SCHEMA = {
     "required": ["station_name", "data_id", "pollutant_type"]
 }
 
-GENERATE_CHART_ARGS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "data": {"type": ["object", "array"]},
-        "scenario": {
-            "type": "string",
-            "enum": ["vocs_analysis", "pm_analysis", "multi_indicator_timeseries", "regional_comparison", "custom"]
-        },
-        "chart_type_hint": {
-            "type": "string",
-            "enum": ["pie", "bar", "line", "timeseries", "heatmap", "scatter", "radar", "auto"]
-        },
-        "title": {"type": "string"},
-        "pollutant": {"type": "string"},
-        "station_name": {"type": "string"}
-    },
-    "required": ["data"]
-}
-
 # =============================================================================
 # 前端图表数据Schema
 # =============================================================================
@@ -464,5 +445,4 @@ ALL_SCHEMAS = {
     "frontend_chart_data": FRONTEND_CHART_DATA_SCHEMA,
     "get_component_data_args": GET_COMPONENT_DATA_ARGS_SCHEMA,
     "calculate_pmf_args": CALCULATE_PMF_ARGS_SCHEMA,
-    "generate_chart_args": GENERATE_CHART_ARGS_SCHEMA
 }

@@ -4,7 +4,7 @@ calculate_carbon: 碳组分分析（SOC/POC/EC、EC/OC 比值）
 支持 Context-Aware V2，使用 ExecutionContext 管理数据生命周期。
 支持 UnifiedParticulateData 格式（components 嵌套结构）和扁平 DataFrame 格式。
 
-计算完成后，通过原始数据的 data_id 传递给 smart_chart_generator 生成碳组分堆积图，
+计算完成后保留原始 data_id，供图表模式按需生成碳组分堆积图，
 同时使用 ParticulateVisualizer 生成 EC/OC 散点图。
 """
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -456,7 +456,7 @@ def calculate_carbon(
 
     summary = "\n".join(summary_lines)
 
-    # 碳组分堆积图由smart_chart_generator通过data_id生成
+    # 碳组分堆积图如有需要，由图表模式读取 source_data_id 后生成。
     logger.info(
         "[calculate_carbon] 计算完成",
         has_oc="OC" in result_df.columns,
@@ -466,7 +466,7 @@ def calculate_carbon(
         has_soc="SOC" in result_df.columns,
         source_data_id=original_data_id,
         visuals_count=len(visuals),
-        note="EC/OC散点图由ParticulateVisualizer生成，碳组分堆积图由smart_chart_generator生成"
+        note="EC/OC 散点图由 ParticulateVisualizer 生成，碳组分堆积图可在图表模式中按需生成"
     )
 
     return {
@@ -496,7 +496,7 @@ class CalculateCarbonTool(LLMTool):
     """
 
     name = "calculate_carbon"
-    description = "计算碳组分分析（POC、SOC、EC/OC比值），自动生成EC/OC散点图（ParticulateVisualizer）和碳组分堆积图（smart_chart_generator）"
+    description = "计算碳组分分析（POC、SOC、EC/OC 比值）并生成 EC/OC 散点图（ParticulateVisualizer）；堆积图可在图表模式中按需生成"
     category = ToolCategory.ANALYSIS
     version = "1.0.0"
     requires_context = True

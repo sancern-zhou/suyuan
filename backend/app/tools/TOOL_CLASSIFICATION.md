@@ -35,7 +35,7 @@
 - `calculate_crustal` - 地壳元素分析
 - `calculate_trace` - 微量元素分析
 - `calculate_reconstruction` - 质量重构
-- `smart_chart_generator` - 智能图表生成
+- `execute_echarts_python` - 交互式 ECharts 图表生成
 - `get_weather_data` - 气象数据查询
 - `get_backward_trajectory` - 后向轨迹
 - `analyze_upwind_enterprises` - 上风向企业分析

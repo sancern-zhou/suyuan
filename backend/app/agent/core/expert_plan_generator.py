@@ -16,7 +16,7 @@ from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
 
-# 自带专业图表的工具列表（这些工具生成的数据不需要 viz 专家再处理）
+# 自带专业图表的工具列表（这些工具会直接返回 visuals）
 # 这些工具会直接返回 visuals 字段，包含 base64 编码的专业图表
 TOOLS_WITH_BUILTIN_VISUALS = {
     # 轨迹分析工具 - 生成轨迹地图
@@ -31,7 +31,7 @@ SCHEMAS_WITH_BUILTIN_VISUALS = {
     "trajectory_endpoints",  # 轨迹端点数据（已包含轨迹地图）
     "upwind_enterprise_result",
     "particulate_analysis",  # 组分分析结果（已包含电荷平衡、EC/OC、地壳、痕量元素等专业图表）
-    # "pmf_result",  # 已移除，PMF不再自带图表，由viz expert通过smart_chart_generator生成
+    "pmf_result",
 }
 
 
@@ -150,13 +150,6 @@ class ExpertPlanGenerator:
             "description": "VOCs挥发性有机物PMF源解析（仅用于臭氧溯源分析）",
             "example": {"data_id": "vocs_unified:v1:abc123"}
         },
-        "smart_chart_generator": {
-            "param_type": "structured",
-            "required_params": ["data_id", "chart_purpose"],
-            "description": "智能图表生成器",
-            "example": {"data_id": "data_id:v1:xyz789", "chart_purpose": "展示臭氧浓度时间变化趋势"}
-        },
-
         # ========================================
         # 颗粒物组分分析工具（新增）
         # ========================================
@@ -229,7 +222,7 @@ class ExpertPlanGenerator:
         }
     }
 
-    # 专家工具模板（气象专家：专注气象分析，可视化由VizExecutor统一负责）
+    # 专家工具模板（气象专家专注气象分析，额外图表由图表模式按需生成）
     EXPERT_TEMPLATES = {
         "weather": {
             "description": "气象分析专家（专注气象数据获取和分析，轨迹分析可输出地图）",
@@ -280,7 +273,7 @@ class ExpertPlanGenerator:
                     "priority": "high"
                 }
                 # 注意：analyze_upwind_enterprises已内置生成地图，无需额外调用generate_map
-                # 通用图表生成由 VizExecutor 统一负责
+                # 通用图表由图表模式按需生成
             ]
         },
         "component": {
@@ -655,12 +648,8 @@ class ExpertPlanGenerator:
         if query.pollutants:
             _add("component")
 
-        # 只要有污染物，就生成图表辅助展示
-        if query.pollutants:
-            _add("viz")
-
         # 如果有至少两个核心专家，则添加报告专家
-        core_experts = [e for e in experts if e not in {"viz", "report"}]
+        core_experts = [e for e in experts if e != "report"]
         if len(core_experts) >= 2:
             _add("report")
 
@@ -687,7 +676,11 @@ class ExpertPlanGenerator:
             Dict[expert_type, ExpertTask]
         """
         upstream_results = upstream_results or {}
-        expert_list = required_experts or self.determine_required_experts(query)
+        expert_list = [
+            expert
+            for expert in (required_experts or self.determine_required_experts(query))
+            if expert != "viz"
+        ]
         ordered_experts = self._order_experts(expert_list)
         tasks = {}
         
@@ -718,12 +711,6 @@ class ExpertPlanGenerator:
 
         template = self.EXPERT_TEMPLATES.get(expert_type, {})
         task_id = f"{expert_type}_{uuid.uuid4().hex[:8]}"
-
-        # ✨ viz专家特殊处理：动态生成可视化工具计划
-        if expert_type == "viz":
-            return self._generate_viz_task(
-                task_id, query, upstream_results
-            )
 
         # 构建上下文
         context = self._build_context(query, expert_type)
@@ -782,88 +769,6 @@ class ExpertPlanGenerator:
         return ExpertTask(
             task_id=task_id,
             expert_type=expert_type,
-            task_description=task_description,
-            context=context,
-            tool_plan=tool_plan,
-            upstream_data_ids=upstream_data_ids
-        )
-
-    def _generate_viz_task(
-        self,
-        task_id: str,
-        query: StructuredQuery,
-        upstream_results: Dict[str, Any]
-    ) -> ExpertTask:
-        """
-        为viz专家生成可视化任务
-
-        特点：
-        - 动态为每个上游data_id生成smart_chart_generator工具计划
-        - 自动过滤已自带专业图表的数据（如trajectory_result、upwind_enterprise_result）
-        - 利用smart_chart_generator的智能推荐功能（chart_type="auto"）
-
-        Args:
-            task_id: 任务ID
-            query: 结构化查询
-            upstream_results: 上游专家结果
-
-        Returns:
-            ExpertTask: viz专家任务
-        """
-        # 1. 收集上游data_id（已过滤自带图表的数据）
-        upstream_data_ids = self._collect_upstream_data_ids(
-            "viz", upstream_results
-        )
-
-        # 2. 为每个data_id生成工具计划
-        tool_plan = []
-        for idx, data_id in enumerate(upstream_data_ids):
-            # 提取schema类型（用于日志和purpose描述）
-            schema = data_id.split(":")[0] if ":" in data_id else "unknown"
-
-            tool_plan.append(ToolCallPlan(
-                tool="smart_chart_generator",
-                params={
-                    "data_id": data_id,  # 直接使用实际的data_id（不使用占位符）
-                    "chart_type": "auto",  # 智能推荐图表类型
-                },
-                input_bindings={},  # 不使用input_bindings（避免依赖解析问题）
-                purpose=f"为{schema}数据生成可视化图表（智能推荐类型）",
-                depends_on=[],  # 不使用depends_on（data_id已经在params中了）
-                role=f"viz_{schema}"  # 角色标识
-            ))
-
-        # 3. 生成任务描述
-        location_str = query.location or "目标区域"
-        pollutant_str = "、".join(query.pollutants) if query.pollutants else "污染物"
-
-        data_sources_summary = []
-        for did in upstream_data_ids:
-            schema = did.split(":")[0] if ":" in did else "unknown"
-            data_sources_summary.append(schema)
-
-        task_description = (
-            f"【任务目标】为{location_str}的{pollutant_str}分析结果生成可视化图表\n"
-            f"【执行重点】数据可视化、图表类型智能选择、多图表布局\n"
-            f"【数据来源】共{len(upstream_data_ids)}个数据源：{', '.join(set(data_sources_summary))}\n"
-            f"【输出要求】生成时序图、分布图、对比图等专业图表，支持智能类型推荐"
-        )
-
-        # 4. 构建上下文
-        context = self._build_context(query, "viz")
-        context["expert_type"] = "viz"
-
-        logger.info(
-            "viz_task_generated",
-            data_ids_count=len(upstream_data_ids),
-            tools_count=len(tool_plan),
-            data_sources=data_sources_summary,
-            upstream_data_ids=upstream_data_ids
-        )
-
-        return ExpertTask(
-            task_id=task_id,
-            expert_type="viz",
             task_description=task_description,
             context=context,
             tool_plan=tool_plan,
@@ -2217,45 +2122,12 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         expert_type: str,
         upstream_results: Dict[str, Any]
     ) -> List[str]:
-        """收集上游专家的data_id
-        
-        对于 viz 专家，会排除已自带专业图表的数据源（如OBM分析、轨迹分析等）
-        这些工具已生成 base64 编码的专业图表，不需要 viz 专家再处理
-        """
+        """收集报告专家所需的上游 data_id。"""
         
         data_ids = []
         
-        # viz专家需要前序专家的数据，但排除已自带图表的数据
-        if expert_type == "viz":
-            for expert, result in upstream_results.items():
-                if expert in ["weather", "component"]:
-                    if isinstance(result, dict):
-                        if "data_ids" in result:
-                            for data_id in result["data_ids"]:
-                                # 排除已自带专业图表的数据
-                                if not self._has_builtin_visuals(data_id):
-                                    data_ids.append(data_id)
-                                else:
-                                    logger.info(
-                                        "skip_data_with_builtin_visuals",
-                                        expert_type=expert_type,
-                                        data_id=data_id,
-                                        reason="工具已生成专业图表"
-                                    )
-                        elif "data_id" in result:
-                            data_id = result["data_id"]
-                            if not self._has_builtin_visuals(data_id):
-                                data_ids.append(data_id)
-                            else:
-                                logger.info(
-                                    "skip_data_with_builtin_visuals",
-                                    expert_type=expert_type,
-                                    data_id=data_id,
-                                    reason="工具已生成专业图表"
-                                )
-        
         # report专家需要所有前序专家的数据（包括自带图表的，用于文字总结）
-        elif expert_type == "report":
+        if expert_type == "report":
             for expert, result in upstream_results.items():
                 if isinstance(result, dict):
                     if "data_ids" in result:
@@ -2341,16 +2213,9 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
 {chr(10).join(tool_sequence) if tool_sequence else '无工具调用（纯LLM分析）'}
 【输出要求】提供污染物详细分析，包括浓度变化、组分特征和潜在污染源""",
 
-            "viz": f"""【任务目标】为{location_str}的{pollutant_str}分析结果生成可视化图表
-【执行重点】数据可视化、图表类型选择、交互式展示
-【数据依赖】需要weather和component专家的分析结果作为输入
-【工具执行顺序】
-{chr(10).join(tool_sequence) if tool_sequence else '无工具调用（纯LLM分析）'}
-【输出要求】生成15种图表类型，包括时序图、玫瑰图、3D图、地图等，支持多种布局""",
-
             "report": f"""【任务目标】综合气象和组分分析结果，生成{location_str}{pollutant_str}污染溯源报告
 【执行重点】综合分析、结论总结、建议措施
-【数据依赖】需要所有前序专家（weather、component、viz）的分析结果
+【数据依赖】需要所有前序专家（weather、component）的分析结果
 【工具执行顺序】
 {chr(10).join(tool_sequence) if tool_sequence else '无工具调用（纯LLM综合）'}
 【输出要求】提供完整的污染溯源分析报告，包括原因分析、传输路径、治理建议"""
@@ -2363,7 +2228,6 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         priority = {
             "weather": 1,
             "component": 1,
-            "viz": 2,
             "report": 3
         }
         unique_experts = []

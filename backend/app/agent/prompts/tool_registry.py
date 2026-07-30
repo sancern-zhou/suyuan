@@ -89,7 +89,7 @@ EXPERT_TOOL_NAMES = [
     "calculate_crustal", "calculate_trace", "predict_air_quality",
 
     # 可视化
-    "revise_chart", "generate_map", "create_report_chart", "present_artifact",
+    "generate_map", "create_report_chart", "present_artifact",
 
     # 代码执行
     "execute_python",
@@ -189,6 +189,7 @@ CHART_TOOL_NAMES = [
 BOARD_TOOL_NAMES = [
     "list_session_resources",
     "read_file",
+    "edit_file",
     "create_drawio_board",
     "render_drawio_board_candidate",
     "accept_drawio_board_candidate",

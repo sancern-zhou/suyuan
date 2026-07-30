@@ -88,7 +88,7 @@ class VisualBlock(BaseModel):
                     "data": {"type": "pie", "data": [{"name": "机动车", "value": 35.5}]},
                     "meta": {
                         "schema_version": "3.1",
-                        "generator": "chart_data_converter",
+                        "generator": "execute_echarts_python",
                         "original_data_ids": ["pmf_result:v2:abc123"],
                         "scenario": "pmf_analysis",
                         "layout_hint": "main"
@@ -156,7 +156,7 @@ class DataMetadata(BaseModel):
     source_schema: Optional[str] = Field(default=None, description="源数据schema类型")
     source_data_ids: Optional[List[str]] = Field(default=None, description="源数据ID列表（支持多源）")
     scenario: Optional[str] = Field(default=None, description="场景标识：vocs_analysis | pmf_analysis等")
-    generator: Optional[str] = Field(default=None, description="生成工具：smart_chart_generator | calculate_pmf等")
+    generator: Optional[str] = Field(default=None, description="生成工具：execute_echarts_python | create_report_chart | calculate_pmf 等")
     dimensions: Optional[List[str]] = Field(default=None, description="数据维度列表：['station', 'time', 'pollutant']")
     metrics: Optional[List[str]] = Field(default=None, description="数据指标列表：['PM2.5', 'O3', 'NO2']")
     quality_report: Optional[Dict[str, Any]] = Field(default=None, description="数据质量详细报告")
@@ -660,7 +660,7 @@ pmf_chart = VisualBlock(
         "data": {"type": "pie", "data": [{"name": "石油化工", "value": 71.96}]},
         "meta": {
             "schema_version": "3.1",
-            "generator": "chart_data_converter",
+            "generator": "execute_echarts_python",
             "original_data_ids": ["pmf_result:v2:abc123"],
             "scenario": "pmf_analysis"
         }

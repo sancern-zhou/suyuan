@@ -71,7 +71,7 @@ class DataAdapter:
 
         # 检测图表配置
         if "chart_config" in data or "chart_id" in data:
-            return "chart_config", {"schema": "chart_config", "source": "smart_chart_generator"}
+            return "chart_config", {"schema": "chart_config", "source": "visualization_tool"}
 
         return "unknown", format_hints
 

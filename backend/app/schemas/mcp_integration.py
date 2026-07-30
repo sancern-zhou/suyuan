@@ -404,7 +404,7 @@ tool_chain = [
         }
     },
     {
-        "tool": "smart_chart_generator",
+        "tool": "create_report_chart",
         "depends_on": "calculate_pmf",  # 依赖PMF结果
         "params": {
             "chart_type": "pie",

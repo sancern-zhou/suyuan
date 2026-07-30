@@ -61,7 +61,7 @@ class ChartMeta(BaseModel):
     # v3.1 新增字段
     schema_version: str = Field(default="3.1", description="Schema版本号")
     original_data_ids: Optional[List[str]] = Field(default=None, description="原始数据ID列表（支持多源数据）")
-    generator: Optional[str] = Field(default=None, description="生成器标识：template:xxx | llm | smart_chart_generator")
+    generator: Optional[str] = Field(default=None, description="生成器标识：execute_echarts_python | create_report_chart | domain renderer")
     scenario: Optional[str] = Field(default=None, description="场景标识：vocs_analysis | pmf_analysis | custom等")
     layout_hint: Optional[str] = Field(default=None, description="布局提示：wide | tall | map-full | side | main")
     interaction_group: Optional[str] = Field(default=None, description="交互组ID（用于多图联动）")
@@ -353,9 +353,9 @@ class ChartResponse(BaseModel):
                     "unit": "ppb",
                     "station_name": "莲花山",
                     "pollutant": "VOCs",
-                    "data_source": "smart_chart_generator",
+                    "data_source": "execute_echarts_python",
                     "record_count": 67,
-                    "generator": "smart_chart_generator",
+                    "generator": "execute_echarts_python",
                     "scenario": "vocs_analysis"
                 }
             }
