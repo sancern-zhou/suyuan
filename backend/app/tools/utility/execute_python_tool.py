@@ -75,11 +75,14 @@ class ExecutePythonTool(LLMTool):
         super().__init__(
             name="execute_python",
             description=(
-                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理中间资源生成。"
+                "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
+                "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
                 "每次调用是独立环境；跨调用复用结果请用 save_data(...) 保存 data_id。"
                 "使用 data_id 前先用 read_data_registry 读取。"
-                "正式报告静态图表优先使用 create_report_chart，流程/架构图优先使用 create_diagram_artifact；"
-                "execute_python 只保留通用计算和临时资源生成职责。"
+                "⚠️ **图表选择策略**："
+                "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
+                "② 复杂/自定义图表（3D图/多子图/极坐标/误差棒/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
+                "③ 流程图/架构图/步骤图 → 使用 call_sub_agent(target_mode='board') 调用画板Agent生成draw.io图片文件。"
                 f"生成文件保存到统一数据目录：{get_data_registry()}。"
             ),
             category=ToolCategory.QUERY,
@@ -2372,7 +2375,7 @@ def merge_excel_with_charts(file_paths, output_path):
                 "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
                 "每次调用是独立环境；跨调用复用请用 save_data(...) 保存 data_id。"
                 "使用 data_id 前先通过 read_data_registry 读取。"
-                "正式报告静态图表优先使用 create_report_chart，流程/架构图优先使用 create_diagram_artifact。"
+                "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成文件保存到 backend_data_registry；默认超时30秒。"
             ),
             "parameters": {
@@ -2405,8 +2408,13 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         self.category = ToolCategory.VISUALIZATION
         self.enable_echarts_visuals = True
         self.description = (
-            "执行 Python 代码并将 stdout 中的一行一个纯 JSON ECharts option 转换为前端 visuals。"
-            "用于图表模式的最终渲染步骤；通用计算和文件生成仍使用 execute_python。"
+            "执行 Python 代码并将 stdout 中的一行一个纯 JSON ECharts option 转换为前端交互式图表。"
+            "用于生成前端交互式 ECharts 图表（柱状图/折线图/散点图/饼图/3D图/地图等）。"
+            "⚠️ **图表选择策略**："
+            "① 正式报告Word/QMD静态图表 → 优先使用 create_report_chart；"
+            "② 前端交互式图表/复杂数据可视化 → 使用 execute_echarts_python；"
+            "③ 复杂Python绘图（3D/科研图/多子图） → 使用 execute_python + matplotlib/seaborn/plotly。"
+            "通用计算和文件生成仍使用 execute_python。"
         )
 
     async def execute(

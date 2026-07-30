@@ -46,7 +46,6 @@ class CreateDrawioBoardTool(LLMTool):
             "You must classify the requested diagram type and read only the one or two matching drawio_patterns guides "
             "routed by drawio_board_workflow.md before calling this tool for a new, structural, or major edit; "
             "never read every pattern guide. Minor text, color, font, size, or position-only edits may skip pattern guides. "
-            "Do not use create_diagram_artifact for board-mode interactive boards."
         )
         function_schema = {
             "name": name,
