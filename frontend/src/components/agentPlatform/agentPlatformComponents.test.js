@@ -15,23 +15,66 @@ test('agent platform renders accessible cards and emits mode selection', async (
   assert.match(source, /focus-visible/)
 })
 
-test('agent platform presents a compact responsive environment-agent grid', async () => {
+test('agent platform presents the real agent catalog as a portal grid', async () => {
   const source = await readComponent('AgentPlatform.vue')
 
-  assert.match(source, /padding: clamp\(24px, 4vh, 40px\) 0 32px/)
-  assert.match(source, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
-  assert.match(source, /min-height: 292px/)
-  assert.match(source, /gap: 20px/)
+  assert.match(source, /class="terrain-lines"/)
+  assert.match(source, /平台运行中/)
+  assert.match(source, /\{\{ agents\.length \}\}/)
+  assert.match(source, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
+  assert.match(source, /--lake-900: #07293b/)
+  assert.match(source, /--teal-500: #14a0ae/)
   assert.match(source, /@media \(max-width: 820px\)/)
 })
 
-test('agent cards use a clean surface without a colored left-edge decoration', async () => {
+test('agent platform renders visible scheduled task entries and emits selection', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /scheduledTasks:/)
+  assert.match(source, /class="scheduled-task-grid"/)
+  assert.match(source, /v-for="task in scheduledTasks"/)
+  assert.match(source, /task\.workspace_entry\?\.title \|\| task\.name/)
+  assert.match(source, /emit\('select-task', task\)/)
+  assert.match(source, /暂无显示在工作区的定时任务/)
+})
+
+test('agent cards use clean surfaces without decorative side bars', async () => {
   const source = await readComponent('AgentPlatform.vue')
 
   assert.doesNotMatch(source, /&::before/)
   assert.doesNotMatch(source, /inset: 0 auto 0 0/)
-  assert.doesNotMatch(source, /class="agent-icon"/)
-  assert.doesNotMatch(source, /agent\.iconPaths/)
+  assert.match(source, /class="agent-icon"/)
+  assert.match(source, /agent\.iconPaths/)
+})
+
+test('scheduled tasks use a distinct two-column featured-card treatment', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /\.scheduled-task-grid \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
+  assert.match(source, /\.scheduled-task-card \{[\s\S]*linear-gradient\(120deg, var\(--lake-900\)/)
+  assert.match(source, /class="task-ambient"/)
+  assert.match(source, /class="task-badge"/)
+})
+
+test('scheduled tasks appear before the agent catalog', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+  const taskPortalIndex = source.indexOf('class="portal-section task-portal"')
+  const agentPortalIndex = source.indexOf('class="agent-groups"')
+
+  assert.ok(taskPortalIndex >= 0)
+  assert.ok(agentPortalIndex >= 0)
+  assert.ok(taskPortalIndex < agentPortalIndex)
+})
+
+test('scene headings are primary sections without a nested container surface', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.doesNotMatch(source, /智能体入口/)
+  assert.doesNotMatch(source, /基于当前项目配置提供的真实专业能力/)
+  assert.match(source, /<h2 :id="`scene-\$\{scene\.id\}`">\{\{ scene\.name \}\}<\/h2>/)
+  assert.doesNotMatch(source, /\.scene-section \{[^}]*border/)
+  assert.doesNotMatch(source, /\.scene-section \{[^}]*background/)
+  assert.doesNotMatch(source, /\.scene-section \{[^}]*padding/)
 })
 
 test('empty chat resolves complete welcome copy from the selected agent catalog entry', async () => {

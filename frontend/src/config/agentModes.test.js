@@ -28,6 +28,16 @@ test('every agent mode provides complete platform copy and presentation metadata
   }
 })
 
+test('agent platform icons use distinct semantic silhouettes', () => {
+  const iconSignatures = AGENT_MODES.map(agent => agent.iconPaths.join('|'))
+  assert.equal(new Set(iconSignatures).size, AGENT_MODES.length)
+
+  const query = AGENT_MODES.find(agent => agent.id === 'query')
+  const chart = AGENT_MODES.find(agent => agent.id === 'chart')
+  assert.match(query.iconPaths.join(' '), /c0 1\.7 3\.1 3 7 3s7-1\.3 7-3/)
+  assert.match(chart.iconPaths.join(' '), /m5 16 4-5 4 3 6-8/)
+})
+
 test('every agent provides complete chat welcome content', () => {
   assert.equal(AGENT_MODES.length, 8)
   for (const agent of AGENT_MODES) {

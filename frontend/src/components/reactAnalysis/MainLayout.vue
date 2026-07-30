@@ -19,7 +19,9 @@
         :running-modes="runningAgentModes"
         :selecting-mode="selectingAgentMode"
         :error="agentPlatformError"
+        :scheduled-tasks="taskWorkspaceEntries"
         @select="$emit('select-agent', $event)"
+        @select-task="handleTaskWorkspaceSelect"
       />
       <component
         :is="AirQualityForecastView"
@@ -554,6 +556,10 @@ const handleAssistantSelect = (moduleId) => {
 
 const handleSidebarAction = (actionId) => {
   emit('sidebar-action', actionId)
+}
+
+const handleTaskWorkspaceSelect = (task) => {
+  emit('sidebar-action', { type: 'task-workspace', taskId: task.task_id })
 }
 
 const handleLoadSession = (sessionId) => {
