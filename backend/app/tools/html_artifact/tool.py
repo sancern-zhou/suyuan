@@ -190,6 +190,7 @@ class CreateHtmlArtifactTool(LLMTool):
         return {
             "success": True,
             "data": data,
+            "resources": data.get("resources", []),
             **resume_context,
             "metadata": {"generator": "create_html_artifact", "schema_version": "html_artifact.v1"},
             "summary": (

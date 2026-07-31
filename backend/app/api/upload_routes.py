@@ -11,11 +11,14 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import FileResponse, Response
 from typing import Optional, List
 import os
+import re
+import subprocess
 import uuid
 import shutil
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote
+from defusedxml import ElementTree
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -61,12 +64,13 @@ MAX_DOCUMENT_SIZE = 50 * 1024 * 1024  # 50MB
 # 支持的文件类型
 IMAGE_TYPES = {
     "image/png", "image/jpeg", "image/jpg", "image/gif",
-    "image/bmp", "image/webp"
+    "image/bmp", "image/webp", "image/svg+xml"
 }
 DOCUMENT_TYPES = {
     "application/pdf",
     "text/plain",
     "text/markdown",
+    "text/html",
     "application/json",
     "text/csv",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
@@ -91,7 +95,7 @@ def get_file_category(mime_type: str, filename: str = None) -> str:
     # MIME 类型未知时，尝试通过文件扩展名判断
     if filename:
         ext = Path(filename).suffix.lower()
-        image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+        image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
         if ext in image_extensions:
             return "image"
         # 其他允许的扩展名都视为文档
@@ -113,9 +117,9 @@ def validate_file_type(filename: str, content_type: str) -> tuple[bool, str]:
     ext = Path(filename).suffix.lower()
     allowed_extensions = {
         # 图片
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg",
         # 文档
-        ".pdf", ".txt", ".md", ".markdown", ".json", ".csv",
+        ".pdf", ".txt", ".md", ".markdown", ".html", ".htm", ".json", ".csv",
         # Office（新旧格式都支持）
         ".docx", ".xlsx", ".pptx",
         ".doc", ".xls", ".ppt"
@@ -143,6 +147,105 @@ def get_max_size(content_type: str, filename: str = None) -> int:
     return MAX_DOCUMENT_SIZE
 
 
+def _xml_local_name(value: str) -> str:
+    return value.rsplit("}", 1)[-1].lower()
+
+
+def _contains_external_css_reference(value: str) -> bool:
+    compact = re.sub(r"\s+", "", value).lower()
+    if "@import" in compact:
+        return True
+    return any(not target.startswith("#") for target in re.findall(r"url\(['\"]?([^)'\"]+)", compact))
+
+
+def validate_svg_content(content: bytes) -> None:
+    """Reject active SVG content and references that may access server-side resources."""
+    try:
+        root = ElementTree.fromstring(content)
+    except Exception as exc:
+        raise ValueError("SVG 文件不是有效的安全 XML") from exc
+
+    if _xml_local_name(root.tag) != "svg":
+        raise ValueError("SVG 文件缺少 svg 根元素")
+
+    blocked_elements = {"script", "foreignobject", "iframe", "object", "embed"}
+    for element in root.iter():
+        element_name = _xml_local_name(element.tag)
+        if element_name in blocked_elements:
+            raise ValueError(f"SVG 包含不允许的元素: {element_name}")
+        if element_name == "style" and _contains_external_css_reference(element.text or ""):
+            raise ValueError("SVG 样式包含外部资源引用")
+
+        for raw_name, raw_value in element.attrib.items():
+            name = _xml_local_name(raw_name)
+            value = str(raw_value).strip()
+            if name.startswith("on"):
+                raise ValueError("SVG 包含不允许的事件处理器")
+            if name == "href" and value and not value.startswith("#"):
+                raise ValueError("SVG 包含外部资源引用")
+            if name == "style" and _contains_external_css_reference(value):
+                raise ValueError("SVG 样式包含外部资源引用")
+
+
+def _svg_render_size(content: bytes, max_dimension: int = 4096) -> tuple[int, int] | None:
+    root = ElementTree.fromstring(content)
+
+    def length(value: str | None) -> float | None:
+        match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*(px)?\s*", value or "")
+        return float(match.group(1)) if match else None
+
+    width = length(root.attrib.get("width"))
+    height = length(root.attrib.get("height"))
+    if not width or not height:
+        view_box = re.split(r"[\s,]+", root.attrib.get("viewBox", "").strip())
+        if len(view_box) == 4:
+            try:
+                width = width or abs(float(view_box[2]))
+                height = height or abs(float(view_box[3]))
+            except ValueError:
+                pass
+    if not width or not height:
+        return None
+
+    scale = min(1.0, max_dimension / width, max_dimension / height)
+    if scale == 1.0:
+        return None
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
+def convert_svg_to_png(source_path: str, output_path: str) -> None:
+    content = Path(source_path).read_bytes()
+    validate_svg_content(content)
+    render_size = _svg_render_size(content)
+    size_args = (
+        ["--keep-aspect-ratio", "--width", str(render_size[0]), "--height", str(render_size[1])]
+        if render_size else []
+    )
+    try:
+        subprocess.run(
+            [
+                "rsvg-convert",
+                "--format", "png",
+                *size_args,
+                "--output", output_path,
+                source_path,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("SVG 转换组件未安装") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("SVG 转换超时") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"SVG 转换失败: {detail or '无法渲染该文件'}") from exc
+
+    if not Path(output_path).is_file() or Path(output_path).stat().st_size == 0:
+        raise ValueError("SVG 转换失败: 未生成有效图片")
+
+
 @router.post("/chat")
 async def upload_chat_file(
     file: UploadFile = File(...),
@@ -155,8 +258,8 @@ async def upload_chat_file(
     """上传文件用于对话
 
     支持的文件类型：
-    - 图片: PNG, JPG, JPEG, GIF, BMP, WEBP (最大 5MB)
-    - 文档: PDF, TXT, MD, JSON, CSV (最大 50MB)
+    - 图片: PNG, JPG, JPEG, GIF, BMP, WEBP, SVG (最大 5MB；SVG 会安全转换为 PNG)
+    - 文档: PDF, TXT, MD, HTML, HTM, JSON, CSV (最大 50MB)
     - Office: DOC, DOCX, XLS, XLSX, PPT, PPTX (最大 50MB)
 
     Args:
@@ -207,35 +310,50 @@ async def upload_chat_file(
     os.makedirs(UPLOAD_STORAGE_DIR, exist_ok=True)
 
     # 清理文件名：移除特殊字符，保留中文、字母、数字、点、下划线、连字符
-    import re
     original_filename = file.filename or "unnamed"
     # 提取文件扩展名
-    file_ext = Path(original_filename).suffix
+    file_ext = Path(original_filename).suffix.lower()
     # 清理基础文件名（移除路径分隔符等危险字符）
     safe_filename_base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', original_filename)
     if not safe_filename_base:
         safe_filename_base = "unnamed"
     # 使用 file_id + 扩展名保存，避免文件名冲突
-    safe_filename = f"{file_id}{file_ext}" if file_ext else file_id
+    is_svg = file_ext == ".svg" or (file.content_type or "").lower() == "image/svg+xml"
+    stored_ext = ".png" if is_svg else file_ext
+    stored_filename = f"{Path(original_filename).stem}.png" if is_svg else original_filename
+    stored_mime_type = "image/png" if is_svg else (file.content_type or "application/octet-stream")
+    safe_filename = f"{file_id}{stored_ext}" if stored_ext else file_id
     file_path = os.path.join(UPLOAD_STORAGE_DIR, safe_filename)
+    source_file_path = os.path.join(UPLOAD_STORAGE_DIR, f"{file_id}.svg.upload") if is_svg else file_path
 
     try:
-        with open(file_path, "wb") as f:
+        with open(source_file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
+        if is_svg:
+            convert_svg_to_png(source_file_path, file_path)
+            os.remove(source_file_path)
+    except ValueError as e:
+        for path in {source_file_path, file_path}:
+            if os.path.exists(path):
+                os.remove(path)
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error("file_save_failed", file_id=file_id, filename=original_filename, error=str(e))
+        for path in {source_file_path, file_path}:
+            if os.path.exists(path):
+                os.remove(path)
         raise HTTPException(status_code=500, detail=f"文件保存失败: {str(e)}")
 
     # 保存文件元信息到数据库
-    file_category = get_file_category(file.content_type or "", file.filename or "")
+    file_category = get_file_category(stored_mime_type, stored_filename)
 
     uploaded_file = UploadedFile(
         id=file_id,
-        filename=file.filename or "unnamed",
+        filename=stored_filename,
         file_path=file_path,
         file_type=file_category,
-        mime_type=file.content_type or "application/octet-stream",
-        file_size=file_size,
+        mime_type=stored_mime_type,
+        file_size=os.path.getsize(file_path),
         session_id=session_id
     )
 
@@ -256,13 +374,14 @@ async def upload_chat_file(
             declaration = ResourceDeclaration(
                 kind=ResourceKind.FILE,
                 logical_key=f"upload:{file_id}",
-                role=ResourceRole.SOURCE,
-                label=file.filename or "unnamed",
+                role=ResourceRole.ATTACHMENT,
+                label=stored_filename,
                 locator=ResourceLocator(path=file_path),
                 metadata={
-                    "mime_type": file.content_type or "application/octet-stream",
+                    "mime_type": stored_mime_type,
                     "file_id": file_id,
                     "source": "user_upload",
+                    **({"original_filename": original_filename, "original_mime_type": "image/svg+xml"} if is_svg else {}),
                 },
                 tool_name="upload_chat",
             )
@@ -273,7 +392,7 @@ async def upload_chat_file(
                 (
                     item
                     for item in resource_batch.resources
-                    if item.resource_key == declaration.resource_key()
+                    if (item.role, item.resource_key) == declaration.catalog_key()
                 ),
                 None,
             )
@@ -297,9 +416,9 @@ async def upload_chat_file(
     logger.info(
         "file_uploaded",
         file_id=file_id,
-        filename=file.filename,
+        filename=stored_filename,
         file_type=file_category,
-        file_size=file_size
+        file_size=uploaded_file.file_size
     )
 
     # 对外协议只暴露稳定的网关相对资源地址。本地路径由 Agent 通过 file_id
@@ -308,10 +427,10 @@ async def upload_chat_file(
 
     return {
         "file_id": file_id,
-        "filename": file.filename or "unnamed",
+        "filename": stored_filename,
         "file_type": file_category,
-        "mime_type": file.content_type or "application/octet-stream",
-        "file_size": file_size,
+        "mime_type": stored_mime_type,
+        "file_size": uploaded_file.file_size,
         "url": file_url,
         "upload_time": uploaded_file.created_at.isoformat(),
         "resource_ref": (

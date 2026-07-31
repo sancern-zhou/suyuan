@@ -91,6 +91,7 @@ class AgentRuntime:
             enhance_with_history=self.config.enhance_with_history,
             board_context=self.config.board_context,
         )
+        self.executor.resource_run_id = state.run_id
 
         await run_ownership_registry.register(state.session_id, state.run_id)
         await steering_registry.register(state.session_id, state.run_id, state.mode)
@@ -353,6 +354,48 @@ class AgentRuntime:
             return False
         return True
 
+    @staticmethod
+    def _planner_action_tool_calls(action: Optional[Dict[str, Any]]) -> List[tuple[str, Dict[str, Any]]]:
+        """Return normalized tool calls from either planner action shape."""
+        if not isinstance(action, dict):
+            return []
+        if action.get("type") == "TOOL_CALL":
+            return [(str(action.get("tool") or ""), action.get("args") or {})]
+        if action.get("type") == "TOOL_CALLS":
+            return [
+                (str(item.get("tool") or ""), item.get("args") or {})
+                for item in action.get("tools") or []
+                if isinstance(item, dict)
+            ]
+        return []
+
+    @classmethod
+    def _action_materializes_visual_output(cls, action: Optional[Dict[str, Any]]) -> bool:
+        """Whether the planner has reached a visual generation/edit checkpoint.
+
+        Reference images remain attached while the Agent is only reading
+        instructions or inspecting files.  Consuming them at those calls caused
+        later PPT/chart generation to run from memory instead of pixels.
+        """
+        visual_tools = {
+            "create_pptx_with_ppt_master",
+            "create_report_chart",
+            "create_drawio_board",
+            "render_drawio_board_candidate",
+            "edit_file",
+            "write_file",
+        }
+        visual_ppt_operations = {
+            "edit_source",
+            "edit_sources",
+        }
+        for tool_name, args in cls._planner_action_tool_calls(action):
+            if tool_name in visual_tools:
+                return True
+            if tool_name == "manage_editable_ppt" and str(args.get("operation") or "") in visual_ppt_operations:
+                return True
+        return False
+
     def _consume_initial_attachments_after_drawio_board_created(self, state: RunState) -> None:
         attachments = getattr(getattr(self, "config", None), "attachments", None)
         if not attachments or state.initial_attachments_consumed:
@@ -363,7 +406,31 @@ class AgentRuntime:
                 state.consumed_attachment_keys.add(key)
         state.initial_attachments_consumed = True
 
-    def _consume_sent_attachments_after_planner(self, state: RunState) -> None:
+    def _consume_sent_attachments_after_planner(
+        self,
+        state: RunState,
+        action: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if state.mode in {"ppt", "chart"} and not self._action_materializes_visual_output(action):
+            logger.info(
+                "multimodal_attachments_retained_for_visual_materialization",
+                session_id=state.session_id,
+                run_id=state.run_id,
+                iteration=state.iteration,
+                mode=state.mode,
+                attachment_count=len(self._effective_attachments(state)),
+                planner_tools=[name for name, _ in self._planner_action_tool_calls(action)],
+            )
+            return
+        logger.info(
+            "multimodal_attachments_consumed_at_planner_checkpoint",
+            session_id=state.session_id,
+            run_id=state.run_id,
+            iteration=state.iteration,
+            mode=state.mode,
+            attachment_count=len(self._effective_attachments(state)),
+            planner_tools=[name for name, _ in self._planner_action_tool_calls(action)],
+        )
         if state.pending_attachments:
             self._consume_pending_attachments(state)
         if self._should_consume_initial_attachments_after_planner(state):
@@ -392,7 +459,10 @@ class AgentRuntime:
         filtered_attachments: List[Dict[str, Any]] = []
         for attachment in attachments:
             key = self._attachment_key(attachment)
-            if key and (key in state.consumed_attachment_keys or key in known_keys):
+            # A new explicit read_file(..., as_multimodal_attachment=true)
+            # request is allowed to re-open a previously consumed image.  Only
+            # suppress duplicates already waiting for the next planner call.
+            if key and key in known_keys:
                 continue
             filtered_attachments.append(attachment)
             if key:
@@ -848,7 +918,7 @@ class AgentRuntime:
             )
 
         if supports_native_multimodal(state.mode) and attachments:
-            self._consume_sent_attachments_after_planner(state)
+            self._consume_sent_attachments_after_planner(state, planner_result.action)
 
         if planner_result.action and planner_result.action.get("type") in ("TOOL_CALL", "TOOL_CALLS"):
             planner_result.tool_calls = self.tool_coordinator.tool_calls_from_action(planner_result.action)
@@ -965,7 +1035,7 @@ class AgentRuntime:
             auto_profile=self.config.auto_profile,
         )
         if supports_native_multimodal(state.mode) and attachments:
-            self._consume_sent_attachments_after_planner(state)
+            self._consume_sent_attachments_after_planner(state, result.get("action"))
         partial.thought = result.get("thought")
         partial.action = result.get("action")
         partial.raw_thinking_blocks = result.get("raw_thinking_blocks")

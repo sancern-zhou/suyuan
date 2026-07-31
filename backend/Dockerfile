@@ -8,6 +8,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
+    librsvg2-bin \
     unixodbc \
     unixodbc-dev \
     && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \

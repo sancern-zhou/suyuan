@@ -484,6 +484,7 @@ def calculate_carbon(
 # ============================================================================
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_visuals
 
 
 class CalculateCarbonTool(LLMTool):
@@ -657,6 +658,7 @@ calculate_carbon(
             except Exception as save_err:
                 logger.warning(f"[calculate_carbon] 保存失败: {save_err}")
 
+        result["resources"] = resources_for_visuals(result.get("visuals", []), tool_name=self.name)
         return result
 
 

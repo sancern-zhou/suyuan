@@ -221,7 +221,7 @@
                 ref="fileInputRef"
                 type="file"
                 @change="handleFileSelect"
-                accept="image/*,.pdf,.txt,.md,.json,.csv,.docx,.xlsx,.pptx"
+                accept="image/*,.pdf,.txt,.md,.html,.htm,.json,.csv,.docx,.xlsx,.pptx"
               />
               <span class="upload-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24">
@@ -1116,6 +1116,7 @@ const getFileExtensionFromMimeType = (mimeType) => {
     'application/pdf': '.pdf',
     'text/plain': '.txt',
     'text/markdown': '.md',
+    'text/html': '.html',
     'application/json': '.json',
     'text/csv': '.csv',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',

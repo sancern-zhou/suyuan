@@ -29,6 +29,9 @@ from .resources.runtime import (
     flush_resource_accumulator,
 )
 from .resources.resource_service import SessionResourceService, StoredResource
+from .resources.resource_map import project_agent_resource_map
+from .resources.discovery import discover_resource_declarations
+from .resources.models import ResourceRole
 from .selection_context import (
     resource_refs_to_runtime_attachments,
     selected_resource_projection,
@@ -523,30 +526,28 @@ class ReActAgent:
             manual_mode=manual_mode,
             storage_mode=session_storage_mode or manual_mode,
         )
-        # 上下文资源唯一来源为持久化资源目录；不再读取会话内存中的旧
-        # office_documents 快照，避免重启前后 Agent 上下文不一致。
-        session_resources = await SessionResourceService.database().list_resources(
-            actual_session_id, presentation_type="document", limit=100
-        )
-        resource_documents = [
-            {
-                "file_name": resource.label,
-                "file_path": (resource.locator or {}).get("path"),
-                "file_type": (resource.presentation or {}).get("format") if resource.presentation else None,
-                "summary": (resource.metadata or {}).get("summary"),
-            }
-            for resource in session_resources.resources
-        ]
-        session_document_context = self._build_session_document_context(resource_documents)
-        if session_document_context:
-            user_query = f"{user_query}\n\n{session_document_context}"
-            logger.info(
-                "session_document_context_added",
-                session_id=actual_session_id,
-                context_length=len(session_document_context),
-                document_count=len(resource_documents[: self.SESSION_DOCUMENT_CONTEXT_LIMIT]),
+        resource_service = SessionResourceService.database()
+        if attachments:
+            input_resources = discover_resource_declarations(
+                attachments,
+                role=ResourceRole.ATTACHMENT,
+                tool_name="user_attachment",
+                expand_directories=False,
             )
-
+            if input_resources:
+                try:
+                    await resource_service.upsert_run_resources(
+                        actual_session_id,
+                        f"input:{uuid.uuid4().hex}",
+                        input_resources,
+                        turn_sequence=0,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "attachment_resource_persistence_failed",
+                        session_id=actual_session_id,
+                        error=str(exc),
+                    )
         from .task.task_models import TaskList
 
         run_task_list = TaskList()
@@ -562,7 +563,6 @@ class ReActAgent:
         )
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
-        resource_service = SessionResourceService.database()
         resource_accumulator = RunResourceAccumulator(run_id="")
         resource_flushed = False
 
@@ -613,12 +613,18 @@ class ReActAgent:
                 auto_profile=auto_profile,
             )
 
+            run_executor.configure_resource_tracking(
+                service=resource_service,
+                context_builder=react_loop.context_builder,
+                query=user_query,
+            )
+
             try:
-                resource_page = await resource_service.list_resources(actual_session_id, limit=100)
+                resource_page = await resource_service.list_resources(actual_session_id, limit=500)
                 if resource_page.resources:
-                    react_loop.context_builder.session_resource_context = "\n".join(
-                        f"- {item.resource_id} | {item.kind} | {item.label} | {next(iter(item.locator.values()))}"
-                        for item in resource_page.resources
+                    react_loop.context_builder.session_resource_context = project_agent_resource_map(
+                        resource_page.resources,
+                        query=user_query,
                     )
             except Exception as exc:
                 logger.error("session_resource_context_load_failed", session_id=actual_session_id, error=str(exc))

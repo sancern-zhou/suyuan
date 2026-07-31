@@ -90,8 +90,13 @@ class SessionResourcesRepository:
                         statement = insert(SessionResourceDB).values(**values)
                         update_values = {**values, "metadata": stored.metadata}
                         update_values.pop("resource_metadata", None)
+                        update_values.pop("resource_id", None)
                         statement = statement.on_conflict_do_update(
-                            index_elements=[SessionResourceDB.session_id, SessionResourceDB.resource_key],
+                            index_elements=[
+                                SessionResourceDB.session_id,
+                                SessionResourceDB.resource_key,
+                                SessionResourceDB.role,
+                            ],
                             set_={**update_values, "created_at": SessionResourceDB.created_at},
                         )
                         await db.execute(statement)
@@ -100,7 +105,7 @@ class SessionResourcesRepository:
                 rows = await db.execute(
                     select(SessionResourceDB)
                     .where(SessionResourceDB.session_id == session_id)
-                    .order_by(SessionResourceDB.created_at, SessionResourceDB.resource_key)
+                    .order_by(SessionResourceDB.updated_at.desc(), SessionResourceDB.resource_key)
                 )
                 result_version = version_row.version
                 stored_rows = [_stored(row) for row in rows.scalars().all()]
@@ -127,7 +132,7 @@ class SessionResourcesRepository:
                 statement = statement.where(SessionResourceDB.role == role)
             if status:
                 statement = statement.where(SessionResourceDB.status == status)
-            statement = statement.order_by(SessionResourceDB.created_at, SessionResourceDB.resource_key)
+            statement = statement.order_by(SessionResourceDB.updated_at.desc(), SessionResourceDB.resource_key)
             if cursor:
                 statement = statement.offset(int(cursor))
             statement = statement.limit(limit + 1)
@@ -143,6 +148,15 @@ class SessionResourcesRepository:
             visualizations=sum(row.presentation_type == "visualization" for row in page.resources),
             files=sum(row.kind in {"file", "artifact"} for row in page.resources),
         )
+
+    async def version(self, session_id: str) -> int:
+        async with AsyncSession(self.engine) as db:
+            value = await db.scalar(
+                select(SessionResourceVersionDB.version).where(
+                    SessionResourceVersionDB.session_id == session_id
+                )
+            )
+            return int(value or 0)
 
     async def get_resource(
         self,

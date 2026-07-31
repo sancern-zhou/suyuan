@@ -32,6 +32,7 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.resource_refs import build_file_ref
 from app.utils.path_config import BACKEND_ROOT
@@ -153,21 +154,22 @@ class ReadFileTool(LLMTool):
             if not resolved_path:
                 return {
                     "success": False,
-                    "data": {"error": f"文件路径无效或超出工作目录范围: {path}"},
-                    "summary": f"无法访问文件: {path}"
+                    "data": {"error": "文件路径无效或超出工作目录范围"},
+                    "summary": "无法访问该文件"
                 }
 
             # 2. 检查文件是否存在
             if not resolved_path.exists():
                 return {
                     "success": False,
-                    "data": {"error": f"文件不存在: {path}"},
-                    "summary": f"文件不存在: {path}"
+                    "data": {"error": "文件不存在"},
+                    "summary": "文件不存在"
                 }
 
             # 2.5. 检查是否为目录
             if resolved_path.is_dir():
-                return await self._list_directory(resolved_path)
+                result = await self._list_directory(resolved_path)
+                return self._strip_source_path_echo(result, resolved_path)
 
             # 3. 获取文件信息
             file_size = resolved_path.stat().st_size
@@ -185,15 +187,15 @@ class ReadFileTool(LLMTool):
             if is_image:
                 if as_multimodal_attachment:
                     return await self._read_image_as_multimodal_attachment(resolved_path, file_size)
-                return await self._read_image(
+                result = await self._read_image(
                     resolved_path, file_size, auto_analyze, analysis_type
                 )
             elif is_pdf:
-                return await self._read_pdf_delegated(
+                result = await self._read_pdf_delegated(
                     resolved_path, file_size, pages, extract_tables, extract_images, enable_preview
                 )
             elif is_docx:
-                return await self._read_docx_delegated(
+                result = await self._read_docx_delegated(
                     resolved_path,
                     file_size,
                     offset,
@@ -203,25 +205,26 @@ class ReadFileTool(LLMTool):
                     enable_preview,
                 )
             elif is_doc:
-                return await self._read_doc_delegated(
+                result = await self._read_doc_delegated(
                     resolved_path, file_size, offset, limit
                 )
             elif is_pptx:
-                return await self._read_pptx_delegated(
+                result = await self._read_pptx_delegated(
                     resolved_path, file_size, pages, enable_preview
                 )
             elif is_excel:
                 # Excel 文件需要使用 execute_python 工具
-                return await self._handle_excel_file(resolved_path)
+                result = await self._handle_excel_file(resolved_path)
             elif is_word_xml:
-                return await self._read_word_xml(
+                result = await self._read_word_xml(
                     resolved_path, file_size, raw_mode, include_formatting, max_paragraphs
                 )
             else:
                 # 读取文本文件（支持分页）
-                return await self._read_text(
+                result = await self._read_text(
                     resolved_path, encoding, file_size, offset, limit, max_size
                 )
+            return self._strip_source_path_echo(result, resolved_path)
 
         except Exception as e:
             logger.error("read_file_failed", path=path, error=str(e))
@@ -253,12 +256,66 @@ class ReadFileTool(LLMTool):
                 },
                 "summary": f"目录内容: {dir_path.name} ({len(items)} 项)"
             }
+
         except Exception as e:
             return {
                 "success": False,
                 "data": {"error": f"无法列出目录内容: {str(e)}"},
                 "summary": f"无法访问目录: {dir_path.name}"
             }
+
+    def _strip_source_path_echo(self, result: Dict[str, Any], source_path: Path) -> Dict[str, Any]:
+        """Remove redundant source locators while preserving runtime-only directives."""
+        source = str(source_path)
+
+        def clean(value: Any, parent_key: str = "") -> Any:
+            if isinstance(value, dict):
+                if parent_key == "attachments":
+                    return value
+                cleaned: Dict[str, Any] = {}
+                for key, item in value.items():
+                    if key == "refs":
+                        continue
+                    if key == "resources" and isinstance(item, list):
+                        cleaned[key] = [
+                            resource
+                            for resource in item
+                            if not (
+                                isinstance(resource, dict)
+                                and isinstance(resource.get("locator"), dict)
+                                and resource["locator"].get("path") == source
+                            )
+                        ]
+                        continue
+                    if key in {"path", "file_path"} and item == source:
+                        continue
+                    cleaned[key] = clean(item, key)
+                return cleaned
+            if isinstance(value, list):
+                return [clean(item, parent_key) for item in value]
+            return value
+
+        cleaned_result = clean(result)
+
+        preview_paths: list[str] = []
+        def collect_previews(value: Any, parent_key: str = "") -> None:
+            if isinstance(value, dict):
+                if parent_key == "pdf_preview" and value.get("pdf_path"):
+                    preview_paths.append(str(value["pdf_path"]))
+                for key, item in value.items():
+                    collect_previews(item, key)
+            elif isinstance(value, list):
+                for item in value:
+                    collect_previews(item, parent_key)
+
+        collect_previews(result)
+        generated = resources_for_files(
+            [path for path in preview_paths if str(Path(path).resolve()) != source],
+            tool_name=self.name,
+        )
+        if generated:
+            cleaned_result.setdefault("resources", []).extend(generated)
+        return cleaned_result
 
     async def _read_text(
         self,
@@ -353,18 +410,15 @@ class ReadFileTool(LLMTool):
             }
             if is_truncated:
                 llm_resume["tool_hint"] = (
-                    f"Use read_file(path='{file_path}', offset={end_line}, limit={effective_limit}) "
+                    f"Use read_file(offset={end_line}, limit={effective_limit}) on the same resource "
                     "to continue reading."
                 )
-            else:
-                llm_resume["tool_hint"] = f"Use read_file(path='{file_path}') to reread this file."
 
             # Markdown文件添加预览字段
             if file_path.suffix.lower() in self.MARKDOWN_EXTENSIONS:
                 data["markdown_preview"] = {
                     "content": content,
-                    "file_name": file_path.name,
-                    "file_path": str(file_path)
+                    "file_name": file_path.name
                 }
 
             # 构建摘要信息
@@ -510,14 +564,12 @@ class ReadFileTool(LLMTool):
                 "type": "multimodal_attachment",
                 "format": file_path.suffix[1:].lower(),
                 "size": file_size,
-                "attachments": [attachment],
             },
             "attachments": [attachment],
             "summary": "图片已挂载，将在下一轮以原生多模态输入提供。",
             "metadata": {
                 "schema_version": "v2.0",
                 "tool_name": "read_file",
-                "path": str(file_path),
             },
         }
 
@@ -971,11 +1023,9 @@ class ReadFileTool(LLMTool):
             llm_resume = {"content_preview": selected_content[:2000]}
             if is_truncated:
                 llm_resume["tool_hint"] = (
-                    f"Use read_file(path='{file_path}', offset={end_line}, limit={effective_limit}) "
+                    f"Use read_file(offset={end_line}, limit={effective_limit}) on the same resource "
                     "to continue reading."
                 )
-            else:
-                llm_resume["tool_hint"] = f"Use read_file(path='{file_path}') to reread this file."
 
             if effective_limit is not None and end_line < total_lines:
                 summary = (

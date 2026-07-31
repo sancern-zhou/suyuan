@@ -18,6 +18,8 @@ from datetime import datetime
 from enum import Enum
 import structlog
 
+from app.tools.resource_declarations import resources_for_visuals
+
 logger = structlog.get_logger()
 
 
@@ -189,11 +191,13 @@ class WorkflowTool(ABC):
         if extra_metadata:
             metadata.update(extra_metadata)
 
+        normalized_visuals = visuals or []
         return {
             "status": status,
             "success": success,
             "data": data,
-            "visuals": visuals or [],
+            "visuals": normalized_visuals,
+            "resources": resources_for_visuals(normalized_visuals, tool_name=self.name),
             "metadata": metadata,
             "summary": summary
         }

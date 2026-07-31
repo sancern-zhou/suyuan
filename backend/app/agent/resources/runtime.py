@@ -27,14 +27,19 @@ class RunResourceAccumulator:
         if data.get("is_error") or data.get("success") is False:
             return
         result = data.get("result") if isinstance(data.get("result"), dict) else data
+        tracking = result.get("resource_tracking") if isinstance(result, dict) else None
+        if isinstance(tracking, dict) and tracking.get("durable") is True:
+            # The executor persisted these resources before returning the tool
+            # result, so a terminal re-upsert would create a false new version.
+            return
         resources, rejected = normalize_tool_resources(result=result)
         self.rejected = [*self.rejected, *rejected][-50:]
-        by_key = {item.resource_key(): item for item in self.resources}
+        by_key = {item.catalog_key(): item for item in self.resources}
         tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
         for resource in resources:
             if tool_name:
                 resource = resource.model_copy(update={"tool_name": tool_name})
-            by_key[resource.resource_key()] = resource
+            by_key[resource.catalog_key()] = resource
         self.resources = list(by_key.values())
 
 

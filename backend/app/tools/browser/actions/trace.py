@@ -5,6 +5,7 @@ Handler for trace debugging operations.
 import structlog
 
 from ..services.trace_manager import TraceManager
+from app.tools.resource_declarations import file_resource
 
 logger = structlog.get_logger()
 
@@ -78,7 +79,7 @@ def handle_trace(
         return {
             "action": "start",
             "trace_path": trace_path,
-            "name": name
+            "name": name,
         }
 
     elif action == "stop":
@@ -93,7 +94,8 @@ def handle_trace(
         if trace_path:
             return {
                 "action": "stop",
-                "trace_path": trace_path
+                "trace_path": trace_path,
+                "resources": [file_resource(trace_path, tool_name="browser")],
             }
         else:
             return {

@@ -366,6 +366,7 @@ def calculate_trace(
 # ============================================================================
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import data_resource, resources_for_visuals
 
 
 class CalculateTraceTool(LLMTool):
@@ -441,6 +442,9 @@ class CalculateTraceTool(LLMTool):
                 import structlog
                 logging.warning(f"[calculate_trace] 保存结果失败: {save_err}")
 
+        result["resources"] = resources_for_visuals(result.get("visuals", []), tool_name=self.name)
+        if result.get("data_id"):
+            result["resources"].append(data_resource(str(result["data_id"]), tool_name=self.name))
         return result
 
 

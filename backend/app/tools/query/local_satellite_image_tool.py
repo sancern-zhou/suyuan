@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.data_registry import DataRegistryService, data_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 from app.tools.resource_refs import build_data_ref, build_file_ref, build_url_ref, build_visual_ref
 
 
@@ -147,6 +148,10 @@ class LocalSatelliteImageTool(LLMTool):
             "status": "success",
             "data": {"source": self.source_name, "images": images, "count": len(images)},
             "visuals": visuals,
+            "resources": resources_for_files(
+                [image["local_path"] for image in images],
+                tool_name=self.name,
+            ),
             "refs": refs,
             "llm_resume": {
                 "source_data_ids": list(dict.fromkeys(image["data_id"] for image in images)),

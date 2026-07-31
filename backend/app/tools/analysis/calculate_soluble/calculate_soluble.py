@@ -598,6 +598,7 @@ def calculate_soluble(
 # ============================================================================
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_visuals
 
 
 class CalculateSolubleTool(LLMTool):
@@ -825,6 +826,7 @@ result = calculate_soluble(
             except Exception as save_err:
                 logger.warning(f"[calculate_soluble] 保存失败: {save_err}")
 
+        result["resources"] = resources_for_visuals(result.get("visuals", []), tool_name=self.name)
         return result
 
     def _merge_ion_gas_records(

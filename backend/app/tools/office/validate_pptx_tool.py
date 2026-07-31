@@ -4,6 +4,7 @@ Validate PPTX deliverables by rendering and running lightweight QA checks.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from collections import Counter
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import file_resource
 from app.tools.office.slides_qa.create_montage import create_montage
 from app.tools.office.slides_qa.detect_fonts import detect_pdf_fonts
 from app.tools.office.slides_qa.detect_overflow import (
@@ -23,6 +25,20 @@ from app.tools.office.slides_qa.detect_overflow import (
 from app.tools.office.slides_qa.render_pptx import render_deck
 
 logger = structlog.get_logger()
+
+
+def validation_output_resources(pptx_path: Path, outputs: List[Path]) -> List[Dict[str, Any]]:
+    """Declare current QA outputs in stable per-deck slots."""
+    validation_slot = hashlib.sha256(str(pptx_path).encode("utf-8")).hexdigest()[:16]
+    return [
+        file_resource(
+            output,
+            tool_name="validate_pptx",
+            logical_key=f"ppt-validation:{validation_slot}:{output.name}",
+        )
+        for output in outputs
+        if output.is_file()
+    ]
 
 
 class ValidatePptxTool(LLMTool):
@@ -153,6 +169,13 @@ class ValidatePptxTool(LLMTool):
             report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
             report["report_path"] = str(report_path)
 
+            compact_outputs = [report_path]
+            if montage_path:
+                compact_outputs.append(montage_path)
+            pdf_path = render_result.get("pdf_path") if isinstance(render_result, dict) else None
+            if pdf_path:
+                compact_outputs.append(Path(str(pdf_path)))
+
             summary = (
                 f"PPT验证完成：{pptx_path.name}，发现 {len(issues)} 个问题"
                 if issues
@@ -161,6 +184,7 @@ class ValidatePptxTool(LLMTool):
             return {
                 "success": True,
                 "data": report,
+                "resources": validation_output_resources(pptx_path, compact_outputs),
                 "summary": summary,
             }
         except Exception as e:

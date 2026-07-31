@@ -36,6 +36,7 @@ import structlog
 import json
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_visuals
 
 logger = structlog.get_logger()
 
@@ -281,6 +282,7 @@ class MLPredictorTool(LLMTool):
                 }
             },
             "visuals": [chart],
+            "resources": resources_for_visuals([chart], tool_name=self.name),
             "metadata": {
                 "schema_version": "v2.0",
                 "generator": "predict_air_quality",

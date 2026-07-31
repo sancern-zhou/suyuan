@@ -639,6 +639,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="list_session_resources", error=str(e))
 
     try:
+        from app.tools.utility.read_session_resource_tool import ReadSessionResourceTool
+        registry.register(ReadSessionResourceTool(), priority=299)
+        logger.info("tool_loaded", tool="read_session_resource")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="read_session_resource", error=str(e))
+
+    try:
         from app.tools.utility.bash_tool import BashTool
         registry.register(BashTool(), priority=300)  # 修复: 500->300
         logger.info("tool_loaded", tool="bash")

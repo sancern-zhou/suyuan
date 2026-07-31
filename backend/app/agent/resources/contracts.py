@@ -146,3 +146,7 @@ class ResourceDeclaration(BaseModel):
             return self.logical_key
         identity = f"{self.kind.value}:{self.locator.canonical_identity()}"
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+
+    def catalog_key(self) -> tuple[str, str]:
+        """Identity within the catalog: the same resource may exist in each role."""
+        return self.role.value, self.resource_key()

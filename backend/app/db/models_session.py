@@ -31,7 +31,7 @@ class SessionResourceDB(Base):
     resource_key = Column(String(255), primary_key=True)
     resource_id = Column(String(64), nullable=False, unique=True, index=True)
     kind = Column(String(32), nullable=False, index=True)
-    role = Column(String(32), nullable=False)
+    role = Column(String(32), primary_key=True)
     logical_key = Column(String(255), nullable=True)
     label = Column(String(512), nullable=False)
     locator = Column(JSONB, nullable=False)

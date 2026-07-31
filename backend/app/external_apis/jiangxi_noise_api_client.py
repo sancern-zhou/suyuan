@@ -73,6 +73,8 @@ def resolve_city_codes(city_names: Iterable[str]) -> list[str]:
 class JiangxiNoiseDataClient:
     """江西省噪声平台异步查询客户端。"""
 
+    TOKEN_ENDPOINT = "/api/noiseproduct/AirCityBaseCommon/GetExternalApiToken"
+
     API_ENDPOINTS = {
         "station_hour": (
             "/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync"
@@ -87,21 +89,28 @@ class JiangxiNoiseDataClient:
         self,
         *,
         base_url: str,
-        secret_name: str,
+        username: str,
+        secret_key: str,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         base_url = base_url.strip().rstrip("/")
-        secret_name = secret_name.strip()
+        username = username.strip()
+        secret_key = secret_key.strip()
         if not base_url:
             raise JiangxiNoiseClientError(
                 "configuration_error",
                 "缺少环境变量 JIANGXI_NOISE_BASE_URL",
             )
-        if not secret_name:
+        if not username:
             raise JiangxiNoiseClientError(
                 "configuration_error",
-                "缺少环境变量 JIANGXI_NOISE_SECRET_NAME",
+                "缺少环境变量 JIANGXI_NOISE_USERNAME",
+            )
+        if not secret_key:
+            raise JiangxiNoiseClientError(
+                "configuration_error",
+                "缺少环境变量 JIANGXI_NOISE_SECRET_KEY",
             )
         if timeout <= 0:
             raise JiangxiNoiseClientError(
@@ -110,7 +119,8 @@ class JiangxiNoiseDataClient:
             )
 
         self.base_url = base_url
-        self.secret_name = secret_name
+        self.username = username
+        self.secret_key = secret_key
         self.timeout = timeout
         self._transport = transport
         self._token: str | None = None
@@ -119,7 +129,8 @@ class JiangxiNoiseDataClient:
     def from_env(cls) -> JiangxiNoiseDataClient:
         """从江西项目的运行时环境创建客户端。"""
         base_url = os.getenv("JIANGXI_NOISE_BASE_URL", "")
-        secret_name = os.getenv("JIANGXI_NOISE_SECRET_NAME", "")
+        username = os.getenv("JIANGXI_NOISE_USERNAME", "")
+        secret_key = os.getenv("JIANGXI_NOISE_SECRET_KEY", "")
         timeout_value = os.getenv("JIANGXI_NOISE_TIMEOUT_SECONDS", "30")
         try:
             timeout = float(timeout_value)
@@ -130,7 +141,8 @@ class JiangxiNoiseDataClient:
             ) from exc
         return cls(
             base_url=base_url,
-            secret_name=secret_name,
+            username=username,
+            secret_key=secret_key,
             timeout=timeout,
         )
 
@@ -160,8 +172,12 @@ class JiangxiNoiseDataClient:
     async def _authenticate(self, client: httpx.AsyncClient) -> None:
         try:
             response = await client.get(
-                "/api/auth/token/get",
-                params={"secretName": self.secret_name},
+                self.TOKEN_ENDPOINT,
+                headers={"syscode": "NOISE"},
+                params={
+                    "UserName": self.username,
+                    "SecretKey": self.secret_key,
+                },
             )
         except httpx.TimeoutException as exc:
             raise JiangxiNoiseClientError(
@@ -182,7 +198,11 @@ class JiangxiNoiseDataClient:
 
         payload = self._decode_json(response)
         token = payload.get("result") if payload.get("success") else None
-        if not isinstance(token, str) or not token.strip():
+        if (
+            not isinstance(token, str)
+            or not token.strip()
+            or token.strip() == "账号或密钥错误！"
+        ):
             raise JiangxiNoiseClientError(
                 "authentication_failed",
                 "江西噪声平台认证失败",

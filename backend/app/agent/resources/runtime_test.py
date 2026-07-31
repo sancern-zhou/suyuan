@@ -1,6 +1,19 @@
 import pytest
+from pathlib import Path
+from types import SimpleNamespace
 
+from app.agent.core.executor import ToolExecutor
+from app.agent.resources.discovery import discover_resource_declarations
+from app.agent.resources.models import ResourceRole
+from app.agent.resources.resource_map import project_agent_resource_map
+from app.agent.resources.resource_service import SessionResourceService, StoredResource
+from app.tools.utility.list_directory_tool import ListDirectoryTool
+from app.tools.utility.read_file_tool import ReadFileTool
+from app.tools.utility.read_session_resource_tool import ReadSessionResourceTool
+from app.tools.office.validate_pptx_tool import validation_output_resources
 from .contracts import ResourceDeclaration
+from .contracts import ResourceLocator
+from .models import ResourceKind
 from .runtime import RunResourceAccumulator, event_turn_sequence, flush_resource_accumulator
 
 
@@ -49,3 +62,348 @@ async def test_flush_marks_resource_durable_after_upsert():
 
 def test_malformed_iteration_falls_back_to_zero():
     assert event_turn_sequence({"iteration": "not-a-number"}) == 0
+
+
+def test_output_directory_discovers_preview_files_and_svg_mime(tmp_path):
+    preview = tmp_path / "build" / "preview" / "previews"
+    preview.mkdir(parents=True)
+    (preview / "page-001.png").write_bytes(b"png")
+    (preview / "framework.svg").write_text("<svg/>", encoding="utf-8")
+
+    resources = discover_resource_declarations(
+        {"preview_dir": str(preview)},
+        role=ResourceRole.OUTPUT,
+        tool_name="manage_editable_ppt",
+        expand_directories=True,
+    )
+
+    assert {item.label for item in resources} == {"page-001.png", "framework.svg"}
+    svg = next(item for item in resources if item.label.endswith(".svg"))
+    assert svg.metadata["mime_type"] == "image/svg+xml"
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["list_directory", "search_files", "grep", "web_search", "web_fetch"],
+)
+def test_bulk_discovery_tool_inputs_do_not_pollute_catalog(tmp_path, tool_name):
+    source = tmp_path / "many"
+    source.mkdir()
+    (source / "item.txt").write_text("item", encoding="utf-8")
+
+    resources = discover_resource_declarations(
+        {"path": str(source), "url": "https://example.com/result"},
+        role=ResourceRole.SOURCE,
+        tool_name=tool_name,
+    )
+
+    assert resources == []
+
+
+@pytest.mark.asyncio
+async def test_executor_persists_resources_before_returning_result(tmp_path):
+    preview = tmp_path / "previews"
+    preview.mkdir()
+    generated = preview / "page-001.png"
+    generated.write_bytes(b"png")
+
+    async def tool(**_):
+        return {
+            "success": True,
+            "data": {"preview_dir": str(preview)},
+            "resources": [{
+                "kind": "file",
+                "role": "output",
+                "label": generated.name,
+                "locator": {"path": str(generated)},
+                "tool_name": "render",
+            }],
+        }
+
+    service = SessionResourceService.in_memory()
+    executor = ToolExecutor(tool_registry={"render": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-a")
+    context_builder = SimpleNamespace(session_resource_context="")
+    executor.configure_resource_tracking(
+        service=service,
+        context_builder=context_builder,
+        query="preview",
+    )
+    executor.resource_run_id = "run-a"
+
+    result = await executor.execute_tool("render", {}, iteration=3)
+    page = await service.list_resources("session-a")
+
+    assert result["resource_tracking"]["durable"] is True
+    assert page.resources[0].locator["path"] == str(generated.resolve())
+    assert page.resources[0].turn_sequence == 3
+    assert f"path={generated.resolve()}" in context_builder.session_resource_context
+
+
+@pytest.mark.asyncio
+async def test_executor_does_not_guess_outputs_from_result_fields(tmp_path):
+    generated = tmp_path / "generated.txt"
+    generated.write_text("content", encoding="utf-8")
+
+    async def tool(**_):
+        return {
+            "success": True,
+            "data": {
+                "file_path": str(generated),
+                "files": [str(generated)],
+                "preview_dir": str(tmp_path),
+            },
+        }
+
+    service = SessionResourceService.in_memory()
+    executor = ToolExecutor(tool_registry={"bulk_result": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-a")
+    executor.configure_resource_tracking(
+        service=service,
+        context_builder=SimpleNamespace(session_resource_context=""),
+    )
+
+    result = await executor.execute_tool("bulk_result", {}, iteration=1)
+    page = await service.list_resources("session-a")
+
+    assert "resource_tracking" not in result
+    assert page.resources == []
+
+
+@pytest.mark.asyncio
+async def test_executor_declares_handles_created_by_save_data_api():
+    async def tool(**_):
+        return {"success": True, "data": {"count": 2}}
+
+    service = SessionResourceService.in_memory()
+    executor = ToolExecutor(tool_registry={"analysis": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-a")
+    executor._create_execution_context = lambda _iteration: SimpleNamespace(
+        available_data_ids=["analysis:v1:abc"]
+    )
+    executor.configure_resource_tracking(
+        service=service,
+        context_builder=SimpleNamespace(session_resource_context=""),
+    )
+
+    result = await executor.execute_tool("analysis", {}, iteration=2)
+    page = await service.list_resources("session-a")
+
+    assert result["resources"][0]["locator"]["data_id"] == "analysis:v1:abc"
+    assert page.resources[0].locator["data_id"] == "analysis:v1:abc"
+
+
+@pytest.mark.asyncio
+async def test_read_file_does_not_echo_text_source_path(tmp_path):
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes\nbody\n", encoding="utf-8")
+
+    result = await ReadFileTool().execute(path=str(source))
+
+    assert result["success"] is True
+    assert "path" not in result["data"]
+    assert "file_path" not in result["data"].get("markdown_preview", {})
+    assert "refs" not in result
+    assert str(source) not in result.get("llm_resume", {}).get("tool_hint", "")
+
+
+@pytest.mark.asyncio
+async def test_read_file_keeps_runtime_multimodal_attachment_path(tmp_path):
+    source = tmp_path / "pixel.png"
+    source.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    )
+
+    result = await ReadFileTool().execute(
+        path=str(source), as_multimodal_attachment=True
+    )
+
+    assert result["attachments"][0]["local_path"] == str(source)
+
+
+@pytest.mark.asyncio
+async def test_resource_identity_is_scoped_to_role(tmp_path):
+    path = str((tmp_path / "shared.txt").resolve())
+    (tmp_path / "shared.txt").write_text("shared", encoding="utf-8")
+    service = SessionResourceService.in_memory()
+
+    def declaration(role, label):
+        return ResourceDeclaration(
+            kind=ResourceKind.FILE,
+            logical_key="shared-file",
+            role=role,
+            label=label,
+            locator=ResourceLocator(path=path),
+        )
+
+    first_source = (
+        await service.upsert_run_resources(
+            "session-a", "run-1", [declaration(ResourceRole.SOURCE, "first read")]
+        )
+    ).resources[0]
+    await service.upsert_run_resources(
+        "session-a", "run-2", [declaration(ResourceRole.ATTACHMENT, "user input")]
+    )
+    result = await service.upsert_run_resources(
+        "session-a", "run-3", [declaration(ResourceRole.SOURCE, "latest read")]
+    )
+
+    matching = [item for item in result.resources if item.resource_key == "shared-file"]
+    assert {(item.role, item.label) for item in matching} == {
+        ("attachment", "user input"),
+        ("source", "latest read"),
+    }
+    assert next(item for item in matching if item.role == "source").resource_id == first_source.resource_id
+
+
+def test_agent_resource_map_is_bounded_and_includes_actionable_path(tmp_path):
+    path = str((tmp_path / "secret.txt").resolve())
+    (tmp_path / "secret.txt").write_text("content", encoding="utf-8")
+    declaration = ResourceDeclaration(
+        kind=ResourceKind.FILE,
+        label="secret.txt",
+        locator=ResourceLocator(path=path),
+        metadata={"summary": "short note", "mime_type": "text/plain"},
+    )
+    stored = StoredResource.from_declaration("session", "run", declaration)
+    projected = project_agent_resource_map([stored], max_chars=500)
+
+    assert stored.resource_id in projected
+    assert f"path={path}" in projected
+    assert len(projected) <= 500
+
+
+def test_agent_resource_map_shortens_paths_under_backend_root():
+    source = Path(__file__).resolve()
+    declaration = ResourceDeclaration(
+        kind=ResourceKind.FILE,
+        label=source.name,
+        locator=ResourceLocator(path=str(source)),
+        metadata={"mime_type": "text/x-python"},
+    )
+    stored = StoredResource.from_declaration("session", "run", declaration)
+
+    projected = project_agent_resource_map([stored])
+
+    assert "path=app/agent/resources/runtime_test.py" in projected
+    assert str(source) not in projected
+
+
+def test_agent_resource_map_collapses_same_locator_but_reports_all_roles(tmp_path):
+    source = tmp_path / "reference.png"
+    source.write_bytes(b"png")
+    declarations = [
+        ResourceDeclaration(
+            kind=ResourceKind.FILE,
+            logical_key="upload",
+            role=ResourceRole.ATTACHMENT,
+            label="original-name.svg",
+            locator=ResourceLocator(path=str(source)),
+        ),
+        ResourceDeclaration(
+            kind=ResourceKind.FILE,
+            logical_key="read",
+            role=ResourceRole.SOURCE,
+            label="reference.png",
+            locator=ResourceLocator(path=str(source)),
+        ),
+    ]
+    stored = [StoredResource.from_declaration("session", "run", item) for item in declarations]
+
+    projected = project_agent_resource_map(stored)
+
+    assert projected.count(f"path={source}") == 1
+    assert "roles=attachment,source" in projected
+
+
+def test_agent_resource_map_hides_legacy_bulk_discovery_rows(tmp_path):
+    directory = tmp_path / "runtime"
+    directory.mkdir()
+    declaration = ResourceDeclaration(
+        kind=ResourceKind.FILE,
+        role=ResourceRole.SOURCE,
+        label="runtime",
+        locator=ResourceLocator(path=str(directory)),
+        tool_name="list_directory",
+    )
+    stored = StoredResource.from_declaration("session", "run", declaration)
+
+    assert project_agent_resource_map([stored]) == ""
+
+
+def test_ppt_validation_outputs_use_stable_slots_for_same_deck(tmp_path):
+    pptx = tmp_path / "deck.pptx"
+    pptx.write_bytes(b"pptx")
+    qa_dir = tmp_path / "qa"
+    qa_dir.mkdir()
+    first = qa_dir / "montage.png"
+    first.write_bytes(b"first")
+
+    slot = __import__("hashlib").sha256(str(pptx).encode("utf-8")).hexdigest()[:16]
+    resource = validation_output_resources(pptx, [first])[0]
+
+    assert resource["logical_key"] == f"ppt-validation:{slot}:montage.png"
+
+
+@pytest.mark.asyncio
+async def test_new_ppt_validation_output_replaces_previous_qa_path(tmp_path):
+    pptx = tmp_path / "deck.pptx"
+    pptx.write_bytes(b"pptx")
+    first = tmp_path / "qa-1" / "montage.png"
+    second = tmp_path / "qa-2" / "montage.png"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    service = SessionResourceService.in_memory()
+
+    first_declaration = ResourceDeclaration.model_validate(
+        validation_output_resources(pptx, [first])[0]
+    )
+    second_declaration = ResourceDeclaration.model_validate(
+        validation_output_resources(pptx, [second])[0]
+    )
+    await service.upsert_run_resources("session", "run-1", [first_declaration])
+    result = await service.upsert_run_resources("session", "run-2", [second_declaration])
+
+    outputs = [item for item in result.resources if item.role == "output"]
+    assert len(outputs) == 1
+    assert outputs[0].locator["path"] == str(second)
+
+
+@pytest.mark.asyncio
+async def test_explicit_build_directory_can_be_listed(tmp_path):
+    build = tmp_path / "build" / "preview"
+    build.mkdir(parents=True)
+    (build / "page-001.png").write_bytes(b"png")
+    tool = ListDirectoryTool()
+    tool.allowed_dirs.append(tmp_path)
+
+    result = await tool.execute(str(build))
+
+    assert result["success"] is True
+    assert [item["name"] for item in result["data"]["entries"]] == ["page-001.png"]
+
+
+@pytest.mark.asyncio
+async def test_session_resource_can_be_read_without_exposing_path_in_prompt(tmp_path):
+    source = tmp_path / "note.txt"
+    source.write_text("resource content", encoding="utf-8")
+    service = SessionResourceService.in_memory()
+    declaration = ResourceDeclaration(
+        kind=ResourceKind.FILE,
+        label=source.name,
+        locator=ResourceLocator(path=str(source)),
+    )
+    stored = (
+        await service.upsert_run_resources("session-a", "run-a", [declaration])
+    ).resources[0]
+
+    result = await ReadSessionResourceTool(service=service).execute(
+        context=SimpleNamespace(session_id="session-a"),
+        resource_id=stored.resource_id,
+    )
+
+    assert result["success"] is True
+    assert "resource content" in str(result["data"])

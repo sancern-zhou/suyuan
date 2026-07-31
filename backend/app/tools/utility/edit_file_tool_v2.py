@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from app.services.document_preview_refresh import refresh_preview_for_managed_document_path
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import file_resource
 from app.tools.utility.file_read_state import get_file_read_state
 from app.utils.path_config import BACKEND_ROOT
 import structlog
@@ -524,6 +525,7 @@ class EditFileToolV2(LLMTool):
             return {
                 "success": True,
                 "data": result_data,
+                "resources": [file_resource(resolved_path, tool_name=self.name)],
                 "summary": summary
             }
 

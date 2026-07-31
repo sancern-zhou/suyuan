@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 from app.utils.path_config import PROJECT_ROOT
 
 logger = structlog.get_logger(__name__)
@@ -414,6 +415,11 @@ class TerminalSessionTool(LLMTool):
                     "max_output_chars": {
                         "type": "integer",
                         "description": "本次返回的最大输出字符数，默认6000。"
+                    },
+                    "output_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "会话命令已创建或修改的成果文件；在 read/send/stop 时声明并登记。"
                     }
                 },
                 "required": ["action"]
@@ -442,6 +448,7 @@ class TerminalSessionTool(LLMTool):
         restart: bool = False,
         read_timeout: float = DEFAULT_READ_TIMEOUT,
         max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+        output_paths: Optional[List[str]] = None,
         context: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -489,7 +496,9 @@ class TerminalSessionTool(LLMTool):
                 return self._failed(error)
             data = self._session_data(session, include_output=True, output=output, max_output_chars=max_output_chars) if session else {}
             summary = "terminal 会话已启动" if started else error
-            return self._ok(action, summary, data)
+            return self._with_output_resources(
+                self._ok(action, summary, data), output_paths, resolved_cwd
+            )
 
         session = await _manager.get(user_key, session_name)
         if not session:
@@ -500,12 +509,20 @@ class TerminalSessionTool(LLMTool):
                 return self._failed("action=send 时必须提供 input")
             ok, output = await _manager.send(session, input, read_timeout, max_output_chars, bool(append_newline))
             data = self._session_data(session, include_output=True, output=output, max_output_chars=max_output_chars)
-            return self._ok(action, "已写入输入并读取新输出" if ok else "写入失败", data, success=ok)
+            return self._with_output_resources(
+                self._ok(action, "已写入输入并读取新输出" if ok else "写入失败", data, success=ok),
+                output_paths,
+                Path(session.cwd),
+            )
 
         if action == "read":
             output = await _manager.read(session, read_timeout, max_output_chars)
             data = self._session_data(session, include_output=True, output=output, max_output_chars=max_output_chars)
-            return self._ok(action, "已读取 terminal 会话输出", data)
+            return self._with_output_resources(
+                self._ok(action, "已读取 terminal 会话输出", data),
+                output_paths,
+                Path(session.cwd),
+            )
 
         if action == "status":
             data = self._session_data(session, include_output=True, output=None, max_output_chars=max_output_chars)
@@ -515,7 +532,11 @@ class TerminalSessionTool(LLMTool):
             output = await _manager.stop(session)
             await _manager.discard(user_key, session_name)
             data = self._session_data(session, include_output=True, output=output, max_output_chars=max_output_chars)
-            return self._ok(action, "terminal 会话已停止", data)
+            return self._with_output_resources(
+                self._ok(action, "terminal 会话已停止", data),
+                output_paths,
+                Path(session.cwd),
+            )
 
         return self._failed(f"未处理的 action: {action}")
 
@@ -553,6 +574,23 @@ class TerminalSessionTool(LLMTool):
         if Path(first).is_absolute() and Path(first).exists():
             return {"valid": True, "args": args}
         return {"valid": False, "error": f"命令不存在或不在 PATH 中: {first}"}
+
+    def _with_output_resources(
+        self,
+        result: Dict[str, Any],
+        output_paths: Optional[List[str]],
+        cwd: Path,
+    ) -> Dict[str, Any]:
+        if not result.get("success") or not output_paths:
+            return result
+        resolved = []
+        for value in output_paths:
+            path = Path(value).expanduser()
+            path = path.resolve() if path.is_absolute() else (cwd / path).resolve()
+            if path.is_relative_to(PROJECT_ROOT):
+                resolved.append(path)
+        result["resources"] = resources_for_files(resolved, tool_name=self.name)
+        return result
 
     def _resolve_cwd(self, cwd: Optional[str]) -> Optional[Path]:
         try:

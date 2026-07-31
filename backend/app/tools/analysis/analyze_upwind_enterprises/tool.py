@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files, resources_for_visuals
 from app.services.external_apis import upwind_api
 from app.models.schemas import WindData
 from config.settings import settings
@@ -625,12 +626,18 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
             else:
                 summary = f"✅ {effective_city_name}前{len(all_results)}个国控站点上风向企业分析完成，共生成{len(visuals_list)}个地图"
 
+            resources = resources_for_files(
+                [item["local_path"] for item in map_images if item.get("local_path")],
+                tool_name=self.name,
+            )
+            resources.extend(resources_for_visuals(visuals_list, tool_name=self.name))
             return {
                 "status": "success",
                 "success": True,
                 "data": None,
                 "visuals": visuals_list,  # 每个站点一个独立的地图
                 "map_images": map_images,
+                "resources": resources,
                 "metadata": {
                     "schema_version": "v2.0",
                     "source_data_ids": [],

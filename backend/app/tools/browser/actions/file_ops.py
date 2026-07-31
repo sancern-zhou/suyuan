@@ -3,6 +3,7 @@
 Handler for file upload and download operations.
 """
 import structlog
+from app.tools.resource_declarations import file_resource
 
 from ..services.file_handler import FileHandler
 from ..refs.ref_resolver import get_global_resolver
@@ -65,6 +66,10 @@ def handle_download(
             raise ValueError(f"Download ref '{ref}' does not have a selector")
 
     result = handler.wait_for_download(page, selector=selector, click_context=context, timeout=timeout)
+    if result.get("download_path"):
+        result["resources"] = [
+            file_resource(result["download_path"], tool_name="browser")
+        ]
 
     logger.info(
         "[FILE_OPS] Download completed",

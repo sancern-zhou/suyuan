@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_visuals
 from app.utils.visualization import generate_map_payload
 
 logger = structlog.get_logger()
@@ -249,6 +250,9 @@ class GenerateMapTool(LLMTool):
                 "success": True,
                 "data": None,  # v2.0格式使用visuals字段
                 "visuals": [visual_block.dict()],  # 统一visuals格式
+                "resources": resources_for_visuals(
+                    [visual_block.dict()], tool_name=self.name
+                ),
                 "metadata": {
                     "schema_version": "v2.0",
                     "source_data_ids": [],
