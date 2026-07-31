@@ -9,6 +9,7 @@ from datetime import datetime
 from ..config import config
 from ..services.frame_target import resolve_frame
 from app.services.image_cache import get_image_cache
+from app.tools.resource_declarations import file_resource
 
 logger = structlog.get_logger()
 
@@ -83,7 +84,7 @@ def handle_screenshot(
         size_kb=len(screenshot_bytes) / 1024
     )
 
-    return {
+    result = {
         "image_id": image_id,
         "image_url": image_url,
         "local_path": save_result.get("local_path"),
@@ -93,6 +94,11 @@ def handle_screenshot(
         "url": url,
         "title": title
     }
+    if save_result.get("local_path"):
+        result["resources"] = [
+            file_resource(save_result["local_path"], tool_name="browser")
+        ]
+    return result
 
 
 def _generate_page_description(page) -> str:

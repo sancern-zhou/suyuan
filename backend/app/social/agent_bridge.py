@@ -404,10 +404,10 @@ class AgentBridge:
             run_id,
             declarations,
         )
-        stored_by_key = {item.resource_key: item for item in batch.resources}
+        stored_by_key = {(item.role, item.resource_key): item for item in batch.resources}
         prepared: List[Dict[str, Any]] = []
         for attachment, declaration in zip(attachments, declarations):
-            stored = stored_by_key.get(declaration.resource_key())
+            stored = stored_by_key.get(declaration.catalog_key())
             if stored is None:
                 raise RuntimeError("social_attachment_resource_missing_after_upsert")
             prepared.append({

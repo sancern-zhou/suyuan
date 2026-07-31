@@ -15,6 +15,7 @@ from pathlib import Path
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import file_resource
 
 logger = structlog.get_logger()
 
@@ -230,6 +231,7 @@ class ChartImageRenderer(LLMTool):
                     "tool_name": "render_chart_to_image",
                     "image_path": str(image_path)
                 },
+                "resources": [file_resource(image_path, tool_name=self.name)],
                 "summary": f"[OK] 图表渲染完成，图片路径: {image_path}"
             }
             

@@ -185,24 +185,32 @@ class ListDirectoryTool(LLMTool):
         if recursive:
             # 递归模式
             for item in root.rglob("*"):
-                if self._should_include(item, show_hidden):
+                if self._should_include(item, show_hidden, root=root):
                     entry = self._create_entry(item, root)
                     if entry:
                         entries.append(entry)
         else:
             # 非递归模式
             for item in root.iterdir():
-                if self._should_include(item, show_hidden):
+                if self._should_include(item, show_hidden, root=root):
                     entry = self._create_entry(item, root)
                     if entry:
                         entries.append(entry)
 
         return entries
 
-    def _should_include(self, path: Path, show_hidden: bool) -> bool:
+    def _should_include(self, path: Path, show_hidden: bool, *, root: Path) -> bool:
         """判断是否应包含此路径"""
-        # 跳过忽略目录
-        if any(part in IGNORED_DIRS for part in path.parts):
+        # Ignore generated/vendor directories only below the requested root.
+        # A caller explicitly listing .../build/preview must be able to see it;
+        # checking the absolute path made every entry under such a root vanish.
+        try:
+            relative_parts = path.relative_to(root).parts
+        except ValueError:
+            relative_parts = (path.name,)
+        if (path.is_dir() and path.name in IGNORED_DIRS) or any(
+            part in IGNORED_DIRS for part in relative_parts[:-1]
+        ):
             return False
 
         # 隐藏文件过滤

@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_visuals
 from app.tools.resource_refs import build_data_resume_context, merge_refs
 from app.external_apis.noaa_hysplit_api import NOAAHysplitAPI
 
@@ -455,6 +456,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                 "success": True,
                 "data": endpoints,
                 "visuals": visuals,
+                "resources": resources_for_visuals(visuals, tool_name=self.name),
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "meteorological_trajectory_analysis",

@@ -21,6 +21,7 @@ import numpy as np
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 
 logger = structlog.get_logger()
 
@@ -240,6 +241,10 @@ class GFSProcessorTool(LLMTool):
                 "tool_version": "1.0.0",
                 "schema_version": "v2.0"
             },
+            "resources": resources_for_files(
+                [output_file, orog_file] if orog_data is not None else [output_file],
+                tool_name=self.name,
+            ),
             "summary": f"✅ GFS数据预处理完成: 加载 {len(gfs_datasets)}/{len(file_list)} 个文件，输出 {output_file.name}"
         }
 

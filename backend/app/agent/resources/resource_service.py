@@ -40,7 +40,9 @@ class StoredResource:
     ) -> "StoredResource":
         now = created_at or datetime.now(timezone.utc)
         key = declaration.resource_key()
-        resource_id = hashlib.sha256(f"{session_id}:{key}".encode()).hexdigest()[:32]
+        resource_id = hashlib.sha256(
+            f"{session_id}:{declaration.role.value}:{key}".encode()
+        ).hexdigest()[:32]
         return cls(
             session_id=session_id,
             resource_key=key,
@@ -83,7 +85,7 @@ class ResourceCounts:
 
 @dataclass
 class _MemoryState:
-    resources: dict[tuple[str, str], StoredResource] = field(default_factory=dict)
+    resources: dict[tuple[str, str, str], StoredResource] = field(default_factory=dict)
     versions: dict[str, int] = field(default_factory=dict)
 
 
@@ -128,11 +130,13 @@ class SessionResourceService:
                 declaration,
                 turn_sequence=turn_sequence,
             )
-            previous = self._state.resources.get((session_id, stored.resource_key))
+            catalog_key = (session_id, stored.role, stored.resource_key)
+            previous = self._state.resources.get(catalog_key)
             if previous is not None:
                 stored.created_at = previous.created_at
+                stored.resource_id = previous.resource_id
             stored.updated_at = datetime.now(timezone.utc)
-            self._state.resources[(session_id, stored.resource_key)] = stored
+            self._state.resources[catalog_key] = stored
 
         self._state.versions[session_id] = self._state.versions.get(session_id, 0) + 1
         return ResourceBatchResult(
@@ -185,6 +189,11 @@ class SessionResourceService:
             files=sum(item.kind in {"file", "artifact"} for item in resources),
         )
 
+    async def catalog_version(self, session_id: str) -> int:
+        if self._repository is not None:
+            return await self._repository.version(session_id)
+        return self._state.versions.get(session_id, 0)
+
     async def get_resource(
         self,
         session_id: str,
@@ -211,7 +220,13 @@ class SessionResourceService:
     async def delete_resource(self, session_id: str, resource_key: str) -> bool:
         if self._repository is not None:
             return await self._repository.delete_resource(session_id, resource_key)
-        return self._state.resources.pop((session_id, resource_key), None) is not None
+        keys = [
+            key for key in self._state.resources
+            if key[0] == session_id and key[2] == resource_key
+        ]
+        for key in keys:
+            self._state.resources.pop(key, None)
+        return bool(keys)
 
     async def delete_session_resources(self, session_id: str) -> bool:
         if self._repository is not None:
@@ -224,6 +239,7 @@ class SessionResourceService:
 
     async def _resources_for(self, session_id: str) -> list[StoredResource]:
         return sorted(
-            [item for (sid, _), item in self._state.resources.items() if sid == session_id],
-            key=lambda item: (item.created_at, item.resource_key),
+            [item for (sid, _, _), item in self._state.resources.items() if sid == session_id],
+            key=lambda item: (item.updated_at, item.resource_key),
+            reverse=True,
         )

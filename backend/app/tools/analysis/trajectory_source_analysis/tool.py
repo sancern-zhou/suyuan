@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_visuals
 from app.tools.analysis.trajectory_source_analysis.trajectory_runner import TrajectoryRunner
 from app.tools.analysis.trajectory_source_analysis.enterprise_matcher import EnterpriseMatcher
 from app.tools.analysis.trajectory_source_analysis.visualization_generator import VisualizationGenerator
@@ -290,6 +291,7 @@ class TrajectorySourceAnalysisTool(LLMTool):
                 },
                 "emission_summary": emission_summary,
                 "visuals": visuals,
+                "resources": resources_for_visuals(visuals, tool_name=self.name),
                 "recommendations": recommendations,
                 "metadata": {
                     "schema_version": "v2.0",

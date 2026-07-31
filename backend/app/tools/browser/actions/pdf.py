@@ -6,6 +6,7 @@ import structlog
 import os
 
 from ..services.pdf_export import PDFExporter
+from app.tools.resource_declarations import file_resource
 
 logger = structlog.get_logger()
 
@@ -75,6 +76,7 @@ def handle_pdf(
             landscape=landscape
         )
         result["action"] = "export_page"
+        result["resources"] = [file_resource(result["pdf_path"], tool_name="browser")]
         return result
 
     elif action == "export_element":
@@ -88,6 +90,7 @@ def handle_pdf(
         )
         result["action"] = "export_element"
         result["selector"] = selector
+        result["resources"] = [file_resource(result["pdf_path"], tool_name="browser")]
         return result
 
     elif action == "list":

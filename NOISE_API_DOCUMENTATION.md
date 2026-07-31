@@ -6,14 +6,14 @@
 
 平台访问要求：
 
-- Token 端点：`GET /api/auth/token/get`
-- Token 参数：`secretName`
+- Token 端点：`GET /api/noiseproduct/AirCityBaseCommon/GetExternalApiToken`
+- Token 参数：`UserName`、`SecretKey`
 - 数据请求头：`Authorization: Bearer <token>`
 - 必需请求头：`syscode: NOISE`
 - 时间格式：`YYYY-MM-DD HH:MM:SS`
 - 平台目前提供的是 HTTP 地址；部署侧必须通过网络访问控制、VPN 或安全反向代理降低 Token 明文传输风险。
 
-代码和日志不得保存、输出或提交 `secretName`、Token 或 Token 前缀。
+代码和日志不得保存、输出或提交认证密钥、Token 或 Token 前缀。
 
 ## 2. 当前工具开放范围
 
@@ -34,11 +34,12 @@
 ```bash
 export PROJECT="jiangxi"
 export JIANGXI_NOISE_BASE_URL="http://<平台地址>:<端口>"
-export JIANGXI_NOISE_SECRET_NAME="<由平台管理员提供>"
+export JIANGXI_NOISE_USERNAME="<外部接口用户名>"
+export JIANGXI_NOISE_SECRET_KEY="<外部接口密钥>"
 export JIANGXI_NOISE_TIMEOUT_SECONDS="30"
 ```
 
-`JIANGXI_NOISE_BASE_URL` 和 `JIANGXI_NOISE_SECRET_NAME` 没有代码内默认值。配置缺失时，工具返回 `configuration_error`，不会在服务启动阶段访问平台。
+`JIANGXI_NOISE_BASE_URL`、`JIANGXI_NOISE_USERNAME` 和 `JIANGXI_NOISE_SECRET_KEY` 没有代码内默认值。配置缺失时，工具返回 `configuration_error`，不会在服务启动阶段访问平台。
 
 Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客户端重新认证并重试一次；第二次仍为 401 时终止请求。
 
@@ -214,7 +215,7 @@ async def main():
 asyncio.run(main())
 ```
 
-示例依赖运行环境预先设置第三节列出的环境变量。不要在脚本中写入真实 `secretName`。
+示例依赖运行环境预先设置第三节列出的环境变量。不要在脚本中写入真实用户名或密钥。
 
 ## 10. 项目与分支隔离
 

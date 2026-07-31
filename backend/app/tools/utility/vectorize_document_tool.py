@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import artifact_resource
 from app.knowledge_base.models import KnowledgeBase, KnowledgeBaseStatus, KnowledgeBaseType
 from app.knowledge_base.service import KnowledgeBaseService
 from app.db.database import async_session
@@ -234,6 +235,19 @@ class VectorizeDocumentTool(LLMTool):
                         "processing_time": round(processing_time, 2),
                         "created_at": document.created_at.isoformat() if document.created_at else None
                     },
+                    "resources": [
+                        artifact_resource(
+                            str(document.id),
+                            tool_name=self.name,
+                            label=document.filename,
+                            logical_key=f"knowledge_document:{document.id}",
+                            metadata={
+                                "knowledge_base_id": str(kb.id),
+                                "file_type": document.file_type,
+                                "chunk_count": document.chunk_count,
+                            },
+                        )
+                    ],
                     "summary": (
                         f"文档向量化成功：{document.filename}，"
                         f"分块数: {document.chunk_count}，"

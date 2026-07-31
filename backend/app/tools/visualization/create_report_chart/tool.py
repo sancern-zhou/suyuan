@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
 from app.tools.visualization.create_report_chart.renderer import ChartDataError
 
@@ -171,6 +172,15 @@ class CreateReportChartTool(LLMTool):
                 "summary": "报告图表请求已按 create_report_chart 统一入口解析；dry_run 未生成图片。",
             }
             self._attach_resume_context(result, data_id=data_id)
+            result["resources"] = resources_for_files(
+                [
+                    visual.get("local_path") or visual.get("file_path")
+                    for visual in result.get("visuals", [])
+                    if isinstance(visual, dict)
+                    and (visual.get("local_path") or visual.get("file_path"))
+                ],
+                tool_name=self.name,
+            )
             return result
 
         try:

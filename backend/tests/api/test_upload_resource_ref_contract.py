@@ -93,7 +93,7 @@ async def test_chat_upload_returns_the_persisted_session_resource_ref(tmp_path, 
     assert result["resource_ref"]["ref_id"] == resource_service.stored.resource_id
     assert result["resource_ref"]["resource_id"] == resource_service.stored.resource_id
     assert result["resource_ref"]["kind"] == "file"
-    assert result["resource_ref"]["role"] == "source"
+    assert result["resource_ref"]["role"] == "attachment"
     assert result["resource_ref"]["metadata"]["source"] == "user_upload"
 
 
@@ -104,7 +104,7 @@ async def test_session_resource_list_exposes_ref_id_alias(monkeypatch):
         {
             "kind": "file",
             "logical_key": "upload:file-1",
-            "role": "source",
+            "role": "attachment",
             "label": "evidence.png",
             "locator": {"path": "/tmp/evidence.png"},
             "metadata": {"file_id": "file-1", "mime_type": "image/png"},

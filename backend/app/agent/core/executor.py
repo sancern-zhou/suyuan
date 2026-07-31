@@ -71,6 +71,10 @@ class ToolExecutor:
         self.event_bus = event_bus  # Phase 3.1: 存储事件总线
         self.runtime_mode: Optional[str] = None
         self.user_identifier: Optional[str] = None
+        self.resource_service: Optional[Any] = None
+        self.resource_context_builder: Optional[Any] = None
+        self.resource_run_id: str = ""
+        self.resource_query: str = ""
 
         # Initialize DataContextManager if memory_manager provided
         if memory_manager:
@@ -239,6 +243,79 @@ class ToolExecutor:
         cloned.user_identifier = self.user_identifier
         return cloned
 
+    def configure_resource_tracking(
+        self, *, service: Any, context_builder: Any, query: str = ""
+    ) -> None:
+        """Bind the run-scoped durable catalog and its compact prompt projection."""
+        self.resource_service = service
+        self.resource_context_builder = context_builder
+        self.resource_query = query
+
+    async def _persist_boundary_resources(
+        self,
+        *,
+        tool_name: str,
+        value: Any,
+        role: str,
+        iteration: int,
+        expand_directories: bool,
+    ) -> Dict[str, Any]:
+        if self.resource_service is None or self.memory_manager is None:
+            return {}
+        from app.agent.resources.discovery import discover_resource_declarations
+        from app.agent.resources.models import ResourceRole
+        from app.agent.resources.normalizer import normalize_tool_resources
+        from app.agent.resources.resource_map import project_agent_resource_map
+
+        resource_role = ResourceRole(role)
+        if role == "output":
+            # Output admission is explicit-only. Tool result field names are not
+            # a durable resource protocol and are never guessed here.
+            declarations, rejected = normalize_tool_resources(result=value)
+        else:
+            rejected = []
+            declarations = discover_resource_declarations(
+                value,
+                role=resource_role,
+                tool_name=tool_name,
+                expand_directories=False,
+            )
+        if not declarations and not rejected:
+            return {}
+        if not declarations:
+            return {"durable": False, "rejected": rejected}
+        try:
+            result = await self.resource_service.upsert_run_resources(
+                self.memory_manager.session_id,
+                self.resource_run_id or f"tool:{tool_name}",
+                declarations,
+                turn_sequence=iteration,
+            )
+            if self.resource_context_builder is not None:
+                self.resource_context_builder.session_resource_context = project_agent_resource_map(
+                    result.resources,
+                    query=self.resource_query,
+                )
+            return {
+                "durable": True,
+                "version": result.version,
+                "resource_ids": [
+                    stored.resource_id
+                    for stored in result.resources
+                    if (stored.role, stored.resource_key)
+                    in {item.catalog_key() for item in declarations}
+                ],
+                "rejected": rejected,
+            }
+        except Exception as exc:
+            logger.error(
+                "tool_boundary_resource_persistence_failed",
+                tool_name=tool_name,
+                role=role,
+                error=str(exc),
+            )
+            return {"durable": False, "error": "resource_persistence_failed", "rejected": rejected}
+
     async def execute_tool(
         self,
         tool_name: str,
@@ -277,6 +354,17 @@ class ToolExecutor:
 
         # Step 0: 准备 Execution Context。工具参数直接采用 Anthropic tool_use input。
         execution_context = self._create_execution_context(iteration)
+
+        # Resource inputs are registered before execution. This makes every
+        # file/data/url crossing the tool boundary discoverable without relying
+        # on the model or an individual tool to declare it.
+        await self._persist_boundary_resources(
+            tool_name=tool_name,
+            value=tool_args,
+            role="source",
+            iteration=iteration,
+            expand_directories=False,
+        )
 
         # Step 1: 验证工具存在
         if tool_name not in self.tool_registry:
@@ -324,6 +412,34 @@ class ToolExecutor:
 
             # Step 4: 标准化返回结果
             observation = self._normalize_result(tool_name, result)
+
+            # save_data is itself a resource-producing API. Attach its exact
+            # handles to the same explicit result contract; never rediscover
+            # them by inspecting arbitrary result field names.
+            if execution_context and execution_context.available_data_ids:
+                from app.tools.resource_declarations import data_resource
+
+                declared = observation.setdefault("resources", [])
+                declared_data_ids = {
+                    item.get("locator", {}).get("data_id")
+                    for item in declared
+                    if isinstance(item, dict) and isinstance(item.get("locator"), dict)
+                }
+                declared.extend(
+                    data_resource(data_id, tool_name=tool_name)
+                    for data_id in execution_context.available_data_ids
+                    if data_id not in declared_data_ids
+                )
+
+            tracking = await self._persist_boundary_resources(
+                tool_name=tool_name,
+                value=observation,
+                role="output",
+                iteration=iteration,
+                expand_directories=True,
+            )
+            if tracking:
+                observation["resource_tracking"] = tracking
 
             # ========================================
             # 详细调试信息：显示工具调用后

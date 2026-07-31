@@ -317,6 +317,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         return {
             "success": True,
             "data": result_data,
+            "resources": result_data.get("resources", []),
             **resume_context,
             "summary": self._build_summary(output_path.name, len(page_plan), final_quality_gate),
         }
@@ -384,6 +385,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         return {
             "success": True,
             "data": result_data,
+            "resources": result_data.get("resources", []),
             **resume_context,
             "summary": f"PPT渲染预览已刷新：{pptx_path.name}",
         }

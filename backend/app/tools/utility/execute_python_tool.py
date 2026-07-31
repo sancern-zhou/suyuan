@@ -722,6 +722,16 @@ class ExecutePythonTool(LLMTool):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
             self._attach_resume_context(result)
+            from app.tools.resource_declarations import data_resource, resources_for_files
+
+            result["resources"] = resources_for_files(
+                final_files,
+                tool_name=self.name,
+            )
+            result["resources"].extend(
+                data_resource(data_id, tool_name=self.name)
+                for data_id in python_data_refs
+            )
             return result
 
         except Exception as e:
@@ -2426,6 +2436,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         **kwargs
     ) -> Dict[str, Any]:
         result = await super().execute(context=context, code=code, timeout=timeout, **kwargs)
+        from app.tools.resource_declarations import resources_for_visuals
+
         echarts_visuals = [
             visual for visual in result.get("visuals", [])
             if visual.get("meta", {}).get("schema_version") == "echarts_standard"
@@ -2437,6 +2449,9 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
 
         if not result.get("success"):
             result["visuals"] = echarts_visuals
+            result.setdefault("resources", []).extend(
+                resources_for_visuals(echarts_visuals, tool_name=self.name)
+            )
             return result
 
         if not echarts_visuals:
@@ -2465,6 +2480,9 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             result["metadata"]["error_type"] = "ECHARTS_COUNT_MISMATCH"
             result["metadata"]["expected_charts"] = expected_charts
             result["metadata"]["actual_charts"] = len(echarts_visuals)
+            result.setdefault("resources", []).extend(
+                resources_for_visuals(echarts_visuals, tool_name=self.name)
+            )
             return result
 
         await self._attach_static_preview_urls(echarts_visuals)
@@ -2473,6 +2491,9 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("metadata", {})
         result["metadata"]["tool_name"] = "execute_echarts_python"
         result["metadata"]["visuals_count"] = len(echarts_visuals)
+        result.setdefault("resources", []).extend(
+            resources_for_visuals(echarts_visuals, tool_name=self.name)
+        )
         markdown_images = [
             visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
             for visual in echarts_visuals

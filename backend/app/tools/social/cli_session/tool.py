@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 from app.utils.path_config import PROJECT_ROOT, get_social_dir
 
 logger = structlog.get_logger(__name__)
@@ -97,7 +98,12 @@ class CliSessionTool(LLMTool):
                         "type": "boolean",
                         "description": "start/send后台执行，默认true。"
                     },
-                    "task_id": {"type": "string", "description": "后台任务ID。"}
+                    "task_id": {"type": "string", "description": "后台任务ID。"},
+                    "output_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "CLI 本轮会创建或修改的成果文件；填写后自动前台等待并登记资源。"
+                    }
                 },
                 "required": ["action"]
             }
@@ -129,6 +135,7 @@ class CliSessionTool(LLMTool):
         include_raw_output: bool = False,
         background: bool = True,
         task_id: Optional[str] = None,
+        output_paths: Optional[List[str]] = None,
         context: Any = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -137,6 +144,8 @@ class CliSessionTool(LLMTool):
         session_name = self._safe_name(session_name or "default")
         timeout = self._clamp_int(timeout, 30, 3600, 600)
         max_output_chars = self._clamp_int(max_output_chars, 1000, 100000, DEFAULT_ANSWER_CHARS)
+        if output_paths:
+            background = False
 
         if action not in self.VALID_ACTIONS:
             return self._failed(f"不支持的 action: {action}")
@@ -338,7 +347,7 @@ class CliSessionTool(LLMTool):
                 "stderr_truncated": stderr_truncated,
             })
 
-        return {
+        tool_result = {
             "status": "success" if success else "failed",
             "success": success,
             "metadata": self._metadata(
@@ -364,6 +373,18 @@ class CliSessionTool(LLMTool):
                 answer_truncated=answer_truncated,
             ),
         }
+        if success and output_paths:
+            resolved_outputs = [
+                Path(path).expanduser().resolve()
+                if Path(path).expanduser().is_absolute()
+                else (resolved_cwd / path).resolve()
+                for path in output_paths
+            ]
+            tool_result["resources"] = resources_for_files(
+                [path for path in resolved_outputs if path.is_relative_to(PROJECT_ROOT)],
+                tool_name=self.name,
+            )
+        return tool_result
 
     async def _start_background_task(
         self,

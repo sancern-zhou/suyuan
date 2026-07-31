@@ -761,6 +761,7 @@ format:
         return {
             "success": not bool(render_error),
             "data": data,
+            "resources": data.get("resources", []),
             **resume_context,
             "metadata": {"generator": "create_report_package", "schema_version": "report_package.v1"},
             "summary": (
@@ -856,6 +857,7 @@ class RenderReportPackageTool(LLMTool):
         return {
             "success": True,
             "data": data,
+            "resources": data.get("resources", []),
             "metadata": {"generator": "render_report_package", "schema_version": "report_package.v1"},
             "summary": f"报告 {safe_id} 已渲染为 {format}",
         }

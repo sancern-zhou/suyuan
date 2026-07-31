@@ -34,6 +34,7 @@ from datetime import datetime
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import resources_for_files
 from app.utils.path_config import BACKEND_ROOT
 
 logger = structlog.get_logger()
@@ -367,7 +368,8 @@ class BashTool(LLMTool):
         context=None,
         command: str = None,
         timeout: Optional[int] = None,
-        working_dir: Optional[str] = None
+        working_dir: Optional[str] = None,
+        output_paths: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         执行 Bash 命令
@@ -527,7 +529,7 @@ class BashTool(LLMTool):
 
             # ✅ 完整输出，不生成 summary，让上层格式化器决定如何呈现
             # 依赖系统的上下文压缩策略管理 token 消耗
-            return {
+            tool_result = {
                 "status": "success" if returncode == 0 else "failed",
                 "success": returncode == 0,
                 "data": {
@@ -544,6 +546,20 @@ class BashTool(LLMTool):
                     "stderr_length": len(stderr)
                 }
             }
+            if returncode == 0 and output_paths:
+                resolved_outputs = []
+                for output_path in output_paths:
+                    candidate = Path(output_path).expanduser()
+                    if not candidate.is_absolute():
+                        candidate = Path(work_dir) / candidate
+                    candidate = candidate.resolve()
+                    if candidate.is_relative_to(self.working_dir):
+                        resolved_outputs.append(candidate)
+                tool_result["resources"] = resources_for_files(
+                    resolved_outputs,
+                    tool_name=self.name,
+                )
+            return tool_result
 
         except subprocess.TimeoutExpired:
             self._log_command(command, "timeout")
@@ -1146,6 +1162,11 @@ class BashTool(LLMTool):
                     "working_dir": {
                         "type": "string",
                         "description": "起始目录，可选；必须在项目目录内。默认不填，路径建议用正斜杠"
+                    },
+                    "output_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "命令成功创建或修改的文件路径；只声明真实成果，不填写搜索/列表结果"
                     }
                 },
                 "required": ["command"]

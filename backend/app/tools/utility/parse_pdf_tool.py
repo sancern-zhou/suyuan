@@ -31,6 +31,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.resource_declarations import file_resource
 from app.utils.path_config import get_data_registry
 from config.settings import settings
 from app.services.bailian_multimodal import call_bailian_vision
@@ -597,6 +598,7 @@ class ParsePDFTool(LLMTool):
                     # 添加文档路径到data中
                     if result_file_path:
                         result["data"]["result_file_path"] = result_file_path
+                        result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                         result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
                     return result
@@ -646,6 +648,7 @@ class ParsePDFTool(LLMTool):
                     # 添加文档路径到data中
                     if result_file_path:
                         result["data"]["result_file_path"] = result_file_path
+                        result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                         result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
                     return result
@@ -779,6 +782,7 @@ class ParsePDFTool(LLMTool):
             # 添加文档路径到data中
             if result_file_path:
                 result["data"]["result_file_path"] = result_file_path
+                result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                 result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
             return result
@@ -851,6 +855,7 @@ class ParsePDFTool(LLMTool):
             # 添加文档路径到data中
             if result_file_path:
                 result["data"]["result_file_path"] = result_file_path
+                result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                 result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
             return result
@@ -917,6 +922,7 @@ class ParsePDFTool(LLMTool):
             # 添加文档路径到data中
             if result_file_path:
                 result["data"]["result_file_path"] = result_file_path
+                result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                 result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
             return result
@@ -985,6 +991,7 @@ class ParsePDFTool(LLMTool):
                 # 添加文档路径到data中
                 if result_file_path:
                     result["data"]["result_file_path"] = result_file_path
+                    result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                     result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
                 return result
@@ -1050,6 +1057,7 @@ class ParsePDFTool(LLMTool):
                 # 添加文档路径到data中
                 if result_file_path:
                     result["data"]["result_file_path"] = result_file_path
+                    result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                     result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
                 return result
@@ -1113,6 +1121,7 @@ class ParsePDFTool(LLMTool):
                 # 添加文档路径到data中
                 if result_file_path:
                     result["data"]["result_file_path"] = result_file_path
+                    result["resources"] = [file_resource(result_file_path, tool_name=self.name)]
                     result["summary"] += f" → 结果已保存: `{result_file_path}`"
 
                 return result

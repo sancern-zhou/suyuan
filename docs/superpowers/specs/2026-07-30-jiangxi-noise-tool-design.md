@@ -49,7 +49,8 @@
 运行时读取以下环境变量：
 
 - `JIANGXI_NOISE_BASE_URL`：平台根地址，必填。
-- `JIANGXI_NOISE_SECRET_NAME`：认证所需的 secret name，必填。
+- `JIANGXI_NOISE_USERNAME`：外部 Token 接口用户名，必填。
+- `JIANGXI_NOISE_SECRET_KEY`：外部 Token 接口密钥，必填。
 - `JIANGXI_NOISE_TIMEOUT_SECONDS`：请求超时，默认 30 秒。
 
 代码和日志不记录 Token 或 Token 前缀。客户端缓存 Token；数据请求收到 401 时清除缓存、重新认证并只重试一次。其他 HTTP 错误转换为不包含 Authorization 头和内部堆栈的稳定错误信息。

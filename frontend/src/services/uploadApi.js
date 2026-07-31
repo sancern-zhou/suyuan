@@ -1,4 +1,4 @@
-import { authFetch } from '@/auth/http.js'
+import { authFetch } from '../auth/http.js'
 /**
  * 文件上传API服务
  * 用于对话中的文件和图片上传
@@ -121,11 +121,12 @@ export function validateFile(file) {
     document: 50 * 1024 * 1024, // 50MB
   };
 
-  const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/webp'];
+  const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml'];
   const documentTypes = [
     'application/pdf',
     'text/plain',
     'text/markdown',
+    'text/html',
     'application/json',
     'text/csv',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  // .docx
@@ -145,11 +146,14 @@ export function validateFile(file) {
     '.gif': 'image',
     '.bmp': 'image',
     '.webp': 'image',
+    '.svg': 'image',
     // 文档
     '.pdf': 'document',
     '.txt': 'document',
     '.md': 'document',
     '.markdown': 'document',
+    '.html': 'document',
+    '.htm': 'document',
     '.json': 'document',
     '.csv': 'document',
     // Office（新旧格式都支持）

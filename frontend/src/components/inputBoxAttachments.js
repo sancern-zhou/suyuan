@@ -11,6 +11,8 @@ export function completeUploadedAttachment(attachmentList, pendingAttachment, up
 
   const completedAttachment = {
     ...attachmentList[index],
+    name: uploadResult.filename || pendingAttachment.name,
+    type: uploadResult.file_type || pendingAttachment.type,
     file_id: uploadResult.file_id,
     resourceRefId,
     url: uploadResult.url,

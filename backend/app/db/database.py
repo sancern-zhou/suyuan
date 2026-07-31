@@ -165,7 +165,7 @@ async def _ensure_session_resources_schema(conn) -> None:
             status VARCHAR(32) NOT NULL DEFAULT 'active',
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (session_id, resource_key)
+            PRIMARY KEY (session_id, resource_key, role)
         )
         """,
         """
@@ -185,6 +185,29 @@ async def _ensure_session_resources_schema(conn) -> None:
             ALTER COLUMN logical_key DROP NOT NULL,
             ALTER COLUMN presentation_type DROP NOT NULL,
             ALTER COLUMN presentation DROP NOT NULL
+        """,
+        """
+        DO $$
+        DECLARE
+            current_columns TEXT[];
+        BEGIN
+            SELECT array_agg(att.attname ORDER BY keys.ordinality)
+              INTO current_columns
+              FROM pg_constraint con
+              JOIN unnest(con.conkey) WITH ORDINALITY AS keys(attnum, ordinality) ON TRUE
+              JOIN pg_attribute att
+                ON att.attrelid = con.conrelid AND att.attnum = keys.attnum
+             WHERE con.conrelid = 'session_resources'::regclass
+               AND con.contype = 'p';
+
+            IF current_columns IS DISTINCT FROM ARRAY['session_id', 'resource_key', 'role'] THEN
+                ALTER TABLE session_resources DROP CONSTRAINT session_resources_pkey;
+                ALTER TABLE session_resources
+                    ADD CONSTRAINT session_resources_pkey
+                    PRIMARY KEY (session_id, resource_key, role);
+            END IF;
+        END
+        $$
         """,
     )
     for statement in statements:
