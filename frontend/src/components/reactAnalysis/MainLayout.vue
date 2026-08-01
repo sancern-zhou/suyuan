@@ -171,7 +171,6 @@
         :active-tab="activeRightTab"
         :panel-style="vizPanelStyle"
         :assistant-mode="agentMode"
-        :visualization-content="visualizationContent"
         :board="board"
         :task-workspace-task="taskWorkspaceTask"
         :messages="messages"
@@ -283,10 +282,6 @@ const props = defineProps({
   sessionId: {
     type: String,
     default: ''
-  },
-  visualizationContent: {
-    type: Object,
-    default: null
   },
   expertResults: {
     type: Object,
@@ -507,25 +502,6 @@ const knowledgeSources = computed(() => {
     else if (lastMsg?.sources && Array.isArray(lastMsg.sources)) {
       sources = lastMsg.sources
     }
-  }
-
-  // 3. 如果还没有sources，尝试从visualizationContent中提取
-  if (sources.length === 0 && props.visualizationContent?.visuals && Array.isArray(props.visualizationContent.visuals)) {
-    const knowledgeVisuals = props.visualizationContent.visuals
-      .filter(v => v.type === 'knowledge_source')
-      .map((v) => ({
-        title: v.title || '未知标题',
-        document_name: v.title || '未知标题',
-        source: v.data?.source || '未知来源',
-        knowledge_base_name: v.data?.source || '未知来源',
-        relevance: v.data?.relevance || 0,
-        score: v.data?.relevance || 0,
-        chunk_index: v.data?.chunk_index,
-        document_id: v.data?.document_id,
-        knowledge_base_id: v.data?.knowledge_base_id,
-        content: v.data?.content || ''
-      }))
-    sources = knowledgeVisuals
   }
 
   return sources

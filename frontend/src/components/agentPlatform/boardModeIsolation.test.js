@@ -13,8 +13,8 @@ test('board state and snapshots are isolated to board mode', () => {
   assert.match(storeSource, /actualMode === 'board' \? this\.buildBoardContext/)
   assert.doesNotMatch(storeSource, /actualMode === 'chart' \? this\.buildBoardContext/)
   assert.match(inputSource, /currentMode !== 'board'/)
-  assert.match(sessionManagementSource, /store\.currentMode === 'board'/)
-  assert.match(sessionManagementSource, /restoredMode === 'board'/)
+  assert.doesNotMatch(sessionManagementSource, /restoreDrawioBoardFromSession/)
+  assert.match(sessionManagementSource, /resourceStore\.loadCatalog\(sessionId\)/)
 })
 
 test('every valid mode has an initialized mode state for reset and restore', () => {

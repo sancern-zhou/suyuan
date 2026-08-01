@@ -20,7 +20,6 @@
       :total-message-count="store.currentState.pagination.totalMessageCount"
       :loading-more="store.currentState.pagination.loadingMore"
       :session-id="currentModeSessionId"
-      :visualization-content="currentModeVisualization"
       :expert-results="currentModeExpertResults"
       :active-module="activeAssistant"
       :agent-mode="store.currentMode"
@@ -291,28 +290,6 @@ const kbEditForm = computed(() => dialogData.value.kbEdit)
 // ========== 计算属性 ==========
 
 const currentModeMessages = computed(() => store.currentState.messages)
-
-const currentModeVisualization = computed(() => {
-  if (store.currentState.groupedVisualizations &&
-      (store.currentState.groupedVisualizations.weather?.length > 0 ||
-       store.currentState.groupedVisualizations.component?.length > 0)) {
-    return {
-      visuals: [
-        ...(store.currentState.groupedVisualizations.weather || []),
-        ...(store.currentState.groupedVisualizations.component || [])
-      ]
-    }
-  }
-
-  const history = store.currentState.visualizationHistory || []
-  if (history.length > 0) {
-    return {
-      visuals: history
-    }
-  }
-
-  return store.currentState.currentVisualization
-})
 
 const currentModeExpertResults = computed(() => store.currentState.lastExpertResults)
 const currentModeSessionId = computed(() => store.currentState.sessionId)

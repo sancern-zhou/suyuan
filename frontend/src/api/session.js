@@ -69,18 +69,15 @@ export async function getSessionStats() {
  * @param {string} sessionId - 会话ID
  * @param {object} options - 选项
  * @param {number} options.messageLimit - 首屏消息数量限制（默认30，更多历史通过分页加载）
- * @param {boolean} options.lazyArtifacts - 是否延迟加载图表/文档预览（默认true）
  */
 export async function restoreSession(sessionId, options = {}) {
-  const { messageLimit = 30, lazyArtifacts = true } = options
+  const { messageLimit = 30 } = options
 
   // 构建查询参数
   const params = new URLSearchParams()
   if (messageLimit) {
     params.set('message_limit', messageLimit)
   }
-  params.set('lazy_artifacts', lazyArtifacts ? 'true' : 'false')
-
   return await request(`${BASE_URL}/${sessionId}/restore?${params}`, {
     method: 'POST'
   })
@@ -101,31 +98,6 @@ export async function getSessionMessages(sessionId, beforeSequence, limit = 30) 
  */
 export async function getSessionResources(sessionId) {
   return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources`)
-}
-
-/**
- * 按需加载会话图表数据
- */
-export async function getSessionVisualizations(sessionId) {
-  return await request(`${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=visualization`)
-}
-
-/**
- * 按需加载会话文档/报告预览元数据
- */
-export async function getSessionOfficeDocuments(sessionId, options = {}) {
-  const { cursor = null, limit = null } = options
-  let url = `${BASE_URL}/${encodeURIComponent(sessionId)}/resources?presentation_type=document`
-  if (limit) url += `&limit=${encodeURIComponent(limit)}`
-  if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`
-  return await request(url)
-}
-
-/**
- * 按需加载会话 Draw.io 画板状态
- */
-export async function getSessionDrawioBoard(sessionId) {
-  return await request(`${BASE_URL}/${sessionId}/drawio-board`)
 }
 
 /**
