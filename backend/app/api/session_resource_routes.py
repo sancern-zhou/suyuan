@@ -45,6 +45,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "status": item.status,
         "content_url": f"{base}/" if directory else base,
         "download_url": actions.get("download"),
+        "size_bytes": int(item.metadata.get("size") or item.metadata.get("size_bytes") or 0),
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }

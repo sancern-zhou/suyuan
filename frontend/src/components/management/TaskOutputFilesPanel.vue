@@ -62,6 +62,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { authFetch } from '@/auth/http.js'
+import { listSessionResources } from '@/api/sessionResources.js'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import {
   buildTaskOutputGroups,
@@ -98,10 +99,17 @@ async function load() {
       executions
         .filter((execution) => execution.session_id)
         .map(async (execution) => {
-          const response = await authFetch(`/api/sessions/${encodeURIComponent(execution.session_id)}/resources`)
-          if (!response.ok) throw new Error(`执行会话资源读取失败（HTTP ${response.status}）`)
-          const payload = await response.json()
-          return [execution.session_id, Array.isArray(payload.resources) ? payload.resources : []]
+          const resources = []
+          let cursor = null
+          do {
+            const payload = await listSessionResources(execution.session_id, {
+              limit: 200,
+              ...(cursor ? { cursor } : {})
+            })
+            resources.push(...(Array.isArray(payload.resources) ? payload.resources : []))
+            cursor = payload.next_cursor || null
+          } while (cursor)
+          return [execution.session_id, resources]
         })
     )
     groups.value = buildTaskOutputGroups(executions, Object.fromEntries(resourceEntries))

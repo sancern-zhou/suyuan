@@ -51,6 +51,15 @@
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
         <button
+          v-if="sessionId"
+          :class="['tab-btn', { active: activeTab === 'files' }]"
+          @click="handleTabChange('files')"
+        >
+          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7h6l2 2h9v9.5a2 2 0 0 1-2 2h-17v-13.5Z"/><path d="M3.5 10h17"/></svg>
+          <span>文件产物</span>
+          <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
+        </button>
+        <button
           v-if="taskWorkspaceTask"
           :class="['tab-btn', { active: activeTab === 'task-files' }]"
           @click="handleTabChange('task-files')"
@@ -132,6 +141,12 @@
         :task="taskWorkspaceTask"
         @restore-session="emit('restore-session', $event)"
       />
+
+      <ResourceProductsPanel
+        v-if="activeTab === 'files' && sessionId"
+        class="panel-content"
+        @open-resource-tab="handleTabChange"
+      />
     </template>
   </div>
 </template>
@@ -144,6 +159,8 @@ import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
 import DrawioBoardPanel from '@/components/board/DrawioBoardPanel.vue'
 import TaskOutputFilesPanel from '@/components/management/TaskOutputFilesPanel.vue'
+import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.vue'
+import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 
 const props = defineProps({
   visible: {
@@ -221,6 +238,7 @@ const emit = defineEmits([
   'board-version-restore',
   'restore-session'
 ])
+const resourceStore = useSessionResourceStore()
 
 // 添加调试
 watch(() => props.activeTab, (newVal) => {
@@ -245,8 +263,14 @@ const showBoardTab = computed(() => props.boardPanelVisible || hasBoardXml.value
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.taskWorkspaceTask || props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
+  return props.sessionId || props.taskWorkspaceTask || props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
 })
+
+const fileProductCount = computed(() => (
+  resourceStore.activeSessionId === props.sessionId
+    ? resourceStore.activeSessionState?.resources?.filter(resource => resource.relation === 'primary' && ['output', 'report'].includes(resource.role)).length || 0
+    : 0
+))
 
 const visualizationCount = computed(() => {
   const visuals = props.visualizationContent?.visuals
