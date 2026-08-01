@@ -193,16 +193,13 @@ export function useSessionManagement(store) {
    * @returns {object} 恢复结果
    */
   const doRestoreSession = async (sessionId, options = {}) => {
-    const {
-      messageLimit = 100,
-      lazyArtifacts = true
-    } = options
+    const { messageLimit = 100 } = options
 
     try {
       // 1. 调用恢复API
       resourceStore.activateSession(sessionId)
       const [restoreResult] = await Promise.all([
-        restoreSession(sessionId, { messageLimit, lazyArtifacts }),
+        restoreSession(sessionId, { messageLimit }),
         resourceStore.loadCatalog(sessionId)
       ])
 

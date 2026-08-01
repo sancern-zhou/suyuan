@@ -375,7 +375,7 @@ const props = defineProps({
     type: String,
     default: null
   },
-  // 【新增】接收VisualizationPanel的引用，用于获取图表截图
+  // 可选截图提供方，用于报告附件采集
   visualizationPanelRef: {
     type: Object,
     default: null
@@ -786,25 +786,6 @@ const handleLiveProcessToggle = (event) => {
   isLiveProcessExpanded.value = event.target.open
 }
 
-// 【新增】判断是否是带PDF预览的Office工具消息（这些消息在OfficeDocumentPanel中显示，不需要在聊天列表重复显示）
-const isOfficeToolWithPdf = (message) => {
-  if (getMessageType(message) !== 'tool_result') return false
-
-  const result = message.data?.result
-  if (!result) return false
-
-  const metadata = result.metadata || {}
-  const generator = metadata.generator
-
-  // 检查是否是Office工具
-  const officeTools = ['unpack_office', 'pack_office', 'word_processor', 'excel_processor', 'ppt_processor', 'find_replace_word', 'accept_word_changes', 'recalc_excel', 'add_ppt_slide']
-  if (!officeTools.includes(generator)) return false
-
-  // 检查是否有PDF预览
-  const data = result.data || result
-  return !!(data?.pdf_preview)
-}
-
 const getProcessCorrelationId = (message) => {
   const data = message?.data || {}
   if (data.tool_use_id) return `tool:${data.tool_use_id}`
@@ -941,7 +922,7 @@ const buildProcessItems = (messages, options = {}) => {
 
       item.status = message.data?.is_error ? 'error' : 'done'
       item.result = message.data?.result ?? message.data ?? null
-      item.resultHidden = isOfficeToolWithPdf(message)
+      item.resultHidden = false
       item.summary = getProcessResultSummary(message)
       item.completedAt = message.timestamp
     }

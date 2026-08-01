@@ -159,10 +159,6 @@ const props = defineProps({
     type: String,
     default: 'general-agent'
   },
-  visualizationContent: {
-    type: Object,
-    default: null
-  },
   messages: {
     type: Array,
     default: () => []

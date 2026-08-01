@@ -154,60 +154,6 @@ const getContentPreview = (content, maxLength = 100) => {
   return text.substring(0, maxLength)
 }
 
-const isPresentedImageArtifact = (payload = {}, metadata = {}) => {
-  const generator = payload.generator || metadata.generator || metadata.tool_name
-  const fileType = payload.file_type || payload.html_preview?.file_type
-  return generator === 'present_artifact' && fileType === 'image'
-}
-
-const getFilenameFromPath = (filePath = '') => {
-  if (!filePath || typeof filePath !== 'string') return ''
-  return filePath.split('/').pop() || filePath
-}
-
-const buildPresentedImageVisual = (payload = {}, metadata = {}) => {
-  if (!isPresentedImageArtifact(payload, metadata)) return null
-  const imageUrl = payload.html_preview?.html_url || payload.html_url
-  if (!imageUrl) return null
-
-  const filePath = payload.file_path || payload.path || ''
-  const fileName = payload.file_name || getFilenameFromPath(filePath) || '图片'
-  const stableId = payload.html_preview?.html_id || filePath || imageUrl
-
-  return {
-    id: `present_artifact_image_${String(stableId).replace(/[^a-zA-Z0-9_-]/g, '_')}`,
-    type: 'image',
-    title: fileName,
-    image_url: imageUrl,
-    data: { url: imageUrl },
-    meta: {
-      generator: 'present_artifact',
-      file_path: filePath,
-      file_type: 'image',
-      schema_version: 'present_artifact.v1'
-    }
-  }
-}
-
-const ensurePresentedImageVisual = (result = {}) => {
-  const payload = result.data || {}
-  const visual = buildPresentedImageVisual(payload, result.metadata || {})
-  if (!visual) return false
-  if (!Array.isArray(result.visuals)) {
-    result.visuals = []
-  }
-  const exists = result.visuals.some(item => item?.id === visual.id)
-  if (!exists) {
-    result.visuals.push(visual)
-  }
-  return true
-}
-
-const hasVisualizationRecord = (targetState, visualId) => {
-  return !!visualId && Array.isArray(targetState?.visualizationHistory) &&
-    targetState.visualizationHistory.some(item => item?.id === visualId)
-}
-
 const createEmptyDrawioBoardState = () => ({
   activeBoardId: null,
   title: '',
@@ -359,20 +305,6 @@ const findLatestDrawioBoardResultFromMessages = (messages = []) => {
   return null
 }
 
-const getOfficeDocumentIdentity = (doc = {}) => {
-  return doc.version_id ||
-    (doc.document_id && doc.file_path ? `${doc.document_id}:${doc.file_path}` : '') ||
-    doc.file_path ||
-    doc.path ||
-    doc.pdf_preview?.pdf_id ||
-    doc.html_preview?.html_id ||
-    doc.html_preview?.html_url ||
-    doc.svg_preview?.svg_url ||
-    doc.svg_preview?.svg_path ||
-    doc.markdown_preview?.content ||
-    ''
-}
-
 // 辅助函数：创建空的模式状态
 const createEmptyModeState = () => ({
   // 基础状态
@@ -406,10 +338,6 @@ const createEmptyModeState = () => ({
   lastExpertResults: null,
   selectedExperts: [],
 
-  // Office文档预览状态
-  lastOfficeDocument: null,
-  officeDocumentHistory: [],
-
   // 结果
   finalAnswer: '',
   finalAnswers: [],
@@ -419,14 +347,8 @@ const createEmptyModeState = () => ({
   currentMapProgram: null,
   mapEvents: [],
 
-  // 可视化
-  currentVisualization: null,
-  visualizationHistory: [],
+  // 画板编辑状态（预览由统一资源目录负责）
   board: createEmptyDrawioBoardState(),
-  groupedVisualizations: {
-    weather: [],
-    component: []
-  },
 
   // 结果管理系统
   results: {
@@ -450,26 +372,9 @@ const createEmptyModeState = () => ({
     loadingMore: false
   },
 
-  lazyArtifacts: {
-    hasVisualizations: false,
-    visualizationCount: 0,
-    visualizationsLoaded: false,
-    loadingVisualizations: false,
-    hasOfficeDocuments: false,
-    officeDocumentCount: 0,
-    officeDocumentsLoaded: false,
-    loadingOfficeDocuments: false,
-    hasDrawioBoard: false,
-    drawioBoardLoaded: false,
-    loadingDrawioBoard: false
-  },
-
   // 流式渲染状态
   streamingAnswerMessageId: null,
-  _forceRenderCount: 0,
-
-  // 内部状态
-  _lastProcessedExpertResultsHash: null
+  _forceRenderCount: 0
 })
 
 export const useReactStore = defineStore('react', {
@@ -554,33 +459,9 @@ export const useReactStore = defineStore('react', {
       return this.currentState?.hasResults || false
     },
 
-    // ✅ 向后兼容：visualizationHistory
-    visualizationHistory() {
-      return this.currentState?.visualizationHistory || []
-    },
-
     // ✅ 向后兼容：lastExpertResults
     lastExpertResults() {
       return this.currentState?.lastExpertResults || null
-    },
-
-    // ✅ 向后兼容：lastOfficeDocument
-    lastOfficeDocument() {
-      return this.currentState?.lastOfficeDocument || null
-    },
-
-    officeDocumentHistory() {
-      return this.currentState?.officeDocumentHistory || []
-    },
-
-    // ✅ 向后兼容：groupedVisualizations
-    groupedVisualizations() {
-      return this.currentState?.groupedVisualizations || { weather: [], component: [] }
-    },
-
-    // ✅ 向后兼容：currentVisualization
-    currentVisualization() {
-      return this.currentState?.currentVisualization || null
     },
 
     // ✅ 向后兼容：isComplete
@@ -784,22 +665,6 @@ export const useReactStore = defineStore('react', {
       // 只保存最近50条消息（避免localStorage超限）
       const messagesToSave = modeState.messages.slice(-50)
 
-      // 【验证】检查持久化前的 messages 数据
-      const toolResultMsgs = messagesToSave.filter(m => m.type === 'tool_result')
-      console.log(`[_persistModeState] 🔍 验证 - 持久化 ${mode} 模式:`, {
-        totalMessages: messagesToSave.length,
-        toolResultCount: toolResultMsgs.length,
-        toolResultsWithVisuals: toolResultMsgs.filter(m => m.data?.result?.visuals?.length > 0).length,
-        visualizationHistoryCount: modeState.visualizationHistory?.length || 0
-      })
-      toolResultMsgs.forEach((msg, idx) => {
-        if (msg.data?.result?.visuals?.length > 0) {
-          console.log(`[_persistModeState] tool_result[${idx}] 有 ${msg.data.result.visuals.length} 个 visuals:`,
-            msg.data.result.visuals.map(v => ({ id: v.id, type: v.type }))
-          )
-        }
-      })
-
       const stateToSave = {
         sessionId: modeState.sessionId,
         isAnalyzing: modeState.isAnalyzing,
@@ -816,29 +681,22 @@ export const useReactStore = defineStore('react', {
         expertResults: modeState.expertResults,
         lastExpertResults: modeState.lastExpertResults,
         selectedExperts: modeState.selectedExperts,
-        lastOfficeDocument: modeState.lastOfficeDocument,
-        officeDocumentHistory: modeState.officeDocumentHistory,
         finalAnswer: modeState.finalAnswer,
         finalAnswers: modeState.finalAnswers,
         hasResults: modeState.hasResults,
         dashboardOverview: modeState.dashboardOverview,
         mapPrograms: modeState.mapPrograms,
         currentMapProgram: modeState.currentMapProgram,
-        currentVisualization: modeState.currentVisualization,
-        visualizationHistory: modeState.visualizationHistory,
         board: modeState.board
           ? { ...modeState.board, pendingSnapshotAttachment: null }
           : modeState.board,
-        groupedVisualizations: modeState.groupedVisualizations,
-        lazyArtifacts: modeState.lazyArtifacts,
         results: modeState.results,
         sessionRound: modeState.sessionRound,
         interventionQueue: modeState.interventionQueue,
         pendingUserInputs: modeState.pendingUserInputs,
         pendingSteeringInputs: modeState.pendingSteeringInputs,
         streamingAnswerMessageId: modeState.streamingAnswerMessageId,
-        _forceRenderCount: modeState._forceRenderCount,
-        _lastProcessedExpertResultsHash: modeState._lastProcessedExpertResultsHash
+        _forceRenderCount: modeState._forceRenderCount
       }
 
       try {
@@ -1011,77 +869,6 @@ export const useReactStore = defineStore('react', {
     },
 
     /**
-     * 设置当前模式的可视化历史（用于会话恢复）
-     */
-    setVisualizationHistory(visualizations) {
-      if (!Array.isArray(visualizations)) {
-        console.warn('[setVisualizationHistory] Invalid visualizations:', visualizations)
-        return
-      }
-      this.currentState.visualizationHistory = visualizations
-      console.log(`[setVisualizationHistory] Set ${visualizations.length} visualizations for mode ${this.currentMode}`)
-    },
-
-    /**
-     * 设置最近一次Office文档（用于会话恢复）
-     */
-    setLastOfficeDocument(doc) {
-      if (!doc) return
-      this.recordOfficeDocument(doc, this.currentState)
-      console.log(`[setLastOfficeDocument] Set office document for mode ${this.currentMode}`)
-    },
-
-    setOfficeDocumentHistory(documents, targetState = this.currentState) {
-      if (!Array.isArray(documents)) {
-        console.warn('[setOfficeDocumentHistory] Invalid documents:', documents)
-        return
-      }
-      targetState.officeDocumentHistory = []
-      targetState.lastOfficeDocument = null
-      documents
-        .slice()
-        .sort((a, b) => {
-          const aTime = new Date(a?.timestamp || 0).getTime()
-          const bTime = new Date(b?.timestamp || 0).getTime()
-          return aTime - bTime
-        })
-        .forEach(doc => this.recordOfficeDocument(doc, targetState))
-      console.log(`[setOfficeDocumentHistory] Set ${documents.length} office documents for mode ${this.currentMode}`)
-    },
-
-    recordOfficeDocument(doc, targetState = this.currentState) {
-      if (!doc || !targetState) return
-      const normalizedDoc = {
-        ...doc,
-        file_path: doc.file_path || doc.path || doc.pdf_preview?.pdf_path || doc.svg_preview?.svg_path,
-        file_type: doc.file_type || doc.html_preview?.file_type || doc.svg_preview?.file_type,
-        related_files: doc.related_files,
-        artifacts: doc.artifacts,
-        refs: doc.refs,
-        assets: doc.assets,
-        timestamp: doc.timestamp || new Date().toISOString()
-      }
-      const identity = getOfficeDocumentIdentity(normalizedDoc)
-      targetState.lastOfficeDocument = normalizedDoc
-      if (!Array.isArray(targetState.officeDocumentHistory)) {
-        targetState.officeDocumentHistory = []
-      }
-      const existingIndex = targetState.officeDocumentHistory.findIndex(item =>
-        getOfficeDocumentIdentity(item) === identity
-      )
-      if (existingIndex >= 0) {
-        const updatedDoc = {
-          ...targetState.officeDocumentHistory[existingIndex],
-          ...normalizedDoc
-        }
-        targetState.officeDocumentHistory.splice(existingIndex, 1)
-        targetState.officeDocumentHistory.push(updatedDoc)
-      } else {
-        targetState.officeDocumentHistory.push(normalizedDoc)
-      }
-    },
-
-    /**
      * 设置当前模式的专家结果（用于会话恢复）
      */
     setLastExpertResults(results) {
@@ -1133,12 +920,6 @@ export const useReactStore = defineStore('react', {
 
       restoreMapScene(this.currentState, sessionData)
 
-      if (sessionData.visualizations && Array.isArray(sessionData.visualizations)) {
-        this.setVisualizationHistory(sessionData.visualizations)
-      }
-
-      this.restoreDrawioBoardFromSession(sessionData)
-
       if (sessionData.last_result) {
         this.currentState.lastExpertResults = sessionData.last_result
       }
@@ -1168,13 +949,6 @@ export const useReactStore = defineStore('react', {
      */
     setPagination(state) {
       Object.assign(this.currentState.pagination, state)
-    },
-
-    setLazyArtifacts(state) {
-      if (!this.currentState.lazyArtifacts) {
-        this.currentState.lazyArtifacts = createEmptyModeState().lazyArtifacts
-      }
-      Object.assign(this.currentState.lazyArtifacts, state)
     },
 
     /**
@@ -1725,7 +1499,6 @@ export const useReactStore = defineStore('react', {
           const resultToolUseId = toolResultData.tool_use_id
           const result = toolResultData.result || {}
           const isError = toolResultData.is_error || false
-          const isPresentedImage = ensurePresentedImageVisual(result)
 
           // 格式化工具结果信息
           let toolResultContent = isError ? 'Tool Error' : 'Tool Result'
@@ -1748,105 +1521,11 @@ export const useReactStore = defineStore('react', {
             timestamp: toolResultData.timestamp
           })
 
-          if (isPresentedImage && Array.isArray(result.visuals)) {
-            result.visuals.forEach(visual => {
-              if (!hasVisualizationRecord(targetState, visual?.id)) {
-                this.recordVisualization(visual, targetState)
-              }
-            })
-            targetState.hasResults = true
-          }
-
-          const resultData = result?.data || {}
           const appliedDrawioBoard = this.applyDrawioBoardToolResult(result, targetState)
           if (!appliedDrawioBoard) {
             this.applyDrawioBoardToolResultFromRef(result, targetState)
           }
 
-          if (!isPresentedImage && (resultData.pdf_preview || resultData.markdown_preview || resultData.html_preview || resultData.svg_preview || resultData.spreadsheet_preview || resultData.ppt_preview)) {
-            this.recordOfficeDocument({
-              pdf_preview: resultData.pdf_preview,
-              markdown_preview: resultData.markdown_preview,
-              html_preview: resultData.html_preview,
-              svg_preview: resultData.svg_preview,
-              spreadsheet_preview: resultData.spreadsheet_preview,
-              ppt_preview: resultData.ppt_preview,
-              file_path: resultData.file_path || resultData.path || resultData.pdf_preview?.pdf_path || resultData.svg_preview?.svg_path,
-              file_type: resultData.file_type || resultData.html_preview?.file_type || resultData.svg_preview?.file_type,
-              related_files: resultData.related_files,
-              artifacts: resultData.artifacts,
-              refs: resultData.refs,
-              assets: resultData.assets,
-              generator: resultData.generator || result?.metadata?.generator || toolResultData.tool_name,
-              summary: result.summary,
-              timestamp: toolResultData.timestamp
-            }, targetState)
-          }
-          break
-        }
-
-        case 'office_document': {
-          // Office文档PDF预览事件（用于驱动文档预览面板）
-          // 【修复】使用targetState而不是currentState
-          const imageVisual = buildPresentedImageVisual(data || {}, { generator: data?.generator })
-          if (imageVisual) {
-            if (!hasVisualizationRecord(targetState, imageVisual.id)) {
-              this.recordVisualization(imageVisual, targetState)
-            }
-            targetState.hasResults = true
-            break
-          }
-
-          this.recordOfficeDocument({
-            pdf_preview: data?.pdf_preview,
-            markdown_preview: data?.markdown_preview,
-            html_preview: data?.html_preview,
-            svg_preview: data?.svg_preview,
-            spreadsheet_preview: data?.spreadsheet_preview,
-            file_path: data?.file_path || data?.svg_preview?.svg_path,
-            file_type: data?.file_type || data?.svg_preview?.file_type,
-            related_files: data?.related_files,
-            artifacts: data?.artifacts,
-            refs: data?.refs,
-            assets: data?.assets,
-            generator: data?.generator,
-            summary: data?.summary,
-            timestamp: data?.timestamp
-          }, targetState)
-          console.log('[reactStore] office_document事件:', {
-            generator: data?.generator,
-            pdf_id: data?.pdf_preview?.pdf_id,
-            has_markdown_preview: !!data?.markdown_preview,
-            file_path: data?.file_path,
-            targetMode: targetMode
-          })
-          break
-        }
-
-        case 'html_document': {
-          // HTML预览事件
-          const imageVisual = buildPresentedImageVisual(data || {}, { generator: data?.generator })
-          if (imageVisual) {
-            if (!hasVisualizationRecord(targetState, imageVisual.id)) {
-              this.recordVisualization(imageVisual, targetState)
-            }
-            targetState.hasResults = true
-            break
-          }
-
-          this.recordOfficeDocument({
-            html_preview: data?.html_preview,
-            markdown_preview: data?.markdown_preview,
-            file_path: data?.file_path,
-            file_type: data?.file_type || 'html',
-            related_files: data?.related_files,
-            artifacts: data?.artifacts,
-            refs: data?.refs,
-            assets: data?.assets,
-            generator: data?.generator,
-            summary: data?.summary,
-            timestamp: data?.timestamp
-          }, targetState)
           break
         }
 
@@ -2035,16 +1714,8 @@ export const useReactStore = defineStore('react', {
             console.log('[event:complete] 警告：没有answer或response字段，不添加final消息')
           }
 
-          // 处理可视化数据
-          if (data?.visualization) {
-            console.log('[event:complete] 处理visualization字段')
-            this.handleResult(data.visualization, targetState)
-          }
-
           // 【关键修复】处理多专家系统的最终结果
           if (data?.expert_results) {
-            console.log('[event:complete] 调用 _processExpertResultsForVisualization')
-            this._processExpertResultsForVisualization(data.expert_results, targetState)
             // 【重要】同时存储完整的专家结果供前端使用
             targetState.lastExpertResults = {
               expert_results: data.expert_results
@@ -2055,7 +1726,7 @@ export const useReactStore = defineStore('react', {
           // ✅ 处理sources字段（知识问答工作流返回的检索文档）
           if (data?.sources && Array.isArray(data.sources) && data.sources.length > 0) {
             console.log('[event:complete] 保存sources到最后消息，count:', data.sources.length)
-            // 保存到当前消息的sources字段，供VisualizationPanel使用
+            // 保存到当前消息的 sources 字段，供知识溯源标签使用
             if (targetState.messages.length > 0) {
               const lastMsg = targetState.messages[targetState.messages.length - 1]
               // 确保data对象存在
@@ -2130,7 +1801,6 @@ export const useReactStore = defineStore('react', {
           // 处理多专家系统的最终结果（即使未完成也可能有部分结果）
           if (data?.expert_results) {
             console.log('[incomplete] 处理多专家系统最终结果:', data.expert_results)
-            this._processExpertResultsForVisualization(data.expert_results, targetState)
             // 【重要】同时存储完整的专家结果供前端使用
             targetState.lastExpertResults = {
               expert_results: data.expert_results
@@ -2187,12 +1857,6 @@ export const useReactStore = defineStore('react', {
             timestamp: data?.timestamp || new Date().toISOString()
           })
           this._persistModeState(targetMode)
-          break
-        }
-
-        case 'result': {
-          // 处理结果事件（原有工作流逻辑）
-          this.handleResult(data, targetState)
           break
         }
 
@@ -2283,10 +1947,6 @@ export const useReactStore = defineStore('react', {
               is_expert_result: true
             })
 
-            // 【关键修复】从专家结果中提取visuals并传递给可视化面板
-            console.log('[event:expert_result] 调用 _processExpertResultsForVisualization')
-            this._processExpertResultsForVisualization(data.expert_results, targetState)
-
             // 【重要】确保lastExpertResults具有正确的结构
             targetState.lastExpertResults = {
               expert_results: data.expert_results
@@ -2359,20 +2019,6 @@ export const useReactStore = defineStore('react', {
       if (type === 'thought' || type === 'tool_use' || type === 'tool_result') {
         targetState.iterations += 0.5 // 每个循环算作0.5，因为thought+action+observation是一个完整循环
       }
-    },
-
-    // 记录可视化历史，并同步当前展示
-    recordVisualization(visualization, targetState = this.currentState) {
-      if (!visualization) return
-
-      const record = {
-        ...visualization,
-        id: visualization.id || `viz_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        timestamp: visualization.timestamp || new Date().toISOString()
-      }
-
-      targetState.currentVisualization = record
-      targetState.visualizationHistory.push(record)
     },
 
     ensureDrawioBoardState(targetState = this.currentState) {
@@ -2825,125 +2471,6 @@ export const useReactStore = defineStore('react', {
       }
     },
 
-    // 处理结果（UDF v2.0格式 + v3.0图表格式）
-    handleResult(resultData, targetState = this.currentState) {
-      if (!resultData) return
-
-      console.log('[handleResult] 处理结果:', resultData)
-
-      // 【UDF v2.0】处理visuals字段
-      if (resultData.visuals && Array.isArray(resultData.visuals)) {
-        console.log('[handleResult] 检测到UDF v2.0 visuals格式:', resultData.visuals)
-
-        // 将每个visual提取并添加到历史记录
-        // 兼容两种格式：VisualBlock格式 和 直接格式（EKMA专业图表等）
-        resultData.visuals.forEach((visualBlock, index) => {
-          let visualization
-          if (visualBlock.payload) {
-            // VisualBlock格式: {payload: {...}, meta: {...}}
-            visualization = {
-              ...visualBlock.payload,
-              meta: {
-                ...visualBlock.meta,
-                schema_version: 'v2.0'
-              },
-              id: visualBlock.id || visualBlock.payload?.id || `viz_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`,
-              timestamp: new Date().toISOString()
-            }
-          } else {
-            // 直接格式: {id, type, data, meta, ...} (如EKMA专业图表)
-            visualization = {
-              ...visualBlock,
-              meta: {
-                ...visualBlock.meta,
-                schema_version: 'v2.0'
-              },
-              id: visualBlock.id || `viz_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 5)}`,
-              timestamp: new Date().toISOString()
-            }
-          }
-
-          // 添加到历史记录
-          this.recordVisualization(visualization, targetState)
-          console.log('[handleResult] 添加visual到历史记录:', visualization)
-        })
-
-        console.log('[handleResult] UDF v2.0 visuals处理完成，已添加', resultData.visuals.length, '个图表到历史记录')
-        targetState.hasResults = true
-        return
-      }
-
-      // 处理v3.0格式或其他格式
-      if (resultData.type === 'map' || resultData.mapConfig) {
-        const mapData = resultData.mapConfig || resultData
-        targetState.results.map = mapData
-
-        const mapVisualization = {
-          ...mapData,
-          type: mapData.type || 'map',
-          title: mapData.title || '地图可视化',
-          data: mapData.data || mapData.config || mapData
-        }
-
-        this.recordVisualization(mapVisualization, targetState)
-        console.log('[handleResult] 设置地图可视化')
-      } else if (['chart', 'pie', 'bar', 'line', 'timeseries', 'radar', 'wind_rose', 'profile'].includes(resultData.type) || resultData.chartConfig) {
-        // 处理v3.0图表格式：支持所有图表类型
-        const chartData = resultData.chartConfig || resultData
-        targetState.results.charts.push(chartData)
-
-        const chartVisualization = {
-          ...chartData,
-          id: chartData.id || chartData.chartId || `chart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: chartData.type || 'chart',
-          title: chartData.title || '',
-          data: chartData.data,
-          meta: chartData.meta || {}
-        }
-
-        this.recordVisualization(chartVisualization, targetState)
-        console.log('[handleResult] 设置图表可视化 (v3.0):', chartVisualization)
-      } else if (resultData.type === 'table' || resultData.tableConfig) {
-        const tableData = resultData.tableConfig || resultData
-        targetState.results.tables.push(tableData)
-
-        const tableVisualization = {
-          type: 'table',
-          title: tableData.title || '表格',
-          data: tableData
-        }
-
-        this.recordVisualization(tableVisualization, targetState)
-        console.log('[handleResult] 设置表格可视化')
-      } else if (resultData.type === 'image' || resultData.image) {
-        const imageVisualization = {
-          type: 'image',
-          title: resultData.title || '图片',
-          data: resultData.data || resultData.image
-        }
-
-        this.recordVisualization(imageVisualization, targetState)
-        console.log('[handleResult] 设置图片可视化')
-      } else if (resultData.type === 'text' || resultData.text) {
-        const text = resultData.text || resultData.content || ''
-        targetState.results.text = targetState.results.text ? `${targetState.results.text}\n${text}` : text
-
-        const textVisualization = {
-          type: 'text',
-          title: resultData.title || '文本',
-          content: text
-        }
-
-        this.recordVisualization(textVisualization, targetState)
-        console.log('[handleResult] 设置文本可视化')
-      } else {
-        this.recordVisualization(resultData, targetState)
-        console.log('[handleResult] 设置通用可视化')
-      }
-
-      targetState.hasResults = true
-    },
-
     // ✅ 向后兼容别名：analyze -> startAnalysis
     async analyze(query, options = {}) {
       return await this.startAnalysis(query, options)
@@ -3336,14 +2863,6 @@ export const useReactStore = defineStore('react', {
         return
       }
 
-      // 防重复检查
-      const expertResultsHash = JSON.stringify(expertResults)
-      if (targetState._lastProcessedExpertResultsHash === expertResultsHash) {
-        console.log('[processExpertResults] 跳过重复处理')
-        return
-      }
-      targetState._lastProcessedExpertResultsHash = expertResultsHash
-
       console.log('[processExpertResults] 开始处理专家结果')
       console.log('[processExpertResults] expertResults keys:', Object.keys(expertResults))
 
@@ -3450,7 +2969,6 @@ export const useReactStore = defineStore('react', {
             console.log(`[processExpertResults] 分类结果: ${viz.id} -> ${targetGroup}`)
             viz.meta.expert_source = targetGroup  // 确保 meta 中有正确的分类
             groups[targetGroup].push(viz)
-            targetState.visualizationHistory.push(viz)
           }
 
           // 兼容直接的可视化格式（包括EKMA专业图表的image类型）
@@ -3468,13 +2986,11 @@ export const useReactStore = defineStore('react', {
             console.log(`[processExpertResults] 直接格式分类: ${result.type} -> ${targetGroup}`)
             viz.meta.expert_source = targetGroup
             groups[targetGroup].push(viz)
-            targetState.visualizationHistory.push(viz)
           }
         }
       }
 
       // 更新分组状态
-      targetState.groupedVisualizations = groups
       targetState.expertResults = expertResults
       targetState.lastExpertResults = { expert_results: expertResults }
 
