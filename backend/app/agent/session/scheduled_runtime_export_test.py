@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from app.agent.react_agent import ReActAgent
 
 
-def test_export_runtime_session_contains_full_runtime_history_and_artifacts():
+def test_export_runtime_session_contains_full_runtime_history_without_artifact_copies():
     agent = ReActAgent.__new__(ReActAgent)
     memory = SimpleNamespace(session=SimpleNamespace(conversation_history=[
         {"type": "user", "role": "user", "content": "执行任务"},
@@ -14,8 +14,6 @@ def test_export_runtime_session_contains_full_runtime_history_and_artifacts():
     agent._session_store = {
         "scheduled-session": {
             "memory": memory,
-            "collected_data_ids": ["data-1"],
-            "office_documents": [{"file_name": "报告.docx"}],
         }
     }
 
@@ -30,8 +28,7 @@ def test_export_runtime_session_contains_full_runtime_history_and_artifacts():
     ]
     assert session.query == "任务描述"
     assert session.metadata["mode"] == "social"
-    assert session.data_ids == ["data-1"]
-    assert session.office_documents == [{"file_name": "报告.docx"}]
+    assert set(session.model_dump()) >= {"session_id", "conversation_history", "metadata"}
 
 
 def test_export_runtime_session_returns_none_when_runtime_is_missing():

@@ -269,6 +269,16 @@ class ToolExecutor:
             # Inputs are selected resource IDs resolved server-side. Never infer
             # durable resources from arbitrary tool arguments.
             return {}
+        if self.resource_run_id:
+            from app.agent.runtime.ownership import run_ownership_registry
+
+            if not await run_ownership_registry.can_write(
+                self.memory_manager.session_id, self.resource_run_id
+            ):
+                return {
+                    "durable": False,
+                    "rejected": ["stale_run_write_skipped"],
+                }
         declarations, rejected = normalize_tool_resources(result=value)
         if not declarations and not rejected:
             return {}

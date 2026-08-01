@@ -17,17 +17,6 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 logger = structlog.get_logger()
 
 
-# PDF转换器导入（懒加载避免循环依赖）
-def get_pdf_converter():
-    """获取PDF转换器实例"""
-    try:
-        from app.services.pdf_converter import pdf_converter
-        return pdf_converter
-    except ImportError:
-        logger.warning("pdf_converter_not_available")
-        return None
-
-
 class ReadDocxTool(LLMTool):
     """
     读取DOCX文档工具
@@ -288,20 +277,6 @@ class ReadDocxTool(LLMTool):
                 result_data["image_note"] = f"文档包含 {image_count} 张图片，但提取失败。"
                 result_data["image_suggestion"] = "图片未能自动提取；当前不暴露 Office XML 解包工具。"
 
-            # 生成PDF预览
-            try:
-                converter = get_pdf_converter()
-                if converter:
-                    pdf_preview = await converter.convert_to_pdf(str(file_path))
-                    result_data["pdf_preview"] = pdf_preview
-                    logger.info(
-                        "read_docx_pdf_generated",
-                        pdf_id=pdf_preview["pdf_id"],
-                        pdf_url=pdf_preview["pdf_url"]
-                    )
-            except Exception as pdf_error:
-                logger.warning("read_docx_pdf_conversion_failed", error=str(pdf_error))
-
             result = {
                 "success": True,
                 "data": result_data,
@@ -458,20 +433,6 @@ class ReadDocxTool(LLMTool):
                     result_data["image_note"] = f"文档包含 {len(image_paths)} 张图片。"
                     result_data["image_suggestion"] = "图片已提取到临时目录，可使用 read_file 并设置 as_multimodal_attachment=true 查看。"
 
-                # 生成PDF预览
-                try:
-                    converter = get_pdf_converter()
-                    if converter:
-                        pdf_preview = await converter.convert_to_pdf(str(file_path))
-                        result_data["pdf_preview"] = pdf_preview
-                        logger.info(
-                            "read_docx_fallback_pdf_generated",
-                            pdf_id=pdf_preview["pdf_id"],
-                            pdf_url=pdf_preview["pdf_url"]
-                        )
-                except Exception as pdf_error:
-                    logger.warning("read_docx_fallback_pdf_conversion_failed", error=str(pdf_error))
-
                 return {
                     "success": True,
                     "data": result_data,
@@ -528,20 +489,6 @@ class ReadDocxTool(LLMTool):
                 if image_paths:
                     result_data["image_paths"] = image_paths
                     result_data["image_note"] = f"文档包含 {len(image_paths)} 张图片。"
-
-                # 生成PDF预览
-                try:
-                    converter = get_pdf_converter()
-                    if converter:
-                        pdf_preview = await converter.convert_to_pdf(str(file_path))
-                        result_data["pdf_preview"] = pdf_preview
-                        logger.info(
-                            "read_docx_regex_pdf_generated",
-                            pdf_id=pdf_preview["pdf_id"],
-                            pdf_url=pdf_preview["pdf_url"]
-                        )
-                except Exception as pdf_error:
-                    logger.warning("read_docx_regex_pdf_conversion_failed", error=str(pdf_error))
 
                 return {
                     "success": True,

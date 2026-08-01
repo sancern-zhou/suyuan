@@ -1304,10 +1304,8 @@ class ReActAgent:
                                 ),
                             )
 
-                        saved_visualizations = []
-
                         # 保存到内存缓存。即使历史消息为空，也要缓存已存在的
-                        # session，避免含 data/visual/office 状态的会话被当作新会话。
+                        # session，避免空历史的已存在会话被当作新会话。
                         self._session_store[session_id] = {
                             "memory": memory_manager,
                             "created": datetime.utcnow(),

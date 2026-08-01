@@ -130,6 +130,8 @@ async def test_executor_persists_resources_before_returning_result(tmp_path):
         query="preview",
     )
     executor.resource_run_id = "run-a"
+    from app.agent.runtime.ownership import run_ownership_registry
+    await run_ownership_registry.register("session-a", "run-a")
 
     result = await executor.execute_tool("render", {}, iteration=3)
     page = await service.list_resources("session-a")
@@ -138,6 +140,47 @@ async def test_executor_persists_resources_before_returning_result(tmp_path):
     assert page.resources[0].locator["path"] == str(generated.resolve())
     assert page.resources[0].turn_sequence == 3
     assert f"path={generated.resolve()}" in context_builder.session_resource_context
+    await run_ownership_registry.complete("session-a", "run-a")
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_resources_from_superseded_run(tmp_path):
+    generated = tmp_path / "stale.txt"
+    generated.write_text("stale", encoding="utf-8")
+
+    async def tool(**_):
+        return {
+            "success": True,
+            "resources": [
+                primary_file(
+                    generated,
+                    group_key="file:stale",
+                    tool_name="write_file",
+                )
+            ],
+        }
+
+    from app.agent.runtime.ownership import run_ownership_registry
+
+    service = SessionResourceService.in_memory()
+    executor = ToolExecutor(tool_registry={"write_file": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-stale")
+    executor.configure_resource_tracking(
+        service=service,
+        context_builder=SimpleNamespace(session_resource_context=""),
+    )
+    executor.resource_run_id = "run-old"
+    await run_ownership_registry.register("session-stale", "run-old")
+    await run_ownership_registry.register("session-stale", "run-new")
+
+    result = await executor.execute_tool("write_file", {}, iteration=1)
+
+    assert result["resource_tracking"] == {
+        "durable": False,
+        "rejected": ["stale_run_write_skipped"],
+    }
+    assert (await service.list_resources("session-stale")).resources == []
+    await run_ownership_registry.complete("session-stale", "run-new")
 
 
 @pytest.mark.asyncio

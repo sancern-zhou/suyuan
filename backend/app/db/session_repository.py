@@ -409,8 +409,8 @@ class SessionRepository:
                     "created_at": s.created_at.isoformat() if s.created_at else None,
                     "updated_at": s.updated_at.isoformat() if s.updated_at else None,
                     "mode": s.mode,
-                    "data_count": len(s.data_ids) if s.data_ids else 0,
-                    "visual_count": len(s.visual_ids) if s.visual_ids else 0,
+                    "data_count": 0,
+                    "visual_count": 0,
                     "has_error": s.error is not None,
                     "metadata": self._session_summary_metadata(s.session_metadata)
                 })

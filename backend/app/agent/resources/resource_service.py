@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from pathlib import Path
+
+from app.utils.path_config import get_data_registry, get_sessions_dir
 
 from .contracts import ResourceDeclaration, ResourceRelation
 
@@ -142,9 +146,15 @@ class _MemoryState:
 
 
 class SessionResourceService:
-    def __init__(self, state: _MemoryState | None = None, repository=None):
+    def __init__(
+        self,
+        state: _MemoryState | None = None,
+        repository=None,
+        storage_root: Path | None = None,
+    ):
         self._state = state or _MemoryState()
         self._repository = repository
+        self._storage_root = storage_root
 
     @classmethod
     def in_memory(cls) -> SessionResourceService:
@@ -154,7 +164,49 @@ class SessionResourceService:
     def database(cls) -> SessionResourceService:
         from app.db.session_resources_repository import SessionResourcesRepository
 
-        return cls(repository=SessionResourcesRepository())
+        return cls(
+            repository=SessionResourcesRepository(),
+            storage_root=get_sessions_dir() / "resource_content",
+        )
+
+    def _materialize_declarations(
+        self, session_id: str, declarations: list[ResourceDeclaration]
+    ) -> list[ResourceDeclaration]:
+        """Copy path-backed products into the canonical registry before publication."""
+        if self._storage_root is None:
+            return declarations
+        registry_root = get_data_registry().resolve()
+        session_key = hashlib.sha256(session_id.encode()).hexdigest()[:24]
+        materialized: list[ResourceDeclaration] = []
+        for declaration in declarations:
+            raw_path = declaration.locator.path
+            if not raw_path:
+                materialized.append(declaration)
+                continue
+            source = Path(raw_path).expanduser().resolve()
+            if source.is_relative_to(registry_root):
+                materialized.append(declaration)
+                continue
+            if not source.exists():
+                raise ValueError(f"resource path does not exist: {source}")
+            source_key = hashlib.sha256(str(source).encode()).hexdigest()[:24]
+            destination_dir = self._storage_root / session_key / source_key
+            destination_dir.mkdir(parents=True, exist_ok=True)
+            destination = destination_dir / source.name
+            if source.is_dir():
+                shutil.copytree(source, destination, dirs_exist_ok=True)
+            else:
+                shutil.copy2(source, destination)
+            materialized.append(
+                declaration.model_copy(
+                    update={
+                        "locator": declaration.locator.model_copy(
+                            update={"path": str(destination.resolve())}
+                        )
+                    }
+                )
+            )
+        return materialized
 
     async def publish_group(
         self,
@@ -167,6 +219,7 @@ class SessionResourceService:
     ) -> ResourcePublishResult:
         declarations = list(resources)
         validate_publication(group_key, declarations)
+        declarations = self._materialize_declarations(session_id, declarations)
         if self._repository is not None:
             return await self._repository.publish_group(
                 session_id,
@@ -195,6 +248,7 @@ class SessionResourceService:
         declarations = list(resources)
         if not declarations:
             raise ValueError("resource attachment cannot be empty")
+        declarations = self._materialize_declarations(session_id, declarations)
         if self._repository is not None:
             return await self._repository.attach_resources(
                 session_id,

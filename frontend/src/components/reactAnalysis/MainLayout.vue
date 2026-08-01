@@ -180,7 +180,6 @@
         :knowledge-sources="knowledgeSources"
         @restore-session="$emit('restore-execution-session', $event)"
         @tab-change="handleTabChange"
-        @office-edit-submit="handleOfficeEditSubmit"
         @board-xml-change="handleBoardXmlChange"
         @board-selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
@@ -428,7 +427,6 @@ const emit = defineEmits([
   'stop-drag',
   'reset-width',
   'tab-change',
-  'office-edit-submit',
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
@@ -576,10 +574,6 @@ const handleResetWidth = () => {
 
 const handleTabChange = (tab) => {
   emit('tab-change', tab)
-}
-
-const handleOfficeEditSubmit = (data) => {
-  emit('office-edit-submit', data)
 }
 
 const handleBoardXmlChange = (xml) => {

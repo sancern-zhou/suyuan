@@ -27,6 +27,15 @@ class Adapters:
                         "source": "web",
                         "conversation_history": [
                             {"type": "user", "content": "生成报告"},
+                            {
+                                "type": "tool_result",
+                                "data": {
+                                    "file_path": "/tmp/private/report.docx",
+                                    "download_url": "/api/office/download-word",
+                                    "pdf_preview": {"pdf_path": "/tmp/private/report.pdf"},
+                                    "resources": [{"locator": {"path": "/tmp/private"}}],
+                                },
+                            },
                             {"type": "final", "content": "报告已生成"},
                         ],
                     }
@@ -122,6 +131,8 @@ async def test_new_session_publish_restore_catalog_and_content(tmp_path, monkeyp
     assert restored["session"]["resource_version"] == 1
     assert restored["session"]["resource_counts"]["total"] == 2
     assert not contains_preview_payload(restored["session"]["conversation_history"])
+    assert "/tmp/private" not in str(restored["session"]["conversation_history"])
+    assert "download_url" not in str(restored["session"]["conversation_history"])
     assert catalog["resources"][0]["group_id"] == catalog["resources"][1]["group_id"]
     assert all("locator" not in item for item in catalog["resources"])
     assert {response.path for response in delivered} == {docx, pdf}

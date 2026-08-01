@@ -3,7 +3,6 @@ import pytest
 from app.agent.resources.actions import attach_rendered_file
 from app.agent.resources.contracts import ResourceDeclaration
 from app.agent.resources.resource_service import SessionResourceService
-from app.api import office_routes
 from app.tools.resource_declarations import primary_file
 
 
@@ -47,46 +46,3 @@ async def test_report_render_attaches_derivative_and_returns_only_receipt(tmp_pa
     )
     assert derivative.parent_resource_id == published.resources[0].resource_id
     assert derivative.relation == "preview"
-
-
-@pytest.mark.asyncio
-async def test_office_edit_publishes_new_group_and_returns_no_preview_url(
-    tmp_path, monkeypatch
-):
-    service = SessionResourceService.in_memory()
-    source = tmp_path / "source.docx"
-    edited = tmp_path / "edited.docx"
-    preview = tmp_path / "edited.pdf"
-    source.write_bytes(b"source")
-    edited.write_bytes(b"edited")
-    preview.write_bytes(b"pdf")
-    monkeypatch.setattr(
-        office_routes.SessionResourceService,
-        "database",
-        classmethod(lambda _cls: service),
-    )
-
-    publication = await office_routes._publish_office_product(
-        session_id="session-1",
-        source_path=source,
-        output_path=edited,
-        tool_name="docx_online_editor",
-        renderer="file",
-        preview_path=preview,
-    )
-    receipt = {
-        "success": True,
-        "resource_version": publication.catalog_version,
-        "changed_resource_ids": [
-            resource.resource_id for resource in publication.resources
-        ],
-    }
-
-    assert set(receipt) == {"success", "resource_version", "changed_resource_ids"}
-    assert len(receipt["changed_resource_ids"]) == 2
-    assert "url" not in str(receipt).lower()
-    page = await service.list_resources("session-1")
-    assert {resource.relation for resource in page.resources} == {
-        "primary",
-        "preview",
-    }

@@ -26,7 +26,30 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
-ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview", "svg_preview", "spreadsheet_preview"}
+ARTIFACT_KEYS = {
+    "visuals",
+    "visualizations",
+    "office_documents",
+    "artifact",
+    "artifacts",
+    "resources",
+    "pdf_preview",
+    "ppt_preview",
+    "markdown_preview",
+    "html_preview",
+    "svg_preview",
+    "spreadsheet_preview",
+}
+LEGACY_LOCATOR_KEYS = {
+    "path",
+    "filePath",
+    "file_path",
+    "download_url",
+    "pdf_url",
+    "preview_url",
+    "source_file",
+    "office_file_path",
+}
 SESSION_LIST_DEFAULT_LIMIT = 200
 SESSION_LIST_MAX_LIMIT = 200
 
@@ -44,17 +67,18 @@ async def _resource_catalog_summary(session_id: str) -> tuple[int, dict[str, int
 
 
 def _strip_lazy_artifacts(obj: Any) -> Any:
-    """Return a copy with heavyweight visualization/document preview payloads removed."""
+    """Remove legacy preview payloads and server locators from restored history."""
     if isinstance(obj, list):
         return [_strip_lazy_artifacts(item) for item in obj]
     if isinstance(obj, dict):
         stripped = {}
         for key, value in obj.items():
-            if key in ARTIFACT_KEYS:
-                if key == "visuals" and isinstance(value, list):
-                    stripped["visuals_count"] = len(value)
-                elif key.endswith("_preview") and isinstance(value, dict):
-                    stripped[f"{key}_available"] = True
+            if (
+                key in ARTIFACT_KEYS
+                or key in LEGACY_LOCATOR_KEYS
+                or key.endswith("_path")
+                or key.endswith("_preview")
+            ):
                 continue
             stripped[key] = _strip_lazy_artifacts(value)
         return stripped
@@ -359,7 +383,6 @@ def _sanitize_floats(obj):
 async def restore_session(
     session_id: str,
     message_limit: int = 100,
-    lazy_artifacts: bool = False,
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
@@ -379,13 +402,13 @@ async def restore_session(
         "[会话恢复] 开始恢复会话",
         session_id=session_id,
         message_limit=message_limit,
-        lazy_artifacts=lazy_artifacts
+        lazy_artifacts=True
     )
 
     result = await adapters.get(row.source).restore(
         row,
         message_limit=message_limit,
-        lazy_artifacts=lazy_artifacts,
+        lazy_artifacts=True,
     )
 
     if not result:
@@ -404,6 +427,7 @@ async def restore_session(
                 session_id=session_id,
                 error=str(exc),
             )
+        normalized_session = _strip_lazy_artifacts(normalized_session)
         normalized_session["resource_counts"] = resource_counts
         normalized_session["resource_version"] = resource_version
         return {
@@ -437,10 +461,7 @@ async def restore_session(
     session_data["resource_counts"] = resource_counts
     session_data["resource_version"] = resource_version
 
-    if lazy_artifacts:
-        session_data["conversation_history"] = _strip_lazy_artifacts(
-            session_data.get("conversation_history", [])
-        )
+    session_data = _strip_lazy_artifacts(session_data)
 
     # 清理特殊浮点值，防止 JSON 序列化错误
     session_data = _sanitize_floats(session_data)
