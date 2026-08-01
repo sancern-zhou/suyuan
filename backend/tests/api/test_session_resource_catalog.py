@@ -49,6 +49,10 @@ async def test_catalog_exposes_delivery_contract_without_physical_locator(monkey
         async def list_resources(self, *_args, **_kwargs):
             return ResourcePage([resource])
 
+        async def catalog_version(self, session_id):
+            assert session_id == "session-1"
+            return 7
+
     monkeypatch.setattr(
         session_resource_routes.SessionResourceService,
         "database",
@@ -60,6 +64,7 @@ async def test_catalog_exposes_delivery_contract_without_physical_locator(monkey
     )
 
     item = response["resources"][0]
+    assert response["resource_version"] == 7
     assert item["resource_id"] == "resource-1"
     assert item["ref_id"] == "resource-1"
     assert item["group_id"] == "group-1"
