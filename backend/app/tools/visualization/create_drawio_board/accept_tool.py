@@ -6,7 +6,7 @@ from typing import Any, Dict
 from app.boards.application import BoardApplicationService
 from app.db.database import async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import board_product
 
 
 class AcceptDrawioBoardCandidateTool(LLMTool):
@@ -69,11 +69,6 @@ class AcceptDrawioBoardCandidateTool(LLMTool):
         refs = [payload["xml_ref"]]
         if payload.get("screenshot_ref"):
             refs.append(payload["screenshot_ref"])
-        resource_paths = [
-            ref.get("local_path")
-            for ref in refs
-            if isinstance(ref, dict) and ref.get("local_path")
-        ]
         return {
             "status": "success",
             "success": True,
@@ -86,7 +81,12 @@ class AcceptDrawioBoardCandidateTool(LLMTool):
                 "editable": True,
             },
             "refs": {"artifacts": refs},
-            "resources": resources_for_files(resource_paths, tool_name=self.name),
+            "resources": board_product(
+                xml_path=payload["xml_ref"]["local_path"],
+                artifact_id=payload["board_id"],
+                screenshot_path=(payload.get("screenshot_ref") or {}).get("local_path"),
+                tool_name=self.name,
+            ),
             "summary": f"画板候选版本 v{payload['version_number']} 已正式提交。",
         }
 

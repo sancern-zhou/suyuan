@@ -140,7 +140,7 @@ async def get_session_resource_content(
     resource = await SessionResourceService.database().get_resource(
         session_id, resource_id, status="active"
     )
-    if resource is None or resource.kind not in {"file", "artifact"}:
+    if resource is None or resource.kind not in {"file", "artifact", "visual"}:
         raise HTTPException(status_code=404, detail="resource_not_found")
     required_capability = "download" if disposition == "attachment" else "preview"
     if required_capability not in resource.capabilities:

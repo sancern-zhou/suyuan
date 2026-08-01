@@ -14,7 +14,7 @@ from app.boards.application import BoardApplicationService
 from app.boards.quality import evaluate_drawio_quality
 from app.db.database import async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import board_product
 from app.utils.path_config import get_data_registry
 
 from .routing import DrawioRoutingError, route_drawio_candidate
@@ -474,14 +474,11 @@ class CreateDrawioBoardTool(LLMTool):
             "data": data,
             "metadata": metadata,
             "refs": {"artifacts": [xml_ref]},
-            "resources": [
-                file_resource(
-                    xml_ref["local_path"],
-                    tool_name=self.name,
-                    logical_key=f"drawio_board:{safe_artifact_id}",
-                    metadata={"artifact_id": safe_artifact_id, "format": "drawio"},
-                )
-            ],
+            "resources": board_product(
+                xml_path=xml_ref["local_path"],
+                artifact_id=safe_artifact_id,
+                tool_name=self.name,
+            ),
             "summary": _build_summary(safe_title, op, operation_count, changed, changed_cells),
         }
         if candidate_payload:
