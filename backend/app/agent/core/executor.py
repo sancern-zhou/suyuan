@@ -262,49 +262,49 @@ class ToolExecutor:
     ) -> Dict[str, Any]:
         if self.resource_service is None or self.memory_manager is None:
             return {}
-        from app.agent.resources.discovery import discover_resource_declarations
-        from app.agent.resources.models import ResourceRole
         from app.agent.resources.normalizer import normalize_tool_resources
         from app.agent.resources.resource_map import project_agent_resource_map
 
-        resource_role = ResourceRole(role)
-        if role == "output":
-            # Output admission is explicit-only. Tool result field names are not
-            # a durable resource protocol and are never guessed here.
-            declarations, rejected = normalize_tool_resources(result=value)
-        else:
-            rejected = []
-            declarations = discover_resource_declarations(
-                value,
-                role=resource_role,
-                tool_name=tool_name,
-                expand_directories=False,
-            )
+        if role != "output":
+            # Inputs are selected resource IDs resolved server-side. Never infer
+            # durable resources from arbitrary tool arguments.
+            return {}
+        declarations, rejected = normalize_tool_resources(result=value)
         if not declarations and not rejected:
             return {}
         if not declarations:
             return {"durable": False, "rejected": rejected}
         try:
-            result = await self.resource_service.upsert_run_resources(
-                self.memory_manager.session_id,
-                self.resource_run_id or f"tool:{tool_name}",
-                declarations,
-                turn_sequence=iteration,
-            )
+            grouped = {}
+            for declaration in declarations:
+                grouped.setdefault(declaration.group_key, []).append(declaration)
+            publications = []
+            for group_key, members in grouped.items():
+                publications.append(
+                    await self.resource_service.publish_group(
+                        self.memory_manager.session_id,
+                        self.resource_run_id or f"tool:{tool_name}",
+                        group_key,
+                        members,
+                        turn_sequence=iteration,
+                    )
+                )
+            stored_resources = [
+                stored
+                for publication in publications
+                for stored in publication.resources
+            ]
             if self.resource_context_builder is not None:
                 self.resource_context_builder.session_resource_context = project_agent_resource_map(
-                    result.resources,
+                    stored_resources,
                     query=self.resource_query,
                 )
             return {
                 "durable": True,
-                "version": result.version,
-                "resource_ids": [
-                    stored.resource_id
-                    for stored in result.resources
-                    if (stored.role, stored.resource_key)
-                    in {item.catalog_key() for item in declarations}
-                ],
+                "version": max(
+                    publication.catalog_version for publication in publications
+                ),
+                "resource_ids": [stored.resource_id for stored in stored_resources],
                 "rejected": rejected,
             }
         except Exception as exc:

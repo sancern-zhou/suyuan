@@ -14,9 +14,9 @@ from typing import Optional, List, Dict, Any
 import structlog
 
 from app.agent.react_agent import ReActAgent
-from app.agent.resources.contracts import ResourceDeclaration, ResourceLocator
-from app.agent.resources.models import ResourceKind, ResourceRole
+from app.agent.resources.contracts import ResourceDeclaration
 from app.agent.resources.resource_service import SessionResourceService
+from app.tools.resource_declarations import primary_file
 from app.utils.path_config import get_data_registry
 from app.social.events import InboundMessage, OutboundMessage
 from app.social.message_bus import MessageBus
@@ -373,41 +373,56 @@ class AgentBridge:
                     str(attachment.get("type") or "file"),
                 )
                 attachment["local_path"] = str(path)
-                kind = ResourceKind.FILE
-                locator = ResourceLocator(path=str(path))
             else:
                 raise ValueError(
                     f"social_attachment_requires_local_file: {attachment['name']}"
                 )
 
-            declarations.append(ResourceDeclaration(
-                kind=kind,
-                logical_key=f"social-attachment:{digest}",
-                role=ResourceRole.ATTACHMENT,
-                label=str(attachment["name"]),
-                locator=locator,
-                metadata={
-                    "source": "social_inbound",
-                    "channel": channel,
-                    "mime_type": str(attachment.get("mime_type") or "application/octet-stream"),
-                    "attachment_type": str(attachment.get("type") or "file"),
-                    "sha256": digest,
-                    "size": size,
-                },
-                tool_name="social_inbound",
-            ))
+            declarations.append(
+                ResourceDeclaration.model_validate(
+                    primary_file(
+                        path,
+                        group_key=f"social-attachment:{digest}",
+                        tool_name="social_inbound",
+                        role="attachment",
+                        renderer="image"
+                        if attachment.get("type") == "image"
+                        else "file",
+                        capabilities=("preview", "download")
+                        if attachment.get("type") == "image"
+                        else ("download",),
+                        label=str(attachment["name"]),
+                        metadata={
+                            "source": "social_inbound",
+                            "channel": channel,
+                            "attachment_type": str(
+                                attachment.get("type") or "file"
+                            ),
+                            "sha256": digest,
+                            "size": size,
+                        },
+                    )
+                )
+            )
 
-        identity = "\n".join(item.resource_key() for item in declarations)
+        identity = "\n".join(item.group_key for item in declarations)
         run_id = f"social-inbound:{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
-        batch = await self.resource_service.upsert_run_resources(
-            session_id,
-            run_id,
-            declarations,
-        )
-        stored_by_key = {(item.role, item.resource_key): item for item in batch.resources}
+        publications = [
+            await self.resource_service.publish_group(
+                session_id,
+                run_id,
+                declaration.group_key,
+                [declaration],
+            )
+            for declaration in declarations
+        ]
+        stored_by_group = {
+            declaration.group_key: publication.resources[0]
+            for declaration, publication in zip(declarations, publications)
+        }
         prepared: List[Dict[str, Any]] = []
         for attachment, declaration in zip(attachments, declarations):
-            stored = stored_by_key.get(declaration.catalog_key())
+            stored = stored_by_group.get(declaration.group_key)
             if stored is None:
                 raise RuntimeError("social_attachment_resource_missing_after_upsert")
             prepared.append({
@@ -423,7 +438,9 @@ class AgentBridge:
             channel=channel,
             resource_ids=[item["resource_id"] for item in prepared],
             attachment_count=len(prepared),
-            resource_version=batch.version,
+            resource_version=max(
+                publication.catalog_version for publication in publications
+            ),
         )
         return prepared
 
