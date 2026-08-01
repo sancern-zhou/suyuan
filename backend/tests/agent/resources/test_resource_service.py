@@ -4,76 +4,141 @@ from app.agent.resources.contracts import ResourceDeclaration
 from app.agent.resources.resource_service import SessionResourceService
 
 
-def declaration(logical_key: str, path: str, *, presentation_type=None):
-    payload = {
-        "kind": "file",
-        "logical_key": logical_key,
-        "role": "output",
-        "label": logical_key,
-        "locator": {"path": path},
-    }
-    if presentation_type == "document":
-        payload.update({
-            "presentation_type": "document",
-            "presentation": {
-                "format": "html",
-                "preview": {"type": "html", "url": "/preview"},
-            },
-        })
-    return ResourceDeclaration.model_validate(payload)
-
-
-@pytest.mark.asyncio
-async def test_upsert_replaces_latest_logical_key_and_keeps_distinct_resources():
-    service = SessionResourceService.in_memory()
-    first = declaration("report:current", "/tmp/v1.html", presentation_type="document")
-    other = declaration("upload:source", "/tmp/source.docx")
-    result = await service.upsert_run_resources("session-a", "run-a", [first, other])
-    assert result.version == 1
-    assert len(result.resources) == 2
-
-    replacement = declaration("report:current", "/tmp/v2.html", presentation_type="document")
-    result = await service.upsert_run_resources("session-a", "run-b", [replacement])
-    assert result.version == 2
-    page = await service.list_resources("session-a")
-    assert {item.locator["path"] for item in page.resources} == {"/tmp/v2.html", "/tmp/source.docx"}
-
-
-@pytest.mark.asyncio
-async def test_empty_upsert_does_not_clear_and_filter_counts_are_unified():
-    service = SessionResourceService.in_memory()
-    await service.upsert_run_resources(
-        "session-a", "run-a", [declaration("report:current", "/tmp/report.html", presentation_type="document")]
+def declaration(
+    group_key: str,
+    resource_key: str,
+    path: str,
+    *,
+    relation: str = "primary",
+    parent_key: str | None = None,
+    renderer: str = "file",
+    role: str = "output",
+) -> ResourceDeclaration:
+    return ResourceDeclaration.model_validate(
+        {
+            "kind": "file",
+            "group_key": group_key,
+            "resource_key": resource_key,
+            "parent_key": parent_key,
+            "relation": relation,
+            "role": role,
+            "label": resource_key,
+            "locator": {"path": path},
+            "format": path.rsplit(".", 1)[-1],
+            "media_type": "application/pdf" if path.endswith(".pdf") else "application/octet-stream",
+            "renderer": renderer,
+            "capabilities": ["preview", "download"],
+            "tool_name": "test_tool",
+        }
     )
-    result = await service.upsert_run_resources("session-a", "run-b", [])
-    assert result.version == 1
-    counts = await service.resource_counts("session-a")
-    assert counts.total == 1
+
+
+def report(group_key: str, version: str) -> list[ResourceDeclaration]:
+    primary_key = f"source:{version}"
+    return [
+        declaration(group_key, primary_key, f"/tmp/{version}.docx"),
+        declaration(
+            group_key,
+            f"preview:{version}",
+            f"/tmp/{version}.pdf",
+            relation="preview",
+            parent_key=primary_key,
+            renderer="pdf",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_publish_group_keeps_versions_and_binds_children():
+    service = SessionResourceService.in_memory()
+    first = await service.publish_group("s1", "run-1", "report:air", report("report:air", "v1"))
+    second = await service.publish_group("s1", "run-2", "report:air", report("report:air", "v2"))
+
+    assert first.catalog_version == 1
+    assert first.group_version == 1
+    assert second.catalog_version == 2
+    assert second.group_version == 2
+
+    current = await service.list_resources("s1", status="active")
+    history = await service.list_resources("s1", status=None)
+    assert {resource.version for resource in current.resources} == {2}
+    assert {resource.version for resource in history.resources} == {1, 2}
+    preview = next(resource for resource in current.resources if resource.relation == "preview")
+    primary = next(resource for resource in current.resources if resource.relation == "primary")
+    assert preview.parent_resource_id == primary.resource_id
+
+
+@pytest.mark.asyncio
+async def test_attach_derivatives_uses_parent_group_version():
+    service = SessionResourceService.in_memory()
+    primary_declaration = declaration("report:air", "source:v1", "/tmp/v1.docx")
+    published = await service.publish_group("s1", "run-1", "report:air", [primary_declaration])
+    primary = published.resources[0]
+    preview = declaration(
+        "report:air",
+        "preview:v1",
+        "/tmp/v1.pdf",
+        relation="preview",
+        parent_key="source:v1",
+        renderer="pdf",
+    )
+
+    attached = await service.attach_resources("s1", "render-1", primary.resource_id, [preview])
+
+    assert attached.catalog_version == 2
+    assert attached.group_version == primary.version
+    assert attached.resources[0].group_id == primary.group_id
+    assert attached.resources[0].version == primary.version
+    assert attached.resources[0].parent_resource_id == primary.resource_id
+
+
+@pytest.mark.asyncio
+async def test_failed_publication_is_atomic_and_does_not_increment_versions():
+    service = SessionResourceService.in_memory()
+    published = await service.publish_group("s1", "run-1", "report:air", report("report:air", "v1"))
+    invalid = [
+        declaration("report:air", "source:v2", "/tmp/v2.docx"),
+        declaration(
+            "report:air",
+            "preview:v2",
+            "/tmp/v2.pdf",
+            relation="preview",
+            parent_key="missing",
+            renderer="pdf",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="parent"):
+        await service.publish_group("s1", "run-2", "report:air", invalid)
+
+    assert await service.catalog_version("s1") == published.catalog_version
+    current = await service.list_resources("s1")
+    assert {resource.version for resource in current.resources} == {1}
+
+
+@pytest.mark.asyncio
+async def test_catalog_filters_and_counts_use_renderer_contract():
+    service = SessionResourceService.in_memory()
+    await service.publish_group("s1", "run-1", "report:air", report("report:air", "v1"))
+
+    pdfs = await service.list_resources("s1", renderer="pdf")
+    assert [resource.renderer for resource in pdfs.resources] == ["pdf"]
+    counts = await service.resource_counts("s1")
+    assert counts.total == 2
     assert counts.documents == 1
-    filtered = await service.list_resources("session-a", presentation_type="document")
-    assert len(filtered.resources) == 1
+    assert counts.files == 2
 
 
 @pytest.mark.asyncio
-async def test_delete_is_idempotent_and_session_isolated():
+async def test_get_and_delete_are_scoped_to_session_and_resource_id():
     service = SessionResourceService.in_memory()
-    item = declaration("report:current", "/tmp/report.html", presentation_type="document")
-    await service.upsert_run_resources("session-a", "run-a", [item])
-    assert await service.delete_resource("session-a", item.resource_key()) is True
-    assert await service.delete_resource("session-a", item.resource_key()) is False
-    assert (await service.list_resources("session-b")).resources == []
-
-
-@pytest.mark.asyncio
-async def test_get_resource_is_scoped_to_session_and_status():
-    service = SessionResourceService.in_memory()
-    result = await service.upsert_run_resources(
-        "session-a",
-        "run-a",
-        [declaration("upload:image", "/tmp/image.jpg")],
+    published = await service.publish_group(
+        "s1", "run-1", "upload:image", [declaration("upload:image", "source", "/tmp/image.jpg")]
     )
-    resource_id = result.resources[0].resource_id
+    resource_id = published.resources[0].resource_id
 
-    assert (await service.get_resource("session-a", resource_id)).resource_id == resource_id
-    assert await service.get_resource("session-b", resource_id) is None
-    assert await service.get_resource("session-a", resource_id, status="missing") is None
+    assert (await service.get_resource("s1", resource_id)).resource_id == resource_id
+    assert await service.get_resource("s2", resource_id) is None
+    assert await service.delete_resource("s2", resource_id) is False
+    assert await service.delete_resource("s1", resource_id) is True
+    assert await service.delete_resource("s1", resource_id) is False
