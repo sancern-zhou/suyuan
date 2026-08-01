@@ -30,6 +30,11 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "correlation_heatmap": str(REFERENCE_DIR / "correlation-heatmap.md"),
         "boxplot": str(REFERENCE_DIR / "boxplot.md"),
         "table_image": str(REFERENCE_DIR / "table-image.md"),
+        "combo_chart": str(REFERENCE_DIR / "combo-chart.md"),
+        "range_and_error": str(REFERENCE_DIR / "range-and-error.md"),
+        "waterfall_chart": str(REFERENCE_DIR / "waterfall-chart.md"),
+        "pareto_chart": str(REFERENCE_DIR / "pareto-chart.md"),
+        "comparison_charts": str(REFERENCE_DIR / "comparison-charts.md"),
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
         "generic_pollutant_wind_rose": str(REFERENCE_DIR / "generic-pollutant-wind-rose.md"),
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
@@ -43,7 +48,7 @@ class CreateReportChartTool(LLMTool):
     def __init__(self):
         reference_paths = report_chart_reference_paths()
         description = (
-            "创建正式报告（Word/QMD）静态图表，支持17种预定义图表类型。"
+            "创建正式报告（Word/QMD）静态图表，支持多种预定义分析图表类型。"
             f"先读 references/index.md={reference_paths['index']}，再按图型读取规则。"
             "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
@@ -75,6 +80,13 @@ class CreateReportChartTool(LLMTool):
                             "correlation_heatmap",
                             "boxplot",
                             "table_image",
+                            "combo",
+                            "range_line",
+                            "waterfall",
+                            "pareto",
+                            "diverging_bar",
+                            "step_line",
+                            "error_bar",
                             "pollutant_calendar",
                             "generic_pollutant_wind_rose",
                             "aqi_calendar",
@@ -90,6 +102,7 @@ class CreateReportChartTool(LLMTool):
                             "line/bar/pie 推荐传 labels+values 或 x+y；"
                             "单序列可传 series[0].data 或 series[0].values。"
                             "line/bar 支持多序列 series，每个序列使用 name + data/values。"
+                            "combo 使用 labels + series[{name,type,values,axis,stack}]，type 仅 bar/line。"
                             "使用 data_id 时，数据应已保存为上述图表数据对象。"
                         ),
                     },
@@ -114,7 +127,8 @@ class CreateReportChartTool(LLMTool):
                     "options": {
                         "type": "object",
                         "description": (
-                            "少量图型参数；支持 x_label、y_label、unit、legend、reference_lines。"
+                            "少量图型参数；支持 x_label、y_label、unit、legend、reference_lines；"
+                            "组合图支持 left_y_label/right_y_label 和 left_unit/right_unit。"
                             "reference_lines 示例：[{axis:'y', value:100, label:'参考线'}]。"
                             "复杂视觉规则请先读取引用文档。"
                         ),
@@ -128,7 +142,7 @@ class CreateReportChartTool(LLMTool):
             description=description,
             category=ToolCategory.VISUALIZATION,
             function_schema=function_schema,
-            version="0.1.0",
+            version="0.2.0",
             requires_context=True,
         )
 

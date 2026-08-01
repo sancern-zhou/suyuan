@@ -21,6 +21,7 @@ from app.tools.visualization.create_report_chart.text_layout import (
     TextLayoutRegistry,
     govern_text_layout,
 )
+from app.tools.visualization.create_report_chart.validation import ChartDataError
 
 
 WORD_TARGET_WIDTH_IN = 5.8
@@ -50,6 +51,13 @@ GENERAL_CHART_TYPES = {
     "correlation_heatmap",
     "boxplot",
     "table_image",
+    "combo",
+    "range_line",
+    "waterfall",
+    "pareto",
+    "diverging_bar",
+    "step_line",
+    "error_bar",
 }
 SPECIALIZED_CHART_TYPES = {
     "aqi_calendar",
@@ -58,10 +66,6 @@ SPECIALIZED_CHART_TYPES = {
     "generic_pollutant_wind_rose",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
-
-
-class ChartDataError(ValueError):
-    """User-facing create_report_chart data validation error."""
 
 
 def render_report_chart(
@@ -173,6 +177,37 @@ def _render_single_chart(
         raise ChartDataError(f"不支持的 chart_type：{chart_type}。")
 
     fig, ax = _create_figure(output_context, style_profile)
+    try:
+        return _render_general_chart_figure(
+            fig=fig,
+            ax=ax,
+            chart_id=chart_id,
+            chart_type=chart_type,
+            applied_chart_type=applied_chart_type,
+            title=title,
+            data=data,
+            output_context=output_context,
+            style_profile=style_profile,
+            options=options,
+            warnings=warnings,
+        )
+    finally:
+        plt.close(fig)
+
+
+def _render_general_chart_figure(
+    fig,
+    ax,
+    chart_id: str | None,
+    chart_type: str,
+    applied_chart_type: str,
+    title: str,
+    data: Dict[str, Any],
+    output_context: str,
+    style_profile: str,
+    options: Dict[str, Any],
+    warnings: List[str],
+) -> Dict[str, Any]:
     text_registry = TextLayoutRegistry()
     _apply_fonts()
     metadata = {
@@ -212,6 +247,35 @@ def _render_single_chart(
         draw_metadata = _draw_boxplot(ax, title, data, options)
     elif applied_chart_type == "table_image":
         draw_metadata = _draw_table(ax, title, data, options)
+    elif applied_chart_type in {"combo", "pareto"}:
+        from app.tools.visualization.create_report_chart.renderers.combo import draw_combo, draw_pareto
+
+        draw_metadata = (
+            draw_combo(ax, title, data, options)
+            if applied_chart_type == "combo"
+            else draw_pareto(ax, title, data, options)
+        )
+    elif applied_chart_type in {"range_line", "error_bar"}:
+        from app.tools.visualization.create_report_chart.renderers.interval import draw_error_bar, draw_range_line
+
+        draw_metadata = (
+            draw_range_line(ax, title, data, options)
+            if applied_chart_type == "range_line"
+            else draw_error_bar(ax, title, data, options)
+        )
+    elif applied_chart_type in {"waterfall", "diverging_bar", "step_line"}:
+        from app.tools.visualization.create_report_chart.renderers.analytical import (
+            draw_diverging_bar,
+            draw_step_line,
+            draw_waterfall,
+        )
+
+        analytical_renderers = {
+            "waterfall": draw_waterfall,
+            "diverging_bar": draw_diverging_bar,
+            "step_line": draw_step_line,
+        }
+        draw_metadata = analytical_renderers[applied_chart_type](ax, title, data, options)
     else:
         _draw_specialized_placeholder(ax, title, applied_chart_type, data)
         draw_metadata = {"renderer_note": "specialized_type_placeholder"}
@@ -238,7 +302,6 @@ def _render_single_chart(
     metadata["text_layout"] = text_layout_metadata
 
     visual = _cache_figure(fig, chart_id or title, title)
-    plt.close(fig)
 
     return {
         "chart_id": visual["image_id"],

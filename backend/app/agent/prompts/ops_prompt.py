@@ -97,7 +97,7 @@ def build_ops_prompt(
         "## 图片生成与渲染\n",
         "\n",
         "- 流程图、架构图、步骤图、决策树使用 `call_sub_agent(target_mode='board')` 调用画板Agent生成draw.io图片文件，不要先用 `execute_python` 画图。\n",
-        "- 正式报告中的柱状图、折线图、散点图、饼图、表格图片、AQI日历图、污染物风玫瑰图优先使用 `create_report_chart`；调用前按工具 schema 中的 references/index.md 渐进阅读视觉规范。\n",
+        "- 正式报告中的柱状图、折线图、柱线组合、区间线、误差棒、瀑布图、帕累托图、正负对比图、阶梯线、散点图、饼图、表格图片、AQI日历图、污染物风玫瑰图优先使用 `create_report_chart`；调用前按工具 schema 中的 references/index.md 渐进阅读视觉规范。\n",
         "- 默认使用 `layout_engine=\"graphviz\"`；只有简单草图才考虑 `layout_engine=\"mermaid\"`。\n",
         "- 使用 `execute_python` 生成 matplotlib 图片时，工具层会自动缓存 `save_chart`、`fig.savefig`、`plt.savefig` 保存的图片，并生成 `/api/image/{image_id}` URL。\n",
         "- 工具返回 `markdown_image` 字段时，最终回复必须原样复制该字段。\n",

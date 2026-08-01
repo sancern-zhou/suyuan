@@ -16,6 +16,11 @@ Supported general `chart_type` values:
 - `correlation_heatmap`: read `correlation-heatmap.md`.
 - `boxplot`: read `boxplot.md`.
 - `table_image`: read `table-image.md`.
+- `combo`: read `combo-chart.md`.
+- `range_line` and `error_bar`: read `range-and-error.md`.
+- `waterfall`: read `waterfall-chart.md`.
+- `pareto`: read `pareto-chart.md`.
+- `diverging_bar` and `step_line`: read `comparison-charts.md`.
 - `pollutant_calendar`: read `pollutant-calendar.md`.
 - `generic_pollutant_wind_rose`: read `generic-pollutant-wind-rose.md`.
 - `aqi_calendar`: Guangdong Province only; read `aqi-calendar.md`.
@@ -35,6 +40,12 @@ Common environmental-analysis charts already covered by this tool:
 - 百分堆叠柱状图: `percent_stacked_bar`.
 - 散点图: `scatter`.
 - 直方图/频次分布图: `histogram`.
+- 柱线组合或双轴柱线: `combo`.
+- 置信区间、上下限或误差: `range_line` or `error_bar`.
+- 增减因素拆解: `waterfall`.
+- 排名与累计贡献率: `pareto`.
+- 正负变化对比: `diverging_bar`.
+- 离散阶段变化: `step_line`.
 - 通用污染物日历图: `pollutant_calendar`.
 - 通用风玫瑰图/污染物风玫瑰图: `generic_pollutant_wind_rose`.
 - 广东省专用 AQI 日历图: `aqi_calendar`.

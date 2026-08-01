@@ -30,6 +30,14 @@ in these progressive reference files.
   plot: read `boxplot.md`.
 - Pie or share chart: read `pie-rules.md`.
 - Table rendered as an image: read `table-image.md`.
+- Bar-line combination, dual-axis bar-line chart, or stacked bars with a trend:
+  read `combo-chart.md`.
+- Confidence interval, target range, min/max band, or error bars: read
+  `range-and-error.md`.
+- Sequential increase/decrease contribution bridge: read `waterfall-chart.md`.
+- Ranked contributors with cumulative share: read `pareto-chart.md`.
+- Positive/negative comparison or discrete step changes: read
+  `comparison-charts.md`.
 - Unsure which simple chart type to use: read `chart-types.md`.
 
 ## Domain Chart Routing
