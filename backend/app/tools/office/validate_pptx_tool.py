@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import derivative_file, primary_file
 from app.tools.office.slides_qa.create_montage import create_montage
 from app.tools.office.slides_qa.detect_fonts import detect_pdf_fonts
 from app.tools.office.slides_qa.detect_overflow import (
@@ -28,17 +28,49 @@ logger = structlog.get_logger()
 
 
 def validation_output_resources(pptx_path: Path, outputs: List[Path]) -> List[Dict[str, Any]]:
-    """Declare current QA outputs in stable per-deck slots."""
+    """Declare a presentation and all QA derivatives as one resource group."""
     validation_slot = hashlib.sha256(str(pptx_path).encode("utf-8")).hexdigest()[:16]
-    return [
-        file_resource(
-            output,
-            tool_name="validate_pptx",
-            logical_key=f"ppt-validation:{validation_slot}:{output.name}",
+    group_key = f"presentation:{validation_slot}"
+    primary = primary_file(
+        pptx_path,
+        group_key=group_key,
+        tool_name="validate_pptx",
+        renderer="presentation",
+        capabilities=("preview", "download", "edit"),
+    )
+    primary["resource_key"] = "pptx"
+    members = [primary]
+    for output in outputs:
+        if not output.is_file():
+            continue
+        suffix = output.suffix.lower().lstrip(".") or "file"
+        is_page = output.name.startswith("page-")
+        relation = "attachment" if is_page or suffix == "json" else "preview"
+        renderer = (
+            "pdf"
+            if suffix == "pdf"
+            else "image"
+            if suffix in {"png", "jpg", "jpeg", "svg"}
+            else "file"
         )
-        for output in outputs
-        if output.is_file()
-    ]
+        derivative = derivative_file(
+            output,
+            group_key=group_key,
+            parent_key="pptx",
+            tool_name="validate_pptx",
+            relation=relation,
+            renderer=renderer,
+        )
+        if output.name == "montage.png":
+            derivative["resource_key"] = "montage"
+        elif suffix == "pdf":
+            derivative["resource_key"] = "pdf"
+        elif is_page:
+            derivative["resource_key"] = output.stem
+        else:
+            derivative["resource_key"] = output.name
+        members.append(derivative)
+    return members
 
 
 class ValidatePptxTool(LLMTool):
@@ -175,6 +207,7 @@ class ValidatePptxTool(LLMTool):
             pdf_path = render_result.get("pdf_path") if isinstance(render_result, dict) else None
             if pdf_path:
                 compact_outputs.append(Path(str(pdf_path)))
+            compact_outputs.extend(page_pngs)
 
             summary = (
                 f"PPT验证完成：{pptx_path.name}，发现 {len(issues)} 个问题"

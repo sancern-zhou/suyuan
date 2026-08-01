@@ -14,6 +14,8 @@ import yaml
 
 from app.services.quarto_report_renderer import ReportRenderError, quarto_report_renderer
 from app.services.report_preview_refresh import build_html_preview, record_report_update
+from app.agent.resources.actions import attach_rendered_file
+from app.agent.resources.resource_service import SessionResourceService
 from app.auth.share_access import (
     SHARE_GRANT_COOKIE,
     external_api_path,
@@ -114,19 +116,23 @@ def _refresh_report_html_if_stale(report_id: str, html_path: Path) -> Path:
 
 
 @router.post("/{report_id}/render/html")
-async def render_report_html(report_id: str):
+async def render_report_html(
+    report_id: str, session_id: str, parent_resource_id: str
+):
     try:
         html_path = quarto_report_renderer.render_preview_html(report_id)
-        meta = record_report_update(report_id, source="api_render_html", html_path=html_path)
-        return {
-            "success": True,
-            "report_id": report_id,
-            "file_path": str(quarto_report_renderer.get_qmd_path(report_id)),
-            "html_preview": build_html_preview(report_id, html_path),
-            "path": str(html_path),
-            "version": meta.get("version"),
-            "metadata": {"generator": "quarto_report"},
-        }
+        record_report_update(report_id, source="api_render_html", html_path=html_path)
+        return await attach_rendered_file(
+            SessionResourceService.database(),
+            session_id=session_id,
+            run_id=f"render-report-html:{report_id}",
+            group_key=f"report:{report_id}",
+            parent_resource_id=parent_resource_id,
+            path=html_path,
+            relation="preview",
+            renderer="html",
+            tool_name="render_report_html",
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (ValueError, ReportRenderError) as exc:
@@ -134,15 +140,22 @@ async def render_report_html(report_id: str):
 
 
 @router.post("/{report_id}/render/docx")
-async def render_report_docx(report_id: str):
+async def render_report_docx(
+    report_id: str, session_id: str, parent_resource_id: str
+):
     try:
         docx_path = quarto_report_renderer.render_docx(report_id)
-        return {
-            "success": True,
-            "report_id": report_id,
-            "download_url": external_api_path(f"/api/reports/{report_id}/download/docx"),
-            "path": str(docx_path),
-        }
+        return await attach_rendered_file(
+            SessionResourceService.database(),
+            session_id=session_id,
+            run_id=f"render-report-docx:{report_id}",
+            group_key=f"report:{report_id}",
+            parent_resource_id=parent_resource_id,
+            path=docx_path,
+            relation="rendition",
+            renderer="file",
+            tool_name="render_report_docx",
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (ValueError, ReportRenderError) as exc:

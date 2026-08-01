@@ -17,6 +17,7 @@ from app.services.report_preview_refresh import (
     refresh_report_preview_for_qmd_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.artifact_utils import attach_document_artifact
 from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 
 logger = structlog.get_logger()
@@ -188,21 +189,43 @@ class PresentArtifactTool(LLMTool):
             )
             if isinstance(preview, dict):
                 artifact["preview"] = preview
+            preview_key = next(
+                (
+                    key
+                    for key in (
+                        "html_preview",
+                        "spreadsheet_preview",
+                        "pdf_preview",
+                        "ppt_preview",
+                        "markdown_preview",
+                    )
+                    if isinstance(data.get(key), dict)
+                ),
+                None,
+            )
+            resource_kind = (
+                resolved_type
+                if resolved_type in {"report", "html_artifact"}
+                else "office"
+            )
             logical_key = html_artifact_id or artifact.get("artifact_id") or resolved_path.stem
-            data["resources"] = [{
-                "kind": "file",
-                "logical_key": str(logical_key),
-                "role": "output",
-                "label": artifact.get("title") or resolved_path.name,
-                "locator": {"path": str(resolved_path)},
-                "presentation_type": "document",
-                "presentation": {
-                    "format": artifact_format,
-                    "preview": preview or {},
-                    "editable": bool(artifact.get("preview_panel", False)),
+            attach_document_artifact(
+                data,
+                resolved_path,
+                kind=resource_kind,
+                format=artifact_format,
+                title=artifact.get("title") or resolved_path.name,
+                preview_key=preview_key,
+                generator="present_artifact",
+                metadata={
+                    "artifact_id": str(logical_key)
+                    if resource_kind == "html_artifact"
+                    else None,
+                    "report_id": str(logical_key)
+                    if resource_kind == "report"
+                    else None,
                 },
-                "metadata": {"generator": "present_artifact", "file_type": resolved_type},
-            }]
+            )
 
             logger.info(
                 "artifact_presented",
