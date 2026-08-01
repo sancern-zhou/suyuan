@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from app.auth.errors import AuthenticationRejected, AuthenticationUnavailable
 from app.auth.middleware import GatewayAuthenticationMiddleware
 from app.auth.models import CurrentUser
+from app.auth.share_access import ShareAccessService, resource_preview_identity
 from config.settings import Settings
 
 
@@ -40,6 +41,7 @@ def _app(service=None, **setting_overrides):
         GatewayAuthenticationMiddleware,
         settings=_settings(**setting_overrides),
         auth_service=service,
+        share_access=ShareAccessService("test-preview-secret", ttl_seconds=60),
     )
 
     @app.get("/health")
@@ -72,13 +74,10 @@ def _app(service=None, **setting_overrides):
     async def asset(path: str):
         return {"path": path}
 
-    @app.get("/api/reports/share/{token}")
-    async def report(token: str):
-        return {"token": token}
-
-    @app.get("/api/html-artifacts/share/{token}")
-    async def artifact(token: str):
-        return {"token": token}
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}/content/{asset:path}")
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}/content")
+    async def resource_content(session_id: str, resource_id: str, asset: str = ""):
+        return {"session_id": session_id, "resource_id": resource_id, "asset": asset}
 
     @app.get("/api/private")
     async def private(request: Request):
@@ -111,8 +110,6 @@ async def _get(app, path, *, client_host="127.0.0.1", headers=None):
         "/knowledge-base",
         "/session/session-1",
         "/assets/app.js",
-        "/api/reports/share/grant",
-        "/api/html-artifacts/share/grant",
     ],
 )
 async def test_exact_public_routes_do_not_authenticate(path):
@@ -132,8 +129,10 @@ async def test_exact_public_routes_do_not_authenticate(path):
         "/login/private",
         "/session",
         "/api/reports/share",
+        "/api/reports/share/grant",
         "/api/reports/share/grant/private",
         "/api/html-artifacts/share/grant/private",
+        "/api/html-artifacts/share/grant",
         "/api/signed-media",
         "/api/signed-media/a/b.png?expires=1&signature=x",
         "/api/auth/runtime-config/private",
@@ -238,3 +237,25 @@ async def test_docs_are_private_by_default_and_explicitly_public_when_enabled():
 
     assert (await _get(private_app, "/openapi.json")).status_code == 401
     assert (await _get(public_app, "/openapi.json")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_session_resource_preview_ticket_allows_only_bound_content_subtree():
+    app, service = _app()
+    ticket = ShareAccessService("test-preview-secret", ttl_seconds=60).issue(
+        "session-resource",
+        resource_preview_identity("session-1", "resource-1"),
+    )
+
+    allowed = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/assets/style.css?preview_ticket={ticket}",
+    )
+    wrong_resource = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-2/content?preview_ticket={ticket}",
+    )
+
+    assert allowed.status_code == 200
+    assert wrong_resource.status_code == 401
+    assert service.calls == []

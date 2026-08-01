@@ -269,22 +269,12 @@ class ToolExecutor:
             # Inputs are selected resource IDs resolved server-side. Never infer
             # durable resources from arbitrary tool arguments.
             return {}
-        if self.resource_run_id:
-            from app.agent.runtime.ownership import run_ownership_registry
-
-            if not await run_ownership_registry.can_write(
-                self.memory_manager.session_id, self.resource_run_id
-            ):
-                return {
-                    "durable": False,
-                    "rejected": ["stale_run_write_skipped"],
-                }
         declarations, rejected = normalize_tool_resources(result=value)
         if not declarations and not rejected:
             return {}
         if not declarations:
             return {"durable": False, "rejected": rejected}
-        try:
+        async def publish_resources():
             grouped = {}
             for declaration in declarations:
                 grouped.setdefault(declaration.group_key, []).append(declaration)
@@ -317,6 +307,21 @@ class ToolExecutor:
                 "resource_ids": [stored.resource_id for stored in stored_resources],
                 "rejected": rejected,
             }
+
+        try:
+            from app.agent.runtime.ownership import run_ownership_registry
+
+            owned, result = await run_ownership_registry.execute_if_owner(
+                self.memory_manager.session_id,
+                self.resource_run_id,
+                publish_resources,
+            )
+            if not owned:
+                return {
+                    "durable": False,
+                    "rejected": ["stale_run_write_skipped"],
+                }
+            return result or {}
         except Exception as exc:
             logger.error(
                 "tool_boundary_resource_persistence_failed",

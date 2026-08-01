@@ -104,8 +104,6 @@ class PresentArtifactTool(LLMTool):
                 resolved_type = "html_artifact"
                 data["file_type"] = "html_artifact"
                 data["html_preview"] = html_preview
-                data["download_url"] = f"/api/html-artifacts/{html_artifact_id}/download/html"
-                data["share_endpoint"] = f"/api/html-artifacts/{html_artifact_id}/share"
             elif suffix == ".qmd":
                 report_preview = (
                     refresh_report_preview_for_qmd_path(resolved_path)

@@ -13,7 +13,7 @@ from app.auth.middleware import GatewayAuthenticationMiddleware
 from app.auth.models import CurrentUser
 from app.auth.routes import router as auth_router
 from app.auth.service import AuthenticationService
-from app.auth.share_access import ShareAccessService
+from app.auth.share_access import ShareAccessService, resource_preview_identity
 from app.auth.ws_tickets import WebSocketTicketService
 from config.settings import Settings
 
@@ -96,9 +96,9 @@ async def test_fake_infrastructure_gateway_flow(monkeypatch):
             yield f"data: {user.id}\n\n"
         return StreamingResponse(content(), media_type="text/event-stream")
 
-    @app.get("/api/reports/{report_id}/assets/{path:path}")
-    async def report_asset(report_id: str, path: str):
-        return {"report_id": report_id, "path": path}
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}/content/{path:path}")
+    async def resource_asset(session_id: str, resource_id: str, path: str):
+        return {"session_id": session_id, "resource_id": resource_id, "path": path}
 
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
     headers = {
@@ -116,10 +116,12 @@ async def test_fake_infrastructure_gateway_flow(monkeypatch):
         )
         sse = await client.get("/api/events", headers=headers)
         ticket_response = await client.post("/api/auth/ws-ticket", headers=headers)
-        grant = shares.issue("report", "r1")
+        grant = shares.issue(
+            "session-resource",
+            resource_preview_identity("session-1", "resource-1"),
+        )
         shared = await client.get(
-            "/api/reports/r1/assets/chart.png",
-            cookies={"suyuan-share-grant": grant},
+            f"/api/sessions/session-1/resources/resource-1/content/assets/chart.png?preview_ticket={grant}",
         )
 
     assert anonymous.status_code == 401

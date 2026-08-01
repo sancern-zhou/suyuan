@@ -1104,8 +1104,7 @@ def resolve_report_image_path(src: str, base_dir: str | Path | None = None) -> P
     Resolve an HTML image src to a local file path.
 
     Supports absolute paths, paths relative to a report.html directory, file://
-    URLs, local /api/reports/{report_id}/assets/... URLs, and assets/charts/...
-    relative paths. Remote HTTP images are intentionally not downloaded here.
+    URLs, and assets/charts/... relative paths. Remote HTTP images are not downloaded.
     """
     if not src:
         return None
@@ -1123,15 +1122,6 @@ def resolve_report_image_path(src: str, base_dir: str | Path | None = None) -> P
         return None
     if parsed.scheme == "file":
         candidate = Path(unquote(parsed.path))
-    elif src.startswith("/api/reports/"):
-        parts = src.split("/")
-        # /api/reports/{report_id}/assets/{asset_path...}
-        if len(parts) >= 6 and parts[4] == "assets":
-            report_id = unquote(parts[3])
-            asset_path = Path(*[unquote(part) for part in parts[5:]])
-            candidate = DEFAULT_REFERENCE_DOCX.parents[1] / "reports" / report_id / "assets" / asset_path
-        else:
-            return None
     else:
         candidate = Path(unquote(src))
         if not candidate.is_absolute() and base_dir is not None:
@@ -1376,7 +1366,7 @@ def convert_html_report_to_government_docx(
     Convert a local HTML report package to a government-style DOCX.
 
     The HTML file is treated as the source of truth. Local images referenced by
-    relative paths, file URLs, or /api/reports/{report_id}/assets/... URLs are
+    relative paths or file URLs are
     embedded into the Word document instead of left as placeholders.
     """
     from bs4 import BeautifulSoup

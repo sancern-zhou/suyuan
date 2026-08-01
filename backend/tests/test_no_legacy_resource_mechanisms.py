@@ -25,6 +25,11 @@ FORBIDDEN = (
     "app.agent.resources.models",
     "SessionResourceRef",
     "app.api.office_routes",
+    "app.api.report_routes",
+    "app.api.html_artifact_routes",
+    '"/api/reports',
+    '"/api/html-artifacts',
+    "SHARE_GRANT_COOKIE",
     'lazy_artifacts: bool = False',
 )
 
@@ -45,3 +50,5 @@ def test_openapi_has_no_path_download_or_typed_office_download_routes():
     routing = (APP_ROOT / "core" / "routing.py").read_text(encoding="utf-8")
     assert "app.api.office_routes" not in routing
     assert not (APP_ROOT / "api" / "office_routes.py").exists()
+    assert not (APP_ROOT / "api" / "report_routes.py").exists()
+    assert not (APP_ROOT / "api" / "html_artifact_routes.py").exists()

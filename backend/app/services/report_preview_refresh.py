@@ -11,7 +11,6 @@ from typing import Any, Dict, Optional
 
 import structlog
 
-from app.auth.share_access import external_api_path
 from app.services.quarto_report_renderer import (
     MARKDOWN_IMAGE_PATTERN,
     markdown_image_path,
@@ -72,7 +71,7 @@ def build_html_preview(report_id: str, html_path: Path) -> Dict[str, Any]:
     )
     return {
         "html_id": report_id,
-        "html_url": external_api_path(f"/api/reports/{report_id}/html"),
+        "html_path": str(html_path.resolve()),
         "file_type": "report",
         "schema_version": "report_package.v1",
         "preview_version": preview_version,
@@ -179,10 +178,6 @@ def record_report_update(
             "updated_at": now,
             "version": next_version,
             "files": files,
-            "download_urls": {
-                "qmd": external_api_path(f"/api/reports/{report_id}/download/qmd"),
-                "docx": external_api_path(f"/api/reports/{report_id}/download/docx"),
-            },
             "history": history[-20:],
         }
     )
@@ -302,10 +297,6 @@ def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any
             "source_qmd": str(qmd_path),
             "html": str(report_dir / "report.html"),
             "docx": str(report_dir / "report.docx"),
-        },
-        "download_urls": {
-            "qmd": external_api_path(f"/api/reports/{report_id}/download/qmd"),
-            "docx": external_api_path(f"/api/reports/{report_id}/download/docx"),
         },
     }
     write_report_meta(report_id, meta)

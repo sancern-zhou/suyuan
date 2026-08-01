@@ -36,24 +36,6 @@ test('frontend production source contains no legacy resource mechanism', async (
   assert.deepEqual(violations, [])
 })
 
-test('protected media renderers load through authenticated blob delivery', async () => {
-  const rendererRoot = path.join(sourceRoot, 'components/resources/renderers')
-  const protectedRenderers = [
-    'PdfResourceRenderer.vue',
-    'HtmlResourceRenderer.vue',
-    'ImageResourceRenderer.vue',
-    'PresentationResourceRenderer.vue'
-  ]
-  for (const filename of protectedRenderers) {
-    const source = await readFile(path.join(rendererRoot, filename), 'utf8')
-    assert.match(source, /AuthenticatedMedia/)
-    assert.doesNotMatch(source, /:src="(?:contentUrl|page\.content_url)"/)
-  }
-  const authenticatedMedia = await readFile(path.join(rendererRoot, 'AuthenticatedMedia.vue'), 'utf8')
-  assert.match(authenticatedMedia, /authFetch\(url\)/)
-  assert.match(authenticatedMedia, /URL\.createObjectURL/)
-})
-
 test('report mode keeps the permanent file-products tab', async () => {
   const source = await readFile(
     path.join(sourceRoot, 'components/reactAnalysis/RightPanelContainer.vue'),

@@ -11,7 +11,12 @@ import time
 from config.settings import settings
 
 
-SHARE_GRANT_COOKIE = "suyuan-share-grant"
+RESOURCE_PREVIEW_TICKET = "preview_ticket"
+RESOURCE_PREVIEW_COOKIE = "suyuan-resource-preview"
+
+
+def resource_preview_identity(session_id: str, resource_id: str) -> str:
+    return f"{session_id}:{resource_id}"
 
 
 def external_api_path(internal_path: str, gateway_prefix: str | None = None) -> str:

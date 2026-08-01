@@ -15,6 +15,11 @@ def require_current_user(request: Request) -> CurrentUser:
     return user
 
 
+def optional_current_user(request: Request) -> CurrentUser | None:
+    user = getattr(request.state, "current_user", None)
+    return user if isinstance(user, CurrentUser) else None
+
+
 def current_user_id(user: CurrentUser = Depends(require_current_user)) -> str:
     return user.id
 

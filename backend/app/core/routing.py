@@ -56,8 +56,6 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.scheduled_task_ws", description="Scheduled task WebSocket"),
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
-    RouterSpec("app.api.report_routes", description="Quarto report preview/share"),
-    RouterSpec("app.api.html_artifact_routes", description="HTML artifact preview/share"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
     RouterSpec("app.routers.social_routes", description="Social platform management"),
     RouterSpec("app.routers.fetchers", description="Fetcher management"),
