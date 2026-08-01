@@ -24,20 +24,32 @@
 <script setup>
 import { computed, defineAsyncComponent, onErrorCaptured, ref } from 'vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
-import { buildResourceGroups } from '@/services/resourceGroups.js'
+import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } from '@/services/resourceGroups.js'
 import { rendererKey, RESOURCE_RENDERERS } from '@/services/resourceRendererRegistry.js'
 
 const resourceStore = useSessionResourceStore()
+const props = defineProps({
+  target: { type: String, default: '' }
+})
 const renderError = ref('')
 const state = computed(() => resourceStore.activeSessionState)
-const resource = computed(() => resourceStore.activeSessionId
+const groups = computed(() => topLevelProducts(buildResourceGroups(state.value?.resources || [])))
+const selected = computed(() => resourceStore.activeSessionId
   ? resourceStore.selectedResource(resourceStore.activeSessionId)
   : null)
-const group = computed(() => buildResourceGroups(state.value?.resources || [])
-  .find(item => item.group_id === resource.value?.group_id) || null)
-const rendererComponent = computed(() => defineAsyncComponent(
-  RESOURCE_RENDERERS[rendererKey(resource.value || {})]
-))
+const group = computed(() => {
+  const selectedGroup = groups.value.find(item => item.group_id === selected.value?.group_id)
+  if (selectedGroup && (!props.target || targetTab(selectedGroup) === props.target)) return selectedGroup
+  return groups.value.find(item => !props.target || targetTab(item) === props.target) || null
+})
+const resource = computed(() => {
+  if (selected.value && selected.value.group_id === group.value?.group_id) return selected.value
+  return preferredPreview(group.value)
+})
+const rendererComponent = computed(() => {
+  if (!resource.value) return null
+  return defineAsyncComponent(RESOURCE_RENDERERS[rendererKey(resource.value)])
+})
 
 const retry = () => resourceStore.activeSessionId
   ? resourceStore.loadCatalog(resourceStore.activeSessionId)

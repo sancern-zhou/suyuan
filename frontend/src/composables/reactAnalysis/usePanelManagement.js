@@ -4,9 +4,12 @@
  */
 import { ref, computed, watch } from 'vue'
 import { PANEL_SIZES } from '@/utils/constants'
-import { shouldAutoSwitchToDocument } from './panelTabPolicy'
+import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
+import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 
 export function usePanelManagement(store = null) {
+  const resourceStore = useSessionResourceStore()
   // ========== 面板状态 ==========
   const managementPanel = ref(null) // 当前显示的管理面板
   const rightPanelVisible = ref(false) // 右侧面板是否可见
@@ -15,7 +18,7 @@ export function usePanelManagement(store = null) {
   const officePanelVisible = ref(false) // Office文档面板是否可见
   const knowledgePanelVisible = ref(false) // 知识溯源面板是否可见
   const boardPanelVisible = ref(false) // Draw.io画板面板是否可见
-  const activeRightTab = ref('visualization') // 右侧面板活动标签页
+  const activeRightTab = ref('files') // 右侧面板活动标签页
 
   // ========== 宽度调整相关 ==========
   const defaultVizWidth = PANEL_SIZES.DEFAULT_VIZ_WIDTH
@@ -26,6 +29,9 @@ export function usePanelManagement(store = null) {
   const vizWidth = ref(defaultVizWidth)
   const isDragging = ref(false)
   const layoutRef = ref(null)
+  const resourceSummary = computed(() => summarizeRightPanelResources(
+    resourceStore.activeSessionState?.resources || []
+  ))
 
   // ========== 计算属性 ==========
 
@@ -48,11 +54,6 @@ export function usePanelManagement(store = null) {
   const hasVizContent = computed(() => {
     if (!store) return false
 
-    // 检查是否有可视化图表
-    const hasCharts = store.currentState.visualizationHistory?.length > 0 ||
-      store.currentState.currentVisualization?.visuals?.length > 0 ||
-      store.currentState.lazyArtifacts?.hasVisualizations
-
     // 检查知识问答检索来源，复用可视化面板展示知识溯源
     const messages = store.messages || store.currentState?.messages || []
     const hasSources = messages.some(msg =>
@@ -60,52 +61,14 @@ export function usePanelManagement(store = null) {
       (Array.isArray(msg?.sources) && msg.sources.length > 0)
     )
 
-    // 检查是否有Office文档
-    const hasOffice = officePanelVisible.value
-
-    // 检查是否有Draw.io画板
-    const hasBoard = boardPanelVisible.value
-
-    return hasCharts || hasSources || hasOffice || hasBoard
+    return resourceSummary.value.hasArtifacts || hasSources
   })
 
   /**
    * 检测是否有Office文档操作
    */
   const hasOfficeDocuments = computed(() => {
-    if (!store || !store.messages) return false
-
-    if (store.lastOfficeDocument?.pdf_preview || store.lastOfficeDocument?.markdown_preview || store.lastOfficeDocument?.html_preview || store.lastOfficeDocument?.svg_preview || store.lastOfficeDocument?.spreadsheet_preview || store.lastOfficeDocument?.ppt_preview) {
-      return true
-    }
-
-    if (store.currentState.lazyArtifacts?.hasOfficeDocuments) {
-      return true
-    }
-
-    return store.messages.some(msg => {
-      if (msg?.type === 'tool_result' && msg?.data?.result) {
-        const metadata = msg.data.result.metadata || {}
-        const generator = metadata.generator
-
-        const isOfficeTool = [
-          'word_edit', 'find_replace_word', 'accept_word_changes',
-          'unpack_office', 'pack_office', 'recalc_excel', 'add_ppt_slide',
-          'read_pptx', 'create_pptx', 'analyze_pptx_template',
-          'create_pptx_from_template', 'edit_pptx', 'validate_pptx',
-          'read_file', 'edit_file'
-        ].includes(generator)
-
-        // 对于通用文件工具，需要检查是否有可预览内容
-        if (['read_file', 'edit_file'].includes(generator)) {
-          const result = msg.data.result
-          return !!(result.data?.pdf_preview || result.data?.markdown_preview || result.data?.html_preview || result.data?.svg_preview || result.data?.spreadsheet_preview)
-        }
-
-        return isOfficeTool && !!(msg.data.result?.data?.pdf_preview || msg.data.result?.data?.markdown_preview || msg.data.result?.data?.html_preview || msg.data.result?.data?.svg_preview || msg.data.result?.data?.spreadsheet_preview)
-      }
-      return false
-    })
+    return resourceSummary.value.counts.document > 0
   })
 
   /**
@@ -129,8 +92,7 @@ export function usePanelManagement(store = null) {
    * 检测是否有Draw.io画板
    */
   const hasBoardContent = computed(() => {
-    if (!store) return false
-    return !!store.currentState?.board?.currentXml
+    return resourceSummary.value.counts.board > 0
   })
 
   // ========== 面板切换方法 ==========
@@ -181,7 +143,7 @@ export function usePanelManagement(store = null) {
     rightPanelVisible.value = false
     leftSidebarCollapsed.value = false
     managementPanel.value = null
-    activeRightTab.value = 'visualization'
+    activeRightTab.value = 'files'
   }
 
   // ========== 宽度调整方法 ==========
@@ -265,20 +227,21 @@ export function usePanelManagement(store = null) {
    * 监听内容变化，自动显示/隐藏面板
    */
   const setupWatchers = () => {
-    // 监听可视化内容变化
-    watch(hasVizContent, (newValue) => {
-      if (newValue && !vizPanelVisible.value) {
-        vizPanelVisible.value = true
-        if (!officePanelVisible.value) {
-          activeRightTab.value = 'visualization'
+    watch(
+      () => [resourceStore.activeSessionId, resourceStore.activeSessionState?.resourceVersion],
+      () => {
+        const sessionId = resourceStore.activeSessionId
+        const summary = resourceSummary.value
+        vizPanelVisible.value = summary.counts.visualization > 0
+        officePanelVisible.value = summary.counts.document > 0
+        boardPanelVisible.value = summary.counts.board > 0
+        if (sessionId && summary.hasArtifacts) {
+          const restored = chooseRestoredResource(resourceStore, sessionId)
+          if (restored) activeRightTab.value = restored.targetTab
         }
-      }
-    }, { immediate: true })
-
-    // 监听Office文档变化
-    watch(hasOfficeDocuments, (newValue) => {
-      officePanelVisible.value = newValue
-    }, { immediate: true })
+      },
+      { immediate: true }
+    )
 
     // 监听知识溯源变化
     watch(hasKnowledgeSources, (newValue) => {
@@ -289,35 +252,9 @@ export function usePanelManagement(store = null) {
       }
     }, { immediate: true })
 
-    // 监听Draw.io画板变化
-    watch(hasBoardContent, (newValue) => {
-      boardPanelVisible.value = newValue
-      if (newValue) {
-        activeRightTab.value = 'board'
-      } else if (activeRightTab.value === 'board') {
-        if (vizPanelVisible.value) {
-          activeRightTab.value = 'visualization'
-        } else if (officePanelVisible.value) {
-          activeRightTab.value = 'document'
-        } else if (knowledgePanelVisible.value) {
-          activeRightTab.value = 'knowledge'
-        }
-      }
-    }, { immediate: true })
-
-    // 监听图表历史变化，当有图表时且当前在document标签，切换回visualization标签
-    if (store) {
-      watch(() => store.currentState.visualizationHistory, (newHistory) => {
-        const hasCharts = newHistory?.length > 0
-        if (hasCharts && activeRightTab.value === 'document' && !officePanelVisible.value && !knowledgePanelVisible.value && !boardPanelVisible.value) {
-          activeRightTab.value = 'visualization'
-        }
-      }, { immediate: true })
-    }
-
     // 监听右侧面板显示状态
-    watch([vizPanelVisible, officePanelVisible, knowledgePanelVisible, boardPanelVisible], ([viz, office, knowledge, board]) => {
-      const shouldShow = viz || office || knowledge || board
+    watch([hasVizContent, knowledgePanelVisible], ([artifacts, knowledge]) => {
+      const shouldShow = artifacts || knowledge
       if (shouldShow) {
         rightPanelVisible.value = true
         // 右侧面板展开时，自动折叠左侧面板
@@ -330,18 +267,6 @@ export function usePanelManagement(store = null) {
       }
     }, { immediate: true })
 
-    // 监听office_document事件
-    if (store) {
-      watch(() => store.lastOfficeDocument, (doc, previousDoc) => {
-        // 支持 PDF/Markdown/HTML 预览，统一显示在"文档预览"标签页
-        if (doc?.pdf_preview || doc?.markdown_preview || doc?.html_preview || doc?.svg_preview || doc?.spreadsheet_preview || doc?.ppt_preview) {
-          officePanelVisible.value = true
-          if (shouldAutoSwitchToDocument({ doc, previousDoc, activeTab: activeRightTab.value })) {
-            activeRightTab.value = 'document'
-          }
-        }
-      }, { immediate: true })
-    }
   }
 
   // ========== 生命周期 ==========
@@ -386,6 +311,7 @@ export function usePanelManagement(store = null) {
     hasOfficeDocuments,
     hasKnowledgeSources,
     hasBoardContent,
+    resourceSummary,
 
     // 方法
     toggleVizPanel,

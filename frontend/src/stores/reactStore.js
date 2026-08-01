@@ -22,8 +22,9 @@ import {
   shouldPreviewBoardCandidate
 } from '../components/board/boardVersionHistory.js'
 import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
-import { autoSaveSession, getSessionOfficeDocuments } from '../api/session.js'
-import { refreshDurableDocumentResources } from '../services/sessionDocumentResources.js'
+import { autoSaveSession } from '../api/session.js'
+import { useSessionResourceStore } from './sessionResourceStore.js'
+import { applyResourceStreamEvent } from '../services/sessionResourceLifecycle.js'
 import {
   convertStreamingAnswerToThoughtIfToolPlanning,
   freezeActiveAssistantOutput
@@ -1006,6 +1007,7 @@ export const useReactStore = defineStore('react', {
       const targetState = this._activateSession(sessionId, sessionMode)
       targetState.sessionId = sessionId
       console.log(`[setSessionId] Set sessionId for mode ${this.currentMode}:`, sessionId)
+      useSessionResourceStore().activateSession(sessionId)
     },
 
     /**
@@ -1556,6 +1558,15 @@ export const useReactStore = defineStore('react', {
       const sessionId = data?.session_id || event?.session_id
       console.log('[handleEvent] sessionId:', sessionId)
 
+      if (type === 'resources_changed') {
+        const resourceStore = useSessionResourceStore()
+        if (sessionId && this.currentState?.sessionId === sessionId) {
+          resourceStore.activateSession(sessionId)
+        }
+        void applyResourceStreamEvent(resourceStore, event)
+        return
+      }
+
       const eventMode = this._resolveEventMode(data, sessionId)
       console.log('[handleEvent] Extracted eventMode:', eventMode)
 
@@ -1624,6 +1635,9 @@ export const useReactStore = defineStore('react', {
           addMessage('start', `开始分析: ${data?.query || ''}`)
           if (data?.session_id) {
             targetState.sessionId = data.session_id
+            if (targetState === this.currentState) {
+              useSessionResourceStore().activateSession(data.session_id)
+            }
           }
           targetState.iterations = 0
           break
@@ -2057,40 +2071,6 @@ export const useReactStore = defineStore('react', {
           } else {
             console.log('[event:complete] 没有sources字段或为空')
           }
-
-          if (Array.isArray(data?.office_documents)) {
-            data.office_documents.forEach(doc => this.recordOfficeDocument(doc, targetState))
-            targetState.lazyArtifacts = {
-              ...(targetState.lazyArtifacts || createEmptyModeState().lazyArtifacts),
-              hasOfficeDocuments: data.office_documents.length > 0,
-              officeDocumentCount: targetState.officeDocumentHistory?.length || data.office_documents.length,
-              officeDocumentsLoaded: true,
-              loadingOfficeDocuments: false
-            }
-          } else if (data?.last_office_document) {
-            this.recordOfficeDocument(data.last_office_document, targetState)
-          }
-
-          void refreshDurableDocumentResources({
-            terminalData: data,
-            sessionId,
-            targetState,
-            fetchDocuments: getSessionOfficeDocuments,
-            isSessionActive: () => (
-              this.currentMode === targetMode &&
-              (this.activeSessionByMode[targetMode] || targetState.sessionId) === sessionId
-            ),
-            applyDocuments: (documents) => {
-              this.setOfficeDocumentHistory(documents, targetState)
-              targetState.lazyArtifacts = {
-                ...(targetState.lazyArtifacts || createEmptyModeState().lazyArtifacts),
-                hasOfficeDocuments: documents.length > 0,
-                officeDocumentCount: documents.length,
-                officeDocumentsLoaded: true,
-                loadingOfficeDocuments: false
-              }
-            }
-          })
 
           this.finishQueryVoiceOutput(finalContent || targetState.finalAnswer, targetMode, targetState)
 

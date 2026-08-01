@@ -82,28 +82,11 @@
         </button>
       </div>
 
-      <!-- 可视化面板 -->
-      <VisualizationPanel
-        v-if="activeTab === 'visualization'"
-        ref="vizPanelRef"
-        key="visualization-panel"
+      <ResourcePreviewHost
+        v-if="['visualization', 'document', 'board'].includes(activeTab)"
+        :key="`${activeTab}-resource-preview`"
         class="panel-content"
-        :content="visualizationContent"
-        :history="messages"
-        :selected-message-id="selectedMessageId"
-        :assistant-mode="assistantMode"
-        :expert-results="expertResults"
-      />
-
-      <!-- Office文档预览面板（包含 PDF/Markdown/HTML） -->
-      <OfficeDocumentPanel
-        v-if="activeTab === 'document'"
-        ref="officePanelRef"
-        key="document-panel"
-        class="panel-content"
-        :history="messages"
-        :session-id="sessionId"
-        @submit-edit="handleOfficeEditSubmit"
+        :target="activeTab"
       />
 
       <!-- 知识溯源面板 -->
@@ -115,24 +98,6 @@
         :sources="knowledgeSources"
         :history="messages"
         :selected-message-id="selectedMessageId"
-      />
-
-      <!-- Draw.io画板面板 -->
-      <DrawioBoardPanel
-        v-if="showBoardTab && activeTab === 'board'"
-        ref="boardPanelRef"
-        key="board-panel"
-        class="panel-content"
-        :xml="board?.currentXml || board?.current_xml || board?.xml || ''"
-        :title="board?.title || '画板'"
-        :version-files="board?.versions || []"
-        :current-version-id="board?.currentVersionId || board?.current_version_id || ''"
-        :board-dirty="!!board?.dirty"
-        :read-only="!!board?.readOnly"
-        @xml-change="handleBoardXmlChange"
-        @selection-change="handleBoardSelectionChange"
-        @board-snapshot-confirm="handleBoardSnapshotConfirm"
-        @version-restore="handleBoardVersionRestore"
       />
 
       <TaskOutputFilesPanel
@@ -153,14 +118,13 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import VisualizationPanel from '@/components/VisualizationPanel.vue'
-import OfficeDocumentPanel from '@/components/OfficeDocumentPanel.vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
-import DrawioBoardPanel from '@/components/board/DrawioBoardPanel.vue'
 import TaskOutputFilesPanel from '@/components/management/TaskOutputFilesPanel.vue'
 import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.vue'
+import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 
 const props = defineProps({
   visible: {
@@ -249,46 +213,23 @@ watch(() => props.visible, (newVal) => {
   console.log('[RightPanelContainer] visible changed to:', newVal)
 })
 
-const vizPanelRef = ref(null)
 const officePanelRef = ref(null)
 const knowledgePanelRef = ref(null)
-const boardPanelRef = ref(null)
-
-const hasBoardXml = computed(() => !!(
-  props.board?.currentXml ||
-  props.board?.current_xml ||
-  props.board?.xml
+const resourceSummary = computed(() => summarizeRightPanelResources(
+  resourceStore.activeSessionId === props.sessionId
+    ? resourceStore.activeSessionState?.resources || []
+    : []
 ))
-const showBoardTab = computed(() => props.boardPanelVisible || hasBoardXml.value)
+const showBoardTab = computed(() => resourceSummary.value.counts.board > 0)
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
   return props.sessionId || props.taskWorkspaceTask || props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
 })
 
-const fileProductCount = computed(() => (
-  resourceStore.activeSessionId === props.sessionId
-    ? resourceStore.activeSessionState?.resources?.filter(resource => resource.relation === 'primary' && ['output', 'report'].includes(resource.role)).length || 0
-    : 0
-))
-
-const visualizationCount = computed(() => {
-  const visuals = props.visualizationContent?.visuals
-  if (Array.isArray(visuals)) return visuals.length
-  if (props.visualizationContent) return 1
-  return 0
-})
-
-const documentCount = computed(() => {
-  const docs = new Set()
-  for (const msg of props.messages || []) {
-    const result = msg?.data?.result
-    const data = result?.data || result
-    const id = data?.pdf_id || data?.pdf_url || data?.html_url || data?.file_path || data?.markdown_content
-    if (id) docs.add(String(id))
-  }
-  return docs.size
-})
+const fileProductCount = computed(() => resourceSummary.value.counts.files)
+const visualizationCount = computed(() => resourceSummary.value.counts.visualization)
+const documentCount = computed(() => resourceSummary.value.counts.document)
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
 
