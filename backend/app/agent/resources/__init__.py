@@ -1,19 +1,15 @@
-"""Session-scoped resource reference primitives."""
+"""Canonical session-resource contracts."""
 
-from .models import (
-    ResourceImportance,
+from .contracts import (
     ResourceKind,
     ResourceLocator,
     ResourceRole,
     ResourceStatus,
-    SessionResourceRef,
 )
 
 __all__ = [
-    "ResourceImportance",
     "ResourceKind",
     "ResourceLocator",
     "ResourceRole",
     "ResourceStatus",
-    "SessionResourceRef",
 ]

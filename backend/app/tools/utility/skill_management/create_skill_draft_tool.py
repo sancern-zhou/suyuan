@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import single_file_product
 from app.tools.utility.skill_management.skill_paths import (
     DRAFTS_DIR,
     ensure_within_directory,
@@ -142,7 +142,7 @@ class CreateSkillDraftTool(LLMTool):
                     "is_draft": True,
                     "next_action": "请审核候选技能内容，确认后再发布为正式技能。",
                 },
-                "resources": [file_resource(draft_file, tool_name=self.name)],
+                "resources": [single_file_product(draft_file, tool_name=self.name)],
                 "summary": f"已创建候选技能草稿：{draft_file.name}",
             }
         except ValueError as exc:

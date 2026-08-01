@@ -948,8 +948,6 @@ class AgentBridge:
         sent_text_contents = set()
 
         conversation_history = []
-        collected_visuals = []
-        seen_visual_ids = set()
 
         persistence = ConversationPersistenceService()
 
@@ -977,7 +975,6 @@ class AgentBridge:
         async def persist_turn(
             *,
             terminal_message: Optional[Dict[str, Any]] = None,
-            office_documents: Optional[List[Dict[str, Any]]] = None,
             log_event: str = "social_session_transcript_persisted",
             **log_fields: Any,
         ) -> None:
@@ -987,29 +984,23 @@ class AgentBridge:
                 persistence.append_complete(
                     session,
                     display_history=conversation_history,
-                    collected_visuals=collected_visuals,
-                    office_documents=office_documents,
                 )
             else:
                 persistence.append_terminal(
                     session,
                     display_history=conversation_history,
                     terminal_message=terminal_message,
-                    collected_visuals=collected_visuals,
-                    office_documents=office_documents,
                 )
             await append_session_transcript_for_mode(session, mode=self.mode)
 
             if session_id not in self.agent._session_store:
                 self.agent._session_store[session_id] = {}
-            self.agent._session_store[session_id]["collected_visuals"] = collected_visuals
             self.agent._session_store[session_id]["display_history_persisted"] = True
 
             logger.info(
                 log_event,
                 session_id=session_id,
                 conversation_history_length=len(conversation_history),
-                collected_visuals_count=len(collected_visuals),
                 **log_fields,
             )
 
@@ -1092,16 +1083,6 @@ class AgentBridge:
                                 for attachment in steering_attachments
                             ]
                         conversation_history.append(steering_message)
-
-                # 收集可视化（基于ID去重）
-                if "visuals" in event.get("data", {}):
-                    visuals = event["data"]["visuals"]
-                    if isinstance(visuals, list):
-                        for visual in visuals:
-                            visual_id = visual.get("id")
-                            if visual_id and visual_id not in seen_visual_ids:
-                                collected_visuals.append(visual)
-                                seen_visual_ids.add(visual_id)
 
                 if event_type == "streaming_text":
                     # Accumulate streaming text
@@ -1200,14 +1181,7 @@ class AgentBridge:
                                 final_message["visuals"] = final_data["visuals"]
 
                             if session:
-                                office_documents = self.agent._session_store.get(
-                                    session_id, {}
-                                ).get("office_documents", [])
-
-                                await persist_turn(
-                                    office_documents=office_documents,
-                                    log_event="social_session_transcript_persisted",
-                                )
+                                await persist_turn(log_event="social_session_transcript_persisted")
 
                             return response_text, reasoning_content
 

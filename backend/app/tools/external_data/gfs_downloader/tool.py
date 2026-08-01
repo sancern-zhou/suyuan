@@ -21,7 +21,7 @@ import structlog
 from pathlib import Path
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import file_products
 
 logger = structlog.get_logger()
 
@@ -258,7 +258,7 @@ class GFSDownloaderTool(LLMTool):
                 }
             },
             "metadata": metadata,
-            "resources": resources_for_files(output_paths, tool_name=self.name),
+            "resources": file_products(output_paths, tool_name=self.name),
             "summary": f"✅ GFS数据下载完成: {len(downloaded_files)}/{forecast_hours + 1}文件成功 ({download_success_rate:.1f}%), 总大小 {total_size_mb:.1f} MB"
         }
 

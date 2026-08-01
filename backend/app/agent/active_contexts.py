@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.agent.prompts.tool_registry import get_tools_by_mode
-from app.agent.resources.models import ResourceStatus
+from app.agent.resources.contracts import ResourceStatus
 from app.agent.resources.resource_service import StoredResource
 from app.agent.selection_context import InvalidContextReference, SkillSelection, load_skill_selection
 

@@ -10,7 +10,7 @@ import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -470,7 +470,6 @@ class BoardVersionService:
                 "board_id": board_id,
                 "local_path": local_path,
                 "path": local_path,
-                "read_url": f"/api/file/{quote(local_path, safe='')}",
                 "mime_type": "application/xml",
                 "format": "drawio",
                 "size_bytes": len(str(xml).encode("utf-8")),

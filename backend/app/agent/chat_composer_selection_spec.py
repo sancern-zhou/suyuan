@@ -5,44 +5,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent.context.context_builder import SimplifiedContextBuilder
-from app.agent.resources.models import (
-    ResourceKind,
-    ResourceLocator,
-    ResourceRole,
-    ResourceStatus,
-    SessionResourceRef,
-)
 from app.agent.resources.resource_service import StoredResource
 from app.agent.selection_context import (
-    InvalidContextReference,
-    build_uploaded_file_ref,
     describe_skill_item,
     load_skill_selection,
-    mark_uploaded_file_missing,
     resource_refs_to_message_attachments,
     resource_refs_to_runtime_attachments,
-    select_conversation_files,
-    selected_resource_projection,
-    serialize_conversation_files,
 )
 from app.routers.agent import AgentAnalyzeRequest
-
-
-def _ref(ref_id: str, *, kind=ResourceKind.FILE, status=ResourceStatus.ACTIVE):
-    now = datetime.now(UTC)
-    return SessionResourceRef(
-        ref_id=ref_id,
-        kind=kind,
-        locator=ResourceLocator(path=f"/tmp/{ref_id}.txt"),
-        role=ResourceRole.ATTACHMENT,
-        label=f"{ref_id}.txt",
-        tool_name="upload_chat_file",
-        run_id="upload",
-        turn_sequence=0,
-        status=status,
-        created_at=now,
-        last_seen_at=now,
-    )
 
 
 def _stored_resource(
@@ -61,18 +31,24 @@ def _stored_resource(
     now = datetime.now(UTC)
     return StoredResource(
         session_id="session-1",
+        group_id="upload-group",
+        parent_resource_id=None,
         resource_key=f"upload:{file_id}",
         resource_id=resource_id,
         kind="file",
         role="source",
         label=filename,
         locator={"path": str(path)},
-        presentation_type=None,
-        presentation=None,
+        relation="primary",
+        format=path.suffix.lstrip(".") or "bin",
+        media_type=mime_type,
+        renderer="image" if mime_type.startswith("image/") else "file",
+        capabilities=["preview", "download"],
         metadata={"file_id": file_id, "mime_type": mime_type},
         tool_name="upload_chat",
         run_id=f"upload:{file_id}",
         turn_sequence=0,
+        version=1,
         status=status,
         created_at=now,
         updated_at=now,
@@ -129,26 +105,6 @@ def test_fixed_policy_context_is_injected_outside_compressible_history():
     assert "<fixed_policies>" in prompt
 
 
-def test_select_conversation_files_validates_type_status_and_order():
-    refs = [
-        _ref("one"),
-        _ref("artifact", kind=ResourceKind.ARTIFACT),
-        _ref("data", kind=ResourceKind.DATA),
-        _ref("inactive", status=ResourceStatus.MISSING),
-    ]
-    assert [ref.ref_id for ref in select_conversation_files(refs, ["artifact", "one"])] == ["artifact", "one"]
-    for invalid in ("data", "inactive", "missing"):
-        with pytest.raises(InvalidContextReference):
-            select_conversation_files(refs, [invalid])
-
-
-def test_prompt_resource_projection_keeps_saved_refs_without_explicit_selection():
-    saved_refs = [_ref("saved")]
-
-    assert selected_resource_projection(None, saved_refs=saved_refs) == saved_refs
-    assert selected_resource_projection([], saved_refs=saved_refs) == saved_refs
-
-
 def test_current_turn_image_ref_must_resolve_to_an_existing_file(tmp_path):
     missing = _stored_resource(
         tmp_path,
@@ -201,28 +157,7 @@ def test_disabled_skill_metadata_prevents_template_selection(tmp_path):
         load_skill_selection("template", skills_dir=tmp_path)
 
 
-def test_published_tool_dependent_skill_is_rejected_in_incompatible_mode():
-    with pytest.raises(ValueError, match="ops_audit_fetch_dataset"):
-        load_skill_selection(
-            "fault_work_order_analysis",
-            available_tools={"read_file"},
-        )
-
-
 def test_uploaded_files_are_safe_to_list_and_images_support_native_input(tmp_path):
-    spreadsheet = tmp_path / "upload.xlsx"
-    spreadsheet.write_bytes(b"data")
-    file_ref = build_uploaded_file_ref(
-        file_id="file-1",
-        file_path=str(spreadsheet),
-        filename="数据.xlsx",
-        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    payload = serialize_conversation_files([file_ref])[0]
-    assert payload["metadata"]["source"] == "user_upload"
-    assert payload["metadata"]["file_id"] == "file-1"
-    assert "locator" not in payload
-
     non_image = _stored_resource(
         tmp_path,
         file_id="file-1",
@@ -261,14 +196,3 @@ def test_uploaded_image_ref_builds_safe_message_attachment(tmp_path):
         "mime_type": "image/png",
         "url": "/api/upload/image-1",
     }]
-
-
-def test_deleted_upload_is_marked_missing(tmp_path):
-    path = tmp_path / "upload.txt"
-    path.write_text("data", encoding="utf-8")
-    ref = build_uploaded_file_ref(
-        file_id="file-1", file_path=str(path), filename="数据.txt", mime_type="text/plain"
-    )
-    changed = mark_uploaded_file_missing([ref], "file-1")
-    assert len(changed) == 1
-    assert changed[0].status is ResourceStatus.MISSING

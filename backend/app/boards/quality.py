@@ -8,7 +8,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 from app.utils.path_config import get_data_registry
 
@@ -238,7 +238,6 @@ class DrawioQualityService:
             "candidate_version_id": candidate_id,
             "local_path": local_path,
             "path": local_path,
-            "read_url": f"/api/file/{quote(local_path, safe='')}",
             "mime_type": "image/png",
             "format": "png",
             "size_bytes": output_path.stat().st_size,

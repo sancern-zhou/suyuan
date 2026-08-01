@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import file_products
 from app.utils.path_config import PROJECT_ROOT, get_social_dir
 
 logger = structlog.get_logger(__name__)
@@ -380,7 +380,7 @@ class CliSessionTool(LLMTool):
                 else (resolved_cwd / path).resolve()
                 for path in output_paths
             ]
-            tool_result["resources"] = resources_for_files(
+            tool_result["resources"] = file_products(
                 [path for path in resolved_outputs if path.is_relative_to(PROJECT_ROOT)],
                 tool_name=self.name,
             )

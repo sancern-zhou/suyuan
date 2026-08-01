@@ -19,9 +19,6 @@ from app.conversations.adapters import (
 )
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
-from app.boards.application import BoardApplicationService
-from app.boards.service import BoardNotFound, BoardVersionNotFound
-from app.db.database import async_session
 from app.agent.resources.resource_service import SessionResourceService
 
 logger = structlog.get_logger()
@@ -32,6 +29,18 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 ARTIFACT_KEYS = {"visuals", "pdf_preview", "markdown_preview", "html_preview", "svg_preview", "spreadsheet_preview"}
 SESSION_LIST_DEFAULT_LIMIT = 200
 SESSION_LIST_MAX_LIMIT = 200
+
+
+async def _resource_catalog_summary(session_id: str) -> tuple[int, dict[str, int]]:
+    service = SessionResourceService.database()
+    counts = await service.resource_counts(session_id)
+    version = await service.catalog_version(session_id)
+    return version, {
+        "total": counts.total,
+        "documents": counts.documents,
+        "visualizations": counts.visualizations,
+        "files": counts.files,
+    }
 
 
 def _strip_lazy_artifacts(obj: Any) -> Any:
@@ -50,111 +59,6 @@ def _strip_lazy_artifacts(obj: Any) -> Any:
             stripped[key] = _strip_lazy_artifacts(value)
         return stripped
     return obj
-
-
-def _extract_visualizations_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    visuals: List[Dict[str, Any]] = []
-    seen_ids = set()
-
-    def add_visuals(items: Any) -> None:
-        if not isinstance(items, list):
-            return
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            payload = item.get("payload")
-            visual_id = item.get("id") or (payload.get("id") if isinstance(payload, dict) else None)
-            if visual_id and visual_id in seen_ids:
-                continue
-            if visual_id:
-                seen_ids.add(visual_id)
-            visuals.append(item)
-
-    for msg in messages:
-        if msg.get("type") != "tool_result":
-            continue
-        data = msg.get("data") or {}
-        result = data.get("result") or {}
-        results = data.get("results") or []
-
-        add_visuals(result.get("visuals"))
-        inner_data = result.get("data") if isinstance(result, dict) else None
-        if isinstance(inner_data, dict):
-            add_visuals(inner_data.get("visuals"))
-        tool_results = result.get("tool_results") if isinstance(result, dict) else None
-        for tool_result in tool_results if isinstance(tool_results, list) else []:
-            if not isinstance(tool_result, dict):
-                continue
-            tool_result_payload = tool_result.get("result")
-            if isinstance(tool_result_payload, dict):
-                add_visuals(tool_result_payload.get("visuals"))
-                tool_result_data = tool_result_payload.get("data")
-                if isinstance(tool_result_data, dict):
-                    add_visuals(tool_result_data.get("visuals"))
-        for item in results if isinstance(results, list) else []:
-            if not isinstance(item, dict):
-                continue
-            add_visuals(item.get("visuals"))
-            item_data = item.get("data")
-            if isinstance(item_data, dict):
-                add_visuals(item_data.get("visuals"))
-
-    return visuals
-
-
-def _extract_office_documents_from_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    documents: List[Dict[str, Any]] = []
-
-    for msg in messages:
-        if msg.get("type") != "tool_result":
-            continue
-        result = (msg.get("data") or {}).get("result") or {}
-        result_data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(result_data, dict):
-            continue
-
-        pdf_preview = result_data.get("pdf_preview")
-        markdown_preview = result_data.get("markdown_preview")
-        html_preview = result_data.get("html_preview")
-        svg_preview = result_data.get("svg_preview")
-        spreadsheet_preview = result_data.get("spreadsheet_preview")
-        if not (pdf_preview or markdown_preview or html_preview or svg_preview or spreadsheet_preview):
-            continue
-
-        document = {
-            "file_name": result_data.get("file_name"),
-            "file_path": result_data.get("file_path")
-                or result_data.get("path")
-                or (pdf_preview or {}).get("pdf_path")
-                or (svg_preview or {}).get("svg_path")
-                or (html_preview or {}).get("html_id"),
-            "file_type": result_data.get("file_type")
-                or (html_preview or {}).get("file_type")
-                or (svg_preview or {}).get("file_type")
-                or (spreadsheet_preview or {}).get("file_type"),
-            "generator": result_data.get("generator")
-                or (result.get("metadata") or {}).get("generator")
-                or "document",
-            "summary": result.get("summary"),
-            "timestamp": msg.get("timestamp"),
-        }
-        if pdf_preview:
-            document["pdf_preview"] = pdf_preview
-        if markdown_preview:
-            document["markdown_preview"] = markdown_preview
-        if html_preview:
-            document["html_preview"] = html_preview
-        if svg_preview:
-            document["svg_preview"] = svg_preview
-        if spreadsheet_preview:
-            document["spreadsheet_preview"] = spreadsheet_preview
-        for key in ("related_files", "artifacts", "refs", "assets"):
-            value = result_data.get(key)
-            if value:
-                document[key] = value
-        documents.append(document)
-
-    return documents
 
 
 @router.get("/")
@@ -432,104 +336,6 @@ async def get_session_messages(
     return result
 
 
-@router.get("/{session_id}/drawio-board")
-async def get_session_drawio_board(
-    session_id: str,
-    user: CurrentUser = Depends(require_current_user),
-    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
-):
-    """
-    按需获取会话 Draw.io 画板状态。
-
-    restore 接口默认不返回画板 XML，避免首屏携带大块可编辑画布数据。
-    """
-    row = await catalog.require_read(session_id, user)
-    if row.source != ConversationSource.WEB:
-        return {
-            "session_id": session_id,
-            "drawio_board": None,
-            "has_drawio_board": False,
-        }
-    from app.db.session_repository import get_session_repository
-
-    repo = get_session_repository()
-    metadata = await repo.get_session_metadata(session_id)
-    if metadata is None:
-        session = await repo.get_session(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
-        metadata = {}
-
-    drawio_board = metadata.get("drawio_board") if isinstance(metadata, dict) else None
-    if not isinstance(drawio_board, dict):
-        drawio_board = None
-
-    try:
-        legacy_xml = (
-            drawio_board.get("current_xml")
-            or drawio_board.get("currentXml")
-            or drawio_board.get("xml")
-            if isinstance(drawio_board, dict)
-            else None
-        )
-        snapshot = await BoardApplicationService(async_session).load_session_board(
-            session_id,
-            legacy_title=(drawio_board or {}).get("title"),
-            legacy_xml=legacy_xml,
-        )
-        if snapshot is None and drawio_board:
-            raise BoardNotFound(str(drawio_board.get("board_id") or session_id))
-        if snapshot is not None:
-            is_candidate = snapshot.lifecycle_status == "candidate"
-            drawio_board = {
-                "artifact_kind": "drawio_board",
-                "board_id": snapshot.board_id,
-                "active_board_id": snapshot.board_id,
-                "title": snapshot.title,
-                "current_xml": snapshot.xml,
-                "version": snapshot.version_number,
-                "revision": snapshot.revision,
-                "lifecycle_status": snapshot.lifecycle_status,
-                "preview_candidate": is_candidate,
-                "requires_visual_review": is_candidate,
-                "candidate_version_id": snapshot.version_id if is_candidate else None,
-                "current_version_id": snapshot.current_version_id,
-                "base_version_id": snapshot.current_version_id,
-                "xml_sha256": snapshot.xml_sha256,
-                "quality_status": snapshot.quality_status,
-                "quality_report": snapshot.quality_report,
-                "screenshot_ref": snapshot.screenshot_ref,
-                "selected_cells": (drawio_board or {}).get("selected_cells") or [],
-                "dirty": False,
-                "updated_at": snapshot.updated_at,
-                "has_board_versions": True,
-            }
-            lightweight_metadata = dict(metadata or {})
-            lightweight_metadata["drawio_board"] = {
-                key: drawio_board[key]
-                for key in (
-                    "artifact_kind", "board_id", "active_board_id", "title",
-                    "version", "revision", "lifecycle_status", "preview_candidate",
-                    "requires_visual_review", "candidate_version_id",
-                    "current_version_id", "updated_at",
-                )
-            }
-            if lightweight_metadata != metadata:
-                await repo.update_session(session_id, metadata=lightweight_metadata)
-    except (FileNotFoundError, BoardNotFound, BoardVersionNotFound) as exc:
-        logger.warning("drawio_board_version_restore_missing", session_id=session_id, error=str(exc))
-        raise HTTPException(status_code=409, detail="board_version_restore_failed") from exc
-    except Exception as exc:
-        logger.exception("drawio_board_version_restore_failed", session_id=session_id, error=str(exc))
-        raise HTTPException(status_code=503, detail="board_version_restore_failed") from exc
-
-    return {
-        "session_id": session_id,
-        "drawio_board": _sanitize_floats(drawio_board),
-        "has_drawio_board": bool(drawio_board)
-    }
-
-
 def _sanitize_floats(obj):
     """
     清理数据中的特殊浮点值（inf, -inf, nan），转换为 None
@@ -588,15 +394,10 @@ async def restore_session(
 
     normalized_session = result.get("normalized_session")
     if normalized_session is not None:
+        resource_version = 0
         resource_counts = {"total": 0, "documents": 0, "visualizations": 0, "files": 0}
         try:
-            counts = await SessionResourceService.database().resource_counts(session_id)
-            resource_counts = {
-                "total": counts.total,
-                "documents": counts.documents,
-                "visualizations": counts.visualizations,
-                "files": counts.files,
-            }
+            resource_version, resource_counts = await _resource_catalog_summary(session_id)
         except Exception as exc:
             logger.warning(
                 "normalized_session_resource_counts_failed",
@@ -604,9 +405,7 @@ async def restore_session(
                 error=str(exc),
             )
         normalized_session["resource_counts"] = resource_counts
-        normalized_session["has_lazy_files"] = resource_counts["files"] > 0
-        normalized_session["has_lazy_office_documents"] = resource_counts["documents"] > 0
-        normalized_session["has_lazy_visualizations"] = resource_counts["visualizations"] > 0
+        normalized_session["resource_version"] = resource_version
         return {
             "message": f"Session {session_id} restored successfully",
             "session": normalized_session,
@@ -624,15 +423,10 @@ async def restore_session(
     # 使用 mode='json' 确保 float 特殊值（inf, -inf, NaN）被正确处理
     session_data = session.model_dump(mode='json')
 
+    resource_version = 0
     resource_counts = {"total": 0, "documents": 0, "visualizations": 0, "files": 0}
     try:
-        counts = await SessionResourceService.database().resource_counts(session_id)
-        resource_counts = {
-            "total": counts.total,
-            "documents": counts.documents,
-            "visualizations": counts.visualizations,
-            "files": counts.files,
-        }
+        resource_version, resource_counts = await _resource_catalog_summary(session_id)
     except Exception as exc:
         logger.warning("session_resource_counts_unavailable", session_id=session_id, error=str(exc))
 
@@ -641,22 +435,7 @@ async def restore_session(
     session_data["total_message_count"] = pagination["total_count"]
     session_data["oldest_sequence"] = pagination["oldest_sequence"]
     session_data["resource_counts"] = resource_counts
-    # 轻量恢复 deliberately 不加载 artifacts，因而 session_data 中可能没有
-    # session_metadata。画板仍按需从 metadata 读取；不能因为首屏省略 metadata
-    # 就把已有画板错误标记为不存在，否则前端不会调度 /drawio-board。
-    drawio_metadata = session_data.get("metadata")
-    if not isinstance(drawio_metadata, dict):
-        try:
-            from app.db.session_repository import get_session_repository
-
-            drawio_metadata = await get_session_repository().get_session_metadata(session_id)
-        except Exception as exc:
-            logger.warning("session_drawio_board_flag_unavailable", session_id=session_id, error=str(exc))
-            drawio_metadata = None
-    session_data["has_lazy_drawio_board"] = bool(
-        isinstance(drawio_metadata, dict)
-        and isinstance(drawio_metadata.get("drawio_board"), dict)
-    )
+    session_data["resource_version"] = resource_version
 
     if lazy_artifacts:
         session_data["conversation_history"] = _strip_lazy_artifacts(

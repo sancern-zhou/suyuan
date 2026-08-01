@@ -22,7 +22,6 @@ from .core.loop import ReActLoop
 from .core.planner import ReActPlanner
 from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
-from .session.conversation_persistence import ConversationPersistenceService
 from .resources.runtime import (
     event_turn_sequence,
     persist_tool_result_resources,
@@ -30,10 +29,7 @@ from .resources.runtime import (
 )
 from .resources.resource_service import SessionResourceService, StoredResource
 from .resources.resource_map import project_agent_resource_map
-from .selection_context import (
-    resource_refs_to_runtime_attachments,
-    selected_resource_projection,
-)
+from .selection_context import resource_refs_to_runtime_attachments
 
 logger = structlog.get_logger()
 
@@ -68,8 +64,6 @@ class ReActAgent:
     )
 
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
-    SESSION_DOCUMENT_CONTEXT_LIMIT = 5
-    OFFICE_DOCUMENT_STORE_LIMIT = 50
 
     @staticmethod
     def _select_auto_profile(
@@ -83,88 +77,6 @@ class ReActAgent:
         if supports_native_multimodal(manual_mode):
             return "multimodal"
         return None
-
-    @staticmethod
-    def _trim_office_documents(
-        documents: List[Dict[str, Any]],
-        max_documents: int,
-    ) -> List[Dict[str, Any]]:
-        if max_documents <= 0:
-            return []
-
-        deduped_by_key: Dict[str, Dict[str, Any]] = {}
-        ordered_keys: List[str] = []
-        anonymous: List[Dict[str, Any]] = []
-        for document in documents or []:
-            if not isinstance(document, dict):
-                continue
-            doc = dict(document)
-            key = (
-                doc.get("file_path")
-                or doc.get("pdf_preview", {}).get("pdf_id")
-                or doc.get("html_preview", {}).get("html_id")
-                or doc.get("file_name")
-            )
-            if not key:
-                anonymous.append(doc)
-                continue
-            key = str(key)
-            if key in deduped_by_key:
-                ordered_keys.remove(key)
-            deduped_by_key[key] = doc
-            ordered_keys.append(key)
-
-        merged = [deduped_by_key[key] for key in ordered_keys] + anonymous
-        return merged[-max_documents:]
-
-    @staticmethod
-    def _office_document_path(document: Dict[str, Any]) -> str:
-        if not isinstance(document, dict):
-            return ""
-        return str(
-            document.get("file_path")
-            or document.get("source_file_path")
-            or document.get("path")
-            or document.get("markdown_preview", {}).get("markdown_path")
-            or document.get("pdf_preview", {}).get("pdf_path")
-            or document.get("pdf_preview", {}).get("pdf_id")
-            or document.get("html_preview", {}).get("html_id")
-            or document.get("svg_preview", {}).get("svg_path")
-            or ""
-        )
-
-    @classmethod
-    def _build_session_document_context(
-        cls,
-        documents: List[Dict[str, Any]],
-        max_documents: Optional[int] = None,
-    ) -> str:
-        recent_docs = cls._trim_office_documents(
-            documents or [],
-            max_documents or cls.SESSION_DOCUMENT_CONTEXT_LIMIT,
-        )
-        if not recent_docs:
-            return ""
-
-        lines = [
-            "## 当前会话可用文档",
-            "下面是本会话已经上传、读取或生成过的最近文档。",
-        ]
-        for index, document in enumerate(recent_docs, 1):
-            name = document.get("file_name") or document.get("title") or "未命名文档"
-            path = cls._office_document_path(document)
-            file_type = document.get("file_type") or document.get("doc_type") or ""
-            summary = str(document.get("summary") or "").strip()
-            line = f"{index}. {name}"
-            if file_type:
-                line += f" ({file_type})"
-            if path:
-                line += f"\n   路径: {path}"
-            if summary:
-                line += f"\n   摘要: {summary[:160]}"
-            lines.append(line)
-
-        return "\n".join(lines)
 
     @staticmethod
     def _build_attachment_reference_context(
@@ -214,11 +126,6 @@ class ReActAgent:
                     runtime_count=len(runtime_history),
                     persisted_count=len(session.conversation_history),
                 )
-
-        collected_data_ids = entry.get("collected_data_ids", [])
-        collected_visuals = entry.get("collected_visuals", [])
-
-        # 图表资源已由 SessionResourceService 持久化；不再复制到 metadata.visualizations。
 
         if entry.get("has_error"):
             session.error = {
@@ -1405,8 +1312,6 @@ class ReActAgent:
                             "memory": memory_manager,
                             "created": datetime.utcnow(),
                             "last_used": datetime.utcnow(),
-                            "collected_data_ids": [],
-                            "collected_visuals": [],
                         }
 
                         return session_id, memory_manager, False  # False 表示不是新建，是恢复的

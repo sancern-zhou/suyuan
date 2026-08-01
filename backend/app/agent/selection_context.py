@@ -6,13 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.agent.resources.models import (
-    ResourceKind,
-    ResourceLocator,
-    ResourceRole,
-    ResourceStatus,
-    SessionResourceRef,
-)
+from app.agent.resources.contracts import ResourceStatus
 from app.agent.resources.resource_service import StoredResource
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "docs" / "skills"
@@ -126,80 +120,6 @@ def load_skill_selection(
     )
 
 
-def select_conversation_files(
-    refs: list[SessionResourceRef], requested_ids: list[str]
-) -> list[SessionResourceRef]:
-    """Resolve active file/artifact refs in the exact order requested by the user."""
-    by_id = {ref.ref_id: ref for ref in refs}
-    selected: list[SessionResourceRef] = []
-    for ref_id in dict.fromkeys(requested_ids):
-        ref = by_id.get(ref_id)
-        if (
-            ref is None
-            or ref.status is not ResourceStatus.ACTIVE
-            or ref.kind not in {ResourceKind.FILE, ResourceKind.ARTIFACT}
-        ):
-            raise InvalidContextReference(f"invalid conversation file reference: {ref_id}")
-        selected.append(ref)
-    return selected
-
-
-def selected_resource_projection(
-    selected_refs: list[SessionResourceRef] | None,
-    *,
-    saved_refs: list[SessionResourceRef] | None = None,
-) -> list[SessionResourceRef]:
-    """Keep the complete manifest; explicit refs affect ranking, not visibility."""
-    del selected_refs
-    return list(saved_refs or [])
-
-
-def build_uploaded_file_ref(
-    *,
-    file_id: str,
-    file_path: str,
-    filename: str,
-    mime_type: str,
-) -> SessionResourceRef:
-    """Create the canonical manifest entry for a completed chat upload."""
-    return SessionResourceRef.create(
-        kind=ResourceKind.FILE,
-        locator=ResourceLocator(path=file_path),
-        logical_key=f"upload:{file_id}",
-        role=ResourceRole.ATTACHMENT,
-        label=filename,
-        tool_name="upload_chat_file",
-        run_id=f"upload:{file_id}",
-        turn_sequence=0,
-        metadata={
-            "source": "user_upload",
-            "file_id": file_id,
-            "mime_type": mime_type,
-        },
-    )
-
-
-def serialize_conversation_files(refs: list[SessionResourceRef]) -> list[dict]:
-    """Return active file-like resources suitable for the composer menu."""
-    return [
-        {
-            "ref_id": ref.ref_id,
-            "kind": ref.kind.value,
-            "role": ref.role.value,
-            "label": ref.label,
-            "tool_name": ref.tool_name,
-            "turn_sequence": ref.turn_sequence,
-            "status": ref.status.value,
-            "created_at": ref.created_at.isoformat(),
-            "last_used_at": ref.last_used_at.isoformat() if ref.last_used_at else None,
-            "metadata": ref.metadata,
-        }
-        for ref in refs
-        if ref.status is ResourceStatus.ACTIVE
-        and ref.kind in {ResourceKind.FILE, ResourceKind.ARTIFACT}
-    ]
-
-
 def resource_refs_to_runtime_attachments(
     refs: Sequence[StoredResource],
 ) -> list[dict[str, str]]:
@@ -227,7 +147,6 @@ def resource_refs_to_runtime_attachments(
         })
     return attachments
 
-
 def resource_refs_to_message_attachments(
     refs: Sequence[StoredResource],
 ) -> list[dict[str, str]]:
@@ -247,15 +166,3 @@ def resource_refs_to_message_attachments(
             attachment["mime_type"] = mime_type
         attachments.append(attachment)
     return attachments
-
-
-def mark_uploaded_file_missing(
-    refs: list[SessionResourceRef], file_id: str
-) -> list[SessionResourceRef]:
-    """Return manifest updates that invalidate a deleted uploaded file."""
-    return [
-        ref.model_copy(update={"status": ResourceStatus.MISSING})
-        for ref in refs
-        if ref.metadata.get("file_id") == file_id
-        and ref.status is ResourceStatus.ACTIVE
-    ]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agent.resources.models import ResourceKind, ResourceStatus
+from app.agent.resources.contracts import ResourceKind, ResourceStatus
 from app.agent.resources.resource_service import SessionResourceService
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 

@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import file_products
 from app.utils.path_config import PROJECT_ROOT
 
 logger = structlog.get_logger(__name__)
@@ -589,7 +589,7 @@ class TerminalSessionTool(LLMTool):
             path = path.resolve() if path.is_absolute() else (cwd / path).resolve()
             if path.is_relative_to(PROJECT_ROOT):
                 resolved.append(path)
-        result["resources"] = resources_for_files(resolved, tool_name=self.name)
+        result["resources"] = file_products(resolved, tool_name=self.name)
         return result
 
     def _resolve_cwd(self, cwd: Optional[str]) -> Optional[Path]:

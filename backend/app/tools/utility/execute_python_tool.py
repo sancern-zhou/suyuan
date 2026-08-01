@@ -459,7 +459,6 @@ class ExecutePythonTool(LLMTool):
                     result["data"]["spreadsheet_preview"] = {
                         "file_type": office_suffix.lstrip("."),
                         "editable": True,
-                        "download_url": "/api/office/download-excel",
                         "size": Path(office_file).stat().st_size,
                     }
                     result["data"]["file_path"] = office_file
@@ -722,9 +721,9 @@ class ExecutePythonTool(LLMTool):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
             self._attach_resume_context(result)
-            from app.tools.resource_declarations import data_resource, resources_for_files
+            from app.tools.resource_declarations import data_resource, file_products
 
-            result["resources"] = resources_for_files(
+            result["resources"] = file_products(
                 final_files,
                 tool_name=self.name,
             )

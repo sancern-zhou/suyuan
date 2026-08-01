@@ -188,7 +188,6 @@ class SessionRepository:
         query: str,
         mode: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        office_documents: Optional[List[Dict[str, Any]]] = None
     ) -> SessionDB:
         """创建新会话"""
         async with AsyncSession(self.engine) as session:
@@ -216,10 +215,6 @@ class SessionRepository:
             stmt = select(SessionDB).where(SessionDB.session_id == session_id)
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
-
-    async def find_office_document_by_pdf_id(self, pdf_id: str) -> Optional[Dict[str, Any]]:
-        """Legacy lookup removed; query session_resources instead."""
-        return None
 
     async def get_session_with_messages(
         self,

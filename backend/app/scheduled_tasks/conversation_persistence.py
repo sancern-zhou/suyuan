@@ -51,15 +51,11 @@ class ScheduledTaskConversationPersistence:
             self.transcript_persistence.append_complete(
                 session,
                 display_history=display_history,
-                collected_visuals=session.metadata.get("visualizations", []),
-                office_documents=None,
             )
         else:
             self.transcript_persistence.apply_complete(
                 session,
                 display_history=display_history,
-                collected_visuals=session.metadata.get("visualizations", []),
-                office_documents=None,
             )
 
         saved = await self.session_manager.save_session(session)

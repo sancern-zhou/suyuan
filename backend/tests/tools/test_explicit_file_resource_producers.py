@@ -3,10 +3,10 @@ from app.tools.resource_declarations import (
     data_resource,
     directory_artifact,
     file_product,
-    file_resource,
+    single_file_product,
     preview_file,
     primary_file,
-    resources_for_files,
+    file_products,
 )
 
 
@@ -86,8 +86,8 @@ def test_existing_generic_producer_seams_emit_only_valid_grouped_members(tmp_pat
     second.write_text("{}")
 
     members = [
-        file_resource(first, tool_name="write_file"),
-        *resources_for_files([first, second], tool_name="bash"),
+        single_file_product(first, tool_name="write_file"),
+        *file_products([first, second], tool_name="bash"),
         data_resource("analysis:v1:abc", tool_name="execute_python"),
     ]
 

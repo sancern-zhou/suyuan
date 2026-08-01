@@ -10,7 +10,7 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import single_file_product
 from app.tools.resource_refs import build_file_ref, build_url_ref, build_visual_ref
 from app.tools.utility.project_root import get_project_root
 from app.services.image_cache import get_image_cache
@@ -581,7 +581,7 @@ class GetPlatformWeatherImageTool(LLMTool):
                     "product_code": product_spec.code,
                     "output_root": str(self.output_root),
                 },
-                "resources": [file_resource(local_path, tool_name=self.name)],
+                "resources": [single_file_product(local_path, tool_name=self.name)],
                 "summary": f"已获取{date_key} {product_spec.name} {time_key} 图片",
             }
             if visual:

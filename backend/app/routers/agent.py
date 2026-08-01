@@ -28,7 +28,6 @@ from app.agent.runtime.ownership import run_ownership_registry
 from app.agent.selection_context import (
     InvalidContextReference,
     resource_refs_to_message_attachments,
-    select_conversation_files,
 )
 from app.agent.resources.resource_service import SessionResourceService
 from app.auth.dependencies import require_current_user
@@ -820,9 +819,7 @@ async def analyze_stream(
         persistence = ConversationPersistenceService()
         actual_session_id = request.session_id
         conversation_history = []
-        collected_visuals = []
         latest_drawio_board = None
-        seen_visual_ids = set()  # ✅ 用于去重：记录已添加的图表ID
 
         if not actual_session_id:
             import uuid
@@ -922,7 +919,7 @@ async def analyze_stream(
 
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, collected_visuals, latest_drawio_board, drawio_board_context, seen_visual_ids
+            nonlocal actual_session_id, conversation_history, latest_drawio_board, drawio_board_context
             cancel_event = None
             latest_event_run_id = None
 
@@ -1156,32 +1153,6 @@ async def analyze_stream(
                                     map_program,
                                 )
 
-                        # 收集可视化（基于ID去重）
-                        if "visuals" in event.get("data", {}):
-                            visuals = event["data"]["visuals"]
-                            if isinstance(visuals, list):
-                                for visual in visuals:
-                                    visual_id = visual.get("id")
-                                    visual_title = visual.get("title", "")
-                                    if visual_id and visual_id not in seen_visual_ids:
-                                        logger.info(
-                                            "visual_collected",
-                                            visual_id=visual_id,
-                                            visual_title=visual_title[:50] if visual_title else "",
-                                            seen_count=len(seen_visual_ids)
-                                        )
-                                        collected_visuals.append(visual)
-                                        seen_visual_ids.add(visual_id)
-                                    elif visual_id and visual_id in seen_visual_ids:
-                                        logger.warning(
-                                            "visual_duplicate_skipped",
-                                            visual_id=visual_id,
-                                            visual_title=visual_title[:50] if visual_title else ""
-                                        )
-                                    elif not visual_id:
-                                        # 如果没有ID，也添加（向后兼容）
-                                        collected_visuals.append(visual)
-
                         # ✅ 如果是完成或致命错误，先保存会话（在 yield 之前）
                         if event["type"] == "complete":
                             event_run_id = _event_run_id(event)
@@ -1194,14 +1165,6 @@ async def analyze_stream(
                                 event_data = json.dumps(event, ensure_ascii=False, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
-                            # Legacy transcript persistence is removed in the
-                            # backend cleanup task. It must never be injected
-                            # into the live transport; resources_changed is the
-                            # only preview notification contract.
-                            office_documents = agent._session_store.get(
-                                actual_session_id, {}
-                            ).get("office_documents", [])
-
                             # ✅ 添加最终答案消息
                             event_data = event.get("data") or {}
                             if event_data.get("answer"):
@@ -1220,25 +1183,11 @@ async def analyze_stream(
 
                             logger.info("saving_session_on_complete",
                                        session_id=actual_session_id,
-                                       conversation_history_length=len(conversation_history),
-                                       collected_visuals_count=len(collected_visuals))
-
-                            # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
-                            if actual_session_id not in agent._session_store:
-                                agent._session_store[actual_session_id] = {}
-
-                            agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
-                            logger.info(
-                                "collected_data_stored",
-                                session_id=actual_session_id,
-                                visuals_count=len(collected_visuals)
-                            )
+                                       conversation_history_length=len(conversation_history))
 
                             persistence.append_complete(
                                 session,
                                 display_history=conversation_history,
-                                collected_visuals=collected_visuals,
-                                office_documents=office_documents,
                                 drawio_board=latest_drawio_board or drawio_board_context,
                             )
                             await session_manager.append_session_transcript(session)
@@ -1260,7 +1209,6 @@ async def analyze_stream(
                             if actual_session_id not in agent._session_store:
                                 agent._session_store[actual_session_id] = {}
 
-                            agent._session_store[actual_session_id]["collected_visuals"] = collected_visuals
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
                             event_data = event.get("data") or {}
@@ -1284,7 +1232,6 @@ async def analyze_stream(
                                     "data": event_data,
                                     "timestamp": event_data.get("timestamp") or datetime.now().isoformat(),
                                 },
-                                collected_visuals=collected_visuals,
                                 drawio_board=latest_drawio_board or drawio_board_context,
                             )
                             await session_manager.append_session_transcript(session)
@@ -1313,7 +1260,6 @@ async def analyze_stream(
                                 "content": "客户端已断开，本轮分析已取消",
                                 "timestamp": datetime.now().isoformat(),
                             },
-                            collected_visuals=collected_visuals,
                             drawio_board=latest_drawio_board or drawio_board_context,
                         )
                         await session_manager.append_session_transcript(session)
@@ -1337,7 +1283,6 @@ async def analyze_stream(
                             "content": str(e),
                             "timestamp": datetime.now().isoformat(),
                         },
-                        collected_visuals=collected_visuals,
                         drawio_board=latest_drawio_board or drawio_board_context,
                     )
                     session.error = {
