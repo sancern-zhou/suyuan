@@ -142,30 +142,36 @@ async def _ensure_social_binding_schema(conn) -> None:
 
 
 async def _ensure_session_resources_schema(conn) -> None:
-    """Ensure the unified row-oriented session resource store exists on startup."""
+    """Create the grouped resource delivery schema for a clean database."""
     if conn.dialect.name != "postgresql":
         return
     statements = (
         """
         CREATE TABLE IF NOT EXISTS session_resources (
+            resource_id VARCHAR(64) PRIMARY KEY,
             session_id VARCHAR(255) NOT NULL,
+            group_id VARCHAR(64) NOT NULL,
+            parent_resource_id VARCHAR(64)
+                REFERENCES session_resources(resource_id) ON DELETE CASCADE,
             resource_key VARCHAR(255) NOT NULL,
-            resource_id VARCHAR(64) NOT NULL UNIQUE,
+            relation VARCHAR(32) NOT NULL,
             kind VARCHAR(32) NOT NULL,
-            role VARCHAR(64) NOT NULL,
-            logical_key VARCHAR(255),
+            role VARCHAR(32) NOT NULL,
             label VARCHAR(512) NOT NULL,
             locator JSONB NOT NULL,
-            presentation_type VARCHAR(32),
-            presentation JSONB,
+            format VARCHAR(64) NOT NULL,
+            media_type VARCHAR(255) NOT NULL,
+            renderer VARCHAR(64) NOT NULL,
+            capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
             metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
             tool_name VARCHAR(255) NOT NULL DEFAULT '',
-            run_id VARCHAR(255),
+            run_id VARCHAR(255) NOT NULL,
             turn_sequence INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL,
             status VARCHAR(32) NOT NULL DEFAULT 'active',
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (session_id, resource_key, role)
+            UNIQUE (session_id, group_id, version, resource_key)
         )
         """,
         """
@@ -176,38 +182,12 @@ async def _ensure_session_resources_schema(conn) -> None:
         )
         """,
         """
-        ALTER TABLE IF EXISTS session_resources
-            ALTER COLUMN resource_id TYPE VARCHAR(64)
-            USING resource_id::text
+        CREATE INDEX IF NOT EXISTS ix_session_resources_catalog
+            ON session_resources(session_id, status, updated_at DESC)
         """,
         """
-        ALTER TABLE IF EXISTS session_resources
-            ALTER COLUMN logical_key DROP NOT NULL,
-            ALTER COLUMN presentation_type DROP NOT NULL,
-            ALTER COLUMN presentation DROP NOT NULL
-        """,
-        """
-        DO $$
-        DECLARE
-            current_columns TEXT[];
-        BEGIN
-            SELECT array_agg(att.attname ORDER BY keys.ordinality)
-              INTO current_columns
-              FROM pg_constraint con
-              JOIN unnest(con.conkey) WITH ORDINALITY AS keys(attnum, ordinality) ON TRUE
-              JOIN pg_attribute att
-                ON att.attrelid = con.conrelid AND att.attnum = keys.attnum
-             WHERE con.conrelid = 'session_resources'::regclass
-               AND con.contype = 'p';
-
-            IF current_columns IS DISTINCT FROM ARRAY['session_id', 'resource_key', 'role'] THEN
-                ALTER TABLE session_resources DROP CONSTRAINT session_resources_pkey;
-                ALTER TABLE session_resources
-                    ADD CONSTRAINT session_resources_pkey
-                    PRIMARY KEY (session_id, resource_key, role);
-            END IF;
-        END
-        $$
+        CREATE INDEX IF NOT EXISTS ix_session_resources_group
+            ON session_resources(session_id, group_id, version)
         """,
     )
     for statement in statements:

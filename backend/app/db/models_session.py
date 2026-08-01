@@ -13,7 +13,7 @@
 - content 字段：JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
-from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, Index
+from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -23,27 +23,48 @@ Base = declarative_base()
 
 
 class SessionResourceDB(Base):
-    """One current resource row for the unified session resource service."""
+    """One immutable member of a versioned session resource group."""
 
     __tablename__ = "session_resources"
 
-    session_id = Column(String(255), primary_key=True)
-    resource_key = Column(String(255), primary_key=True)
-    resource_id = Column(String(64), nullable=False, unique=True, index=True)
+    resource_id = Column(String(64), primary_key=True)
+    session_id = Column(String(255), nullable=False)
+    group_id = Column(String(64), nullable=False)
+    parent_resource_id = Column(
+        String(64),
+        ForeignKey("session_resources.resource_id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    resource_key = Column(String(255), nullable=False)
+    relation = Column(String(32), nullable=False)
     kind = Column(String(32), nullable=False, index=True)
-    role = Column(String(32), primary_key=True)
-    logical_key = Column(String(255), nullable=True)
+    role = Column(String(32), nullable=False)
     label = Column(String(512), nullable=False)
     locator = Column(JSONB, nullable=False)
-    presentation_type = Column(String(32), nullable=True, index=True)
-    presentation = Column(JSONB, nullable=True)
+    format = Column(String(64), nullable=False)
+    media_type = Column(String(255), nullable=False)
+    renderer = Column(String(64), nullable=False, index=True)
+    capabilities = Column(JSONB, nullable=False, default=list)
     resource_metadata = Column("metadata", JSONB, nullable=False, default=dict)
-    tool_name = Column(String(255), nullable=False)
+    tool_name = Column(String(255), nullable=False, default="")
     run_id = Column(String(255), nullable=False)
     turn_sequence = Column(Integer, nullable=False, default=0)
+    version = Column(Integer, nullable=False)
     status = Column(String(32), nullable=False, default="active", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "group_id",
+            "version",
+            "resource_key",
+            name="uq_session_resource_group_member",
+        ),
+        Index("ix_session_resources_catalog", "session_id", "status", "updated_at"),
+        Index("ix_session_resources_group", "session_id", "group_id", "version"),
+    )
 
 
 class SessionResourceVersionDB(Base):
