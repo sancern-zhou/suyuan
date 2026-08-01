@@ -7,7 +7,7 @@ from app.boards.application import BoardApplicationService
 from app.boards.quality import BoardQualityFailed, BoardRenderFailed, DrawioQualityService
 from app.db.database import async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import board_product
 
 
 def _merge_quality_reports(
@@ -189,8 +189,10 @@ class RenderDrawioBoardCandidateTool(LLMTool):
                 "artifact_kind": "drawio_board",
             },
             "refs": {"artifacts": [source.get("xml_ref"), screenshot_ref]},
-            "resources": resources_for_files(
-                [screenshot_ref.get("local_path")],
+            "resources": board_product(
+                xml_path=source["xml_ref"]["local_path"],
+                artifact_id=source["board_id"],
+                screenshot_path=screenshot_ref["local_path"],
                 tool_name=self.name,
             ),
             "attachments": [

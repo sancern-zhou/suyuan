@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+from app.utils.path_config import get_data_registry
 
 
 def _file_format(path: Path) -> str:
@@ -29,6 +32,20 @@ def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
         for key, value in metadata.items()
         if "path" not in key.lower() and "url" not in key.lower()
     }
+
+
+def _safe_spec_payload(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_safe_spec_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _safe_spec_payload(item)
+            for key, item in value.items()
+            if "path" not in key.lower()
+            and "url" not in key.lower()
+            and "base64" not in key.lower()
+        }
+    return value
 
 
 def primary_file(
@@ -245,6 +262,7 @@ def chart_resource(
     *,
     group_key: str,
     tool_name: str,
+    path: str | Path | None = None,
     label: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -255,9 +273,11 @@ def chart_resource(
         "relation": "primary",
         "role": "output",
         "label": label or visual_id,
-        "locator": {"visual_id": visual_id},
-        "format": "chart",
-        "media_type": "application/vnd.suyuan.chart+json",
+        "locator": {"path": str(Path(path).expanduser().resolve())}
+        if path is not None
+        else {"visual_id": visual_id},
+        "format": "json",
+        "media_type": "application/json",
         "renderer": "chart",
         "capabilities": ["preview"],
         "metadata": _safe_metadata(metadata),
@@ -270,6 +290,7 @@ def board_resource(
     *,
     group_key: str,
     tool_name: str,
+    path: str | Path | None = None,
     label: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -280,14 +301,46 @@ def board_resource(
         "relation": "primary",
         "role": "output",
         "label": label or artifact_id,
-        "locator": {"artifact_id": artifact_id},
+        "locator": {"path": str(Path(path).expanduser().resolve())}
+        if path is not None
+        else {"artifact_id": artifact_id},
         "format": "drawio",
-        "media_type": "application/vnd.jgraph.mxfile",
+        "media_type": "application/xml",
         "renderer": "board",
         "capabilities": ["preview", "edit"],
         "metadata": _safe_metadata(metadata),
         "tool_name": tool_name,
     }
+
+
+def board_product(
+    *,
+    xml_path: str | Path,
+    artifact_id: str,
+    tool_name: str,
+    screenshot_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    group_key = f"board:{artifact_id}"
+    board = board_resource(
+        artifact_id,
+        path=xml_path,
+        group_key=group_key,
+        tool_name=tool_name,
+    )
+    board["resource_key"] = "board-xml"
+    members = [board]
+    if screenshot_path is not None:
+        screenshot = derivative_file(
+            screenshot_path,
+            group_key=group_key,
+            parent_key="board-xml",
+            tool_name=tool_name,
+            relation="preview",
+            renderer="image",
+        )
+        screenshot["resource_key"] = "board-preview"
+        members.append(screenshot)
+    return members
 
 
 def visual_resource(
@@ -322,14 +375,44 @@ def resources_for_visuals(
         visual_id = str(visual.get("id") or payload.get("image_id") or "").strip()
         if not visual_id or visual_id in seen:
             continue
-        resources.append(
-            visual_resource(
-                visual_id,
-                tool_name=tool_name,
-                label=str(visual.get("title") or payload.get("title") or visual_id),
-                metadata={"type": visual.get("type") or payload.get("type")},
-            )
+        chart_dir = (get_data_registry() / "charts").resolve()
+        chart_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = chart_dir / f"{visual_id}.json"
+        safe_spec = _safe_spec_payload(visual)
+        spec_path.write_text(
+            json.dumps(safe_spec, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
         )
+        group_key = f"visual:{visual_id}"
+        chart = chart_resource(
+            visual_id,
+            path=spec_path,
+            group_key=group_key,
+            tool_name=tool_name,
+            label=str(visual.get("title") or payload.get("title") or visual_id),
+            metadata={"type": visual.get("type") or payload.get("type")},
+        )
+        chart["resource_key"] = "chart-spec"
+        resources.append(chart)
+        raw_image_path = (
+            visual.get("local_path")
+            or visual.get("file_path")
+            or payload.get("local_path")
+            or payload.get("file_path")
+        )
+        if isinstance(raw_image_path, str):
+            image_path = Path(raw_image_path).expanduser().resolve()
+            if image_path.is_file():
+                image = derivative_file(
+                    image_path,
+                    group_key=group_key,
+                    parent_key="chart-spec",
+                    tool_name=tool_name,
+                    relation="rendition",
+                    renderer="image",
+                )
+                image["resource_key"] = "chart-image"
+                resources.append(image)
         seen.add(visual_id)
     return resources
 
