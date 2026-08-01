@@ -1,6 +1,8 @@
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pytest
+from PIL import Image
 
 from app.tools.visualization.create_report_chart.tool import (
     CreateReportChartTool,
@@ -45,6 +47,13 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "correlation_heatmap",
         "boxplot",
         "table_image",
+        "combo",
+        "range_line",
+        "waterfall",
+        "pareto",
+        "diverging_bar",
+        "step_line",
+        "error_bar",
         "pollutant_calendar",
         "generic_pollutant_wind_rose",
         "aqi_calendar",
@@ -78,6 +87,11 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "correlation_heatmap",
         "boxplot",
         "table_image",
+        "combo_chart",
+        "range_and_error",
+        "waterfall_chart",
+        "pareto_chart",
+        "comparison_charts",
         "pollutant_calendar",
         "generic_pollutant_wind_rose",
         "aqi_calendar",
@@ -1020,3 +1034,488 @@ async def test_multi_chart_request_is_split_into_separate_report_images():
     assert len(result["visuals"]) == 2
     for visual in result["visuals"]:
         assert Path(visual["local_path"]).exists()
+
+
+NEW_ANALYTICAL_CASES = [
+    (
+        "combo",
+        {
+            "labels": ["一季度", "二季度", "三季度"],
+            "series": [
+                {"name": "产量", "type": "bar", "values": [120, 150, 180]},
+                {"name": "增速", "type": "line", "axis": "right", "values": [8, 12, 10]},
+            ],
+        },
+        {"left_y_label": "产量（吨）", "right_y_label": "增速（%）"},
+    ),
+    (
+        "range_line",
+        {
+            "labels": ["一月", "二月", "三月"],
+            "series": [{"name": "浓度", "values": [42, 38, 35], "lower": [35, 31, 29], "upper": [49, 45, 42]}],
+        },
+        {},
+    ),
+    (
+        "waterfall",
+        {"labels": ["结构调整", "产量变化", "治理措施"], "values": [-12, 8, -6], "start_value": 100},
+        {},
+    ),
+    ("pareto", {"labels": ["来源B", "来源A", "来源C"], "values": [30, 45, 25]}, {}),
+    ("diverging_bar", {"labels": ["城市A", "城市B", "城市C"], "values": [-8.2, 3.1, -1.5]}, {}),
+    ("step_line", {"labels": ["阶段一", "阶段二", "阶段三"], "values": [1, 2, 1.5]}, {"step": "post"}),
+    (
+        "error_bar",
+        {"labels": ["A组", "B组", "C组"], "series": [{"name": "均值", "values": [12, 15, 11], "errors": [1.2, 1.5, 0.8]}]},
+        {},
+    ),
+]
+
+EXPECTED_NEW_GEOMETRIES = {
+    "combo": ["bar", "line"],
+    "range_line": ["line", "interval_band"],
+    "waterfall": ["bar", "connector_line"],
+    "pareto": ["bar", "line"],
+    "diverging_bar": ["bar"],
+    "step_line": ["line"],
+    "error_bar": ["point", "error_bar"],
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("chart_type", "data", "options"), NEW_ANALYTICAL_CASES)
+async def test_new_analytical_chart_types_render_report_images(chart_type, data, options):
+    result = await CreateReportChartTool().execute(
+        chart_id=f"new_{chart_type}_case",
+        chart_type=chart_type,
+        title=f"{chart_type} 测试图",
+        data=data,
+        options=options,
+    )
+
+    metadata = result["data"]["metadata"]
+    image_path = Path(result["visuals"][0]["local_path"])
+    assert result["success"] is True, result
+    assert metadata["applied_chart_type"] == chart_type
+    assert metadata["series_count"] >= 1
+    assert metadata["axis_count"] in {1, 2}
+    assert metadata["geometry_types"] == EXPECTED_NEW_GEOMETRIES[chart_type]
+    assert image_path.exists()
+    with Image.open(image_path) as rendered_image:
+        assert rendered_image.width >= 1000
+        assert rendered_image.height >= 700
+        grayscale = rendered_image.convert("L")
+        minimum, maximum = grayscale.getextrema()
+        assert maximum - minimum > 20
+
+
+@pytest.mark.asyncio
+async def test_combo_reports_axes_geometry_stacks_and_many_series_warning():
+    result = await CreateReportChartTool().execute(
+        chart_id="combo_metadata_case",
+        chart_type="combo",
+        title="结构与增长趋势",
+        data={
+            "labels": ["一月", "二月", "三月"],
+            "series": [
+                {"name": "工业", "type": "bar", "stack": "构成", "values": [20, 22, 21]},
+                {"name": "交通", "type": "bar", "stack": "构成", "values": [10, 11, 9]},
+                {"name": "目标", "type": "bar", "values": [35, 35, 35]},
+                {"name": "总量", "type": "line", "values": [30, 33, 30]},
+                {"name": "增速", "type": "line", "axis": "right", "values": [3, 10, -9]},
+            ],
+        },
+        options={"left_y_label": "排放量（吨）", "right_y_label": "增速（%）"},
+    )
+
+    metadata = result["data"]["metadata"]
+    assert result["success"] is True
+    assert metadata["axis_count"] == 2
+    assert metadata["axis_series_counts"] == {"left": 4, "right": 1}
+    assert metadata["geometry_types"] == ["bar", "line"]
+    assert metadata["stack_groups"] == ["构成"]
+    assert "combo_many_series" in result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("series", "options", "expected_axis_count"),
+    [
+        (
+            [
+                {"name": "数量", "type": "bar", "values": [10, 12]},
+                {"name": "趋势", "type": "line", "values": [9, 13]},
+            ],
+            {},
+            1,
+        ),
+        (
+            [
+                {"name": "A", "type": "bar", "values": [10, 12]},
+                {"name": "B", "type": "bar", "values": [8, 9]},
+                {"name": "趋势", "type": "line", "axis": "right", "values": [2, 3]},
+            ],
+            {"left_y_label": "数量", "right_y_label": "增速"},
+            2,
+        ),
+    ],
+)
+async def test_combo_supports_single_axis_and_grouped_dual_axis_variants(
+    series, options, expected_axis_count
+):
+    result = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="组合变体",
+        data={"labels": ["A", "B"], "series": series},
+        options=options,
+    )
+
+    assert result["success"] is True, result
+    assert result["data"]["metadata"]["axis_count"] == expected_axis_count
+
+
+@pytest.mark.asyncio
+async def test_combo_emits_density_and_dual_axis_scale_warnings():
+    dense_series = [
+        {"name": f"柱{index}", "type": "bar", "values": [index + 1] * 10}
+        for index in range(5)
+    ] + [{"name": "趋势", "type": "line", "values": list(range(10))}]
+    dense_result = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="密集组合图",
+        data={"labels": [f"分类{index}" for index in range(10)], "series": dense_series},
+    )
+    scale_result = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="双轴量级检查",
+        data={
+            "labels": ["A", "B"],
+            "series": [
+                {"name": "总量", "type": "bar", "values": [10000, 12000]},
+                {"name": "比例", "type": "line", "axis": "right", "values": [1, 1.2]},
+            ],
+        },
+        options={"left_y_label": "总量", "right_y_label": "比例"},
+    )
+    zero_scale_result = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="零值双轴检查",
+        data={
+            "labels": ["A", "B"],
+            "series": [
+                {"name": "总量", "type": "bar", "values": [100, 120]},
+                {"name": "比例", "type": "line", "axis": "right", "values": [0, 0]},
+            ],
+        },
+        options={"left_y_label": "总量", "right_y_label": "比例"},
+    )
+
+    assert dense_result["success"] is True
+    assert "combo_many_series" in dense_result["data"]["layout_warnings"]
+    assert "combo_narrow_bars" in dense_result["data"]["layout_warnings"]
+    assert scale_result["success"] is True
+    assert "combo_dual_axis_scale_disparity" in scale_result["data"]["layout_warnings"]
+    assert zero_scale_result["success"] is True
+    assert zero_scale_result["data"]["metadata"]["axis_magnitude_ratio"] == "infinite"
+    assert "combo_dual_axis_scale_disparity" in zero_scale_result["data"]["layout_warnings"]
+
+
+@pytest.mark.asyncio
+async def test_new_analytical_chart_boundary_variants():
+    overlap = await CreateReportChartTool().execute(
+        chart_type="range_line",
+        title="重叠区间",
+        data={
+            "labels": ["A", "B"],
+            "series": [
+                {"name": "系列一", "values": [5, 6], "lower": [3, 4], "upper": [7, 8]},
+                {"name": "系列二", "values": [5.2, 6.2], "lower": [3.2, 4.2], "upper": [7.2, 8.2]},
+            ],
+        },
+    )
+    asymmetric = await CreateReportChartTool().execute(
+        chart_type="error_bar",
+        title="非对称误差",
+        data={
+            "labels": ["A", "B"],
+            "series": [
+                {"values": [5, 6], "lower_errors": [0.5, 0.8], "upper_errors": [1, 1.2]}
+            ],
+        },
+    )
+    multi_step = await CreateReportChartTool().execute(
+        chart_type="step_line",
+        title="多阶段线",
+        data={
+            "labels": ["A", "B"],
+            "series": [
+                {"name": "标准一", "values": [1, 2]},
+                {"name": "标准二", "values": [2, 3]},
+            ],
+        },
+        options={"step": "mid"},
+    )
+    horizontal = await CreateReportChartTool().execute(
+        chart_type="diverging_bar",
+        title="长标签变化",
+        data={"labels": ["这是一个很长的分类标签", "另一个很长的分类标签"], "values": [-1, 2]},
+    )
+    no_total = await CreateReportChartTool().execute(
+        chart_type="waterfall",
+        title="不显示合计",
+        data={"labels": ["变化一", "变化二"], "values": [2, -1], "show_total": False},
+    )
+    six_series = [
+        {"name": f"柱{index}", "type": "bar", "values": [index + 1]}
+        for index in range(5)
+    ] + [{"name": "趋势", "type": "line", "values": [6]}]
+    at_limit = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="六系列组合",
+        data={"labels": ["A"], "series": six_series},
+    )
+
+    assert overlap["success"] is True
+    assert "range_intervals_heavily_overlap" in overlap["data"]["layout_warnings"]
+    assert asymmetric["success"] is True
+    assert asymmetric["data"]["metadata"]["error_modes"] == ["asymmetric"]
+    assert multi_step["success"] is True
+    assert multi_step["data"]["metadata"]["series_count"] == 2
+    assert multi_step["data"]["metadata"]["step_where"] == "mid"
+    assert horizontal["success"] is True
+    assert horizontal["data"]["metadata"]["orientation"] == "horizontal"
+    assert no_total["success"] is True
+    assert "total" not in no_total["data"]["metadata"]["bar_kinds"]
+    assert at_limit["success"] is True
+    assert at_limit["data"]["metadata"]["series_count"] == 6
+
+
+@pytest.mark.asyncio
+async def test_pareto_returns_sorted_and_cumulative_metadata():
+    result = await CreateReportChartTool().execute(
+        chart_id="pareto_metadata_case",
+        chart_type="pareto",
+        title="来源累计贡献",
+        data={"labels": ["B", "A", "C"], "values": [30, 45, 25]},
+    )
+
+    metadata = result["data"]["metadata"]
+    assert result["success"] is True
+    assert metadata["sorted_labels"] == ["A", "B", "C"]
+    assert metadata["cumulative_values"] == [45, 75, 100]
+    assert metadata["cumulative_percentages"] == pytest.approx([45, 75, 100])
+    assert metadata["threshold_percent"] == 80
+
+
+@pytest.mark.asyncio
+async def test_waterfall_supports_explicit_subtotal_without_duplicate_total():
+    result = await CreateReportChartTool().execute(
+        chart_id="waterfall_subtotal_case",
+        chart_type="waterfall",
+        title="阶段变化拆解",
+        data={
+            "labels": ["因素一", "阶段小计", "最终值"],
+            "values": [-10, 90, 82],
+            "measures": ["relative", "subtotal", "total"],
+            "start_value": 100,
+        },
+    )
+
+    metadata = result["data"]["metadata"]
+    assert result["success"] is True
+    assert metadata["measures"] == ["relative", "subtotal", "total"]
+    assert metadata["cumulative_positions"] == [90, 90, 82]
+    assert metadata["bar_kinds"] == ["start", "decrease", "subtotal", "total"]
+    assert metadata["final_value"] == 82
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chart_type", "data", "options", "error_fragment"),
+    [
+        (
+            "combo",
+            {
+                "labels": ["A", "B"],
+                "series": [
+                    {"name": "值", "type": "bar", "values": [1, 2]},
+                    {"name": "率", "type": "line", "axis": "right", "values": [3, 4]},
+                ],
+            },
+            {},
+            "必须提供左右轴标题或单位",
+        ),
+        ("pareto", {"labels": ["A", "B"], "values": [0, 0]}, {}, "合计必须大于 0"),
+        (
+            "range_line",
+            {"labels": ["A"], "series": [{"values": [2], "lower": [3], "upper": [4]}]},
+            {},
+            "lower[0] 不得大于 values[0]",
+        ),
+        (
+            "error_bar",
+            {"labels": ["A"], "series": [{"values": [2], "errors": [-1]}]},
+            {},
+            "不允许包含负数",
+        ),
+        ("diverging_bar", {"labels": ["A"], "values": [float("nan")]}, {}, "必须是有限数值"),
+        (
+            "error_bar",
+            {"labels": ["A"], "series": [{"values": [2], "lower_errors": [1]}]},
+            {},
+            "同时提供 lower_errors 和 upper_errors",
+        ),
+        (
+            "combo",
+            {
+                "labels": ["A"],
+                "series": [
+                    {"name": "柱", "type": "bar", "values": [1]},
+                    {"name": "线", "type": "line", "values": [float("inf")]},
+                ],
+            },
+            {},
+            "必须是有限数值",
+        ),
+    ],
+)
+async def test_new_analytical_chart_validation_returns_precise_failures(chart_type, data, options, error_fragment):
+    result = await CreateReportChartTool().execute(
+        chart_type=chart_type,
+        title="非法输入",
+        data=data,
+        options=options,
+    )
+
+    assert result["success"] is False
+    assert error_fragment in result["error"]
+    assert result["visuals"] == []
+
+
+ANALYTICAL_VALIDATION_MATRIX = [
+    ("combo-empty", "combo", {"labels": [], "series": []}),
+    (
+        "combo-length",
+        "combo",
+        {
+            "labels": ["A", "B"],
+            "series": [
+                {"type": "bar", "values": [1]},
+                {"type": "line", "values": [1, 2]},
+            ],
+        },
+    ),
+    (
+        "combo-nonfinite",
+        "combo",
+        {
+            "labels": ["A"],
+            "series": [
+                {"type": "bar", "values": [1]},
+                {"type": "line", "values": [float("nan")]},
+            ],
+        },
+    ),
+    ("range-empty", "range_line", {"labels": [], "series": []}),
+    (
+        "range-length",
+        "range_line",
+        {"labels": ["A"], "series": [{"values": [1, 2], "lower": [0], "upper": [2]}]},
+    ),
+    (
+        "range-nonfinite",
+        "range_line",
+        {"labels": ["A"], "series": [{"values": [float("inf")], "lower": [0], "upper": [2]}]},
+    ),
+    ("waterfall-empty", "waterfall", {"labels": [], "values": []}),
+    ("waterfall-length", "waterfall", {"labels": ["A", "B"], "values": [1]}),
+    ("waterfall-nonfinite", "waterfall", {"labels": ["A"], "values": [float("nan")]}),
+    ("pareto-empty", "pareto", {"labels": [], "values": []}),
+    ("pareto-length", "pareto", {"labels": ["A", "B"], "values": [1]}),
+    ("pareto-nonfinite", "pareto", {"labels": ["A"], "values": [float("inf")]}),
+    ("diverging-empty", "diverging_bar", {"labels": [], "values": []}),
+    ("diverging-length", "diverging_bar", {"labels": ["A", "B"], "values": [1]}),
+    (
+        "diverging-nonfinite",
+        "diverging_bar",
+        {"labels": ["A"], "values": [float("nan")]},
+    ),
+    ("step-empty", "step_line", {"labels": [], "values": []}),
+    ("step-length", "step_line", {"labels": ["A", "B"], "values": [1]}),
+    ("step-nonfinite", "step_line", {"labels": ["A"], "values": [float("inf")]}),
+    ("error-empty", "error_bar", {"labels": [], "series": []}),
+    (
+        "error-length",
+        "error_bar",
+        {"labels": ["A", "B"], "series": [{"values": [1], "errors": [0.2]}]},
+    ),
+    (
+        "error-nonfinite",
+        "error_bar",
+        {"labels": ["A"], "series": [{"values": [float("nan")], "errors": [0.2]}]},
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case_id", "chart_type", "data"),
+    ANALYTICAL_VALIDATION_MATRIX,
+    ids=[case[0] for case in ANALYTICAL_VALIDATION_MATRIX],
+)
+async def test_new_analytical_protocols_reject_empty_mismatched_and_nonfinite_data(
+    case_id, chart_type, data
+):
+    result = await CreateReportChartTool().execute(
+        chart_type=chart_type,
+        title=case_id,
+        data=data,
+    )
+
+    assert result["success"] is False
+    assert result["visuals"] == []
+
+
+@pytest.mark.asyncio
+async def test_combo_enforces_six_series_limit_and_rejects_line_stack():
+    seven_series = [
+        {"name": f"柱{index}", "type": "bar", "values": [index + 1]}
+        for index in range(6)
+    ] + [{"name": "趋势", "type": "line", "values": [1]}]
+    too_many = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="系列上限",
+        data={"labels": ["A"], "series": seven_series},
+    )
+    line_stack = await CreateReportChartTool().execute(
+        chart_type="combo",
+        title="非法堆叠",
+        data={
+            "labels": ["A"],
+            "series": [
+                {"name": "柱", "type": "bar", "values": [1]},
+                {"name": "线", "type": "line", "stack": "组", "values": [2]},
+            ],
+        },
+    )
+
+    assert too_many["success"] is False
+    assert "最多支持 6 个系列" in too_many["error"]
+    assert line_stack["success"] is False
+    assert "stack 仅适用于 bar 系列" in line_stack["error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_report_chart_render_does_not_leak_matplotlib_figures():
+    before = set(plt.get_fignums())
+    result = await CreateReportChartTool().execute(
+        chart_type="range_line",
+        title="非法区间",
+        data={
+            "labels": ["A"],
+            "series": [{"values": [2], "lower": [3], "upper": [4]}],
+        },
+    )
+
+    assert result["success"] is False
+    assert set(plt.get_fignums()) == before

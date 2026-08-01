@@ -81,7 +81,7 @@ class ExecutePythonTool(LLMTool):
                 "使用 data_id 前先用 read_data_registry 读取。"
                 "⚠️ **图表选择策略**："
                 "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
-                "② 复杂/自定义图表（3D图/多子图/极坐标/误差棒/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
+                "② 复杂/自定义图表（3D图/多子图/任意极坐标/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
                 "③ 流程图/架构图/步骤图 → 使用 call_sub_agent(target_mode='board') 调用画板Agent生成draw.io图片文件。"
                 f"生成文件保存到统一数据目录：{get_data_registry()}。"
             ),
