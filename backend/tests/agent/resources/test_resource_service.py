@@ -142,3 +142,24 @@ async def test_get_and_delete_are_scoped_to_session_and_resource_id():
     assert await service.delete_resource("s2", resource_id) is False
     assert await service.delete_resource("s1", resource_id) is True
     assert await service.delete_resource("s1", resource_id) is False
+
+
+@pytest.mark.asyncio
+async def test_publication_materializes_external_file_into_session_storage(tmp_path):
+    source = tmp_path / "outside" / "result.md"
+    source.parent.mkdir()
+    source.write_text("result", encoding="utf-8")
+    storage = tmp_path / "registry" / "sessions" / "resource_content"
+    service = SessionResourceService(storage_root=storage)
+
+    published = await service.publish_group(
+        "session-a",
+        "run-a",
+        "write:file",
+        [declaration("write:file", "primary:md", str(source), renderer="markdown")],
+    )
+
+    copied = published.resources[0].locator["path"]
+    assert copied != str(source.resolve())
+    assert copied.startswith(str(storage.resolve()))
+    assert open(copied, encoding="utf-8").read() == "result"

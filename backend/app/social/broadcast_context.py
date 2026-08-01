@@ -21,7 +21,7 @@ async def persist_broadcast_context(
     media: list[str],
     metadata: dict[str, Any],
 ) -> bool:
-    """Append one idempotent assistant broadcast and its document metadata."""
+    """Append one idempotent assistant broadcast with message attachments."""
     session_id = await session_mapper.get_or_create_session(
         social_user_id,
         mode="social",
@@ -56,14 +56,6 @@ async def persist_broadcast_context(
             "data": {**metadata, "attachments": attachments},
         })
 
-    documents = {}
-    for attachment in attachments:
-        documents[attachment["path"]] = {
-            "file_path": attachment["path"],
-            "file_name": attachment["name"],
-            "source": "broadcast",
-            **metadata,
-        }
     return bool(
         await append_session_transcript_for_mode(session, mode="social")
     )

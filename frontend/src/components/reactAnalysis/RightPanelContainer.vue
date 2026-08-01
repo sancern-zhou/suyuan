@@ -1,10 +1,33 @@
 <template>
   <div v-if="visible" class="viz-wrapper" :style="panelStyle">
     <!-- 报告生成专家 -->
-    <ReportGenerationPanel
-      v-if="assistantMode === 'report-generation-expert'"
-      :assistant-mode="assistantMode"
-    />
+    <template v-if="assistantMode === 'report-generation-expert'">
+      <div class="right-panel-tabs">
+        <button
+          :class="['tab-btn', { active: activeTab !== 'files' }]"
+          @click="handleTabChange('document')"
+        >
+          <span>报告</span>
+          <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
+        </button>
+        <button
+          :class="['tab-btn', { active: activeTab === 'files' }]"
+          @click="handleTabChange('files')"
+        >
+          <span>文件产物</span>
+          <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
+        </button>
+      </div>
+      <ResourceProductsPanel
+        v-if="activeTab === 'files' && sessionId"
+        class="panel-content"
+        @open-resource-tab="handleTabChange"
+      />
+      <ReportGenerationPanel
+        v-else
+        :assistant-mode="assistantMode"
+      />
+    </template>
 
     <!-- 其他模式：可视化面板 + Office文档预览面板 + 知识溯源面板 -->
     <template v-else>
@@ -191,7 +214,6 @@ const props = defineProps({
 
 const emit = defineEmits([
   'tab-change',
-  'office-edit-submit',
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
@@ -209,7 +231,6 @@ watch(() => props.visible, (newVal) => {
   console.log('[RightPanelContainer] visible changed to:', newVal)
 })
 
-const officePanelRef = ref(null)
 const knowledgePanelRef = ref(null)
 const resourceSummary = computed(() => summarizeRightPanelResources(
   resourceStore.activeSessionId === props.sessionId
@@ -233,10 +254,6 @@ const handleTabChange = (tab) => {
   emit('tab-change', tab)
 }
 
-const handleOfficeEditSubmit = async (editData) => {
-  emit('office-edit-submit', editData)
-}
-
 const handleBoardXmlChange = (xml) => {
   emit('board-xml-change', xml)
 }
@@ -253,16 +270,6 @@ const handleBoardVersionRestore = (versionId) => {
   emit('board-version-restore', versionId)
 }
 
-// 公开方法
-const cancelOfficeEdit = () => {
-  if (officePanelRef.value && typeof officePanelRef.value.cancelEdit === 'function') {
-    officePanelRef.value.cancelEdit()
-  }
-}
-
-defineExpose({
-  cancelOfficeEdit
-})
 </script>
 
 <style scoped>

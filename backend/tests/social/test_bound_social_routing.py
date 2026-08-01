@@ -1,6 +1,6 @@
 import asyncio
 from collections import OrderedDict
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.agent.react_agent import ReActAgent
-from app.agent.resources.resource_service import ResourceBatchResult, StoredResource
+from app.agent.resources.resource_service import SessionResourceService
 from app.agent.runtime.agent_runtime import AgentRuntime, AgentRuntimeConfig
 from app.agent.runtime.steering import InMemorySteeringStore, steering_registry
 from app.agent.runtime.types import RunState
@@ -26,22 +26,19 @@ _DEFAULT_AGENT = object()
 class RecordingResourceService:
     def __init__(self):
         self.calls = []
+        self.service = SessionResourceService.in_memory()
 
-    async def upsert_run_resources(
-        self, session_id, run_id, resources, *, turn_sequence=0
+    async def publish_group(
+        self, session_id, run_id, group_key, resources, *, turn_sequence=0
     ):
         self.calls.append((session_id, run_id, resources))
-        stored = [
-            StoredResource.from_declaration(
-                session_id,
-                run_id,
-                resource,
-                created_at=datetime.now(UTC),
-                turn_sequence=turn_sequence,
-            )
-            for resource in resources
-        ]
-        return ResourceBatchResult(version=1, resources=stored)
+        return await self.service.publish_group(
+            session_id,
+            run_id,
+            group_key,
+            resources,
+            turn_sequence=turn_sequence,
+        )
 
 
 def _resource_bridge(

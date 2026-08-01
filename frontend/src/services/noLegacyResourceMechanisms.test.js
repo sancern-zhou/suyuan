@@ -10,7 +10,7 @@ const forbidden = [
   'extractOfficeDocumentsFromMessages', 'getSessionOfficeDocuments',
   'getSessionVisualizations', 'getSessionDrawioBoard',
   '/office-documents', '/visualizations', '/api/file/',
-  '/api/office/download-word', '/api/office/download-ppt', '/api/office/download-excel',
+  '/api/office', 'api/suyuan/office',
   'pdf_preview', 'html_preview', 'markdown_preview', 'spreadsheet_preview', 'ppt_preview'
 ]
 
@@ -34,4 +34,35 @@ test('frontend production source contains no legacy resource mechanism', async (
     }
   }
   assert.deepEqual(violations, [])
+})
+
+test('protected media renderers load through authenticated blob delivery', async () => {
+  const rendererRoot = path.join(sourceRoot, 'components/resources/renderers')
+  const protectedRenderers = [
+    'PdfResourceRenderer.vue',
+    'HtmlResourceRenderer.vue',
+    'ImageResourceRenderer.vue',
+    'PresentationResourceRenderer.vue'
+  ]
+  for (const filename of protectedRenderers) {
+    const source = await readFile(path.join(rendererRoot, filename), 'utf8')
+    assert.match(source, /AuthenticatedMedia/)
+    assert.doesNotMatch(source, /:src="(?:contentUrl|page\.content_url)"/)
+  }
+  const authenticatedMedia = await readFile(path.join(rendererRoot, 'AuthenticatedMedia.vue'), 'utf8')
+  assert.match(authenticatedMedia, /authFetch\(url\)/)
+  assert.match(authenticatedMedia, /URL\.createObjectURL/)
+})
+
+test('report mode keeps the permanent file-products tab', async () => {
+  const source = await readFile(
+    path.join(sourceRoot, 'components/reactAnalysis/RightPanelContainer.vue'),
+    'utf8'
+  )
+  const reportBranch = source.slice(
+    source.indexOf('assistantMode === \'report-generation-expert\''),
+    source.indexOf('<!-- 其他模式')
+  )
+  assert.match(reportBranch, /文件产物/)
+  assert.match(reportBranch, /ResourceProductsPanel/)
 })

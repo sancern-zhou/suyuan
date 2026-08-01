@@ -108,12 +108,6 @@ async def migrate_sessions_to_db(
             if session_data.get("current_expert"):
                 update_data["current_expert"] = session_data["current_expert"]
 
-            if session_data.get("data_ids"):
-                update_data["data_ids"] = session_data["data_ids"]
-
-            if session_data.get("visual_ids"):
-                update_data["visual_ids"] = session_data["visual_ids"]
-
             if session_data.get("error"):
                 update_data["error"] = session_data["error"]
 

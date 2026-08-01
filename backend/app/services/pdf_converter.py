@@ -39,7 +39,6 @@ class PDFConverter:
             {
                 "pdf_id": "unique-id",
                 "pdf_path": "/path/to/pdf",
-                "pdf_url": "/api/office/pdf/unique-id",
                 "pages": 10,
                 "size": 12345
             }
@@ -75,7 +74,6 @@ class PDFConverter:
             return {
                 "pdf_id": pdf_id,
                 "pdf_path": str(pdf_path),
-                "pdf_url": f"/api/office/pdf/{pdf_id}",
                 "pages": self._get_pdf_page_count(pdf_path),
                 "size": pdf_path.stat().st_size
             }
@@ -86,11 +84,7 @@ class PDFConverter:
 
     async def rebuild_pdf(self, pdf_id: str, office_file_path: str) -> dict:
         """
-        Rebuild a missing cached PDF while preserving its historical PDF id.
-
-        Historical sessions store pdf_url values that include pdf_id. Regenerating
-        with a new id would leave the restored iframe pointing at the old URL, so
-        recovery writes the converted PDF back to the old cache path.
+        Rebuild a missing cached PDF while preserving its stable cache id.
         """
         try:
             pdf_path = self.get_pdf_path(pdf_id)
@@ -121,7 +115,6 @@ class PDFConverter:
             return {
                 "pdf_id": pdf_id,
                 "pdf_path": str(pdf_path),
-                "pdf_url": f"/api/office/pdf/{pdf_id}",
                 "pages": self._get_pdf_page_count(pdf_path),
                 "size": pdf_path.stat().st_size
             }

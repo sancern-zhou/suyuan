@@ -90,7 +90,7 @@ async def test_broadcast_is_appended_as_assistant_message_with_attachment(
     assert saved[0].conversation_history[-1]["role"] == "assistant"
     attachment = saved[0].conversation_history[-1]["data"]["attachments"][0]
     assert attachment["path"] == str(report)
-    assert saved[0].office_documents[-1]["file_path"] == str(report)
+    assert "office_documents" not in saved[0].model_dump()
 
 
 @pytest.mark.asyncio
@@ -129,13 +129,8 @@ async def test_same_broadcast_message_is_idempotent(monkeypatch, tmp_path):
     broadcasts = [
         item for item in session.conversation_history if item.get("type") == "broadcast"
     ]
-    documents = [
-        item
-        for item in session.office_documents
-        if item.get("file_path") == str(report)
-    ]
     assert len(broadcasts) == 1
-    assert len(documents) == 1
+    assert "office_documents" not in session.model_dump()
 
 
 @pytest.mark.asyncio

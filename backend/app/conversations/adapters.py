@@ -34,8 +34,6 @@ def knowledge_session_to_payload(session, row: ConversationCatalogRecord) -> dic
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         "conversation_history": messages,
         "execution_context": {},
-        "data_ids": [],
-        "visual_ids": [],
         "metadata": {"mode": "knowledge_qa"},
         "error": None,
         "has_more_messages": False,

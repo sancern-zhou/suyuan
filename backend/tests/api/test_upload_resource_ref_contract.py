@@ -122,6 +122,9 @@ async def test_social_restore_exposes_unified_resource_counts(monkeypatch):
             return Adapter()
 
     class CountService:
+        async def catalog_version(self, _session_id):
+            return 1
+
         async def resource_counts(self, _session_id):
             return ResourceCounts(total=1, files=1)
 
@@ -139,4 +142,3 @@ async def test_social_restore_exposes_unified_resource_counts(monkeypatch):
     )
 
     assert result["session"]["resource_counts"]["files"] == 1
-    assert result["session"]["has_lazy_files"] is True

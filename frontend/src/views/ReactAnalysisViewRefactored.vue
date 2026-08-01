@@ -65,7 +65,6 @@
       @stop-drag="stopDragging"
       @reset-width="resetWidth"
       @tab-change="activeRightTab = $event"
-      @office-edit-submit="handleOfficeEditSubmit"
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
       @board-snapshot-confirm="handleBoardSnapshotConfirm"
@@ -127,7 +126,6 @@
 </template>
 
 <script setup>
-import { authFetch } from '@/auth/http.js'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
@@ -272,7 +270,6 @@ const {
 const activeAssistant = ref('general-agent')
 const inputBoxRef = ref(null)
 const vizPanelRef = ref(null)
-const officePanelRef = ref(null)
 const chatAreaDragOver = ref(false)
 const useReranker = ref(false)
 const scheduledTasksRefreshing = ref(false)
@@ -386,34 +383,6 @@ const handleChatAreaDrop = async (e) => {
 
   if (inputBoxRef.value && typeof inputBoxRef.value.handleFilesDrop === 'function') {
     await inputBoxRef.value.handleFilesDrop(files)
-  }
-}
-
-const handleOfficeEditSubmit = async (editData) => {
-  try {
-    const response = await authFetch('/api/office/apply-edit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        file_path: editData.file_path,
-        content: editData.content,
-        doc_type: editData.doc_type,
-        session_id: currentModeSessionId.value || ''
-      })
-    })
-
-    const result = await response.json()
-
-    if (result.success) {
-      console.log('编辑已提交:', result.message)
-      if (officePanelRef.value) {
-        officePanelRef.value.cancelEdit()
-      }
-    } else {
-      console.error('提交失败:', result.message)
-    }
-  } catch (error) {
-    console.error('提交编辑失败:', error)
   }
 }
 
