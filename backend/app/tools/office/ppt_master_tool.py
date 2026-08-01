@@ -1465,19 +1465,6 @@ class CreatePptxWithPptMasterTool(LLMTool):
             candidate = (get_images_dir() / f"{image_id}.png").resolve()
             return candidate if candidate.exists() else None
 
-        if value.startswith("/api/html-artifacts/"):
-            parts = value.split("?", 1)[0].split("#", 1)[0].split("/")
-            if len(parts) >= 5 and parts[3] and parts[4] == "assets":
-                artifact_id = unquote(parts[3])
-                asset_path = Path(*[unquote(part) for part in parts[5:]])
-                assets_dir = (get_data_registry() / "html_artifacts" / artifact_id / "assets").resolve()
-                candidate = (assets_dir / asset_path).resolve()
-                try:
-                    candidate.relative_to(assets_dir)
-                except ValueError:
-                    return None
-                return candidate if candidate.exists() else None
-
         candidate = Path(value).expanduser()
         if not candidate.is_absolute():
             candidate = (Path.cwd() / candidate).resolve()

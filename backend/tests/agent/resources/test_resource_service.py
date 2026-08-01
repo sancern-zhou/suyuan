@@ -163,3 +163,15 @@ async def test_publication_materializes_external_file_into_session_storage(tmp_p
     assert copied != str(source.resolve())
     assert copied.startswith(str(storage.resolve()))
     assert open(copied, encoding="utf-8").read() == "result"
+
+    source.write_text("new result", encoding="utf-8")
+    second = await service.publish_group(
+        "session-a",
+        "run-b",
+        "write:file",
+        [declaration("write:file", "primary:md", str(source), renderer="markdown")],
+    )
+    second_copy = second.resources[0].locator["path"]
+    assert second_copy != copied
+    assert open(copied, encoding="utf-8").read() == "result"
+    assert open(second_copy, encoding="utf-8").read() == "new result"

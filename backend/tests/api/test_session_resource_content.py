@@ -1,11 +1,14 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.agent.resources.resource_service import StoredResource
 from app.api import session_resource_routes
+from app.auth.share_access import get_share_access_service, resource_preview_identity
 
 
 def stored(path: Path, **updates) -> StoredResource:
@@ -166,3 +169,41 @@ async def test_content_hides_unauthorized_wrong_session_and_missing_resources(tm
                 catalog=catalog,
             )
         assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_preview_ticket_serves_bound_resource_and_sets_scoped_asset_cookie(tmp_path, monkeypatch):
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    pdf = registry / "report.pdf"
+    pdf.write_bytes(b"%PDF")
+    install_service(monkeypatch, stored(pdf))
+    monkeypatch.setattr(session_resource_routes, "get_data_registry", lambda: registry)
+    ticket = get_share_access_service().issue(
+        "session-resource",
+        resource_preview_identity("session-1", "resource-1"),
+    )
+    query = urlencode({"preview_ticket": ticket}).encode()
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "scheme": "https",
+        "server": ("test", 443),
+        "path": "/api/sessions/session-1/resources/resource-1/content",
+        "query_string": query,
+        "headers": [],
+    })
+
+    response = await session_resource_routes.get_session_resource_content(
+        "session-1",
+        "resource-1",
+        request=request,
+        user=None,
+        catalog=Catalog(),
+    )
+
+    cookie = response.headers["set-cookie"]
+    assert "suyuan-resource-preview=" in cookie
+    assert "HttpOnly" in cookie
+    assert "Secure" in cookie
+    assert "Path=/api/suyuan/sessions/session-1/resources/resource-1/content" in cookie

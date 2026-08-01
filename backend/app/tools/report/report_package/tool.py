@@ -650,10 +650,6 @@ format:
             "assets": copied_assets,
             "validation": validation,
             "version": version,
-            "download_urls": {
-                "qmd": f"/api/reports/{safe_id}/download/qmd",
-                "docx": f"/api/reports/{safe_id}/download/docx",
-            },
             "history": history[-20:],
         }
         if report_type:

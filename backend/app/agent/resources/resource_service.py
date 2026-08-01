@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 from app.utils.path_config import get_data_registry, get_sessions_dir
 
@@ -177,6 +178,8 @@ class SessionResourceService:
             return declarations
         registry_root = get_data_registry().resolve()
         session_key = hashlib.sha256(session_id.encode()).hexdigest()[:24]
+        publication_key = uuid4().hex
+        publication_root: Path | None = None
         materialized: list[ResourceDeclaration] = []
         for declaration in declarations:
             raw_path = declaration.locator.path
@@ -189,14 +192,30 @@ class SessionResourceService:
                 continue
             if not source.exists():
                 raise ValueError(f"resource path does not exist: {source}")
-            source_key = hashlib.sha256(str(source).encode()).hexdigest()[:24]
-            destination_dir = self._storage_root / session_key / source_key
-            destination_dir.mkdir(parents=True, exist_ok=True)
+            if publication_root is None:
+                publication_root = (
+                    self._storage_root / session_key / publication_key
+                ).resolve()
+                publication_root.mkdir(parents=True, exist_ok=False)
+            member_key = hashlib.sha256(
+                f"{declaration.resource_key}:{source}".encode()
+            ).hexdigest()[:20]
+            destination_dir = publication_root / member_key
+            destination_dir.mkdir(parents=True, exist_ok=False)
             destination = destination_dir / source.name
-            if source.is_dir():
-                shutil.copytree(source, destination, dirs_exist_ok=True)
-            else:
-                shutil.copy2(source, destination)
+            temporary = destination_dir / f".{source.name}.tmp-{uuid4().hex}"
+            try:
+                if source.is_dir():
+                    shutil.copytree(source, temporary)
+                else:
+                    shutil.copy2(source, temporary)
+                temporary.replace(destination)
+            except Exception:
+                if temporary.is_dir():
+                    shutil.rmtree(temporary)
+                elif temporary.exists():
+                    temporary.unlink()
+                raise
             materialized.append(
                 declaration.model_copy(
                     update={

@@ -4,14 +4,11 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 import structlog
-
-from app.auth.share_access import external_api_path
 
 from app.utils.path_config import get_data_registry
 
@@ -135,7 +132,6 @@ class HtmlArtifactService:
         fingerprint = _file_fingerprint(index_path)
         return {
             "html_id": artifact_id,
-            "html_url": external_api_path(f"/api/html-artifacts/{artifact_id}/html"),
             "file_type": "html_artifact",
             "schema_version": "html_artifact.v1",
             "preview_version": fingerprint["preview_version"],
@@ -167,8 +163,6 @@ class HtmlArtifactService:
                 "version": previous_version + 1,
                 "files": {"html": str(index_path)},
                 "preview_version": fingerprint["preview_version"],
-                "html_url": external_api_path(f"/api/html-artifacts/{artifact_id}/html"),
-                "download_url": external_api_path(f"/api/html-artifacts/{artifact_id}/download/html"),
                 "history": history[-20:],
             }
         )
@@ -211,8 +205,6 @@ class HtmlArtifactService:
             "files": {"html": str(index_path)},
             "assets": copied_assets,
             "version": int(existing_meta.get("version") or 0) + 1,
-            "html_url": external_api_path(f"/api/html-artifacts/{safe_id}/html"),
-            "download_url": external_api_path(f"/api/html-artifacts/{safe_id}/download/html"),
         }
         fingerprint = _file_fingerprint(index_path)
         meta["preview_version"] = fingerprint["preview_version"]
@@ -240,42 +232,8 @@ class HtmlArtifactService:
             "artifact_dir": str(artifact_dir),
             "file_type": "html_artifact",
             "html_preview": self.build_html_preview(safe_id),
-            "download_url": external_api_path(f"/api/html-artifacts/{safe_id}/download/html"),
-            "share_endpoint": external_api_path(f"/api/html-artifacts/{safe_id}/share"),
             "copied_assets": copied_assets,
         }
-
-    def create_share(self, artifact_id: str) -> Dict[str, Any]:
-        artifact_dir = self.get_artifact_dir(artifact_id)
-        self.get_index_path(artifact_id)
-        meta_path = artifact_dir / "meta.json"
-        meta: Dict[str, Any] = {}
-        if meta_path.exists():
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        token = meta.get("share_token") or uuid.uuid4().hex[:16]
-        meta["share_token"] = token
-        meta["shared_at"] = datetime.now().isoformat()
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {
-            "artifact_id": artifact_id,
-            "share_token": token,
-            "share_url": external_api_path(f"/api/html-artifacts/share/{token}"),
-            "html_url": external_api_path(f"/api/html-artifacts/{artifact_id}/html"),
-        }
-
-    def find_by_share_token(self, token: str) -> Optional[Path]:
-        if not token:
-            return None
-        for meta_path in self.root.glob("*/meta.json"):
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if meta.get("share_token") == token:
-                index_path = meta_path.parent / "index.html"
-                if index_path.exists():
-                    return index_path
-        return None
 
 
 html_artifact_service = HtmlArtifactService()

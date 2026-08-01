@@ -6,13 +6,20 @@ from pathlib import Path
 from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from app.agent.resources.actions import resource_action_links, resource_content_base
 from app.agent.resources.resource_service import SessionResourceService, StoredResource
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.models import CurrentUser
+from app.auth.share_access import (
+    RESOURCE_PREVIEW_COOKIE,
+    RESOURCE_PREVIEW_TICKET,
+    external_api_path,
+    get_share_access_service,
+    resource_preview_identity,
+)
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.utils.path_config import get_data_registry
@@ -26,6 +33,17 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
     base = resource_content_base(session_id, item)
     directory = item.kind == "artifact" and bool(item.metadata.get("entrypoint"))
     actions = resource_action_links(session_id, item)
+    preview_service = get_share_access_service()
+    preview_ticket = preview_service.issue(
+        "session-resource",
+        resource_preview_identity(session_id, item.resource_id),
+    )
+    internal_content_url = f"{base}/" if directory else base
+    content_url = external_api_path(internal_content_url)
+    separator = "&" if "?" in content_url else "?"
+    content_url = f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
+    if "preview" in actions:
+        actions["preview"] = content_url
     return {
         "resource_id": item.resource_id,
         "ref_id": item.resource_id,
@@ -43,8 +61,8 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "actions": actions,
         "version": item.version,
         "status": item.status,
-        "content_url": f"{base}/" if directory else base,
-        "download_url": actions.get("download"),
+        "content_url": content_url,
+        "download_url": external_api_path(actions["download"]) if actions.get("download") else None,
         "size_bytes": int(item.metadata.get("size") or item.metadata.get("size_bytes") or 0),
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
@@ -135,11 +153,26 @@ async def get_session_resource_content(
     resource_id: str,
     asset_path: str | None = None,
     disposition: Literal["inline", "attachment"] = "inline",
-    user: CurrentUser = Depends(require_current_user),
+    request: Request = None,
+    user: CurrentUser | None = Depends(optional_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """Serve authorized bytes while keeping the storage locator opaque."""
-    await catalog.require_read(session_id, user)
+    preview_service = get_share_access_service()
+    ticket = ""
+    if request is not None:
+        ticket = request.query_params.get(RESOURCE_PREVIEW_TICKET) or request.cookies.get(
+            RESOURCE_PREVIEW_COOKIE, ""
+        )
+    ticket_valid = preview_service.verify(
+        ticket,
+        "session-resource",
+        resource_preview_identity(session_id, resource_id),
+    ) if ticket else False
+    if user is not None:
+        await catalog.require_read(session_id, user)
+    elif not ticket_valid:
+        raise HTTPException(status_code=401, detail="authentication_required")
     resource = await SessionResourceService.database().get_resource(
         session_id, resource_id, status="active"
     )
@@ -164,10 +197,23 @@ async def get_session_resource_content(
             "script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
         )
     filename = target.name if asset_path is not None else (resource.label or target.name)
-    return FileResponse(
+    response = FileResponse(
         path=target,
         media_type=media_type,
         filename=filename,
         content_disposition_type=disposition,
         headers=headers,
     )
+    if ticket_valid:
+        response.set_cookie(
+            RESOURCE_PREVIEW_COOKIE,
+            ticket,
+            max_age=preview_service.ttl_seconds,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="strict",
+            path=external_api_path(
+                resource_content_base(session_id, resource)
+            ),
+        )
+    return response

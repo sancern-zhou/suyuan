@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from http.cookies import SimpleCookie
+from urllib.parse import parse_qs, unquote
 from typing import Any
 
 from starlette.datastructures import Headers
@@ -12,7 +13,11 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .errors import AuthenticationRejected, AuthenticationUnavailable
-from .share_access import SHARE_GRANT_COOKIE
+from .share_access import (
+    RESOURCE_PREVIEW_COOKIE,
+    RESOURCE_PREVIEW_TICKET,
+    resource_preview_identity,
+)
 
 
 _PUBLIC_EXACT_PATHS = {
@@ -35,16 +40,11 @@ _PUBLIC_EXACT_PATHS = {
     "/expert-deliberation",
 }
 _PUBLIC_STATIC_PREFIXES = ("/assets/", "/static/", "/dist/")
-_PUBLIC_SHARE_PATTERNS = (
-    re.compile(r"^/session/[^/]+$"),
-    re.compile(r"^/api/reports/share/[^/]+$"),
-    re.compile(r"^/api/html-artifacts/share/[^/]+$"),
-)
+_PUBLIC_SHARE_PATTERNS = (re.compile(r"^/session/[^/]+$"),)
 _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
-_SHARE_ASSET_PATTERNS = (
-    (re.compile(r"^/api/reports/([^/]+)/(?:assets|report_files)/.+$"), "report"),
-    (re.compile(r"^/api/html-artifacts/([^/]+)/assets/.+$"), "html-artifact"),
+_RESOURCE_CONTENT_PATTERN = re.compile(
+    r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/.*)?$"
 )
 
 
@@ -78,16 +78,9 @@ class GatewayAuthenticationMiddleware:
             await self.app(scope, receive, send)
             return
 
-        share_resource = self._share_resource(path)
-        if share_resource is not None and self.share_access is not None:
-            grant = self._share_grant(scope)
-            if grant:
-                kind, resource_id = share_resource
-                if self.share_access.verify(grant, kind, resource_id):
-                    await self.app(scope, receive, send)
-                    return
-                await self._error(scope, receive, send, 403, "invalid_share_grant")
-                return
+        if self._valid_resource_preview(scope, path):
+            await self.app(scope, receive, send)
+            return
 
         if self.settings.auth_mode == "company" and not self._is_trusted_peer(scope):
             await self._error(scope, receive, send, 403, "untrusted_gateway_peer")
@@ -148,22 +141,32 @@ class GatewayAuthenticationMiddleware:
             return False
         return any(address in network for network in self._trusted_networks)
 
-    @staticmethod
-    def _share_resource(path: str) -> tuple[str, str] | None:
-        for pattern, kind in _SHARE_ASSET_PATTERNS:
-            match = pattern.fullmatch(path)
-            if match:
-                return kind, match.group(1)
-        return None
+    def _valid_resource_preview(self, scope: Scope, path: str) -> bool:
+        match = _RESOURCE_CONTENT_PATTERN.fullmatch(path)
+        if match is None or self.share_access is None:
+            return False
+        query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
+        ticket = (query.get(RESOURCE_PREVIEW_TICKET) or [""])[0]
+        if not ticket:
+            ticket = self._resource_preview_cookie(scope)
+        session_id, resource_id = (unquote(value) for value in match.groups())
+        return bool(
+            ticket
+            and self.share_access.verify(
+                ticket,
+                "session-resource",
+                resource_preview_identity(session_id, resource_id),
+            )
+        )
 
     @staticmethod
-    def _share_grant(scope: Scope) -> str:
+    def _resource_preview_cookie(scope: Scope) -> str:
         cookie = SimpleCookie()
         try:
             cookie.load(Headers(scope=scope).get("cookie", ""))
         except ValueError:
             return ""
-        morsel = cookie.get(SHARE_GRANT_COOKIE)
+        morsel = cookie.get(RESOURCE_PREVIEW_COOKIE)
         return morsel.value if morsel else ""
 
     @staticmethod

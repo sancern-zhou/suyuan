@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from inspect import signature
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -70,7 +71,9 @@ async def test_catalog_exposes_delivery_contract_without_physical_locator(monkey
     assert item["group_id"] == "group-1"
     assert item["relation"] == "primary"
     assert item["renderer"] == "pdf"
-    assert item["content_url"].endswith("/resource-1/content")
+    parsed = urlparse(item["content_url"])
+    assert parsed.path.endswith("/resource-1/content")
+    assert parse_qs(parsed.query)["preview_ticket"]
     assert "locator" not in item
     assert "metadata" not in item
     assert "file_path" not in item
@@ -93,7 +96,9 @@ def test_directory_artifact_content_url_has_trailing_slash():
             metadata={"entrypoint": "index.html"},
         ),
     )
-    assert item["content_url"].endswith("/resource-1/content/")
+    parsed = urlparse(item["content_url"])
+    assert parsed.path.endswith("/resource-1/content/")
+    assert parse_qs(parsed.query)["preview_ticket"]
 
 
 def test_action_links_ignore_untrusted_metadata_urls_and_unsupported_capabilities():

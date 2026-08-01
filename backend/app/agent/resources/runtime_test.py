@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
@@ -181,6 +183,62 @@ async def test_executor_rejects_resources_from_superseded_run(tmp_path):
     }
     assert (await service.list_resources("session-stale")).resources == []
     await run_ownership_registry.complete("session-stale", "run-new")
+
+
+@pytest.mark.asyncio
+async def test_ownership_transition_waits_for_resource_commit(tmp_path):
+    generated = tmp_path / "linearized.txt"
+    generated.write_text("content", encoding="utf-8")
+    commit_started = asyncio.Event()
+    allow_commit = asyncio.Event()
+
+    class BlockingService:
+        async def publish_group(self, *_args, **_kwargs):
+            commit_started.set()
+            await allow_commit.wait()
+            return SimpleNamespace(
+                catalog_version=1,
+                resources=[SimpleNamespace(resource_id="resource-a")],
+            )
+
+    async def tool(**_):
+        return {
+            "success": True,
+            "resources": [
+                primary_file(
+                    generated,
+                    group_key="file:linearized",
+                    tool_name="write_file",
+                )
+            ],
+        }
+
+    from app.agent.runtime.ownership import run_ownership_registry
+
+    executor = ToolExecutor(tool_registry={"write_file": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-linearized")
+    executor.configure_resource_tracking(
+        service=BlockingService(),
+        context_builder=None,
+    )
+    executor.resource_run_id = "run-old"
+    await run_ownership_registry.register("session-linearized", "run-old")
+
+    execution = asyncio.create_task(executor.execute_tool("write_file", {}, iteration=1))
+    await commit_started.wait()
+    ownership_change = asyncio.create_task(
+        run_ownership_registry.register("session-linearized", "run-new")
+    )
+    await asyncio.sleep(0)
+    assert not ownership_change.done()
+
+    allow_commit.set()
+    result = await execution
+    await ownership_change
+
+    assert result["resource_tracking"]["durable"] is True
+    assert await run_ownership_registry.current_run_id("session-linearized") == "run-new"
+    await run_ownership_registry.complete("session-linearized", "run-new")
 
 
 @pytest.mark.asyncio

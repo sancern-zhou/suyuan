@@ -18,7 +18,6 @@ from typing import Any, Dict
 
 import structlog
 
-from app.auth.share_access import external_api_path
 from app.services.report.government_docx_style import (
     ensure_government_reference_docx,
     finalize_government_docx,
@@ -482,85 +481,6 @@ class QuartoReportRenderer:
         )
         logger.info("docx_html_fallback_complete", **result)
         return docx_path
-
-    def render_share_html(self, report_id: str) -> Dict[str, Any]:
-        """Render standalone HTML and persist a share token in meta.json."""
-        report_dir = self.get_report_dir(report_id)
-        try:
-            qmd_path = self.get_qmd_path(report_id)
-            self._validate_render_qmd(report_dir, qmd_path)
-            self._run_quarto(
-                report_dir,
-                [
-                    "render",
-                    "report.qmd",
-                    "--to",
-                    "html",
-                    "--output",
-                    "report_standalone.html",
-                    "-M",
-                    "embed-resources:true",
-                ],
-            )
-        except FileNotFoundError:
-            preview_html = report_dir / "report.html"
-            if not preview_html.exists():
-                raise
-            standalone_html = report_dir / "report_standalone.html"
-            html = preview_html.read_text(encoding="utf-8")
-            html = self._inject_base_href(
-                html, external_api_path(f"/api/reports/{report_id}/")
-            )
-            standalone_html.write_text(html, encoding="utf-8")
-
-        token = uuid.uuid4().hex
-        meta = self._read_meta(report_dir)
-        shares = meta.setdefault("shares", [])
-        shares.append(
-            {
-                "token": token,
-                "file": "report_standalone.html",
-                "created_at": datetime.now().isoformat(),
-            }
-        )
-        self._write_meta(report_dir, meta)
-
-        return {
-            "token": token,
-            "share_url": external_api_path(f"/api/reports/share/{token}"),
-            "html_url": external_api_path(f"/api/reports/{report_id}/share/html"),
-            "file_path": str(report_dir / "report_standalone.html"),
-        }
-
-    def find_shared_html(self, token: str) -> Path | None:
-        if not token or "/" in token or "\\" in token or ".." in token:
-            return None
-        for meta_path in self.report_root.glob("*/meta.json"):
-            try:
-                meta = self._read_meta(meta_path.parent)
-            except Exception:
-                continue
-            for share in meta.get("shares", []):
-                if share.get("token") == token:
-                    html_path = (meta_path.parent / share.get("file", "report_standalone.html")).resolve()
-                    try:
-                        html_path.relative_to(meta_path.parent.resolve())
-                    except ValueError:
-                        return None
-                    return html_path if html_path.exists() else None
-        return None
-
-    def _inject_base_href(self, html: str, href: str) -> str:
-        """Ensure copied HTML reports resolve relative assets through report routes."""
-        base_tag = f'<base href="{href}">'
-        lower_html = html.lower()
-        if "<base " in lower_html:
-            return html
-        head_index = lower_html.find("<head>")
-        if head_index >= 0:
-            insert_at = head_index + len("<head>")
-            return html[:insert_at] + "\n" + base_tag + html[insert_at:]
-        return base_tag + "\n" + html
 
     def _read_qmd_front_matter(self, qmd_path: Path) -> str:
         try:

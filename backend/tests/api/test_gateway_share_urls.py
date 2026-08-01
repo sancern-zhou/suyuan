@@ -6,7 +6,11 @@ import pytest
 from fastapi import FastAPI
 
 from app.auth.middleware import GatewayAuthenticationMiddleware
-from app.auth.share_access import ShareAccessService, external_api_path
+from app.auth.share_access import (
+    ShareAccessService,
+    external_api_path,
+    resource_preview_identity,
+)
 from config.settings import Settings
 
 
@@ -33,17 +37,18 @@ def test_external_api_path_replaces_exactly_one_api_prefix():
 def test_share_grant_is_resource_scoped_tamper_evident_and_expiring():
     now = int(time.time())
     service = ShareAccessService("secret", ttl_seconds=60)
-    grant = service.issue("report", "report-1", now=now)
+    identity = resource_preview_identity("session-1", "resource-1")
+    grant = service.issue("session-resource", identity, now=now)
 
-    assert service.verify(grant, "report", "report-1", now=now + 10)
-    assert not service.verify(grant, "report", "report-2", now=now + 10)
-    assert not service.verify(grant, "html-artifact", "report-1", now=now + 10)
-    assert not service.verify(f"{grant}x", "report", "report-1", now=now + 10)
-    assert not service.verify(grant, "report", "report-1", now=now + 61)
+    assert service.verify(grant, "session-resource", identity, now=now + 10)
+    assert not service.verify(grant, "session-resource", resource_preview_identity("session-1", "resource-2"), now=now + 10)
+    assert not service.verify(grant, "report", identity, now=now + 10)
+    assert not service.verify(f"{grant}x", "session-resource", identity, now=now + 10)
+    assert not service.verify(grant, "session-resource", identity, now=now + 61)
 
 
 @pytest.mark.asyncio
-async def test_grant_permits_only_bound_asset_subtree_and_bad_grants_are_403():
+async def test_preview_ticket_permits_only_bound_resource_subtree():
     grants = ShareAccessService("secret", ttl_seconds=60)
     app = FastAPI()
     app.add_middleware(
@@ -53,29 +58,29 @@ async def test_grant_permits_only_bound_asset_subtree_and_bad_grants_are_403():
         share_access=grants,
     )
 
-    @app.get("/api/reports/{report_id}/assets/{path:path}")
-    async def report_asset(report_id: str, path: str):
-        return {"report_id": report_id, "path": path}
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}/content/{path:path}")
+    async def resource_asset(session_id: str, resource_id: str, path: str):
+        return {"session_id": session_id, "resource_id": resource_id, "path": path}
 
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
-    grant = grants.issue("report", "report-1")
+    grant = grants.issue(
+        "session-resource",
+        resource_preview_identity("session-1", "resource-1"),
+    )
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         allowed = await client.get(
-            "/api/reports/report-1/assets/chart.png",
-            cookies={"suyuan-share-grant": grant},
+            f"/api/sessions/session-1/resources/resource-1/content/assets/chart.png?preview_ticket={grant}",
         )
         cross_resource = await client.get(
-            "/api/reports/report-2/assets/chart.png",
-            cookies={"suyuan-share-grant": grant},
+            f"/api/sessions/session-1/resources/resource-2/content/assets/chart.png?preview_ticket={grant}",
         )
         altered = await client.get(
-            "/api/reports/report-1/assets/chart.png",
-            cookies={"suyuan-share-grant": f"{grant}x"},
+            f"/api/sessions/session-1/resources/resource-1/content/assets/chart.png?preview_ticket={grant}x",
         )
 
     assert allowed.status_code == 200
-    assert cross_resource.status_code == 403
-    assert altered.status_code == 403
+    assert cross_resource.status_code == 401
+    assert altered.status_code == 401
 
 
 def test_legacy_social_media_transport_is_physically_removed():
@@ -102,49 +107,3 @@ def test_legacy_social_media_transport_is_physically_removed():
     }
     assert legacy_fields.isdisjoint(type(settings).model_fields)
     assert Settings(_env_file=None, signed_media_secret="legacy-secret").share_signing_secret is None
-
-
-@pytest.mark.asyncio
-async def test_html_share_sets_scoped_httponly_grant_and_gateway_base(tmp_path, monkeypatch):
-    from app.api import html_artifact_routes
-
-    artifact_dir = tmp_path / "artifact-1"
-    artifact_dir.mkdir()
-    index = artifact_dir / "index.html"
-    index.write_text("<html><head></head><body>artifact</body></html>", encoding="utf-8")
-    monkeypatch.setattr(
-        html_artifact_routes.html_artifact_service,
-        "find_by_share_token",
-        lambda token: index,
-    )
-
-    response = await html_artifact_routes.get_shared_html_artifact("share-token")
-
-    assert '<base href="/api/suyuan/html-artifacts/artifact-1/">' in response.body.decode()
-    cookie = response.headers["set-cookie"]
-    assert "suyuan-share-grant=" in cookie
-    assert "HttpOnly" in cookie
-    assert "Path=/api/suyuan/html-artifacts/artifact-1/" in cookie
-
-
-@pytest.mark.asyncio
-async def test_report_share_rewrites_base_and_scopes_grant(tmp_path, monkeypatch):
-    from app.api import report_routes
-
-    report_dir = tmp_path / "report-1"
-    report_dir.mkdir()
-    html = report_dir / "report.html"
-    html.write_text(
-        '<html><head><base href="/api/reports/report-1/"></head></html>',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        report_routes.quarto_report_renderer,
-        "find_shared_html",
-        lambda token: html,
-    )
-
-    response = await report_routes.get_shared_report("share-token")
-
-    assert '<base href="/api/suyuan/reports/report-1/">' in response.body.decode()
-    assert "Path=/api/suyuan/reports/report-1/" in response.headers["set-cookie"]
