@@ -8,7 +8,29 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .models import ResourceKind, ResourceRole, ResourceStatus
+
+
+class ResourceKind(str, Enum):
+    DATA = "data"
+    FILE = "file"
+    ARTIFACT = "artifact"
+    URL = "url"
+    VISUAL = "visual"
+
+
+class ResourceRole(str, Enum):
+    PRIMARY = "primary"
+    SOURCE = "source"
+    REPORT = "report"
+    OUTPUT = "output"
+    ATTACHMENT = "attachment"
+
+
+class ResourceStatus(str, Enum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    MISSING = "missing"
+    INVALID = "invalid"
 
 
 class ResourceRelation(str, Enum):

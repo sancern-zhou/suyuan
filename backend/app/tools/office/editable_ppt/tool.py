@@ -9,7 +9,7 @@ from typing import Any
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import single_file_product
 from app.tools.office.editable_ppt.compiler_client import (
     CompilerClientError,
     EditablePptCompilerClient,
@@ -292,7 +292,7 @@ class ManageEditablePptTool(LLMTool):
                         "pptxSha256": compile_result["pptxSha256"],
                         "qualityGate": gate.to_dict(),
                     })
-                    validation["resources"] = [file_resource(target, tool_name=self.name)]
+                    validation["resources"] = [single_file_product(target, tool_name=self.name)]
                 return validation
             return self._failure("UNSUPPORTED_OPERATION", f"不支持的操作：{operation}")
         except RevisionConflictError as error:
@@ -440,7 +440,7 @@ class ManageEditablePptTool(LLMTool):
         if isinstance(raw.get("resources"), list):
             result["resources"] = raw["resources"]
         if operation == "compile" and public_success and raw.get("pptxPath"):
-            result["resources"] = [file_resource(raw["pptxPath"], tool_name=self.name)]
+            result["resources"] = [single_file_product(raw["pptxPath"], tool_name=self.name)]
         if not public_success:
             source_paths = result["data"]["recommended_action"]["source_paths"]
             joined_paths = "、".join(source_paths) or "diagnostic.issues 对应源码"

@@ -127,14 +127,13 @@ class PresentArtifactTool(LLMTool):
                 }
             elif resolved_type in {"html", "image"}:
                 data["html_preview"] = {
-                    "html_url": self._file_url(resolved_path),
+                    "html_path": str(resolved_path),
                     "html_id": self._stable_artifact_id(resolved_path),
                     "preview_version": str(int(resolved_path.stat().st_mtime)),
                     "file_type": resolved_type,
                 }
             elif resolved_type == "pdf":
                 data["pdf_preview"] = {
-                    "pdf_url": self._file_url(resolved_path),
                     "pdf_path": str(resolved_path),
                     "size": file_size,
                 }
@@ -142,7 +141,6 @@ class PresentArtifactTool(LLMTool):
                 data["spreadsheet_preview"] = {
                     "file_type": suffix.lstrip(".") or "xlsx",
                     "editable": True,
-                    "download_url": "/api/office/download-excel",
                     "size": file_size,
                 }
             elif resolved_type in {"document", "presentation"}:
@@ -316,9 +314,6 @@ class PresentArtifactTool(LLMTool):
         if suffix in DRAWIO_EXTENSIONS:
             return "editable_diagram"
         return "unsupported"
-
-    def _file_url(self, path: Path) -> str:
-        return f"/api/file/{quote(str(path), safe='')}"
 
     def _stable_artifact_id(self, path: Path) -> str:
         return quote(str(path), safe="")

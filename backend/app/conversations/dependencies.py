@@ -7,7 +7,7 @@ from app.agent.resources.resource_service import SessionResourceService
 
 _service = ConversationCatalogService(
     ConversationCatalogRepository(),
-    resource_manifest_service=SessionResourceService.database(),
+    resource_service=SessionResourceService.database(),
 )
 
 

@@ -6,7 +6,6 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
 
 import structlog
 
@@ -641,7 +640,6 @@ def _store_drawio_xml(artifact_id: str, xml: str) -> Dict[str, Any]:
         "artifact_id": artifact_id,
         "local_path": local_path,
         "path": local_path,
-        "read_url": f"/api/file/{quote(local_path, safe='')}",
         "mime_type": "application/xml",
         "format": "drawio",
         "size_bytes": len(xml.encode("utf-8")),

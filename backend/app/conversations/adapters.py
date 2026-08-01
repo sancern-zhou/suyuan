@@ -36,7 +36,6 @@ def knowledge_session_to_payload(session, row: ConversationCatalogRecord) -> dic
         "execution_context": {},
         "data_ids": [],
         "visual_ids": [],
-        "office_documents": [],
         "metadata": {"mode": "knowledge_qa"},
         "error": None,
         "has_more_messages": False,
@@ -129,9 +128,6 @@ class SocialConversationAdapter:
         payload["has_more_messages"] = len(all_messages) > len(messages)
         payload["total_message_count"] = len(all_messages)
         payload["oldest_sequence"] = None
-        payload["has_lazy_visualizations"] = False
-        payload["has_lazy_office_documents"] = False
-        payload["has_lazy_drawio_board"] = False
         return payload
 
     async def get(self, row: ConversationCatalogRecord) -> dict | None:

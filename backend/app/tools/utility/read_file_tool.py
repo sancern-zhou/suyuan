@@ -26,13 +26,11 @@ Word XML 三种模式：
 """
 import os
 import tempfile
-import uuid
 from mimetypes import guess_type
 from pathlib import Path
-from urllib.parse import quote
 from typing import Dict, Any, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import file_products
 from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.resource_refs import build_file_ref
 from app.utils.path_config import BACKEND_ROOT
@@ -309,7 +307,7 @@ class ReadFileTool(LLMTool):
                     collect_previews(item, parent_key)
 
         collect_previews(result)
-        generated = resources_for_files(
+        generated = file_products(
             [path for path in preview_paths if str(Path(path).resolve()) != source],
             tool_name=self.name,
         )
@@ -702,9 +700,6 @@ class ReadFileTool(LLMTool):
 
             if result.get("success"):
                 normalized = self._normalize_pdf_result(result, file_path, file_size)
-                # 生成PDF预览（PDF直接使用原文件）
-                if enable_preview:
-                    await self._ensure_pdf_preview(file_path, normalized["data"], is_pdf=True)
                 return normalized
 
             # 2. parse_pdf 失败，降级到原生 PyPDF2
@@ -842,10 +837,6 @@ class ReadFileTool(LLMTool):
                     "pages_read": len(page_numbers),
                     "page_range": pages or f"1-{total_pages}"
                 }
-
-                # 生成PDF预览（PDF直接使用原文件）
-                if enable_preview:
-                    await self._ensure_pdf_preview(file_path, result_data, is_pdf=True)
 
                 return {
                     "success": True,
@@ -1122,39 +1113,6 @@ class ReadFileTool(LLMTool):
                 "data": {"error": str(e)},
                 "summary": f"读取PPTX失败: {str(e)[:50]}",
             }
-
-    async def _ensure_pdf_preview(self, file_path: Path, result_data: dict, is_pdf: bool = False):
-        """确保PDF预览已生成（PDF和DOCX）"""
-        if "pdf_preview" in result_data:
-            return  # 已有预览
-
-        try:
-            if is_pdf:
-                # PDF：直接使用原文件，生成预览元数据
-                import pypdf
-                pages = 0
-                try:
-                    with open(file_path, 'rb') as f:
-                        reader = pypdf.PdfReader(f)
-                        pages = len(reader.pages)
-                except Exception:
-                    pages = result_data.get("total_pages", 0)
-
-                result_data["pdf_preview"] = {
-                    "pdf_id": f"{uuid.uuid4()}",
-                    "pdf_url": f"/api/file/{quote(str(file_path), safe='')}",
-                    "pages": pages,
-                    "size": file_path.stat().st_size
-                }
-            else:
-                # DOCX：通过 LibreOffice 转换
-                from app.services.pdf_converter import pdf_converter
-                pdf_preview = await pdf_converter.convert_to_pdf(str(file_path))
-                result_data["pdf_preview"] = pdf_preview
-
-        except Exception as e:
-            logger.warning("pdf_preview_generation_failed", path=str(file_path), error=str(e))
-            # 预览失败不影响主流程
 
     def _get_cached_tool(self, tool_class, tool_name: str):
         """获取缓存的工具实例"""

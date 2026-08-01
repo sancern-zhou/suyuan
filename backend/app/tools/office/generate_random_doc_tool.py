@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import single_file_product
 
 logger = structlog.get_logger()
 
@@ -145,7 +145,7 @@ class GenerateRandomDocTool(LLMTool):
                     "paragraphs": paragraphs,
                     "title": title
                 },
-                "resources": [file_resource(resolved_path, tool_name=self.name)],
+                "resources": [single_file_product(resolved_path, tool_name=self.name)],
                 "summary": f"成功生成随机文档: {title} ({paragraphs}段落)"
             }
 

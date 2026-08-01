@@ -37,9 +37,6 @@ def make_client(user=None, catalog=None, adapters=None):
         ("GET", "/api/sessions/other"),
         ("POST", "/api/sessions/other/restore"),
         ("GET", "/api/sessions/other/messages"),
-        ("GET", "/api/sessions/other/visualizations"),
-        ("GET", "/api/sessions/other/office-documents"),
-        ("GET", "/api/sessions/other/drawio-board"),
         ("POST", "/api/sessions/other/save"),
         ("POST", "/api/sessions/other/case"),
         ("DELETE", "/api/sessions/other/case"),
@@ -178,5 +175,9 @@ def test_knowledge_catalog_record_dispatches_to_knowledge_adapter():
     assert (
         client.post("/api/sessions/kqa-1/restore").json()["session"]["source"]
         == "knowledge_qa"
+    )
+    assert isinstance(
+        client.post("/api/sessions/kqa-1/restore").json()["session"]["resource_version"],
+        int,
     )
     assert client.delete("/api/sessions/kqa-1").status_code == 200

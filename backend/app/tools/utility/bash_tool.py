@@ -34,7 +34,7 @@ from datetime import datetime
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import file_products
 from app.utils.path_config import BACKEND_ROOT
 
 logger = structlog.get_logger()
@@ -555,7 +555,7 @@ class BashTool(LLMTool):
                     candidate = candidate.resolve()
                     if candidate.is_relative_to(self.working_dir):
                         resolved_outputs.append(candidate)
-                tool_result["resources"] = resources_for_files(
+                tool_result["resources"] = file_products(
                     resolved_outputs,
                     tool_name=self.name,
                 )

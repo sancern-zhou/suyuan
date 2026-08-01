@@ -10,9 +10,9 @@ from .schemas import ConversationCatalogRecord, ConversationSource
 
 
 class ConversationCatalogService:
-    def __init__(self, repository, *, resource_manifest_service=None):
+    def __init__(self, repository, *, resource_service=None):
         self.repository = repository
-        self.resource_manifest_service = resource_manifest_service
+        self.resource_service = resource_service
 
     async def register(
         self,
@@ -134,7 +134,7 @@ class ConversationCatalogService:
 
     async def delete(self, session_id: str) -> bool:
         catalog_deleted = await self.repository.delete(session_id)
-        manifest_deleted = False
-        if self.resource_manifest_service is not None:
-            manifest_deleted = await self.resource_manifest_service.delete_session_resources(session_id)
-        return bool(catalog_deleted or manifest_deleted)
+        resources_deleted = False
+        if self.resource_service is not None:
+            resources_deleted = await self.resource_service.delete_session_resources(session_id)
+        return bool(catalog_deleted or resources_deleted)

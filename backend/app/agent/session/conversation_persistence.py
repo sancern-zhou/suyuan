@@ -72,15 +72,11 @@ class ConversationPersistenceService:
         session: Session,
         *,
         display_history: List[Dict[str, Any]],
-        collected_visuals: List[Dict[str, Any]],
-        office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = self._persistent_messages(display_history)
         self.apply_metadata(
             session,
-            collected_visuals=collected_visuals,
-            office_documents=office_documents,
             drawio_board=drawio_board,
         )
 
@@ -89,8 +85,6 @@ class ConversationPersistenceService:
         session: Session,
         *,
         display_history: List[Dict[str, Any]],
-        collected_visuals: List[Dict[str, Any]],
-        office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = self._append_missing_messages(
@@ -99,8 +93,6 @@ class ConversationPersistenceService:
         )
         self.append_metadata(
             session,
-            collected_visuals=collected_visuals,
-            office_documents=office_documents,
             drawio_board=drawio_board,
         )
 
@@ -110,8 +102,6 @@ class ConversationPersistenceService:
         *,
         display_history: List[Dict[str, Any]],
         terminal_message: Dict[str, Any],
-        collected_visuals: List[Dict[str, Any]],
-        office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = self._persistent_messages(
@@ -119,8 +109,6 @@ class ConversationPersistenceService:
         )
         self.apply_metadata(
             session,
-            collected_visuals=collected_visuals,
-            office_documents=office_documents,
             drawio_board=drawio_board,
         )
 
@@ -130,8 +118,6 @@ class ConversationPersistenceService:
         *,
         display_history: List[Dict[str, Any]],
         terminal_message: Dict[str, Any],
-        collected_visuals: List[Dict[str, Any]],
-        office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         session.conversation_history = self._append_missing_messages(
@@ -140,8 +126,6 @@ class ConversationPersistenceService:
         )
         self.append_metadata(
             session,
-            collected_visuals=collected_visuals,
-            office_documents=office_documents,
             drawio_board=drawio_board,
         )
 
@@ -202,8 +186,6 @@ class ConversationPersistenceService:
         self,
         session: Session,
         *,
-        collected_visuals: List[Dict[str, Any]],
-        office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
         normalized_board = self.normalize_drawio_board(drawio_board)
@@ -214,34 +196,8 @@ class ConversationPersistenceService:
         self,
         session: Session,
         *,
-        collected_visuals: List[Dict[str, Any]],
-        office_documents: Optional[List[Dict[str, Any]]] = None,
         drawio_board: Optional[Dict[str, Any]] = None,
     ) -> None:
-        existing_visuals = []
-        visuals_by_id: Dict[str, Dict[str, Any]] = {}
-        anonymous_visuals: List[Dict[str, Any]] = []
-        anonymous_visual_keys = set()
-        for visual in [*existing_visuals, *collected_visuals]:
-            if not isinstance(visual, dict):
-                continue
-            visual_id = visual.get("id")
-            if visual_id:
-                visuals_by_id[visual_id] = visual
-            else:
-                visual_key = json.dumps(
-                    visual,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=str,
-                )
-                if visual_key in anonymous_visual_keys:
-                    continue
-                anonymous_visuals.append(visual)
-                anonymous_visual_keys.add(visual_key)
-
-        merged_visuals = [*visuals_by_id.values(), *anonymous_visuals]
-
         normalized_board = self.normalize_drawio_board(drawio_board)
         if normalized_board:
             session.metadata["drawio_board"] = normalized_board

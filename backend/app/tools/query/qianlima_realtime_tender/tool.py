@@ -11,7 +11,7 @@ from typing import Any, Callable, Sequence
 from app.services.tenders.models import NoticeType, TenderCandidate
 from app.services.tenders.qianlima_client import QianlimaClient
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import resources_for_files
+from app.tools.resource_declarations import file_products
 from config.settings import settings
 
 
@@ -200,7 +200,7 @@ class QianlimaRealtimeTenderTool(LLMTool):
                     "results": records,
                     "output_file": str(output_file),
                     "markdown_file": str(markdown_file),
-                    "resources": resources_for_files(
+                    "resources": file_products(
                         [output_file, markdown_file], tool_name=self.name
                     ),
                     "summary": f"实时检索到 {len(records)} 条千里马招投标结果，已写入 {output_file}",
@@ -263,7 +263,7 @@ class QianlimaRealtimeTenderTool(LLMTool):
                         "text_preview": text[:1000],
                         "output_file": str(output_file),
                         "html_file": str(html_file),
-                        "resources": resources_for_files(
+                        "resources": file_products(
                             [output_file, html_file], tool_name=self.name
                         ),
                         "summary": f"详情页已抓取并写入 {output_file}",

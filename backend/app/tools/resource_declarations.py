@@ -417,9 +417,7 @@ def resources_for_visuals(
     return resources
 
 
-# Temporary call-site adapters. Tasks 5-7 remove every import before the final
-# hard cut; their output is already the canonical grouped contract.
-def file_resource(
+def single_file_product(
     path: str | Path,
     *,
     tool_name: str,
@@ -439,7 +437,7 @@ def file_resource(
     )
 
 
-def resources_for_files(
+def file_products(
     paths: Iterable[str | Path], *, tool_name: str, role: str = "output"
 ) -> list[dict[str, Any]]:
     resources: list[dict[str, Any]] = []

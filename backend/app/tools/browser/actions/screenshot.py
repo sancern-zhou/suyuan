@@ -9,7 +9,7 @@ from datetime import datetime
 from ..config import config
 from ..services.frame_target import resolve_frame
 from app.services.image_cache import get_image_cache
-from app.tools.resource_declarations import file_resource
+from app.tools.resource_declarations import single_file_product
 
 logger = structlog.get_logger()
 
@@ -96,7 +96,7 @@ def handle_screenshot(
     }
     if save_result.get("local_path"):
         result["resources"] = [
-            file_resource(save_result["local_path"], tool_name="browser")
+            single_file_product(save_result["local_path"], tool_name="browser")
         ]
     return result
 

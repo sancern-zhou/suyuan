@@ -89,9 +89,8 @@ def test_owner_can_restore_social_history_but_cannot_mutate_it():
     messages = client.get("/api/sessions/social-1/messages")
     assert messages.status_code == 200
     assert messages.json()["messages"][0]["content"] == "hello"
-    assert client.get("/api/sessions/social-1/visualizations").json()["visualizations"] == []
-    assert client.get("/api/sessions/social-1/office-documents").json()["office_documents"] == []
-    assert client.get("/api/sessions/social-1/drawio-board").json()["drawio_board"] is None
+    assert client.get("/api/sessions/social-1/visualizations").status_code == 404
+    assert client.get("/api/sessions/social-1/office-documents").status_code == 404
 
     for method, suffix in (("POST", "/save"), ("DELETE", ""), ("POST", "/case")):
         response = client.request(method, f"/api/sessions/social-1{suffix}")

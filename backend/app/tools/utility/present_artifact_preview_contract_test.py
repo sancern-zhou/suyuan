@@ -34,4 +34,6 @@ async def test_pptx_unified_resource_prefers_pdf_when_both_previews_exist(tmp_pa
 
     assert result["success"] is True
     assert result["data"]["ppt_preview"]["pages"][0]["slide"] == 1
-    assert result["resources"][0]["presentation"]["preview"] == result["data"]["pdf_preview"]
+    assert result["resources"][0]["group_key"].startswith("presentation:")
+    assert result["resources"][0]["resource_key"] == "pptx"
+    assert result["resources"][0]["renderer"] == "presentation"
