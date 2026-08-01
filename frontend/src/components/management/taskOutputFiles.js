@@ -1,10 +1,5 @@
 const OUTPUT_ROLES = new Set(['primary', 'output', 'report'])
 
-const fileNameFromPath = (path = '') => {
-  const normalized = String(path).replace(/\\/g, '/')
-  return normalized.split('/').filter(Boolean).pop() || ''
-}
-
 const extensionFromName = (name = '') => {
   const lastDot = String(name).lastIndexOf('.')
   return lastDot > -1 ? String(name).slice(lastDot + 1).toUpperCase() : ''
@@ -21,25 +16,20 @@ export const executionStatusLabel = (status) => ({
 
 export function getTaskOutputFile(resource = {}) {
   if (!OUTPUT_ROLES.has(resource.role)) return null
-
-  const metadata = resource.metadata || {}
-  const path = resource.file_path || metadata.path || metadata.file_path || metadata.local_path || ''
-  const url = metadata.download_url || metadata.read_url || metadata.url || (path
-    ? `/api/file/${encodeURIComponent(path)}`
-    : '')
+  const url = resource.download_url || ''
 
   if (!url) return null
 
-  const label = resource.label || metadata.title || fileNameFromPath(path) || '未命名文件'
-  const format = metadata.format || metadata.file_type || extensionFromName(label) || resource.kind || '文件'
+  const label = resource.label || '未命名文件'
+  const format = resource.format || extensionFromName(label) || resource.kind || '文件'
 
   return {
-    id: resource.ref_id || `${label}:${url}`,
+    id: resource.resource_id || resource.ref_id || `${label}:${url}`,
     label,
     format: String(format).toUpperCase(),
     url,
-    mimeType: metadata.mime_type || '',
-    sizeBytes: Number(metadata.size_bytes || metadata.file_size || 0),
+    mimeType: resource.media_type || '',
+    sizeBytes: Number(resource.size_bytes || 0),
     createdAt: resource.created_at || ''
   }
 }
