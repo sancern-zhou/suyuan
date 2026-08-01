@@ -8,21 +8,19 @@ import { preserveCatalogFields } from '@/components/management/sessionHistoryAcc
 import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
 import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
-import { mapSessionDocumentResources } from '@/services/sessionDocumentResources.js'
-import { extractOfficeDocumentsFromMessages } from '@/services/officeDocumentRecovery.js'
+import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import {
   listSessions,
   restoreSession,
   getSessionMessages,
-  getSessionVisualizations,
-  getSessionOfficeDocuments,
-  getSessionDrawioBoard,
   deleteSession as deleteSessionRequest,
   markSessionCase,
   unmarkSessionCase
 } from '@/api/session'
 
 export function useSessionManagement(store) {
+  const resourceStore = useSessionResourceStore()
   // ========== 状态 ==========
   const showSessionManager = ref(false)
   const sessionHistoryLoading = ref(false)
@@ -30,125 +28,6 @@ export function useSessionManagement(store) {
   const sessionHistoryStats = ref(null)
   let autoRefreshTimer = null
   let refreshInFlight = null
-
-  const runAfterFirstPaint = (callback) => {
-    if (typeof window === 'undefined') {
-      setTimeout(callback, 0)
-      return
-    }
-    const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 0))
-    schedule(callback)
-  }
-
-  const loadLazyArtifacts = async (sessionId, options = {}) => {
-    const {
-      loadVisualizations = true,
-      loadOfficeDocuments = true,
-      loadDrawioBoard = true
-    } = options
-
-    if (!sessionId) return
-
-    console.log('[会话恢复] 开始自动加载延迟资源:', {
-      sessionId,
-      loadVisualizations,
-      loadOfficeDocuments,
-      loadDrawioBoard
-    })
-
-    const tasks = []
-
-    if (loadVisualizations && !store.currentState.lazyArtifacts?.visualizationsLoaded) {
-      store.setLazyArtifacts({ loadingVisualizations: true })
-      tasks.push(
-        getSessionVisualizations(sessionId)
-          .then(response => {
-            if (store.currentState.sessionId !== sessionId) return
-            const visualizations = response?.resources || []
-            console.log('[会话恢复] 图表延迟加载完成:', visualizations.length)
-            store.setVisualizationHistory(visualizations)
-            store.setLazyArtifacts({
-              hasVisualizations: visualizations.length > 0,
-              visualizationCount: visualizations.length,
-              visualizationsLoaded: true,
-              loadingVisualizations: false
-            })
-          })
-          .catch(error => {
-            console.error('[会话恢复] 延迟加载图表失败:', error)
-            if (store.currentState.sessionId === sessionId) {
-              store.setLazyArtifacts({ loadingVisualizations: false })
-            }
-          })
-      )
-    }
-
-    if (loadOfficeDocuments && !store.currentState.lazyArtifacts?.officeDocumentsLoaded) {
-      store.setLazyArtifacts({ loadingOfficeDocuments: true })
-      tasks.push(
-        getSessionOfficeDocuments(sessionId)
-          .then(response => {
-            if (store.currentState.sessionId !== sessionId) return
-            const officeDocs = mapSessionDocumentResources(response?.resources)
-            console.log('[会话恢复] 文档延迟加载完成:', officeDocs.length)
-            if (officeDocs.length > 0) {
-              if (typeof store.setOfficeDocumentHistory === 'function') {
-                store.setOfficeDocumentHistory(officeDocs)
-              } else {
-                store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
-              }
-            }
-            store.setLazyArtifacts({
-              hasOfficeDocuments: officeDocs.length > 0,
-              officeDocumentCount: officeDocs.length,
-              officeDocumentsLoaded: true,
-              loadingOfficeDocuments: false
-            })
-          })
-          .catch(error => {
-            console.error('[会话恢复] 延迟加载文档失败:', error)
-            if (store.currentState.sessionId === sessionId) {
-              store.setLazyArtifacts({ loadingOfficeDocuments: false })
-            }
-          })
-      )
-    }
-
-    const shouldLoadDrawioBoard = loadDrawioBoard &&
-      store.currentMode === 'board' &&
-      !store.currentState.lazyArtifacts?.drawioBoardLoaded
-
-    if (shouldLoadDrawioBoard) {
-      store.setLazyArtifacts({ loadingDrawioBoard: true })
-      tasks.push(
-        getSessionDrawioBoard(sessionId)
-          .then(async response => {
-            if (store.currentState.sessionId !== sessionId) return
-            const drawioBoard = response?.drawio_board || null
-            console.log('[会话恢复] 画板延迟加载完成:', !!drawioBoard)
-            if (drawioBoard && typeof store.restoreDrawioBoardFromSession === 'function') {
-              store.restoreDrawioBoardFromSession({ drawio_board: drawioBoard })
-              if (typeof store.loadDrawioBoardVersions === 'function') {
-                await store.loadDrawioBoardVersions()
-              }
-            }
-            store.setLazyArtifacts({
-              hasDrawioBoard: !!drawioBoard,
-              drawioBoardLoaded: true,
-              loadingDrawioBoard: false
-            })
-          })
-          .catch(error => {
-            console.error('[会话恢复] 延迟加载画板失败:', error)
-            if (store.currentState.sessionId === sessionId) {
-              store.setLazyArtifacts({ loadingDrawioBoard: false })
-            }
-          })
-      )
-    }
-
-    await Promise.allSettled(tasks)
-  }
 
   const localSessionHistoryData = computed(() => {
     return Object.values(store.sessionStates || {})
@@ -316,13 +195,16 @@ export function useSessionManagement(store) {
   const doRestoreSession = async (sessionId, options = {}) => {
     const {
       messageLimit = 100,
-      restoreOfficeDocs = true,
       lazyArtifacts = true
     } = options
 
     try {
       // 1. 调用恢复API
-      const restoreResult = await restoreSession(sessionId, { messageLimit, lazyArtifacts })
+      resourceStore.activateSession(sessionId)
+      const [restoreResult] = await Promise.all([
+        restoreSession(sessionId, { messageLimit, lazyArtifacts }),
+        resourceStore.loadCatalog(sessionId)
+      ])
 
       if (!restoreResult) {
         return {
@@ -340,19 +222,6 @@ export function useSessionManagement(store) {
         const msgType = (m.type || '').toLowerCase()
         return msgType === 'final' || msgType === 'assistant'
       })
-
-      // 辅助函数：安全提取 content 预览（支持字符串和 content blocks 格式）
-      const getContentPreview = (content) => {
-        if (typeof content === 'string') {
-          return content.substring(0, 100)
-        }
-        if (Array.isArray(content)) {
-          // 提取文本类型的 content block（Anthropic 格式）
-          const textBlock = content.find(block => block.type === 'text')
-          return textBlock?.text?.substring(0, 100) || '[结构化内容]'
-        }
-        return '[未知格式]'
-      }
 
       // 【修复】final消息按ID去重，只过滤真正重复ID的消息
       const idMap = new Map()
@@ -388,11 +257,7 @@ export function useSessionManagement(store) {
         console.log(`[会话恢复] 按ID去重：${beforeCount} → ${messages.length} (过滤${beforeCount - messages.length}条)`)
       }
 
-      // 2. 资源只来自统一资源接口/恢复载荷，不再从消息推断。
-      const resources = Array.isArray(sessionData.resources) ? sessionData.resources : []
-      const visuals = lazyArtifacts ? [] : resources.filter(r => r.presentation_type === 'visualization')
-
-      // 3. 更新store
+      // 2. 更新对话状态；资源状态由 sessionResourceStore 独立维护。
       const restoredMode = resolveRestoredAgentMode(sessionData, sessionId, store.currentMode)
       store.switchMode(restoredMode)
       store.reset()
@@ -402,22 +267,9 @@ export function useSessionManagement(store) {
         read_only_on_web: sessionData.read_only_on_web === true
       }
       store.setMessages(messages)
-      if (restoredMode === 'board' && typeof store.restoreDrawioBoardFromSession === 'function') {
-        store.restoreDrawioBoardFromSession(sessionData)
-      }
-      store.setLazyArtifacts({
-        hasVisualizations: (sessionData.resource_counts?.visualizations || 0) > 0,
-        visualizationCount: sessionData.resource_counts?.visualizations || 0,
-        visualizationsLoaded: !lazyArtifacts,
-        loadingVisualizations: false,
-        hasOfficeDocuments: (sessionData.resource_counts?.documents || 0) > 0,
-        officeDocumentCount: sessionData.resource_counts?.documents || 0,
-        officeDocumentsLoaded: !lazyArtifacts,
-        loadingOfficeDocuments: false,
-        hasDrawioBoard: restoredMode === 'board' && !!sessionData.has_lazy_drawio_board,
-        drawioBoardLoaded: !lazyArtifacts,
-        loadingDrawioBoard: false
-      })
+      resourceStore.activateSession(sessionId)
+      await resourceStore.refreshIfNewer(sessionId, sessionData.resource_version || 0)
+      chooseRestoredResource(resourceStore, sessionId)
 
       // 设置分页信息
       if (sessionData.has_more_messages !== undefined || sessionData.total_message_count !== undefined) {
@@ -429,40 +281,10 @@ export function useSessionManagement(store) {
         })
       }
 
-      if (!lazyArtifacts) {
-        // 无论 visuals 是否为空都要设置，确保清空旧会话的图表数据
-        store.setVisualizationHistory(visuals)
-      }
-
-      // 4. 恢复Office文档
-      if (restoreOfficeDocs && !lazyArtifacts) {
-        const officeDocs = resources.filter(r => r.presentation_type === 'document')
-
-        if (officeDocs.length > 0) {
-          if (typeof store.setOfficeDocumentHistory === 'function') {
-            store.setOfficeDocumentHistory(officeDocs)
-          } else {
-            store.setLastOfficeDocument(officeDocs[officeDocs.length - 1])
-          }
-        }
-      }
-
-      if (lazyArtifacts && !currentConversationPolicy.value.readOnly) {
-        console.log('[会话恢复] 首屏消息已恢复，准备调度延迟资源自动加载:', sessionId)
-        runAfterFirstPaint(() => {
-          loadLazyArtifacts(sessionId, {
-            loadVisualizations: true,
-            loadOfficeDocuments: restoreOfficeDocs,
-            loadDrawioBoard: true
-          })
-        })
-      }
-
       return {
         success: true,
         messageCount: messages.length,
-        visualCount: lazyArtifacts ? (sessionData.visualization_count || 0) : visuals.length,
-        officeDocCount: lazyArtifacts ? (sessionData.resource_counts?.documents || 0) : (restoreOfficeDocs ? resources.filter(r => r.presentation_type === 'document').length : 0)
+        resourceCount: resourceStore.sessionState(sessionId)?.resources?.length || 0
       }
 
     } catch (error) {
@@ -552,10 +374,6 @@ export function useSessionManagement(store) {
    * @param {array} messages - 消息列表
    * @returns {array} Office文档列表
    */
-  const extractOfficeDocuments = (messages) => {
-    return extractOfficeDocumentsFromMessages(messages)
-  }
-
   const activateLocalSessionIfAvailable = (sessionId) => {
     const localSessionState = store.sessionStates?.[sessionId]
     if (!localSessionState) return false
@@ -569,6 +387,8 @@ export function useSessionManagement(store) {
     if (!hasVisibleState) return false
 
     store._activateSession(sessionId, localSessionState.mode)
+    resourceStore.activateSession(sessionId)
+    void resourceStore.loadCatalog(sessionId).then(() => chooseRestoredResource(resourceStore, sessionId))
     console.log('[会话切换] 已激活本地会话状态，跳过后端恢复:', {
       sessionId,
       messageCount: localSessionState.messages?.length || 0,
@@ -615,6 +435,7 @@ export function useSessionManagement(store) {
 
   const startNewWebConversation = () => {
     store.reset()
+    resourceStore.activateSession(null)
     store.currentState.conversationAccess = {
       source: 'web',
       read_only_on_web: false
