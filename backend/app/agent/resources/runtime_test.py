@@ -11,6 +11,7 @@ from app.tools.utility.list_directory_tool import ListDirectoryTool
 from app.tools.utility.read_file_tool import ReadFileTool
 from app.tools.utility.read_session_resource_tool import ReadSessionResourceTool
 from app.tools.office.validate_pptx_tool import validation_output_resources
+from app.tools.resource_declarations import primary_file
 from .contracts import ResourceDeclaration
 from .contracts import ResourceLocator
 from .models import ResourceKind
@@ -146,13 +147,15 @@ async def test_executor_persists_resources_before_returning_result(tmp_path):
         return {
             "success": True,
             "data": {"preview_dir": str(preview)},
-            "resources": [{
-                "kind": "file",
-                "role": "output",
-                "label": generated.name,
-                "locator": {"path": str(generated)},
-                "tool_name": "render",
-            }],
+            "resources": [
+                primary_file(
+                    generated,
+                    group_key="render:preview",
+                    tool_name="render",
+                    renderer="image",
+                    capabilities=("preview", "download"),
+                )
+            ],
         }
 
     service = SessionResourceService.in_memory()

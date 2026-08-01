@@ -30,8 +30,6 @@ from .resources.runtime import (
 )
 from .resources.resource_service import SessionResourceService, StoredResource
 from .resources.resource_map import project_agent_resource_map
-from .resources.discovery import discover_resource_declarations
-from .resources.models import ResourceRole
 from .selection_context import (
     resource_refs_to_runtime_attachments,
     selected_resource_projection,
@@ -527,27 +525,6 @@ class ReActAgent:
             storage_mode=session_storage_mode or manual_mode,
         )
         resource_service = SessionResourceService.database()
-        if attachments:
-            input_resources = discover_resource_declarations(
-                attachments,
-                role=ResourceRole.ATTACHMENT,
-                tool_name="user_attachment",
-                expand_directories=False,
-            )
-            if input_resources:
-                try:
-                    await resource_service.upsert_run_resources(
-                        actual_session_id,
-                        f"input:{uuid.uuid4().hex}",
-                        input_resources,
-                        turn_sequence=0,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "attachment_resource_persistence_failed",
-                        session_id=actual_session_id,
-                        error=str(exc),
-                    )
         from .task.task_models import TaskList
 
         run_task_list = TaskList()

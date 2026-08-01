@@ -26,9 +26,12 @@ import structlog
 from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.utils.path_config import get_uploads_dir
-from app.agent.resources.contracts import ResourceDeclaration, ResourceLocator
-from app.agent.resources.models import ResourceKind, ResourceRole
-from app.agent.resources.resource_service import SessionResourceService
+from app.agent.resources.contracts import ResourceDeclaration
+from app.agent.resources.resource_service import (
+    SessionResourceService,
+    stable_group_id,
+)
+from app.tools.resource_declarations import primary_file
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
@@ -371,31 +374,45 @@ async def upload_chat_file(
     resource_ref = None
     if session_id:
         try:
-            declaration = ResourceDeclaration(
-                kind=ResourceKind.FILE,
-                logical_key=f"upload:{file_id}",
-                role=ResourceRole.ATTACHMENT,
-                label=stored_filename,
-                locator=ResourceLocator(path=file_path),
-                metadata={
-                    "mime_type": stored_mime_type,
-                    "file_id": file_id,
-                    "source": "user_upload",
-                    **({"original_filename": original_filename, "original_mime_type": "image/svg+xml"} if is_svg else {}),
-                },
-                tool_name="upload_chat",
+            group_key = f"upload:{file_id}"
+            previewable = stored_mime_type.startswith("image/") or stored_mime_type in {
+                "application/pdf",
+                "text/html",
+                "text/markdown",
+                "text/plain",
+            }
+            declaration = ResourceDeclaration.model_validate(
+                primary_file(
+                    file_path,
+                    group_key=group_key,
+                    tool_name="upload_chat",
+                    role="attachment",
+                    renderer="image" if stored_mime_type.startswith("image/") else "file",
+                    capabilities=("preview", "download")
+                    if previewable
+                    else ("download",),
+                    label=stored_filename,
+                    metadata={
+                        "file_id": file_id,
+                        "source": "user_upload",
+                        **(
+                            {
+                                "original_filename": original_filename,
+                                "original_mime_type": "image/svg+xml",
+                            }
+                            if is_svg
+                            else {}
+                        ),
+                    },
+                )
             )
-            resource_batch = await SessionResourceService.database().upsert_run_resources(
-                session_id, f"upload:{file_id}", [declaration]
+            resource_batch = await SessionResourceService.database().publish_group(
+                session_id,
+                f"upload:{file_id}",
+                group_key,
+                [declaration],
             )
-            resource_ref = next(
-                (
-                    item
-                    for item in resource_batch.resources
-                    if (item.role, item.resource_key) == declaration.catalog_key()
-                ),
-                None,
-            )
+            resource_ref = resource_batch.resources[0] if resource_batch.resources else None
             if resource_ref is None:
                 raise RuntimeError("uploaded resource missing from resource store result")
         except Exception as exc:
@@ -438,12 +455,15 @@ async def upload_chat_file(
                 "ref_id": resource_ref.resource_id,
                 "resource_id": resource_ref.resource_id,
                 "resource_key": resource_ref.resource_key,
+                "group_id": resource_ref.group_id,
+                "relation": resource_ref.relation,
                 "kind": resource_ref.kind,
                 "role": resource_ref.role,
                 "label": resource_ref.label,
+                "renderer": resource_ref.renderer,
+                "capabilities": resource_ref.capabilities,
                 "status": resource_ref.status,
                 "created_at": resource_ref.created_at.isoformat(),
-                "metadata": resource_ref.metadata,
             }
             if resource_ref else None
         ),
@@ -576,9 +596,18 @@ async def delete_uploaded_file(
 
     if uploaded_file.session_id:
         try:
-            await SessionResourceService.database().delete_resource(
-                uploaded_file.session_id, f"upload:{file_id}"
+            resources = SessionResourceService.database()
+            page = await resources.list_resources(
+                uploaded_file.session_id,
+                group_id=stable_group_id(
+                    uploaded_file.session_id, f"upload:{file_id}"
+                ),
+                status=None,
             )
+            for resource in page.resources:
+                await resources.delete_resource(
+                    uploaded_file.session_id, resource.resource_id
+                )
         except Exception as exc:
             logger.error(
                 "deleted_upload_resource_update_failed",
