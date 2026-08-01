@@ -396,18 +396,31 @@ async def test_new_ppt_validation_output_replaces_previous_qa_path(tmp_path):
     second.write_bytes(b"second")
     service = SessionResourceService.in_memory()
 
-    first_declaration = ResourceDeclaration.model_validate(
-        validation_output_resources(pptx, [first])[0]
+    first_declarations = [
+        ResourceDeclaration.model_validate(item)
+        for item in validation_output_resources(pptx, [first])
+    ]
+    second_declarations = [
+        ResourceDeclaration.model_validate(item)
+        for item in validation_output_resources(pptx, [second])
+    ]
+    await service.publish_group(
+        "session",
+        "run-1",
+        first_declarations[0].group_key,
+        first_declarations,
     )
-    second_declaration = ResourceDeclaration.model_validate(
-        validation_output_resources(pptx, [second])[0]
+    await service.publish_group(
+        "session",
+        "run-2",
+        second_declarations[0].group_key,
+        second_declarations,
     )
-    await service.upsert_run_resources("session", "run-1", [first_declaration])
-    result = await service.upsert_run_resources("session", "run-2", [second_declaration])
 
-    outputs = [item for item in result.resources if item.role == "output"]
-    assert len(outputs) == 1
-    assert outputs[0].locator["path"] == str(second)
+    page = await service.list_resources("session")
+    montage = next(item for item in page.resources if item.resource_key == "montage")
+    assert montage.locator["path"] == str(second.resolve())
+    assert {item.version for item in page.resources} == {2}
 
 
 @pytest.mark.asyncio

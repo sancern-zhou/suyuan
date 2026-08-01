@@ -1,8 +1,12 @@
 """Trusted action-link projection for session resources."""
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import quote
 
+from app.tools.resource_declarations import derivative_file
+
+from .contracts import ResourceDeclaration
 from .resource_service import StoredResource
 
 
@@ -26,3 +30,43 @@ def resource_action_links(
     if "download" in resource.capabilities and not directory:
         actions["download"] = f"{base}?disposition=attachment"
     return actions
+
+
+async def attach_rendered_file(
+    service,
+    *,
+    session_id: str,
+    run_id: str,
+    group_key: str,
+    parent_resource_id: str,
+    path: str | Path,
+    relation: str,
+    renderer: str,
+    tool_name: str,
+) -> dict:
+    """Attach a render result and return the sole mutation receipt contract."""
+    parent = await service.get_resource(session_id, parent_resource_id)
+    if parent is None:
+        raise ValueError("active parent resource was not found")
+    payload = derivative_file(
+        path,
+        group_key=group_key,
+        parent_key=parent.resource_key,
+        tool_name=tool_name,
+        relation=relation,
+        role=parent.role,
+        renderer=renderer,
+    )
+    publication = await service.attach_resources(
+        session_id,
+        run_id,
+        parent_resource_id,
+        [ResourceDeclaration.model_validate(payload)],
+    )
+    return {
+        "success": True,
+        "resource_version": publication.catalog_version,
+        "changed_resource_ids": [
+            resource.resource_id for resource in publication.resources
+        ],
+    }

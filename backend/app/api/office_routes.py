@@ -17,7 +17,10 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from xml.etree import ElementTree as ET
 
 from app.db.session_repository import get_session_repository
+from app.agent.resources.contracts import ResourceDeclaration
+from app.agent.resources.resource_service import SessionResourceService
 from app.services.pdf_converter import pdf_converter
+from app.tools.resource_declarations import file_product, preview_file, primary_file
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,48 @@ def _office_document_file_path(document: dict) -> Optional[str]:
     if isinstance(pdf_preview, dict):
         return pdf_preview.get("source_file") or pdf_preview.get("office_file_path")
     return None
+
+
+async def _publish_office_product(
+    *,
+    session_id: str,
+    source_path: Path,
+    output_path: Path,
+    tool_name: str,
+    renderer: str,
+    preview_path: Path | None = None,
+):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    group_key = f"office:{source_path.stem}"
+    if preview_path is not None:
+        payloads = file_product(
+            primary_path=output_path,
+            group_key=group_key,
+            tool_name=tool_name,
+            renderer=renderer,
+            capabilities=("preview", "download", "edit"),
+            previews=[preview_file(preview_path, renderer="pdf")],
+        )
+    else:
+        payloads = [
+            primary_file(
+                output_path,
+                group_key=group_key,
+                tool_name=tool_name,
+                renderer=renderer,
+                capabilities=("preview", "download", "edit"),
+            )
+        ]
+    declarations = [
+        ResourceDeclaration.model_validate(payload) for payload in payloads
+    ]
+    return await SessionResourceService.database().publish_group(
+        session_id,
+        f"{tool_name}:{datetime.now().isoformat()}",
+        group_key,
+        declarations,
+    )
 
 
 def _resolve_existing_docx(file_path: str) -> Path:
@@ -692,32 +737,21 @@ async def save_docx(
         layout_source_path = _layout_reference_docx_path(source_path)
         _preserve_docx_layout_from_source(layout_source_path, output_path)
         pdf_preview = await _convert_docx_to_pdf_preview(output_path)
-        timestamp = datetime.now().isoformat()
-
-        document = {
-            "doc_type": "word",
-            "file_name": output_path.name,
-            "file_path": str(output_path),
-            "file_type": "docx",
-            "pdf_preview": pdf_preview,
-            "timestamp": timestamp,
-            "last_action": {
-                "tool": "docx_online_editor",
-                "summary": "在线编辑保存",
-                "timestamp": timestamp,
-            },
-            "metadata": {
-                "source_file_path": str(source_path),
-                "parent_file_path": str(source_path),
-                "display_file_name": display_filename,
-                "layout_source_file_path": str(layout_source_path),
-                "session_id": session_id,
-                "editor": "docx_online_editor",
-                "version_type": "edited",
-            },
+        publication = await _publish_office_product(
+            session_id=session_id,
+            source_path=source_path,
+            output_path=output_path,
+            tool_name="docx_online_editor",
+            renderer="file",
+            preview_path=Path(pdf_preview["pdf_path"]),
+        )
+        return {
+            "success": True,
+            "resource_version": publication.catalog_version,
+            "changed_resource_ids": [
+                resource.resource_id for resource in publication.resources
+            ],
         }
-        await _persist_office_document_version(session_id, document)
-        return {"success": True, "document": document}
     except HTTPException:
         raise
     except Exception as e:
@@ -772,30 +806,20 @@ async def save_excel(
             raise HTTPException(status_code=400, detail="Uploaded Excel file is empty")
 
         output_path.write_bytes(content)
-        timestamp = datetime.now().isoformat()
-        document = {
-            "doc_type": "excel",
-            "file_name": output_path.name,
-            "file_path": str(output_path),
-            "file_type": output_path.suffix.lower().lstrip(".") or "xlsx",
-            "spreadsheet_preview": _spreadsheet_preview(output_path),
-            "timestamp": timestamp,
-            "last_action": {
-                "tool": "excel_online_editor",
-                "summary": "在线编辑保存",
-                "timestamp": timestamp,
-            },
-            "metadata": {
-                "source_file_path": str(source_path),
-                "parent_file_path": str(source_path),
-                "display_file_name": display_filename,
-                "session_id": session_id,
-                "editor": "excel_online_editor",
-                "version_type": "edited",
-            },
+        publication = await _publish_office_product(
+            session_id=session_id,
+            source_path=source_path,
+            output_path=output_path,
+            tool_name="excel_online_editor",
+            renderer="spreadsheet",
+        )
+        return {
+            "success": True,
+            "resource_version": publication.catalog_version,
+            "changed_resource_ids": [
+                resource.resource_id for resource in publication.resources
+            ],
         }
-        await _persist_office_document_version(session_id, document)
-        return {"success": True, "document": document}
     except HTTPException:
         raise
     except Exception as e:

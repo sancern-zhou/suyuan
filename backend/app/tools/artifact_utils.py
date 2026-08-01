@@ -4,6 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.tools.resource_declarations import (
+    derivative_file,
+    directory_artifact,
+    primary_file,
+)
+
 OFFICE_MIME_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -74,24 +80,90 @@ def attach_document_artifact(
         else metadata.get("artifact_id") if isinstance(metadata, dict) and metadata.get("artifact_id")
         else title or Path(file_path).stem
     )
-    result_data["resources"] = [{
-        "kind": "file",
-        "logical_key": logical_key,
-        "role": "report" if kind == "report" else "output",
-        "label": title or Path(file_path).name,
-        "locator": {"path": str(Path(file_path).resolve())},
-        "presentation_type": "document",
-        "presentation": {
-            "format": artifact.get("format") or "document",
-            "preview": preview or {},
-            "editable": bool(artifact.get("preview_panel", False)),
-        },
-        "metadata": {
-            "generator": generator,
-            "artifact_kind": kind,
-            "mime_type": artifact.get("mime_type"),
-        },
-    }]
+    path = Path(file_path).expanduser().resolve()
+    if kind == "report":
+        group_key = f"report:{logical_key}"
+    elif kind == "html_artifact":
+        group_key = f"html-artifact:{logical_key}"
+    elif (format or path.suffix.lstrip(".")).lower() == "pptx":
+        group_key = f"presentation:{logical_key}"
+    else:
+        group_key = f"office:{logical_key}"
+    fmt = (format or path.suffix.lstrip(".") or "document").lower()
+    renderer_by_format = {
+        "pdf": "pdf",
+        "html": "html",
+        "qmd": "markdown",
+        "md": "markdown",
+        "xlsx": "spreadsheet",
+        "xls": "spreadsheet",
+        "pptx": "presentation",
+        "ppt": "presentation",
+        "png": "image",
+        "jpg": "image",
+        "jpeg": "image",
+        "svg": "image",
+    }
+    role = "report" if kind == "report" else "output"
+    if kind == "html_artifact":
+        primary = directory_artifact(
+            path.parent,
+            entrypoint=path.name,
+            group_key=group_key,
+            tool_name=generator or "html_artifact",
+            role=role,
+            label=title or logical_key,
+        )
+    else:
+        primary = primary_file(
+            path,
+            group_key=group_key,
+            tool_name=generator or "document",
+            role=role,
+            renderer=renderer_by_format.get(fmt, "file"),
+            capabilities=("preview", "download", "edit")
+            if fmt in {"docx", "xlsx", "pptx"}
+            else ("preview", "download"),
+            label=title or path.name,
+            metadata={"artifact_kind": kind},
+        )
+    primary["resource_key"] = fmt
+    resources = [primary]
+
+    preview_path = None
+    if isinstance(preview, dict):
+        for key in (
+            "pdf_path",
+            "html_path",
+            "markdown_path",
+            "svg_path",
+            "file_path",
+            "local_path",
+        ):
+            value = preview.get(key)
+            if isinstance(value, str) and value:
+                candidate = Path(value).expanduser().resolve()
+                if candidate.is_file() and candidate != path:
+                    preview_path = candidate
+                    break
+    if preview_path is None and kind == "report" and fmt == "qmd":
+        rendered_html = path.with_name("report.html")
+        if rendered_html.is_file():
+            preview_path = rendered_html
+    if preview_path is not None:
+        preview_fmt = preview_path.suffix.lower().lstrip(".") or "file"
+        derivative = derivative_file(
+            preview_path,
+            group_key=group_key,
+            parent_key=primary["resource_key"],
+            tool_name=generator or "document",
+            relation="preview",
+            role=role,
+            renderer=renderer_by_format.get(preview_fmt, "file"),
+        )
+        derivative["resource_key"] = preview_fmt
+        resources.append(derivative)
+    result_data["resources"] = resources
     return result_data
 
 
