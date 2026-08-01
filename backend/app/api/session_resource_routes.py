@@ -64,8 +64,9 @@ async def get_session_resources(
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     await catalog.require_read(session_id, user)
+    service = SessionResourceService.database()
     try:
-        page = await SessionResourceService.database().list_resources(
+        page = await service.list_resources(
             session_id,
             kind=kind,
             role=role,
@@ -85,6 +86,7 @@ async def get_session_resources(
     resources = [resource_dto(session_id, item) for item in page.resources]
     return {
         "session_id": session_id,
+        "resource_version": await service.catalog_version(session_id),
         "resources": resources,
         "total": len(resources),
         "next_cursor": page.next_cursor,
