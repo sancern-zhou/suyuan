@@ -24,9 +24,9 @@ from .core.executor import ToolExecutor
 from .runtime.mode_capabilities import supports_native_multimodal
 from .session.conversation_persistence import ConversationPersistenceService
 from .resources.runtime import (
-    RunResourceAccumulator,
     event_turn_sequence,
-    flush_resource_accumulator,
+    persist_tool_result_resources,
+    resource_error_event,
 )
 from .resources.resource_service import SessionResourceService, StoredResource
 from .resources.resource_map import project_agent_resource_map
@@ -563,8 +563,9 @@ class ReActAgent:
         )
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
-        resource_accumulator = RunResourceAccumulator(run_id="")
-        resource_flushed = False
+        latest_resource_version: int | None = None
+        resource_failures: list[dict[str, Any]] = []
+        published_resource_ids: list[str] = []
 
         # ✅ 创建记忆快照
         # 社交模式：使用外部传入的 social_memory_store
@@ -751,58 +752,69 @@ class ReActAgent:
             ):
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
                 active_run_id = event_data.get("run_id") or event.get("run_id") or active_run_id
-                resource_accumulator.run_id = str(active_run_id or resource_accumulator.run_id)
-                resource_accumulator.capture(
-                    event,
-                    turn_sequence=event_turn_sequence(event_data),
-                )
+                pending_resource_event = None
+                pending_resource_error = None
+
+                if event.get("type") == "tool_result":
+                    from app.agent.runtime.ownership import run_ownership_registry
+
+                    effective_run_id = str(active_run_id or "")
+                    if await run_ownership_registry.can_write(
+                        actual_session_id, active_run_id
+                    ):
+                        try:
+                            publication = await persist_tool_result_resources(
+                                resource_service,
+                                actual_session_id,
+                                effective_run_id,
+                                event,
+                                turn_sequence=event_turn_sequence(event_data),
+                            )
+                            if publication is not None:
+                                latest_resource_version = max(
+                                    latest_resource_version or 0,
+                                    publication.catalog_version,
+                                )
+                                if publication.changed_resource_ids:
+                                    published_resource_ids.extend(
+                                        publication.changed_resource_ids
+                                    )
+                                    pending_resource_event = publication.changed_event(
+                                        actual_session_id, effective_run_id
+                                    )
+                        except Exception as exc:
+                            pending_resource_error = resource_error_event(
+                                actual_session_id, effective_run_id, exc
+                            )
+                            resource_failures.append(pending_resource_error["data"])
+                            logger.error(
+                                "tool_result_resource_publication_failed",
+                                session_id=actual_session_id,
+                                run_id=effective_run_id,
+                                error=str(exc),
+                            )
+                    else:
+                        pending_resource_error = {
+                            "type": "resource_error",
+                            "data": {
+                                "session_id": actual_session_id,
+                                "run_id": effective_run_id,
+                                "error": "stale_run_write_skipped",
+                            },
+                        }
+                        resource_failures.append(pending_resource_error["data"])
 
                 if event.get("type") in {"complete", "incomplete", "interrupted", "fatal_error"}:
                     terminal_data = event.setdefault("data", {})
-                    from app.agent.runtime.ownership import run_ownership_registry
-
-                    owns_run = await run_ownership_registry.can_write(
-                        actual_session_id,
-                        active_run_id,
-                    )
-                    manifest = None
-                    if owns_run:
-                        result = await flush_resource_accumulator(
-                            resource_service,
-                            actual_session_id,
-                            resource_accumulator,
-                            terminal_data,
-                        )
-                        resource_flushed = bool(resource_accumulator.resources)
-                    elif resource_accumulator.resources:
-                        resource_flushed = True
+                    if latest_resource_version is not None:
+                        terminal_data["resource_version"] = latest_resource_version
+                    if resource_failures:
                         terminal_data["resource_durable"] = False
-                        terminal_data["resource_error"] = "stale_run_write_skipped"
-                        logger.info(
-                            "stale_run_resource_manifest_merge_skipped",
-                            session_id=actual_session_id,
-                            run_id=active_run_id,
-                        )
-                    if result is not None:
-                        logger.info(
-                            "session_resources_merged",
-                            session_id=actual_session_id,
-                            run_id=active_run_id,
-                            mode=manual_mode or "expert",
-                            version=result.version,
-                            resource_count=len(result.resources),
-                            extracted_count=len(resource_accumulator.resources),
-                            rejected_count=len(resource_accumulator.rejected),
-                        )
-                    elif terminal_data.get("resource_durable") is False:
-                        logger.error(
-                            "session_resources_merge_failed",
-                            session_id=actual_session_id,
-                            run_id=active_run_id,
-                            mode=manual_mode or "expert",
-                            extracted_count=len(resource_accumulator.resources),
-                            error=terminal_data.get("resource_error_detail"),
-                        )
+                        terminal_data["resource_error"] = resource_failures[-1][
+                            "error"
+                        ]
+                    elif published_resource_ids:
+                        terminal_data["resource_durable"] = True
 
                 if self._should_run_report_auto_followup(
                     manual_mode,
@@ -823,6 +835,10 @@ class ReActAgent:
                     return
 
                 yield event
+                if pending_resource_event is not None:
+                    yield pending_resource_event
+                elif pending_resource_error is not None:
+                    yield pending_resource_error
 
         except Exception as e:
             logger.error(
@@ -840,48 +856,17 @@ class ReActAgent:
                     "timestamp": datetime.now().isoformat()
                 }
             }
-            from app.agent.runtime.ownership import run_ownership_registry
-
-            if await run_ownership_registry.can_write(actual_session_id, active_run_id):
-                await flush_resource_accumulator(
-                    resource_service,
-                    actual_session_id,
-                    resource_accumulator,
-                    fatal_event["data"],
-                )
-            elif resource_accumulator.resources:
+            if latest_resource_version is not None:
+                fatal_event["data"]["resource_version"] = latest_resource_version
+            if resource_failures:
                 fatal_event["data"].update({
                     "resource_durable": False,
-                    "resource_error": "stale_run_write_skipped",
+                    "resource_error": resource_failures[-1]["error"],
                 })
-            resource_flushed = bool(resource_accumulator.resources)
+            elif published_resource_ids:
+                fatal_event["data"]["resource_durable"] = True
             yield fatal_event
         finally:
-            if resource_accumulator.resources and not resource_flushed:
-                try:
-                    from app.agent.runtime.ownership import run_ownership_registry
-
-                    if await run_ownership_registry.can_write(actual_session_id, active_run_id):
-                        await resource_service.upsert_run_resources(
-                            actual_session_id,
-                            resource_accumulator.run_id,
-                            resource_accumulator.resources,
-                        )
-                    else:
-                        logger.info(
-                            "stale_run_resources_finally_flush_skipped",
-                            session_id=actual_session_id,
-                            run_id=active_run_id,
-                        )
-                except Exception as exc:
-                    logger.error(
-                        "session_resources_finally_flush_failed",
-                        session_id=actual_session_id,
-                        run_id=active_run_id,
-                        mode=manual_mode or "expert",
-                        error=str(exc),
-                    )
-
             # ✅ 统一保存会话到数据库（每次分析完成后）
             if actual_session_id:
                 try:
