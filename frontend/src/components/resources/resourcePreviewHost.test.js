@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import test from 'node:test'
+
+const rendererNames = [
+  'PdfResourceRenderer', 'HtmlResourceRenderer', 'MarkdownResourceRenderer',
+  'SpreadsheetResourceRenderer', 'PresentationResourceRenderer', 'ImageResourceRenderer',
+  'ChartResourceRenderer', 'BoardResourceRenderer', 'FileDetailRenderer'
+]
+
+test('preview host uses the resource store and opaque content boundary', async () => {
+  const source = await readFile(new URL('./ResourcePreviewHost.vue', import.meta.url), 'utf8')
+  assert.match(source, /useSessionResourceStore/)
+  assert.match(source, /rendererKey/)
+  assert.match(source, /content-url/)
+  assert.doesNotMatch(source, /file_path|pdf_id|html_id|\/api\/file\//)
+})
+
+test('renderers accept only resource, group and contentUrl boundary props', async () => {
+  for (const name of rendererNames) {
+    const source = await readFile(new URL(`./renderers/${name}.vue`, import.meta.url), 'utf8')
+    assert.match(source, /defineProps/)
+    assert.match(source, /resource/)
+    assert.match(source, /group/)
+    assert.match(source, /contentUrl/)
+    assert.doesNotMatch(source, /api\/session|reactStore|file_path|pdf_id|html_id|\/api\/file\//)
+  }
+})
