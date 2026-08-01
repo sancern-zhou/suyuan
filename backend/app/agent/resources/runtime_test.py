@@ -14,50 +14,85 @@ from app.tools.office.validate_pptx_tool import validation_output_resources
 from .contracts import ResourceDeclaration
 from .contracts import ResourceLocator
 from .models import ResourceKind
-from .runtime import RunResourceAccumulator, event_turn_sequence, flush_resource_accumulator
+from .runtime import (
+    RunResourceAccumulator,
+    event_turn_sequence,
+    persist_tool_result_resources,
+)
 
 
 def _resource():
     return {
         "kind": "file",
-        "logical_key": "report:current",
+        "group_key": "report:current",
+        "resource_key": "source",
+        "relation": "primary",
         "role": "report",
         "label": "report",
         "locator": {"path": "/tmp/report.html"},
-        "presentation_type": "document",
-        "presentation": {"format": "html", "preview": {"type": "html", "url": "/preview"}},
+        "format": "html",
+        "media_type": "text/html",
+        "renderer": "html",
+        "capabilities": ["preview", "download"],
     }
 
 
 def test_accumulator_reads_only_explicit_resource_list():
     accumulator = RunResourceAccumulator(run_id="run-a")
-    accumulator.capture({"type": "tool_result", "data": {"resources": [_resource()]}}, turn_sequence=2)
-    accumulator.capture({"type": "tool_result", "data": {"file_path": "/tmp/legacy.html"}}, turn_sequence=3)
-    assert len(accumulator.resources) == 1
-    assert accumulator.resources[0].resource_key() == "report:current"
+    grouped = accumulator.capture(
+        {"type": "tool_result", "data": {"resources": [_resource()]}},
+        turn_sequence=2,
+    )
+    legacy = accumulator.capture(
+        {"type": "tool_result", "data": {"file_path": "/tmp/legacy.html"}},
+        turn_sequence=3,
+    )
+    assert list(grouped) == ["report:current"]
+    assert grouped["report:current"][0].resource_key == "source"
+    assert legacy == {}
 
 
 def test_accumulator_ignores_transport_document_event():
     accumulator = RunResourceAccumulator(run_id="run-a")
-    accumulator.capture({"type": "tool_result", "data": {"resources": [_resource()]}}, turn_sequence=2)
-    accumulator.capture({"type": "office_document", "data": {"file_path": "/tmp/report.html"}}, turn_sequence=2)
-    assert len(accumulator.resources) == 1
+    grouped = accumulator.capture(
+        {"type": "tool_result", "data": {"resources": [_resource()]}},
+        turn_sequence=2,
+    )
+    ignored = accumulator.capture(
+        {"type": "office_document", "data": {"file_path": "/tmp/report.html"}},
+        turn_sequence=2,
+    )
+    assert list(grouped) == ["report:current"]
+    assert ignored == {}
 
 
 @pytest.mark.asyncio
-async def test_flush_marks_resource_durable_after_upsert():
-    accumulator = RunResourceAccumulator(run_id="run-a")
-    accumulator.capture({"type": "tool_result", "data": {"resources": [_resource()]}}, turn_sequence=1)
-
+async def test_tool_result_publication_returns_durable_change():
     class Service:
-        async def upsert_run_resources(self, session_id, run_id, resources, *, turn_sequence=0):
-            return type("Result", (), {"version": 4})()
+        async def publish_group(self, session_id, run_id, group_key, resources, *, turn_sequence=0):
+            stored = StoredResource.from_declaration(
+                session_id,
+                run_id,
+                "group-id",
+                1,
+                resources[0],
+                turn_sequence=turn_sequence,
+            )
+            return type(
+                "Result",
+                (),
+                {"catalog_version": 4, "resources": [stored]},
+            )()
 
-    terminal_data = {}
-    result = await flush_resource_accumulator(Service(), "session-a", accumulator, terminal_data)
-    assert result.version == 4
-    assert terminal_data["resource_durable"] is True
-    assert terminal_data["resource_version"] == 4
+    result = await persist_tool_result_resources(
+        Service(),
+        "session-a",
+        "run-a",
+        {"type": "tool_result", "data": {"resources": [_resource()]}},
+        turn_sequence=1,
+    )
+    assert result.catalog_version == 4
+    assert len(result.changed_resource_ids) == 1
 
 
 def test_malformed_iteration_falls_back_to_zero():

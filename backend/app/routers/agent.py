@@ -1194,14 +1194,13 @@ async def analyze_stream(
                                 event_data = json.dumps(event, ensure_ascii=False, default=str)
                                 yield f"data: {event_data}\n\n"
                                 break
-                            # ✅ 将本轮生成/读取的 Office 预览元数据附到 complete 事件，避免前端错过
-                            # office_document 实时事件后无法打开预览面板。
+                            # Legacy transcript persistence is removed in the
+                            # backend cleanup task. It must never be injected
+                            # into the live transport; resources_changed is the
+                            # only preview notification contract.
                             office_documents = agent._session_store.get(
                                 actual_session_id, {}
                             ).get("office_documents", [])
-                            if office_documents:
-                                event.setdefault("data", {})["office_documents"] = office_documents
-                                event["data"]["last_office_document"] = office_documents[-1]
 
                             # ✅ 添加最终答案消息
                             event_data = event.get("data") or {}
