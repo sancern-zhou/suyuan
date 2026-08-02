@@ -1,8 +1,8 @@
 """
 present_artifact 工具
 
-Agent 用这个工具把已经生成的文件推送到前端右侧面板。
-工具不生成文件，只把文件路径转换成现有前端可消费的 preview 字段。
+Agent 用这个工具把已经生成的文件登记为统一会话资源。
+工具不生成文件，只负责声明原文件及已有预览衍生物。
 """
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -17,7 +17,7 @@ from app.services.report_preview_refresh import (
     refresh_report_preview_for_qmd_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_resources, preview_output_path
 from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 
 logger = structlog.get_logger()
@@ -87,7 +87,6 @@ class PresentArtifactTool(LLMTool):
                 )
 
         try:
-            artifact: Optional[Dict[str, Any]] = None
             data: Dict[str, Any] = {
                 "file_path": str(resolved_path),
                 "file_name": resolved_path.name,
@@ -148,34 +147,11 @@ class PresentArtifactTool(LLMTool):
                     if ppt_preview:
                         data["ppt_preview"] = ppt_preview
             elif resolved_type == "editable_diagram" and suffix in DRAWIO_EXTENSIONS:
-                artifact = {
-                    "type": "document",
-                    "kind": "editable_diagram",
-                    "format": "drawio",
-                    "file_path": str(resolved_path),
-                    "file_name": resolved_path.name,
-                    "preview_panel": False,
-                }
+                pass
             else:
                 return self._failure(f"不支持预览的文件类型: {suffix or '无扩展名'}")
 
             artifact_format = suffix.lstrip(".") or resolved_type
-            if artifact is None:
-                artifact = {
-                    "type": "document",
-                    "kind": resolved_type,
-                    "format": artifact_format,
-                    "file_path": str(resolved_path),
-                    "file_name": resolved_path.name,
-                    "title": html_artifact_id or resolved_path.stem,
-                }
-            else:
-                artifact.setdefault("type", "document")
-                artifact.setdefault("kind", resolved_type)
-                artifact.setdefault("format", artifact_format)
-                artifact.setdefault("file_path", str(resolved_path))
-                artifact.setdefault("file_name", resolved_path.name)
-                artifact.setdefault("title", html_artifact_id or resolved_path.stem)
             preview = (
                 data.get("html_preview")
                 or data.get("spreadsheet_preview")
@@ -183,35 +159,19 @@ class PresentArtifactTool(LLMTool):
                 or data.get("ppt_preview")
                 or data.get("markdown_preview")
             )
-            if isinstance(preview, dict):
-                artifact["preview"] = preview
-            preview_key = next(
-                (
-                    key
-                    for key in (
-                        "html_preview",
-                        "spreadsheet_preview",
-                        "pdf_preview",
-                        "ppt_preview",
-                        "markdown_preview",
-                    )
-                    if isinstance(data.get(key), dict)
-                ),
-                None,
-            )
             resource_kind = (
                 resolved_type
                 if resolved_type in {"report", "html_artifact"}
                 else "office"
             )
-            logical_key = html_artifact_id or artifact.get("artifact_id") or resolved_path.stem
-            attach_document_artifact(
+            logical_key = html_artifact_id or resolved_path.stem
+            attach_document_resources(
                 data,
                 resolved_path,
                 kind=resource_kind,
                 format=artifact_format,
-                title=artifact.get("title") or resolved_path.name,
-                preview_key=preview_key,
+                title=html_artifact_id or resolved_path.stem,
+                preview_path=preview_output_path(preview),
                 generator="present_artifact",
                 metadata={
                     "artifact_id": str(logical_key)
@@ -231,7 +191,7 @@ class PresentArtifactTool(LLMTool):
             )
             summary = (
                 f"已作为可下载产物提供: {resolved_path.name}"
-                if artifact and artifact.get("preview_panel") is False
+                if resolved_type == "editable_diagram"
                 else f"已推送到右侧预览面板: {resolved_path.name}"
             )
             resources = data.get("resources", [])
@@ -239,7 +199,6 @@ class PresentArtifactTool(LLMTool):
                 "status": "success",
                 "success": True,
                 "data": data,
-                **({"artifact": artifact, "artifacts": [artifact]} if artifact else {}),
                 "resources": resources,
                 "llm_resume": {
                     "file_path": str(resolved_path),

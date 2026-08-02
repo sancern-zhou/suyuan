@@ -10,71 +10,33 @@ from app.tools.resource_declarations import (
     primary_file,
 )
 
-OFFICE_MIME_TYPES = {
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-}
 
+def preview_output_path(*descriptors: Any) -> Path | None:
+    """Resolve a renderer output descriptor to an existing local file."""
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict):
+            continue
+        for key in ("pdf_path", "html_path", "markdown_path", "svg_path", "file_path", "local_path"):
+            value = descriptor.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            candidate = Path(value).expanduser().resolve()
+            if candidate.is_file():
+                return candidate
+    return None
 
-def build_document_artifact(
-    file_path: str | Path,
-    *,
-    kind: str = "office",
-    format: Optional[str] = None,
-    title: Optional[str] = None,
-    preview: Optional[Dict[str, Any]] = None,
-    generator: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Return the normalized document artifact contract for the right panel."""
-    path = Path(file_path)
-    fmt = (format or path.suffix.lstrip(".") or "document").lower()
-    artifact: Dict[str, Any] = {
-        "type": "document",
-        "kind": kind,
-        "format": fmt,
-        "file_path": str(path),
-        "file_name": path.name,
-        "preview_panel": True,
-    }
-    mime_type = OFFICE_MIME_TYPES.get(fmt)
-    if mime_type:
-        artifact["mime_type"] = mime_type
-    if title:
-        artifact["title"] = title
-    if preview:
-        artifact["preview"] = preview
-    if generator:
-        artifact["generator"] = generator
-    if metadata:
-        artifact["metadata"] = metadata
-    return artifact
-
-
-def attach_document_artifact(
+def attach_document_resources(
     result_data: Dict[str, Any],
     file_path: str | Path,
     *,
     kind: str = "office",
     format: Optional[str] = None,
     title: Optional[str] = None,
-    preview_key: Optional[str] = None,
+    preview_path: str | Path | None = None,
     generator: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Attach one explicit document resource and the render payload."""
-    preview = result_data.get(preview_key) if preview_key else None
-    artifact = build_document_artifact(
-        file_path,
-        kind=kind,
-        format=format,
-        title=title,
-        preview=preview,
-        generator=generator,
-        metadata=metadata,
-    )
-    result_data["artifact"] = artifact
+    """Attach a primary file and optional preview directly as resources."""
     logical_key = str(
         metadata.get("report_id") if isinstance(metadata, dict) and metadata.get("report_id")
         else metadata.get("artifact_id") if isinstance(metadata, dict) and metadata.get("artifact_id")
@@ -125,43 +87,32 @@ def attach_document_artifact(
     primary["resource_key"] = fmt
     resources = [primary]
 
-    preview_path = None
-    if isinstance(preview, dict):
-        for key in (
-            "pdf_path",
-            "html_path",
-            "markdown_path",
-            "svg_path",
-            "file_path",
-            "local_path",
-        ):
-            value = preview.get(key)
-            if isinstance(value, str) and value:
-                candidate = Path(value).expanduser().resolve()
-                if candidate.is_file() and candidate != path:
-                    preview_path = candidate
-                    break
+    resolved_preview = None
+    if preview_path:
+        candidate = Path(preview_path).expanduser().resolve()
+        if candidate.is_file() and candidate != path:
+            resolved_preview = candidate
     if kind == "html_artifact" and fmt == "html":
-        preview_path = path
-    elif preview_path is None and kind == "report" and fmt == "qmd":
+        resolved_preview = path
+    elif resolved_preview is None and kind == "report" and fmt == "qmd":
         rendered_html = path.with_name("report.html")
         if rendered_html.is_file():
-            preview_path = rendered_html
-    if preview_path is not None:
-        preview_fmt = preview_path.suffix.lower().lstrip(".") or "file"
+            resolved_preview = rendered_html
+    if resolved_preview is not None:
+        preview_fmt = resolved_preview.suffix.lower().lstrip(".") or "file"
         if (
             (kind == "report" and fmt == "qmd" and preview_fmt == "html")
             or (kind == "html_artifact" and preview_fmt == "html")
         ):
             derivative = directory_artifact(
-                preview_path.parent,
-                entrypoint=preview_path.name,
+                resolved_preview.parent,
+                entrypoint=resolved_preview.name,
                 group_key=group_key,
                 tool_name=generator or "document",
                 role=role,
                 renderer="html",
                 capabilities=("preview",),
-                label=preview_path.name,
+                label=resolved_preview.name,
             )
             derivative.update(
                 resource_key="html",
@@ -170,7 +121,7 @@ def attach_document_artifact(
             )
         else:
             derivative = derivative_file(
-                preview_path,
+                resolved_preview,
                 group_key=group_key,
                 parent_key=primary["resource_key"],
                 tool_name=generator or "document",
@@ -192,11 +143,11 @@ def build_artifact_resume_context(
     tool_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return top-level Agent resume fields for an explicit artifact result."""
-    artifact = result_data.get("artifact") if isinstance(result_data.get("artifact"), dict) else {}
+    path = Path(file_path)
     resume = {
-        "artifact_path": str(Path(file_path)),
-        "artifact_format": artifact.get("format") or Path(file_path).suffix.lstrip(".") or None,
-        "tool_hint": tool_hint or f"Use present_artifact(file_path='{Path(file_path)}') to preview this artifact.",
+        "artifact_path": str(path),
+        "artifact_format": path.suffix.lstrip(".") or None,
+        "tool_hint": tool_hint or f"Use present_artifact(file_path='{path}') to preview this artifact.",
     }
     if extra_resume:
         resume.update({key: value for key, value in extra_resume.items() if value is not None})

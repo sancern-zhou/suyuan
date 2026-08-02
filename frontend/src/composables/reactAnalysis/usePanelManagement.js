@@ -15,10 +15,7 @@ export function usePanelManagement(store = null) {
   const managementPanel = ref(null) // 当前显示的管理面板
   const rightPanelVisible = ref(false) // 右侧面板是否可见
   const leftSidebarCollapsed = ref(false) // 左侧边栏是否折叠
-  const vizPanelVisible = ref(false) // 可视化面板是否可见
-  const officePanelVisible = ref(false) // Office文档面板是否可见
   const knowledgePanelVisible = ref(false) // 知识溯源面板是否可见
-  const boardPanelVisible = ref(false) // Draw.io画板面板是否可见
   const activeRightTab = ref('files') // 右侧面板活动标签页
 
   // ========== 宽度调整相关 ==========
@@ -74,13 +71,6 @@ export function usePanelManagement(store = null) {
   })
 
   /**
-   * 检测是否有Office文档操作
-   */
-  const hasOfficeDocuments = computed(() => {
-    return resourceSummary.value.counts.document > 0
-  })
-
-  /**
    * 检测是否有知识溯源信息
    */
   const hasKnowledgeSources = computed(() => {
@@ -95,13 +85,6 @@ export function usePanelManagement(store = null) {
       }
       return false
     })
-  })
-
-  /**
-   * 检测是否有Draw.io画板
-   */
-  const hasBoardContent = computed(() => {
-    return resourceSummary.value.counts.board > 0
   })
 
   // ========== 面板切换方法 ==========
@@ -145,10 +128,7 @@ export function usePanelManagement(store = null) {
    * 重置面板状态（用于新会话）
    */
   const resetPanelState = () => {
-    vizPanelVisible.value = false
-    officePanelVisible.value = false
     knowledgePanelVisible.value = false
-    boardPanelVisible.value = false
     rightPanelVisible.value = false
     leftSidebarCollapsed.value = false
     managementPanel.value = null
@@ -172,7 +152,6 @@ export function usePanelManagement(store = null) {
       resourceStore.selectGroup(sessionId, resource.group_id)
       resourceStore.selectResource(sessionId, resource.resource_id, 'explicit')
       activeRightTab.value = 'document'
-      officePanelVisible.value = true
       rightPanelVisible.value = true
       leftSidebarCollapsed.value = true
       vizWidth.value = collapsedVizWidth
@@ -272,9 +251,6 @@ export function usePanelManagement(store = null) {
       () => {
         const sessionId = resourceStore.activeSessionId
         const summary = resourceSummary.value
-        vizPanelVisible.value = summary.counts.visualization > 0
-        officePanelVisible.value = summary.counts.document > 0 || !!explicitAttachment.value
-        boardPanelVisible.value = summary.counts.board > 0
         if (sessionId && summary.hasArtifacts && !explicitAttachment.value) {
           const restored = chooseRestoredResource(resourceStore, sessionId)
           if (restored) activeRightTab.value = restored.targetTab
@@ -336,10 +312,7 @@ export function usePanelManagement(store = null) {
     managementPanel,
     rightPanelVisible,
     leftSidebarCollapsed,
-    vizPanelVisible,
-    officePanelVisible,
     knowledgePanelVisible,
-    boardPanelVisible,
     activeRightTab,
     vizWidth,
     isDragging,
@@ -348,9 +321,7 @@ export function usePanelManagement(store = null) {
     // 计算属性
     vizPanelStyle,
     hasVizContent,
-    hasOfficeDocuments,
     hasKnowledgeSources,
-    hasBoardContent,
     resourceSummary,
 
     // 方法

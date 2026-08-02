@@ -4,7 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
+from app.tools.artifact_utils import (
+    attach_document_resources,
+    build_artifact_resume_context,
+    preview_output_path,
+)
 from app.services.html_artifact_service import html_artifact_service
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
@@ -172,13 +176,13 @@ class CreateHtmlArtifactTool(LLMTool):
         )
         data.pop("download_url", None)
         data.pop("share_endpoint", None)
-        attach_document_artifact(
+        attach_document_resources(
             data,
             data["file_path"],
             kind="html_artifact",
             format="html",
             title=title or data.get("artifact_id"),
-            preview_key="html_preview",
+            preview_path=preview_output_path(data.get("html_preview")),
             generator=self.name,
             metadata={"artifact_id": data.get("artifact_id")},
         )

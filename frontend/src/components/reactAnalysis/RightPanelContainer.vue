@@ -154,19 +154,7 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  vizPanelVisible: {
-    type: Boolean,
-    default: false
-  },
-  officePanelVisible: {
-    type: Boolean,
-    default: false
-  },
   knowledgePanelVisible: {
-    type: Boolean,
-    default: false
-  },
-  boardPanelVisible: {
     type: Boolean,
     default: false
   },
@@ -241,7 +229,7 @@ const showBoardTab = computed(() => resourceSummary.value.counts.board > 0)
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.sessionId || props.taskWorkspaceTask || props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || showBoardTab.value
+  return props.sessionId || props.taskWorkspaceTask || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)

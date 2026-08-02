@@ -29,7 +29,11 @@ from app.services.report_preview_refresh import (
 from app.services.report_preview_refresh import (
     record_report_update,
 )
-from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
+from app.tools.artifact_utils import (
+    attach_document_resources,
+    build_artifact_resume_context,
+    preview_output_path,
+)
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import get_images_dir
 
@@ -728,13 +732,13 @@ format:
             data["render_error"] = render_error
             data["error"] = render_error
 
-        attach_document_artifact(
+        attach_document_resources(
             data,
             qmd_path,
             kind="report",
             format="qmd",
             title=data.get("report_id"),
-            preview_key="html_preview" if html_preview else "markdown_preview",
+            preview_path=preview_output_path(html_preview),
             generator="create_report_package",
             metadata={"report_id": safe_id},
         )
@@ -815,13 +819,13 @@ class RenderReportPackageTool(LLMTool):
                     "html_preview": build_report_html_preview(safe_id, path),
                     "version": meta.get("version"),
                 }
-                attach_document_artifact(
+                attach_document_resources(
                     data,
                     path,
                     kind="report",
                     format="html",
                     title=safe_id,
-                    preview_key="html_preview",
+                    preview_path=path,
                     generator="render_report_package",
                     metadata={"report_id": safe_id},
                 )
@@ -833,7 +837,7 @@ class RenderReportPackageTool(LLMTool):
                     "file_type": "report",
                     "generator": "render_report_package",
                 }
-                attach_document_artifact(
+                attach_document_resources(
                     data,
                     path,
                     kind="report",
@@ -850,7 +854,7 @@ class RenderReportPackageTool(LLMTool):
                     "file_type": "report",
                     "generator": "render_report_package",
                 }
-                attach_document_artifact(
+                attach_document_resources(
                     data,
                     path,
                     kind="report",
