@@ -15,7 +15,7 @@ test('preview host uses the resource store and opaque content boundary', async (
   assert.match(source, /content-url/)
   assert.match(source, /explicitAttachment/)
   assert.match(source, /preferredPreview\(group\.value\) \|\| explicitAttachment\.value/)
-  assert.match(source, /:floating="target === 'document' && resource\.renderer !== 'spreadsheet'"/)
+  assert.match(source, /:floating="target === 'document'"/)
   assert.match(source, /\.preview-layout \{ position: relative;/)
   assert.doesNotMatch(source, /file_path|pdf_id|html_id|\/api\/file\//)
 })

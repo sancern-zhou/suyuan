@@ -267,7 +267,13 @@ test('preview original download is a native browser download link', async ({ pag
   await page.getByRole('button', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
 
-  const downloadLink = page.locator('.resource-actions a[download]')
+  const actions = page.locator('.resource-actions.floating')
+  await expect(actions.getByRole('button', { name: '下载' })).toBeVisible()
+  const triggerBox = await actions.getByRole('button', { name: '下载' }).boundingBox()
+  const toolbarActionsBox = await page.locator('.excel-toolbar .toolbar-actions').boundingBox()
+  expect(toolbarActionsBox.x + toolbarActionsBox.width).toBeLessThanOrEqual(triggerBox.x)
+  await actions.getByRole('button', { name: '下载' }).click()
+  const downloadLink = actions.getByRole('menuitem', { name: '下载原始 Excel' })
   await expect(downloadLink).toHaveText('下载原始 Excel')
   const download = page.waitForEvent('download')
   await downloadLink.click()
@@ -323,7 +329,9 @@ test('spreadsheet preview switches sheets, edits a cell, and refreshes after sav
   await page.getByRole('button', { name: '保存' }).click()
 
   await expect(page.locator('.excel-status')).toContainText('已保存')
-  await expect(page.locator('.resource-actions a[download]')).toHaveAttribute(
+  const actions = page.locator('.resource-actions.floating')
+  await actions.getByRole('button', { name: '下载' }).click()
+  await expect(actions.getByRole('menuitem', { name: '下载原始 Excel' })).toHaveAttribute(
     'href',
     /resource-spreadsheet-v2/
   )
