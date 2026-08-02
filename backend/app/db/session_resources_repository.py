@@ -63,7 +63,7 @@ def _insert_values(resource: StoredResource) -> dict:
         "media_type": resource.media_type,
         "renderer": resource.renderer,
         "capabilities": resource.capabilities,
-        "metadata": resource.metadata,
+        "resource_metadata": resource.metadata,
         "tool_name": resource.tool_name,
         "run_id": resource.run_id,
         "turn_sequence": resource.turn_sequence,
