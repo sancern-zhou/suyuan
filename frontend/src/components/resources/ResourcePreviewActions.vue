@@ -26,15 +26,15 @@
       :class="floating || compact ? 'download-menu' : 'action-list'"
       :role="floating || compact ? 'menu' : null"
     >
-      <a
+      <button
         v-if="primary.download_url"
-        :href="primary.download_url"
-        :download="downloadFileName(primary)"
+        type="button"
         :role="floating || compact ? 'menuitem' : null"
-        @click="closeMenu"
+        :disabled="Boolean(busy)"
+        @click="download(primary)"
       >
-        {{ originalLabel }}
-      </a>
+        {{ busy === primary.resource_id ? '下载中...' : originalLabel }}
+      </button>
       <template v-if="isQmd">
         <span class="divider" aria-hidden="true"></span>
         <button
@@ -53,15 +53,15 @@
         >
           {{ busy === 'docx' ? '生成中...' : (floating || compact ? '导出 Word' : 'Word') }}
         </button>
-        <a
+        <button
           v-if="pdfRendition"
-          :href="pdfRendition.download_url"
-          :download="downloadFileName(pdfRendition)"
+          type="button"
           :role="floating || compact ? 'menuitem' : null"
-          @click="closeMenu"
+          :disabled="Boolean(busy)"
+          @click="download(pdfRendition)"
         >
-          {{ floating || compact ? '下载 PDF' : 'PDF' }}
-        </a>
+          {{ busy === pdfRendition.resource_id ? '下载中...' : (floating || compact ? '下载 PDF' : 'PDF') }}
+        </button>
       </template>
       <span v-if="error" class="error" role="alert">{{ error }}</span>
     </div>
@@ -72,7 +72,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invokeResourceAction } from '@/api/sessionResources.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
-import { activeRendition, downloadFileName, downloadResource, formatName } from '@/services/resourceDownloads.js'
+import { activeRendition, downloadResource, formatName } from '@/services/resourceDownloads.js'
 
 const props = defineProps({
   group: { type: Object, default: null },
@@ -100,6 +100,20 @@ const closeMenu = () => {
   menuOpen.value = false
 }
 
+const download = async resource => {
+  if (!resource || busy.value) return
+  busy.value = resource.resource_id
+  error.value = ''
+  try {
+    await downloadResource(resource)
+    closeMenu()
+  } catch (cause) {
+    error.value = cause?.message || '下载失败'
+  } finally {
+    busy.value = ''
+  }
+}
+
 const handleDocumentPointerDown = event => {
   if (menuOpen.value && !actionsRef.value?.contains(event.target)) closeMenu()
 }
@@ -122,7 +136,7 @@ watch(() => props.resource?.resource_id, closeMenu)
 
 const exportReport = async format => {
   const existing = activeRendition(props.group, format)
-  if (existing) return downloadResource(existing)
+  if (existing) return download(existing)
   const sessionId = resourceStore.activeSessionId
   const actionUrl = primary.value?.actions?.render
   if (!sessionId || !actionUrl) return

@@ -54,6 +54,42 @@ test('refreshes once for a newer event and ignores out-of-order versions', async
   assert.equal(store.sessionState('session-a').resourceVersion, 4)
 })
 
+test('retries until the catalog reports the expected version without another event', async () => {
+  let fetchCount = 0
+  const store = createResourceStoreHarness({
+    listResources: async sessionId => {
+      fetchCount += 1
+      if (fetchCount < 3) return page(sessionId, 2, [{ resource_id: 'old' }])
+      return page(sessionId, 3, [{ resource_id: 'new' }])
+    }
+  })
+
+  await store.loadCatalog('session-a')
+  await store.onResourcesChanged({ session_id: 'session-a', resource_version: 3 })
+
+  assert.equal(fetchCount, 3)
+  assert.equal(store.sessionState('session-a').resourceVersion, 3)
+  assert.deepEqual(store.sessionState('session-a').resources, [{ resource_id: 'new' }])
+})
+
+test('does not replace an observed catalog with an older snapshot', async () => {
+  let fetchCount = 0
+  const store = createResourceStoreHarness({
+    listResources: async sessionId => {
+      fetchCount += 1
+      return fetchCount === 1
+        ? page(sessionId, 4, [{ resource_id: 'current' }])
+        : page(sessionId, 3, [{ resource_id: 'obsolete' }])
+    }
+  })
+
+  await store.loadCatalog('session-a')
+  await store.loadCatalog('session-a')
+
+  assert.equal(store.sessionState('session-a').resourceVersion, 4)
+  assert.deepEqual(store.sessionState('session-a').resources, [{ resource_id: 'current' }])
+})
+
 test('ignores an older event while a newer version refresh is still in flight', async () => {
   let resolveRefresh
   let fetchCount = 0

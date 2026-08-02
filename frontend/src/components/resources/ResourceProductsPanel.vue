@@ -43,28 +43,32 @@
         </div>
         <div class="product-actions">
           <button type="button" class="open-label" @click="open(group)">打开</button>
-          <a
+          <button
             v-if="group.primary.download_url"
+            type="button"
             class="download"
-            :href="group.primary.download_url"
-            :download="downloadFileName(group.primary)"
-          >下载</a>
+            :disabled="Boolean(downloadingId)"
+            @click="download(group.primary)"
+          >{{ downloadingId === group.primary.resource_id ? '下载中...' : '下载' }}</button>
         </div>
       </article>
     </div>
+    <p v-if="downloadError" class="download-error" role="alert">{{ downloadError }}</p>
   </section>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } from '@/services/resourceGroups.js'
-import { downloadFileName } from '@/services/resourceDownloads.js'
+import { downloadResource } from '@/services/resourceDownloads.js'
 import { derivativeLabel } from '@/services/resourceProductLabels.js'
 import FileDetailRenderer from '@/components/resources/renderers/FileDetailRenderer.vue'
 
 const emit = defineEmits(['open-resource-tab'])
 const resourceStore = useSessionResourceStore()
+const downloadingId = ref('')
+const downloadError = ref('')
 const sessionState = computed(() => resourceStore.activeSessionState)
 const products = computed(() => topLevelProducts(buildResourceGroups(sessionState.value?.resources || [])))
 const explicitAttachment = computed(() => {
@@ -93,6 +97,19 @@ const open = (group) => {
   emit('open-resource-tab', targetTab(group))
 }
 
+const download = async resource => {
+  if (!resource || downloadingId.value) return
+  downloadingId.value = resource.resource_id
+  downloadError.value = ''
+  try {
+    await downloadResource(resource)
+  } catch (error) {
+    downloadError.value = error?.message || '下载失败'
+  } finally {
+    downloadingId.value = ''
+  }
+}
+
 const sizeLabel = (size) => {
   const bytes = Number(size || 0)
   if (!bytes) return ''
@@ -108,7 +125,7 @@ const sizeLabel = (size) => {
 header, .product-main { display: flex; align-items: center; }
 header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid #edf1f7; }
 h3 { margin: 0; font-size: 16px; color: #17223b; } header p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
-button, a { border: 0; background: transparent; color: #1976d2; cursor: pointer; font: inherit; text-decoration: none; }
+button { border: 0; background: transparent; color: #1976d2; cursor: pointer; font: inherit; }
 .state { margin: 28px 4px; color: #64748b; text-align: center; }.error { color: #b42318; }
 .product-list { display: grid; gap: 10px; padding-top: 14px; }.product { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; border: 1px solid #e2e8f0; border-radius: 6px; }
 .product-main { grid-column: 1; grid-row: 1; width: 100%; gap: 10px; padding: 10px; color: #17223b; text-align: left; }
@@ -116,5 +133,6 @@ button, a { border: 0; background: transparent; color: #1976d2; cursor: pointer;
 .details { display: grid; min-width: 0; gap: 4px; }.details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.details small, .derivatives { color: #7a8798; font-size: 11px; }
 .derivatives { display: flex; grid-column: 1; grid-row: 2; flex-wrap: wrap; gap: 8px; padding: 0 10px 10px 58px; }
 .product-actions { display: flex; grid-column: 2; grid-row: 1 / 3; align-items: center; gap: 2px; padding: 8px; }
-.product-actions button, .product-actions a { padding: 8px 6px; white-space: nowrap; }
+.product-actions button { padding: 8px 6px; white-space: nowrap; }
+.download-error { margin: 10px 4px 0; color: #b42318; font-size: 12px; }
 </style>
