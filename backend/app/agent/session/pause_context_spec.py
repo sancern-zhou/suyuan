@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from app.agent.runtime import cancellation as cancellation_runtime
 from app.agent.memory.session_memory import SessionMemory
 from app.agent.runtime.cancellation import CancellationRegistry
 from app.agent.session.conversation_persistence import ConversationPersistenceService
@@ -182,3 +183,95 @@ async def test_next_turn_waits_until_the_paused_run_finishes_finalization():
     assert old_task.cancelled()
     assert next_event is not first_event
     await registry.unregister("session_a", next_event)
+
+
+@pytest.mark.asyncio
+async def test_remote_worker_pause_cancels_the_worker_that_owns_the_run():
+    shared_store = cancellation_runtime.InMemoryCancellationStateStore()
+    owner = CancellationRegistry(store=shared_store, poll_interval=0.01)
+    remote = CancellationRegistry(store=shared_store, poll_interval=0.01)
+    cancel_event = await owner.register("session_a")
+    await owner.attach_run_id("session_a", cancel_event, "run_old")
+
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    run_task = asyncio.create_task(wait_forever())
+    await owner.attach_run_task("session_a", run_task)
+    await owner.arm_run_task("session_a", cancel_event)
+
+    assert await remote.cancel(
+        "session_a",
+        expected_run_id="run_old",
+        reason="user_paused",
+    )
+    await asyncio.wait_for(cancel_event.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert run_task.cancelled()
+    assert await owner.pause_reason("session_a", cancel_event) == "user_paused"
+    await owner.unregister("session_a", cancel_event)
+
+
+@pytest.mark.asyncio
+async def test_remote_next_turn_waits_for_the_owner_to_commit_pause():
+    shared_store = cancellation_runtime.InMemoryCancellationStateStore()
+    owner = CancellationRegistry(store=shared_store, poll_interval=0.01)
+    remote = CancellationRegistry(store=shared_store, poll_interval=0.01)
+    cancel_event = await owner.register("session_a")
+    await owner.attach_run_id("session_a", cancel_event, "run_old")
+
+    assert await remote.cancel(
+        "session_a",
+        expected_run_id="run_old",
+        reason="user_paused",
+    )
+    barrier = asyncio.create_task(
+        remote.ensure_pause_succeeded("session_a", "run_old")
+    )
+    await asyncio.sleep(0.03)
+    assert barrier.done() is False
+
+    await asyncio.wait_for(cancel_event.wait(), timeout=0.5)
+    await owner.unregister("session_a", cancel_event)
+    await asyncio.wait_for(barrier, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_sse_disconnect_reads_remote_pause_reason_before_polling_catches_up():
+    shared_store = cancellation_runtime.InMemoryCancellationStateStore()
+    owner = CancellationRegistry(store=shared_store, poll_interval=10)
+    remote = CancellationRegistry(store=shared_store, poll_interval=10)
+    cancel_event = await owner.register("session_a")
+    await owner.attach_run_id("session_a", cancel_event, "run_old")
+
+    assert await remote.cancel(
+        "session_a",
+        expected_run_id="run_old",
+        reason="user_paused",
+    )
+
+    assert await owner.pause_reason("session_a", cancel_event) == "user_paused"
+    await owner.unregister("session_a", cancel_event)
+
+
+@pytest.mark.asyncio
+async def test_repeated_run_id_attachment_does_not_clear_remote_pause_request():
+    shared_store = cancellation_runtime.InMemoryCancellationStateStore()
+    owner = CancellationRegistry(store=shared_store, poll_interval=10)
+    remote = CancellationRegistry(store=shared_store, poll_interval=10)
+    cancel_event = await owner.register("session_a")
+    await owner.attach_run_id("session_a", cancel_event, "run_old")
+
+    assert await remote.cancel(
+        "session_a",
+        expected_run_id="run_old",
+        reason="user_paused",
+    )
+    assert await owner.attach_run_id("session_a", cancel_event, "run_old")
+
+    state = await shared_store.get("session_a")
+    assert state is not None
+    assert state.status == "pause_requested"
+    assert state.reason == "user_paused"
+    await owner.unregister("session_a", cancel_event)
