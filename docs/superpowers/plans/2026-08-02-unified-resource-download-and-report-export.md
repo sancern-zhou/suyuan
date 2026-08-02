@@ -51,7 +51,7 @@
 - [ ] Centralize authenticated Blob download in `resourceDownloads.js`, preserving the resource label/extension.
 - [ ] Render a top action bar whenever the group primary has `download`; use the primary for “下载原始文件” even when a PDF/HTML preview is selected.
 - [ ] For QMD groups expose “下载 QMD”, “导出 HTML”, and “导出 Word”. Invoke the trusted render action, refresh the catalog, locate the new rendition, and download it; reuse an existing rendition without rendering again.
-- [ ] Hide the PDF browser toolbar with `#toolbar=0&navpanes=0` so it cannot masquerade as the original download button.
+- [ ] Keep the PDF browser toolbar and make the unified action bar explicitly label the original format, such as “下载原始 DOCX”, so saving the preview and downloading the original are distinct operations.
 - [ ] Add E2E coverage for Word preview downloading DOCX, generic HTML/Markdown download visibility, QMD Word export, and restored existing rendition download.
 - [ ] Run `npm run test:session-resources` and commit the frontend interaction.
 
