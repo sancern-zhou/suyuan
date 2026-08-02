@@ -1,0 +1,48 @@
+# Non-Python runtime dependencies. Keep the apt package list aligned with the
+# Dockerfile. requirements.txt and the editable-PPT package-lock.json remain
+# authoritative for Python and Node packages respectively.
+debian_packages:
+  - ffmpeg
+  - fonts-liberation
+  - fonts-noto-cjk
+  - jq
+  - libreoffice-calc
+  - libreoffice-impress
+  - libreoffice-writer
+  - librsvg2-bin
+  - nodejs
+  - npm
+  - poppler-utils
+  - tesseract-ocr
+  - tesseract-ocr-chi-sim
+  - unixodbc
+  - unixodbc-dev
+
+external_runtimes:
+  msodbcsql18:
+    version: "18"
+    purpose: SQL Server connectivity
+  quarto:
+    version: 1.8.25
+    purpose: HTML and DOCX report rendering
+  playwright_chromium:
+    install: python -m playwright install --with-deps chromium
+    purpose: Browser tools and editable PPT rendering
+  editable_ppt_node_modules:
+    install: npm ci --omit=dev --prefix app/tools/office/editable_ppt_runtime
+    purpose: Editable PPT compilation
+
+commands:
+  soffice: Office preview, PPT rendering, and PDF conversion
+  ffmpeg: Uploaded audio transcoding
+  pdftoppm: PDF page rasterization
+  pdftotext: PDF text extraction
+  tesseract: PDF and image OCR
+  rsvg-convert: SVG preview conversion
+  jq: Optional structured filtering with a Python fallback
+  node: Editable PPT compilation
+  quarto: Report HTML and DOCX rendering
+
+# Optional external integration. The application detects its absence.
+optional_commands:
+  wecom-cli: WeCom command-line integration

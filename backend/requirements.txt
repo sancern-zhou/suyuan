@@ -85,11 +85,24 @@ python-docx==1.1.2
 python-pptx==1.0.2
 openpyxl>=3.1.0  # Excel file manipulation for Office tools
 pypdf>=5.0.0  # PDF processing for Office document preview
+PyMuPDF==1.26.7  # PDF rendering, font inspection, and OCR preprocessing
+pdfplumber==0.11.9  # PDF text and table extraction
+pdf2image==1.17.0  # PDF page rasterization through Poppler
+pytesseract==0.3.13  # OCR integration through the Tesseract executable
+Pillow==12.0.0  # Image processing for Office, reports, OCR, and visualizations
 markdown==3.7
 jinja2==3.1.4
+beautifulsoup4==4.14.3  # HTML parsing for reports, knowledge base, and query tools
+
+# File Upload & Async I/O
+python-multipart==0.0.21  # FastAPI UploadFile/Form request parsing
+aiofiles==24.1.0  # Asynchronous knowledge-base import/export
 
 # Browser Automation (for browser tool)
 playwright==1.48.0  # Cross-platform browser automation
+
+# Machine Learning
+scikit-learn==1.8.0  # Regression and prediction analysis tools
 
 # Optional: Python code execution (for execute_python tool)
 ipython>=8.0.0  # Optional, for better output capture and error handling
