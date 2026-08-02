@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.agent.resources.contracts import ResourceStatus
+from app.agent.resources.resource_map import resource_access_path
 from app.agent.resources.resource_service import StoredResource
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "docs" / "skills"
@@ -126,7 +127,7 @@ def resource_refs_to_runtime_attachments(
     """Convert selected image refs into native multimodal planner attachments."""
     attachments: list[dict[str, str]] = []
     for ref in refs:
-        mime_type = str(ref.metadata.get("mime_type") or "")
+        mime_type = str(ref.media_type or ref.metadata.get("mime_type") or "")
         path = ref.locator.get("path")
         if not mime_type.startswith("image/"):
             continue
@@ -147,15 +148,58 @@ def resource_refs_to_runtime_attachments(
         })
     return attachments
 
+
+def select_conversation_resources(
+    resources: Sequence[StoredResource],
+    requested_ids: Sequence[str],
+) -> list[StoredResource]:
+    """Resolve active file resources in the order submitted by the user."""
+    by_id = {resource.resource_id: resource for resource in resources}
+    selected: list[StoredResource] = []
+    for resource_id in dict.fromkeys(requested_ids):
+        resource = by_id.get(resource_id)
+        if (
+            resource is None
+            or resource.status != ResourceStatus.ACTIVE.value
+            or resource.kind not in {"file", "artifact"}
+        ):
+            raise InvalidContextReference(
+                f"invalid conversation file reference: {resource_id}"
+            )
+        selected.append(resource)
+    return selected
+
+
+def resource_refs_to_current_turn_context(
+    refs: Sequence[StoredResource],
+) -> str:
+    """Render server-authorized current-turn file facts for the planner."""
+    lines: list[str] = []
+    for index, ref in enumerate(refs, 1):
+        access_path = resource_access_path(ref)
+        if not access_path:
+            raise InvalidContextReference(
+                f"current turn resource path is unavailable: {ref.resource_id}"
+            )
+        lines.extend([
+            f"{index}. {ref.label}",
+            f"   资源 ID: {ref.resource_id}",
+            "   类型: "
+            f"{ref.media_type or ref.metadata.get('mime_type') or 'application/octet-stream'}",
+            f"   路径: {access_path}",
+        ])
+    return "\n".join(lines)
+
 def resource_refs_to_message_attachments(
     refs: Sequence[StoredResource],
 ) -> list[dict[str, str]]:
     """Project selected refs into the public attachment contract used by chat UI."""
     attachments: list[dict[str, str]] = []
     for ref in refs:
-        mime_type = str(ref.metadata.get("mime_type") or "")
+        mime_type = str(ref.media_type or ref.metadata.get("mime_type") or "")
         file_id = str(ref.metadata.get("file_id") or "")
         attachment = {
+            "resource_id": ref.resource_id,
             "name": ref.label,
             "type": "image" if file_id and mime_type.startswith("image/") else "file",
         }

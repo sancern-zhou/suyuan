@@ -32,9 +32,12 @@
     <!-- 其他模式：可视化面板 + Office文档预览面板 + 知识溯源面板 -->
     <template v-else>
       <!-- 标签页切换按钮 -->
-      <div v-if="showTabs" class="right-panel-tabs">
+      <div v-if="showTabs" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
         <button
           :class="['tab-btn', { active: activeTab === 'visualization' }]"
+          role="tab"
+          :aria-selected="activeTab === 'visualization'"
+          :disabled="!visualizationAvailable"
           @click="handleTabChange('visualization')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -49,6 +52,9 @@
         </button>
         <button
           :class="['tab-btn', { active: activeTab === 'document' }]"
+          role="tab"
+          :aria-selected="activeTab === 'document'"
+          :disabled="!documentAvailable"
           @click="handleTabChange('document')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -62,6 +68,9 @@
         </button>
         <button
           :class="['tab-btn', { active: activeTab === 'knowledge' }]"
+          role="tab"
+          :aria-selected="activeTab === 'knowledge'"
+          :disabled="knowledgeCount === 0"
           @click="handleTabChange('knowledge')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -76,6 +85,8 @@
         <button
           v-if="sessionId"
           :class="['tab-btn', { active: activeTab === 'files' }]"
+          role="tab"
+          :aria-selected="activeTab === 'files'"
           @click="handleTabChange('files')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7h6l2 2h9v9.5a2 2 0 0 1-2 2h-17v-13.5Z"/><path d="M3.5 10h17"/></svg>
@@ -85,6 +96,8 @@
         <button
           v-if="taskWorkspaceTask"
           :class="['tab-btn', { active: activeTab === 'task-files' }]"
+          role="tab"
+          :aria-selected="activeTab === 'task-files'"
           @click="handleTabChange('task-files')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7h6l2 2h9v9.5a2 2 0 0 1-2 2h-17v-13.5Z"/><path d="M3.5 10h17"/></svg>
@@ -93,6 +106,8 @@
         <button
           v-if="showBoardTab"
           :class="['tab-btn', { active: activeTab === 'board' }]"
+          role="tab"
+          :aria-selected="activeTab === 'board'"
           @click="handleTabChange('board')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -105,8 +120,14 @@
         </button>
       </div>
 
+      <VisualizationGallery
+        v-if="activeTab === 'visualization'"
+        key="visualization-gallery"
+        class="panel-content"
+      />
+
       <ResourcePreviewHost
-        v-if="['visualization', 'document', 'board'].includes(activeTab)"
+        v-if="['document', 'board'].includes(activeTab)"
         :key="`${activeTab}-resource-preview`"
         class="panel-content"
         :target="activeTab"
@@ -146,8 +167,10 @@ import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSou
 import TaskOutputFilesPanel from '@/components/management/TaskOutputFilesPanel.vue'
 import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.vue'
 import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
+import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
+import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
 
 const props = defineProps({
   visible: {
@@ -226,6 +249,13 @@ const resourceSummary = computed(() => summarizeRightPanelResources(
     : []
 ))
 const showBoardTab = computed(() => resourceSummary.value.counts.board > 0)
+const explicitTarget = computed(() => {
+  const state = resourceStore.activeSessionState
+  if (state?.selectionOrigin !== 'explicit' || resourceStore.activeSessionId !== props.sessionId) return ''
+  const selected = resourceStore.selectedResource(props.sessionId)
+  const group = buildResourceGroups(state.resources || []).find(item => item.group_id === selected?.group_id)
+  return group ? targetTab(group) : ''
+})
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
@@ -235,8 +265,25 @@ const showTabs = computed(() => {
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
 const visualizationCount = computed(() => resourceSummary.value.counts.visualization)
 const documentCount = computed(() => resourceSummary.value.counts.document)
+const visualizationAvailable = computed(() => visualizationCount.value > 0 || explicitTarget.value === 'visualization')
+const documentAvailable = computed(() => documentCount.value > 0 || explicitTarget.value === 'document')
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
+
+watch(
+  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value],
+  ([mode, tab, visualizations, documents, knowledge, board]) => {
+    if (mode === 'report-generation-expert') return
+    const unavailable = (
+      (tab === 'visualization' && !visualizations)
+      || (tab === 'document' && !documents)
+      || (tab === 'knowledge' && knowledge === 0)
+      || (tab === 'board' && !board)
+    )
+    if (unavailable) emit('tab-change', 'files')
+  },
+  { immediate: true }
+)
 
 const handleTabChange = (tab) => {
   emit('tab-change', tab)
@@ -277,6 +324,7 @@ const handleBoardVersionRestore = (versionId) => {
   padding: 8px;
   background: #f8fafc;
   border-bottom: 1px solid #edf1f7;
+  overflow-x: auto;
 }
 
 .tab-btn {
@@ -285,7 +333,7 @@ const handleBoardVersionRestore = (versionId) => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 0;
+  min-width: 72px;
   min-height: 34px;
   padding: 7px 8px;
   border: 1px solid transparent;
@@ -302,6 +350,9 @@ const handleBoardVersionRestore = (versionId) => {
   color: #1976D2;
   background: #eef4fb;
 }
+
+.tab-btn:disabled { cursor: not-allowed; opacity: .4; }
+.tab-btn:disabled:hover { color: #526173; background: transparent; }
 
 .tab-btn.active {
   color: #1976D2;

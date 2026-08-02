@@ -22,12 +22,13 @@ from app.agent.active_contexts import (
 )
 from app.agent.session import Session, get_session_manager
 from app.agent.session.conversation_persistence import ConversationPersistenceService
-from app.agent.runtime.cancellation import cancellation_registry
+from app.agent.runtime.cancellation import PauseCheckpointError, cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
 from app.agent.selection_context import (
     InvalidContextReference,
     resource_refs_to_message_attachments,
+    select_conversation_resources,
 )
 from app.agent.resources.resource_service import SessionResourceService
 from app.auth.dependencies import require_current_user
@@ -55,6 +56,20 @@ def _safe_preview(value: Any, max_chars: int = 100) -> str:
         return json.dumps(value, ensure_ascii=False, default=str)[:max_chars]
     except Exception:
         return repr(value)[:max_chars]
+
+
+async def _await_cancellation_resistant(awaitable):
+    """Finish a transcript commit even if the disconnected SSE is cancelled again."""
+    task = asyncio.create_task(awaitable)
+    current = asyncio.current_task()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if current is not None and hasattr(current, "uncancel"):
+                while current.cancelling():
+                    current.uncancel()
+    return task.result()
 
 
 def _build_user_message_for_history(
@@ -426,6 +441,11 @@ class AgentAnalyzeRequest(BaseModel):
         False,
         description="是否为用户中断后的对话（默认False，用户暂停后继续对话时为True）"
     )
+    previous_paused_run_id: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices("previous_paused_run_id", "previousPausedRunId"),
+        description="新一轮开始前必须完成落盘的上一轮暂停 run ID",
+    )
     board_context: Optional[Dict[str, Any]] = Field(
         None,
         validation_alias=AliasChoices("board_context", "boardContext"),
@@ -482,6 +502,11 @@ class AgentSteerRequest(BaseModel):
     """执行中用户补充/纠偏输入。"""
     message: str = Field(..., description="追加到当前 active run 的用户输入")
     input_id: Optional[str] = Field(default=None, description="客户端追加输入唯一标识")
+
+
+class AgentCancelRequest(BaseModel):
+    run_id: Optional[str] = None
+    reason: Literal["user_paused", "client_cancelled"] = "user_paused"
 
 
 async def persist_new_web_session(
@@ -847,7 +872,7 @@ async def analyze_stream(
         )
 
         try:
-            requested_ids = {ref.resource_id for ref in request.context_refs}
+            requested_ids = [ref.resource_id for ref in request.context_refs]
             needs_resources = bool(requested_ids) or any(
                 item["type"] == "fixed_policy" for item in effective_active_contexts
             )
@@ -857,11 +882,10 @@ async def analyze_stream(
                 else None
             )
             available_resources = resource_page.resources if resource_page else []
-            selected_resource_refs = [
-                ref for ref in available_resources if ref.resource_id in requested_ids
-            ]
-            if len(selected_resource_refs) != len(requested_ids):
-                raise InvalidContextReference("one or more context resources were not found")
+            selected_resource_refs = select_conversation_resources(
+                available_resources,
+                requested_ids,
+            )
             resolved_active_contexts = resolve_active_contexts(
                 effective_active_contexts,
                 mode=request.mode or "expert",
@@ -919,13 +943,46 @@ async def analyze_stream(
 
         async def event_generator():
             """SSE 事件生成器"""
-            nonlocal actual_session_id, conversation_history, latest_drawio_board, drawio_board_context
+            nonlocal actual_session_id, conversation_history, latest_drawio_board, drawio_board_context, preloaded_session
             cancel_event = None
             latest_event_run_id = None
 
             # ✅ 用于统计（不输出日志）
             event_count = 0
             streaming_chunk_count = 0
+            partial_answer_chunks: List[str] = []
+
+            # The pause barrier must complete before loading conversation
+            # history; otherwise a fast next turn can retain a stale preload.
+            try:
+                if request.previous_paused_run_id:
+                    await cancellation_registry.cancel(
+                        actual_session_id,
+                        expected_run_id=request.previous_paused_run_id,
+                        reason="user_paused",
+                    )
+                    await cancellation_registry.ensure_pause_succeeded(
+                        actual_session_id,
+                        request.previous_paused_run_id,
+                    )
+                cancel_event = await cancellation_registry.register(actual_session_id)
+            except PauseCheckpointError as pause_error:
+                error_event = {
+                    "type": "fatal_error",
+                    "data": {
+                        "error": "暂停记录保存失败，请重试当前消息",
+                        "code": "pause_checkpoint_failed",
+                        "detail": str(pause_error),
+                    },
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                return
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                await cancellation_registry.attach_run_task(actual_session_id, current_task)
+            analyze_kwargs["cancel_event"] = cancel_event
+            if actual_session_id:
+                preloaded_session = await load_session(actual_session_id)
 
             # 创建或加载会话
             if actual_session_id:
@@ -989,12 +1046,6 @@ async def analyze_stream(
             session.metadata = dict(session.metadata or {})
             session.metadata[ACTIVE_CONTEXTS_KEY] = active_contexts_payload
 
-            cancel_event = await cancellation_registry.register(actual_session_id)
-            current_task = asyncio.current_task()
-            if current_task is not None:
-                await cancellation_registry.attach_run_task(actual_session_id, current_task)
-            analyze_kwargs["cancel_event"] = cancel_event
-
             # 只保存/刷新会话元数据，不在首个 SSE 事件前同步历史消息。
             # 历史消息在本轮完成或异常时走增量保存，避免 DELETE + INSERT
             # 阻塞用户看到首个响应事件。
@@ -1034,11 +1085,18 @@ async def analyze_stream(
             logger.debug("user_message_added", query_preview=request.query[:100])
 
             try:
+                await cancellation_registry.arm_run_task(actual_session_id, cancel_event)
                 with llm_service.use_model_tier(request.model_tier):
                     async for event in agent.analyze(**analyze_kwargs):
                         event_count += 1
                         event_type = event.get("type")
                         latest_event_run_id = _event_run_id(event) or latest_event_run_id
+                        if latest_event_run_id:
+                            await cancellation_registry.attach_run_id(
+                                actual_session_id,
+                                cancel_event,
+                                latest_event_run_id,
+                            )
 
                         # ✅ 关闭流式文本事件的所有日志
                         if event_type != "streaming_text":
@@ -1124,7 +1182,10 @@ async def analyze_stream(
                         elif event["type"] == "streaming_text":
                             # 流式文本直接转发，不保存到对话历史
                             # 等待 complete 事件时再保存完整的最终答案
-                            pass
+                            event_data = event.get("data") or {}
+                            chunk = event_data.get("chunk")
+                            if isinstance(chunk, str) and chunk:
+                                partial_answer_chunks.append(chunk)
 
                         elif event["type"] == "synthetic_user_message":
                             event_data = event.get("data") or {}
@@ -1249,23 +1310,57 @@ async def analyze_stream(
                             break
 
             except asyncio.CancelledError:
-                if actual_session_id:
-                    await cancellation_registry.cancel(actual_session_id)
-                    if await run_ownership_registry.can_write(actual_session_id, latest_event_run_id):
-                        persistence.append_terminal(
-                            session,
-                            display_history=conversation_history,
-                            terminal_message={
-                                "type": "interrupted",
-                                "content": "客户端已断开，本轮分析已取消",
-                                "timestamp": datetime.now().isoformat(),
-                            },
-                            drawio_board=latest_drawio_board or drawio_board_context,
+                if (
+                    actual_session_id
+                    and cancel_event is not None
+                    and await cancellation_registry.can_finalize(actual_session_id, cancel_event)
+                ):
+                    async def persist_interrupted_transcript() -> None:
+                        pause_reason = await cancellation_registry.pause_reason(
+                            actual_session_id,
+                            cancel_event,
                         )
-                        await session_manager.append_session_transcript(session)
+                        if pause_reason == "user_paused":
+                            persistence.append_paused(
+                                session,
+                                display_history=conversation_history,
+                                run_id=latest_event_run_id or f"pending:{actual_session_id}",
+                                partial_answer="".join(partial_answer_chunks),
+                                drawio_board=latest_drawio_board or drawio_board_context,
+                            )
+                        else:
+                            persistence.append_terminal(
+                                session,
+                                display_history=conversation_history,
+                                terminal_message={
+                                    "type": "interrupted",
+                                    "content": "客户端已断开，本轮分析已取消",
+                                    "timestamp": datetime.now().isoformat(),
+                                },
+                                drawio_board=latest_drawio_board or drawio_board_context,
+                            )
+                        saved = False
+                        for attempt in range(3):
+                            saved = await session_manager.append_session_transcript(session)
+                            if saved:
+                                break
+                            if attempt < 2:
+                                await asyncio.sleep(0.05)
+                        if not saved:
+                            raise RuntimeError("pause_checkpoint_failed")
                         if actual_session_id not in agent._session_store:
                             agent._session_store[actual_session_id] = {}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
+
+                    try:
+                        await _await_cancellation_resistant(persist_interrupted_transcript())
+                    except Exception as pause_error:
+                        await cancellation_registry.record_finalization_error(
+                            actual_session_id,
+                            cancel_event,
+                            pause_error,
+                        )
+                        raise
                 raise
             except Exception as e:
                 logger.error(
@@ -1328,13 +1423,18 @@ async def analyze_stream(
 @router.post("/{session_id}/cancel")
 async def cancel_analysis(
     session_id: str,
+    request: Optional[AgentCancelRequest] = Body(default=None),
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """Cancel an in-flight streaming analysis for a session."""
     await catalog.require_write(session_id, user)
     active_run_id = await run_ownership_registry.current_run_id(session_id)
-    cancelled = await cancellation_registry.cancel(session_id)
+    cancelled = await cancellation_registry.cancel(
+        session_id,
+        expected_run_id=request.run_id if request else None,
+        reason=request.reason if request else "user_paused",
+    )
     return {
         "success": True,
         "cancelled": cancelled,

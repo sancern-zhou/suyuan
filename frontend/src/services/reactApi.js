@@ -39,6 +39,7 @@ class ReactAgentAPI {
       mapContext = null,
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
+      previousPausedRunId = null,
       skipAutoFollowup = false,
       requestKey = sessionId,
       onAccepted,
@@ -61,6 +62,7 @@ class ReactAgentAPI {
       mapContext,
       userIdentifier,
       isInterruption,
+      previousPausedRunId,
       skipAutoFollowup
     })
 
@@ -215,22 +217,31 @@ class ReactAgentAPI {
   }
 
   // 取消请求
-  async cancel(requestKey = null) {
+  async cancel(requestKey = null, runId = null, reason = 'user_paused') {
     if (requestKey) {
       const controller = this.controllers.get(requestKey)
-      if (controller) {
-        controller.abort()
-        this.controllers.delete(requestKey)
-      }
-      if (this.controller === controller) {
-        this.controller = null
-      }
-      const backendCancelPromise = authFetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
-        method: 'POST'
-      }).catch((error) => {
+      try {
+        await authFetch(`${API_BASE_URL}/agent/${encodeURIComponent(requestKey)}/cancel`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ...(runId ? { run_id: runId } : {}),
+            reason,
+          })
+        })
+      } catch (error) {
         console.warn('Failed to cancel backend analysis:', error)
-      })
-      void backendCancelPromise
+      } finally {
+        controller?.abort()
+        if (this.controllers.get(requestKey) === controller) {
+          this.controllers.delete(requestKey)
+        }
+        if (this.controller === controller) {
+          this.controller = null
+        }
+      }
       return
     }
 

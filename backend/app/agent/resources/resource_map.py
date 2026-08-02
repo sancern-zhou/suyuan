@@ -17,7 +17,7 @@ def _terms(query: str) -> set[str]:
     return {item.casefold() for item in re.findall(r"[\w\u4e00-\u9fff]{2,}", query or "")}
 
 
-def _access_path(item: StoredResource) -> str:
+def resource_access_path(item: StoredResource) -> str:
     """Return the shortest path that the Agent's file tools can use directly."""
     raw_path = str((item.locator or {}).get("path") or "").strip()
     if not raw_path:
@@ -90,7 +90,7 @@ def project_agent_resource_map(
         mime = str((item.metadata or {}).get("mime_type") or "")
         details = "; ".join(part for part in (mime, summary) if part)
         line = f"- {item.resource_id} | roles={','.join(roles)} | {item.kind} | {item.label}"
-        access_path = _access_path(item)
+        access_path = resource_access_path(item)
         if access_path:
             line += f" | path={access_path}"
         if details:

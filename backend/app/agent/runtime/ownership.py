@@ -50,6 +50,18 @@ class RunOwnershipRegistry:
             self._runs.pop(session_id, None)
             return True
 
+    async def begin_pause(self, session_id: str, run_id: Optional[str] = None) -> bool:
+        """Stop ordinary writes while leaving the run identifiable for finalization."""
+        async with self._lock_for(session_id):
+            current = self._runs.get(session_id)
+            if not current:
+                return False
+            if run_id is not None and current.run_id != run_id:
+                return False
+            current.status = "pausing"
+            current.updated_at = datetime.now().isoformat()
+            return True
+
     async def complete(self, session_id: str, run_id: str) -> bool:
         async with self._lock_for(session_id):
             current = self._runs.get(session_id)

@@ -29,7 +29,10 @@ from .resources.runtime import (
 )
 from .resources.resource_service import SessionResourceService, StoredResource
 from .resources.resource_map import project_agent_resource_map
-from .selection_context import resource_refs_to_runtime_attachments
+from .selection_context import (
+    resource_refs_to_current_turn_context,
+    resource_refs_to_runtime_attachments,
+)
 
 logger = structlog.get_logger()
 
@@ -391,6 +394,12 @@ class ReActAgent:
             )
 
         runtime_attachments = []
+        current_turn_resource_context = ""
+
+        if selected_resource_refs:
+            current_turn_resource_context = resource_refs_to_current_turn_context(
+                selected_resource_refs
+            )
 
         if selected_resource_refs and supports_native_multimodal(manual_mode):
             runtime_attachments.extend(
@@ -513,6 +522,11 @@ class ReActAgent:
                     )
             except Exception as exc:
                 logger.error("session_resource_context_load_failed", session_id=actual_session_id, error=str(exc))
+
+            if current_turn_resource_context:
+                react_loop.context_builder.current_turn_resource_context = (
+                    current_turn_resource_context
+                )
 
             if selected_skill_context:
                 react_loop.context_builder.selected_skill_context = selected_skill_context

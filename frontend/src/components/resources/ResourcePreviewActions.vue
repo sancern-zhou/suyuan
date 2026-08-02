@@ -2,10 +2,10 @@
   <div
     v-if="primary && (primary.download_url || isQmd)"
     ref="actionsRef"
-    :class="['resource-actions', { floating }]"
+    :class="['resource-actions', { floating, compact }]"
   >
     <button
-      v-if="floating"
+      v-if="floating || compact"
       type="button"
       class="download-trigger"
       aria-haspopup="menu"
@@ -22,46 +22,45 @@
     </button>
 
     <div
-      v-if="!floating || menuOpen"
-      :class="floating ? 'download-menu' : 'action-list'"
-      :role="floating ? 'menu' : null"
+      v-if="(!floating && !compact) || menuOpen"
+      :class="floating || compact ? 'download-menu' : 'action-list'"
+      :role="floating || compact ? 'menu' : null"
     >
       <a
         v-if="primary.download_url"
         :href="primary.download_url"
         :download="downloadFileName(primary)"
-        :role="floating ? 'menuitem' : null"
+        :role="floating || compact ? 'menuitem' : null"
         @click="closeMenu"
       >
         {{ originalLabel }}
       </a>
       <template v-if="isQmd">
         <span class="divider" aria-hidden="true"></span>
-        <span class="export-label">导出报告</span>
         <button
           type="button"
-          :role="floating ? 'menuitem' : null"
+          :role="floating || compact ? 'menuitem' : null"
           :disabled="Boolean(busy)"
           @click="exportReport('html')"
         >
-          {{ busy === 'html' ? '生成中...' : (floating ? '导出 HTML' : 'HTML') }}
+          {{ busy === 'html' ? '生成中...' : (floating || compact ? '导出 HTML' : 'HTML') }}
         </button>
         <button
           type="button"
-          :role="floating ? 'menuitem' : null"
+          :role="floating || compact ? 'menuitem' : null"
           :disabled="Boolean(busy)"
           @click="exportReport('docx')"
         >
-          {{ busy === 'docx' ? '生成中...' : (floating ? '导出 Word' : 'Word') }}
+          {{ busy === 'docx' ? '生成中...' : (floating || compact ? '导出 Word' : 'Word') }}
         </button>
         <a
           v-if="pdfRendition"
           :href="pdfRendition.download_url"
           :download="downloadFileName(pdfRendition)"
-          :role="floating ? 'menuitem' : null"
+          :role="floating || compact ? 'menuitem' : null"
           @click="closeMenu"
         >
-          {{ floating ? '下载 PDF' : 'PDF' }}
+          {{ floating || compact ? '下载 PDF' : 'PDF' }}
         </a>
       </template>
       <span v-if="error" class="error" role="alert">{{ error }}</span>
@@ -78,7 +77,8 @@ import { activeRendition, downloadFileName, downloadResource, formatName } from 
 const props = defineProps({
   group: { type: Object, default: null },
   resource: { type: Object, default: null },
-  floating: { type: Boolean, default: false }
+  floating: { type: Boolean, default: false },
+  compact: { type: Boolean, default: false }
 })
 const resourceStore = useSessionResourceStore()
 const busy = ref('')
@@ -151,20 +151,19 @@ const exportReport = async format => {
 <style scoped>
 .resource-actions { position: relative; min-height: 42px; box-sizing: border-box; border-bottom: 1px solid #e5eaf0; background: #fff; color: #526174; font-size: 12px; }
 .action-list { display: flex; min-height: 42px; align-items: center; gap: 8px; padding: 6px 12px; box-sizing: border-box; }
-.resource-actions.floating { position: absolute; z-index: 20; top: 12px; right: 12px; min-height: 0; border: 0; background: transparent; }
+.resource-actions.floating { position: absolute; z-index: 20; top: 64px; right: 12px; min-height: 0; border: 0; background: transparent; }
+.resource-actions.compact { min-height: 0; border: 0; background: transparent; }
 button, a { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; color: #1b66aa; cursor: pointer; font: inherit; text-decoration: none; }
 button:hover:not(:disabled), a:hover { background: #f1f6fb; }
 button:disabled { cursor: wait; opacity: .6; }
 .download-trigger { min-height: 34px; border-color: #c3d2e2; border-radius: 7px; box-shadow: 0 2px 8px rgba(15, 23, 42, .12); font-weight: 500; }
 .download-trigger svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .download-trigger .chevron { width: 12px; height: 12px; }
-.download-menu { position: absolute; top: calc(100% + 6px); right: 0; display: flex; width: max-content; min-width: 168px; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #d9e2ec; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px rgba(15, 23, 42, .16); }
+.download-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; display: flex; width: max-content; min-width: 168px; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #d9e2ec; border-radius: 8px; background: #fff; box-shadow: 0 10px 28px rgba(15, 23, 42, .16); }
 .download-menu button, .download-menu a { width: 100%; justify-content: flex-start; box-sizing: border-box; border-color: transparent; color: #334155; text-align: left; white-space: nowrap; }
 .download-menu button:hover:not(:disabled), .download-menu a:hover { border-color: #d8e9fb; color: #1b66aa; }
 .divider { width: 1px; height: 20px; margin: 0 2px; background: #e2e8f0; }
-.export-label { color: #64748b; }
 .error { margin-left: auto; color: #b42318; }
 .download-menu .divider { width: 100%; height: 1px; margin: 2px 0; }
-.download-menu .export-label { padding: 2px 8px 0; font-size: 11px; }
 .download-menu .error { max-width: 220px; margin: 2px 8px; line-height: 1.4; }
 </style>

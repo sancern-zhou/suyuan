@@ -14,7 +14,8 @@
         >{{ name }}</button>
       </div>
       <div class="toolbar-actions">
-        <button type="button" :disabled="loading || saving" @click="loadWorkbook">重新加载</button>
+        <span v-if="dirty" class="dirty-state">未保存</span>
+        <button type="button" :disabled="loading || saving" @click="reloadWorkbook">重新加载</button>
         <button
           v-if="resource.actions?.save"
           type="button"
@@ -55,11 +56,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as XLSX from 'xlsx'
 import { authFetch } from '@/auth/http.js'
 import { coerceSpreadsheetCell, saveSpreadsheetResource } from '@/services/spreadsheetResourceApi.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+import { registerResourcePreviewLeaveGuard } from '@/services/resourcePreviewLeaveGuard.js'
 
 const props = defineProps({
   resource: { type: Object, required: true },
@@ -76,6 +78,9 @@ const saving = ref(false)
 const error = ref('')
 const status = ref('')
 const statusType = ref('success')
+const dirty = ref(false)
+const guardOwner = Symbol('spreadsheet-resource')
+let unregisterLeaveGuard = null
 
 const sheetNames = computed(() => workbook.value?.SheetNames || [])
 const columnHeaders = computed(() => {
@@ -113,11 +118,21 @@ const loadWorkbook = async () => {
     })
     activeSheetName.value = workbook.value.SheetNames[0] || ''
     loadActiveSheet()
+    dirty.value = false
   } catch (cause) {
     error.value = cause?.message || '加载表格失败'
   } finally {
     loading.value = false
   }
+}
+
+const confirmDiscard = () => (
+  !dirty.value || window.confirm('表格有未保存的修改，确定要放弃这些修改吗？')
+)
+
+const reloadWorkbook = async () => {
+  if (!confirmDiscard()) return
+  await loadWorkbook()
 }
 
 const selectSheet = name => {
@@ -137,10 +152,14 @@ const updateCell = (rowIndex, columnIndex, value) => {
   range.e.r = Math.max(range.e.r, rowIndex)
   range.e.c = Math.max(range.e.c, columnIndex)
   sheet['!ref'] = XLSX.utils.encode_range(range)
+  dirty.value = true
+  status.value = ''
 }
 
 const saveWorkbook = async () => {
   if (!workbook.value || !props.resource.actions?.save) return
+  const originSessionId = resourceStore.activeSessionId
+  const originResourceId = props.resource.resource_id
   saving.value = true
   status.value = ''
   error.value = ''
@@ -155,19 +174,24 @@ const saveWorkbook = async () => {
     }
     const bytes = XLSX.write(workbook.value, { type: 'array', bookType })
     const receipt = await saveSpreadsheetResource(props.resource, bytes)
-    const sessionId = resourceStore.activeSessionId
-    await resourceStore.refreshIfNewer(sessionId, receipt.resource_version)
-    const next = resourceStore.sessionState(sessionId)?.resources.find(item => (
+    if (
+      resourceStore.activeSessionId !== originSessionId
+      || props.resource.resource_id !== originResourceId
+    ) return
+    await resourceStore.refreshIfNewer(originSessionId, receipt.resource_version)
+    if (resourceStore.activeSessionId !== originSessionId) return
+    const next = resourceStore.sessionState(originSessionId)?.resources.find(item => (
       item.group_id === props.resource.group_id
       && item.relation === 'primary'
       && item.status === 'active'
     ))
     if (next) {
-      resourceStore.selectGroup(sessionId, next.group_id)
-      resourceStore.selectResource(sessionId, next.resource_id)
+      resourceStore.selectGroup(originSessionId, next.group_id)
+      resourceStore.selectResource(originSessionId, next.resource_id)
     }
     statusType.value = 'success'
-    status.value = '已保存为最新版本'
+    dirty.value = false
+    status.value = `已保存为 v${next?.version || props.resource.version}`
   } catch (cause) {
     statusType.value = 'error'
     status.value = cause?.message || '保存失败'
@@ -176,13 +200,28 @@ const saveWorkbook = async () => {
   }
 }
 
-onMounted(loadWorkbook)
+const handleBeforeUnload = event => {
+  if (!dirty.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => {
+  unregisterLeaveGuard = registerResourcePreviewLeaveGuard(guardOwner, confirmDiscard)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  loadWorkbook()
+})
+onBeforeUnmount(() => {
+  unregisterLeaveGuard?.()
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
 watch(() => props.contentUrl, loadWorkbook)
 </script>
 
 <style scoped>
 .excel-editor { display: flex; height: 100%; min-height: 0; flex-direction: column; background: #fff; }
-.excel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 112px 8px 12px; border-bottom: 1px solid #d8deea; background: #f7f9fc; }
+.excel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #d8deea; background: #f7f9fc; }
+.dirty-state { align-self: center; padding: 3px 7px; border-radius: 999px; background: #fff4e5; color: #a15c00; font-size: 11px; white-space: nowrap; }
 .sheet-tabs, .toolbar-actions { display: flex; gap: 6px; }.sheet-tabs { min-width: 0; overflow-x: auto; }
 button { min-height: 30px; padding: 5px 10px; border: 1px solid #cfd7e6; border-radius: 5px; background: #fff; color: #334155; cursor: pointer; white-space: nowrap; }
 button:disabled { cursor: wait; opacity: .55; }.sheet-tab.active { border-color: #2374d5; background: #eef6ff; color: #145ca8; }.primary { border-color: #2374d5; background: #2374d5; color: #fff; }
