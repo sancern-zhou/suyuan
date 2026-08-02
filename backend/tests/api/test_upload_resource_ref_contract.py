@@ -18,6 +18,7 @@ from app.api import session_routes, upload_routes
 class ResourceService:
     def __init__(self):
         self.stored: StoredResource | None = None
+        self.resources: list[StoredResource] = []
         self.group_key: str | None = None
 
     async def publish_group(
@@ -30,15 +31,22 @@ class ResourceService:
         turn_sequence=0,
     ):
         self.group_key = group_key
-        self.stored = StoredResource.from_declaration(
-            session_id,
-            run_id,
-            stable_group_id(session_id, group_key),
-            1,
-            resources[0],
-            turn_sequence=turn_sequence,
-        )
-        return ResourcePublishResult(1, 1, [self.stored])
+        declarations = list(resources)
+        ids_by_key = {}
+        for declaration in declarations:
+            stored = StoredResource.from_declaration(
+                session_id,
+                run_id,
+                stable_group_id(session_id, group_key),
+                1,
+                declaration,
+                parent_resource_id=ids_by_key.get(declaration.parent_key),
+                turn_sequence=turn_sequence,
+            )
+            ids_by_key[declaration.resource_key] = stored.resource_id
+            self.resources.append(stored)
+        self.stored = next(item for item in self.resources if item.relation == "primary")
+        return ResourcePublishResult(1, 1, self.resources)
 
 
 class UploadDatabase:
@@ -119,6 +127,57 @@ async def test_chat_upload_publishes_an_attachment_resource_group(tmp_path, monk
     assert result["resource_ref"]["group_id"] == stored.group_id
     assert "metadata" not in result["resource_ref"]
     assert str(tmp_path) not in str(result["resource_ref"])
+
+
+@pytest.mark.asyncio
+async def test_docx_upload_publishes_pdf_preview_in_the_attachment_group(
+    tmp_path, monkeypatch
+):
+    resource_service = ResourceService()
+    monkeypatch.setattr(upload_routes, "UPLOAD_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        upload_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: resource_service),
+    )
+
+    def render_preview(file_path):
+        preview = upload_routes.Path(file_path).with_suffix(".preview.pdf")
+        preview.write_bytes(b"pdf-preview")
+        return preview
+
+    monkeypatch.setattr(upload_routes, "_office_pdf_preview", render_preview)
+    upload = UploadFile(
+        file=BytesIO(b"docx-bytes"),
+        filename="evidence.docx",
+        headers=Headers(
+            {
+                "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            }
+        ),
+    )
+
+    result = await upload_routes.upload_chat_file(
+        file=upload,
+        session_id="assistant_session_docx_preview",
+        mode="assistant",
+        db=UploadDatabase(),
+        user=object(),
+        catalog=Catalog(),
+    )
+
+    primary = next(
+        item for item in resource_service.resources if item.relation == "primary"
+    )
+    preview = next(
+        item for item in resource_service.resources if item.relation == "preview"
+    )
+    assert result["resource_ref"]["resource_id"] == primary.resource_id
+    assert primary.format == "docx"
+    assert primary.capabilities == ["download"]
+    assert preview.renderer == "pdf"
+    assert preview.capabilities == ["preview"]
+    assert preview.parent_resource_id == primary.resource_id
 
 
 @pytest.mark.asyncio

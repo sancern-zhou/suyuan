@@ -14,6 +14,7 @@ test('preview host uses the resource store and opaque content boundary', async (
   assert.match(source, /rendererKey/)
   assert.match(source, /content-url/)
   assert.match(source, /explicitAttachment/)
+  assert.match(source, /preferredPreview\(group\.value\) \|\| explicitAttachment\.value/)
   assert.doesNotMatch(source, /file_path|pdf_id|html_id|\/api\/file\//)
 })
 

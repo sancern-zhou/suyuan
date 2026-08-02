@@ -39,9 +39,30 @@ function resourceFixture([name, format, renderer, target]) {
   }
 }
 
-async function mockApplication(page, fixture, { attachmentType = null } = {}) {
+async function mockApplication(page, fixture, { attachmentType = null, officePreview = false } = {}) {
   const resource = resourceFixture(fixture)
   if (attachmentType) resource.role = 'attachment'
+  const resources = [resource]
+  if (officePreview) {
+    resource.label = 'Office attachment.docx'
+    resource.format = 'docx'
+    resource.renderer = 'file'
+    resource.capabilities = ['download']
+    resources.push({
+      ...resourceFixture(fixtures[0]),
+      resource_id: 'resource-office-pdf-preview',
+      ref_id: 'resource-office-pdf-preview',
+      group_id: resource.group_id,
+      parent_resource_id: resource.resource_id,
+      resource_key: 'preview:pdf',
+      relation: 'preview',
+      role: 'attachment',
+      label: 'Office attachment.pdf',
+      capabilities: ['preview'],
+      content_url: '/api/sessions/e2e/resources/resource-office-pdf-preview/content',
+      download_url: null
+    })
+  }
   const handler = async route => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith('/auth/runtime-config')) {
@@ -50,22 +71,23 @@ async function mockApplication(page, fixture, { attachmentType = null } = {}) {
         mockUser: { id: 'e2e', userName: 'e2e', name: 'E2E', roleCodes: ['SUYUAN_ADMIN'], isAdmin: true, authSource: 'mock', sysCode: 'SUYUAN' }
       } })
     }
-    if (url.pathname.endsWith(`/resources/${resource.resource_id}/content`)) {
+    const contentResource = resources.find(item => url.pathname.endsWith(`/resources/${item.resource_id}/content`))
+    if (contentResource) {
       const bodies = {
         markdown: '# restored markdown', chart: '{"type":"bar","data":[]}',
         board: '<mxfile><diagram id="e2e" /></mxfile>', html: '<h1>restored html</h1>'
       }
       return route.fulfill({
         status: 200,
-        contentType: resource.renderer === 'chart' ? 'application/json' : 'text/plain',
-        body: bodies[resource.renderer] || 'fixture'
+        contentType: contentResource.renderer === 'chart' ? 'application/json' : 'text/plain',
+        body: bodies[contentResource.renderer] || 'fixture'
       })
     }
     if (url.pathname.startsWith('/api/upload/')) {
       return route.fulfill({ status: 200, contentType: 'image/png', body: 'fixture' })
     }
     if (/\/sessions\/e2e\/resources$/.test(url.pathname)) {
-      return route.fulfill({ json: { session_id: 'e2e', resource_version: 1, resources: [resource], total: 1, next_cursor: null } })
+      return route.fulfill({ json: { session_id: 'e2e', resource_version: 1, resources, total: resources.length, next_cursor: null } })
     }
     if (/\/sessions\/e2e\/restore$/.test(url.pathname)) {
       return route.fulfill({ json: { session: {
@@ -117,6 +139,18 @@ test('message image attachment keeps the image modal while resolving unified con
   await page.locator('.attachment-image').click()
   await expect(page.locator('.image-preview-modal')).toBeVisible()
   await expect(page.locator('.image-preview-modal .preview-filename')).toContainText('Image.png')
+})
+
+test('message DOCX attachment opens its unified PDF preview derivative', async ({ page }) => {
+  await mockApplication(page, fixtures[0], { attachmentType: 'file', officePreview: true })
+  await page.goto('/session/e2e')
+
+  await page.locator('.attachment-file').click()
+  await expect(page.locator('.tab-btn.active')).toContainText('文档')
+  await expect(page.locator('.resource-preview-host iframe')).toHaveAttribute(
+    'src',
+    /resource-office-pdf-preview/
+  )
 })
 
 for (const fixture of fixtures) {
