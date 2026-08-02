@@ -147,3 +147,32 @@ def test_action_links_ignore_untrusted_metadata_urls_and_unsupported_capabilitie
     assert item["actions"] == {}
     assert item["download_url"] is None
     assert "attacker.invalid" not in str(item)
+
+
+def test_editable_spreadsheet_exposes_only_resource_scoped_save_action():
+    item = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(
+            format="xlsx",
+            renderer="spreadsheet",
+            capabilities=["preview", "download", "edit"],
+        ),
+    )
+
+    assert item["actions"]["save"].endswith(
+        "/sessions/session-1/resources/resource-1/save"
+    )
+    assert "/office/" not in str(item)
+
+
+def test_csv_spreadsheet_does_not_expose_the_excel_save_action():
+    item = session_resource_routes.resource_dto(
+        "session-1",
+        stored_resource(
+            format="csv",
+            renderer="spreadsheet",
+            capabilities=["preview", "download", "edit"],
+        ),
+    )
+
+    assert "save" not in item["actions"]

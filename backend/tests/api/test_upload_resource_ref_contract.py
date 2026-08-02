@@ -181,6 +181,66 @@ async def test_docx_upload_publishes_pdf_preview_in_the_attachment_group(
 
 
 @pytest.mark.asyncio
+async def test_xlsx_upload_is_editable_through_the_resource_contract(tmp_path, monkeypatch):
+    resource_service = ResourceService()
+    monkeypatch.setattr(upload_routes, "UPLOAD_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        upload_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: resource_service),
+    )
+    upload = UploadFile(
+        file=BytesIO(b"PK\x03\x04xlsx"),
+        filename="editable.xlsx",
+        headers=Headers(
+            {
+                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+        ),
+    )
+
+    await upload_routes.upload_chat_file(
+        file=upload,
+        session_id="assistant_session_xlsx_edit",
+        mode="assistant",
+        db=UploadDatabase(),
+        user=object(),
+        catalog=Catalog(),
+    )
+
+    assert resource_service.stored.renderer == "spreadsheet"
+    assert resource_service.stored.capabilities == ["download", "edit", "preview"]
+
+
+@pytest.mark.asyncio
+async def test_csv_upload_remains_preview_only(tmp_path, monkeypatch):
+    resource_service = ResourceService()
+    monkeypatch.setattr(upload_routes, "UPLOAD_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        upload_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: resource_service),
+    )
+    upload = UploadFile(
+        file=BytesIO(b"name,value\na,1\n"),
+        filename="data.csv",
+        headers=Headers({"content-type": "text/csv"}),
+    )
+
+    await upload_routes.upload_chat_file(
+        file=upload,
+        session_id="assistant_session_csv_preview",
+        mode="assistant",
+        db=UploadDatabase(),
+        user=object(),
+        catalog=Catalog(),
+    )
+
+    assert resource_service.stored.renderer == "spreadsheet"
+    assert resource_service.stored.capabilities == ["download", "preview"]
+
+
+@pytest.mark.asyncio
 async def test_social_restore_exposes_unified_resource_counts(monkeypatch):
     class RestoreCatalog:
         async def require_read(self, *_args, **_kwargs):

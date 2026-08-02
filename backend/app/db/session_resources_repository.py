@@ -1,6 +1,7 @@
 """Transactional persistence for versioned session resource groups."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 from sqlalchemy import delete, select, update
@@ -14,6 +15,7 @@ from app.agent.resources.resource_service import (
     ResourcePublishResult,
     StoredResource,
     stable_group_id,
+    stable_resource_id,
     validate_publication,
 )
 from app.db.database import engine
@@ -245,6 +247,80 @@ class SessionResourcesRepository:
                 catalog_version = catalog.version
             return ResourcePublishResult(
                 catalog_version, parent_row.version, attached
+            )
+
+    async def replace_primary_file(
+        self,
+        session_id: str,
+        run_id: str,
+        resource_id: str,
+        path: str,
+        metadata: dict,
+    ) -> ResourcePublishResult:
+        async with AsyncSession(self.engine, expire_on_commit=False) as db:
+            async with db.begin():
+                catalog = await self._lock_catalog_version(db, session_id)
+                result = await db.execute(
+                    select(SessionResourceDB)
+                    .where(
+                        SessionResourceDB.session_id == session_id,
+                        SessionResourceDB.resource_id == resource_id,
+                        SessionResourceDB.status == "active",
+                    )
+                    .with_for_update()
+                )
+                primary_row = result.scalar_one_or_none()
+                if primary_row is None or primary_row.relation != "primary":
+                    raise ValueError("active primary resource was not found")
+                group_rows = list(
+                    (
+                        await db.execute(
+                            select(SessionResourceDB)
+                            .where(
+                                SessionResourceDB.session_id == session_id,
+                                SessionResourceDB.group_id == primary_row.group_id,
+                            )
+                            .with_for_update()
+                        )
+                    ).scalars().all()
+                )
+                group_version = max(row.version for row in group_rows) + 1
+                now = datetime.utcnow()
+                await db.execute(
+                    update(SessionResourceDB)
+                    .where(
+                        SessionResourceDB.session_id == session_id,
+                        SessionResourceDB.group_id == primary_row.group_id,
+                        SessionResourceDB.status == "active",
+                    )
+                    .values(status="superseded", updated_at=now)
+                )
+                current = _stored(primary_row)
+                replacement = replace(
+                    current,
+                    resource_id=stable_resource_id(
+                        session_id,
+                        current.group_id,
+                        group_version,
+                        current.resource_key,
+                    ),
+                    parent_resource_id=None,
+                    locator={"path": path},
+                    metadata=metadata,
+                    run_id=run_id,
+                    version=group_version,
+                    status="active",
+                    created_at=now,
+                    updated_at=now,
+                )
+                await db.execute(
+                    insert(SessionResourceDB).values(**_insert_values(replacement))
+                )
+                catalog.version += 1
+                catalog.updated_at = now
+                catalog_version = catalog.version
+            return ResourcePublishResult(
+                catalog_version, group_version, [replacement]
             )
 
     async def list_resources(

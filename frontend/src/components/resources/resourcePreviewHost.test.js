@@ -15,7 +15,19 @@ test('preview host uses the resource store and opaque content boundary', async (
   assert.match(source, /content-url/)
   assert.match(source, /explicitAttachment/)
   assert.match(source, /preferredPreview\(group\.value\) \|\| explicitAttachment\.value/)
+  assert.match(source, /:floating="target === 'document' && resource\.renderer !== 'spreadsheet'"/)
+  assert.match(source, /\.preview-layout \{ position: relative;/)
   assert.doesNotMatch(source, /file_path|pdf_id|html_id|\/api\/file\//)
+})
+
+test('document preview actions expose an overlay menu without reserving layout space', async () => {
+  const source = await readFile(new URL('./ResourcePreviewActions.vue', import.meta.url), 'utf8')
+  assert.match(source, /class="download-trigger"/)
+  assert.match(source, /aria-haspopup="menu"/)
+  assert.match(source, /\{ floating \}/)
+  assert.match(source, /position: absolute/)
+  assert.match(source, /handleDocumentPointerDown/)
+  assert.match(source, /event\.key === 'Escape'/)
 })
 
 test('renderers accept only resource, group and contentUrl boundary props', async () => {

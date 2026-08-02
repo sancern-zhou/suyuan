@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import tempfile
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -70,6 +71,8 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         actions["preview"] = content_url
     if "render" in actions:
         actions["render"] = external_api_path(actions["render"])
+    if "save" in actions:
+        actions["save"] = external_api_path(actions["save"])
     download_url = (
         external_api_path(actions["download"])
         if actions.get("download")
@@ -102,6 +105,90 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "size_bytes": int(item.metadata.get("size") or item.metadata.get("size_bytes") or 0),
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
+    }
+
+
+MAX_SPREADSHEET_SAVE_BYTES = 50 * 1024 * 1024
+SPREADSHEET_SIGNATURES = {
+    "xlsx": b"PK\x03\x04",
+    "xls": b"\xd0\xcf\x11\xe0",
+}
+
+
+def _is_valid_spreadsheet(path: Path, format_name: str) -> bool:
+    try:
+        if format_name == "xlsx":
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(path, read_only=True, data_only=False)
+            workbook.close()
+        else:
+            import xlrd
+
+            workbook = xlrd.open_workbook(path, on_demand=True)
+            workbook.release_resources()
+        return True
+    except Exception:
+        return False
+
+
+@router.post("/{session_id}/resources/{resource_id}/save")
+async def save_session_resource(
+    session_id: str,
+    resource_id: str,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """Publish a browser-edited spreadsheet as the group's next version."""
+    await catalog.require_write(session_id, user)
+    service = SessionResourceService.database()
+    resource = await service.get_resource(session_id, resource_id, status="active")
+    if resource is None or not user_visible_resource(resource):
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    if not (
+        resource.relation == "primary"
+        and resource.renderer == "spreadsheet"
+        and resource.format in SPREADSHEET_SIGNATURES
+        and "edit" in resource.capabilities
+    ):
+        raise HTTPException(status_code=422, detail="resource_not_editable")
+
+    with tempfile.TemporaryDirectory(prefix="suyuan-resource-edit-") as temp_dir:
+        edited = Path(temp_dir) / f"edited.{resource.format}"
+        size = 0
+        signature = b""
+        with edited.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                if not signature:
+                    signature = chunk[:4]
+                size += len(chunk)
+                if size > MAX_SPREADSHEET_SAVE_BYTES:
+                    raise HTTPException(status_code=413, detail="resource_edit_too_large")
+                output.write(chunk)
+        if (
+            size == 0
+            or signature != SPREADSHEET_SIGNATURES[resource.format]
+            or not await asyncio.to_thread(
+                _is_valid_spreadsheet, edited, resource.format
+            )
+        ):
+            raise HTTPException(status_code=422, detail="invalid_spreadsheet_content")
+        try:
+            publication = await service.replace_primary_file(
+                session_id,
+                f"resource-edit-{uuid4().hex}",
+                resource_id,
+                edited,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "resource_version": publication.catalog_version,
+        "changed_resource_ids": [
+            item.resource_id for item in publication.resources
+        ],
     }
 
 
