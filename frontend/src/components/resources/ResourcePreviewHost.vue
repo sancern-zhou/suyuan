@@ -14,7 +14,7 @@
       <ResourcePreviewActions
         :group="group"
         :resource="resource"
-        :floating="target === 'document' && resource.renderer !== 'spreadsheet'"
+        :floating="target === 'document'"
       />
       <component
         :is="rendererComponent"

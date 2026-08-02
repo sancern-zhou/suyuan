@@ -182,7 +182,7 @@ watch(() => props.contentUrl, loadWorkbook)
 
 <style scoped>
 .excel-editor { display: flex; height: 100%; min-height: 0; flex-direction: column; background: #fff; }
-.excel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #d8deea; background: #f7f9fc; }
+.excel-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 112px 8px 12px; border-bottom: 1px solid #d8deea; background: #f7f9fc; }
 .sheet-tabs, .toolbar-actions { display: flex; gap: 6px; }.sheet-tabs { min-width: 0; overflow-x: auto; }
 button { min-height: 30px; padding: 5px 10px; border: 1px solid #cfd7e6; border-radius: 5px; background: #fff; color: #334155; cursor: pointer; white-space: nowrap; }
 button:disabled { cursor: wait; opacity: .55; }.sheet-tab.active { border-color: #2374d5; background: #eef6ff; color: #145ca8; }.primary { border-color: #2374d5; background: #2374d5; color: #fff; }
