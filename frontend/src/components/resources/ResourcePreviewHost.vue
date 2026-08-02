@@ -10,14 +10,17 @@
       <button type="button" @click="renderError = ''">重试</button>
     </div>
     <p v-else-if="!resource" class="state">请选择一个文件产物</p>
-    <component
-      :is="rendererComponent"
-      v-else
-      :key="resource.resource_id"
-      :resource="resource"
-      :group="group"
-      :content-url="resource.content_url"
-    />
+    <div v-else class="preview-layout">
+      <ResourcePreviewActions :group="group" :resource="resource" />
+      <component
+        :is="rendererComponent"
+        :key="resource.resource_id"
+        class="preview-content"
+        :resource="resource"
+        :group="group"
+        :content-url="resource.content_url"
+      />
+    </div>
   </section>
 </template>
 
@@ -26,6 +29,7 @@ import { computed, defineAsyncComponent, onErrorCaptured, ref } from 'vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } from '@/services/resourceGroups.js'
 import { rendererKey, RESOURCE_RENDERERS } from '@/services/resourceRendererRegistry.js'
+import ResourcePreviewActions from './ResourcePreviewActions.vue'
 
 const resourceStore = useSessionResourceStore()
 const props = defineProps({
@@ -72,5 +76,5 @@ onErrorCaptured((error) => {
 </script>
 
 <style scoped>
-.resource-preview-host { height: 100%; min-height: 0; background: #fff; }.state { display: grid; height: 100%; margin: 0; place-content: center; color: #64748b; text-align: center; }.error { color: #b42318; }.state button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
+.resource-preview-host { height: 100%; min-height: 0; background: #fff; }.preview-layout { display: flex; height: 100%; min-height: 0; flex-direction: column; }.preview-content { min-height: 0; flex: 1; }.state { display: grid; height: 100%; margin: 0; place-content: center; color: #64748b; text-align: center; }.error { color: #b42318; }.state button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
 </style>

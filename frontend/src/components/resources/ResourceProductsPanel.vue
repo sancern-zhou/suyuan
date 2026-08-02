@@ -50,9 +50,9 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { authFetch } from '@/auth/http.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } from '@/services/resourceGroups.js'
+import { downloadResource } from '@/services/resourceDownloads.js'
 
 const emit = defineEmits(['open-resource-tab'])
 const resourceStore = useSessionResourceStore()
@@ -86,16 +86,7 @@ const download = async (resource) => {
   downloadingId.value = resource.resource_id
   downloadError.value = ''
   try {
-    const response = await authFetch(resource.download_url)
-    if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`)
-    const objectUrl = URL.createObjectURL(await response.blob())
-    const link = document.createElement('a')
-    link.href = objectUrl
-    link.download = resource.label
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(objectUrl)
+    await downloadResource(resource)
   } catch (error) {
     downloadError.value = error?.message || '下载失败'
   } finally {

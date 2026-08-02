@@ -58,7 +58,7 @@ def test_report_source_and_html_preview_share_a_group(tmp_path):
     assert {resource.group_key for resource in resources} == {"report:air"}
 
 
-def test_html_artifact_is_a_directory_resource_with_entrypoint(tmp_path):
+def test_html_artifact_has_downloadable_primary_and_directory_preview(tmp_path):
     artifact_dir = tmp_path / "artifact"
     artifact_dir.mkdir()
     index = artifact_dir / "index.html"
@@ -74,12 +74,18 @@ def test_html_artifact_is_a_directory_resource_with_entrypoint(tmp_path):
         generator="create_html_artifact",
         metadata={"artifact_id": "demo"},
     )
-    resource = validate(data["resources"])[0]
+    primary, preview = validate(data["resources"])
 
-    assert resource.kind.value == "artifact"
-    assert resource.group_key == "html-artifact:demo"
-    assert resource.renderer.value == "html"
-    assert resource.metadata == {"entrypoint": "index.html"}
+    assert primary.kind.value == "file"
+    assert primary.group_key == "html-artifact:demo"
+    assert primary.locator.path == str(index.resolve())
+    assert {item.value for item in primary.capabilities} == {"preview", "download"}
+    assert preview.kind.value == "artifact"
+    assert preview.locator.path == str(artifact_dir.resolve())
+    assert preview.renderer.value == "html"
+    assert preview.metadata == {"entrypoint": "index.html"}
+    assert preview.relation.value == "preview"
+    assert {item.value for item in preview.capabilities} == {"preview"}
 
 
 def test_spreadsheet_primary_uses_spreadsheet_renderer(tmp_path):

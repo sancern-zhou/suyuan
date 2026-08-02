@@ -1,15 +1,22 @@
 """Authorized catalog and opaque content delivery for session resources."""
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
-from app.agent.resources.actions import resource_action_links, resource_content_base
+from app.agent.resources.actions import (
+    attach_rendered_file,
+    resource_action_links,
+    resource_content_base,
+)
 from app.agent.resources.resource_service import SessionResourceService, StoredResource
 from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.models import CurrentUser
@@ -22,12 +29,20 @@ from app.auth.share_access import (
 )
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
+from app.services.quarto_report_renderer import (
+    ReportRenderError,
+    quarto_report_renderer,
+)
 from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["session-resources"])
 USER_VISIBLE_RESOURCE_ROLES = {"output", "report", "attachment"}
 USER_VISIBLE_RESOURCE_KINDS = {"file", "artifact", "visual"}
+
+
+class RenderResourceRequest(BaseModel):
+    format: Literal["docx", "html"]
 
 
 def user_visible_resource(item: StoredResource) -> bool:
@@ -53,6 +68,8 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
     content_url = f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
     if "preview" in actions:
         actions["preview"] = content_url
+    if "render" in actions:
+        actions["render"] = external_api_path(actions["render"])
     return {
         "resource_id": item.resource_id,
         "ref_id": item.resource_id,
@@ -123,6 +140,79 @@ async def get_session_resources(
         "total": len(resources),
         "next_cursor": page.next_cursor,
     }
+
+
+def _qmd_report_id(resource: StoredResource) -> str:
+    raw_path = (resource.locator or {}).get("path")
+    if not raw_path:
+        raise HTTPException(status_code=422, detail="report_source_unavailable")
+    qmd_path = Path(str(raw_path)).expanduser().resolve()
+    reports_root = quarto_report_renderer.report_root.resolve()
+    try:
+        relative = qmd_path.relative_to(reports_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="report_source_forbidden") from exc
+    if len(relative.parts) != 2 or relative.name != "report.qmd":
+        raise HTTPException(status_code=422, detail="invalid_report_source")
+    return relative.parts[0]
+
+
+@router.post("/{session_id}/resources/{resource_id}/render")
+async def render_session_resource(
+    session_id: str,
+    resource_id: str,
+    payload: RenderResourceRequest,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """Render a trusted QMD report into a downloadable same-group rendition."""
+    await catalog.require_write(session_id, user)
+    service = SessionResourceService.database()
+    resource = await service.get_resource(session_id, resource_id, status="active")
+    if resource is None or not user_visible_resource(resource):
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    if not (
+        resource.relation == "primary"
+        and resource.role == "report"
+        and resource.format == "qmd"
+        and "render" in resource.capabilities
+    ):
+        raise HTTPException(status_code=422, detail="resource_not_renderable")
+
+    report_id = _qmd_report_id(resource)
+    try:
+        if payload.format == "docx":
+            path = await asyncio.to_thread(quarto_report_renderer.render_docx, report_id)
+            renderer = "file"
+            label = "report.docx"
+        else:
+            path = await asyncio.to_thread(
+                quarto_report_renderer.render_share_html, report_id
+            )
+            renderer = "html"
+            label = "report.html"
+        return await attach_rendered_file(
+            service,
+            session_id=session_id,
+            run_id=f"resource-render-{uuid4().hex}",
+            group_key=f"report:{report_id}",
+            parent_resource_id=resource.resource_id,
+            path=path,
+            relation="rendition",
+            renderer=renderer,
+            tool_name=f"render_report_{payload.format}",
+            capabilities=("download",),
+            label=label,
+        )
+    except (FileNotFoundError, ValueError, ReportRenderError) as exc:
+        logger.warning(
+            "session_resource_render_failed",
+            session_id=session_id,
+            resource_id=resource_id,
+            format=payload.format,
+            error=str(exc),
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _require_within(candidate: Path, root: Path) -> Path:

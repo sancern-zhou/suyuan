@@ -105,28 +105,23 @@ def attach_document_artifact(
         "svg": "image",
     }
     role = "report" if kind == "report" else "output"
-    if kind == "html_artifact":
-        primary = directory_artifact(
-            path.parent,
-            entrypoint=path.name,
-            group_key=group_key,
-            tool_name=generator or "html_artifact",
-            role=role,
-            label=title or logical_key,
-        )
-    else:
-        primary = primary_file(
-            path,
-            group_key=group_key,
-            tool_name=generator or "document",
-            role=role,
-            renderer=renderer_by_format.get(fmt, "file"),
-            capabilities=("preview", "download", "edit")
-            if fmt in {"docx", "xlsx", "pptx"}
-            else ("preview", "download"),
-            label=title or path.name,
-            metadata={"artifact_kind": kind},
-        )
+    capabilities = (
+        ("preview", "download", "render")
+        if kind == "report" and fmt == "qmd"
+        else ("preview", "download", "edit")
+        if fmt in {"docx", "xlsx", "pptx"}
+        else ("preview", "download")
+    )
+    primary = primary_file(
+        path,
+        group_key=group_key,
+        tool_name=generator or "document",
+        role=role,
+        renderer=renderer_by_format.get(fmt, "file"),
+        capabilities=capabilities,
+        label=title or path.name,
+        metadata={"artifact_kind": kind},
+    )
     primary["resource_key"] = fmt
     resources = [primary]
 
@@ -146,21 +141,43 @@ def attach_document_artifact(
                 if candidate.is_file() and candidate != path:
                     preview_path = candidate
                     break
-    if preview_path is None and kind == "report" and fmt == "qmd":
+    if kind == "html_artifact" and fmt == "html":
+        preview_path = path
+    elif preview_path is None and kind == "report" and fmt == "qmd":
         rendered_html = path.with_name("report.html")
         if rendered_html.is_file():
             preview_path = rendered_html
     if preview_path is not None:
         preview_fmt = preview_path.suffix.lower().lstrip(".") or "file"
-        derivative = derivative_file(
-            preview_path,
-            group_key=group_key,
-            parent_key=primary["resource_key"],
-            tool_name=generator or "document",
-            relation="preview",
-            role=role,
-            renderer=renderer_by_format.get(preview_fmt, "file"),
-        )
+        if (
+            (kind == "report" and fmt == "qmd" and preview_fmt == "html")
+            or (kind == "html_artifact" and preview_fmt == "html")
+        ):
+            derivative = directory_artifact(
+                preview_path.parent,
+                entrypoint=preview_path.name,
+                group_key=group_key,
+                tool_name=generator or "document",
+                role=role,
+                renderer="html",
+                capabilities=("preview",),
+                label=preview_path.name,
+            )
+            derivative.update(
+                resource_key="html",
+                parent_key=primary["resource_key"],
+                relation="preview",
+            )
+        else:
+            derivative = derivative_file(
+                preview_path,
+                group_key=group_key,
+                parent_key=primary["resource_key"],
+                tool_name=generator or "document",
+                relation="preview",
+                role=role,
+                renderer=renderer_by_format.get(preview_fmt, "file"),
+            )
         derivative["resource_key"] = preview_fmt
         resources.append(derivative)
     result_data["resources"] = resources

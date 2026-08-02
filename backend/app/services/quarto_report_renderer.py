@@ -426,6 +426,28 @@ class QuartoReportRenderer:
         )
         return output_path
 
+    def render_share_html(self, report_id: str) -> Path:
+        """Render a downloadable standalone HTML report with embedded assets."""
+        report_dir = self.get_report_dir(report_id)
+        output_path = report_dir / "report.export.html"
+        qmd_path = self.get_qmd_path(report_id)
+        self._validate_render_qmd(report_dir, qmd_path)
+        self._run_quarto(
+            report_dir,
+            [
+                "render",
+                "report.qmd",
+                "--to",
+                "html",
+                "--output",
+                output_path.name,
+                "--embed-resources",
+            ],
+        )
+        if not output_path.is_file():
+            raise ReportRenderError("Quarto did not produce the standalone HTML report")
+        return output_path
+
     def render_docx(self, report_id: str) -> Path:
         report_dir = self.get_report_dir(report_id)
         qmd_path = self.get_qmd_path(report_id)

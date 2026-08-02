@@ -843,8 +843,22 @@ class RenderReportPackageTool(LLMTool):
                     metadata={"report_id": safe_id},
                 )
             elif format == "share_html":
-                data = quarto_report_renderer.render_share_html(safe_id)
-                data.update({"report_id": safe_id, "file_type": "report", "generator": "render_report_package"})
+                path = quarto_report_renderer.render_share_html(safe_id)
+                data = {
+                    "report_id": safe_id,
+                    "file_path": str(path),
+                    "file_type": "report",
+                    "generator": "render_report_package",
+                }
+                attach_document_artifact(
+                    data,
+                    path,
+                    kind="report",
+                    format="html",
+                    title=safe_id,
+                    generator="render_report_package",
+                    metadata={"report_id": safe_id},
+                )
             else:
                 return {"success": False, "data": {"error": f"不支持的格式: {format}"}, "summary": "报告渲染格式不支持"}
         except (FileNotFoundError, ValueError, ReportRenderError) as exc:
