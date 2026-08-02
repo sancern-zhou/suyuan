@@ -6,7 +6,7 @@ const fixtures = [
   ['Markdown', 'md', 'markdown', 'document', '.resource-preview-host .scroll'],
   ['Spreadsheet', 'xlsx', 'spreadsheet', 'document', '.resource-preview-host .sheet'],
   ['Presentation', 'pptx', 'presentation', 'document', '.resource-preview-host .slides'],
-  ['Image', 'png', 'image', 'document', '.resource-preview-host .image'],
+  ['Image', 'png', 'image', 'visualization', '.resource-preview-host .image'],
   ['Chart', 'json', 'chart', 'visualization', '.resource-preview-host .chart'],
   ['Board', 'drawio', 'board', 'board', '.resource-preview-host .board']
 ]
@@ -39,10 +39,11 @@ function resourceFixture([name, format, renderer, target]) {
   }
 }
 
-async function mockApplication(page, fixture, { attachmentType = null, officePreview = false } = {}) {
+async function mockApplication(page, fixture, { attachmentType = null, officePreview = false, extraFixtures = [] } = {}) {
   const resource = resourceFixture(fixture)
   if (attachmentType) resource.role = 'attachment'
   const resources = [resource]
+  resources.push(...extraFixtures.map(resourceFixture))
   if (officePreview) {
     resource.label = 'Office attachment.docx'
     resource.format = 'docx'
@@ -151,6 +152,34 @@ test('message DOCX attachment opens its unified PDF preview derivative', async (
     'src',
     /resource-office-pdf-preview/
   )
+})
+
+test('explicit document selection does not leak into the visualization tab', async ({ page }) => {
+  await mockApplication(page, fixtures[0], {
+    attachmentType: 'file',
+    extraFixtures: [fixtures[6]]
+  })
+  await page.goto('/session/e2e')
+
+  await page.locator('.attachment-file').click()
+  await expect(page.locator('.resource-preview-host iframe')).toBeVisible()
+  await page.getByRole('button', { name: /可视化/ }).click()
+  await expect(page.locator('.resource-preview-host .chart')).toBeVisible()
+  await expect(page.locator('.resource-preview-host iframe')).toHaveCount(0)
+})
+
+test('file product open and download actions do not overlap', async ({ page }) => {
+  await mockApplication(page, fixtures[0])
+  await page.goto('/session/e2e')
+  await page.getByRole('button', { name: /文件产物/ }).click()
+
+  const openBox = await page.locator('.product .open-label').boundingBox()
+  const downloadBox = await page.locator('.product .download').boundingBox()
+  const overlaps = openBox.x < downloadBox.x + downloadBox.width
+    && openBox.x + openBox.width > downloadBox.x
+    && openBox.y < downloadBox.y + downloadBox.height
+    && openBox.y + openBox.height > downloadBox.y
+  expect(overlaps).toBe(false)
 })
 
 for (const fixture of fixtures) {

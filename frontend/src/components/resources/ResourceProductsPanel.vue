@@ -102,9 +102,9 @@ header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1p
 h3 { margin: 0; font-size: 16px; color: #17223b; } header p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
 button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
 .state { margin: 28px 4px; color: #64748b; text-align: center; }.error { color: #b42318; }
-.product-list { display: grid; gap: 10px; padding-top: 14px; }.product { position: relative; border: 1px solid #e2e8f0; border-radius: 6px; }
+.product-list { display: grid; gap: 10px; padding-top: 14px; }.product { display: grid; grid-template-columns: minmax(0, 1fr) auto; border: 1px solid #e2e8f0; border-radius: 6px; }
 .product-main { width: 100%; gap: 10px; padding: 10px; color: #17223b; text-align: left; }
 .format { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 5px; background: #e8f1fb; color: #1b66aa; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .details { display: grid; min-width: 0; gap: 4px; }.details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.details small, .derivatives { color: #7a8798; font-size: 11px; }
-.open-label { margin-left: auto; }.derivatives { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 10px 10px 58px; }.download { position: absolute; right: 10px; bottom: 8px; }
+.open-label { margin-left: auto; }.derivatives { display: flex; grid-column: 1 / -1; flex-wrap: wrap; gap: 8px; padding: 0 10px 10px 58px; }.download { align-self: center; padding: 10px 12px; }
 </style>

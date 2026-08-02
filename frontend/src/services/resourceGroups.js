@@ -3,7 +3,7 @@ const PRODUCT_KINDS = new Set(['file', 'artifact', 'visual'])
 const SUPPORTED_RENDERERS = new Set([
   'pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'image', 'chart', 'board'
 ])
-const DOCUMENT_RENDERERS = new Set(['pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'image'])
+const DOCUMENT_RENDERERS = new Set(['pdf', 'html', 'markdown', 'spreadsheet', 'presentation'])
 
 const newestFirst = (left, right) => {
   const version = Number(right.version || 0) - Number(left.version || 0)
@@ -55,10 +55,21 @@ export function preferredPreview(group) {
 }
 
 export function targetTab(group) {
+  const primary = group?.primary
+  if (primary?.renderer === 'board' || primary?.format === 'drawio') return 'board'
+  if (
+    primary?.kind === 'visual'
+    || primary?.renderer === 'chart'
+    || primary?.renderer === 'image'
+  ) return 'visualization'
   const resource = preferredPreview(group) || group?.primary
   if (!resource) return 'files'
   if (resource.renderer === 'board' || resource.format === 'drawio') return 'board'
-  if (resource.renderer === 'chart' || resource.kind === 'visual') return 'visualization'
+  if (
+    resource.renderer === 'chart'
+    || resource.renderer === 'image'
+    || resource.kind === 'visual'
+  ) return 'visualization'
   if (DOCUMENT_RENDERERS.has(resource.renderer)) return 'document'
   return 'files'
 }
