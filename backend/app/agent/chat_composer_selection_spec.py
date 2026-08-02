@@ -1,9 +1,11 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
 
+from app.agent import selection_context
 from app.agent.context.context_builder import SimplifiedContextBuilder
 from app.agent.resources.resource_service import StoredResource
 from app.agent.selection_context import (
@@ -167,14 +169,62 @@ def test_uploaded_files_are_safe_to_list_and_images_support_native_input(tmp_pat
     assert resource_refs_to_runtime_attachments([non_image]) == []
 
 
+def test_selected_resources_keep_request_order(tmp_path):
+    first = _stored_resource(
+        tmp_path,
+        resource_id="resource-1",
+        file_id="file-1",
+        filename="first.html",
+        mime_type="text/html",
+    )
+    second = _stored_resource(
+        tmp_path,
+        resource_id="resource-2",
+        file_id="file-2",
+        filename="second.txt",
+        mime_type="text/plain",
+    )
+
+    assert hasattr(selection_context, "select_conversation_resources")
+    selected = selection_context.select_conversation_resources(
+        [first, second],
+        ["resource-2", "resource-1"],
+    )
+
+    assert [item.resource_id for item in selected] == ["resource-2", "resource-1"]
+
+
+def test_current_turn_resource_context_contains_server_resource_facts(tmp_path):
+    html = _stored_resource(
+        tmp_path,
+        resource_id="html-resource",
+        file_id="html-file",
+        filename="index (1).html",
+        mime_type="text/html",
+    )
+    html = replace(html, metadata={"file_id": "html-file"})
+
+    assert hasattr(selection_context, "resource_refs_to_current_turn_context")
+    context = selection_context.resource_refs_to_current_turn_context([html])
+
+    assert "1. index (1).html" in context
+    assert "资源 ID: html-resource" in context
+    assert "类型: text/html" in context
+    assert f"路径: {(tmp_path / 'index (1).html').resolve()}" in context
+    assert "应优先" not in context
+    assert "必须读取" not in context
+
+
 def test_persisted_uploaded_image_supports_native_input(tmp_path):
     image_ref = _stored_resource(
         tmp_path, file_id="image-1", filename="persisted-image.png"
     )
+    image_ref = replace(image_ref, metadata={"file_id": "image-1"})
 
-    assert resource_refs_to_runtime_attachments([image_ref])[0]["local_path"] == str(
-        (tmp_path / "persisted-image.png").resolve()
-    )
+    attachment = resource_refs_to_runtime_attachments([image_ref])[0]
+
+    assert attachment["local_path"] == str((tmp_path / "persisted-image.png").resolve())
+    assert attachment["mime_type"] == "image/png"
 
 
 def test_inactive_persisted_image_is_rejected(tmp_path):
@@ -190,6 +240,7 @@ def test_uploaded_image_ref_builds_safe_message_attachment(tmp_path):
     )
 
     assert resource_refs_to_message_attachments([image_ref]) == [{
+        "resource_id": "resource-1",
         "file_id": "image-1",
         "name": "现场.png",
         "type": "image",

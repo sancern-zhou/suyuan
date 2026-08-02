@@ -107,6 +107,9 @@ class SimplifiedContextBuilder:
         # 当前逻辑会话的共享资源投影。此字段不受模式隔离策略清理。
         self.session_resource_context = None
 
+        # 用户在本轮显式提交的附件事实，仅进入第一轮用户消息。
+        self.current_turn_resource_context = None
+
         # 用户为当前轮显式选择的技能正文。技能全模式通用，但不能改变工具权限。
         self.selected_skill_context = None
 
@@ -811,6 +814,11 @@ class SimplifiedContextBuilder:
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
             if iteration == 1:
                 sections.append(current_input_section)
+                if self.current_turn_resource_context:
+                    sections.append(
+                        "## 本轮用户附件\n"
+                        + self.current_turn_resource_context.strip()
+                    )
 
             # ✅ 调试日志：确认记忆和用户问题内容已添加
             if has_memory_enhancement or has_attachments:
@@ -835,6 +843,11 @@ class SimplifiedContextBuilder:
             if graph_map_context_summary:
                 sections.append(graph_map_context_summary)
             sections.append(current_input_section)
+            if iteration == 1 and self.current_turn_resource_context:
+                sections.append(
+                    "## 本轮用户附件\n"
+                    + self.current_turn_resource_context.strip()
+                )
 
         # 3. 最新观察结果（仅当conversation_history为空时添加，避免重复）
         # conversation_history已包含所有历史对话，包括完整的observation数据

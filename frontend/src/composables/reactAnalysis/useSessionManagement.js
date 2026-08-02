@@ -10,6 +10,7 @@ import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreMode
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
+import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import {
   listSessions,
   restoreSession,
@@ -28,6 +29,7 @@ export function useSessionManagement(store) {
   const sessionHistoryStats = ref(null)
   let autoRefreshTimer = null
   let refreshInFlight = null
+  let restoreRequestToken = 0
 
   const localSessionHistoryData = computed(() => {
     return Object.values(store.sessionStates || {})
@@ -194,14 +196,17 @@ export function useSessionManagement(store) {
    */
   const doRestoreSession = async (sessionId, options = {}) => {
     const { messageLimit = 100 } = options
+    const requestToken = ++restoreRequestToken
 
     try {
       // 1. 调用恢复API
-      resourceStore.activateSession(sessionId)
       const [restoreResult] = await Promise.all([
         restoreSession(sessionId, { messageLimit }),
         resourceStore.loadCatalog(sessionId)
       ])
+      if (requestToken !== restoreRequestToken) {
+        return { success: false, cancelled: true, error: '会话已切换' }
+      }
 
       if (!restoreResult) {
         return {
@@ -266,6 +271,9 @@ export function useSessionManagement(store) {
       store.setMessages(messages)
       resourceStore.activateSession(sessionId)
       await resourceStore.refreshIfNewer(sessionId, sessionData.resource_version || 0)
+      if (requestToken !== restoreRequestToken || resourceStore.activeSessionId !== sessionId) {
+        return { success: false, cancelled: true, error: '会话已切换' }
+      }
       chooseRestoredResource(resourceStore, sessionId)
 
       // 设置分页信息
@@ -285,6 +293,9 @@ export function useSessionManagement(store) {
       }
 
     } catch (error) {
+      if (requestToken !== restoreRequestToken) {
+        return { success: false, cancelled: true, error: '会话已切换' }
+      }
       console.error('[会话恢复] 恢复会话时出错:', error)
       if (store.sessionStates?.[sessionId]) {
         store._activateSession(sessionId)
@@ -303,7 +314,7 @@ export function useSessionManagement(store) {
     }
   }
 
-  const activateLocalSessionIfAvailable = (sessionId) => {
+  const activateLocalSessionIfAvailable = async (sessionId) => {
     const localSessionState = store.sessionStates?.[sessionId]
     if (!localSessionState) return false
 
@@ -315,6 +326,7 @@ export function useSessionManagement(store) {
 
     if (!hasVisibleState) return false
 
+    restoreRequestToken += 1
     store._activateSession(sessionId, localSessionState.mode)
     resourceStore.activateSession(sessionId)
     void resourceStore.loadCatalog(sessionId).then(() => chooseRestoredResource(resourceStore, sessionId))
@@ -331,7 +343,10 @@ export function useSessionManagement(store) {
    * @param {string} sessionId - 会话ID
    */
   const handleSessionRestore = async (sessionId) => {
-    if (activateLocalSessionIfAvailable(sessionId)) {
+    if (resourceStore.activeSessionId && resourceStore.activeSessionId !== sessionId) {
+      if (!await confirmResourcePreviewLeave()) return false
+    }
+    if (await activateLocalSessionIfAvailable(sessionId)) {
       return true
     }
 
@@ -350,7 +365,10 @@ export function useSessionManagement(store) {
    * @param {string} sessionId - 会话ID
    */
   const handleLoadSession = async (sessionId) => {
-    if (activateLocalSessionIfAvailable(sessionId)) {
+    if (resourceStore.activeSessionId && resourceStore.activeSessionId !== sessionId) {
+      if (!await confirmResourcePreviewLeave()) return false
+    }
+    if (await activateLocalSessionIfAvailable(sessionId)) {
       return true
     }
 
@@ -362,13 +380,16 @@ export function useSessionManagement(store) {
     return result.success
   }
 
-  const startNewWebConversation = () => {
+  const startNewWebConversation = async () => {
+    if (!await confirmResourcePreviewLeave()) return false
+    restoreRequestToken += 1
     store.reset()
     resourceStore.activateSession(null)
     store.currentState.conversationAccess = {
       source: 'web',
       read_only_on_web: false
     }
+    return true
   }
 
   // ========== 会话历史管理 ==========

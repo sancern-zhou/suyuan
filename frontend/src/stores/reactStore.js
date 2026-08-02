@@ -315,6 +315,7 @@ const createEmptyModeState = () => ({
   },
   activeRunId: null,
   ignoredRunIds: [],
+  pendingPausedRunId: null,
   isAnalyzing: false,
   error: null,
   isInterruption: false,
@@ -1405,6 +1406,9 @@ export const useReactStore = defineStore('react', {
           const runId = getEventRunId(event)
           if (runId) {
             targetState.activeRunId = runId
+            if (targetState.pendingPausedRunId && targetState.pendingPausedRunId !== runId) {
+              targetState.pendingPausedRunId = null
+            }
           }
           addMessage('start', `开始分析: ${data?.query || ''}`)
           if (data?.session_id) {
@@ -2699,6 +2703,7 @@ export const useReactStore = defineStore('react', {
           useFullChemistry: useFullChemistry,  // RACM2完整化学机理分析选项
           gridResolution: gridResolution,  // 网格分辨率选项
           isInterruption: isInterruption,  // ✅ 传递中断标志
+          previousPausedRunId: sessionState.pendingPausedRunId,
           agentMode: actualMode,  // ✅ 使用从 sessionId 提取的模式
           knowledgeBaseIds: knowledgeBaseIds,  // ✅ 传递知识库ID列表
           modelTier,
@@ -2812,7 +2817,7 @@ export const useReactStore = defineStore('react', {
         if (!confirmStop) {
           return
         }
-        await agentAPI.cancel(this.currentState.sessionId)
+        await agentAPI.cancel(this.currentState.sessionId, this.currentState.activeRunId, 'client_cancelled')
         this.currentState.isAnalyzing = false
       }
 
@@ -2828,7 +2833,7 @@ export const useReactStore = defineStore('react', {
         this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
         this.currentState.activeRunId = null
       }
-      await agentAPI.cancel(this.currentState.sessionId)
+      await agentAPI.cancel(this.currentState.sessionId, activeRunId, 'client_cancelled')
       this.currentState.isAnalyzing = false
       if (this.currentMode === 'board' && this.currentState.board) this.currentState.board.readOnly = false
       // 不添加系统消息
@@ -2840,14 +2845,15 @@ export const useReactStore = defineStore('react', {
       const activeRunId = this.currentState.activeRunId
       if (activeRunId) {
         this.currentState.ignoredRunIds = [...(this.currentState.ignoredRunIds || []), activeRunId]
+        this.currentState.pendingPausedRunId = activeRunId
         this.currentState.activeRunId = null
       }
-      await agentAPI.cancel(this.currentState.sessionId)
       this.currentState.isAnalyzing = false
       if (this.currentMode === 'board' && this.currentState.board) this.currentState.board.readOnly = false
       this.currentState.isComplete = false
       this.currentState.error = null
-      this.currentState.isInterruption = true  // 标记为中断状态
+      this.currentState.isInterruption = false
+      void agentAPI.cancel(this.currentState.sessionId, activeRunId)
       // 不添加系统消息
     },
 

@@ -7,8 +7,8 @@ const fixtures = [
   ['Markdown', 'md', 'markdown', 'document', '.resource-preview-host .scroll'],
   ['Spreadsheet', 'xlsx', 'spreadsheet', 'document', '.resource-preview-host .excel-editor'],
   ['Presentation', 'pptx', 'presentation', 'document', '.resource-preview-host .slides'],
-  ['Image', 'png', 'image', 'visualization', '.resource-preview-host .image'],
-  ['Chart', 'json', 'chart', 'visualization', '.resource-preview-host .chart'],
+  ['Image', 'png', 'image', 'visualization', '.visualization-gallery .image'],
+  ['Chart', 'json', 'chart', 'visualization', '.visualization-gallery .chart'],
   ['Board', 'drawio', 'board', 'board', '.resource-preview-host .board']
 ]
 
@@ -51,6 +51,11 @@ function spreadsheetFixtureBytes() {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Second sheet']]), '说明')
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
 }
+
+const imageFixtureBytes = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64'
+)
 
 async function mockApplication(page, fixture, {
   attachmentType = null,
@@ -104,15 +109,20 @@ async function mockApplication(page, fixture, {
         status: 200,
         contentType: contentResource.renderer === 'chart'
           ? 'application/json'
+          : (contentResource.renderer === 'image'
+              ? 'image/png'
           : (contentResource.renderer === 'spreadsheet'
               ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-              : 'text/plain'),
+              : 'text/plain')),
         headers: url.searchParams.get('disposition') === 'attachment'
           ? { 'Content-Disposition': `attachment; filename="${contentResource.label}"` }
           : {},
         body: contentResource.renderer === 'spreadsheet'
           ? spreadsheetFixtureBytes()
+          : (contentResource.renderer === 'image'
+              ? imageFixtureBytes
           : (bodies[contentResource.renderer] || 'fixture')
+            )
       })
     }
     if (url.pathname.endsWith('/resources/resource-spreadsheet/save')) {
@@ -188,21 +198,16 @@ test('message document attachment opens explicitly without entering file product
   await expect(page.locator('.resource-preview-host iframe')).toBeVisible()
 })
 
-test('document download actions float over the preview and expand as a menu', async ({ page }) => {
+test('document toolbar identifies the file and expands its download menu', async ({ page }) => {
   await mockApplication(page, fixtures[0])
   await page.goto('/session/e2e')
 
-  await page.getByRole('button', { name: /文件产物/ }).click()
+  await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /DOCX\/PDF\.pdf/ }).click()
 
-  const preview = page.locator('.resource-preview-host .preview-layout')
-  const content = page.locator('.resource-preview-host .preview-content')
-  const actions = page.locator('.resource-preview-host .resource-actions.floating')
+  const actions = page.locator('.resource-preview-host .resource-actions.compact')
+  await expect(page.locator('.document-picker select')).toHaveValue('group-pdf')
   await expect(actions.getByRole('button', { name: '下载' })).toBeVisible()
-
-  const previewBox = await preview.boundingBox()
-  const contentBox = await content.boundingBox()
-  expect(contentBox.y).toBe(previewBox.y)
 
   await actions.getByRole('button', { name: '下载' }).click()
   await expect(actions.getByRole('menu')).toBeVisible()
@@ -242,15 +247,15 @@ test('explicit document selection does not leak into the visualization tab', asy
 
   await page.locator('.attachment-file').click()
   await expect(page.locator('.resource-preview-host iframe')).toBeVisible()
-  await page.getByRole('button', { name: /可视化/ }).click()
-  await expect(page.locator('.resource-preview-host .chart')).toBeVisible()
+  await page.getByRole('tab', { name: /可视化/ }).click()
+  await expect(page.locator('.visualization-gallery .chart')).toBeVisible()
   await expect(page.locator('.resource-preview-host iframe')).toHaveCount(0)
 })
 
 test('file product open and download actions do not overlap', async ({ page }) => {
   await mockApplication(page, fixtures[0])
   await page.goto('/session/e2e')
-  await page.getByRole('button', { name: /文件产物/ }).click()
+  await page.getByRole('tab', { name: /文件产物/ }).click()
 
   const openBox = await page.locator('.product .open-label').boundingBox()
   const downloadBox = await page.locator('.product .download').boundingBox()
@@ -264,14 +269,11 @@ test('file product open and download actions do not overlap', async ({ page }) =
 test('preview original download is a native browser download link', async ({ page }) => {
   await mockApplication(page, fixtures[3])
   await page.goto('/session/e2e')
-  await page.getByRole('button', { name: /文件产物/ }).click()
+  await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
 
-  const actions = page.locator('.resource-actions.floating')
+  const actions = page.locator('.resource-actions.compact')
   await expect(actions.getByRole('button', { name: '下载' })).toBeVisible()
-  const triggerBox = await actions.getByRole('button', { name: '下载' }).boundingBox()
-  const toolbarActionsBox = await page.locator('.excel-toolbar .toolbar-actions').boundingBox()
-  expect(toolbarActionsBox.x + toolbarActionsBox.width).toBeLessThanOrEqual(triggerBox.x)
   await actions.getByRole('button', { name: '下载' }).click()
   const downloadLink = actions.getByRole('menuitem', { name: '下载原始 Excel' })
   await expect(downloadLink).toHaveText('下载原始 Excel')
@@ -290,7 +292,8 @@ test('file product actions stay fixed when the product has an HTML rendition', a
     role: 'report',
     label: '正式报告.qmd',
     format: 'qmd',
-    capabilities: ['preview', 'download', 'render']
+    capabilities: ['preview', 'download', 'render'],
+    actions: { render: '/api/sessions/e2e/resources/resource-qmd/render' }
   }
   const html = {
     ...resourceFixture(fixtures[1]),
@@ -305,19 +308,26 @@ test('file product actions stay fixed when the product has an HTML rendition', a
   }
   await mockApplication(page, fixtures[6], { extraResources: [primary, html] })
   await page.goto('/session/e2e')
-  await page.getByRole('button', { name: /文件产物/ }).click()
+  await page.getByRole('tab', { name: /文件产物/ }).click()
 
   const product = page.locator('.product').filter({ hasText: '正式报告.qmd' })
   const actions = product.locator('.product-actions')
   await expect(actions).toBeVisible()
   await expect(actions.getByText('打开', { exact: true })).toBeVisible()
   await expect(actions.getByText('下载', { exact: true })).toBeVisible()
+
+  await actions.getByText('打开', { exact: true }).click()
+  const previewActions = page.locator('.resource-preview-host .resource-actions.compact')
+  await previewActions.getByRole('button', { name: '下载' }).click()
+  await expect(previewActions.getByText('导出报告', { exact: true })).toHaveCount(0)
+  await expect(previewActions.getByRole('menuitem', { name: '导出 HTML' })).toBeVisible()
+  await expect(previewActions.getByRole('menuitem', { name: '导出 Word' })).toBeVisible()
 })
 
 test('spreadsheet preview switches sheets, edits a cell, and refreshes after save', async ({ page }) => {
   await mockApplication(page, fixtures[3])
   await page.goto('/session/e2e')
-  await page.getByRole('button', { name: /文件产物/ }).click()
+  await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
 
   await expect(page.getByRole('tab', { name: '数据' })).toBeVisible()
@@ -329,7 +339,7 @@ test('spreadsheet preview switches sheets, edits a cell, and refreshes after sav
   await page.getByRole('button', { name: '保存' }).click()
 
   await expect(page.locator('.excel-status')).toContainText('已保存')
-  const actions = page.locator('.resource-actions.floating')
+  const actions = page.locator('.resource-actions.compact')
   await actions.getByRole('button', { name: '下载' }).click()
   await expect(actions.getByRole('menuitem', { name: '下载原始 Excel' })).toHaveAttribute(
     'href',
@@ -337,10 +347,38 @@ test('spreadsheet preview switches sheets, edits a cell, and refreshes after sav
   )
 })
 
+test('visualization gallery automatically shows every chart and image', async ({ page }) => {
+  await mockApplication(page, fixtures[6], { extraFixtures: [fixtures[5]] })
+  await page.goto('/session/e2e')
+
+  await page.getByRole('tab', { name: /可视化/ }).click()
+  await expect(page.locator('.visualization-card')).toHaveCount(2)
+  await expect(page.locator('.visualization-gallery .chart')).toBeVisible()
+  await expect(page.locator('.visualization-gallery .image')).toBeVisible()
+  await expect(page.locator('.gallery-heading')).toContainText('2 项')
+})
+
+test('a failed chart stays isolated and can retry without hiding other visuals', async ({ page }) => {
+  await mockApplication(page, fixtures[6], { extraFixtures: [fixtures[5]] })
+  let chartAttempts = 0
+  await page.route('**/resources/resource-chart/content*', async route => {
+    chartAttempts += 1
+    await route.fulfill({ status: 503, body: 'chart unavailable' })
+  })
+  await page.goto('/session/e2e')
+
+  const chartCard = page.locator('.visualization-card').filter({ hasText: 'Chart.json' })
+  await expect(chartCard.locator('.error')).toContainText('HTTP 503')
+  await expect(page.locator('.visualization-gallery .image img')).toBeVisible()
+  await chartCard.getByRole('button', { name: '重试' }).click()
+  await expect.poll(() => chartAttempts).toBeGreaterThanOrEqual(2)
+  await expect(page.locator('.visualization-card')).toHaveCount(2)
+})
+
 test('spreadsheet keeps edited cells visible when post-save catalog refresh fails', async ({ page }) => {
   await mockApplication(page, fixtures[3], { failCatalogRefreshAfterSave: true })
   await page.goto('/session/e2e')
-  await page.getByRole('button', { name: /文件产物/ }).click()
+  await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
   await page.locator('.cell-input').first().fill('Unsynced preview')
   await page.getByRole('button', { name: '保存' }).click()
@@ -349,13 +387,41 @@ test('spreadsheet keeps edited cells visible when post-save catalog refresh fail
   await expect(page.locator('.cell-input').first()).toHaveValue('Unsynced preview')
 })
 
+test('spreadsheet unsaved edits block tab changes and panel closing', async ({ page }) => {
+  await mockApplication(page, fixtures[3], { extraFixtures: [fixtures[6]] })
+  await page.goto('/session/e2e')
+  await page.getByRole('tab', { name: /文件产物/ }).click()
+  await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
+  await page.locator('.cell-input').first().fill('Keep this edit')
+  await expect(page.locator('.dirty-state')).toHaveText('未保存')
+
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.getByRole('tab', { name: /可视化/ }).click()
+  await expect(page.locator('.tab-btn.active')).toContainText('文档')
+  await expect(page.locator('.cell-input').first()).toHaveValue('Keep this edit')
+
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.locator('.viz-toggle-btn').click()
+  await expect(page.locator('.resource-preview-host')).toBeVisible()
+  await expect(page.locator('.cell-input').first()).toHaveValue('Keep this edit')
+})
+
+test('empty resource tabs are disabled', async ({ page }) => {
+  await mockApplication(page, fixtures[0])
+  await page.goto('/session/e2e')
+
+  await expect(page.getByRole('tab', { name: /可视化/ })).toBeDisabled()
+  await expect(page.getByRole('tab', { name: /溯源/ })).toBeDisabled()
+  await expect(page.getByRole('tab', { name: /文档/ })).toBeEnabled()
+})
+
 for (const fixture of fixtures) {
   test(`${fixture[0]} resource opens through the catalog and survives restore`, async ({ page }) => {
     const resource = await mockApplication(page, fixture)
     await page.goto('/session/e2e')
 
-    await expect(page.getByRole('button', { name: /文件产物/ })).toBeVisible()
-    await page.getByRole('button', { name: /文件产物/ }).click()
+    await expect(page.getByRole('tab', { name: /文件产物/ })).toBeVisible()
+    await page.getByRole('tab', { name: /文件产物/ }).click()
     await page.getByRole('button', { name: new RegExp(resource.label) }).click()
     await expect(page.locator('.tab-btn.active')).toContainText(tabLabel[fixture[3]])
     await expect(page.locator(fixture[4])).toBeVisible()

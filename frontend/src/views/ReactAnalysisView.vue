@@ -70,7 +70,7 @@
       @start-drag="startDragging"
       @stop-drag="stopDragging"
       @reset-width="resetWidth"
-      @tab-change="activeRightTab = $event"
+      @tab-change="changeRightTab"
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
       @board-snapshot-confirm="handleBoardSnapshotConfirm"
@@ -146,6 +146,7 @@ import {
   toggleScheduledTask
 } from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
+import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import {
   getRunningAgentSessionId,
@@ -190,6 +191,7 @@ const {
   layoutRef,
   vizPanelStyle,
   toggleVizPanel,
+  changeRightTab,
   showManagementPanel,
   hideManagementPanel,
   resetPanelState,
@@ -327,6 +329,7 @@ const handleAgentSelect = async (mode) => {
     agentPlatformError.value = '暂不支持该智能体模式'
     return
   }
+  if (!await confirmResourcePreviewLeave()) return
 
   selectingAgentMode.value = mode
   agentPlatformError.value = ''
@@ -426,6 +429,7 @@ const handleSidebarAction = async (actionId) => {
     : null
 
   if (actionId === 'agent-platform') {
+    if (!await confirmResourcePreviewLeave()) return
     hideManagementPanel()
     resetPanelState()
     agentPlatformError.value = ''
@@ -434,6 +438,7 @@ const handleSidebarAction = async (actionId) => {
   }
 
   if (actionId === 'air-quality-forecast') {
+    if (!await confirmResourcePreviewLeave()) return
     hideManagementPanel()
     resetPanelState()
     workspace.value = 'forecast'
@@ -443,6 +448,7 @@ const handleSidebarAction = async (actionId) => {
   workspace.value = 'chat'
   switch (actionId) {
     case 'query-dashboard':
+      if (!await confirmResourcePreviewLeave()) return
       store.switchMode('query')
       hideManagementPanel()
       resetPanelState()
@@ -484,6 +490,7 @@ const handleSidebarAction = async (actionId) => {
       showManagementPanel('file-manager')
       break
     case 'restart-session':
+      if (!await confirmResourcePreviewLeave()) return
       console.log('[ReactAnalysisView] Restarting session')
       if (newTaskMode !== store.currentMode) store.switchMode(newTaskMode)
       store.restart()

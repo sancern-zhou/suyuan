@@ -455,7 +455,7 @@ const rightPanelExpanded = ref(true)
 
 // 计算是否有可视化内容（用于显示/隐藏ChatArea中的按钮）
 const hasVizContent = computed(() => {
-  return props.rightPanelVisible
+  return Boolean(props.sessionId) || props.rightPanelVisible
 })
 
 // 计算知识溯源数据

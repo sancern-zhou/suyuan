@@ -210,3 +210,53 @@ def test_context_result_reports_summary_then_recent_messages_then_current_turn()
     ]
     assert [item["name"] for item in message_layers] == list(MESSAGE_CONTEXT_LAYER_ORDER)
     assert all(item["active"] for item in message_layers)
+
+
+def test_first_planner_turn_keeps_query_and_current_turn_attachment_facts():
+    builder = SimplifiedContextBuilder(Mock(), Mock(), {})
+    builder.current_turn_resource_context = (
+        "1. index (1).html\n"
+        "   资源 ID: html-resource\n"
+        "   类型: text/html\n"
+        "   路径: backend_data_registry/uploads/index.html"
+    )
+
+    with patch(
+        "app.agent.prompts.prompt_builder.build_react_system_prompt",
+        return_value="mode-marker",
+    ):
+        result = asyncio.run(builder.build_for_thought_action(
+            query="阅读",
+            iteration=1,
+            conversation_history=[
+                {"type": "assistant", "role": "assistant", "content": "older turn"},
+            ],
+            mode="assistant",
+        ))
+
+    conversation = result["user_conversation"]
+    assert "## 当前进行的任务\n阅读" in conversation
+    assert "## 本轮用户附件" in conversation
+    assert "index (1).html" in conversation
+    assert "html-resource" in conversation
+
+
+def test_later_planner_iterations_do_not_repeat_current_turn_attachment_facts():
+    builder = SimplifiedContextBuilder(Mock(), Mock(), {})
+    builder.current_turn_resource_context = "1. index (1).html"
+
+    with patch(
+        "app.agent.prompts.prompt_builder.build_react_system_prompt",
+        return_value="mode-marker",
+    ):
+        result = asyncio.run(builder.build_for_thought_action(
+            query="阅读",
+            iteration=2,
+            conversation_history=[
+                {"type": "user", "role": "user", "content": "阅读"},
+            ],
+            mode="assistant",
+        ))
+
+    assert "本轮用户附件" not in result["user_conversation"]
+    assert "index (1).html" not in result["user_conversation"]

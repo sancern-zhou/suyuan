@@ -7,6 +7,7 @@ LLM memory is a lossy projection and must not overwrite it.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.agent.session.models import Session
@@ -54,11 +55,14 @@ class ConversationPersistenceService:
         self,
         existing_history: List[Dict[str, Any]],
         display_history: List[Dict[str, Any]],
+        *,
+        preserve_runtime_events: bool = False,
     ) -> List[Dict[str, Any]]:
-        merged = self._persistent_messages(existing_history)
+        normalize = list if preserve_runtime_events else self._persistent_messages
+        merged = [dict(message) for message in normalize(existing_history)]
         seen = {self._message_key(message) for message in merged}
 
-        for message in self._persistent_messages(display_history):
+        for message in normalize(display_history):
             key = self._message_key(message)
             if key in seen:
                 continue
@@ -66,6 +70,133 @@ class ConversationPersistenceService:
             seen.add(key)
 
         return merged
+
+    @staticmethod
+    def _event_run_id(message: Dict[str, Any]) -> Optional[str]:
+        data = message.get("data")
+        if isinstance(data, dict) and data.get("run_id"):
+            return str(data["run_id"])
+        if message.get("run_id"):
+            return str(message["run_id"])
+        return None
+
+    @staticmethod
+    def _tool_use_id(message: Dict[str, Any]) -> Optional[str]:
+        data = message.get("data") if isinstance(message.get("data"), dict) else {}
+        direct = data.get("tool_use_id") or message.get("tool_use_id")
+        if direct:
+            return str(direct)
+        tool_use = data.get("tool_use")
+        tools = tool_use.get("tools") if isinstance(tool_use, dict) else None
+        if isinstance(tools, list) and tools and isinstance(tools[0], dict):
+            value = tools[0].get("tool_call_id") or tools[0].get("id")
+            return str(value) if value else None
+        return None
+
+    def _close_unpaired_pause_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        run_id: str,
+        paused_at: str,
+    ) -> List[Dict[str, Any]]:
+        tool_uses: Dict[str, Dict[str, Any]] = {}
+        tool_results: set[str] = set()
+        for message in messages:
+            if self._event_run_id(message) != run_id:
+                continue
+            tool_use_id = self._tool_use_id(message)
+            if not tool_use_id:
+                continue
+            if message.get("type") == "tool_use":
+                tool_uses[tool_use_id] = message
+            elif message.get("type") == "tool_result":
+                tool_results.add(tool_use_id)
+
+        closed = [dict(message) for message in messages]
+        for tool_use_id, tool_use_message in tool_uses.items():
+            if tool_use_id in tool_results:
+                continue
+            source_data = tool_use_message.get("data")
+            tool_name = source_data.get("tool_name") if isinstance(source_data, dict) else None
+            result = {
+                "success": False,
+                "status": "unknown",
+                "summary": "工具调用因用户暂停而中断，是否产生外部副作用尚未确认。",
+                "tool_use_id": tool_use_id,
+            }
+            closed.append({
+                "type": "tool_result",
+                "content": result["summary"],
+                "data": {
+                    "run_id": run_id,
+                    "tool_use_id": tool_use_id,
+                    "tool_name": tool_name,
+                    "result": result,
+                    "is_error": True,
+                    "synthetic": True,
+                    "timestamp": paused_at,
+                },
+                "tool_use_id": tool_use_id,
+                "is_error": True,
+                "timestamp": paused_at,
+            })
+        return closed
+
+    def append_paused(
+        self,
+        session: Session,
+        *,
+        display_history: List[Dict[str, Any]],
+        run_id: str,
+        partial_answer: str = "",
+        paused_at: Optional[str] = None,
+        drawio_board: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Persist a user-visible interrupted turn and its explicit pause marker."""
+        if any(
+            message.get("type") == "user_pause"
+            and self._event_run_id(message) == run_id
+            for message in session.conversation_history
+        ):
+            return
+        timestamp = paused_at or datetime.now().isoformat()
+        paused_history = self._close_unpaired_pause_tools(
+            display_history,
+            run_id=run_id,
+            paused_at=timestamp,
+        )
+        partial = partial_answer.strip()
+        if partial:
+            paused_history.append({
+                "type": "final",
+                "role": "assistant",
+                "content": partial,
+                "data": {
+                    "partial": True,
+                    "frozen_from": "paused",
+                    "run_id": run_id,
+                },
+                "timestamp": timestamp,
+                "streaming": False,
+            })
+        paused_history.append({
+            "type": "user_pause",
+            "role": "user",
+            "content": "用户主动暂停了上一轮分析",
+            "data": {
+                "run_id": run_id,
+                "reason": "user_paused",
+                "paused_at": timestamp,
+            },
+            "timestamp": timestamp,
+        })
+        session.conversation_history = self._append_missing_messages(
+            session.conversation_history,
+            paused_history,
+            preserve_runtime_events=True,
+        )
+        self.append_metadata(session, drawio_board=drawio_board)
 
     def apply_complete(
         self,

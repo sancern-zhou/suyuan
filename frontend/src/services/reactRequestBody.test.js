@@ -29,3 +29,14 @@ test('always includes empty selection arrays', () => {
   assert.deepEqual(body.context_refs, [])
   assert.equal(body.active_contexts, null)
 })
+
+test('carries the previous paused run barrier into the next normal turn', () => {
+  const body = buildAnalyzeRequestBody('继续刚才的数据分析', {
+    sessionId: 'assistant_session_1',
+    previousPausedRunId: 'run_paused_1',
+    isInterruption: false
+  })
+
+  assert.equal(body.previous_paused_run_id, 'run_paused_1')
+  assert.equal(body.is_interruption, false)
+})

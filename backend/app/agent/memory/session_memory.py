@@ -1638,8 +1638,20 @@ class SessionMemory:
         skipped_count = 0
         error_count = 0
         paired_display_tool_ids = self._paired_display_tool_ids(messages)
+        paused_run_ids = {
+            str(data.get("run_id"))
+            for message in messages
+            if message.get("type") == "user_pause"
+            for data in [message.get("data")]
+            if isinstance(data, dict) and data.get("run_id")
+        }
         pending_tool_uses: List[Dict[str, Any]] = []
         pending_tool_results: List[Dict[str, Any]] = []
+
+        def is_paused_run_event(message: Dict[str, Any]) -> bool:
+            data = message.get("data")
+            run_id = data.get("run_id") if isinstance(data, dict) else message.get("run_id")
+            return bool(run_id and str(run_id) in paused_run_ids)
 
         def flush_tool_uses(timestamp: Optional[str] = None) -> None:
             nonlocal loaded_count
@@ -1682,8 +1694,13 @@ class SessionMemory:
                 timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
 
                 is_native_content_blocks = isinstance(msg.get("content"), list)
+                paused_run_event = is_paused_run_event(msg)
 
-                if msg_type in {"tool_use", "tool_result"} and not is_native_content_blocks:
+                if (
+                    msg_type in {"tool_use", "tool_result"}
+                    and not is_native_content_blocks
+                    and not paused_run_event
+                ):
                     # Display transcript tool rows are UI/runtime events. Replaying
                     # them on a later turn makes stale failures and old tool output
                     # compete with the user's current request. Native content blocks
@@ -1736,6 +1753,13 @@ class SessionMemory:
                         elif "tool_use" in content_types:
                             role = "assistant"
                             msg_type = "tool_use"
+                    elif msg_type == "thought" and paused_run_event:
+                        content = f"[暂停前的可见分析]\n{content}"
+                        role = "assistant"
+                        msg_type = "assistant"
+                    elif msg_type == "user_pause":
+                        role = "user"
+                        content = content or "用户主动暂停了上一轮分析"
                     elif msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
                         # These rows are UI/display transcript events. Replaying
                         # them as assistant/user text teaches the model to emit
@@ -1762,7 +1786,33 @@ class SessionMemory:
                     data = msg.get("data", {})
 
                     # 提取消息内容
-                    if msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
+                    if msg_type == "thought" and paused_run_event:
+                        thought_content = msg.get("content") or data.get("thought") or ""
+                        if thought_content:
+                            self.conversation_history.append(
+                                ConversationTurn(
+                                    role="assistant",
+                                    content=f"[暂停前的可见分析]\n{thought_content}",
+                                    timestamp=timestamp,
+                                    type="assistant",
+                                    data={"restored_from_paused_run": True},
+                                )
+                            )
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    elif msg_type == "user_pause":
+                        self.conversation_history.append(
+                            ConversationTurn(
+                                role="user",
+                                content=msg.get("content") or "用户主动暂停了上一轮分析",
+                                timestamp=timestamp,
+                                type="user_pause",
+                                data=data if isinstance(data, dict) else None,
+                            )
+                        )
+                        loaded_count += 1
+                    elif msg_type in {"tool_use", "tool_result", "start", "error", "interrupted"}:
                         skipped_count += 1
                     elif msg_type == "complete":
                         answer = data.get("answer", "")

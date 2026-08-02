@@ -8,15 +8,19 @@ import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { resolveMessageAttachmentResource } from '@/services/messageAttachmentPreview.js'
+import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
+import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 
 export function usePanelManagement(store = null) {
   const resourceStore = useSessionResourceStore()
   // ========== 面板状态 ==========
   const managementPanel = ref(null) // 当前显示的管理面板
   const rightPanelVisible = ref(false) // 右侧面板是否可见
+  const rightPanelDismissed = ref(false) // 用户手动关闭后不被资源刷新强制重开
   const leftSidebarCollapsed = ref(false) // 左侧边栏是否折叠
   const knowledgePanelVisible = ref(false) // 知识溯源面板是否可见
   const activeRightTab = ref('files') // 右侧面板活动标签页
+  const activeTabUserSelected = ref(false)
 
   // ========== 宽度调整相关 ==========
   const defaultVizWidth = PANEL_SIZES.DEFAULT_VIZ_WIDTH
@@ -92,17 +96,27 @@ export function usePanelManagement(store = null) {
   /**
    * 切换可视化面板显示/隐藏
    */
-  const toggleVizPanel = () => {
+  const toggleVizPanel = async () => {
     const newState = !rightPanelVisible.value
+    if (!newState && !await confirmResourcePreviewLeave()) return false
     rightPanelVisible.value = newState
+    rightPanelDismissed.value = !newState
 
     // 联动左侧面板
     if (newState) {
       leftSidebarCollapsed.value = true
-      vizWidth.value = collapsedVizWidth
     } else {
       leftSidebarCollapsed.value = false
     }
+    return true
+  }
+
+  const changeRightTab = async tab => {
+    if (!tab || tab === activeRightTab.value) return true
+    if (!await confirmResourcePreviewLeave()) return false
+    activeRightTab.value = tab
+    activeTabUserSelected.value = true
+    return true
   }
 
   /**
@@ -130,9 +144,11 @@ export function usePanelManagement(store = null) {
   const resetPanelState = () => {
     knowledgePanelVisible.value = false
     rightPanelVisible.value = false
+    rightPanelDismissed.value = false
     leftSidebarCollapsed.value = false
     managementPanel.value = null
     activeRightTab.value = 'files'
+    activeTabUserSelected.value = false
     const sessionId = resourceStore.activeSessionId
     if (sessionId && resourceStore.activeSessionState?.selectionOrigin === 'explicit') {
       resourceStore.selectResource(sessionId, null)
@@ -143,6 +159,7 @@ export function usePanelManagement(store = null) {
   const openMessageAttachmentPreview = async ({ sessionId, resourceId } = {}) => {
     const token = ++attachmentPreviewToken
     try {
+      if (!await confirmResourcePreviewLeave()) return null
       const resource = await resolveMessageAttachmentResource(
         resourceStore,
         sessionId,
@@ -151,10 +168,14 @@ export function usePanelManagement(store = null) {
       if (token !== attachmentPreviewToken || resourceStore.activeSessionId !== sessionId) return null
       resourceStore.selectGroup(sessionId, resource.group_id)
       resourceStore.selectResource(sessionId, resource.resource_id, 'explicit')
-      activeRightTab.value = 'document'
+      const state = resourceStore.sessionState(sessionId)
+      const group = buildResourceGroups(state?.resources || [])
+        .find(item => item.group_id === resource.group_id)
+      activeRightTab.value = group ? targetTab(group) : 'files'
+      activeTabUserSelected.value = true
       rightPanelVisible.value = true
+      rightPanelDismissed.value = false
       leftSidebarCollapsed.value = true
-      vizWidth.value = collapsedVizWidth
       return resource
     } catch (error) {
       if (token === attachmentPreviewToken) {
@@ -246,15 +267,31 @@ export function usePanelManagement(store = null) {
    * 监听内容变化，自动显示/隐藏面板
    */
   const setupWatchers = () => {
+    let previousArtifactCount = 0
+    let previousSessionId = null
     watch(
       () => [resourceStore.activeSessionId, resourceStore.activeSessionState?.resourceVersion],
       () => {
         const sessionId = resourceStore.activeSessionId
         const summary = resourceSummary.value
+        if (sessionId !== previousSessionId) {
+          previousSessionId = sessionId
+          previousArtifactCount = 0
+          activeTabUserSelected.value = false
+          rightPanelDismissed.value = false
+        }
         if (sessionId && summary.hasArtifacts && !explicitAttachment.value) {
           const restored = chooseRestoredResource(resourceStore, sessionId)
-          if (restored) activeRightTab.value = restored.targetTab
+          if (restored && !activeTabUserSelected.value) {
+            activeRightTab.value = restored.targetTab
+          }
+          if (previousArtifactCount === 0 && summary.counts.files > 0 && !rightPanelDismissed.value) {
+            rightPanelVisible.value = true
+            leftSidebarCollapsed.value = true
+            vizWidth.value = collapsedVizWidth
+          }
         }
+        previousArtifactCount = summary.counts.files
       },
       { immediate: true }
     )
@@ -263,20 +300,19 @@ export function usePanelManagement(store = null) {
     watch(hasKnowledgeSources, (newValue) => {
       knowledgePanelVisible.value = newValue
       // 当检测到知识溯源时，自动切换到知识标签页
-      if (newValue) {
+      if (newValue && !activeTabUserSelected.value) {
         activeRightTab.value = 'knowledge'
+        if (!rightPanelDismissed.value) rightPanelVisible.value = true
       }
     }, { immediate: true })
 
     // 监听右侧面板显示状态
     watch([hasVizContent, knowledgePanelVisible], ([artifacts, knowledge]) => {
       const shouldShow = artifacts || knowledge
-      if (shouldShow) {
-        rightPanelVisible.value = true
+      if (shouldShow && rightPanelVisible.value) {
         // 右侧面板展开时，自动折叠左侧面板
         leftSidebarCollapsed.value = true
-        vizWidth.value = collapsedVizWidth
-      } else {
+      } else if (!shouldShow) {
         rightPanelVisible.value = false
         // 右侧面板收起时，恢复左侧面板
         leftSidebarCollapsed.value = false
@@ -311,6 +347,7 @@ export function usePanelManagement(store = null) {
     // 状态
     managementPanel,
     rightPanelVisible,
+    rightPanelDismissed,
     leftSidebarCollapsed,
     knowledgePanelVisible,
     activeRightTab,
@@ -326,6 +363,7 @@ export function usePanelManagement(store = null) {
 
     // 方法
     toggleVizPanel,
+    changeRightTab,
     showManagementPanel,
     hideManagementPanel,
     resetPanelState,

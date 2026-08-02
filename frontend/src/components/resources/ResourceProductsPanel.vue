@@ -11,7 +11,13 @@
       <button type="button" :disabled="sessionState?.loading" @click="reload">刷新</button>
     </header>
 
-    <p v-if="sessionState?.loading && !products.length" class="state">正在加载文件产物...</p>
+    <FileDetailRenderer
+      v-if="fileDetailAttachment"
+      :resource="fileDetailAttachment"
+      :group="explicitAttachmentGroup"
+      :content-url="fileDetailAttachment.content_url"
+    />
+    <p v-else-if="sessionState?.loading && !products.length" class="state">正在加载文件产物...</p>
     <div v-else-if="sessionState?.error" class="state error">
       <p>{{ sessionState.error }}</p>
       <button type="button" @click="reload">重试</button>
@@ -31,9 +37,9 @@
         </button>
         <div v-if="group.children.length || group.versions.length > 1" class="derivatives">
           <span v-for="child in group.children" :key="child.resource_id">
-            {{ child.relation }} · {{ child.format }}
+            {{ derivativeLabel(child) }}
           </span>
-          <span v-if="group.versions.length > 1">版本 {{ group.versions.join(' / ') }}</span>
+          <span v-if="group.versions.length > 1">共 {{ group.versions.length }} 个版本</span>
         </div>
         <div class="product-actions">
           <button type="button" class="open-label" @click="open(group)">打开</button>
@@ -54,11 +60,25 @@ import { computed } from 'vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } from '@/services/resourceGroups.js'
 import { downloadFileName } from '@/services/resourceDownloads.js'
+import { derivativeLabel } from '@/services/resourceProductLabels.js'
+import FileDetailRenderer from '@/components/resources/renderers/FileDetailRenderer.vue'
 
 const emit = defineEmits(['open-resource-tab'])
 const resourceStore = useSessionResourceStore()
 const sessionState = computed(() => resourceStore.activeSessionState)
 const products = computed(() => topLevelProducts(buildResourceGroups(sessionState.value?.resources || [])))
+const explicitAttachment = computed(() => {
+  if (sessionState.value?.selectionOrigin !== 'explicit' || !resourceStore.activeSessionId) return null
+  const selected = resourceStore.selectedResource(resourceStore.activeSessionId)
+  return selected?.role === 'attachment' ? selected : null
+})
+const explicitAttachmentGroup = computed(() => buildResourceGroups(sessionState.value?.resources || [])
+  .find(group => group.group_id === explicitAttachment.value?.group_id) || null)
+const fileDetailAttachment = computed(() => (
+  explicitAttachmentGroup.value && targetTab(explicitAttachmentGroup.value) === 'files'
+    ? explicitAttachment.value
+    : null
+))
 
 const reload = () => resourceStore.activeSessionId
   ? resourceStore.loadCatalog(resourceStore.activeSessionId)

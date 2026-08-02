@@ -61,7 +61,7 @@
       @start-drag="startDragging"
       @stop-drag="stopDragging"
       @reset-width="resetWidth"
-      @tab-change="activeRightTab = $event"
+      @tab-change="changeRightTab"
       @preview-message-attachment="openMessageAttachmentPreview"
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
@@ -136,6 +136,7 @@ import {
   toggleScheduledTask
 } from '@/components/management/scheduledTaskActions.js'
 import { PANEL_SIZES } from '@/utils/constants'
+import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -172,6 +173,7 @@ const {
   layoutRef,
   vizPanelStyle,
   toggleVizPanel,
+  changeRightTab,
   showManagementPanel,
   hideManagementPanel,
   resetPanelState,
@@ -315,6 +317,7 @@ const handleAssistantSelect = async (moduleId) => {
 const handleSidebarAction = async (actionId) => {
   switch (actionId) {
     case 'query-dashboard':
+      if (!await confirmResourcePreviewLeave()) return
       store.switchMode('query')
       hideManagementPanel()
       resetPanelState()
@@ -349,6 +352,7 @@ const handleSidebarAction = async (actionId) => {
       vizWidth.value = collapsedVizWidth
       break
     case 'restart-session':
+      if (!await confirmResourcePreviewLeave()) return
       store.restart()
       hideManagementPanel()
       resetPanelState()
