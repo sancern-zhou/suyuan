@@ -19,7 +19,7 @@ QMD 正式报告在同一资源组内提供 QMD 源文件、可携带完整依�
 
 - 主资源具有 `download` 时显示“下载原始文件”或带格式的标签，如“下载 DOCX”“下载 HTML”“下载 Markdown”。
 - 同组已有可下载 `rendition` 时显示格式选择，下载对应资源。
-- PDF iframe 隐藏浏览器内置工具栏，避免其“保存”按钮把预览 PDF 误认为原始 Word。
+- PDF iframe 保留浏览器内置工具栏；统一操作栏明确标注“下载原始 DOCX”等原始格式操作，避免与保存当前 PDF 预览混淆。
 - 下载继续使用统一资源 `download_url`、鉴权请求和 Blob，不恢复 `/api/office`、`download-word` 等旧接口。
 - 图片、PDF、HTML、Markdown、QMD、表格和普通文件只要具有 `download` 能力，均可通过同一操作栏下载。
 
@@ -61,7 +61,7 @@ QMD 主资源声明 `render` 能力。服务端从可信资源身份生成 rende
 
 ## 验证
 
-- Word 输入附件：显示 PDF 预览，但统一按钮下载 DOCX，PDF 内置工具栏不可见。
+- Word 输入附件：显示 PDF 预览并保留内置工具栏，统一按钮明确下载 DOCX 原始文件。
 - HTML、Markdown、PDF、图片等资源：具有 download 能力时均显示统一下载入口并保留原扩展名。
 - QMD：Quarto HTML 的 CSS/JS/图片请求成功；可下载 QMD；首次导出 Word 生成 DOCX rendition，第二次复用稳定资源；恢复会话后仍可下载。
 - 权限、非法格式、非 QMD 资源和越界报告路径被拒绝。
