@@ -32,7 +32,6 @@
       :assistant-mode="assistantMode"
       :agent-mode="agentMode"
       :selected-message-id="selectedMessageId"
-      :visualization-panel-ref="null"
       :on-message-click="handleMessageClick"
       :has-more-messages="hasMoreMessages"
       :total-message-count="totalMessageCount"

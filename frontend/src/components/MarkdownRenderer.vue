@@ -271,12 +271,6 @@ const renderedHtml = computed(() => {
     return match  // 不是公式，保持原样
   })
 
-  // 【调试】检查是否包含占位符
-  if (content.includes('[ECHARTS_PLACEHOLDER:')) {
-    console.log('[MarkdownRenderer] 收到包含占位符的内容，长度:', content.length)
-    console.log('[MarkdownRenderer] 占位符数量:', (content.match(/\[ECHARTS_PLACEHOLDER:/g) || []).length)
-  }
-
   // 【调试】检查是否包含base64图片
   const base64Matches = content.match(/!\[.*?\]\(data:image\/png;base64,[^\)]+\)/g)
   if (base64Matches) {

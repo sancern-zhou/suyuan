@@ -18,7 +18,11 @@ from urllib.parse import unquote
 
 import structlog
 
-from app.tools.artifact_utils import attach_document_artifact, build_artifact_resume_context
+from app.tools.artifact_utils import (
+    attach_document_resources,
+    build_artifact_resume_context,
+    preview_output_path,
+)
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import get_data_registry, get_images_dir
 
@@ -294,13 +298,15 @@ class CreatePptxWithPptMasterTool(LLMTool):
         result_data["affected_slides"] = final_quality_gate.get("affected_slides", [])
         result_data["next_revision_base_plan_path"] = str(slide_plan_path)
 
-        attach_document_artifact(
+        attach_document_resources(
             result_data,
             output_path,
             kind="office",
             format="pptx",
             title=title,
-            preview_key="ppt_preview" if result_data.get("ppt_preview") else "pdf_preview",
+            preview_path=preview_output_path(
+                result_data.get("ppt_preview"), result_data.get("pdf_preview")
+            ),
             generator=self.name,
             metadata={"workflow": "ppt_master", "project_dir": str(project_path)},
         )
@@ -371,13 +377,15 @@ class CreatePptxWithPptMasterTool(LLMTool):
                 logger.warning("ppt_master_render_validation_failed", error=str(validation_error))
                 result_data["validation_error"] = str(validation_error)
 
-        attach_document_artifact(
+        attach_document_resources(
             result_data,
             pptx_path,
             kind="office",
             format="pptx",
             title=pptx_path.stem,
-            preview_key="ppt_preview" if result_data.get("ppt_preview") else "pdf_preview",
+            preview_path=preview_output_path(
+                result_data.get("ppt_preview"), result_data.get("pdf_preview")
+            ),
             generator=self.name,
             metadata={"workflow": "ppt_master", "operation": "render"},
         )

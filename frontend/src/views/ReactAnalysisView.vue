@@ -33,10 +33,7 @@
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
       :right-panel-visible="rightPanelVisible"
-      :viz-panel-visible="vizPanelVisible"
-      :office-panel-visible="officePanelVisible"
       :knowledge-panel-visible="knowledgePanelVisible"
-      :board-panel-visible="boardPanelVisible"
       :active-right-tab="activeRightTab"
       :viz-panel-style="vizPanelStyle"
       :board="store.currentState.board"
@@ -186,10 +183,7 @@ const {
   managementPanel,
   rightPanelVisible,
   leftSidebarCollapsed,
-  vizPanelVisible,
-  officePanelVisible,
   knowledgePanelVisible,
-  boardPanelVisible,
   activeRightTab,
   vizWidth,
   isDragging,

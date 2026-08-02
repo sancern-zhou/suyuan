@@ -10,9 +10,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     mode VARCHAR(50),
     current_step VARCHAR(255),
     current_expert VARCHAR(100),
-    data_ids JSONB,
-    visual_ids JSONB,
-    office_documents JSONB,
     error JSONB,
     metadata JSONB
 );

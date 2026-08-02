@@ -29,7 +29,6 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 ARTIFACT_KEYS = {
     "visuals",
     "visualizations",
-    "office_documents",
     "artifact",
     "artifacts",
     "resources",

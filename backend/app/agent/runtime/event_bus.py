@@ -155,15 +155,6 @@ class RuntimeEventBus:
             "data": data,
         }
 
-    def result(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"type": "result", "stream": "result", "data": data}
-
-    def office_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"type": "office_document", "stream": "result", "data": data}
-
-    def html_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {"type": "html_document", "stream": "result", "data": data}
-
     def agent_finish(self, state: RunState, thought: Any = None) -> Dict[str, Any]:
         return {
             "type": "agent_finish",

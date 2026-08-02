@@ -165,10 +165,7 @@
         <RightPanelContainer
           v-if="rightPanelVisible"
         :visible="rightPanelVisible"
-        :viz-panel-visible="vizPanelVisible"
-        :office-panel-visible="officePanelVisible"
         :knowledge-panel-visible="knowledgePanelVisible"
-        :board-panel-visible="boardPanelVisible"
         :active-tab="activeRightTab"
         :panel-style="vizPanelStyle"
         :assistant-mode="agentMode"
@@ -312,19 +309,7 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  vizPanelVisible: {
-    type: Boolean,
-    default: false
-  },
-  officePanelVisible: {
-    type: Boolean,
-    default: false
-  },
   knowledgePanelVisible: {
-    type: Boolean,
-    default: false
-  },
-  boardPanelVisible: {
     type: Boolean,
     default: false
   },
@@ -470,8 +455,7 @@ const rightPanelExpanded = ref(true)
 
 // 计算是否有可视化内容（用于显示/隐藏ChatArea中的按钮）
 const hasVizContent = computed(() => {
-  // 只要有右侧面板可见，就显示按钮
-  return props.vizPanelVisible || props.officePanelVisible || props.knowledgePanelVisible || props.boardPanelVisible
+  return props.rightPanelVisible
 })
 
 // 计算知识溯源数据

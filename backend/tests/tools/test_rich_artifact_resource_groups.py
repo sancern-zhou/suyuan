@@ -1,5 +1,5 @@
 from app.agent.resources.contracts import ResourceDeclaration
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_resources
 from app.tools.office.validate_pptx_tool import validation_output_resources
 
 
@@ -40,7 +40,7 @@ def test_report_source_and_html_preview_share_a_group(tmp_path):
     html.write_text("<h1>Report</h1>")
     data = {}
 
-    attach_document_artifact(
+    attach_document_resources(
         data,
         qmd,
         kind="report",
@@ -65,7 +65,7 @@ def test_html_artifact_has_downloadable_primary_and_directory_preview(tmp_path):
     index.write_text("<h1>Artifact</h1>")
     data = {}
 
-    attach_document_artifact(
+    attach_document_resources(
         data,
         index,
         kind="html_artifact",
@@ -92,7 +92,7 @@ def test_spreadsheet_primary_uses_spreadsheet_renderer(tmp_path):
     workbook = tmp_path / "data.xlsx"
     workbook.write_bytes(b"xlsx")
     data = {}
-    attach_document_artifact(
+    attach_document_resources(
         data,
         workbook,
         kind="office",

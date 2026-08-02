@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 
-from app.tools.artifact_utils import attach_document_artifact
+from app.tools.artifact_utils import attach_document_resources, preview_output_path
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
@@ -147,12 +147,12 @@ class ReadPptxTool(LLMTool):
                 except Exception as preview_error:
                     logger.warning("read_pptx_preview_failed", error=str(preview_error))
 
-            attach_document_artifact(
+            attach_document_resources(
                 result_data,
                 file_path,
                 kind="office",
                 format="pptx",
-                preview_key="pdf_preview",
+                preview_path=preview_output_path(result_data.get("pdf_preview")),
                 generator=self.name,
             )
 

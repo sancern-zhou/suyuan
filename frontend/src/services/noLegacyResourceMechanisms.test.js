@@ -11,7 +11,10 @@ const forbidden = [
   'getSessionVisualizations', 'getSessionDrawioBoard',
   '/office-documents', '/visualizations', '/api/file/',
   '/api/office', 'api/suyuan/office',
-  'pdf_preview', 'html_preview', 'markdown_preview', 'spreadsheet_preview', 'ppt_preview'
+  'pdf_preview', 'html_preview', 'markdown_preview', 'spreadsheet_preview', 'ppt_preview',
+  'visualizationPanelRef', 'officePanelVisible', 'hasOfficeDocuments',
+  'getOrFetchScreenshots', 'replaceEchartsPlaceholders', 'ECHARTS_PLACEHOLDER',
+  'extractVisualsFromMessages'
 ]
 
 async function productionFiles(directory) {
