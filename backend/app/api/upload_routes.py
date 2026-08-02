@@ -10,9 +10,11 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import FileResponse, Response
 from typing import Optional, List
+import asyncio
 import os
 import re
 import subprocess
+import tempfile
 import uuid
 import shutil
 from pathlib import Path
@@ -31,7 +33,7 @@ from app.agent.resources.resource_service import (
     SessionResourceService,
     stable_group_id,
 )
-from app.tools.resource_declarations import primary_file
+from app.tools.resource_declarations import derivative_file, primary_file
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
@@ -76,6 +78,56 @@ def _attachment_renderer(mime_type: str, filename: str) -> str:
     } or extension in {".csv", ".xls", ".xlsx", ".xlsm"}:
         return "spreadsheet"
     return "file"
+
+
+OFFICE_PDF_PREVIEW_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx"}
+
+
+def _office_pdf_preview(file_path: str) -> Path | None:
+    """Render Word/PowerPoint uploads to an isolated PDF preview."""
+    source = Path(file_path).resolve()
+    if source.suffix.lower() not in OFFICE_PDF_PREVIEW_EXTENSIONS:
+        return None
+    preview = source.with_suffix(".preview.pdf")
+    try:
+        with tempfile.TemporaryDirectory(prefix="suyuan-office-preview-") as temp_dir:
+            profile_dir = Path(temp_dir) / "profile"
+            output_dir = Path(temp_dir) / "output"
+            output_dir.mkdir()
+            subprocess.run(
+                [
+                    "soffice",
+                    "--headless",
+                    f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(output_dir),
+                    str(source),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=90,
+            )
+            converted = output_dir / f"{source.stem}.pdf"
+            if not converted.is_file() or converted.stat().st_size == 0:
+                raise RuntimeError("LibreOffice did not produce a PDF preview")
+            converted.replace(preview)
+            return preview
+    except Exception as exc:
+        logger.warning(
+            "office_attachment_preview_failed",
+            file=str(source),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return None
+
+
+def _remove_office_pdf_preview(file_path: str) -> None:
+    preview = Path(file_path).resolve().with_suffix(".preview.pdf")
+    if preview.is_file():
+        preview.unlink()
 
 # 配置
 # 统一使用 backend/backend_data_registry/uploads，避免附件路径诱导 Agent 写到仓库根目录。
@@ -396,38 +448,61 @@ async def upload_chat_file(
             group_key = f"upload:{file_id}"
             attachment_renderer = _attachment_renderer(stored_mime_type, stored_filename)
             previewable = attachment_renderer != "file"
-            declaration = ResourceDeclaration.model_validate(
-                primary_file(
-                    file_path,
-                    group_key=group_key,
-                    tool_name="upload_chat",
-                    role="attachment",
-                    renderer=attachment_renderer,
-                    capabilities=("preview", "download")
-                    if previewable
-                    else ("download",),
-                    label=stored_filename,
-                    metadata={
-                        "file_id": file_id,
-                        "source": "user_upload",
-                        **(
-                            {
-                                "original_filename": original_filename,
-                                "original_mime_type": "image/svg+xml",
-                            }
-                            if is_svg
-                            else {}
-                        ),
-                    },
+            declarations = [
+                ResourceDeclaration.model_validate(
+                    primary_file(
+                        file_path,
+                        group_key=group_key,
+                        tool_name="upload_chat",
+                        role="attachment",
+                        renderer=attachment_renderer,
+                        capabilities=("preview", "download")
+                        if previewable
+                        else ("download",),
+                        label=stored_filename,
+                        metadata={
+                            "file_id": file_id,
+                            "source": "user_upload",
+                            **(
+                                {
+                                    "original_filename": original_filename,
+                                    "original_mime_type": "image/svg+xml",
+                                }
+                                if is_svg
+                                else {}
+                            ),
+                        },
+                    )
                 )
-            )
+            ]
+            office_preview = await asyncio.to_thread(_office_pdf_preview, file_path)
+            if office_preview is not None:
+                declarations.append(
+                    ResourceDeclaration.model_validate(
+                        derivative_file(
+                            office_preview,
+                            group_key=group_key,
+                            parent_key=declarations[0].resource_key,
+                            tool_name="upload_chat",
+                            relation="preview",
+                            role="attachment",
+                            renderer="pdf",
+                            capabilities=("preview",),
+                            label=f"{Path(stored_filename).stem}.pdf",
+                            metadata={"source": "office_preview"},
+                        )
+                    )
+                )
             resource_batch = await SessionResourceService.database().publish_group(
                 session_id,
                 f"upload:{file_id}",
                 group_key,
-                [declaration],
+                declarations,
             )
-            resource_ref = resource_batch.resources[0] if resource_batch.resources else None
+            resource_ref = next(
+                (item for item in resource_batch.resources if item.relation == "primary"),
+                None,
+            )
             if resource_ref is None:
                 raise RuntimeError("uploaded resource missing from resource store result")
         except Exception as exc:
@@ -443,6 +518,7 @@ async def upload_chat_file(
             await db.commit()
             if os.path.exists(file_path):
                 os.remove(file_path)
+            _remove_office_pdf_preview(file_path)
             raise HTTPException(status_code=503, detail="resource_store_unavailable") from exc
 
     logger.info(
@@ -602,6 +678,10 @@ async def delete_uploaded_file(
             os.remove(file_path)
         except Exception as e:
             logger.warning("file_delete_failed", file_id=file_id, error=str(e))
+    try:
+        _remove_office_pdf_preview(file_path)
+    except Exception as e:
+        logger.warning("office_preview_delete_failed", file_id=file_id, error=str(e))
 
     # 删除数据库记录
     await db.execute(

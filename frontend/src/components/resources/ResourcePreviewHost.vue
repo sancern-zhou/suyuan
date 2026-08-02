@@ -52,7 +52,7 @@ const group = computed(() => {
   return groups.value.find(item => !props.target || targetTab(item) === props.target) || null
 })
 const resource = computed(() => {
-  if (explicitAttachment.value) return explicitAttachment.value
+  if (explicitAttachment.value) return preferredPreview(group.value) || explicitAttachment.value
   if (selected.value && selected.value.group_id === group.value?.group_id) return selected.value
   return preferredPreview(group.value)
 })
