@@ -1,7 +1,7 @@
 <template>
   <section class="resource-preview-host">
     <p v-if="state?.loading && !resource" class="state">正在加载资源...</p>
-    <div v-else-if="state?.error" class="state error">
+    <div v-else-if="state?.error && !resource" class="state error">
       <p>{{ state.error }}</p>
       <button type="button" @click="retry">重试</button>
     </div>
@@ -11,10 +11,14 @@
     </div>
     <p v-else-if="!resource" class="state">请选择一个文件产物</p>
     <div v-else class="preview-layout">
-      <ResourcePreviewActions :group="group" :resource="resource" />
+      <ResourcePreviewActions
+        :group="group"
+        :resource="resource"
+        :floating="target === 'document' && resource.renderer !== 'spreadsheet'"
+      />
       <component
         :is="rendererComponent"
-        :key="resource.resource_id"
+        :key="`${resource.group_id}:${resource.renderer}`"
         class="preview-content"
         :resource="resource"
         :group="group"
@@ -30,6 +34,10 @@ import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } from '@/services/resourceGroups.js'
 import { rendererKey, RESOURCE_RENDERERS } from '@/services/resourceRendererRegistry.js'
 import ResourcePreviewActions from './ResourcePreviewActions.vue'
+
+const RENDERER_COMPONENTS = Object.fromEntries(
+  Object.entries(RESOURCE_RENDERERS).map(([key, loader]) => [key, defineAsyncComponent(loader)])
+)
 
 const resourceStore = useSessionResourceStore()
 const props = defineProps({
@@ -68,7 +76,7 @@ const resource = computed(() => {
 })
 const rendererComponent = computed(() => {
   if (!resource.value) return null
-  return defineAsyncComponent(RESOURCE_RENDERERS[rendererKey(resource.value)])
+  return RENDERER_COMPONENTS[rendererKey(resource.value)]
 })
 
 const retry = () => resourceStore.activeSessionId
@@ -82,5 +90,5 @@ onErrorCaptured((error) => {
 </script>
 
 <style scoped>
-.resource-preview-host { height: 100%; min-height: 0; background: #fff; }.preview-layout { display: flex; height: 100%; min-height: 0; flex-direction: column; }.preview-content { min-height: 0; flex: 1; }.state { display: grid; height: 100%; margin: 0; place-content: center; color: #64748b; text-align: center; }.error { color: #b42318; }.state button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
+.resource-preview-host { height: 100%; min-height: 0; background: #fff; }.preview-layout { position: relative; display: flex; height: 100%; min-height: 0; flex-direction: column; }.preview-content { min-height: 0; flex: 1; }.state { display: grid; height: 100%; margin: 0; place-content: center; color: #64748b; text-align: center; }.error { color: #b42318; }.state button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
 </style>

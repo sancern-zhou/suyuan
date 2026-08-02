@@ -456,9 +456,12 @@ async def upload_chat_file(
                         tool_name="upload_chat",
                         role="attachment",
                         renderer=attachment_renderer,
-                        capabilities=("preview", "download")
-                        if previewable
-                        else ("download",),
+                        capabilities=("preview", "download", "edit")
+                        if (
+                            attachment_renderer == "spreadsheet"
+                            and Path(stored_filename).suffix.lower() in {".xls", ".xlsx"}
+                        )
+                        else (("preview", "download") if previewable else ("download",)),
                         label=stored_filename,
                         metadata={
                             "file_id": file_id,

@@ -284,6 +284,86 @@ class SessionResourceService:
             turn_sequence=turn_sequence,
         )
 
+    def _materialize_replacement(
+        self, session_id: str, resource: StoredResource, source_path: str | Path
+    ) -> Path:
+        source = Path(source_path).expanduser().resolve()
+        if not source.is_file():
+            raise ValueError("replacement resource file does not exist")
+        if self._storage_root is None:
+            return source
+        session_key = hashlib.sha256(session_id.encode()).hexdigest()[:24]
+        destination_dir = (
+            self._storage_root
+            / session_key
+            / uuid4().hex
+            / hashlib.sha256(resource.resource_key.encode()).hexdigest()[:20]
+        ).resolve()
+        destination_dir.mkdir(parents=True, exist_ok=False)
+        destination = destination_dir / source.name
+        temporary = destination_dir / f".{source.name}.tmp-{uuid4().hex}"
+        shutil.copy2(source, temporary)
+        temporary.replace(destination)
+        return destination
+
+    async def replace_primary_file(
+        self,
+        session_id: str,
+        run_id: str,
+        resource_id: str,
+        path: str | Path,
+    ) -> ResourcePublishResult:
+        resource = await self.get_resource(session_id, resource_id, status="active")
+        if resource is None or resource.relation != "primary":
+            raise ValueError("active primary resource was not found")
+        destination = self._materialize_replacement(session_id, resource, path)
+        metadata = {**resource.metadata, "size": destination.stat().st_size}
+        if self._repository is not None:
+            return await self._repository.replace_primary_file(
+                session_id,
+                run_id,
+                resource_id,
+                str(destination),
+                metadata,
+            )
+        group_version = max(
+            (
+                item.version
+                for item in self._state.resources.values()
+                if item.session_id == session_id and item.group_id == resource.group_id
+            ),
+            default=resource.version,
+        ) + 1
+        now = datetime.now(UTC)
+        for existing_id, existing in list(self._state.resources.items()):
+            if (
+                existing.session_id == session_id
+                and existing.group_id == resource.group_id
+                and existing.status == "active"
+            ):
+                self._state.resources[existing_id] = replace(
+                    existing, status="superseded", updated_at=now
+                )
+        replacement = replace(
+            resource,
+            resource_id=stable_resource_id(
+                session_id, resource.group_id, group_version, resource.resource_key
+            ),
+            parent_resource_id=None,
+            locator={"path": str(destination)},
+            metadata=metadata,
+            run_id=run_id,
+            version=group_version,
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+        self._state.resources[replacement.resource_id] = replacement
+        self._state.group_versions[(session_id, resource.group_id)] = group_version
+        catalog_version = self._state.catalog_versions.get(session_id, 0) + 1
+        self._state.catalog_versions[session_id] = catalog_version
+        return ResourcePublishResult(catalog_version, group_version, [replacement])
+
     def _publish_memory_group(
         self,
         session_id: str,

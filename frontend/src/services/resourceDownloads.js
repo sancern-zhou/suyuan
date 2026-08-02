@@ -28,7 +28,7 @@ export const downloadResource = async resource => {
   link.download = downloadFileName(resource)
   document.body.appendChild(link)
   link.click()
-  link.remove()
+  window.setTimeout(() => link.remove(), 0)
 }
 
 export const activeRendition = (group, format) => (

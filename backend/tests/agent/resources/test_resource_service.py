@@ -175,3 +175,43 @@ async def test_publication_materializes_external_file_into_session_storage(tmp_p
     assert second_copy != copied
     assert open(copied, encoding="utf-8").read() == "result"
     assert open(second_copy, encoding="utf-8").read() == "new result"
+
+
+@pytest.mark.asyncio
+async def test_replace_primary_file_publishes_next_version_in_same_group(tmp_path):
+    original = tmp_path / "original.xlsx"
+    original.write_bytes(b"original")
+    edited = tmp_path / "edited.xlsx"
+    edited.write_bytes(b"edited")
+    spreadsheet = ResourceDeclaration.model_validate(
+        {
+            **declaration(
+                "upload:sheet",
+                "primary:xlsx",
+                str(original),
+                renderer="spreadsheet",
+                role="attachment",
+            ).model_dump(),
+            "capabilities": ["preview", "download", "edit"],
+        }
+    )
+    service = SessionResourceService.in_memory()
+    published = await service.publish_group(
+        "session-a", "upload-1", "upload:sheet", [spreadsheet]
+    )
+    previous = published.resources[0]
+
+    replacement = await service.replace_primary_file(
+        "session-a", "edit-1", previous.resource_id, edited
+    )
+
+    current = replacement.resources[0]
+    history = await service.list_resources("session-a", status=None)
+    assert replacement.catalog_version == 2
+    assert replacement.group_version == 2
+    assert current.group_id == previous.group_id
+    assert current.resource_id != previous.resource_id
+    assert current.version == 2
+    assert current.locator["path"] == str(edited.resolve())
+    assert current.metadata["size"] == len(b"edited")
+    assert {item.status for item in history.resources} == {"active", "superseded"}

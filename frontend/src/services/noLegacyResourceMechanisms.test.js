@@ -48,3 +48,11 @@ test('report mode keeps the permanent file-products tab', async () => {
   assert.match(reportBranch, /文件产物/)
   assert.match(reportBranch, /ResourceProductsPanel/)
 })
+
+test('file products carry the standalone unified-resource build marker', async () => {
+  const source = await readFile(
+    path.join(sourceRoot, 'components/resources/ResourceProductsPanel.vue'),
+    'utf8'
+  )
+  assert.match(source, /resources\?presentation_type=document/)
+})
