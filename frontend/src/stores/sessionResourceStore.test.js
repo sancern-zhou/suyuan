@@ -23,6 +23,20 @@ test('isolates catalog and selection state by session', async () => {
   assert.equal(store.selectedResource('session-b'), null)
 })
 
+test('clears an explicit attachment selection when switching sessions', async () => {
+  const store = createResourceStoreHarness({
+    listResources: async sessionId => page(sessionId, 1, [{ resource_id: `resource-${sessionId}` }])
+  })
+  store.activateSession('session-a')
+  await store.loadCatalog('session-a')
+  store.selectResource('session-a', 'resource-session-a', 'explicit')
+
+  store.activateSession('session-b')
+
+  assert.equal(store.sessionState('session-a').selectedResourceId, null)
+  assert.equal(store.sessionState('session-a').selectionOrigin, null)
+})
+
 test('refreshes once for a newer event and ignores out-of-order versions', async () => {
   const fetches = new Map()
   const store = createResourceStoreHarness({

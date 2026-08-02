@@ -3,6 +3,14 @@ import { buildResourceGroups, preferredPreview, targetTab, topLevelProducts } fr
 export function chooseRestoredResource(resourceStore, sessionId) {
   if (!sessionId || resourceStore.activeSessionId !== sessionId) return null
   const state = resourceStore.sessionState(sessionId)
+  const explicitlySelected = state?.selectionOrigin === 'explicit'
+    ? resourceStore.selectedResource(sessionId)
+    : null
+  if (explicitlySelected) {
+    const group = buildResourceGroups(state?.resources || [])
+      .find(item => item.group_id === explicitlySelected.group_id)
+    if (group) return { group, resource: explicitlySelected, targetTab: targetTab(group) }
+  }
   const group = topLevelProducts(buildResourceGroups(state?.resources || []))[0]
   if (!group) return null
   const resource = preferredPreview(group)

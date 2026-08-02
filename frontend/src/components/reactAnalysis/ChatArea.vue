@@ -37,7 +37,9 @@
       :has-more-messages="hasMoreMessages"
       :total-message-count="totalMessageCount"
       :loading-more="loadingMore"
+      :session-id="sessionId"
       @load-more="$emit('load-more')"
+      @preview-message-attachment="$emit('preview-message-attachment', $event)"
     />
 
     <div v-if="readOnly && !showManagementPanel" class="read-only-notice">
@@ -167,7 +169,8 @@ const emit = defineEmits([
   'drag-over',
   'drag-leave',
   'drop',
-  'new-web-conversation'
+  'new-web-conversation',
+  'preview-message-attachment'
 ])
 
 const inputBoxRef = ref(null)

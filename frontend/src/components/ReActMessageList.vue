@@ -60,7 +60,16 @@
               @click.stop="previewAttachment(attachment)"
             />
             <!-- 文档附件 -->
-            <div v-else class="attachment-file" :title="attachment.name">
+            <div
+              v-else
+              class="attachment-file clickable-attachment"
+              :title="attachment.name"
+              role="button"
+              tabindex="0"
+              @click.stop="previewAttachment(attachment)"
+              @keydown.enter.stop="previewAttachment(attachment)"
+              @keydown.space.prevent.stop="previewAttachment(attachment)"
+            >
               <svg viewBox="0 0 24 24" class="attachment-file-icon">
                 <path d="M6 3.5h8l4 4v13H6v-17Z" />
                 <path d="M14 3.5v4h4" />
@@ -282,9 +291,15 @@
         />
         <div class="preview-info">
           <span class="preview-filename">{{ previewedImage.name }}</span>
-          <a v-if="previewedImage.resolvedUrl" :href="previewedImage.resolvedUrl" :download="previewedImage.name" class="preview-download" @click.stop>
-            下载
-          </a>
+          <button
+            v-if="previewedImage.downloadUrl"
+            type="button"
+            class="preview-download"
+            :disabled="previewImageDownloading"
+            @click.stop="downloadPreviewedImage"
+          >
+            {{ previewImageDownloading ? '下载中' : '下载' }}
+          </button>
         </div>
         <button class="preview-close" @click="closeImagePreview" title="关闭 (ESC)">
           <svg viewBox="0 0 24 24">
@@ -301,6 +316,11 @@
 import { authFetch } from '@/auth/http.js'
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useReactStore } from '@/stores/reactStore'
+import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
+import {
+  isImageAttachmentResource,
+  resolveMessageAttachmentResource
+} from '@/services/messageAttachmentPreview.js'
 import { getAgentMode } from '@/config/agentModes.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
@@ -397,10 +417,15 @@ const props = defineProps({
   loadingMore: {
     type: Boolean,
     default: false
+  },
+  sessionId: {
+    type: String,
+    default: ''
   }
 })
 
-const emit = defineEmits(['load-more'])
+const emit = defineEmits(['load-more', 'preview-message-attachment'])
+const sessionResourceStore = useSessionResourceStore()
 
 const messagesContainer = ref(null)
 
@@ -1754,10 +1779,37 @@ const formatSectionTitle = (key) => {
 
 // 附件预览
 const previewedImage = ref(null)
+const previewImageDownloading = ref(false)
+let attachmentPreviewToken = 0
 
-const previewAttachment = (attachment) => {
-  if (attachment.type === 'image') {
-    previewedImage.value = { ...attachment, resolvedUrl: '' }
+const previewAttachment = async (attachment) => {
+  const token = ++attachmentPreviewToken
+  try {
+    const resource = await resolveMessageAttachmentResource(
+      sessionResourceStore,
+      props.sessionId,
+      attachment
+    )
+    if (token !== attachmentPreviewToken) return
+    if (isImageAttachmentResource(resource)) {
+      previewedImage.value = {
+        ...attachment,
+        name: resource.label || attachment.name,
+        url: resource.content_url,
+        downloadUrl: resource.download_url,
+        resolvedUrl: ''
+      }
+      return
+    }
+    emit('preview-message-attachment', {
+      sessionId: props.sessionId,
+      resourceId: resource.resource_id
+    })
+  } catch (error) {
+    if (token === attachmentPreviewToken) {
+      console.error('[message-attachment-preview] failed', error)
+      window.alert(error?.message || '附件资源不可用')
+    }
   }
 }
 
@@ -1769,6 +1821,29 @@ const setPreviewResolvedUrl = (url) => {
 
 const closeImagePreview = () => {
   previewedImage.value = null
+}
+
+const downloadPreviewedImage = async () => {
+  const current = previewedImage.value
+  if (!current?.downloadUrl || previewImageDownloading.value) return
+  previewImageDownloading.value = true
+  try {
+    const response = await authFetch(current.downloadUrl)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const objectUrl = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = current.name || 'image'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+  } catch (error) {
+    console.error('[message-attachment-download] failed', error)
+    window.alert(error?.message || '下载失败')
+  } finally {
+    previewImageDownloading.value = false
+  }
 }
 </script>
 
@@ -2854,6 +2929,15 @@ const closeImagePreview = () => {
   color: #5f6f89;
 }
 
+.clickable-attachment {
+  cursor: pointer;
+}
+
+.clickable-attachment:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+}
+
 .attachment-file-icon {
   width: 15px;
   height: 15px;
@@ -2958,6 +3042,7 @@ const closeImagePreview = () => {
 }
 
 .preview-download {
+  border: 0;
   color: white;
   text-decoration: none;
   font-size: 14px;
@@ -2965,6 +3050,7 @@ const closeImagePreview = () => {
   background: rgba(255, 255, 255, 0.2);
   border-radius: 4px;
   transition: background 0.2s;
+  cursor: pointer;
 
   &:hover {
     background: rgba(255, 255, 255, 0.3);

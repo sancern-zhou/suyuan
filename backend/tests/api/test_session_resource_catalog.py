@@ -80,6 +80,35 @@ async def test_catalog_exposes_delivery_contract_without_physical_locator(monkey
     assert "/tmp/" not in str(response)
 
 
+@pytest.mark.asyncio
+async def test_catalog_does_not_project_agent_internal_sources_data_or_urls(monkeypatch):
+    resources = [
+        stored_resource(resource_id="attachment", role="attachment"),
+        stored_resource(resource_id="source", role="source"),
+        stored_resource(resource_id="data", kind="data"),
+        stored_resource(resource_id="url", kind="url"),
+    ]
+
+    class Service:
+        async def list_resources(self, *_args, **_kwargs):
+            return ResourcePage(resources)
+
+        async def catalog_version(self, _session_id):
+            return 4
+
+    monkeypatch.setattr(
+        session_resource_routes.SessionResourceService,
+        "database",
+        classmethod(lambda _cls: Service()),
+    )
+
+    response = await session_resource_routes.get_session_resources(
+        "session-1", user=object(), catalog=Catalog()
+    )
+
+    assert [item["resource_id"] for item in response["resources"]] == ["attachment"]
+
+
 def test_catalog_uses_group_renderer_filters_and_has_no_presentation_type():
     parameters = signature(session_resource_routes.get_session_resources).parameters
     assert {"kind", "role", "renderer", "group_id", "status", "cursor"} <= set(parameters)

@@ -8,6 +8,7 @@ const emptySessionState = () => ({
   requestedVersion: 0,
   selectedResourceId: null,
   selectedGroupId: null,
+  selectionOrigin: null,
   loading: false,
   error: null,
   requestToken: 0
@@ -84,13 +85,21 @@ const createActions = (store, client) => ({
     if (!event?.session_id) return null
     return refreshIfNewer(store, client, event.session_id, event.resource_version)
   },
-  selectResource: (sessionId, resourceId) => {
-    ensureSession(store, sessionId).selectedResourceId = resourceId || null
+  selectResource: (sessionId, resourceId, origin = 'product') => {
+    const state = ensureSession(store, sessionId)
+    state.selectedResourceId = resourceId || null
+    state.selectionOrigin = resourceId ? origin : null
   },
   selectGroup: (sessionId, groupId) => {
     ensureSession(store, sessionId).selectedGroupId = groupId || null
   },
   activateSession: sessionId => {
+    const previous = store.activeSessionId
+    if (previous && previous !== sessionId && store.sessions[previous]?.selectionOrigin === 'explicit') {
+      store.sessions[previous].selectedResourceId = null
+      store.sessions[previous].selectedGroupId = null
+      store.sessions[previous].selectionOrigin = null
+    }
     store.activeSessionId = sessionId || null
     if (sessionId) ensureSession(store, sessionId)
   },
@@ -125,13 +134,21 @@ export const useSessionResourceStore = defineStore('sessionResources', {
       if (!event?.session_id) return null
       return this.refreshIfNewer(event.session_id, event.resource_version)
     },
-    selectResource(sessionId, resourceId) {
-      ensureSession(this, sessionId).selectedResourceId = resourceId || null
+    selectResource(sessionId, resourceId, origin = 'product') {
+      const state = ensureSession(this, sessionId)
+      state.selectedResourceId = resourceId || null
+      state.selectionOrigin = resourceId ? origin : null
     },
     selectGroup(sessionId, groupId) {
       ensureSession(this, sessionId).selectedGroupId = groupId || null
     },
     activateSession(sessionId) {
+      const previous = this.activeSessionId
+      if (previous && previous !== sessionId && this.sessions[previous]?.selectionOrigin === 'explicit') {
+        this.sessions[previous].selectedResourceId = null
+        this.sessions[previous].selectedGroupId = null
+        this.sessions[previous].selectionOrigin = null
+      }
       this.activeSessionId = sessionId || null
       if (sessionId) ensureSession(this, sessionId)
     },

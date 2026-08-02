@@ -105,6 +105,7 @@
       @delete-sessions="deleteSessions"
       @new-web-conversation="startNewWebConversation"
       @toggle-viz-panel="toggleVizPanel"
+      @preview-message-attachment="openMessageAttachmentPreview"
     />
 
     <!-- 知识库创建对话框 -->
@@ -203,7 +204,8 @@ const {
   resetWidth,
   setupWatchers: setupPanelWatchers,
   setupGlobalListeners,
-  cleanupGlobalListeners
+  cleanupGlobalListeners,
+  openMessageAttachmentPreview
 } = usePanelManagement(store)
 
 // 会话管理

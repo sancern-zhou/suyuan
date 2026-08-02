@@ -172,6 +172,23 @@ async def test_content_hides_unauthorized_wrong_session_and_missing_resources(tm
 
 
 @pytest.mark.asyncio
+async def test_content_does_not_expose_agent_internal_source_resources(tmp_path, monkeypatch):
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    file_path = registry / "source.pdf"
+    file_path.write_bytes(b"pdf")
+    install_service(monkeypatch, stored(file_path, role="source"))
+    monkeypatch.setattr(session_resource_routes, "get_data_registry", lambda: registry)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await session_resource_routes.get_session_resource_content(
+            "session-1", "resource-1", user=object(), catalog=Catalog()
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_preview_ticket_serves_bound_resource_and_sets_scoped_asset_cookie(tmp_path, monkeypatch):
     registry = tmp_path / "registry"
     registry.mkdir()
