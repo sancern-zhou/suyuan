@@ -29,6 +29,8 @@ def resource_action_links(
         actions["preview"] = f"{base}/" if directory else base
     if "download" in resource.capabilities and not directory:
         actions["download"] = f"{base}?disposition=attachment"
+    if "render" in resource.capabilities:
+        actions["render"] = base.removesuffix("/content") + "/render"
     return actions
 
 
@@ -43,6 +45,8 @@ async def attach_rendered_file(
     relation: str,
     renderer: str,
     tool_name: str,
+    capabilities: tuple[str, ...] = ("preview", "download"),
+    label: str | None = None,
 ) -> dict:
     """Attach a render result and return the sole mutation receipt contract."""
     parent = await service.get_resource(session_id, parent_resource_id)
@@ -56,6 +60,8 @@ async def attach_rendered_file(
         relation=relation,
         role=parent.role,
         renderer=renderer,
+        capabilities=capabilities,
+        label=label,
     )
     publication = await service.attach_resources(
         session_id,
