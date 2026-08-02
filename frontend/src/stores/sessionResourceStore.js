@@ -20,6 +20,7 @@ const ensureSession = (store, sessionId) => {
 }
 
 const sessionState = (store, sessionId) => store.sessions[sessionId] || null
+const CATALOG_RETRY_DELAYS_MS = [25, 50]
 
 const selectedResource = (store, sessionId) => {
   const state = sessionState(store, sessionId)
@@ -35,26 +36,39 @@ const loadCatalog = async (store, client, sessionId, filters = {}) => {
   state.loading = true
   state.error = null
 
-  const resources = []
-  let cursor = null
-  let resourceVersion = 0
   const { minimumVersion = 0, ...queryFilters } = filters
   try {
-    do {
-      const page = await client.listResources(sessionId, {
-        ...queryFilters,
-        limit: queryFilters.limit || 200,
-        ...(cursor ? { cursor } : {})
-      })
+    let resources = []
+    let resourceVersion = 0
+    for (let attempt = 0; ; attempt += 1) {
+      resources = []
+      resourceVersion = 0
+      let cursor = null
+      do {
+        const page = await client.listResources(sessionId, {
+          ...queryFilters,
+          limit: queryFilters.limit || 200,
+          ...(cursor ? { cursor } : {})
+        })
+        if (store.sessions[sessionId]?.requestToken !== token) return null
+        resources.push(...(Array.isArray(page?.resources) ? page.resources : []))
+        resourceVersion = Math.max(resourceVersion, Number(page?.resource_version || 0))
+        cursor = page?.next_cursor || null
+      } while (cursor)
+
+      if (
+        resourceVersion >= Number(minimumVersion || 0)
+        || attempt >= CATALOG_RETRY_DELAYS_MS.length
+      ) break
+      await new Promise(resolve => setTimeout(resolve, CATALOG_RETRY_DELAYS_MS[attempt]))
       if (store.sessions[sessionId]?.requestToken !== token) return null
-      resources.push(...(Array.isArray(page?.resources) ? page.resources : []))
-      resourceVersion = Math.max(resourceVersion, Number(page?.resource_version || 0))
-      cursor = page?.next_cursor || null
-    } while (cursor)
+    }
 
     if (store.sessions[sessionId]?.requestToken !== token) return null
-    state.resources = resources
-    state.resourceVersion = Math.max(resourceVersion, Number(minimumVersion || 0))
+    if (resourceVersion >= state.resourceVersion) {
+      state.resources = resources
+      state.resourceVersion = resourceVersion
+    }
     state.requestedVersion = state.resourceVersion
     state.loading = false
     return state

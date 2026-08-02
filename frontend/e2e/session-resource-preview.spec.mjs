@@ -266,7 +266,7 @@ test('file product open and download actions do not overlap', async ({ page }) =
   expect(overlaps).toBe(false)
 })
 
-test('preview original download is a native browser download link', async ({ page }) => {
+test('preview original download uses an authenticated Blob download', async ({ page }) => {
   await mockApplication(page, fixtures[3])
   await page.goto('/session/e2e')
   await page.getByRole('tab', { name: /文件产物/ }).click()
@@ -275,10 +275,10 @@ test('preview original download is a native browser download link', async ({ pag
   const actions = page.locator('.resource-actions.compact')
   await expect(actions.getByRole('button', { name: '下载' })).toBeVisible()
   await actions.getByRole('button', { name: '下载' }).click()
-  const downloadLink = actions.getByRole('menuitem', { name: '下载原始 Excel' })
-  await expect(downloadLink).toHaveText('下载原始 Excel')
+  const downloadButton = actions.getByRole('menuitem', { name: '下载原始 Excel' })
+  await expect(downloadButton).toHaveText('下载原始 Excel')
   const download = page.waitForEvent('download')
-  await downloadLink.click()
+  await downloadButton.click()
   expect((await download).suggestedFilename()).toBe('Spreadsheet.xlsx')
 })
 
@@ -341,10 +341,14 @@ test('spreadsheet preview switches sheets, edits a cell, and refreshes after sav
   await expect(page.locator('.excel-status')).toContainText('已保存')
   const actions = page.locator('.resource-actions.compact')
   await actions.getByRole('button', { name: '下载' }).click()
-  await expect(actions.getByRole('menuitem', { name: '下载原始 Excel' })).toHaveAttribute(
-    'href',
-    /resource-spreadsheet-v2/
-  )
+  const request = page.waitForRequest(value => (
+    value.url().includes('/resources/resource-spreadsheet-v2/content')
+    && value.url().includes('disposition=attachment')
+  ))
+  const download = page.waitForEvent('download')
+  await actions.getByRole('menuitem', { name: '下载原始 Excel' }).click()
+  expect((await request).url()).toContain('/resources/resource-spreadsheet-v2/content')
+  expect((await download).suggestedFilename()).toBe('Spreadsheet.xlsx')
 })
 
 test('visualization gallery automatically shows every chart and image', async ({ page }) => {
