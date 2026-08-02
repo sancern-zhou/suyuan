@@ -65,6 +65,7 @@
       @stop-drag="stopDragging"
       @reset-width="resetWidth"
       @tab-change="activeRightTab = $event"
+      @preview-message-attachment="openMessageAttachmentPreview"
       @board-xml-change="handleBoardXmlChange"
       @board-selection-change="handleBoardSelectionChange"
       @board-snapshot-confirm="handleBoardSnapshotConfirm"
@@ -184,7 +185,8 @@ const {
   stopDragging,
   resetWidth,
   setLayoutRef,
-  setupWatchers: setupPanelWatchers
+  setupWatchers: setupPanelWatchers,
+  openMessageAttachmentPreview
 } = usePanelManagement(store)
 
 // 定义折叠宽度

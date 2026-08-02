@@ -33,16 +33,26 @@ const props = defineProps({
 })
 const renderError = ref('')
 const state = computed(() => resourceStore.activeSessionState)
-const groups = computed(() => topLevelProducts(buildResourceGroups(state.value?.resources || [])))
+const allGroups = computed(() => buildResourceGroups(state.value?.resources || []))
+const groups = computed(() => topLevelProducts(allGroups.value))
 const selected = computed(() => resourceStore.activeSessionId
   ? resourceStore.selectedResource(resourceStore.activeSessionId)
   : null)
+const explicitAttachment = computed(() => (
+  state.value?.selectionOrigin === 'explicit' && selected.value?.role === 'attachment'
+    ? selected.value
+    : null
+))
 const group = computed(() => {
+  if (explicitAttachment.value) {
+    return allGroups.value.find(item => item.group_id === explicitAttachment.value.group_id) || null
+  }
   const selectedGroup = groups.value.find(item => item.group_id === selected.value?.group_id)
   if (selectedGroup && (!props.target || targetTab(selectedGroup) === props.target)) return selectedGroup
   return groups.value.find(item => !props.target || targetTab(item) === props.target) || null
 })
 const resource = computed(() => {
+  if (explicitAttachment.value) return explicitAttachment.value
   if (selected.value && selected.value.group_id === group.value?.group_id) return selected.value
   return preferredPreview(group.value)
 })

@@ -114,6 +114,7 @@ export function buildComposerPayload({
 }) {
   const turnFiles = (files || []).filter(file => !file.pinnedPolicy)
   const messageAttachments = turnFiles.map(file => ({
+    resource_id: file.id,
     ...(file.fileId ? { file_id: file.fileId } : {}),
     name: file.name,
     type: file.type === 'image' ? 'image' : 'file',

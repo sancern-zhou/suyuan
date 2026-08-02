@@ -93,6 +93,7 @@ test('builds structured context refs and safe message attachments', () => {
     ],
     contextRefs: [{ type: 'conversation_file', resource_id: 'upload-2', display_name: '本轮数据.csv' }],
     messageAttachments: [{
+      resource_id: 'upload-2',
       file_id: 'file-2',
       name: '本轮数据.csv',
       type: 'file',

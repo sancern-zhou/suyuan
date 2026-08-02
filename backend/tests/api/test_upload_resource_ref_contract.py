@@ -70,6 +70,20 @@ def test_chat_upload_rejects_an_empty_session_id_at_the_http_boundary():
     assert session_id_form.metadata[0].min_length == 1
 
 
+@pytest.mark.parametrize(
+    ("mime_type", "filename", "renderer"),
+    [
+        ("application/pdf", "report.pdf", "pdf"),
+        ("text/markdown", "notes.md", "markdown"),
+        ("text/csv", "data.csv", "spreadsheet"),
+        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "data.xlsx", "spreadsheet"),
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "report.docx", "file"),
+    ],
+)
+def test_attachment_renderer_uses_supported_unified_previewers(mime_type, filename, renderer):
+    assert upload_routes._attachment_renderer(mime_type, filename) == renderer
+
+
 @pytest.mark.asyncio
 async def test_chat_upload_publishes_an_attachment_resource_group(tmp_path, monkeypatch):
     resource_service = ResourceService()

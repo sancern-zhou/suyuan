@@ -14,7 +14,7 @@
     "test:images": "node --test src/services/apiMediaBlob.test.mjs src/components/markdownApiImages.test.mjs src/components/messageAttachmentMedia.test.js",
     "test:agent-platform": "node --test src/config/agentModes.test.js src/components/agentPlatform/*.test.js",
     "test:composer": "node --test src/components/inputBoxAttachments.test.js src/components/inputBoxCommandPalette.test.js src/components/inputBoxPlaceholder.test.js src/components/inputBoxSelectionDraft.test.js src/services/uploadApi.test.js src/services/reactRequestBody.test.js src/services/reactApi-map-context.test.mjs src/services/streamAcceptance.test.js src/stores/reactStoreQueue.test.js src/stores/reactStoreSteering.test.js",
-    "test:session-resources": "node --test src/api/sessionResources.test.js src/stores/sessionResourceStore.test.js src/services/resourceGroups.test.js src/services/sessionResourceLifecycle.test.js src/services/noLegacyResourceMechanisms.test.js && playwright test e2e/session-resource-preview.spec.mjs"
+    "test:session-resources": "node --test src/api/sessionResources.test.js src/stores/sessionResourceStore.test.js src/services/resourceGroups.test.js src/services/sessionResourceLifecycle.test.js src/services/messageAttachmentPreview.test.js src/services/noLegacyResourceMechanisms.test.js && playwright test e2e/session-resource-preview.spec.mjs"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",

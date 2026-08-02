@@ -58,6 +58,25 @@ def _uploaded_file_url(file_id: str) -> str:
     """Return the canonical gateway-relative URL for an uploaded resource."""
     return f"/api/upload/{file_id}"
 
+
+def _attachment_renderer(mime_type: str, filename: str) -> str:
+    extension = Path(filename or "").suffix.lower()
+    if mime_type.startswith("image/"):
+        return "image"
+    if mime_type == "application/pdf" or extension == ".pdf":
+        return "pdf"
+    if mime_type == "text/html" or extension in {".html", ".htm"}:
+        return "html"
+    if mime_type in {"text/markdown", "text/plain"} or extension in {".md", ".markdown", ".qmd", ".txt"}:
+        return "markdown"
+    if mime_type in {
+        "text/csv",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    } or extension in {".csv", ".xls", ".xlsx", ".xlsm"}:
+        return "spreadsheet"
+    return "file"
+
 # 配置
 # 统一使用 backend/backend_data_registry/uploads，避免附件路径诱导 Agent 写到仓库根目录。
 UPLOAD_STORAGE_DIR = os.getenv("UPLOAD_STORAGE_DIR", str(get_uploads_dir()))
@@ -375,19 +394,15 @@ async def upload_chat_file(
     if session_id:
         try:
             group_key = f"upload:{file_id}"
-            previewable = stored_mime_type.startswith("image/") or stored_mime_type in {
-                "application/pdf",
-                "text/html",
-                "text/markdown",
-                "text/plain",
-            }
+            attachment_renderer = _attachment_renderer(stored_mime_type, stored_filename)
+            previewable = attachment_renderer != "file"
             declaration = ResourceDeclaration.model_validate(
                 primary_file(
                     file_path,
                     group_key=group_key,
                     tool_name="upload_chat",
                     role="attachment",
-                    renderer="image" if stored_mime_type.startswith("image/") else "file",
+                    renderer=attachment_renderer,
                     capabilities=("preview", "download")
                     if previewable
                     else ("download",),

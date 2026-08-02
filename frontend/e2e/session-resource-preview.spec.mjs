@@ -39,8 +39,9 @@ function resourceFixture([name, format, renderer, target]) {
   }
 }
 
-async function mockApplication(page, fixture) {
+async function mockApplication(page, fixture, { attachmentType = null } = {}) {
   const resource = resourceFixture(fixture)
+  if (attachmentType) resource.role = 'attachment'
   const handler = async route => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith('/auth/runtime-config')) {
@@ -60,12 +61,24 @@ async function mockApplication(page, fixture) {
         body: bodies[resource.renderer] || 'fixture'
       })
     }
+    if (url.pathname.startsWith('/api/upload/')) {
+      return route.fulfill({ status: 200, contentType: 'image/png', body: 'fixture' })
+    }
     if (/\/sessions\/e2e\/resources$/.test(url.pathname)) {
       return route.fulfill({ json: { session_id: 'e2e', resource_version: 1, resources: [resource], total: 1, next_cursor: null } })
     }
     if (/\/sessions\/e2e\/restore$/.test(url.pathname)) {
       return route.fulfill({ json: { session: {
-        session_id: 'e2e', source: 'web', mode: 'assistant', conversation_history: [],
+        session_id: 'e2e', source: 'web', mode: 'assistant', conversation_history: attachmentType ? [{
+          id: 'message-attachment', role: 'user', type: 'user', content: '查看附件',
+          attachments: [{
+            resource_id: resource.resource_id,
+            name: resource.label,
+            type: attachmentType,
+            mime_type: resource.media_type,
+            url: '/api/upload/legacy-not-used-for-preview'
+          }]
+        }] : [],
         resource_version: 1, resource_counts: { total: 1, documents: 0, visualizations: 0, boards: 0, files: 1 }
       } } })
     }
@@ -74,10 +87,37 @@ async function mockApplication(page, fixture) {
     }
     return route.fulfill({ json: { tasks: [], sessions: [], items: [], data: [] } })
   }
+  await page.route('**/api/auth/**', handler)
   await page.route('**/api/suyuan/**', handler)
   await page.route('**/api/sessions/**', handler)
+  await page.route('**/api/upload/**', handler)
   return resource
 }
+
+test('message document attachment opens explicitly without entering file products', async ({ page }) => {
+  await mockApplication(page, fixtures[0], { attachmentType: 'file' })
+  await page.goto('/session/e2e')
+
+  await expect(page.locator('.attachment-file')).toBeVisible()
+  await page.locator('.attachment-file').click()
+  await expect(page.locator('.tab-btn.active')).toContainText('文档')
+  await expect(page.locator('.resource-preview-host iframe')).toBeVisible()
+  await expect(page.locator('.product-list .product')).toHaveCount(0)
+
+  await page.reload()
+  await expect(page.locator('.resource-preview-host')).toHaveCount(0)
+  await page.locator('.attachment-file').click()
+  await expect(page.locator('.resource-preview-host iframe')).toBeVisible()
+})
+
+test('message image attachment keeps the image modal while resolving unified content', async ({ page }) => {
+  await mockApplication(page, fixtures[5], { attachmentType: 'image' })
+  await page.goto('/session/e2e')
+
+  await page.locator('.attachment-image').click()
+  await expect(page.locator('.image-preview-modal')).toBeVisible()
+  await expect(page.locator('.image-preview-modal .preview-filename')).toContainText('Image.png')
+})
 
 for (const fixture of fixtures) {
   test(`${fixture[0]} resource opens through the catalog and survives restore`, async ({ page }) => {

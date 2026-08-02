@@ -26,6 +26,15 @@ from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["session-resources"])
+USER_VISIBLE_RESOURCE_ROLES = {"output", "report", "attachment"}
+USER_VISIBLE_RESOURCE_KINDS = {"file", "artifact", "visual"}
+
+
+def user_visible_resource(item: StoredResource) -> bool:
+    return (
+        item.role in USER_VISIBLE_RESOURCE_ROLES
+        and item.kind in USER_VISIBLE_RESOURCE_KINDS
+    )
 
 
 def resource_dto(session_id: str, item: StoredResource) -> dict:
@@ -102,7 +111,11 @@ async def get_session_resources(
         raise HTTPException(
             status_code=503, detail="resource_catalog_unavailable"
         ) from exc
-    resources = [resource_dto(session_id, item) for item in page.resources]
+    resources = [
+        resource_dto(session_id, item)
+        for item in page.resources
+        if user_visible_resource(item)
+    ]
     return {
         "session_id": session_id,
         "resource_version": await service.catalog_version(session_id),
@@ -176,7 +189,7 @@ async def get_session_resource_content(
     resource = await SessionResourceService.database().get_resource(
         session_id, resource_id, status="active"
     )
-    if resource is None or resource.kind not in {"file", "artifact", "visual"}:
+    if resource is None or not user_visible_resource(resource):
         raise HTTPException(status_code=404, detail="resource_not_found")
     required_capability = "download" if disposition == "attachment" else "preview"
     if required_capability not in resource.capabilities:

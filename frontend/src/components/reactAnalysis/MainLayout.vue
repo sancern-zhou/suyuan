@@ -61,6 +61,7 @@
         @drop="handleChatAreaDrop"
         @select-message="handleSelectMessage"
         @load-more="handleLoadMore"
+        @preview-message-attachment="handleMessageAttachmentPreview"
         @toggle-viz-panel="handleToggleVizPanel"
         @new-web-conversation="$emit('new-web-conversation')"
       >
@@ -458,7 +459,8 @@ const emit = defineEmits([
   'toggle-session-case',
   'delete-sessions',
   'new-web-conversation',
-  'select-agent'
+  'select-agent',
+  'preview-message-attachment'
 ])
 
 const layoutRef = ref(null)
@@ -558,6 +560,10 @@ const handleSelectMessage = (messageId) => {
 
 const handleLoadMore = () => {
   emit('load-more')
+}
+
+const handleMessageAttachmentPreview = (payload) => {
+  emit('preview-message-attachment', payload)
 }
 
 const handleStartDrag = (event) => {

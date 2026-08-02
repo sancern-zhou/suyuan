@@ -7,6 +7,7 @@ import { PANEL_SIZES } from '@/utils/constants'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
+import { resolveMessageAttachmentResource } from '@/services/messageAttachmentPreview.js'
 
 export function usePanelManagement(store = null) {
   const resourceStore = useSessionResourceStore()
@@ -32,6 +33,14 @@ export function usePanelManagement(store = null) {
   const resourceSummary = computed(() => summarizeRightPanelResources(
     resourceStore.activeSessionState?.resources || []
   ))
+  const explicitAttachment = computed(() => {
+    const sessionId = resourceStore.activeSessionId
+    const state = resourceStore.activeSessionState
+    if (!sessionId || state?.selectionOrigin !== 'explicit') return null
+    const selected = resourceStore.selectedResource(sessionId)
+    return selected?.role === 'attachment' ? selected : null
+  })
+  let attachmentPreviewToken = 0
 
   // ========== 计算属性 ==========
 
@@ -61,7 +70,7 @@ export function usePanelManagement(store = null) {
       (Array.isArray(msg?.sources) && msg.sources.length > 0)
     )
 
-    return resourceSummary.value.hasArtifacts || hasSources
+    return resourceSummary.value.hasArtifacts || !!explicitAttachment.value || hasSources
   })
 
   /**
@@ -144,6 +153,37 @@ export function usePanelManagement(store = null) {
     leftSidebarCollapsed.value = false
     managementPanel.value = null
     activeRightTab.value = 'files'
+    const sessionId = resourceStore.activeSessionId
+    if (sessionId && resourceStore.activeSessionState?.selectionOrigin === 'explicit') {
+      resourceStore.selectResource(sessionId, null)
+      resourceStore.selectGroup(sessionId, null)
+    }
+  }
+
+  const openMessageAttachmentPreview = async ({ sessionId, resourceId } = {}) => {
+    const token = ++attachmentPreviewToken
+    try {
+      const resource = await resolveMessageAttachmentResource(
+        resourceStore,
+        sessionId,
+        { resource_id: resourceId }
+      )
+      if (token !== attachmentPreviewToken || resourceStore.activeSessionId !== sessionId) return null
+      resourceStore.selectGroup(sessionId, resource.group_id)
+      resourceStore.selectResource(sessionId, resource.resource_id, 'explicit')
+      activeRightTab.value = 'document'
+      officePanelVisible.value = true
+      rightPanelVisible.value = true
+      leftSidebarCollapsed.value = true
+      vizWidth.value = collapsedVizWidth
+      return resource
+    } catch (error) {
+      if (token === attachmentPreviewToken) {
+        console.error('[message-attachment-preview] failed', error)
+        window.alert(error?.message || '附件资源不可用')
+      }
+      return null
+    }
   }
 
   // ========== 宽度调整方法 ==========
@@ -233,9 +273,9 @@ export function usePanelManagement(store = null) {
         const sessionId = resourceStore.activeSessionId
         const summary = resourceSummary.value
         vizPanelVisible.value = summary.counts.visualization > 0
-        officePanelVisible.value = summary.counts.document > 0
+        officePanelVisible.value = summary.counts.document > 0 || !!explicitAttachment.value
         boardPanelVisible.value = summary.counts.board > 0
-        if (sessionId && summary.hasArtifacts) {
+        if (sessionId && summary.hasArtifacts && !explicitAttachment.value) {
           const restored = chooseRestoredResource(resourceStore, sessionId)
           if (restored) activeRightTab.value = restored.targetTab
         }
@@ -321,6 +361,7 @@ export function usePanelManagement(store = null) {
     startDragging,
     stopDragging,
     resetWidth,
+    openMessageAttachmentPreview,
     setLayoutRef,
     setupWatchers,
     setupGlobalListeners,
