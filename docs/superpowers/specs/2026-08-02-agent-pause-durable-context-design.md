@@ -78,6 +78,19 @@ running → pause_requested → finalizing → paused
 
 暂停请求只作用于明确的 `session_id + run_id`。目标 run 已结束或已被替换时返回幂等结果，不能取消当前新 run。
 
+### 2.1 多 Worker 共享控制面
+
+生产环境使用多个 Uvicorn worker，`RunHandle`、asyncio task 和本地 cancel event 只能存在于执行该 SSE 的 worker 中。因此暂停意图与暂停完成屏障必须存入 Redis，不能依赖进程内注册表完成跨请求通信。
+
+- run 获得 `run_id` 后在 Redis 登记 `session_id + run_id + status=running`，并设置 TTL。
+- 任意 worker 收到暂停请求后，以期望 `run_id` 原子写入 `status=pause_requested` 和暂停原因。
+- 持有本地 RunHandle 的 worker 监测 Redis 状态，命中后立即设置本地 cancel event、丢弃执行器并取消 asyncio task。
+- 暂停 transcript 提交成功后写入 `status=paused`；失败时写入 `status=failed` 和错误摘要。
+- 下一轮的 `previous_paused_run_id` 在 Redis 屏障达到 `paused` 前不得加载会话；`failed` 必须返回 `pause_checkpoint_failed`。
+- Redis 状态只保存控制信息，不保存完整执行轨迹；轨迹仍以数据库 transcript 为事实来源。
+
+单 worker 的本地取消继续作为快速路径，但其结果与 Redis 状态机保持一致。Redis 短暂不可用时不得把暂停误报为成功，也不得让下一轮越过未确认的暂停屏障。
+
 ### 3. 暂停 transcript
 
 暂停收尾使用服务端快照生成上一轮 transcript。暂停轮次与正常完成轮次使用不同的持久化入口；暂停入口保留用户可见 `thought`，正常完成行为不在本需求中改变。
