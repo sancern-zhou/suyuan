@@ -41,3 +41,17 @@ test('chooses the best active renderer and target tab for each group', () => {
   assert.equal(targetTab({ primary: primary({ renderer: 'board', format: 'drawio' }) }), 'board')
   assert.equal(targetTab({ primary: primary({ renderer: 'file', format: 'zip' }) }), 'files')
 })
+
+test('keeps chart image renditions in visualization and treats standalone images as visual', () => {
+  const [chartGroup] = buildResourceGroups([
+    primary({ resource_id: 'chart', kind: 'visual', renderer: 'chart', format: 'json' }),
+    primary({
+      resource_id: 'chart-image', relation: 'rendition', parent_resource_id: 'chart',
+      renderer: 'image', format: 'png'
+    })
+  ])
+
+  assert.equal(preferredPreview(chartGroup).renderer, 'image')
+  assert.equal(targetTab(chartGroup), 'visualization')
+  assert.equal(targetTab({ primary: primary({ renderer: 'image', format: 'png' }) }), 'visualization')
+})

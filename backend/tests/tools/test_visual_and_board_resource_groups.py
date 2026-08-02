@@ -1,7 +1,10 @@
 import json
 
+import pytest
+
 from app.agent.resources.contracts import ResourceDeclaration
 from app.tools.resource_declarations import board_product, resources_for_visuals
+from app.tools.visualization.create_report_chart.tool import CreateReportChartTool
 
 
 def validate(resources):
@@ -64,3 +67,37 @@ def test_board_xml_and_screenshot_are_bound(tmp_path):
     assert preview.parent_key == board.resource_key
     assert preview.relation.value == "preview"
     assert {resource.group_key for resource in resources} == {"board:board-1"}
+
+
+@pytest.mark.asyncio
+async def test_create_report_chart_publishes_visual_and_image_resources(tmp_path, monkeypatch):
+    image = tmp_path / "generated-chart.png"
+    image.write_bytes(b"png")
+    monkeypatch.setattr(
+        "app.tools.resource_declarations.get_data_registry", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "app.tools.visualization.create_report_chart.renderer.render_report_chart",
+        lambda **_kwargs: {
+            "visuals": [{
+                "id": "generated-chart",
+                "type": "bar",
+                "title": "Generated chart",
+                "local_path": str(image),
+            }],
+            "summary": "generated",
+        },
+    )
+
+    result = await CreateReportChartTool().execute(
+        chart_type="bar",
+        title="Generated chart",
+        data={"labels": ["A"], "values": [1]},
+    )
+    resources = validate(result["resources"])
+
+    assert [resource.resource_key for resource in resources] == [
+        "chart-spec", "chart-image"
+    ]
+    assert resources[0].kind.value == "visual"
+    assert resources[1].renderer.value == "image"

@@ -1,5 +1,3 @@
-import { authFetch } from '@/auth/http.js'
-
 const FORMAT_NAMES = {
   doc: 'DOC',
   docx: 'DOCX',
@@ -25,16 +23,12 @@ export const downloadFileName = resource => {
 
 export const downloadResource = async resource => {
   if (!resource?.download_url) throw new Error('该资源不支持下载')
-  const response = await authFetch(resource.download_url)
-  if (!response.ok) throw new Error(`下载失败（HTTP ${response.status}）`)
-  const objectUrl = URL.createObjectURL(await response.blob())
   const link = document.createElement('a')
-  link.href = objectUrl
+  link.href = resource.download_url
   link.download = downloadFileName(resource)
   document.body.appendChild(link)
   link.click()
   link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }
 
 export const activeRendition = (group, format) => (

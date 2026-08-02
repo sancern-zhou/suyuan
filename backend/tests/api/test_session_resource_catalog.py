@@ -74,6 +74,9 @@ async def test_catalog_exposes_delivery_contract_without_physical_locator(monkey
     parsed = urlparse(item["content_url"])
     assert parsed.path.endswith("/resource-1/content")
     assert parse_qs(parsed.query)["preview_ticket"]
+    download = urlparse(item["download_url"])
+    assert parse_qs(download.query)["preview_ticket"]
+    assert parse_qs(download.query)["disposition"] == ["attachment"]
     assert "locator" not in item
     assert "metadata" not in item
     assert "file_path" not in item

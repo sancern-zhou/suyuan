@@ -70,6 +70,16 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         actions["preview"] = content_url
     if "render" in actions:
         actions["render"] = external_api_path(actions["render"])
+    download_url = (
+        external_api_path(actions["download"])
+        if actions.get("download")
+        else None
+    )
+    if download_url:
+        separator = "&" if "?" in download_url else "?"
+        download_url = (
+            f"{download_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
+        )
     return {
         "resource_id": item.resource_id,
         "ref_id": item.resource_id,
@@ -88,7 +98,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "version": item.version,
         "status": item.status,
         "content_url": content_url,
-        "download_url": external_api_path(actions["download"]) if actions.get("download") else None,
+        "download_url": download_url,
         "size_bytes": int(item.metadata.get("size") or item.metadata.get("size_bytes") or 0),
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),

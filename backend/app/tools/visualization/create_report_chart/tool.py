@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import file_products
+from app.tools.resource_declarations import file_products, resources_for_visuals
 from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
 from app.tools.visualization.create_report_chart.renderer import ChartDataError
 
@@ -223,6 +223,9 @@ class CreateReportChartTool(LLMTool):
                 "summary": rendered.get("summary", "报告图表已生成。"),
             }
             self._attach_resume_context(result, data_id=data_id)
+            result["resources"] = resources_for_visuals(
+                result.get("visuals", []), tool_name=self.name
+            )
             return result
         except ChartDataError as exc:
             return self._failed_result(str(exc), metadata, chart_type, title, data_id)

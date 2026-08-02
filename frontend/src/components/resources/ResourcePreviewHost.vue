@@ -49,7 +49,13 @@ const explicitAttachment = computed(() => (
 ))
 const group = computed(() => {
   if (explicitAttachment.value) {
-    return allGroups.value.find(item => item.group_id === explicitAttachment.value.group_id) || null
+    const attachmentGroup = allGroups.value.find(
+      item => item.group_id === explicitAttachment.value.group_id
+    ) || null
+    if (
+      attachmentGroup
+      && (!props.target || targetTab(attachmentGroup) === props.target)
+    ) return attachmentGroup
   }
   const selectedGroup = groups.value.find(item => item.group_id === selected.value?.group_id)
   if (selectedGroup && (!props.target || targetTab(selectedGroup) === props.target)) return selectedGroup
