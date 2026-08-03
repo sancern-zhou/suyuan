@@ -120,11 +120,12 @@
         </button>
       </div>
 
-      <VisualizationGallery
+      <div
         v-if="activeTab === 'visualization'"
-        key="visualization-gallery"
-        class="panel-content"
-      />
+        class="panel-content visualization-panel-host"
+      >
+        <VisualizationGallery key="visualization-gallery" />
+      </div>
 
       <ResourcePreviewHost
         v-if="['document', 'board'].includes(activeTab)"
