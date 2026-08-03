@@ -84,10 +84,8 @@ const showLatest = async () => {
 </script>
 
 <style scoped>
-.visualization-gallery { container-type: inline-size; height: 100%; min-height: 0; padding: 12px; overflow: auto; box-sizing: border-box; background: #f7f9fc; overflow-anchor: none; }
+.visualization-gallery { height: 100%; min-height: 0; padding: 12px; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; background: #f7f9fc; overflow-anchor: none; }
 .gallery-heading { position: sticky; z-index: 5; top: -12px; display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; margin: -12px -12px 12px; padding: 9px 12px; border-bottom: 1px solid #e1e8f0; background: rgba(255, 255, 255, .96); backdrop-filter: blur(6px); }
 .gallery-heading > div { display: grid; gap: 2px; }.gallery-heading strong { color: #17223b; font-size: 14px; }.gallery-heading span { color: #7a8798; font-size: 11px; }.new-visuals { padding: 6px 10px; border: 1px solid #cfe2f7; border-radius: 999px; background: #edf6ff; color: #1769aa; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
 .gallery-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }.empty { display: grid; min-height: 240px; margin: 0; place-content: center; color: #64748b; }
-@container (min-width: 900px) { .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (min-width: 1800px) { .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
