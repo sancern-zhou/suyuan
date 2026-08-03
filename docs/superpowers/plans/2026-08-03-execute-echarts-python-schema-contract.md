@@ -13,12 +13,12 @@
 ### Task 1: Add red contract tests
 
 **Files:**
-- Modify: `backend/tests/test_execute_echarts_python_tool.py`
-- Modify: `backend/app/agent/prompts/task_tool_registry_test.py`
+- Create: `backend/app/tools/utility/execute_echarts_python_schema_spec.py`
+- Create: `backend/app/agent/prompts/chart_prompt_contract_spec.py`
 
 - [ ] **Step 1: Strengthen the tool schema test**
 
-Extend `test_global_registry_registers_execute_echarts_python_with_dedicated_schema` with assertions against the combined tool and `code` descriptions:
+Add `test_execute_echarts_python_schema_owns_data_access_contract` with assertions against the combined tool and `code` descriptions:
 
 ```python
 contract = " ".join([
@@ -36,7 +36,7 @@ assert "物理文件路径" in contract
 
 - [ ] **Step 2: Replace the obsolete chart-prompt example assertion**
 
-Replace `test_chart_prompt_has_no_accidental_python_string_fragments_or_duplicate_headings` with a boundary test:
+Add a chart-prompt boundary test:
 
 ```python
 def test_chart_prompt_selects_echarts_tool_without_embedding_its_call_contract():
@@ -56,8 +56,8 @@ Run:
 
 ```bash
 conda run -p /root/miniconda3/envs/backend_py311 pytest -q \
-  backend/tests/test_execute_echarts_python_tool.py::test_global_registry_registers_execute_echarts_python_with_dedicated_schema \
-  backend/app/agent/prompts/task_tool_registry_test.py::test_chart_prompt_selects_echarts_tool_without_embedding_its_call_contract
+  backend/app/tools/utility/execute_echarts_python_schema_spec.py::test_execute_echarts_python_schema_owns_data_access_contract \
+  backend/app/agent/prompts/chart_prompt_contract_spec.py::test_chart_prompt_selects_echarts_tool_without_embedding_its_call_contract
 ```
 
 Expected: both tests fail because the schema lacks the data-access/manual contract and the chart prompt still embeds it.
@@ -67,7 +67,7 @@ Expected: both tests fail because the schema lacks the data-access/manual contra
 **Files:**
 - Create: `backend/app/tools/utility/execute_echarts_python_manual.md`
 - Modify: `backend/app/tools/utility/execute_python_tool.py:2595-2627`
-- Test: `backend/tests/test_execute_echarts_python_tool.py`
+- Test: `backend/app/tools/utility/execute_echarts_python_schema_spec.py`
 
 - [ ] **Step 1: Create the dedicated manual**
 
@@ -105,7 +105,7 @@ Run:
 
 ```bash
 conda run -p /root/miniconda3/envs/backend_py311 pytest -q \
-  backend/tests/test_execute_echarts_python_tool.py::test_global_registry_registers_execute_echarts_python_with_dedicated_schema
+  backend/app/tools/utility/execute_echarts_python_schema_spec.py::test_execute_echarts_python_schema_owns_data_access_contract
 ```
 
 Expected: `1 passed`.
@@ -114,7 +114,7 @@ Expected: `1 passed`.
 
 **Files:**
 - Modify: `backend/app/agent/prompts/chart_prompt.py`
-- Test: `backend/app/agent/prompts/task_tool_registry_test.py`
+- Test: `backend/app/agent/prompts/chart_prompt_contract_spec.py`
 
 - [ ] **Step 1: Remove tool-call details from the initial workflow**
 
@@ -134,7 +134,7 @@ Run:
 
 ```bash
 conda run -p /root/miniconda3/envs/backend_py311 pytest -q \
-  backend/app/agent/prompts/task_tool_registry_test.py::test_chart_prompt_selects_echarts_tool_without_embedding_its_call_contract
+  backend/app/agent/prompts/chart_prompt_contract_spec.py::test_chart_prompt_selects_echarts_tool_without_embedding_its_call_contract
 ```
 
 Expected: `1 passed`.
@@ -142,8 +142,8 @@ Expected: `1 passed`.
 ### Task 4: Verify the complete migration
 
 **Files:**
-- Verify: `backend/tests/test_execute_echarts_python_tool.py`
-- Verify: `backend/app/agent/prompts/task_tool_registry_test.py`
+- Verify: `backend/app/tools/utility/execute_echarts_python_schema_spec.py`
+- Verify: `backend/app/agent/prompts/chart_prompt_contract_spec.py`
 - Verify: `backend/app/tools/utility/execute_echarts_python_manual.md`
 
 - [ ] **Step 1: Scan for stale prompt-owned contract text**
@@ -163,8 +163,9 @@ Run:
 
 ```bash
 conda run -p /root/miniconda3/envs/backend_py311 pytest -q \
-  backend/tests/test_execute_echarts_python_tool.py \
-  backend/app/agent/prompts/task_tool_registry_test.py
+  backend/app/tools/utility/execute_python_schema_spec.py \
+  backend/app/tools/utility/execute_echarts_python_schema_spec.py \
+  backend/app/agent/prompts/chart_prompt_contract_spec.py
 ```
 
 Expected: all tests pass.
@@ -179,8 +180,8 @@ git status --short
 git diff -- backend/app/tools/utility/execute_python_tool.py \
   backend/app/tools/utility/execute_echarts_python_manual.md \
   backend/app/agent/prompts/chart_prompt.py \
-  backend/tests/test_execute_echarts_python_tool.py \
-  backend/app/agent/prompts/task_tool_registry_test.py
+  backend/app/tools/utility/execute_echarts_python_schema_spec.py \
+  backend/app/agent/prompts/chart_prompt_contract_spec.py
 ```
 
 Expected: no whitespace errors; only the planned files are changed, aside from pre-existing unrelated workspace content.
@@ -191,7 +192,7 @@ Expected: no whitespace errors; only the planned files are changed, aside from p
 git add backend/app/tools/utility/execute_python_tool.py \
   backend/app/tools/utility/execute_echarts_python_manual.md \
   backend/app/agent/prompts/chart_prompt.py \
-  backend/tests/test_execute_echarts_python_tool.py \
-  backend/app/agent/prompts/task_tool_registry_test.py
+  backend/app/tools/utility/execute_echarts_python_schema_spec.py \
+  backend/app/agent/prompts/chart_prompt_contract_spec.py
 git commit -m "refactor: move echarts tool contract into schema"
 ```
