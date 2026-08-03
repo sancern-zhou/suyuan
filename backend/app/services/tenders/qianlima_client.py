@@ -11,6 +11,7 @@ from typing import Any, List, Optional
 from urllib.parse import quote, quote_plus, urljoin, urlsplit, urlunsplit
 
 import requests
+import httpx
 import structlog
 import urllib3
 
@@ -217,7 +218,7 @@ class QianlimaClient:
             else use_search_api
         )
         self.use_detail_http = (
-            _env_bool("QIANLIMA_USE_DETAIL_HTTP", True)
+            _env_bool("QIANLIMA_USE_DETAIL_HTTP", False)
             if use_detail_http is None
             else use_detail_http
         )
@@ -231,6 +232,7 @@ class QianlimaClient:
         self._playwright = None
         self._browser = None
         self._context = None
+        self._browser_uses_proxy = False
         self._start_lock = asyncio.Lock()
         self._browser_detail_semaphore = asyncio.Semaphore(
             max(1, int(os.getenv("QIANLIMA_BROWSER_DETAIL_CONCURRENCY", "3")))
@@ -248,17 +250,19 @@ class QianlimaClient:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.close()
 
-    async def start(self) -> None:
-        if self._context is not None:
+    async def start(self, use_proxy: bool = False) -> None:
+        if self._context is not None and self._browser_uses_proxy == use_proxy:
             return
         async with self._start_lock:
-            if self._context is not None:
+            if self._context is not None and self._browser_uses_proxy == use_proxy:
                 return
+            if self._context is not None:
+                await self.close()
             from playwright.async_api import async_playwright
 
             self._playwright = await async_playwright().start()
             launch_kwargs = {"headless": self.headless}
-            proxy_config = _qianlima_playwright_proxy()
+            proxy_config = _qianlima_playwright_proxy() if use_proxy else None
             if proxy_config:
                 launch_kwargs["proxy"] = proxy_config
             self._browser = await self._playwright.chromium.launch(**launch_kwargs)
@@ -268,6 +272,7 @@ class QianlimaClient:
             self._context = await self._browser.new_context(
                 ignore_https_errors=not self.verify_tls, **context_kwargs
             )
+            self._browser_uses_proxy = use_proxy
             if _env_bool("QIANLIMA_BLOCK_HEAVY_RESOURCES", True):
                 await self._context.route("**/*", self._route_lightweight_detail_resources)
 
@@ -281,6 +286,7 @@ class QianlimaClient:
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+        self._browser_uses_proxy = False
 
     async def login(self, login_url: Optional[str] = None) -> None:
         if not self.username or not self.password:
@@ -645,7 +651,7 @@ class QianlimaClient:
                 return await asyncio.to_thread(
                     self._request_search_api, query, page_number, publish_date
                 )
-            except requests.RequestException as exc:
+            except (requests.RequestException, httpx.RequestError) as exc:
                 last_error = exc
                 if (
                     self._is_unauthorized_error(exc)
@@ -702,7 +708,7 @@ class QianlimaClient:
             "pageSize": int(os.getenv("QIANLIMA_PAGE_SIZE", "10")),
             "searchType": int(os.getenv("QIANLIMA_SEARCH_TYPE", "1")),
         }
-        response = requests.post(
+        response = _post_qianlima_search(
             self.search_api_url,
             params=params,
             json={},
@@ -710,7 +716,6 @@ class QianlimaClient:
             verify=self.verify_tls,
             headers=self._http_headers("https://search.qianlima.com/"),
             cookies=self._storage_state_cookies(),
-            proxies=_qianlima_search_proxies(),
         )
         response.raise_for_status()
         return response.json()
@@ -773,15 +778,14 @@ class QianlimaClient:
 
     def _post_vip_search_api(
         self, payload: dict[str, Any], headers: dict[str, str]
-    ) -> requests.Response:
-        return requests.post(
+    ) -> requests.Response | httpx.Response:
+        return _post_qianlima_search(
             self.search_api_url,
             json=payload,
             timeout=int(os.getenv("QIANLIMA_REQUEST_TIMEOUT", "30")),
             verify=self.verify_tls,
             headers=headers,
             cookies=self._storage_state_cookies(),
-            proxies=_qianlima_search_proxies(),
         )
 
     async def _search_via_browser(
@@ -791,7 +795,7 @@ class QianlimaClient:
         publish_date: Optional[date],
         max_pages: int,
     ) -> List[TenderCandidate]:
-        await self.start()
+        await self.start(use_proxy=True)
         candidates: List[TenderCandidate] = []
         query = keyword.strip()
         for page_number in range(1, max_pages + 1):
@@ -916,7 +920,32 @@ def _qianlima_requests_proxies() -> dict[str, str] | None:
 
 
 def _qianlima_search_proxies() -> dict[str, str] | None:
-    return None
+    return _qianlima_requests_proxies()
+
+
+def _post_qianlima_search(url: str, **kwargs) -> requests.Response | httpx.Response:
+    proxy_url = _qianlima_proxy_url()
+    if proxy_url and proxy_url.lower().startswith(
+        ("socks4://", "socks5://", "socks5h://")
+    ):
+        return httpx.post(
+            url,
+            proxy=proxy_url,
+            follow_redirects=True,
+            **kwargs,
+        )
+    return requests.post(url, proxies=_qianlima_search_proxies(), **kwargs)
+
+
+def _qianlima_proxy_url() -> str | None:
+    server = _qianlima_proxy_setting("server")
+    if not server:
+        return None
+    return _proxy_url_with_credentials(
+        server,
+        _qianlima_proxy_setting("username"),
+        _qianlima_proxy_setting("password"),
+    )
 
 
 def _qianlima_proxy_setting(name: str) -> str:
@@ -928,8 +957,8 @@ def _qianlima_proxy_setting(name: str) -> str:
 
 
 async def _sleep_before_detail_request() -> None:
-    min_delay = float(os.getenv("QIANLIMA_DETAIL_MIN_DELAY_SECONDS", "0"))
-    max_delay = float(os.getenv("QIANLIMA_DETAIL_MAX_DELAY_SECONDS", "0"))
+    min_delay = float(os.getenv("QIANLIMA_DETAIL_MIN_DELAY_SECONDS", "8"))
+    max_delay = float(os.getenv("QIANLIMA_DETAIL_MAX_DELAY_SECONDS", "25"))
     if max_delay <= 0 and min_delay <= 0:
         return
     if max_delay < min_delay:
