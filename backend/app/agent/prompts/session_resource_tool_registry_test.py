@@ -41,6 +41,11 @@ def test_retired_chart_tools_are_not_exposed_by_any_agent_mode(tool_names):
     assert RETIRED_CHART_TOOL_NAMES.isdisjoint(tool_names)
 
 
+@pytest.mark.parametrize("tool_names", ALL_MODE_LISTS)
+def test_artifact_publication_is_automatic_in_every_agent_mode(tool_names):
+    assert "present_artifact" not in tool_names
+
+
 def test_retired_chart_modules_and_runtime_references_are_removed():
     assert importlib.util.find_spec("app.tools.visualization.generate_chart") is None
     assert importlib.util.find_spec("app.tools.analysis.smart_chart_generator") is None

@@ -1,6 +1,7 @@
 import pytest
 
 from app.agent.resources.contracts import ResourceDeclaration
+from app.agent.resources.resource_service import SessionResourceService
 from app.tools.artifact_utils import (
     attach_document_resources,
     attach_report_package_resources,
@@ -207,7 +208,8 @@ async def test_qmd_file_mutation_publishes_refreshed_report_group(
     assert result["resources"][1]["relation"] == "preview"
 
 
-def test_html_artifact_has_downloadable_primary_and_directory_preview(tmp_path):
+@pytest.mark.asyncio
+async def test_html_artifact_has_downloadable_primary_and_directory_preview(tmp_path):
     artifact_dir = tmp_path / "artifact"
     artifact_dir.mkdir()
     index = artifact_dir / "index.html"
@@ -225,6 +227,10 @@ def test_html_artifact_has_downloadable_primary_and_directory_preview(tmp_path):
     )
     primary, preview = validate(data["resources"])
 
+    assert primary.resource_key == "source:html"
+    assert preview.resource_key == "preview:html"
+    assert preview.parent_key == primary.resource_key
+    assert len({item.resource_key for item in (primary, preview)}) == 2
     assert primary.kind.value == "file"
     assert primary.group_key == "html-artifact:demo"
     assert primary.locator.path == str(index.resolve())
@@ -235,6 +241,67 @@ def test_html_artifact_has_downloadable_primary_and_directory_preview(tmp_path):
     assert preview.metadata == {"entrypoint": "index.html"}
     assert preview.relation.value == "preview"
     assert {item.value for item in preview.capabilities} == {"preview"}
+
+    publication = await SessionResourceService.in_memory().publish_group(
+        "session-html", "run-html", primary.group_key, [primary, preview]
+    )
+    assert len(publication.resources) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["edit", "write"])
+async def test_html_artifact_mutation_republishes_previewable_group(
+    tmp_path, monkeypatch, operation
+):
+    artifact_dir = tmp_path / "html_artifacts" / "demo"
+    artifact_dir.mkdir(parents=True)
+    index = artifact_dir / "index.html"
+    index.write_text("<h1>Original</h1>", encoding="utf-8")
+    refresh_result = {
+        "artifact_id": "demo",
+        "file_type": "html_artifact",
+        "html_artifact_preview_refresh": {"success": True},
+    }
+
+    if operation == "edit":
+        monkeypatch.setattr(
+            edit_file_tool_module,
+            "refresh_preview_for_managed_document_path",
+            lambda _path: refresh_result,
+        )
+        tool = EditFileToolV2()
+        tool.read_state.set(
+            str(index.resolve()),
+            content="<h1>Original</h1>",
+            file_size=len("<h1>Original</h1>"),
+            encoding="utf-8",
+        )
+        result = await tool.execute(
+            path=str(index),
+            old_string="Original",
+            new_string="Updated",
+        )
+    else:
+        monkeypatch.setattr(
+            write_file_tool_module,
+            "refresh_preview_for_managed_document_path",
+            lambda _path: refresh_result,
+        )
+        tool = WriteFileTool()
+        tool.read_state.set(
+            str(index.resolve()),
+            content="<h1>Original</h1>",
+            file_size=len("<h1>Original</h1>"),
+            encoding="utf-8",
+        )
+        result = await tool.execute(path=str(index), content="<h1>Updated</h1>")
+
+    resources = validate(result["resources"])
+    assert result["success"] is True
+    assert [item.resource_key for item in resources] == ["source:html", "preview:html"]
+    assert {item.group_key for item in resources} == {"html-artifact:demo"}
+    assert resources[1].relation.value == "preview"
+    assert resources[1].renderer.value == "html"
 
 
 def test_spreadsheet_primary_uses_spreadsheet_renderer(tmp_path):

@@ -12,10 +12,11 @@
     </header>
 
     <FileDetailRenderer
-      v-if="fileDetailAttachment"
-      :resource="fileDetailAttachment"
-      :group="explicitAttachmentGroup"
-      :content-url="fileDetailAttachment.content_url"
+      v-if="fileDetailResource"
+      :resource="fileDetailResource"
+      :group="fileDetailGroup"
+      :content-url="fileDetailResource.content_url"
+      @close="closeDetails"
     />
     <p v-else-if="sessionState?.loading && !products.length" class="state">正在加载文件产物...</p>
     <div v-else-if="sessionState?.error" class="state error">
@@ -42,7 +43,7 @@
           <span v-if="group.versions.length > 1">共 {{ group.versions.length }} 个版本</span>
         </div>
         <div class="product-actions">
-          <button type="button" class="open-label" @click="open(group)">打开</button>
+          <button type="button" class="open-label" @click="open(group)">{{ targetTab(group) === 'files' ? '详情' : '打开' }}</button>
           <button
             v-if="group.primary.download_url"
             type="button"
@@ -83,10 +84,28 @@ const fileDetailAttachment = computed(() => (
     ? explicitAttachment.value
     : null
 ))
+const selectedProductGroup = computed(() => {
+  if (sessionState.value?.selectionOrigin !== 'product' || !resourceStore.activeSessionId) return null
+  const selected = resourceStore.selectedResource(resourceStore.activeSessionId)
+  const selectedGroup = products.value.find(group => group.group_id === selected?.group_id) || null
+  return selectedGroup && targetTab(selectedGroup) === 'files' ? selectedGroup : null
+})
+const fileDetailGroup = computed(() => explicitAttachmentGroup.value || selectedProductGroup.value)
+const fileDetailResource = computed(() => (
+  fileDetailAttachment.value
+  || (selectedProductGroup.value ? resourceStore.selectedResource(resourceStore.activeSessionId) : null)
+))
 
 const reload = () => resourceStore.activeSessionId
   ? resourceStore.loadCatalog(resourceStore.activeSessionId)
   : null
+
+const closeDetails = () => {
+  const sessionId = resourceStore.activeSessionId
+  if (!sessionId) return
+  resourceStore.selectResource(sessionId, null)
+  resourceStore.selectGroup(sessionId, null)
+}
 
 const open = (group) => {
   const sessionId = resourceStore.activeSessionId

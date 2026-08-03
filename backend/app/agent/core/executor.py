@@ -272,8 +272,12 @@ class ToolExecutor:
         declarations, rejected = normalize_tool_resources(result=value)
         if not declarations and not rejected:
             return {}
-        if not declarations:
-            return {"durable": False, "rejected": rejected}
+        if rejected:
+            return {
+                "durable": False,
+                "error": "resource_declaration_invalid",
+                "rejected": rejected,
+            }
         async def publish_resources():
             grouped = {}
             for declaration in declarations:
@@ -455,6 +459,14 @@ class ToolExecutor:
             )
             if tracking:
                 observation["resource_tracking"] = tracking
+                if tracking.get("error"):
+                    original_summary = str(observation.get("summary") or "工具执行完成")
+                    observation.update(
+                        status="failed",
+                        success=False,
+                        error="resource_persistence_failed",
+                        summary=f"{original_summary}，但资源发布失败，结果未交付到文件面板",
+                    )
 
             # ========================================
             # 详细调试信息：显示工具调用后

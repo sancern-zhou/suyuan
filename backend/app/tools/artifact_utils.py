@@ -8,6 +8,7 @@ from app.tools.resource_declarations import (
     derivative_file,
     directory_artifact,
     primary_file,
+    single_file_product,
 )
 
 
@@ -177,7 +178,7 @@ def attach_document_resources(
         label=title or path.name,
         metadata={"artifact_kind": kind},
     )
-    primary["resource_key"] = fmt
+    primary["resource_key"] = "source:html" if kind == "html_artifact" and fmt == "html" else fmt
     resources = [primary]
 
     resolved_preview = None
@@ -201,7 +202,7 @@ def attach_document_resources(
                 label=resolved_preview.name,
             )
             derivative.update(
-                resource_key="html",
+                resource_key="preview:html",
                 parent_key=primary["resource_key"],
                 relation="preview",
             )
@@ -215,10 +216,53 @@ def attach_document_resources(
                 role=role,
                 renderer=renderer_by_format.get(preview_fmt, "file"),
             )
-        derivative["resource_key"] = preview_fmt
+        if not (kind == "html_artifact" and preview_fmt == "html"):
+            derivative["resource_key"] = preview_fmt
         resources.append(derivative)
     result_data["resources"] = resources
     return result_data
+
+
+def attach_mutated_document_resources(
+    result_data: Dict[str, Any],
+    file_path: str | Path,
+    *,
+    generator: str,
+) -> list[dict[str, Any]]:
+    """Build the canonical resource group after a file mutation.
+
+    Preview refresh and durable publication are one lifecycle. Managed reports
+    and HTML artifacts must never fall back to a download-only generic file.
+    """
+    path = Path(file_path).expanduser().resolve()
+    report_refresh = result_data.get("report_preview_refresh") or {}
+    if report_refresh.get("success"):
+        attach_report_package_resources(
+            result_data,
+            path,
+            report_id=str(result_data["report_id"]),
+            html_path=report_refresh.get("html_path"),
+            generator=generator,
+        )
+        return result_data["resources"]
+
+    html_refresh = result_data.get("html_artifact_preview_refresh") or {}
+    if html_refresh.get("success"):
+        artifact_id = str(result_data.get("artifact_id") or html_refresh.get("artifact_id") or path.parent.name)
+        attach_document_resources(
+            result_data,
+            path,
+            kind="html_artifact",
+            format="html",
+            title=artifact_id,
+            generator=generator,
+            metadata={"artifact_id": artifact_id},
+        )
+        return result_data["resources"]
+
+    resources = [single_file_product(path, tool_name=generator)]
+    result_data["resources"] = resources
+    return resources
 
 
 def build_artifact_resume_context(
@@ -233,7 +277,7 @@ def build_artifact_resume_context(
     resume = {
         "artifact_path": str(path),
         "artifact_format": path.suffix.lstrip(".") or None,
-        "tool_hint": tool_hint or f"Use present_artifact(file_path='{path}') to preview this artifact.",
+        "tool_hint": tool_hint or "Artifact preview and download resources are published automatically.",
     }
     if extra_resume:
         resume.update({key: value for key, value in extra_resume.items() if value is not None})

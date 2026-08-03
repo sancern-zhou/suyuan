@@ -37,6 +37,38 @@ test('internal API paths receive the gateway prefix and company headers', async 
 })
 
 
+test('same-origin URL objects receive the gateway prefix', async () => {
+  const seen = []
+  const authFetch = createAuthFetch({
+    storage: sessionStorage(),
+    apiBaseUrl: '/api/suyuan',
+    locationOrigin: 'http://localhost',
+    fetchImpl: async (url) => {
+      seen.push(url)
+      return new Response('{}', { status: 200 })
+    }
+  })
+
+  await authFetch(new URL('http://localhost/api/file-manager/list?path=reports'))
+
+  assert.equal(seen[0], '/api/suyuan/file-manager/list?path=reports')
+})
+
+
+test('cross-origin URL objects require an explicit external opt-in', async () => {
+  const authFetch = createAuthFetch({
+    storage: sessionStorage(),
+    locationOrigin: 'http://localhost',
+    fetchImpl: async () => new Response('{}', { status: 200 })
+  })
+
+  await assert.rejects(
+    () => authFetch(new URL('https://example.test/data')),
+    /Absolute URLs require external: true/
+  )
+})
+
+
 test('gateway prefixes are not duplicated', () => {
   assert.equal(gatewayUrl('/api/suyuan/info', '/api/suyuan'), '/api/suyuan/info')
   assert.equal(gatewayUrl('/api/info?x=1', '/api/suyuan'), '/api/suyuan/info?x=1')

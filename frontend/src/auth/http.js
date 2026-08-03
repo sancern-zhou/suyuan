@@ -30,7 +30,8 @@ export function gatewayUrl(url, apiBaseUrl = configuredApiBase()) {
 export function createAuthFetch({
   fetchImpl = globalThis.fetch,
   storage,
-  apiBaseUrl = configuredApiBase()
+  apiBaseUrl = configuredApiBase(),
+  locationOrigin = globalThis.location?.origin
 }) {
   return async function authFetch(input, options = {}) {
     const {
@@ -39,7 +40,12 @@ export function createAuthFetch({
       clearOnUnauthorized = true,
       ...fetchOptions
     } = options
-    const rawUrl = typeof input === 'string' ? input : input.url
+    let rawUrl = typeof input === 'string' ? input : input.url
+    if (input instanceof URL) {
+      rawUrl = input.origin === locationOrigin
+        ? `${input.pathname}${input.search}${input.hash}`
+        : input.href
+    }
     if (ABSOLUTE_URL.test(rawUrl) && !external) {
       throw new Error('Absolute URLs require external: true')
     }

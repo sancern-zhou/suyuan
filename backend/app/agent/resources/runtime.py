@@ -104,6 +104,8 @@ async def persist_tool_result_resources(
     declarations, rejected = normalize_tool_resources(result=result)
     if not declarations and not rejected:
         return None
+    if rejected:
+        raise ValueError(f"invalid resource declarations: {rejected}")
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
     if tool_name:
