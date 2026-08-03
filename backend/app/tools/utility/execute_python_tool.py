@@ -2598,6 +2598,11 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "name": "execute_echarts_python",
             "description": (
                 "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
+                "首次使用前必须先调用 read_file 阅读 "
+                "backend/app/tools/utility/execute_echarts_python_manual.md。"
+                "使用 DataRegistry 数据前必须先调用 read_data_registry(data_id=...) 读取可计算数据快照，"
+                "代码中再通过系统注入的 get_raw_data(data_id) 获取数据。"
+                "禁止使用 open()、pathlib 或猜测 DataRegistry 物理文件路径直接读取数据。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
                 "工具会同时生成静态预览 image_url/markdown_image，聊天正文必须直接使用该 /api/image/{image_id} 链接。"
@@ -2610,7 +2615,9 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                     "code": {
                         "type": "string",
                         "description": (
-                            "要执行的 Python 代码。必须在 stdout 中逐行 print 纯 JSON ECharts option；"
+                            "要执行的 Python 代码。DataRegistry 数据必须使用 get_raw_data(data_id) 获取，"
+                            "禁止通过 open()、pathlib 或物理文件路径读取。"
+                            "必须在 stdout 中逐行 print 纯 JSON ECharts option；"
                             "不要打印 CHART_1:、Markdown、自然语言说明或本地路径作为图表协议。"
                         )
                     },
