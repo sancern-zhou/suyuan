@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from app.services.document_preview_refresh import refresh_preview_for_managed_document_path
+from app.tools.artifact_utils import attach_report_package_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
 from app.tools.utility.file_read_state import get_file_read_state
@@ -522,10 +523,22 @@ class EditFileToolV2(LLMTool):
                 else:
                     summary += "，但右侧预览刷新失败"
 
+            resources = [single_file_product(resolved_path, tool_name=self.name)]
+            report_refresh = result_data.get("report_preview_refresh") or {}
+            if report_refresh.get("success"):
+                attach_report_package_resources(
+                    result_data,
+                    resolved_path,
+                    report_id=str(result_data["report_id"]),
+                    html_path=report_refresh.get("html_path"),
+                    generator=self.name,
+                )
+                resources = result_data["resources"]
+
             return {
                 "success": True,
                 "data": result_data,
-                "resources": [single_file_product(resolved_path, tool_name=self.name)],
+                "resources": resources,
                 "summary": summary
             }
 

@@ -79,7 +79,7 @@ def _normalize_chinese_ascii_quotes_in_prose_line(
     pattern = re.compile(
         rf'(?<=[{chinese_char}A-Za-z0-9，。：；！？、）】》])"'
         rf'(?P<content>[{content_char}]*[{chinese_char}][{content_char}]*)"'
-        rf'(?=[{chinese_char}A-Za-z0-9，。：；！？、（【《*_~]|\r?$)'
+        rf'(?=[{chinese_char}A-Za-z0-9，。：；！？、（【《*_~]|[ \t]*\||\r?$)'
     )
 
     def normalize_segment(segment: str) -> str:

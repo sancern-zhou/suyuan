@@ -117,6 +117,27 @@ async def test_failed_publication_is_atomic_and_does_not_increment_versions():
 
 
 @pytest.mark.asyncio
+async def test_report_role_group_rejects_html_primary():
+    service = SessionResourceService.in_memory()
+    html_primary = declaration(
+        "report:air",
+        "html",
+        "/tmp/report.html",
+        renderer="html",
+        role="report",
+    )
+
+    with pytest.raises(
+        ValueError, match="report resource groups require a renderable QMD primary"
+    ):
+        await service.publish_group(
+            "s1", "render-html", "report:air", [html_primary]
+        )
+
+    assert await service.catalog_version("s1") == 0
+
+
+@pytest.mark.asyncio
 async def test_catalog_filters_and_counts_use_renderer_contract():
     service = SessionResourceService.in_memory()
     await service.publish_group("s1", "run-1", "report:air", report("report:air", "v1"))

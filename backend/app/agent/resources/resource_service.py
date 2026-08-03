@@ -41,6 +41,16 @@ def validate_publication(
     ]
     if len(primaries) != 1:
         raise ValueError("resource group publication requires exactly one primary")
+    primary = primaries[0]
+    if group_key.startswith("report:") and primary.role.value == "report":
+        if (
+            primary.resource_key not in {"qmd", "primary:qmd"}
+            or primary.format != "qmd"
+            or "render" not in {capability.value for capability in primary.capabilities}
+        ):
+            raise ValueError(
+                "report resource groups require a renderable QMD primary"
+            )
     for item in declarations:
         if item.relation is not ResourceRelation.PRIMARY and item.parent_key not in by_key:
             raise ValueError(

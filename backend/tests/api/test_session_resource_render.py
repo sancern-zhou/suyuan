@@ -1,8 +1,11 @@
 import pytest
+from sqlalchemy.dialects.postgresql import insert
 
 from app.agent.resources.contracts import ResourceDeclaration
 from app.agent.resources.resource_service import SessionResourceService
 from app.api import session_resource_routes
+from app.db.models_session import SessionResourceDB
+from app.db.session_resources_repository import _upsert_update_values
 from app.tools.resource_declarations import primary_file
 
 
@@ -99,3 +102,21 @@ async def test_qmd_primary_dto_exposes_render_action(tmp_path):
     assert dto["actions"]["render"].endswith(
         f"/resources/{published.resources[0].resource_id}/render"
     )
+
+
+def test_resource_upsert_maps_metadata_attribute_to_physical_column():
+    values = {
+        "resource_id": "resource-1",
+        "resource_metadata": {"size": 42},
+        "updated_at": None,
+    }
+
+    updates = _upsert_update_values(values)
+    statement = insert(SessionResourceDB).values(**values).on_conflict_do_update(
+        index_elements=[SessionResourceDB.resource_id],
+        set_=updates,
+    )
+
+    assert SessionResourceDB.__table__.c.metadata in updates
+    assert 'metadata = ' in str(statement)
+    assert 'resource_metadata = ' not in str(statement)
