@@ -390,11 +390,15 @@ async def get_session_resource_content(
     headers = {
         "Cache-Control": "private, max-age=300, immutable",
         "X-Content-Type-Options": "nosniff",
+        # HTML previews run in an intentionally opaque sandbox origin. Quarto's
+        # scripts, styles and fonts therefore require an explicit CORS grant.
+        "Access-Control-Allow-Origin": "*",
     }
     if media_type == "text/html":
         headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+            "script-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+            "object-src 'none'; base-uri 'none'"
         )
     filename = target.name if asset_path is not None else (resource.label or target.name)
     response = FileResponse(

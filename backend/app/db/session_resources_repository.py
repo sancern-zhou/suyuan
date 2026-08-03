@@ -76,6 +76,15 @@ def _insert_values(resource: StoredResource) -> dict:
     }
 
 
+def _upsert_update_values(values: dict) -> dict:
+    """Map ORM attribute keys to columns for PostgreSQL's ON CONFLICT clause."""
+    return {
+        getattr(SessionResourceDB, key).property.columns[0]: value
+        for key, value in values.items()
+        if key not in {"resource_id", "created_at"}
+    }
+
+
 class SessionResourcesRepository:
     def __init__(self, db_engine=None):
         self.engine = db_engine or engine
@@ -228,11 +237,7 @@ class SessionResourcesRepository:
                         turn_sequence=turn_sequence,
                     )
                     values = _insert_values(stored)
-                    updates = {
-                        key: value
-                        for key, value in values.items()
-                        if key not in {"resource_id", "created_at"}
-                    }
+                    updates = _upsert_update_values(values)
                     statement = insert(SessionResourceDB).values(**values)
                     statement = statement.on_conflict_do_update(
                         index_elements=[SessionResourceDB.resource_id],

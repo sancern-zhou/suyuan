@@ -25,6 +25,83 @@ def preview_output_path(*descriptors: Any) -> Path | None:
                 return candidate
     return None
 
+
+def attach_report_package_resources(
+    result_data: Dict[str, Any],
+    qmd_path: str | Path,
+    *,
+    report_id: str,
+    html_path: str | Path | None = None,
+    docx_path: str | Path | None = None,
+    share_html_path: str | Path | None = None,
+    generator: str = "report_package",
+) -> Dict[str, Any]:
+    """Attach one canonical ReportPackage snapshot rooted at report.qmd."""
+    source = Path(qmd_path).expanduser().resolve()
+    if source.suffix.lower() != ".qmd":
+        raise ValueError("report package primary must be a QMD file")
+
+    group_key = f"report:{report_id}"
+    primary = primary_file(
+        source,
+        group_key=group_key,
+        tool_name=generator,
+        role="report",
+        renderer="markdown",
+        capabilities=("preview", "download", "render"),
+        label=report_id,
+        metadata={"artifact_kind": "report", "report_id": report_id},
+    )
+    primary["resource_key"] = "qmd"
+    resources = [primary]
+
+    preview = Path(html_path).expanduser().resolve() if html_path else None
+    if preview is not None and preview.is_file():
+        html_preview = directory_artifact(
+            preview.parent,
+            entrypoint=preview.name,
+            group_key=group_key,
+            tool_name=generator,
+            role="report",
+            renderer="html",
+            capabilities=("preview",),
+            label=preview.name,
+        )
+        html_preview.update(
+            resource_key="html",
+            parent_key="qmd",
+            relation="preview",
+        )
+        resources.append(html_preview)
+
+    rendition_specs = (
+        ("docx", docx_path, "file"),
+        ("share_html", share_html_path, "html"),
+    )
+    for resource_key, raw_path, renderer in rendition_specs:
+        if not raw_path:
+            continue
+        rendition_path = Path(raw_path).expanduser().resolve()
+        if not rendition_path.is_file():
+            continue
+        rendition = derivative_file(
+            rendition_path,
+            group_key=group_key,
+            parent_key="qmd",
+            tool_name=generator,
+            relation="rendition",
+            role="report",
+            renderer=renderer,
+            capabilities=("download",),
+            label=rendition_path.name,
+        )
+        rendition["resource_key"] = resource_key
+        resources.append(rendition)
+
+    result_data["resources"] = resources
+    return result_data
+
+
 def attach_document_resources(
     result_data: Dict[str, Any],
     file_path: str | Path,
@@ -43,15 +120,33 @@ def attach_document_resources(
         else title or Path(file_path).stem
     )
     path = Path(file_path).expanduser().resolve()
+    fmt = (format or path.suffix.lstrip(".") or "document").lower()
     if kind == "report":
-        group_key = f"report:{logical_key}"
-    elif kind == "html_artifact":
+        if fmt != "qmd":
+            raise ValueError("report resources must keep report.qmd as the primary")
+        resolved_preview = None
+        if preview_path:
+            candidate = Path(preview_path).expanduser().resolve()
+            if candidate.is_file():
+                resolved_preview = candidate
+        if resolved_preview is None:
+            rendered_html = path.with_name("report.html")
+            if rendered_html.is_file():
+                resolved_preview = rendered_html
+        return attach_report_package_resources(
+            result_data,
+            path,
+            report_id=logical_key,
+            html_path=resolved_preview,
+            generator=generator or "document",
+        )
+
+    if kind == "html_artifact":
         group_key = f"html-artifact:{logical_key}"
     elif (format or path.suffix.lstrip(".")).lower() == "pptx":
         group_key = f"presentation:{logical_key}"
     else:
         group_key = f"office:{logical_key}"
-    fmt = (format or path.suffix.lstrip(".") or "document").lower()
     renderer_by_format = {
         "pdf": "pdf",
         "html": "html",
@@ -66,11 +161,9 @@ def attach_document_resources(
         "jpeg": "image",
         "svg": "image",
     }
-    role = "report" if kind == "report" else "output"
+    role = "output"
     capabilities = (
-        ("preview", "download", "render")
-        if kind == "report" and fmt == "qmd"
-        else ("preview", "download", "edit")
+        ("preview", "download", "edit")
         if fmt in {"docx", "xlsx", "pptx"}
         else ("preview", "download")
     )
@@ -94,16 +187,9 @@ def attach_document_resources(
             resolved_preview = candidate
     if kind == "html_artifact" and fmt == "html":
         resolved_preview = path
-    elif resolved_preview is None and kind == "report" and fmt == "qmd":
-        rendered_html = path.with_name("report.html")
-        if rendered_html.is_file():
-            resolved_preview = rendered_html
     if resolved_preview is not None:
         preview_fmt = resolved_preview.suffix.lower().lstrip(".") or "file"
-        if (
-            (kind == "report" and fmt == "qmd" and preview_fmt == "html")
-            or (kind == "html_artifact" and preview_fmt == "html")
-        ):
+        if kind == "html_artifact" and preview_fmt == "html":
             derivative = directory_artifact(
                 resolved_preview.parent,
                 entrypoint=resolved_preview.name,

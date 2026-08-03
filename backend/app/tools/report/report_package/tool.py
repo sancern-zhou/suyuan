@@ -31,6 +31,7 @@ from app.services.report_preview_refresh import (
 )
 from app.tools.artifact_utils import (
     attach_document_resources,
+    attach_report_package_resources,
     build_artifact_resume_context,
     preview_output_path,
 )
@@ -809,59 +810,61 @@ class RenderReportPackageTool(LLMTool):
         try:
             if format == "html":
                 path = quarto_report_renderer.render_preview_html(safe_id)
+                qmd_path = quarto_report_renderer.get_report_dir(safe_id) / "report.qmd"
                 meta = record_report_update(safe_id, source="render_report_package_html", html_path=path)
                 data = {
                     "report_id": safe_id,
-                    "file_path": str(quarto_report_renderer.get_report_dir(safe_id) / "report.qmd"),
+                    "file_path": str(qmd_path),
                     "path": str(path),
                     "file_type": "report",
                     "generator": "render_report_package",
                     "html_preview": build_report_html_preview(safe_id, path),
                     "version": meta.get("version"),
                 }
-                attach_document_resources(
+                attach_report_package_resources(
                     data,
-                    path,
-                    kind="report",
-                    format="html",
-                    title=safe_id,
-                    preview_path=path,
+                    qmd_path,
+                    report_id=safe_id,
+                    html_path=path,
                     generator="render_report_package",
-                    metadata={"report_id": safe_id},
                 )
             elif format == "docx":
                 path = quarto_report_renderer.render_docx(safe_id)
+                report_dir = quarto_report_renderer.get_report_dir(safe_id)
+                qmd_path = report_dir / "report.qmd"
                 data = {
                     "report_id": safe_id,
-                    "file_path": str(path),
+                    "file_path": str(qmd_path),
+                    "path": str(path),
                     "file_type": "report",
                     "generator": "render_report_package",
                 }
-                attach_document_resources(
+                attach_report_package_resources(
                     data,
-                    path,
-                    kind="report",
-                    format="docx",
-                    title=safe_id,
+                    qmd_path,
+                    report_id=safe_id,
+                    html_path=report_dir / "report.html",
+                    docx_path=path,
                     generator="render_report_package",
-                    metadata={"report_id": safe_id},
                 )
             elif format == "share_html":
                 path = quarto_report_renderer.render_share_html(safe_id)
+                report_dir = quarto_report_renderer.get_report_dir(safe_id)
+                qmd_path = report_dir / "report.qmd"
                 data = {
                     "report_id": safe_id,
-                    "file_path": str(path),
+                    "file_path": str(qmd_path),
+                    "path": str(path),
                     "file_type": "report",
                     "generator": "render_report_package",
                 }
-                attach_document_resources(
+                attach_report_package_resources(
                     data,
-                    path,
-                    kind="report",
-                    format="html",
-                    title=safe_id,
+                    qmd_path,
+                    report_id=safe_id,
+                    html_path=report_dir / "report.html",
+                    share_html_path=path,
                     generator="render_report_package",
-                    metadata={"report_id": safe_id},
                 )
             else:
                 return {"success": False, "data": {"error": f"不支持的格式: {format}"}, "summary": "报告渲染格式不支持"}

@@ -224,3 +224,42 @@ async def test_preview_ticket_serves_bound_resource_and_sets_scoped_asset_cookie
     assert "HttpOnly" in cookie
     assert "Secure" in cookie
     assert "Path=/api/suyuan/sessions/session-1/resources/resource-1/content" in cookie
+
+
+@pytest.mark.asyncio
+async def test_html_preview_allows_quarto_assets_from_opaque_sandbox_origin(
+    tmp_path, monkeypatch
+):
+    registry = tmp_path / "registry"
+    artifact = registry / "artifact"
+    asset = artifact / "report_files" / "quarto.js"
+    asset.parent.mkdir(parents=True)
+    (artifact / "report.html").write_text("<script src='report_files/quarto.js'></script>")
+    asset.write_text("window.quarto = true")
+    install_service(
+        monkeypatch,
+        stored(
+            artifact,
+            kind="artifact",
+            format="html",
+            media_type="text/html",
+            renderer="html",
+            metadata={"entrypoint": "report.html"},
+        ),
+    )
+    monkeypatch.setattr(session_resource_routes, "get_data_registry", lambda: registry)
+
+    html = await session_resource_routes.get_session_resource_content(
+        "session-1", "resource-1", user=object(), catalog=Catalog()
+    )
+    script = await session_resource_routes.get_session_resource_content(
+        "session-1",
+        "resource-1",
+        asset_path="report_files/quarto.js",
+        user=object(),
+        catalog=Catalog(),
+    )
+
+    assert html.headers["access-control-allow-origin"] == "*"
+    assert script.headers["access-control-allow-origin"] == "*"
+    assert "font-src 'self' data:" in html.headers["content-security-policy"]

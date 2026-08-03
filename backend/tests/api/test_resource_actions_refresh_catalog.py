@@ -20,7 +20,7 @@ async def test_report_render_attaches_derivative_and_returns_only_receipt(tmp_pa
             tool_name="create_report_package",
             role="report",
             renderer="markdown",
-            capabilities=("preview", "download", "edit"),
+            capabilities=("preview", "download", "render"),
         )
     )
     published = await service.publish_group(

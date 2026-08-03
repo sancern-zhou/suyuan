@@ -45,6 +45,30 @@ def test_prepare_docx_qmd_normalizes_tight_chinese_ascii_quotes_without_overwrit
     assert qmd_path.read_text(encoding="utf-8") == source
 
 
+def test_prepare_docx_qmd_normalizes_chinese_ascii_quotes_in_markdown_table(
+    tmp_path,
+):
+    report_root = tmp_path / "reports"
+    source = (
+        "| 目标 | 说明 |\n"
+        "|------|------|\n"
+        '| 污染过程"说得清" | 覆盖全部污染类型 |\n'
+        '| 达标形势"算得明" | 测算年度目标进度 |\n'
+    )
+    report_dir = _write_report(report_root, "air_report", source)
+    qmd_path = report_dir / "report.qmd"
+    renderer = QuartoReportRenderer(report_root=report_root)
+
+    prepared = renderer._prepare_docx_qmd(report_dir, qmd_path)
+
+    assert prepared.read_text(encoding="utf-8") == (
+        "| 目标 | 说明 |\n"
+        "|------|------|\n"
+        "| 污染过程“说得清” | 覆盖全部污染类型 |\n"
+        "| 达标形势“算得明” | 测算年度目标进度 |\n"
+    )
+
+
 def test_prepare_docx_qmd_normalizes_only_markdown_prose(tmp_path):
     report_root = tmp_path / "reports"
     source = '''---
