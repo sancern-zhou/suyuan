@@ -15,6 +15,7 @@ REFERENCE_DIR = Path(__file__).resolve().parent / "references"
 def report_chart_reference_paths() -> Dict[str, str]:
     return {
         "index": str(REFERENCE_DIR / "index.md"),
+        "data_input": str(REFERENCE_DIR / "data-input.md"),
         "word_a4_rules": str(REFERENCE_DIR / "word-a4-rules.md"),
         "layout_rules": str(REFERENCE_DIR / "layout-rules.md"),
         "long_label_rules": str(REFERENCE_DIR / "long-label-rules.md"),
@@ -50,6 +51,8 @@ class CreateReportChartTool(LLMTool):
         description = (
             "创建正式报告（Word/QMD）静态图表，支持多种预定义分析图表类型。"
             f"先读 references/index.md={reference_paths['index']}，再按图型读取规则。"
+            f"数据输入先读 data-input.md={reference_paths['data_input']}。"
+            "必须通过 data 或 data_id 至少提供一种数据输入，不支持文件路径。"
             "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
         )
@@ -103,12 +106,17 @@ class CreateReportChartTool(LLMTool):
                             "单序列可传 series[0].data 或 series[0].values。"
                             "line/bar 支持多序列 series，每个序列使用 name + data/values。"
                             "combo 使用 labels + series[{name,type,values,axis,stack}]，type 仅 bar/line。"
-                            "使用 data_id 时，数据应已保存为上述图表数据对象。"
+                            "普通图表不会自动推断任意 records 的横轴、纵轴或系列字段。"
+                            "与 data_id 同时提供时，data 用于渲染，data_id 仅用于来源追踪。"
                         ),
                     },
                     "data_id": {
                         "type": "string",
-                        "description": "上游数据引用ID；与 data 二选一。",
+                        "description": (
+                            "DataRegistry 上游数据引用 ID。未提供 data 时，工具通过 ExecutionContext 自动读取，"
+                            "Agent 无需调用 get_raw_data；普通图表的数据资产应已整理为目标图型结构。"
+                            "与 data 同时提供时仅用于来源追踪。不支持文件路径，也不要猜测物理存储位置。"
+                        ),
                     },
                     "output_context": {
                         "type": "string",
@@ -135,6 +143,10 @@ class CreateReportChartTool(LLMTool):
                     },
                 },
                 "required": ["chart_type", "title"],
+                "anyOf": [
+                    {"required": ["data"]},
+                    {"required": ["data_id"]},
+                ],
             },
         }
         super().__init__(
@@ -169,6 +181,14 @@ class CreateReportChartTool(LLMTool):
             "style_profile": style_profile or "report",
             "reference_paths": report_chart_reference_paths(),
         }
+        if data is None and not data_id:
+            return self._failed_result(
+                "必须提供 data 或 data_id 作为图表数据输入；不支持文件路径。",
+                metadata,
+                chart_type,
+                title,
+                data_id,
+            )
         if opts.get("dry_run"):
             result = {
                 "success": True,
@@ -241,7 +261,7 @@ class CreateReportChartTool(LLMTool):
         if data is not None:
             return data
         if not data_id:
-            return {}
+            raise ChartDataError("必须提供 data 或 data_id 作为图表数据输入；不支持文件路径。")
         if context is None:
             raise ChartDataError("使用 data_id 调用 create_report_chart 需要 ExecutionContext。")
 

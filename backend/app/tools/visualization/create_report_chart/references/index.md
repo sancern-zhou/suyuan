@@ -4,6 +4,12 @@ Read this file first, then read only the documents needed for the requested
 chart. The tool schema is compact on purpose; detailed chart design rules live
 in these progressive reference files.
 
+## Data Input
+
+- Read `data-input.md` before the first call or whenever choosing between
+  inline `data` and a DataRegistry `data_id`.
+- The tool does not accept a file path as chart data input.
+
 ## Always Read For Reports
 
 - `word-a4-rules.md`: required for Word or QMD report images.

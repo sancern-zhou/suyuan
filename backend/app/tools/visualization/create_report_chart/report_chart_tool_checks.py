@@ -30,8 +30,14 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "options",
     }
     assert schema["parameters"]["required"] == ["chart_type", "title"]
+    assert schema["parameters"]["anyOf"] == [
+        {"required": ["data"]},
+        {"required": ["data_id"]},
+    ]
     assert len(str(schema)) < 7000
     assert "references/index.md" in schema["description"]
+    assert "data-input.md" in schema["description"]
+    assert "不支持文件路径" in schema["description"]
     assert properties["chart_type"]["enum"] == [
         "bar",
         "horizontal_bar",
@@ -64,6 +70,11 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "series[0].values" in properties["data"]["description"]
     assert "多序列" in properties["data"]["description"]
     assert "data_id" in properties["data"]["description"]
+    assert "不会自动推断" in properties["data"]["description"]
+    assert "ExecutionContext" in properties["data_id"]["description"]
+    assert "无需调用 get_raw_data" in properties["data_id"]["description"]
+    assert "来源追踪" in properties["data_id"]["description"]
+    assert "文件路径" in properties["data_id"]["description"]
     assert "reference_lines" in properties["options"]["description"]
 
 
@@ -72,6 +83,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
 
     expected_keys = {
         "index",
+        "data_input",
         "word_a4_rules",
         "layout_rules",
         "long_label_rules",
@@ -106,12 +118,16 @@ def test_reference_paths_include_specialized_chart_type_documents():
     pollutant_wind_rose_text = Path(paths["pollutant_wind_rose"]).read_text(encoding="utf-8")
     pollutant_calendar_text = Path(paths["pollutant_calendar"]).read_text(encoding="utf-8")
     generic_wind_rose_text = Path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
+    data_input_text = Path(paths["data_input"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
     assert "pollutant_wind_rose" in pollutant_wind_rose_text
     assert "广东省专用" in pollutant_wind_rose_text
     assert "pollutant_calendar" in pollutant_calendar_text
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
+    assert "`data` 或 `data_id`" in data_input_text
+    assert "不支持文件路径" in data_input_text
+    assert "不会自动推断" in data_input_text
 
 
 def test_renderer_selects_existing_chinese_font_file_when_available():
@@ -872,6 +888,18 @@ async def test_line_chart_rejects_mismatched_label_and_value_lengths():
     assert result["status"] == "failed"
     assert "labels/x 长度为 3，values/y 长度为 2" in result["error"]
     assert result["visuals"] == []
+
+
+@pytest.mark.asyncio
+async def test_missing_data_and_data_id_returns_input_contract_error():
+    result = await CreateReportChartTool().execute(
+        chart_type="bar",
+        title="缺少数据输入",
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert "必须提供 data 或 data_id" in result["error"]
 
 
 @pytest.mark.asyncio
