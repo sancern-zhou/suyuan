@@ -337,7 +337,7 @@ class CreateReportChartTool(LLMTool):
                         format=path.suffix.lstrip(".") or None,
                         size=path.stat().st_size if path.exists() else None,
                         usage="report_chart",
-                        preferred_for=["present_artifact", "read_file"],
+                        preferred_for=["read_file", "list_session_resources"],
                         visual_id=visual_id,
                     )
                 )

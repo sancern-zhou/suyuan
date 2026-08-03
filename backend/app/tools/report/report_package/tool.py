@@ -748,8 +748,8 @@ format:
             data,
             qmd_path,
             tool_hint=(
-                f"Use read_file(path='{qmd_path}') to inspect the report source, "
-                f"or present_artifact(file_path='{primary_artifact_path}') to preview it."
+                f"Use read_file(path='{qmd_path}') to inspect the report source; "
+                "preview and download resources are published automatically."
             ),
             extra_resume={
                 "report_id": safe_id,

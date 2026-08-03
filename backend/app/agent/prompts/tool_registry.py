@@ -25,7 +25,7 @@ ASSISTANT_TOOL_NAMES = [
     "manage_editable_ppt", "create_pptx_with_ppt_master", "validate_pptx",
 
     # 报告/展示产物
-    "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact", "present_artifact",
+    "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact",
 
     # 编辑
     "write_file", "edit_file", "grep",
@@ -61,7 +61,7 @@ PPT_TOOL_NAMES = [
     # 文件读取与直接源码编辑
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart", "execute_python", "present_artifact",
+    "create_report_chart", "execute_python",
     # 用户材料、知识库与外部资料
     "knowledge_qa_workflow", "knowledge_document_reader",
     "web_search", "web_fetch", "browser",
@@ -89,7 +89,7 @@ EXPERT_TOOL_NAMES = [
     "calculate_crustal", "calculate_trace", "predict_air_quality",
 
     # 可视化
-    "generate_map", "create_report_chart", "present_artifact",
+    "generate_map", "create_report_chart",
 
     # 代码执行
     "execute_python",
@@ -155,7 +155,7 @@ REPORT_TOOL_NAMES = [
     "read_data_registry",
 
     # 文件和执行
-    "read_file", "write_file", "present_artifact", "edit_file", "grep",
+    "read_file", "write_file", "edit_file", "grep",
     "list_directory", "search_files", "bash",
     "create_report_chart", "execute_python",
 
@@ -168,7 +168,7 @@ CHART_TOOL_NAMES = [
     "list_session_resources",
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
-    "bash", "present_artifact",
+    "bash",
 
     # 代码执行和原生多模态视觉参考
     "create_report_chart", "execute_python", "execute_echarts_python",
@@ -206,7 +206,7 @@ OPS_TOOL_NAMES = [
     "knowledge_graph_query", "execute_ops_sql_query",
 
     # 展示型流程图（已废弃 create_diagram_artifact，使用画板模式替代）
-    "create_report_chart", "present_artifact",
+    "create_report_chart",
 
     # 报告产物收口
     "create_report_package", "render_report_package", "validate_report_package",

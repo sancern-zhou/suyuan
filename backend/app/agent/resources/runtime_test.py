@@ -146,6 +146,36 @@ async def test_executor_persists_resources_before_returning_result(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_executor_does_not_report_success_when_resource_publication_fails(tmp_path):
+    generated = tmp_path / "page.html"
+    generated.write_text("<h1>page</h1>", encoding="utf-8")
+
+    async def tool(**_):
+        declaration = primary_file(
+            generated,
+            group_key="html-artifact:broken",
+            tool_name="create_html_artifact",
+            renderer="html",
+            capabilities=("preview", "download"),
+        )
+        return {"success": True, "resources": [declaration, dict(declaration)]}
+
+    executor = ToolExecutor(tool_registry={"create_html_artifact": tool})
+    executor.memory_manager = SimpleNamespace(session_id="session-broken")
+    executor.configure_resource_tracking(
+        service=SessionResourceService.in_memory(),
+        context_builder=SimpleNamespace(session_resource_context=""),
+    )
+
+    result = await executor.execute_tool("create_html_artifact", {}, iteration=1)
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert result["error"] == "resource_persistence_failed"
+    assert "资源发布失败" in result["summary"]
+
+
+@pytest.mark.asyncio
 async def test_executor_rejects_resources_from_superseded_run(tmp_path):
     generated = tmp_path / "stale.txt"
     generated.write_text("stale", encoding="utf-8")

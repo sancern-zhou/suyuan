@@ -60,7 +60,7 @@ def build_ppt_prompt(
         "- 编译后调用 `validate_pptx` 或 `manage_editable_ppt(operation=\"validate\")`；"
         "发现问题时回到源码修复、重新编译和验证。\n",
         "- 只有当前 revision 的严格编译与验证均通过后才能 finalize 和交付。\n",
-        "- 只有 finalize 返回 success=true 才能调用 present_artifact；如果失败，必须继续修复，"
+        "- 只有 finalize 返回 success=true 且产物资源发布成功才算交付；如果失败，必须继续修复，"
         "不得用旧 PPTX 或文字宣称完成。\n",
         "- 最终回复说明产物、页数、验证结果及仍存在的限制，不把本地绝对路径当作主要交付内容。\n",
     ]

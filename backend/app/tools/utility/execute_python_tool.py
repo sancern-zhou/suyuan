@@ -947,7 +947,7 @@ class ExecutePythonTool(LLMTool):
                     format=path_obj.suffix.lstrip(".").lower() or None,
                     size=path_obj.stat().st_size if path_obj.exists() else None,
                     usage="generated_file",
-                    preferred_for=["present_artifact", "read_file"],
+                    preferred_for=["read_file", "list_session_resources"],
                 )
             )
 
@@ -991,7 +991,7 @@ class ExecutePythonTool(LLMTool):
         llm_resume: Dict[str, Any] = {}
         if file_paths:
             llm_resume["generated_files"] = file_paths
-            llm_resume["tool_hint"] = f"Use present_artifact(file_path='{file_paths[0]}') to preview the primary generated file."
+            llm_resume["tool_hint"] = "Generated file resources are published automatically; use list_session_resources to inspect them."
         if data_refs:
             llm_resume["data_ids"] = [ref["data_id"] for ref in data_refs]
         if visual_refs and "tool_hint" not in llm_resume:
