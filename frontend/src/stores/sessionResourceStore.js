@@ -9,6 +9,7 @@ const emptySessionState = () => ({
   selectedResourceId: null,
   selectedGroupId: null,
   selectionOrigin: null,
+  presentationRequest: null,
   loading: false,
   error: null,
   requestToken: 0
@@ -90,15 +91,43 @@ const refreshIfNewer = async (store, client, sessionId, resourceVersion) => {
   return loadCatalog(store, client, sessionId, { minimumVersion: version })
 }
 
+const applyResourcesChanged = async (store, client, event) => {
+  if (!event?.session_id) return null
+  const state = await refreshIfNewer(store, client, event.session_id, event.resource_version)
+  const focusResourceId = event.focus_resource_id || ''
+  if (!state || !focusResourceId) return state
+  const resource = state.resources.find(item => (
+    item.resource_id === focusResourceId && item.status === 'active'
+  ))
+  if (resource) {
+    state.presentationRequest = {
+      resourceId: resource.resource_id,
+      resourceVersion: Number(event.resource_version || state.resourceVersion || 0)
+    }
+  }
+  return state
+}
+
+const consumePresentationRequest = (store, sessionId, resourceId = '') => {
+  const state = sessionState(store, sessionId)
+  if (!state?.presentationRequest) return null
+  if (resourceId && state.presentationRequest.resourceId !== resourceId) return state.presentationRequest
+  const request = state.presentationRequest
+  state.presentationRequest = null
+  return request
+}
+
 const createActions = (store, client) => ({
   sessionState: sessionId => sessionState(store, sessionId),
   selectedResource: sessionId => selectedResource(store, sessionId),
   loadCatalog: (sessionId, filters = {}) => loadCatalog(store, client, sessionId, filters),
   refreshIfNewer: (sessionId, version) => refreshIfNewer(store, client, sessionId, version),
   onResourcesChanged: event => {
-    if (!event?.session_id) return null
-    return refreshIfNewer(store, client, event.session_id, event.resource_version)
+    return applyResourcesChanged(store, client, event)
   },
+  consumePresentationRequest: (sessionId, resourceId = '') => (
+    consumePresentationRequest(store, sessionId, resourceId)
+  ),
   selectResource: (sessionId, resourceId, origin = 'product') => {
     const state = ensureSession(store, sessionId)
     state.selectedResourceId = resourceId || null
@@ -145,8 +174,10 @@ export const useSessionResourceStore = defineStore('sessionResources', {
       return refreshIfNewer(this, { listResources: listSessionResources }, sessionId, version)
     },
     onResourcesChanged(event) {
-      if (!event?.session_id) return null
-      return this.refreshIfNewer(event.session_id, event.resource_version)
+      return applyResourcesChanged(this, { listResources: listSessionResources }, event)
+    },
+    consumePresentationRequest(sessionId, resourceId = '') {
+      return consumePresentationRequest(this, sessionId, resourceId)
     },
     selectResource(sessionId, resourceId, origin = 'product') {
       const state = ensureSession(this, sessionId)

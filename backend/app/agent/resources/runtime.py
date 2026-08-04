@@ -42,17 +42,21 @@ class ResourceEventResult:
     catalog_version: int
     changed_resource_ids: list[str] = field(default_factory=list)
     rejected: list[dict[str, str]] = field(default_factory=list)
+    focus_resource_id: str | None = None
 
     def changed_event(self, session_id: str, run_id: str) -> dict[str, Any]:
+        data = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "resource_version": self.catalog_version,
+            "changed_resource_ids": self.changed_resource_ids,
+            **({"rejected": self.rejected} if self.rejected else {}),
+        }
+        if self.focus_resource_id:
+            data["focus_resource_id"] = self.focus_resource_id
         return {
             "type": "resources_changed",
-            "data": {
-                "session_id": session_id,
-                "run_id": run_id,
-                "resource_version": self.catalog_version,
-                "changed_resource_ids": self.changed_resource_ids,
-                **({"rejected": self.rejected} if self.rejected else {}),
-            },
+            "data": data,
         }
 
 
@@ -93,12 +97,17 @@ async def persist_tool_result_resources(
     result = _successful_result(event)
     if result is None:
         return None
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
+    focus_requested = tool_name == "publish_session_file"
     tracking = result.get("resource_tracking")
     if isinstance(tracking, dict) and tracking.get("durable") is True:
+        resource_ids = list(tracking.get("resource_ids") or [])
         return ResourceEventResult(
             catalog_version=int(tracking.get("version") or 0),
-            changed_resource_ids=list(tracking.get("resource_ids") or []),
+            changed_resource_ids=resource_ids,
             rejected=list(tracking.get("rejected") or []),
+            focus_resource_id=resource_ids[0] if focus_requested and resource_ids else None,
         )
 
     declarations, rejected = normalize_tool_resources(result=result)
@@ -106,8 +115,6 @@ async def persist_tool_result_resources(
         return None
     if rejected:
         raise ValueError(f"invalid resource declarations: {rejected}")
-    data = event.get("data") if isinstance(event.get("data"), dict) else {}
-    tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
     if tool_name:
         declarations = [
             item.model_copy(update={"tool_name": tool_name}) for item in declarations
@@ -128,14 +135,24 @@ async def persist_tool_result_resources(
             catalog_version=await service.catalog_version(session_id),
             rejected=rejected,
         )
+    changed_resources = [
+        resource
+        for publication in published
+        for resource in publication.resources
+    ]
+    focus_resource = next(
+        (resource for resource in changed_resources if resource.relation == "primary"),
+        changed_resources[0] if changed_resources else None,
+    )
     return ResourceEventResult(
         catalog_version=max(item.catalog_version for item in published),
-        changed_resource_ids=[
-            resource.resource_id
-            for publication in published
-            for resource in publication.resources
-        ],
+        changed_resource_ids=[resource.resource_id for resource in changed_resources],
         rejected=rejected,
+        focus_resource_id=(
+            focus_resource.resource_id
+            if focus_requested and focus_resource is not None
+            else None
+        ),
     )
 
 

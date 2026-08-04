@@ -270,8 +270,13 @@ export function usePanelManagement(store = null) {
     let previousArtifactCount = 0
     let previousSessionId = null
     watch(
-      () => [resourceStore.activeSessionId, resourceStore.activeSessionState?.resourceVersion],
-      () => {
+      () => [
+        resourceStore.activeSessionId,
+        resourceStore.activeSessionState?.resourceVersion,
+        resourceStore.activeSessionState?.presentationRequest?.resourceId,
+        resourceStore.activeSessionState?.presentationRequest?.resourceVersion
+      ],
+      async () => {
         const sessionId = resourceStore.activeSessionId
         const summary = resourceSummary.value
         if (sessionId !== previousSessionId) {
@@ -279,6 +284,33 @@ export function usePanelManagement(store = null) {
           previousArtifactCount = 0
           activeTabUserSelected.value = false
           rightPanelDismissed.value = false
+        }
+        const presentationRequest = resourceStore.activeSessionState?.presentationRequest
+        if (sessionId && presentationRequest) {
+          const resource = resourceStore.activeSessionState?.resources.find(
+            item => item.resource_id === presentationRequest.resourceId && item.status === 'active'
+          )
+          const group = buildResourceGroups(resourceStore.activeSessionState?.resources || [])
+            .find(item => item.group_id === resource?.group_id)
+          const allowed = resource && group ? await confirmResourcePreviewLeave() : false
+          const currentRequest = resourceStore.activeSessionState?.presentationRequest
+          if (
+            currentRequest?.resourceId !== presentationRequest.resourceId
+            || currentRequest?.resourceVersion !== presentationRequest.resourceVersion
+          ) return
+          resourceStore.consumePresentationRequest(sessionId, presentationRequest.resourceId)
+          if (allowed) {
+            resourceStore.selectGroup(sessionId, group.group_id)
+            resourceStore.selectResource(sessionId, resource.resource_id, 'publication')
+            activeRightTab.value = targetTab(group)
+            activeTabUserSelected.value = false
+            rightPanelDismissed.value = false
+            rightPanelVisible.value = true
+            leftSidebarCollapsed.value = true
+            vizWidth.value = collapsedVizWidth
+            previousArtifactCount = summary.counts.files
+            return
+          }
         }
         if (sessionId && summary.hasArtifacts && !explicitAttachment.value) {
           const restored = chooseRestoredResource(resourceStore, sessionId)

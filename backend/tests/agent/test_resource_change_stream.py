@@ -87,6 +87,29 @@ async def test_tool_resources_are_committed_before_change_event():
     changed = next(event for event in emitted if event["type"] == "resources_changed")
     assert changed["data"]["resource_version"] == 1
     assert changed["data"]["changed_resource_ids"] == ["resource-1"]
+    assert "focus_resource_id" not in changed["data"]
+
+
+@pytest.mark.asyncio
+async def test_publish_session_file_change_event_requests_focus():
+    class RecordingService:
+        async def publish_group(self, *_args, **_kwargs):
+            return ResourcePublishResult(1, 1, [stored()])
+
+    event = tool_result_event()
+    event["data"]["tool_name"] = "publish_session_file"
+    emitted = [
+        item
+        async for item in stream_with_resources(
+            [event],
+            service=RecordingService(),
+            session_id="session-1",
+            run_id="run-1",
+        )
+    ]
+
+    changed = next(item for item in emitted if item["type"] == "resources_changed")
+    assert changed["data"]["focus_resource_id"] == "resource-1"
 
 
 @pytest.mark.asyncio
