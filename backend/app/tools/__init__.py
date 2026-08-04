@@ -98,13 +98,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="get_current_weather", error=str(e))
 
     try:
-        from app.tools.query.get_weather_situation_map.tool import GetWeatherSituationMapTool
-        registry.register(GetWeatherSituationMapTool(), priority=16)
-        logger.info("tool_loaded", tool="get_weather_situation_map")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_weather_situation_map", error=str(e))
-
-    try:
         from app.tools.query.get_platform_weather_image.tool import GetPlatformWeatherImageTool
         registry.register(GetPlatformWeatherImageTool(), priority=17)
         logger.info("tool_loaded", tool="get_platform_weather_image")
