@@ -101,6 +101,7 @@ nul
 # Documentation/Summary files (optional)
 *_SUMMARY.md
 *_GUIDE.md
+!app/tools/**/*_GUIDE.md
 *_UPDATE_SUMMARY.md
 *_LOG_REVIEW.md
 
