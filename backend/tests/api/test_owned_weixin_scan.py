@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,59 @@ from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.social.binding_schemas import SocialBindingRecord, WeixinScanTaskRecord
 from app.social.binding_service import get_social_binding_service
+from app.tools.social.web_search.tool import WebSearchTool
+from app.utils import path_config
+from config import social_config
+from config.settings import Settings
+
+
+def test_default_social_config_path_is_project_relative_backend_path():
+    assert (
+        Settings.model_fields["social_config_path"].default
+        == "backend/config/social_config.yaml"
+    )
+
+
+def test_social_config_helpers_resolve_relative_paths_from_project_root(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(social_config, "get_social_dir", lambda: tmp_path / "social")
+
+    config = social_config.SocialConfig(
+        weixin=social_config.WeixinConfig(
+            enabled=True,
+            accounts=[
+                social_config.WeixinAccountConfig(
+                    id="saved-account",
+                    name="Saved account",
+                    token="saved-token",
+                )
+            ],
+        )
+    )
+
+    relative_path = "backend/config/social_config.yaml"
+    assert social_config.save_social_config(config, relative_path)
+    assert (tmp_path / relative_path).is_file()
+
+    loaded = social_config.load_social_config(relative_path)
+    assert loaded.weixin.enabled is True
+    assert [account.id for account in loaded.weixin.accounts] == ["saved-account"]
+
+
+def test_social_web_search_uses_the_shared_project_relative_config_path(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("SOCIAL_CONFIG_PATH", raising=False)
+    config_path = tmp_path / "backend/config/social_config.yaml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("web_search:\n  api_key: expected-key\n", encoding="utf-8")
+
+    assert WebSearchTool._load_config_key("web_search", "api_key") == "expected-key"
 
 
 class FakeChannel:

@@ -9,7 +9,7 @@
     cd backend
     python -m uvicorn app.main:app --reload
 
-主应用启动时会自动启动社交平台服务（根据config/social_config.yaml配置）。
+主应用启动时会自动启动社交平台服务（根据backend/config/social_config.yaml配置）。
 
 方式2：独立CLI服务（开发调试用）
 ----------------------------
@@ -20,7 +20,7 @@
 
 注意：独立CLI模式与主应用模式不能同时运行，会冲突。
 
-配置文件：config/social_config.yaml
+配置文件：backend/config/social_config.yaml
 """
 
 import asyncio
@@ -69,7 +69,7 @@ async def main():
 
     if not any([social_config.qq.enabled, social_config.weixin.enabled,
                 social_config.dingtalk.enabled]):
-        logger.warning("No social platforms enabled. Please enable at least one platform in config/social_config.yaml")
+        logger.warning("No social platforms enabled. Please enable at least one platform in backend/config/social_config.yaml")
         return
 
     # Initialize components
