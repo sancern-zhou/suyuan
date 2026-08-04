@@ -26,6 +26,7 @@ from anthropic import APIStatusError, APITimeoutError
 from app.services.bailian_multimodal import call_bailian_vision
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from config.settings import settings
+from app.utils.path_config import BACKEND_ROOT, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -59,7 +60,7 @@ class AnalyzeImageTool(LLMTool):
         )
 
         # 工作目录（用于相对路径解析）
-        self.working_dir = Path(__file__).parent.parent.parent.parent.parent.parent
+        self.working_dir = BACKEND_ROOT
         self.max_image_size = 5 * 1024 * 1024  # 5MB
 
     async def execute(
@@ -314,12 +315,7 @@ class AnalyzeImageTool(LLMTool):
     def _resolve_path(self, path: str) -> Optional[Path]:
         """解析本地文件路径"""
         try:
-            file_path = Path(path)
-            if not file_path.is_absolute():
-                file_path = self.working_dir / file_path
-            file_path = file_path.resolve()
-
-            return file_path
+            return resolve_agent_path(path)
         except Exception:
             return None
 

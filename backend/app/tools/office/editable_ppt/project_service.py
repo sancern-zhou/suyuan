@@ -13,6 +13,7 @@ from typing import Iterable
 
 from app.tools.office.editable_ppt.contracts import ChangeRecord, ProjectState
 from app.utils.path_config import get_data_registry
+from app.utils.path_config import resolve_agent_path
 
 
 class RevisionConflictError(RuntimeError):
@@ -251,7 +252,7 @@ class EditablePptProjectService:
         return sorted(dirty)
 
     def _project_root(self, project_dir: str | Path) -> Path:
-        root = Path(project_dir).resolve()
+        root = resolve_agent_path(project_dir)
         try:
             root.relative_to(self.projects_root)
         except ValueError as exc:

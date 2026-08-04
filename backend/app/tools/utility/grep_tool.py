@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import format_agent_path, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -116,7 +117,7 @@ class GrepTool(LLMTool):
 自动跳过 logs/, node_modules/, .git/, __pycache__ 等目录。
 
 示例：
-- grep(pattern="query_standard", path="app/agent")                          # 搜索agent目录
+- grep(pattern="query_standard", path="backend/app/agent")                  # 搜索agent目录
 - grep(pattern="class.*Agent", type="py")                                    # 搜索Python文件
 - grep(pattern="def execute", output_mode="content")                         # 显示匹配行
 - grep(pattern="TODO|FIXME", case_insensitive=True)                          # 忽略大小写
@@ -127,7 +128,7 @@ class GrepTool(LLMTool):
 
 参数说明：
 - pattern: 正则表达式（必填）
-- path: 搜索路径，相对于backend/（默认 "."）
+- path: 搜索路径（默认 "."）
 - glob: Glob模式过滤文件（如 "*.{py,ts}", "**/*.test.js"）
 - type: 文件类型（py/js/ts/json/yaml/md/txt/html/css/sh/sql/xml）
 - output_mode: content（匹配行）/ files_with_matches（文件列表）/ count（统计）
@@ -271,9 +272,7 @@ class GrepTool(LLMTool):
     def _resolve_path(self, path: str) -> Optional[Path]:
         """解析搜索路径"""
         try:
-            # 相对于 backend/ 目录
-            search_path = self.backend_dir / path
-            return search_path.resolve()
+            return resolve_agent_path(path)
         except Exception:
             return None
 
@@ -647,13 +646,7 @@ class GrepTool(LLMTool):
 
     def _to_rel_path(self, path: str) -> str:
         """转换为相对路径（相对于项目根目录，格式：backend/xxx）"""
-        try:
-            # 先转换为相对于backend/的路径
-            rel_to_backend = Path(path).relative_to(self.backend_dir)
-            # 然后添加 backend/ 前缀
-            return f"backend/{rel_to_backend}"
-        except ValueError:
-            return path
+        return format_agent_path(path)
 
     def _to_rel_path_in_content(self, line: str) -> str:
         """
@@ -673,7 +666,7 @@ class GrepTool(LLMTool):
         """获取 Function Calling Schema"""
         return {
             "name": "grep",
-            "description": "在 backend/ 内用 ripgrep 搜索文件内容；支持正则、过滤、上下文和分页。",
+            "description": "在 suyuan 项目内用 ripgrep 搜索文件内容；支持正则、过滤、上下文和分页。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -683,7 +676,7 @@ class GrepTool(LLMTool):
                     },
                     "path": {
                         "type": "string",
-                        "description": "相对 backend/ 的路径。",
+                        "description": "文件或目录搜索路径。",
                         "default": "."
                     },
                     "glob": {

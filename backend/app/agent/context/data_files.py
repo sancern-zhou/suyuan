@@ -11,15 +11,11 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from config.settings import settings
+from app.utils.path_config import get_data_registry
 
 
 def get_data_root() -> Path:
-    configured = Path(settings.data_registry_dir)
-    if configured.is_absolute():
-        return configured.resolve()
-    backend_root = Path(__file__).resolve().parents[3]
-    return (backend_root / configured).resolve()
+    return get_data_registry()
 
 
 def safe_file_stem(value: str) -> str:

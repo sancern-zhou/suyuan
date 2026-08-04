@@ -13,6 +13,7 @@ from docx.oxml.table import CT_Tbl
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -124,7 +125,7 @@ class ReadDocxTool(LLMTool):
                     "summary": "DOCX分页参数无效",
                 }
 
-            file_path = Path(path)
+            file_path = resolve_agent_path(path)
 
             # 验证文件存在
             if not file_path.exists():

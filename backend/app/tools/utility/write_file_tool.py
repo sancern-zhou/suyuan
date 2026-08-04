@@ -34,7 +34,7 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.utils.path_config import BACKEND_ROOT
+from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -180,7 +180,7 @@ class WriteFileTool(LLMTool):
 - ❌ 修改文件的部分内容 → 使用 edit_file 工具
 
 路径说明：
-- 项目目录：任何相对路径或绝对路径在 /home/xckj/suyuan 下
+- 写入范围限制在 backend 和临时目录
 - 临时目录：/tmp 及其子目录（用于临时文件）
 
 示例：
@@ -188,7 +188,7 @@ class WriteFileTool(LLMTool):
 - write_file(path="config.json", content='{"port": 8000}')
 
 📋 Quarto 报告（.qmd）边界：
-- 正式报告不要用 write_file 直接写入 `backend_data_registry/reports/` 根目录或手工拼装交付路径。
+- 正式报告不要用 write_file 直接写入 `backend/backend_data_registry/reports/` 根目录或手工拼装交付路径。
 - 正式报告应调用 `create_report_package`，由工具保存为 `reports/{report_id}/report.qmd` 并触发右侧面板预览。
 - write_file 只适合创建草稿片段、临时说明文件，或在明确需要时维护非正式文本文件。
 - 需要修改已存在的 `report.qmd` 时，先用 read_file 读取，再按需使用 edit_file/write_file，随后应通过报告包/报告接口刷新预览并用 validate_report_package 校验。
@@ -249,7 +249,7 @@ format:
         self.working_dir = BACKEND_ROOT
         self.read_state = get_file_read_state()
         # 额外允许的路径列表（用于临时文件）
-        self.allowed_extra_paths = [Path("/tmp")]
+        self.allowed_extra_paths = [TEMP_ROOT]
 
     async def execute(
         self,
@@ -559,21 +559,13 @@ format:
         解析文件路径，确保在工作目录或允许的额外路径范围内
         """
         try:
-            file_path = Path(path).expanduser().resolve()
-
-            # 相对路径转换为绝对路径
-            if not file_path.is_absolute():
-                file_path = (self.working_dir / file_path).resolve()
+            file_path = resolve_agent_path(path)
 
             # 安全检查：确保在工作目录或允许的额外路径范围内
             allowed_dirs = [self.working_dir] + [p.resolve() for p in self.allowed_extra_paths]
 
-            for allowed_dir in allowed_dirs:
-                try:
-                    file_path.relative_to(allowed_dir)
-                    return file_path
-                except ValueError:
-                    continue
+            if is_path_within(file_path, allowed_dirs):
+                return file_path
 
             logger.warning(
                 "write_file_path_escape",
@@ -606,7 +598,7 @@ format:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "文件路径，绝对或相对路径"
+                        "description": "文件路径"
                     },
                     "content": {
                         "type": "string",

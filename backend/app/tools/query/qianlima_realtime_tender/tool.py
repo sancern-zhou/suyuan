@@ -336,10 +336,8 @@ def _retry_delay_seconds(attempt: int) -> float:
 
 
 def _default_output_dir() -> Path:
-    base_dir = Path(settings.data_registry_dir)
-    if not base_dir.is_absolute():
-        base_dir = Path(__file__).resolve().parents[4] / base_dir
-    return base_dir / "tenders" / "realtime"
+    from app.utils.path_config import get_data_registry
+    return get_data_registry() / "tenders" / "realtime"
 
 
 def _build_search_query(

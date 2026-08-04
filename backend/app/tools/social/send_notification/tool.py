@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger(__name__)
 
@@ -186,18 +187,7 @@ class SendNotificationTool(LLMTool):
 
                 # 转换相对路径为绝对路径
                 else:
-                    # 获取项目根目录（假设是当前工作目录的父目录）
-                    # 例如：/home/xckj/suyuan/backend -> /home/xckj/suyuan
-                    current_dir = Path.cwd()
-                    # 如果当前在 backend 目录，向上查找项目根
-                    if current_dir.name == 'backend':
-                        project_root = current_dir.parent
-                    else:
-                        project_root = current_dir
-
-                    abs_path = project_root / media_path
-                    # 解析为绝对路径（消除 .. 和 .）
-                    abs_path = abs_path.resolve()
+                    abs_path = resolve_agent_path(media_path)
 
                     # 检查文件是否存在
                     if abs_path.exists():

@@ -16,6 +16,7 @@ from datetime import datetime
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
+from app.utils.path_config import BACKEND_ROOT, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -56,12 +57,12 @@ class GenerateRandomDocTool(LLMTool):
 - generate_random_doc(output_path='/root/随机文件.docx', content_type='report', paragraphs=10)
 - generate_random_doc(output_path='/root/随机文件.docx', title='我的随机报告', paragraphs=8)
 """,
-            category=ToolCategory.UTILITY,
+            category=ToolCategory.REPORTING,
             version="1.0.0",
             requires_context=False
         )
 
-        self.working_dir = Path.cwd().parent
+        self.working_dir = BACKEND_ROOT
 
     async def execute(
         self,
@@ -295,10 +296,7 @@ class GenerateRandomDocTool(LLMTool):
     def _resolve_path(self, path: str) -> Optional[Path]:
         """Resolve file path."""
         try:
-            file_path = Path(path)
-            if not file_path.is_absolute():
-                file_path = self.working_dir / file_path
-            return file_path.resolve()
+            return resolve_agent_path(path)
         except Exception as e:
             logger.error("path_resolution_failed", path=path, error=str(e))
             return None
@@ -313,7 +311,7 @@ class GenerateRandomDocTool(LLMTool):
                 "properties": {
                     "output_path": {
                         "type": "string",
-                        "description": "输出文件路径（必填）。示例：'/root/随机文件.docx'"
+                        "description": "输出文件路径"
                     },
                     "content_type": {
                         "type": "string",

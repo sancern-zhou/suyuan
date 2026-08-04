@@ -27,6 +27,17 @@ import structlog
 
 logger = structlog.get_logger()
 
+FILESYSTEM_PATH_CONTRACT = (
+    "## 文件系统路径约定\n"
+    "所有工具的相对文件系统路径统一以 suyuan 项目根目录为基准；"
+    "backend 内的相对路径必须包含 `backend/` 前缀。工具返回的项目内相对路径也遵循同一格式。"
+    "报告包内 `assets/...` 等内部逻辑路径不属于文件系统路径。"
+)
+
+
+def _with_platform_contracts(prompt: str) -> str:
+    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}"
+
 AgentMode = Literal[
     "assistant",
     "ppt",
@@ -111,19 +122,19 @@ def build_react_system_prompt(
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":
-        return build_custom_prompt(filtered_tools)
+        return _with_platform_contracts(build_custom_prompt(filtered_tools))
     if mode == "assistant":
-        return build_assistant_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_assistant_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "ppt":
-        return build_ppt_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_ppt_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "expert":
-        return build_expert_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
-        return build_query_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
-        return build_report_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_report_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "social":
-        return build_social_prompt(
+        return _with_platform_contracts(build_social_prompt(
             filtered_tools,
             user_preferences,
             memory_file_path,
@@ -135,31 +146,31 @@ def build_react_system_prompt(
             user_context,
             heartbeat_context,
             backend_host,
-        )
+        ))
     elif mode == "chart":
-        return build_chart_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_chart_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "board":
-        return build_board_prompt(
+        return _with_platform_contracts(build_board_prompt(
             filtered_tools,
             memory_context,
             memory_file_path,
             board_context,
-        )
+        ))
     elif mode == "ops":
-        return build_ops_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_ops_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "graph":
-        return build_graph_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_graph_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_meteorology":
-        return build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_deliberation_meteorology_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_monitoring":
-        return build_deliberation_monitoring_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_deliberation_monitoring_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_chemistry":
-        return build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_deliberation_chemistry_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "deliberation_reviewer":
-        return build_deliberation_reviewer_prompt(filtered_tools, memory_context, memory_file_path)
+        return _with_platform_contracts(build_deliberation_reviewer_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "memory_consolidator":
         from .memory_consolidator_prompt import build_memory_consolidator_prompt
-        return build_memory_consolidator_prompt(filtered_tools)
+        return _with_platform_contracts(build_memory_consolidator_prompt(filtered_tools))
     else:
         raise ValueError(f"Unknown mode: {mode}")
 

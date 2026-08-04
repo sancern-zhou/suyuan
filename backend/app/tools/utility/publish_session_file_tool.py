@@ -4,7 +4,6 @@ This tool has no frontend delivery protocol. It returns canonical ``resources``
 declarations; the normal tool-result boundary copies the file into session
 storage, updates the catalog, and emits ``resources_changed``.
 """
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -24,7 +23,7 @@ from app.tools.artifact_utils import (
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 from app.tools.resource_declarations import generated_file_products
-from app.utils.path_config import BACKEND_ROOT, PROJECT_ROOT
+from app.utils.path_config import PROJECT_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -58,7 +57,7 @@ class PublishSessionFileTool(LLMTool):
         )
         self.allowed_dirs = [
             PROJECT_ROOT.resolve(),
-            Path(tempfile.gettempdir()).resolve(),
+            TEMP_ROOT,
         ]
 
     async def execute(
@@ -238,11 +237,8 @@ class PublishSessionFileTool(LLMTool):
 
     def _resolve_path(self, path: str) -> Optional[Path]:
         try:
-            candidate = Path(path)
-            if not candidate.is_absolute():
-                candidate = BACKEND_ROOT / candidate
-            resolved = candidate.resolve()
-            if any(resolved.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs):
+            resolved = resolve_agent_path(path)
+            if is_path_within(resolved, self.allowed_dirs):
                 return resolved
             logger.warning(
                 "publish_session_file_path_escape",
@@ -309,10 +305,7 @@ class PublishSessionFileTool(LLMTool):
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": (
-                            "允许目录内已存在文件的绝对路径，或相对于 backend 目录的路径；"
-                            "例如 backend_data_registry/uploads/example.png。"
-                        ),
+                        "description": "允许目录内已存在的文件路径。",
                     },
                     "label": {
                         "type": "string",

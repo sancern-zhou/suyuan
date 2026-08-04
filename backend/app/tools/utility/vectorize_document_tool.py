@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 from app.tools.resource_declarations import artifact_resource
 from app.knowledge_base.models import KnowledgeBase, KnowledgeBaseStatus, KnowledgeBaseType
 from app.knowledge_base.service import KnowledgeBaseService
@@ -61,7 +62,7 @@ class VectorizeDocumentTool(LLMTool):
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "文档文件路径（支持绝对路径或相对路径）"
+                        "description": "文档文件路径"
                     },
                     "knowledge_base_id": {
                         "type": "string",
@@ -300,7 +301,7 @@ class VectorizeDocumentTool(LLMTool):
         """
         try:
             # 解析路径（支持~和相对路径）
-            expanded_path = Path(file_path).expanduser().resolve()
+            expanded_path = resolve_agent_path(file_path)
 
             # 检查文件是否存在
             if not expanded_path.exists():

@@ -163,7 +163,8 @@ class QQChannel(BaseChannel):
             root = Path(media_dir).expanduser()
         else:
             # Use data registry directory
-            root = Path(settings.data_registry_dir) / "social" / "qq"
+            from app.utils.path_config import get_data_registry
+            root = get_data_registry() / "social" / "qq"
 
         root.mkdir(parents=True, exist_ok=True)
         logger.info("QQ media directory initialized", path=str(root))

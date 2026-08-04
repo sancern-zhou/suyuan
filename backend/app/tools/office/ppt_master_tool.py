@@ -24,7 +24,7 @@ from app.tools.artifact_utils import (
     preview_output_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.path_config import get_data_registry, get_images_dir
+from app.utils.path_config import get_data_registry, get_images_dir, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -337,9 +337,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
     ) -> Dict[str, Any]:
         if not file_path:
             return {"success": False, "data": {"error": "file_path_required"}, "summary": "渲染PPT失败：file_path 参数缺失"}
-        pptx_path = Path(file_path)
-        if not pptx_path.is_absolute():
-            pptx_path = (Path.cwd() / pptx_path).resolve()
+        pptx_path = resolve_agent_path(file_path)
         if not pptx_path.exists():
             return {"success": False, "data": {"error": f"file_not_found: {pptx_path}"}, "summary": f"渲染PPT失败：文件不存在 {pptx_path}"}
         if pptx_path.suffix.lower() != ".pptx":
@@ -551,17 +549,13 @@ class CreatePptxWithPptMasterTool(LLMTool):
 
     def _resolve_base_plan_path(self, base_plan_path: Optional[str], base_project_dir: Optional[str]) -> Path:
         if base_plan_path:
-            path = Path(base_plan_path)
-            if not path.is_absolute():
-                path = (Path.cwd() / path).resolve()
+            path = resolve_agent_path(base_plan_path)
             if not path.exists():
                 raise ValueError(f"base_plan_path_not_found: {path}")
             return path
         if not base_project_dir:
             raise ValueError("base_plan_path_required")
-        project = Path(base_project_dir)
-        if not project.is_absolute():
-            project = (Path.cwd() / project).resolve()
+        project = resolve_agent_path(base_project_dir)
         if not project.exists():
             raise ValueError(f"base_project_dir_not_found: {project}")
         candidates = sorted(project.glob("slide_plan.v*.json"), key=lambda item: item.name)
@@ -591,9 +585,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
         return pages
 
     def _resolve_json_input_path(self, path: str, field_name: str) -> Path:
-        resolved = Path(path)
-        if not resolved.is_absolute():
-            resolved = (Path.cwd() / resolved).resolve()
+        resolved = resolve_agent_path(path)
         if not resolved.exists():
             raise ValueError(f"{field_name}_path_not_found: {resolved}")
         if not resolved.is_file():
@@ -1473,9 +1465,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
             candidate = (get_images_dir() / f"{image_id}.png").resolve()
             return candidate if candidate.exists() else None
 
-        candidate = Path(value).expanduser()
-        if not candidate.is_absolute():
-            candidate = (Path.cwd() / candidate).resolve()
+        candidate = resolve_agent_path(value)
         return candidate if candidate.exists() else None
 
     def _chart_data(self, chart: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1574,15 +1564,13 @@ class CreatePptxWithPptMasterTool(LLMTool):
 
     def _resolve_output_file(self, output_file: Optional[str], title: str) -> Path:
         if output_file:
-            path = Path(output_file)
-            return path if path.is_absolute() else (Path.cwd() / path).resolve()
+            return resolve_agent_path(output_file)
         safe = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", title).strip("_") or "presentation"
         return self.default_output_dir / f"{safe}_{uuid.uuid4().hex[:8]}.pptx"
 
     def _resolve_project_dir(self, project_dir: Optional[str], title: str) -> Path:
         if project_dir:
-            path = Path(project_dir)
-            return path if path.is_absolute() else (Path.cwd() / path).resolve()
+            return resolve_agent_path(project_dir)
         safe = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", title).strip("_") or "presentation"
         return self.default_project_root / f"{safe}_{uuid.uuid4().hex[:8]}"
 

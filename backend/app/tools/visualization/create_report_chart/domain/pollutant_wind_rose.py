@@ -27,6 +27,7 @@ from app.tools.visualization.font_sizing import (
     resolve_matplotlib_font_sizes,
 )
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.utils.path_config import get_datasets_dir
 
 logger = structlog.get_logger()
 
@@ -135,7 +136,7 @@ def load_data_from_id(data_id: str, data_dir: str = None) -> List[Dict]:
     """
     if data_dir is None:
         # 使用项目标准数据目录
-        data_dir = "/home/xckj/suyuan/backend/backend_data_registry/datasets"
+        data_dir = str(get_datasets_dir())
 
     # 将 data_id 中的冒号替换为下划线（文件命名规则）
     filename = f"{data_id.replace(':', '_')}.json"

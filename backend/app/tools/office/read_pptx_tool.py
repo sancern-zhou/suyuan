@@ -9,6 +9,7 @@ import structlog
 
 from app.tools.artifact_utils import attach_document_resources, preview_output_path
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import BACKEND_ROOT, get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -34,7 +35,7 @@ class ReadPptxTool(LLMTool):
             version="1.0.0",
             requires_context=False,
         )
-        self.working_dir = Path.cwd().parent
+        self.working_dir = BACKEND_ROOT
 
     async def execute(
         self,
@@ -171,25 +172,13 @@ class ReadPptxTool(LLMTool):
             }
 
     def _resolve_path(self, path: str) -> Path:
-        file_path = Path(path)
-        if not file_path.is_absolute():
-            file_path = self.working_dir / file_path
-        return file_path.resolve()
+        return resolve_agent_path(path)
 
     def _resolve_image_output_dir(self, file_path: Path, image_output_dir: Optional[str]) -> Path:
         if image_output_dir:
-            output_dir = Path(image_output_dir)
-            if not output_dir.is_absolute():
-                output_dir = self.working_dir / output_dir
+            output_dir = resolve_agent_path(image_output_dir)
         else:
-            output_dir = (
-                self.working_dir
-                / "backend"
-                / "backend_data_registry"
-                / "presentations"
-                / "assets"
-                / file_path.stem
-            )
+            output_dir = get_data_registry() / "presentations" / "assets" / file_path.stem
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir.resolve()
 

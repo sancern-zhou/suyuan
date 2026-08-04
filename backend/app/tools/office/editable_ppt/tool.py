@@ -9,6 +9,7 @@ from typing import Any
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 from app.tools.resource_declarations import single_file_product
 from app.tools.office.editable_ppt.compiler_client import (
     CompilerClientError,
@@ -33,7 +34,7 @@ def _branch(operation: str, required: list[str], properties: dict[str, Any] | No
     return {"type": "object", "properties": base, "required": ["operation", *required], "additionalProperties": False}
 
 
-PROJECT = {"project_dir": {"type": "string", "description": "可编辑 PPT 源码项目绝对路径"}}
+PROJECT = {"project_dir": {"type": "string", "description": "可编辑 PPT 源码项目路径"}}
 
 SOURCE_PATH = {
     "type": "string",
@@ -251,7 +252,9 @@ class ManageEditablePptTool(LLMTool):
             if operation == "finalize":
                 state = self.projects.inspect(kwargs["project_dir"])
                 compile_result = self._read_json(kwargs["project_dir"], "last_compile.json")
-                target = Path(kwargs.get("pptx_path") or compile_result.get("pptxPath", "")).resolve()
+                target = resolve_agent_path(
+                    kwargs.get("pptx_path") or compile_result.get("pptxPath", "")
+                )
                 stale = (
                     bool(state.dirty_slides)
                     or compile_result.get("sourceRevision") != state.revision
