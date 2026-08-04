@@ -722,9 +722,14 @@ def get_tool_schemas(
     Returns:
         Schema列表，用于LLM Function Calling
     """
+    from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES
+
     schemas = []
 
-    requested_order = list(dict.fromkeys(allowed_tool_names or []))
+    requested_order = [
+        name for name in dict.fromkeys(allowed_tool_names or [])
+        if name not in AGENT_HIDDEN_TOOL_NAMES
+    ]
     allowed_tools = set(requested_order) if allowed_tool_names is not None else None
     if allowed_tools is None and mode:
         from app.agent.prompts.tool_registry import get_tools_by_mode
@@ -736,6 +741,8 @@ def get_tool_schemas(
     for tool_data in global_tool_registry.get_all_tools():
         tool = tool_data["tool"]
         if tool.is_available():
+            if tool.name in AGENT_HIDDEN_TOOL_NAMES:
+                continue
             if tool.name in NATIVE_MULTIMODAL_HIDDEN_TOOLS:
                 continue
             if allowed_tools is not None and tool.name not in allowed_tools:

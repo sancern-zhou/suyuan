@@ -10,12 +10,7 @@
   npm run build:standalone
   ```
 
-- 正式前端静态资源唯一来源：`/home/xckj/suyuan/frontend/dist`，由 `suyuan-nginx` 提供服务。
-- 构建完成后重新加载 Nginx：
-
-  ```bash
-  docker exec suyuan-nginx nginx -s reload
-  ```
+- 前端由 `/home/xckj/suyuan/frontend` 中运行在 `5174` 端口的 Vite 进程提供服务。构建完成后无需 Docker 或 Nginx 重载。
 
 - 禁止在项目根目录直接执行 `npm run build`，禁止维护第二套 `/app` 前端 bundle。
 - 前端部署后必须确认构建产物包含统一资源接口，并且不再包含旧接口：

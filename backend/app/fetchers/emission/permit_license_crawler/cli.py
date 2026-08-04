@@ -18,22 +18,39 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("detail phase requires a positive --max-licenses")
     if args.min_delay_seconds < 0 or args.max_delay_seconds < args.min_delay_seconds:
         raise ValueError("invalid delay range")
+    if (
+        args.min_burst_delay_seconds < 0
+        or args.max_burst_delay_seconds < args.min_burst_delay_seconds
+    ):
+        raise ValueError("invalid burst delay range")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    backend_root = Path(__file__).resolve().parents[4]
+    project_root = Path(__file__).resolve().parents[5]
     parser = argparse.ArgumentParser(description="低速分批采集许昌市排污许可证公开数据")
     parser.add_argument("--phase", choices=("list", "detail"), required=True)
     parser.add_argument("--start-page", type=int, default=1)
     parser.add_argument("--max-pages", type=int)
     parser.add_argument("--max-licenses", type=int)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--min-delay-seconds", type=float, default=2.0)
-    parser.add_argument("--max-delay-seconds", type=float, default=5.0)
+    parser.add_argument("--min-delay-seconds", type=float, default=1.0)
+    parser.add_argument("--max-delay-seconds", type=float, default=2.0)
+    parser.add_argument("--min-burst-delay-seconds", type=float, default=0.1)
+    parser.add_argument("--max-burst-delay-seconds", type=float, default=0.2)
     parser.add_argument(
         "--storage-root",
         type=Path,
-        default=backend_root / "backend_data_registry" / "permit_licenses" / "河南省" / "许昌市",
+        default=Path("backend")
+        / "backend_data_registry"
+        / "permit_licenses"
+        / "河南省"
+        / "许昌市",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=project_root,
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -61,11 +78,13 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             async with PermitPlatformClient(
                 min_delay_seconds=args.min_delay_seconds,
                 max_delay_seconds=args.max_delay_seconds,
+                min_burst_delay_seconds=args.min_burst_delay_seconds,
+                max_burst_delay_seconds=args.max_burst_delay_seconds,
             ) as client:
                 crawler = XuchangPermitCrawler(
                     client=client,
                     repository=repository,
-                    storage=FileStorage(args.storage_root),
+                    storage=FileStorage(args.storage_root, project_root=args.project_root),
                 )
                 if args.phase == "list":
                     await crawler.crawl_list(

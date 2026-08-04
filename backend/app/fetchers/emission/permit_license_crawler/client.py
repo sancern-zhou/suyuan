@@ -28,16 +28,25 @@ class PermitPlatformClient:
     def __init__(
         self,
         *,
-        min_delay_seconds: float = 2.0,
-        max_delay_seconds: float = 5.0,
+        min_delay_seconds: float = 1.0,
+        max_delay_seconds: float = 2.0,
+        min_burst_delay_seconds: float = 0.1,
+        max_burst_delay_seconds: float = 0.2,
         max_retries: int = 3,
         timeout_seconds: float = 45.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if min_delay_seconds < 0 or max_delay_seconds < min_delay_seconds:
             raise ValueError("invalid request delay range")
+        if (
+            min_burst_delay_seconds < 0
+            or max_burst_delay_seconds < min_burst_delay_seconds
+        ):
+            raise ValueError("invalid burst delay range")
         self.min_delay_seconds = min_delay_seconds
         self.max_delay_seconds = max_delay_seconds
+        self.min_burst_delay_seconds = min_burst_delay_seconds
+        self.max_burst_delay_seconds = max_burst_delay_seconds
         self.max_retries = max_retries
         self._client = httpx.AsyncClient(
             transport=transport,
@@ -58,13 +67,15 @@ class PermitPlatformClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def get(self, url: str, **kwargs: Any) -> httpx.Response:
-        return await self.request("GET", url, **kwargs)
+    async def get(self, url: str, *, burst: bool = False, **kwargs: Any) -> httpx.Response:
+        return await self.request("GET", url, burst=burst, **kwargs)
 
-    async def post(self, url: str, **kwargs: Any) -> httpx.Response:
-        return await self.request("POST", url, **kwargs)
+    async def post(self, url: str, *, burst: bool = False, **kwargs: Any) -> httpx.Response:
+        return await self.request("POST", url, burst=burst, **kwargs)
 
-    async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    async def request(
+        self, method: str, url: str, *, burst: bool = False, **kwargs: Any
+    ) -> httpx.Response:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -94,11 +105,16 @@ class PermitPlatformClient:
             if any(marker in text for marker in CHALLENGE_MARKERS) or "default-index!getinformation" in final_path:
                 raise PlatformBlockedError("platform returned a challenge page")
             response.raise_for_status()
-            await self._delay()
+            await self._delay(burst=burst)
             return response
         raise PermitPlatformError(f"request failed: {last_error}")
 
-    async def _delay(self) -> None:
-        delay = random.uniform(self.min_delay_seconds, self.max_delay_seconds)
+    async def _delay(self, *, burst: bool = False) -> None:
+        if burst:
+            delay = random.uniform(
+                self.min_burst_delay_seconds, self.max_burst_delay_seconds
+            )
+        else:
+            delay = random.uniform(self.min_delay_seconds, self.max_delay_seconds)
         if delay:
             await asyncio.sleep(delay)

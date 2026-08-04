@@ -237,6 +237,7 @@ CLI 支持至少以下参数：
 - `--max-licenses`
 - `--resume`
 - `--min-delay-seconds`、`--max-delay-seconds`
+- `--min-burst-delay-seconds`、`--max-burst-delay-seconds`
 - `--storage-root`
 
 列表阶段必须显式提供 `--max-pages`，详情阶段必须显式提供 `--max-licenses`，防止误操作启动全量抓取。默认区域固定为河南省许昌市；本期不提供全国或任意地区批量模式。

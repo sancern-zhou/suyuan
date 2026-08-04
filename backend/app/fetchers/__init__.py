@@ -24,6 +24,8 @@ from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
+from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -50,6 +52,8 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(YunchengTrialFetcher())  # 运城市驻场试用场景小时数据盯守
     scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时气象实况
     scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
+    scheduler.register(XuchangDailyAttainmentForecastFetcher())  # 许昌市日达标预测分析
+    scheduler.register(XuchangAnnualAttainmentForecastFetcher())  # 许昌市年度达标预测分析
 
     return scheduler
 

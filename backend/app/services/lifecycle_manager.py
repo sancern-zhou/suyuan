@@ -13,6 +13,8 @@ from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
+from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
@@ -52,53 +54,69 @@ def initialize_fetchers():
     注册所有Fetchers并启动调度器
     """
     try:
+        raw_allowlist = os.getenv("FETCHER_ALLOWLIST", "").strip()
+        allowlist = {
+            name.strip() for name in raw_allowlist.split(",") if name.strip()
+        }
+
+        def register(fetcher):
+            if allowlist and fetcher.name not in allowlist:
+                logger.info(
+                    "fetcher_skipped_by_allowlist",
+                    fetcher=fetcher.name,
+                )
+                return
+            fetcher_scheduler.register(fetcher)
+
         # 注册Weather Fetchers
-        fetcher_scheduler.register(ERA5Fetcher())
-        fetcher_scheduler.register(ObservedWeatherFetcher())
-        fetcher_scheduler.register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
-        fetcher_scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
-        fetcher_scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
+        register(ERA5Fetcher())
+        register(ObservedWeatherFetcher())
+        register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
+        register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
+        register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
+        register(XuchangDailyAttainmentForecastFetcher())  # 许昌市日达标预测分析
+        register(XuchangAnnualAttainmentForecastFetcher())  # 许昌市年度达标预测分析
 
         # 注册Satellite Fetchers
-        fetcher_scheduler.register(NASAFirmsFetcher())
+        register(NASAFirmsFetcher())
         enabled_modules = load_project_context(settings.project_id).enabled_modules
         if "xuchang-satellite" in enabled_modules:
-            fetcher_scheduler.register(GemsImageFetcher())
+            register(GemsImageFetcher())
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
-                fetcher_scheduler.register(GemsHchoDataFetcher())
+                register(GemsHchoDataFetcher())
 
         # 注册Dust Fetchers
-        fetcher_scheduler.register(CAMSDustFetcher())
+        register(CAMSDustFetcher())
 
         # 注册空气质量数据质量巡检Fetcher
-        fetcher_scheduler.register(AirQualityDataQualityFetcher())
+        register(AirQualityDataQualityFetcher())
 
         # 注册城市污染过程告警Fetcher
-        fetcher_scheduler.register(CityPollutionEventFetcher())
+        register(CityPollutionEventFetcher())
 
         # 注册招投标信息每日抓取Fetcher
-        fetcher_scheduler.register(TenderInformationFetcher())
+        register(TenderInformationFetcher())
 
         # 注册济宁市快速溯源报告每日生成Fetcher
-        fetcher_scheduler.register(JiningQuickTraceFetcher())
+        register(JiningQuickTraceFetcher())
 
         # 注册运城市驻场试用场景小时数据盯守Fetcher
-        fetcher_scheduler.register(YunchengTrialFetcher())
+        register(YunchengTrialFetcher())
 
         # 注册会商文件批量更新Fetcher
-        fetcher_scheduler.register(ConsultationFileFetcher())
+        register(ConsultationFileFetcher())
 
         # 注册月度完整会商文件Fetcher（每月4号早上7点10分）
-        fetcher_scheduler.register(MonthlyConsultationFileFetcher())
+        register(MonthlyConsultationFileFetcher())
 
         # 注册年度累计会商文件Fetcher（每月4号早上7点20分）
-        fetcher_scheduler.register(AnnualYtdConsultationFileFetcher())
+        register(AnnualYtdConsultationFileFetcher())
 
         # 注册月度补充数据Fetcher（每月4号早上7点30-50分）
-        fetcher_scheduler.register(MonthlyDistrictPollutantRankingFetcher())
-        fetcher_scheduler.register(MonthlyStationHighValuesFetcher())
-        fetcher_scheduler.register(MonthlyPollutionEventsComponentsFetcher())
-        fetcher_scheduler.register(MonthlyMeteorologySupportFetcher())
+        register(MonthlyDistrictPollutantRankingFetcher())
+        register(MonthlyStationHighValuesFetcher())
+        register(MonthlyPollutionEventsComponentsFetcher())
+        register(MonthlyMeteorologySupportFetcher())
 
         logger.info(
             "fetchers_registered",

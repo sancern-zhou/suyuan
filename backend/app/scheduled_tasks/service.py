@@ -61,7 +61,7 @@ class ScheduledTaskService:
 
         # 初始化调度器
         self.scheduler = SimpleScheduler(task_storage=self.task_storage)
-        self.scheduler.set_task_callback(self.executor.execute_task)
+        self.scheduler.set_task_callback(self._execute_scheduled_task)
 
         # 获取事件总线
         self.event_bus = get_event_bus()  # ✅ 获取EventBus实例
@@ -235,11 +235,76 @@ class ScheduledTaskService:
         )
 
         # 执行任务（异步）
-        execution = await self.executor.execute_task(task)
+        execution = await self._execute_scheduled_task(task)
 
         logger.info(f"Manual execution completed: {execution.execution_id}, status: {execution.status}")
 
         return execution
+
+    async def _execute_scheduled_task(self, task: ScheduledTask) -> TaskExecution:
+        """Execute scheduled work and deliver its explicit broadcast result."""
+        execution: TaskExecution | None = None
+        try:
+            recipients: list[dict[str, str]] = []
+            if task.broadcast_enabled:
+                recipients = await self.event_delivery.resolve_recipients(task.target_user_ids)
+                if not recipients:
+                    raise ValueError("no active bound WeChat recipients")
+
+            execution = await self.executor.execute_task(task, update_stats=False)
+            if execution.status != ExecutionStatus.SUCCESS:
+                self.task_storage.update_run_stats(task.task_id, success=False)
+                return execution
+
+            if task.broadcast_enabled:
+                response = execution.steps[-1].agent_response if execution.steps else ""
+                output = parse_event_task_output(response or "")
+                if not output.success:
+                    raise ValueError(output.error or "scheduled Agent returned failure")
+                execution.delivery_results = await self.event_delivery.deliver(
+                    task=task,
+                    event=None,
+                    execution=execution,
+                    output=output,
+                    recipients=recipients,
+                )
+                if not execution.delivery_results or not any(
+                    row.get("sent") for row in execution.delivery_results
+                ):
+                    raise ValueError("delivery failed for every recipient")
+                self.execution_storage.update(execution)
+
+            self.task_storage.update_run_stats(task.task_id, success=True)
+            return execution
+        except Exception as exc:
+            logger.error(
+                "scheduled_task_execution_failed",
+                task_id=task.task_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            if execution is None:
+                now = datetime.now()
+                execution = TaskExecution(
+                    execution_id=self.executor._generate_execution_id(task.task_id),
+                    task_id=task.task_id,
+                    task_name=task.name,
+                    session_id=self.executor._generate_session_id(task.task_id),
+                    status=ExecutionStatus.FAILED,
+                    started_at=now,
+                    completed_at=now,
+                    duration_seconds=0,
+                    total_steps=len(task.steps),
+                    trigger_type="scheduled",
+                    error_message=str(exc),
+                )
+                self.execution_storage.create(execution)
+            else:
+                execution.status = ExecutionStatus.FAILED
+                execution.error_message = str(exc)
+                self.execution_storage.update(execution)
+            self.task_storage.update_run_stats(task.task_id, success=False)
+            return execution
 
     async def publish_event(
         self,

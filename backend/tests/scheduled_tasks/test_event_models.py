@@ -74,6 +74,13 @@ def test_yuncheng_event_is_registered():
     assert "city" in definitions["yuncheng.alert.created"].filter_fields
 
 
+def test_xuchang_daily_attainment_exceedance_event_is_registered():
+    definitions = {item.event_type: item for item in get_event_definitions()}
+
+    event = definitions["xuchang.daily_attainment.predicted_exceedance"]
+    assert "target_pollutant" in event.filter_fields
+
+
 def _event_task() -> ScheduledTask:
     return ScheduledTask(
         task_id="event",
@@ -121,4 +128,21 @@ def test_scheduler_can_calculate_next_run_for_cron_task(tmp_path):
 
     stored = storage.get(task.task_id)
     assert stored.next_run_at is not None
+    assert scheduler.scheduler.get_job(task.task_id) is not None
+
+
+def test_scheduler_supports_monthly_first_day_task(tmp_path):
+    storage = TaskStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="monthly-task",
+        name="monthly task",
+        description="monthly task",
+        schedule_type="monthly_1st_7am",
+        steps=[_step()],
+    )
+    storage.create(task)
+    scheduler = SimpleScheduler(storage)
+
+    scheduler._schedule_task(task)
+
     assert scheduler.scheduler.get_job(task.task_id) is not None

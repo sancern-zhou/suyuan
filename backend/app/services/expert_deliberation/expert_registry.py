@@ -31,9 +31,7 @@ def get_default_experts() -> list[ExpertCard]:
                 "小时",
             ],
             tool_whitelist=[
-                "query_gd_suncere_city_hour",
                 "query_gd_suncere_city_day_new",
-                "query_gd_suncere_station_hour_new",
                 "query_gd_suncere_station_day_new",
                 "query_city_standard_report",
                 "query_city_standard_yoy_report",
@@ -68,11 +66,8 @@ def get_default_experts() -> list[ExpertCard]:
             tool_whitelist=[
                 "get_weather_forecast",
                 "get_observed_meteorology",
-                "query_gd_suncere_city_hour",
-                "query_gd_suncere_station_hour_new",
                 "meteorological_trajectory_analysis",
                 "analyze_upwind_enterprises",
-                "analyze_trajectory_sources",
             ],
         ),
         ExpertCard(
@@ -102,19 +97,8 @@ def get_default_experts() -> list[ExpertCard]:
                 "排放",
             ],
             tool_whitelist=[
-                "get_vocs_data",
-                "get_pm25_ionic",
-                "get_pm25_carbon",
-                "get_pm25_crustal",
-                "calculate_pm_pmf",
-                "calculate_vocs_pmf",
-                "calculate_pmf",
                 "calculate_obm_ofp",
                 "calculate_obm_full_chemistry",
-                "calculate_reconstruction",
-                "calculate_carbon",
-                "calculate_soluble",
-                "calculate_crustal",
             ],
         ),
         ExpertCard(

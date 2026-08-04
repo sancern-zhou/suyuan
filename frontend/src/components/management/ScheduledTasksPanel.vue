@@ -88,6 +88,7 @@
           <!-- 操作按钮 -->
           <div class="scheduled-task-actions">
             <button
+              v-if="task.trigger_type !== 'event'"
               class="scheduled-btn scheduled-btn-execute"
               @click="$emit('execute-task', task)"
               :disabled="task.executing"

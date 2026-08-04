@@ -38,7 +38,7 @@ class EventTaskDelivery:
         self,
         *,
         task: ScheduledTask,
-        event: TaskEvent,
+        event: TaskEvent | None,
         execution: TaskExecution,
         output: EventTaskOutput,
         recipients: list[dict[str, str]],
@@ -59,8 +59,8 @@ class EventTaskDelivery:
             context_metadata={
                 "task_id": task.task_id,
                 "execution_id": execution.execution_id,
-                "event_id": event.event_id,
-                "event_type": event.event_type,
+                "event_id": event.event_id if event else None,
+                "event_type": event.event_type if event else None,
             },
         )
         return [

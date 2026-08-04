@@ -11,6 +11,7 @@ from app.agent.resources.resource_service import SessionResourceService, StoredR
 from app.tools.utility.list_directory_tool import ListDirectoryTool
 from app.tools.utility.read_file_tool import ReadFileTool
 from app.tools.utility.read_session_resource_tool import ReadSessionResourceTool
+from app.utils.path_config import BACKEND_ROOT
 from app.tools.office.validate_pptx_tool import validation_output_resources
 from app.tools.resource_declarations import primary_file
 from .contracts import ResourceDeclaration
@@ -419,6 +420,16 @@ async def test_read_file_keeps_runtime_multimodal_attachment_path(tmp_path):
     )
 
     assert result["attachments"][0]["local_path"] == str(source)
+
+
+def test_read_file_resolves_current_project_data_registry_from_backend_root():
+    tool = ReadFileTool()
+    relative_path = "backend_data_registry/xuchang_attainment_predictions/annual/latest.json"
+    expected_path = (BACKEND_ROOT / relative_path).resolve()
+
+    assert tool._resolve_path(relative_path) == expected_path
+    assert tool._resolve_path(str(expected_path)) == expected_path
+    assert tool._resolve_path(str(Path("/etc/passwd"))) is None
 
 
 def _stored(declaration: ResourceDeclaration) -> StoredResource:

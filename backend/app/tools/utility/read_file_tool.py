@@ -96,8 +96,9 @@ class ReadFileTool(LLMTool):
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
         self.working_dir = BACKEND_ROOT
-        # 允许访问的目录：整个项目目录（包含backend_data_registry）和临时目录
-        self.allowed_dirs = [Path("/home/xckj/suyuan"), Path("/tmp")]
+        # 允许访问当前项目目录（包含 backend_data_registry）和临时目录。
+        # 必须从 BACKEND_ROOT 推导，避免部署/分支目录变化导致合法文件被拒绝。
+        self.allowed_dirs = [BACKEND_ROOT.parent.resolve(), Path("/tmp").resolve()]
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB

@@ -134,6 +134,28 @@ def test_create_event_task_with_multiple_users(monkeypatch):
     assert task["owner_display_name"] == "任务创建人"
 
 
+def test_event_task_cannot_be_executed_manually(monkeypatch):
+    client, service = _client(monkeypatch)
+    task_id = "event-task"
+    service.create_task(routes.ScheduledTask(
+        task_id=task_id,
+        name="event task",
+        description="event task",
+        trigger_type="event",
+        event_type="yuncheng.alert.created",
+        steps=[routes.TaskStep(
+            step_id="step-1",
+            description="run",
+            agent_prompt="run",
+        )],
+    ))
+
+    response = client.post(f"/api/scheduled-tasks/{task_id}/execute")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Event-triggered tasks cannot be executed manually"
+
+
 def test_create_rejects_unregistered_event_type(monkeypatch):
     client, _ = _client(monkeypatch)
     payload = _event_payload()

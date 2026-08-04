@@ -385,26 +385,12 @@ async def execute_task_now(task_id: str):
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
         if task.trigger_type == TriggerType.EVENT:
-            event = service.claim_storage.latest_event(task.event_type or "")
-            if not event:
-                raise HTTPException(
-                    status_code=409,
-                    detail="No recorded event available for manual execution",
-                )
-            dispatch = await service.publish_event(
-                event,
-                wait=True,
-                force_retry=True,
-                target_task_id=task_id,
+            raise HTTPException(
+                status_code=400,
+                detail="Event-triggered tasks cannot be executed manually",
             )
-            if not dispatch.execution_ids:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Event has already been processed and is not retryable",
-                )
-            execution = service.get_execution(dispatch.execution_ids[0])
-        else:
-            execution = await service.execute_task_now(task_id)
+
+        execution = await service.execute_task_now(task_id)
 
         return {
             "success": True,

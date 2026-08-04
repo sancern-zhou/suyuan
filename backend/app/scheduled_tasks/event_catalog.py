@@ -16,7 +16,16 @@ _EVENT_DEFINITIONS = {
         label="运城市空气质量告警",
         description="运城市小时盯守告警及溯源上下文已准备完成",
         filter_fields=["city", "alert_level", "target_pollutant"],
-    )
+    ),
+    "xuchang.daily_attainment.predicted_exceedance": EventDefinition(
+        event_type="xuchang.daily_attainment.predicted_exceedance",
+        label="许昌市日达标预测超标",
+        description="许昌市当日PM2.5日均值或臭氧日最大8小时滑动平均预测超标",
+        filter_fields=[
+            "city", "target_date", "target_pollutant", "is_attainment_predicted",
+            "notification_reason", "has_turnaround_opportunity",
+        ],
+    ),
 }
 
 

@@ -41,7 +41,7 @@ def get_xuchang_hourly_forecast() -> dict[str, Any]:
     try:
         observations = client.query(
             ["许昌"],
-            (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"),
+            (now - timedelta(hours=72)).strftime("%Y-%m-%d %H:%M:%S"),
             now.strftime("%Y-%m-%d %H:%M:%S"),
             "CityAQIPublishHistory",
         )

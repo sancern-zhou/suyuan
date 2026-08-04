@@ -358,6 +358,14 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="execute_sql_query", error=str(e))
 
+    # PostgreSQL/KingbaseES 企业排污许可证查询工具
+    try:
+        from app.tools.query.execute_postgres_sql_query.tool import ExecutePostgresSQLQueryTool
+        registry.register(ExecutePostgresSQLQueryTool(), priority=47)
+        logger.info("tool_loaded", tool="execute_postgres_sql_query")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="execute_postgres_sql_query", error=str(e))
+
     try:
         from app.tools.query.qianlima_realtime_tender.tool import QianlimaRealtimeTenderTool
         registry.register(QianlimaRealtimeTenderTool(), priority=46)
