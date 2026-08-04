@@ -53,10 +53,6 @@ reports/
 games/
 docs/
 frontend/.vite/
-backend/tests/
-**/tests/
-**/__tests__/
-**/*_test.py
 !backend/app/services/ops_audit/semantic/test_reviewer.py
 !backend/app/utils/path_config_test.py
 **/*.test.mjs
@@ -93,7 +89,9 @@ backend/app/**/*.md
 backend/config/chart_templates/
 backend/*_result.txt
 backend/tool_summaries_*.txt
-backend/test*
+backend/test*.py
+backend/test*.sql
+backend/test*.txt
 backend/debug*
 backend/diagnose*
 backend/fix*
@@ -106,7 +104,8 @@ backend/start*
 backend/update*
 backend/cleanup*
 backend/search*
-backend/comprehensive_test*
+backend/comprehensive_test*.py
+backend/comprehensive_test*.txt
 backend/*_game.py
 frontend/start.*
 frontend/test-*
@@ -142,8 +141,7 @@ unpacked_*/
 unpacked_doc*/
 unpacked_pm25_doc*/
 
-# Test scripts (development only)
-test_*.py
+# Development-only diagnostics
 !backend/app/tools/utility/test_publish_session_file_contract.py
 !backend/app/services/ops_audit/rules/test_rf_range_rules.py
 !backend/app/services/ops_audit/rules/test_rf_required_rules.py
@@ -200,7 +198,6 @@ table-transformer-model/
 obm-full-standalone/
 
 # Temporary data folders
-`data`
 data/
 
 # Deployment scripts
@@ -221,8 +218,9 @@ playwright-*/
 doc/
 docs/
 scripts/
+!/.github/scripts/
+!/.github/scripts/build_filter_repo_replacements.py
 backend/scripts/
-tests/
 models--*/
 hub/
 llm_monitor/

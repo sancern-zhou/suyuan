@@ -10,6 +10,7 @@
 执行日期: 2026-04-09
 """
 
+import os
 import pyodbc
 from decimal import Decimal
 from datetime import datetime
@@ -20,7 +21,7 @@ DB_CONFIG = {
     'port': 1433,
     'database': 'XcAiDb',
     'user': 'sa',
-    'password': "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
+    'password': os.getenv("SQLSERVER_PASSWORD", "")
 }
 
 # HJ 663-2013 旧标准限值
@@ -56,6 +57,8 @@ WEIGHTS_OLD_ALGO = {
 
 def build_connection_string():
     """构建ODBC连接字符串"""
+    if not DB_CONFIG['password']:
+        raise RuntimeError("SQLSERVER_PASSWORD is required")
     return (
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={DB_CONFIG['host']},{DB_CONFIG['port']};"

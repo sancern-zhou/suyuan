@@ -459,12 +459,14 @@ class QuickTraceExecutor:
             'port': 1433,
             'database': 'XcAiDb',
             'uid': 'sa',
-            'pwd': '#Ph981,6J2bOkWYT7p?5slH$I~g_0itR'
+            'pwd': os.getenv('SQLSERVER_PASSWORD', '')
         }
 
         conn = None
         cursor = None
         try:
+            if not sql_server_config['pwd']:
+                raise RuntimeError("SQLSERVER_PASSWORD is required")
             conn_str = (
                 f"DRIVER={sql_server_config['driver']};"
                 f"SERVER={sql_server_config['server']},{sql_server_config['port']};"
@@ -1607,13 +1609,15 @@ class QuickTraceExecutor:
             'port': 1433,
             'database': 'XcAiDb',
             'uid': 'sa',
-            'pwd': '#Ph981,6J2bOkWYT7p?5slH$I~g_0itR'
+            'pwd': os.getenv('SQLSERVER_PASSWORD', '')
         }
 
         conn = None
         cursor = None
 
         try:
+            if not sql_server_config['pwd']:
+                raise RuntimeError("SQLSERVER_PASSWORD is required")
             # 构建连接字符串
             conn_str = (
                 f"DRIVER={sql_server_config['driver']};"

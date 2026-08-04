@@ -94,5 +94,5 @@ sqlserver_host = "180.184.30.94"
 sqlserver_port = 1433
 sqlserver_database = "XcAiDb"
 sqlserver_user = "sa"
-sqlserver_password = "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
+sqlserver_password = os.environ["SQLSERVER_PASSWORD"]
 ```

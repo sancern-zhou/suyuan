@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -60,12 +61,16 @@ async def verify_conversion():
 
     import pyodbc
 
+    password = os.getenv("SQLSERVER_PASSWORD", "")
+    if not password:
+        raise RuntimeError("SQLSERVER_PASSWORD is required")
+
     conn_str = (
         "DRIVER={ODBC Driver 17 for SQL Server};"
         "SERVER=180.184.30.94,1433;"
         "DATABASE=XcAiDb;"
         "UID=sa;"
-        "PWD=#Ph981,6J2bOkWYT7p?5slH$I~g_0itR;"
+        f"PWD={{{password}}};"
         "TrustServerCertificate=yes"
     )
 

@@ -9,7 +9,7 @@ test('company login matches the 2.1.4 SM2/SM3/SM4 protocol layout', () => {
     {
       encryptType: 'SM2',
       sm2PublicKey: 'public-key',
-      sm4Key: '0123456789abcdef'
+      sm4Key: '0123456789abcdef' // gitleaks:allow -- deterministic test fixture
     },
     {
       sm2Encrypt: value => `sm2(${value})`,
@@ -46,7 +46,7 @@ test('company login matches the 2.1.4 SM2/SM3/SM4 protocol layout', () => {
 test('company crypto delegates SM2 encryption to the approved module adapter', () => {
   const encryptedValues = []
   const crypto = createCompanyCrypto(
-    { encryptType: 'SM2', sm2PublicKey: 'key', sm4Key: '0123456789abcdef' },
+    { encryptType: 'SM2', sm2PublicKey: 'key', sm4Key: '0123456789abcdef' }, // gitleaks:allow -- deterministic test fixture
     {
       sm2Encrypt: value => { encryptedValues.push(value); return 'cipher' },
       sm3Hash: () => 'hash',

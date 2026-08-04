@@ -6,9 +6,6 @@ from typing import Optional
 import structlog
 import asyncio
 
-from config.settings import settings
-from app.services.lifecycle_manager import get_fetcher_scheduler
-
 logger = structlog.get_logger()
 
 router = APIRouter()
@@ -35,124 +32,6 @@ async def health_check():
 async def config_options():
     """Handle OPTIONS preflight request for /config endpoint."""
     return {}
-
-
-@router.get("/config")
-async def get_config():
-    """Get frontend configuration."""
-    return ConfigResponse(
-        amapPublicKey=settings.amap_public_key,
-        features={
-            "streaming": True,
-            "realtime_progress": True,
-        },
-    )
-
-
-# =============== Fetchers 管理 API ===============
-
-@router.get("/system/status")
-async def get_system_status():
-    """
-    获取系统状态信息
-
-    包括：
-    - Fetchers运行状态
-    - LLM Tools注册情况
-    - 数据库连接状态
-    """
-    try:
-        from app.services.lifecycle_manager import get_fetcher_scheduler, get_tool_registry
-
-        status = {
-            "service": "atmospheric-environment-decision-support-api",
-            "version": "1.0.0",
-        }
-
-        # 数据库状态
-        import os
-        if os.getenv("DATABASE_URL"):
-            status["database"] = {
-                "enabled": True,
-                "url": os.getenv("DATABASE_URL").split("@")[1] if "@" in os.getenv("DATABASE_URL", "") else "configured"
-            }
-        else:
-            status["database"] = {"enabled": False}
-
-        # Fetchers状态
-        try:
-            scheduler = get_fetcher_scheduler()
-            status["fetchers"] = scheduler.get_status()
-        except Exception as e:
-            status["fetchers"] = {"error": str(e)}
-
-        # Tools状态
-        try:
-            registry = get_tool_registry()
-            status["llm_tools"] = {
-                "registered": registry.list_tools(),
-                "count": len(registry.list_tools()),
-                "statistics": registry.get_stats()
-            }
-        except Exception as e:
-            status["llm_tools"] = {"error": str(e)}
-
-        return status
-
-    except Exception as e:
-        logger.error("system_status_failed", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to get system status: {str(e)}")
-
-
-@router.post("/fetchers/trigger/{fetcher_name}")
-async def trigger_fetcher(fetcher_name: str):
-    """
-    手动触发指定Fetcher
-    """
-    try:
-        scheduler = get_fetcher_scheduler()
-        await scheduler.run_now(fetcher_name)
-        return {
-            "success": True,
-            "message": f"Fetcher '{fetcher_name}' triggered successfully"
-        }
-    except Exception as e:
-        logger.error("trigger_fetcher_failed", fetcher=fetcher_name, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to trigger fetcher: {str(e)}")
-
-
-@router.post("/fetchers/pause/{fetcher_name}")
-async def pause_fetcher(fetcher_name: str):
-    """
-    暂停指定Fetcher
-    """
-    try:
-        scheduler = get_fetcher_scheduler()
-        scheduler.pause(fetcher_name)
-        return {
-            "success": True,
-            "message": f"Fetcher '{fetcher_name}' paused successfully"
-        }
-    except Exception as e:
-        logger.error("pause_fetcher_failed", fetcher=fetcher_name, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to pause fetcher: {str(e)}")
-
-
-@router.post("/fetchers/resume/{fetcher_name}")
-async def resume_fetcher(fetcher_name: str):
-    """
-    恢复指定Fetcher
-    """
-    try:
-        scheduler = get_fetcher_scheduler()
-        scheduler.resume(fetcher_name)
-        return {
-            "success": True,
-            "message": f"Fetcher '{fetcher_name}' resumed successfully"
-        }
-    except Exception as e:
-        logger.error("resume_fetcher_failed", fetcher=fetcher_name, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to resume fetcher: {str(e)}")
 
 
 # =============== ERA5 历史数据补采 API ===============

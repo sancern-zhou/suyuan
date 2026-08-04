@@ -7,6 +7,7 @@ Dify API Client
 from typing import Dict, Any, Optional, AsyncGenerator
 import httpx
 import json
+import os
 import structlog
 
 logger = structlog.get_logger()
@@ -21,10 +22,25 @@ class DifyClient:
     - 支持小时、日、月、年粒度
     """
 
-    def __init__(self):
-        self.base_url = "http://219.135.180.51:56037"
-        self.api_key = "app-nlRAQE2NBII83XnPaK0ysKNw"
-        self.timeout = 300  # Dify 工作流超时时间（5分钟）
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: float = 300,
+    ):
+        self.base_url = (base_url or os.getenv("DIFY_BASE_URL", "")).rstrip("/")
+        self.api_key = api_key or os.getenv("DIFY_API_KEY", "")
+        self.timeout = timeout
+
+    def _headers(self) -> Dict[str, str]:
+        if not self.base_url:
+            raise RuntimeError("DIFY_BASE_URL is required")
+        if not self.api_key:
+            raise RuntimeError("DIFY_API_KEY is required")
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
 
     async def chat_messages(
         self,
@@ -49,10 +65,7 @@ class DifyClient:
             Exception: API 调用失败
         """
         url = f"{self.base_url}/v1/chat-messages"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
+        headers = self._headers()
 
         data = {
             "inputs": {},
@@ -107,10 +120,7 @@ class DifyClient:
             Exception: API 调用失败
         """
         url = f"{self.base_url}/v1/chat-messages"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
+        headers = self._headers()
 
         data = {
             "inputs": {},

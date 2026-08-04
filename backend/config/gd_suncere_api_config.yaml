@@ -3,8 +3,8 @@
 
 # API 基础配置
 api_base_url: "http://113.108.142.147:20161"
-api_username: "ScGuanLy"
-api_password: "Suncere$0717"
+api_username: "${GD_SUNCERE_API_USERNAME}"
+api_password: "${GD_SUNCERE_API_PASSWORD}"
 
 # Token 配置
 token_endpoint: "/api/airprovinceproduct/AirCityBaseCommon/GetExternalApiToken"

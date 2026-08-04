@@ -39,7 +39,7 @@ DEFAULT_CONFIG = {
                 "name": "气象数据API",
                 "url": "http://180.184.30.94/api/AiDataService/ReportApplication/UserReportDataQuery/Query",
                 "description": "查询风速、风向、温度、湿度等气象数据",
-                "api_key": "1882bb80-16a0-419a-ae3e-f442471909d3"
+                "api_key_env": "METEOROLOGICAL_API_KEY"
             },
             "upwind_analysis_api": {
                 "name": "上风向分析API",

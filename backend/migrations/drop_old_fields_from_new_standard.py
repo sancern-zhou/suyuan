@@ -1,6 +1,7 @@
 """
 从新标准表中删除旧标准对比字段
 """
+import os
 import pyodbc
 import structlog
 
@@ -20,11 +21,13 @@ logger = structlog.get_logger()
 SERVER = "180.184.30.94,1433"
 DATABASE = "XcAiDb"
 USER = "sa"
-PASSWORD = r"#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
+PASSWORD = os.getenv("SQLSERVER_PASSWORD", "")
 
 
 def get_connection():
     """获取数据库连接"""
+    if not PASSWORD:
+        raise RuntimeError("SQLSERVER_PASSWORD is required")
     connection_string = (
         f"DRIVER={{ODBC Driver 17 for SQL Server}};"
         f"SERVER={SERVER};"
