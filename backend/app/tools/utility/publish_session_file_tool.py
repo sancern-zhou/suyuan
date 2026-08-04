@@ -4,6 +4,7 @@ This tool has no frontend delivery protocol. It returns canonical ``resources``
 declarations; the normal tool-result boundary copies the file into session
 storage, updates the catalog, and emits ``resources_changed``.
 """
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -23,7 +24,7 @@ from app.tools.artifact_utils import (
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 from app.tools.resource_declarations import generated_file_products
-from app.utils.path_config import PROJECT_ROOT
+from app.utils.path_config import BACKEND_ROOT, PROJECT_ROOT
 
 logger = structlog.get_logger()
 
@@ -55,7 +56,10 @@ class PublishSessionFileTool(LLMTool):
             version="2.0.0",
             requires_context=False,
         )
-        self.allowed_dirs = [PROJECT_ROOT.resolve(), Path("/tmp").resolve()]
+        self.allowed_dirs = [
+            PROJECT_ROOT.resolve(),
+            Path(tempfile.gettempdir()).resolve(),
+        ]
 
     async def execute(
         self,
@@ -236,7 +240,7 @@ class PublishSessionFileTool(LLMTool):
         try:
             candidate = Path(path)
             if not candidate.is_absolute():
-                candidate = PROJECT_ROOT / candidate
+                candidate = BACKEND_ROOT / candidate
             resolved = candidate.resolve()
             if any(resolved.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs):
                 return resolved
@@ -305,7 +309,10 @@ class PublishSessionFileTool(LLMTool):
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "允许目录内已存在文件的绝对路径或项目相对路径。",
+                        "description": (
+                            "允许目录内已存在文件的绝对路径，或相对于 backend 目录的路径；"
+                            "例如 backend_data_registry/uploads/example.png。"
+                        ),
                     },
                     "label": {
                         "type": "string",

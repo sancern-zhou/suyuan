@@ -92,3 +92,19 @@ def test_schema_describes_catalog_registration_instead_of_frontend_push():
     assert set(schema["parameters"]["properties"]) == {"file_path", "label"}
     assert "统一会话资源目录" in schema["description"]
     assert "推送到前端" not in schema["description"]
+
+
+@pytest.mark.asyncio
+async def test_relative_path_is_resolved_from_backend_root(tmp_path, monkeypatch):
+    nested = tmp_path / "outputs"
+    nested.mkdir()
+    document = nested / "report.pdf"
+    document.write_bytes(b"pdf")
+    monkeypatch.setattr(publish_session_file_tool, "BACKEND_ROOT", tmp_path)
+    tool = PublishSessionFileTool()
+
+    result = await tool.execute("outputs/report.pdf")
+
+    assert result["success"] is True
+    assert result["data"]["file_path"] == str(document.resolve())
+    assert result["resources"][0]["locator"]["path"] == str(document.resolve())

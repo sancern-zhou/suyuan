@@ -54,6 +54,33 @@ test('refreshes once for a newer event and ignores out-of-order versions', async
   assert.equal(store.sessionState('session-a').resourceVersion, 4)
 })
 
+test('records a one-shot presentation request for publish_session_file events', async () => {
+  const resource = {
+    resource_id: 'published-file',
+    group_id: 'published-group',
+    status: 'active'
+  }
+  const store = createResourceStoreHarness({
+    listResources: async sessionId => page(sessionId, 2, [resource])
+  })
+
+  await store.onResourcesChanged({
+    session_id: 'session-a',
+    resource_version: 2,
+    focus_resource_id: 'published-file'
+  })
+
+  assert.deepEqual(store.sessionState('session-a').presentationRequest, {
+    resourceId: 'published-file',
+    resourceVersion: 2
+  })
+  assert.deepEqual(
+    store.consumePresentationRequest('session-a', 'published-file'),
+    { resourceId: 'published-file', resourceVersion: 2 }
+  )
+  assert.equal(store.sessionState('session-a').presentationRequest, null)
+})
+
 test('retries until the catalog reports the expected version without another event', async () => {
   let fetchCount = 0
   const store = createResourceStoreHarness({

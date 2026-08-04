@@ -96,6 +96,66 @@ async def test_tool_result_publication_returns_durable_change():
     assert len(result.changed_resource_ids) == 1
 
 
+@pytest.mark.asyncio
+async def test_publish_session_file_requests_frontend_focus():
+    class Service:
+        async def publish_group(self, session_id, run_id, group_key, resources, *, turn_sequence=0):
+            stored = StoredResource.from_declaration(
+                session_id,
+                run_id,
+                "group-id",
+                1,
+                resources[0],
+                turn_sequence=turn_sequence,
+            )
+            return type("Result", (), {"catalog_version": 5, "resources": [stored]})()
+
+    result = await persist_tool_result_resources(
+        Service(),
+        "session-a",
+        "run-a",
+        {
+            "type": "tool_result",
+            "data": {
+                "tool_name": "publish_session_file",
+                "result": {"success": True, "resources": [_resource()]},
+            },
+        },
+        turn_sequence=1,
+    )
+
+    assert result.focus_resource_id == result.changed_resource_ids[0]
+    event = result.changed_event("session-a", "run-a")
+    assert event["data"]["focus_resource_id"] == result.changed_resource_ids[0]
+
+
+@pytest.mark.asyncio
+async def test_durably_tracked_publish_session_file_keeps_focus_intent():
+    result = await persist_tool_result_resources(
+        object(),
+        "session-a",
+        "run-a",
+        {
+            "type": "tool_result",
+            "data": {
+                "tool_name": "publish_session_file",
+                "result": {
+                    "success": True,
+                    "resource_tracking": {
+                        "durable": True,
+                        "version": 7,
+                        "resource_ids": ["primary-id", "preview-id"],
+                    },
+                },
+            },
+        },
+        turn_sequence=1,
+    )
+
+    assert result.catalog_version == 7
+    assert result.focus_resource_id == "primary-id"
+
+
 def test_malformed_iteration_falls_back_to_zero():
     assert event_turn_sequence({"iteration": "not-a-number"}) == 0
 
