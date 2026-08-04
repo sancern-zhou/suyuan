@@ -458,7 +458,7 @@ class EvidenceContext:
 
 
 class EvidencePackageBuilder:
-    def __init__(self, target_date: date, output_root: Path, top_n: int, include_weather_map: bool) -> None:
+    def __init__(self, target_date: date, output_root: Path, top_n: int) -> None:
         self.target_date = target_date
         self.output_root = output_root
         self.package_dir = output_root / target_date.isoformat()
@@ -466,7 +466,6 @@ class EvidencePackageBuilder:
         self.refs_dir = self.package_dir / "data_refs"
         self.context = EvidenceContext(f"pollution_evidence_{target_date.isoformat()}", self.refs_dir)
         self.top_n = top_n
-        self.include_weather_map = include_weather_map
         self.manifest: dict[str, Any] = {
             "schema_version": "pollution_evidence_package/v1",
             "target_date": target_date.isoformat(),
@@ -565,7 +564,6 @@ class EvidencePackageBuilder:
         from app.tools.query.get_universal_meteorology.tool import UniversalMeteorologyTool
         from app.tools.query.get_vocs_data import GetVOCsDataTool
         from app.tools.query.get_weather_forecast.tool import GetWeatherForecastTool
-        from app.tools.query.get_weather_situation_map.tool import GetWeatherSituationMapTool
         from app.tools.query.query_city_standard_report.tool import (
             QueryCityStandardReportTool,
             QueryCityStandardYoyReportTool,
@@ -715,16 +713,6 @@ class EvidencePackageBuilder:
         if weather_tasks:
             await asyncio.gather(*weather_tasks)
 
-        if self.include_weather_map:
-            await self.run_tool(
-                "weather_situation_map",
-                "weather_situation_map.json",
-                lambda: GetWeatherSituationMapTool().execute(
-                    date=self.target_date.strftime("%Y%m%d"),
-                    analysis_focus="广东省污染扩散条件和区域输送背景",
-                ),
-            )
-
         wind_summaries = {}
         for city, result in station_hourly_by_city.items():
             records = find_records(result)
@@ -837,7 +825,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-date", default=yesterday, help="Date to collect, format YYYY-MM-DD. Default: yesterday in Asia/Shanghai.")
     parser.add_argument("--output-root", default="/tmp/溯源分析", help="Root directory for evidence packages.")
     parser.add_argument("--top-n", type=int, default=3, help="Number of top cities to collect detailed evidence for.")
-    parser.add_argument("--skip-weather-map", action="store_true", help="Skip AI weather situation map interpretation.")
     return parser.parse_args()
 
 
@@ -848,7 +835,6 @@ async def main_async() -> int:
         target_date=target,
         output_root=Path(args.output_root),
         top_n=args.top_n,
-        include_weather_map=not args.skip_weather_map,
     )
     manifest = await builder.build()
     print(json.dumps({
