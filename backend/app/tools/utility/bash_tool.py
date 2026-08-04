@@ -35,7 +35,9 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products
-from app.utils.path_config import BACKEND_ROOT, resolve_agent_path
+from app.utils import path_config
+
+resolve_agent_path = path_config.resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -347,8 +349,8 @@ class BashTool(LLMTool):
             requires_context=False
         )
 
-        # 工作目录：使用backend目录（统一所有Agent的工作目录）
-        self.working_dir = BACKEND_ROOT
+        # Bash 命令中的相对路径也统一从项目根目录解析。
+        self.working_dir = path_config.PROJECT_ROOT
         self.default_timeout = 60
         self.max_output_size = 1024 * 1024  # 1MB（大幅提升，有上下文压缩策略）
 
@@ -549,10 +551,7 @@ class BashTool(LLMTool):
             if returncode == 0 and output_paths:
                 resolved_outputs = []
                 for output_path in output_paths:
-                    candidate = Path(output_path).expanduser()
-                    if not candidate.is_absolute():
-                        candidate = Path(work_dir) / candidate
-                    candidate = candidate.resolve()
+                    candidate = resolve_agent_path(output_path)
                     if candidate.is_relative_to(self.working_dir):
                         resolved_outputs.append(candidate)
                 tool_result["resources"] = file_products(
@@ -930,6 +929,16 @@ class BashTool(LLMTool):
         Returns:
             {"valid": bool, "error": str (if invalid)}
         """
+        # Agent 文件路径统一从项目根解析，因此不允许通过 ``..`` 绕出项目根。
+        # 这项检查必须发生在进程启动前，尤其要保护 rm/mv/cp 等文件命令。
+        for part in parts[1:]:
+            path_candidate = part.split("=", 1)[1] if part.startswith("-") and "=" in part else part
+            if ".." in Path(path_candidate).parts:
+                return {
+                    "valid": False,
+                    "error": f"禁止使用父目录路径遍历: {part}",
+                }
+
         # 检查参数中是否包含危险的选项
         for i, part in enumerate(parts[1:], 1):  # 跳过命令本身
             # 检查危险的选项标志

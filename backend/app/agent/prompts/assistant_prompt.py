@@ -3,7 +3,6 @@
 """
 
 from typing import List, Optional
-from pathlib import Path
 
 
 def build_assistant_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
@@ -20,34 +19,14 @@ def build_assistant_prompt(available_tools: List[str], memory_context: Optional[
         memory_context: 记忆上下文内容（从快照获取）
         memory_file_path: 助手模式记忆文件路径
     """
-    # 动态生成绝对路径（LLM需要完整路径才能正确调用read_file）
-    current_dir = Path(__file__).parent
-    ppt_guide_path = (current_dir.parent.parent / "tools" / "office" / "PPT操作指南.md").resolve()
-    ppt_guide_path_str = str(ppt_guide_path).replace("\\", "/")
-
-    # 浏览器工具指导文档路径
-    browser_guide_path = (current_dir.parent.parent / "tools" / "browser" / "browser_skills_guide.md").resolve()
-    browser_guide_path_str = str(browser_guide_path).replace("\\", "/")
-
-    # 问数模式Agent调用指南路径
-    query_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "query_agent_guide.md").resolve()
-    query_agent_guide_path_str = str(query_agent_guide_path).replace("\\", "/")
-
-    # 专家模式Agent调用指南路径
-    expert_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "expert_agent_guide.md").resolve()
-    expert_agent_guide_path_str = str(expert_agent_guide_path).replace("\\", "/")
-
-    # 运维模式Agent调用指南路径
-    ops_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "ops_agent_guide.md").resolve()
-    ops_agent_guide_path_str = str(ops_agent_guide_path).replace("\\", "/")
-
-    # 画板模式Agent调用指南路径
-    board_agent_guide_path = (current_dir.parent.parent.parent / "docs" / "agent_guide" / "board_agent_guide.md").resolve()
-    board_agent_guide_path_str = str(board_agent_guide_path).replace("\\", "/")
-
-    # Excel技能文档路径
-    excel_guide_path = (current_dir.parent.parent.parent / "docs" / "skills" / "excel.md").resolve()
-    excel_guide_path_str = str(excel_guide_path).replace("\\", "/")
+    # Agent 可见文档统一使用 suyuan 项目根相对路径。
+    ppt_guide_path_str = "backend/app/tools/office/PPT操作指南.md"
+    browser_guide_path_str = "backend/app/tools/browser/browser_skills_guide.md"
+    query_agent_guide_path_str = "backend/docs/agent_guide/query_agent_guide.md"
+    expert_agent_guide_path_str = "backend/docs/agent_guide/expert_agent_guide.md"
+    ops_agent_guide_path_str = "backend/docs/agent_guide/ops_agent_guide.md"
+    board_agent_guide_path_str = "backend/app/agent/guides/drawio_board_workflow.md"
+    excel_guide_path_str = "backend/app/tools/office/Excel操作指南.md"
 
     # 使用字符串拼接避免 f-string 中的大括号转义问题
     prompt_parts = []

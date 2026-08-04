@@ -585,8 +585,7 @@ class TerminalSessionTool(LLMTool):
             return result
         resolved = []
         for value in output_paths:
-            path = Path(value).expanduser()
-            path = path.resolve() if path.is_absolute() else (cwd / path).resolve()
+            path = resolve_agent_path(value)
             if path.is_relative_to(PROJECT_ROOT):
                 resolved.append(path)
         result["resources"] = file_products(resolved, tool_name=self.name)

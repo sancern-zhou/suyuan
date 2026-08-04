@@ -38,7 +38,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
-from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir
+from app.utils.path_config import PROJECT_ROOT, get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -151,7 +151,7 @@ class ExecutePythonTool(LLMTool):
         }
         requested_paths = []
         for file_path in self._find_data_file_accesses(code):
-            resolved = Path(file_path).resolve()
+            resolved = resolve_agent_path(file_path)
             resolved_path = str(resolved)
             is_session_file = resolved == session_data_dir or session_data_dir in resolved.parents
             if resolved_path not in available_paths and not is_session_file:
@@ -685,7 +685,7 @@ class ExecutePythonTool(LLMTool):
                 "data": {"error": "Bubblewrap 沙箱不可用，已拒绝在宿主机直接执行代码"},
                 "summary": "Python 沙箱不可用",
             }
-        command, sandbox_sync_dirs = sandbox_spec
+        command, sandbox_sync_dirs, relative_input_mounts = sandbox_spec
 
         # 执行代码
         process = None
@@ -756,6 +756,15 @@ class ExecutePythonTool(LLMTool):
                 self._terminate_process_group(process)
                 await asyncio.to_thread(process.communicate)
             raise
+        finally:
+            for mountpoint in sorted(relative_input_mounts, key=lambda item: len(item.parts), reverse=True):
+                try:
+                    if mountpoint.is_dir():
+                        mountpoint.rmdir()
+                    else:
+                        mountpoint.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("execute_python_relative_input_mount_cleanup_failed", path=str(mountpoint))
 
     def _build_bubblewrap_command(
         self,
@@ -765,7 +774,7 @@ class ExecutePythonTool(LLMTool):
         working_dir: str,
         timeout: int,
         context=None,
-    ) -> Optional[Tuple[List[str], List[Tuple[Path, Path, set[str]]]]]:
+    ) -> Optional[Tuple[List[str], List[Tuple[Path, Path, set[str]]], List[Path]]]:
         """构建 fail-closed Bubblewrap 沙箱命令。
 
         沙箱不可见项目根目录、宿主机 home、Docker socket 和网络；
@@ -861,6 +870,7 @@ class ExecutePythonTool(LLMTool):
 
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
+        relative_input_mounts: List[Path] = []
         context_paths = list(getattr(context, "available_file_paths", []) or [])
         requested_paths = self._find_data_file_accesses(code)
         candidate_paths = list(dict.fromkeys([*context_paths, *requested_paths]))
@@ -870,7 +880,7 @@ class ExecutePythonTool(LLMTool):
                 staged_session_dir.mkdir(parents=True, exist_ok=True)
                 original_relative_paths: set[str] = set()
                 for value in candidate_paths:
-                    source_path = Path(value).resolve()
+                    source_path = resolve_agent_path(value)
                     if not source_path.is_file() or not (
                         source_path == session_data_dir or session_data_dir in source_path.parents
                     ):
@@ -898,12 +908,32 @@ class ExecutePythonTool(LLMTool):
             sync_dirs.append((staged_images_dir, images_dir, set()))
 
             for index, value in enumerate(candidate_paths):
-                path = Path(value).resolve()
+                raw_path = Path(value).expanduser()
+                path = resolve_agent_path(value)
                 if not path.exists():
                     continue
-                if session_data_dir and (path == session_data_dir or session_data_dir in path.parents):
+                if (
+                    raw_path.is_absolute()
+                    and session_data_dir
+                    and (path == session_data_dir or session_data_dir in path.parents)
+                ):
                     continue
-                destination = str(path)
+                if raw_path.is_absolute():
+                    destination_path = path
+                else:
+                    try:
+                        project_relative = path.relative_to(PROJECT_ROOT)
+                    except ValueError:
+                        continue
+                    destination_path = Path("/sandbox") / project_relative
+                    host_mountpoint = Path(working_dir) / project_relative
+                    host_mountpoint.parent.mkdir(parents=True, exist_ok=True)
+                    if path.is_dir():
+                        host_mountpoint.mkdir(exist_ok=True)
+                    else:
+                        host_mountpoint.touch(exist_ok=True)
+                    relative_input_mounts.append(host_mountpoint)
+                destination = str(destination_path)
                 if destination in mounted_destinations:
                     continue
                 staged_input_dir = Path(working_dir) / "inputs"
@@ -913,7 +943,8 @@ class ExecutePythonTool(LLMTool):
                     shutil.copytree(path, staged_input)
                 else:
                     shutil.copy2(path, staged_input)
-                self._append_bubblewrap_parent_dirs(command, path.parent)
+                if raw_path.is_absolute():
+                    self._append_bubblewrap_parent_dirs(command, path.parent)
                 command.extend(["--ro-bind", str(staged_input), destination])
                 mounted_destinations.add(destination)
         except OSError as error:
@@ -925,7 +956,7 @@ class ExecutePythonTool(LLMTool):
             return None
 
         command.extend([str(python_env / "bin/python"), "/sandbox/script.py"])
-        return command, sync_dirs
+        return command, sync_dirs, relative_input_mounts
 
     @staticmethod
     def _sync_sandbox_session_outputs(
@@ -2445,7 +2476,7 @@ def merge_excel_with_charts(file_paths, output_path):
                 "通过 load_data(file_path) 加载，较大计算结果通过 save_data(...) 保存为新的 file_path，避免直接输出大量明细。"
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
-                "复杂用法先阅读 app/tools/utility/execute_python_manual.md。"
+                "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
                 "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用复用请用 save_data(...) 保存并获取 file_path。"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
@@ -2559,7 +2590,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "description": (
                 "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
                 "首次使用前必须先调用 read_file 阅读 "
-                "app/tools/utility/execute_echarts_python_manual.md。"
+                "backend/app/tools/utility/execute_echarts_python_manual.md。"
                 "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"

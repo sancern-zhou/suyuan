@@ -8,6 +8,8 @@ from typing import Any
 
 import structlog
 
+from app.utils.path_config import PROJECT_ROOT, resolve_agent_path
+
 from .schemas import ClaimRecord, DeliberationRequest, ExpertAnalysis, ExpertCard, FactQuality, FactRecord, ToolCallPlan
 
 logger = structlog.get_logger()
@@ -16,8 +18,8 @@ logger = structlog.get_logger()
 class LLMExpertAgentRunner:
     """Run each expert through the existing ReAct loop and tool system."""
 
-    def __init__(self, workspace_root: str | Path = ".") -> None:
-        self.workspace_root = Path(workspace_root)
+    def __init__(self, workspace_root: str | Path = PROJECT_ROOT) -> None:
+        self.workspace_root = resolve_agent_path(workspace_root)
 
     async def analyze(
         self,
@@ -162,9 +164,7 @@ class LLMExpertAgentRunner:
 
     def _read_prompt_file(self, prompt_file: str) -> str:
         candidates = [
-            self.workspace_root / prompt_file,
-            self.workspace_root / prompt_file.replace("backend/", "", 1),
-            Path(prompt_file),
+            resolve_agent_path(prompt_file),
         ]
         for path in candidates:
             if path.exists():

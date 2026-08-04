@@ -9,7 +9,7 @@ import structlog
 
 from app.tools.artifact_utils import attach_document_resources, preview_output_path
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.path_config import BACKEND_ROOT, get_data_registry, resolve_agent_path
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -29,14 +29,12 @@ class ReadPptxTool(LLMTool):
             name="read_pptx",
             description=(
                 "读取PPTX演示文稿，提取每页文本、表格、图片信息、备注和基础元数据。\n\n"
-                "⚠️ 使用前请先阅读：app/tools/office/PPT操作指南.md"
+                "⚠️ 使用前请先阅读：backend/app/tools/office/PPT操作指南.md"
             ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,
         )
-        self.working_dir = BACKEND_ROOT
-
     async def execute(
         self,
         path: str,

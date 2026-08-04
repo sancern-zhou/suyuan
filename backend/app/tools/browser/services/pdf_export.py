@@ -7,7 +7,7 @@ import structlog
 from typing import Optional, Dict, List
 from datetime import datetime
 from playwright.sync_api import Page
-from app.utils.path_config import get_data_registry
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -60,7 +60,9 @@ class PDFExporter:
                 pdf_id = f"page_{timestamp}"
                 output_path = os.path.join(self.output_dir, f"{pdf_id}.pdf")
             else:
+                output_path = str(resolve_agent_path(output_path))
                 pdf_id = os.path.basename(output_path).replace(".pdf", "")
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
             # Export PDF
             pdf_bytes = page.pdf(
@@ -127,7 +129,9 @@ class PDFExporter:
                 pdf_id = f"element_{timestamp}"
                 output_path = os.path.join(self.output_dir, f"{pdf_id}.pdf")
             else:
+                output_path = str(resolve_agent_path(output_path))
                 pdf_id = os.path.basename(output_path).replace(".pdf", "")
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
             # Export element (using clip)
             pdf_bytes = page.pdf(

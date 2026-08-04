@@ -16,7 +16,7 @@ import asyncio
 import structlog
 
 from app.agent.memory.memory_store import MemoryStore, ImprovedMemoryStore
-from app.utils.path_config import get_memory_dir
+from app.utils.path_config import get_memory_dir, resolve_agent_path
 
 logger = structlog.get_logger(__name__)
 
@@ -37,18 +37,13 @@ class UnifiedMemoryManager:
         初始化统一记忆管理器
 
         Args:
-            base_workspace: 基础工作空间目录（相对于 backend 目录）
+            base_workspace: 基础工作空间目录（相对于 suyuan 项目根目录）
             max_cache_size: 最大缓存用户数
         """
         # 解析相对路径为绝对路径（避免工作目录问题）
-        workspace_path = Path(base_workspace) if base_workspace else get_memory_dir()
-        if not workspace_path.is_absolute():
-            # 如果是相对路径，相对于当前文件所在目录的父目录（backend）
-            current_file = Path(__file__).resolve()
-            backend_dir = current_file.parent.parent.parent.parent  # app/agent/memory -> agent -> app -> backend
-            self.base_workspace = (backend_dir / workspace_path).resolve()
-        else:
-            self.base_workspace = workspace_path
+        self.base_workspace = (
+            resolve_agent_path(base_workspace) if base_workspace else get_memory_dir()
+        )
 
         self.base_workspace.mkdir(parents=True, exist_ok=True)
 

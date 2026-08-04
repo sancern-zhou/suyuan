@@ -20,6 +20,7 @@ import uuid
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.agent.session.session_manager import get_session_manager
 from app.agent.session.models import Session
+from app.utils.path_config import format_agent_path, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -181,6 +182,19 @@ class CallSubAgentTool(LLMTool):
 
         # ✅ 参数标准化：优先使用context_str，其次context_supplement
         effective_context = context_str or context_supplement
+        effective_workspace = None
+        if workspace_path and workspace_path.strip():
+            try:
+                effective_workspace = format_agent_path(resolve_agent_path(workspace_path))
+            except (OSError, ValueError) as exc:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": f"无效工作目录路径: {exc}",
+                    "data": {},
+                    "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
+                    "summary": "工作目录路径无效",
+                }
 
         try:
             # 获取父Agent模式
@@ -198,7 +212,7 @@ class CallSubAgentTool(LLMTool):
                 target_mode=target_mode,
                 goal=effective_goal[:100] if effective_goal else "",
                 context=effective_context[:50] if effective_context else "",
-                workspace_path=workspace_path,
+                workspace_path=effective_workspace,
                 provided_session_id=session_id,
                 force_new_session=force_new_session,
                 will_attempt_auto_reuse=should_auto_reuse_session
@@ -288,19 +302,18 @@ class CallSubAgentTool(LLMTool):
             # 2. 动态导入（避免循环导入）
             from app.agent.react_agent import ReActAgent
 
-            # 3. 构建子Agent系统提示（参考Hermes设计：分离goal和context）
-            # 注意：当前 ReActAgent.analyze 不支持 system_prompt_override 参数
-            # 关键要求已添加到 assistant_prompt.py 中
-            child_system_prompt = self._build_child_system_prompt(
+            # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
+            # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
+            child_request_prompt = self._build_child_request_prompt(
                 goal=effective_goal,
                 context=effective_context,
-                workspace_path=workspace_path,
+                workspace_path=effective_workspace,
                 target_mode=target_mode
             )
             logger.debug(
-                "child_system_prompt_built",
+                "child_request_prompt_built",
                 target_mode=target_mode,
-                prompt_preview=child_system_prompt[:200] if child_system_prompt else ""
+                prompt_preview=child_request_prompt[:200] if child_request_prompt else ""
             )
 
             # 4. 创建临时子Agent实例（复用父Agent的配置）
@@ -349,7 +362,7 @@ class CallSubAgentTool(LLMTool):
             result_events = []
             with model_chain_context:
                 async for event in sub_agent.analyze(
-                    user_query=effective_goal,  # ✅ 纯净的原始任务（Hermes方案）
+                    user_query=child_request_prompt,
                     session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
                     manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
                     enhance_with_history=True,  # ✅ 启用记忆增强
@@ -441,7 +454,7 @@ class CallSubAgentTool(LLMTool):
                 "summary": "任务执行失败"
             }
 
-    def _build_child_system_prompt(
+    def _build_child_request_prompt(
         self,
         goal: str,
         context: Optional[str] = None,
@@ -449,7 +462,7 @@ class CallSubAgentTool(LLMTool):
         target_mode: str = "assistant"
     ) -> str:
         """
-        构建子Agent系统提示（参考Hermes设计：分离goal和context）
+        构建子 Agent 本轮请求（分离 goal、补充上下文和工作目录）
 
         Args:
             goal: 任务目标（完整的原始任务，包含所有参数）
@@ -458,7 +471,7 @@ class CallSubAgentTool(LLMTool):
             target_mode: 目标Agent模式
 
         Returns:
-            子Agent系统提示字符串
+            子 Agent 请求字符串
         """
         parts = [
             "你是作为子Agent被调用，专注完成指定的任务。\n",
@@ -507,6 +520,21 @@ class CallSubAgentTool(LLMTool):
         parts.append("- 即使只有一个file_path也必须列出\n")
 
         return "\n".join(parts)
+
+    def _build_child_system_prompt(
+        self,
+        goal: str,
+        context: Optional[str] = None,
+        workspace_path: Optional[str] = None,
+        target_mode: str = "assistant",
+    ) -> str:
+        """Backward-compatible alias for the child request prompt builder."""
+        return self._build_child_request_prompt(
+            goal=goal,
+            context=context,
+            workspace_path=workspace_path,
+            target_mode=target_mode,
+        )
 
     def _extract_final_result(self, events: list) -> Dict:
         """从事件流中提取最终结果"""

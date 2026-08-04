@@ -6,7 +6,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.spatial.spatial_analysis.engine import execute_spatial_spec
 
 
-SPATIAL_ANALYSIS_GUIDE_PATH = "app/tools/spatial/spatial_analysis/spatial_analysis_guide.md"
+SPATIAL_ANALYSIS_GUIDE_PATH = "backend/app/tools/spatial/spatial_analysis/spatial_analysis_guide.md"
 
 
 class SpatialAnalysisTool(LLMTool):

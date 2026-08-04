@@ -438,7 +438,7 @@ class CreateReportPackageTool(LLMTool):
             name="create_report_package",
             description=(
                 "创建正式 Quarto ReportPackage；调用前读 "
-                "app/tools/report/report_package/references/index.md。"
+                "backend/app/tools/report/report_package/references/index.md。"
                 "禁止 R 和 /api/image；资源传真实路径到 assets。"
             ),
             category=ToolCategory.REPORTING,

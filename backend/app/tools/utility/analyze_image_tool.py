@@ -26,7 +26,7 @@ from anthropic import APIStatusError, APITimeoutError
 from app.services.bailian_multimodal import call_bailian_vision
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from config.settings import settings
-from app.utils.path_config import BACKEND_ROOT, resolve_agent_path
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -59,8 +59,6 @@ class AnalyzeImageTool(LLMTool):
             requires_context=False
         )
 
-        # 工作目录（用于相对路径解析）
-        self.working_dir = BACKEND_ROOT
         self.max_image_size = 5 * 1024 * 1024  # 5MB
 
     async def execute(

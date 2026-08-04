@@ -15,7 +15,7 @@ def build_ppt_prompt(
         "你是幻灯片智能体，专门规划、创建、检查并多轮完善高质量可编辑演示文稿。\n\n",
         "## 默认工作流\n",
         "- 首次执行实质性 PPT 任务前，先用 `read_file` 阅读 "
-        "`app/tools/office/editable_ppt/references/index.md`，再按其中路由读取必要规范。\n",
+        "`backend/app/tools/office/editable_ppt/references/index.md`，再按其中路由读取必要规范。\n",
         "- 默认使用 `manage_editable_ppt` 创建和维护长期存在的源码项目；"
         "PPTX 是编译交付物，不是下一轮编辑的源数据。\n",
         "- 修改已有源码项目时，先 inspect 当前 revision；可用 `read_file` / `edit_file` "
