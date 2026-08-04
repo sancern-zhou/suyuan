@@ -6,8 +6,12 @@
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
-from pathlib import Path
 import yaml
+
+from app.utils.path_config import get_social_dir, resolve_agent_path
+
+
+DEFAULT_SOCIAL_CONFIG_PATH = "backend/config/social_config.yaml"
 
 
 def _decrypt_config_data(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -115,7 +119,7 @@ def _merge_orphan_accounts(config: SocialConfig) -> SocialConfig:
     防止进程重启或配置丢失后，状态文件变成孤儿。
     """
     import json
-    state_dir = Path("backend_data_registry/social/weixin")
+    state_dir = get_social_dir() / "weixin"
     if not state_dir.exists():
         return config
 
@@ -156,7 +160,7 @@ def _merge_orphan_accounts(config: SocialConfig) -> SocialConfig:
     return config
 
 
-def load_social_config(config_path: str = "config/social_config.yaml") -> SocialConfig:
+def load_social_config(config_path: str = DEFAULT_SOCIAL_CONFIG_PATH) -> SocialConfig:
     """
     加载社交平台配置
 
@@ -165,7 +169,7 @@ def load_social_config(config_path: str = "config/social_config.yaml") -> Social
     Returns:
         SocialConfig对象
     """
-    config_file = Path(config_path)
+    config_file = resolve_agent_path(config_path)
 
     if not config_file.exists():
         # 返回默认配置（并扫描孤儿账户）
@@ -189,7 +193,7 @@ def load_social_config(config_path: str = "config/social_config.yaml") -> Social
         return _merge_orphan_accounts(SocialConfig())
 
 
-def save_social_config(config: SocialConfig, config_path: str = "config/social_config.yaml") -> bool:
+def save_social_config(config: SocialConfig, config_path: str = DEFAULT_SOCIAL_CONFIG_PATH) -> bool:
     """
     保存社交平台配置
 
@@ -200,7 +204,7 @@ def save_social_config(config: SocialConfig, config_path: str = "config/social_c
     Returns:
         是否成功保存
     """
-    config_file = Path(config_path)
+    config_file = resolve_agent_path(config_path)
 
     try:
         # 确保目录存在
@@ -221,7 +225,7 @@ def save_social_config(config: SocialConfig, config_path: str = "config/social_c
         return False
 
 
-def migrate_old_config(old_config_path: str = "config/social_config.yaml") -> bool:
+def migrate_old_config(old_config_path: str = DEFAULT_SOCIAL_CONFIG_PATH) -> bool:
     """
     迁移旧版配置到新格式
 
@@ -246,7 +250,7 @@ def migrate_old_config(old_config_path: str = "config/social_config.yaml") -> bo
     Returns:
         是否成功迁移
     """
-    config_file = Path(old_config_path)
+    config_file = resolve_agent_path(old_config_path)
 
     if not config_file.exists():
         return False

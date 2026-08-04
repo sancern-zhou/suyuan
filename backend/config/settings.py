@@ -721,7 +721,7 @@ class Settings(BaseSettings):
 
     # Social Platform Configuration
     social_config_path: str = Field(
-        default="config/social_config.yaml",
+        default="backend/config/social_config.yaml",
         description="Path to social platform configuration file"
     )
     social_enabled: bool = Field(
@@ -827,7 +827,9 @@ class Settings(BaseSettings):
         Returns:
             Dictionary with channel configurations
         """
-        config_path = Path(self.social_config_path)
+        from app.utils.path_config import resolve_agent_path
+
+        config_path = resolve_agent_path(self.social_config_path)
 
         if not config_path.exists():
             # Return default empty config

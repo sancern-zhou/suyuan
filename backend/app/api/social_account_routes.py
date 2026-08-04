@@ -99,7 +99,7 @@ def get_channel_manager():
         from app.channels.manager import ChannelManager
 
         social_config = SocialConfig.load_from_yaml(
-            getattr(app.state, 'social_config_path', 'config/social_config.yaml')
+            getattr(app.state, 'social_config_path', 'backend/config/social_config.yaml')
         )
         message_bus = MessageBus()
         manager = ChannelManager(

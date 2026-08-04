@@ -32,6 +32,7 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger(__name__)
 
@@ -334,10 +335,11 @@ class WebSearchTool(LLMTool):
         """从 social_config.yaml 加载配置项"""
         try:
             import yaml
-            config_path = os.environ.get(
+            configured_path = os.environ.get(
                 "SOCIAL_CONFIG_PATH",
-                os.path.join(os.path.dirname(__file__), "../../../../../config/social_config.yaml")
+                "backend/config/social_config.yaml",
             )
+            config_path = resolve_agent_path(configured_path)
             if os.path.exists(config_path):
                 with open(config_path, "r", encoding="utf-8") as f:
                     cfg = yaml.safe_load(f) or {}
