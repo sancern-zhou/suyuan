@@ -38,7 +38,16 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
-from app.utils.path_config import PROJECT_ROOT, get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir, resolve_agent_path
+from app.utils.path_config import (
+    PROJECT_ROOT,
+    format_agent_path,
+    get_charts_dir,
+    get_data_registry,
+    get_images_dir,
+    get_python_output_dir,
+    get_reports_dir,
+    resolve_agent_path,
+)
 
 logger = structlog.get_logger()
 
@@ -578,7 +587,6 @@ class ExecutePythonTool(LLMTool):
                 if not chart_data.get("paths") and not chart_data.get("base64_data"):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
-            self._attach_resume_context(result)
             from app.tools.resource_declarations import (
                 data_file_resource,
                 generated_file_products,
@@ -630,6 +638,10 @@ class ExecutePythonTool(LLMTool):
                 result["resources"].extend(
                     resources_for_visuals(result.get("visuals", []), tool_name=self.name)
                 )
+            # Resource declarations above deliberately retain absolute host paths.
+            # Only after they are complete do we expose the canonical Agent-facing
+            # project-relative paths and the automatic-publication contract.
+            self._attach_resume_context(result)
             return result
 
         except Exception as e:
@@ -1023,20 +1035,21 @@ class ExecutePythonTool(LLMTool):
             return
 
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
-        file_paths = []
+        absolute_file_paths = []
         for path in data.get("files") or []:
             if path:
-                file_paths.append(str(path))
+                absolute_file_paths.append(str(resolve_agent_path(path)))
         if data.get("file_path"):
-            file_paths.insert(0, str(data["file_path"]))
-        file_paths = list(dict.fromkeys(file_paths))
+            absolute_file_paths.insert(0, str(resolve_agent_path(data["file_path"])))
+        absolute_file_paths = list(dict.fromkeys(absolute_file_paths))
+        file_paths = [format_agent_path(path) for path in absolute_file_paths]
 
         file_refs = []
-        for path in file_paths:
-            path_obj = Path(path)
+        for absolute_path, agent_path in zip(absolute_file_paths, file_paths):
+            path_obj = Path(absolute_path)
             file_refs.append(
                 build_file_ref(
-                    path,
+                    agent_path,
                     type=self._resource_type_for_path(path_obj),
                     format=path_obj.suffix.lstrip(".").lower() or None,
                     size=path_obj.stat().st_size if path_obj.exists() else None,
@@ -1045,10 +1058,14 @@ class ExecutePythonTool(LLMTool):
                 )
             )
 
-        data_refs = [
-            build_data_file_ref(file_path, usage="generated")
+        data_file_paths = [
+            format_agent_path(file_path)
             for file_path in (data.get("data_file_paths") or [])
             if file_path
+        ]
+        data_refs = [
+            build_data_file_ref(file_path, usage="generated")
+            for file_path in data_file_paths
         ]
 
         visual_refs = []
@@ -1085,7 +1102,13 @@ class ExecutePythonTool(LLMTool):
         llm_resume: Dict[str, Any] = {}
         if file_paths:
             llm_resume["generated_files"] = file_paths
-            llm_resume["tool_hint"] = "Generated file resources are published automatically; use list_session_resources to inspect them."
+            llm_resume["auto_published"] = True
+            llm_resume["publish_session_file_required"] = False
+            llm_resume["tool_hint"] = (
+                "Generated files have already been published to the unified session resource catalog. "
+                "Do not call publish_session_file and do not construct a sessions/... path. "
+                "Reuse the returned file_path exactly, or use list_session_resources to inspect the resource IDs."
+            )
         if data_refs:
             llm_resume["file_paths"] = [ref["file_path"] for ref in data_refs]
         if visual_refs and "tool_hint" not in llm_resume:
@@ -1097,6 +1120,27 @@ class ExecutePythonTool(LLMTool):
                 )
         if llm_resume:
             result["llm_resume"] = llm_resume
+
+        if file_paths:
+            result["file_path"] = file_paths[0]
+            result["file_paths"] = file_paths
+            data["files"] = file_paths
+            if data.get("file_path"):
+                data["file_path"] = format_agent_path(data["file_path"])
+            data["generated_artifacts"] = [
+                {
+                    "file_path": path,
+                    "file_name": Path(path).name,
+                    "auto_published": True,
+                    "publish_session_file_required": False,
+                }
+                for path in file_paths
+            ]
+        if data_file_paths:
+            data["data_file_paths"] = data_file_paths
+        pdf_preview = data.get("pdf_preview")
+        if isinstance(pdf_preview, dict) and pdf_preview.get("pdf_path"):
+            pdf_preview["pdf_path"] = format_agent_path(pdf_preview["pdf_path"])
 
     def _resource_type_for_path(self, path: Path) -> str:
         suffix = path.suffix.lower()
@@ -1132,9 +1176,10 @@ class ExecutePythonTool(LLMTool):
     def _artifact_schema(self) -> Dict[str, Any]:
         """Return a compact schema note for generated artifacts."""
         return {
-            "version": "execute_python.artifacts.v1",
-            "files": "All generated local files as absolute paths.",
-            "file_path": "Primary generated file for preview/download.",
+            "version": "execute_python.artifacts.v2",
+            "files": "All generated local files as project-relative paths; backend paths include the backend/ prefix.",
+            "file_path": "Primary generated file for preview/download. Reuse exactly; never construct a sessions/... path.",
+            "publication": "Generated files are published automatically; publish_session_file is not required.",
             "pdf_preview": "Office/PDF preview metadata for docx/xlsx/pptx/pdf artifacts.",
             "visuals": "Image/ECharts blocks used to declare durable session resources.",
         }
@@ -2480,7 +2525,8 @@ def merge_excel_with_charts(file_paths, output_path):
                 "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用复用请用 save_data(...) 保存并获取 file_path。"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
-                "生成文件保存到 backend_data_registry；默认超时30秒。"
+                "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
+                "不要自行拼接 sessions/... 路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
             "parameters": {
                 "type": "object",
