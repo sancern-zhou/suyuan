@@ -23,9 +23,9 @@ def _layer_render_summary(receipt: dict[str, Any]) -> dict[str, Any]:
             "status": layer_status,
             "feature_count": feature_count,
         }
-        data_id = layer.get("data_id")
-        if data_id:
-            layer_summary["data_id"] = data_id
+        file_path = layer.get("file_path")
+        if file_path:
+            layer_summary["file_path"] = file_path
         if layer_status == "layer_rendered" and feature_count > 0:
             rendered_layers.append(layer_summary)
         elif layer_status == "layer_empty" or feature_count == 0:
@@ -46,7 +46,7 @@ def _receipt_success_summary(program_id: str, render_summary: dict[str, Any]) ->
                 for part in [
                     str(layer.get("layer_id")),
                     f"feature_count={layer.get('feature_count')}",
-                    f"data_id={layer.get('data_id')}" if layer.get("data_id") else "",
+                    f"file_path={layer.get('file_path')}" if layer.get("file_path") else "",
                 ]
                 if part
             )
@@ -63,7 +63,7 @@ def _receipt_success_summary(program_id: str, render_summary: dict[str, Any]) ->
                 for part in [
                     str(layer.get("layer_id")),
                     f"feature_count={layer.get('feature_count')}",
-                    f"data_id={layer.get('data_id')}" if layer.get("data_id") else "",
+                    f"file_path={layer.get('file_path')}" if layer.get("file_path") else "",
                 ]
                 if part
             )
@@ -71,7 +71,7 @@ def _receipt_success_summary(program_id: str, render_summary: dict[str, Any]) ->
         )
         return (
             f"前端地图程序 {program_id} 已回传执行回执，但图层未渲染出要素：{layer_text}。"
-            "请检查 data_id、字段或筛选条件，不要回复已显示成功。"
+            "请检查 file_path、字段或筛选条件，不要回复已显示成功。"
         )
     return f"前端地图程序 {program_id} 已回传执行回执，但未确认有图层真实渲染。"
 

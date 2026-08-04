@@ -7,7 +7,7 @@
 - 并发查询两个时间段的统计数据
 - 自动对比全部统计指标（综合指数、超标天数、六参数等）
 - 返回差值、变化率、趋势判断
-- 保存对比报表数据包，支持后续通过 read_data_registry 按视图读取
+- 保存包含结构化视图的完整对比报表数据文件
 
 【对比指标】
 - 综合指标：composite_index, exceed_days, exceed_rate, compliance_rate, total_days, valid_days
@@ -87,7 +87,7 @@ class CompareOldStandardReportsTool(LLMTool):
             "description": (
                 "【第一优先级】旧标准同比/环比/双时段对比工具，基于HJ 633-2013。"
                 "返回综合指数、超标天数、达标率、六参数等统计指标的差值和变化率；不要手算。"
-                "result可直接用于报告；report_data_id可用read_data_registry按cities/province/result视图读取。"
+                "result可直接用于报告；完整 cities/province/result 视图保存在 report_file_path。"
                 "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
             ),
             "parameters": {

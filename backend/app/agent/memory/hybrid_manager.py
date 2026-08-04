@@ -68,7 +68,7 @@ class HybridMemoryManager:
         """Add a new iteration and manage large payloads.
 
         简化逻辑：既然所有工具都已保存数据到context，
-        HybridMemoryManager只需检查是否有data_id并直接引用，
+        HybridMemoryManager只需检查是否有file_path并直接引用，
         无需重复保存数据。
         """
 
@@ -99,7 +99,7 @@ class HybridMemoryManager:
         action: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        简化的observation处理：直接使用已有的data_id，无重复外部化。
+        简化的observation处理：直接使用已有的file_path，无重复外部化。
 
         由于所有工具都已通过context.save_data()保存数据，
         HybridMemoryManager只需检查observation中的data_id并直接引用，
@@ -109,89 +109,81 @@ class HybridMemoryManager:
         data = observation.get("data")
         refs = self._extract_observation_refs(observation)
 
-        if data is None and not refs["data_ids"] and not refs["report_data_ids"]:
+        if data is None and not refs["file_paths"] and not refs["report_file_paths"]:
             # data为None且没有可引用结果的情况，直接返回
             return observation
 
-        existing_data_id = refs["data_ids"][0] if refs["data_ids"] else None
+        existing_path = refs["file_paths"][0] if refs["file_paths"] else None
 
-        if existing_data_id and isinstance(existing_data_id, str) and ":" in existing_data_id:
-            data_id = existing_data_id
+        if existing_path:
             logger.debug(
-                "hybrid_memory_using_existing_data_id",
-                data_id=data_id,
+                "hybrid_memory_using_existing_data_file",
+                file_path=existing_path,
                 source="observation"
             )
 
-            # 检查数据是否已保存过
-            if data_id in self.session.data_files:
+            if existing_path in self.session.data_files:
                 logger.debug(
                     "hybrid_memory_data_already_saved",
-                    data_id=data_id,
+                    file_path=existing_path,
                     action="skip_duplicate_save"
                 )
 
-                # 构建轻量级payload，直接引用已有数据
-                path = self.session.data_files[data_id]
-                registry_id = self.session.get_registry_id(data_id)
                 sampled_data = self._sample_data(data)
 
                 return {
                     "success": observation.get("success"),
                     "summary": observation.get("summary"),
                     "error": observation.get("error"),
-                    "data_id": data_id,
-                    "data_ref": data_id,
-                    "data_path": path,
-                    "data_registry_id": registry_id,
+                    "file_path": existing_path,
                     "sampled_data": sampled_data,
                     "total_records": len(data) if isinstance(data, list) else None,
                 }
             else:
                 # 数据未保存（不应该发生，因为所有工具都保存了），但仍需处理
                 logger.warning(
-                    "hybrid_memory_data_id_exists_but_not_saved",
-                    data_id=data_id
+                    "hybrid_memory_data_file_not_registered",
+                    file_path=existing_path
                 )
                 # 返回原observation，让上层处理
                 return observation
         else:
-            if refs["report_data_ids"]:
+            if refs["report_file_paths"]:
                 logger.debug(
-                    "hybrid_memory_using_existing_report_data_id",
-                    report_data_ids=refs["report_data_ids"],
+                    "hybrid_memory_using_existing_report_files",
+                    report_file_paths=refs["report_file_paths"],
                     source="observation"
                 )
                 return {
                     "success": observation.get("success"),
                     "summary": observation.get("summary"),
                     "error": observation.get("error"),
-                    "report_data_id": refs["report_data_ids"][0],
-                    "report_data_ids": refs["report_data_ids"],
+                    "report_file_path": refs["report_file_paths"][0],
+                    "report_file_paths": refs["report_file_paths"],
                     "data_role": "statistical_report",
                     "sampled_data": self._sample_data(data) if data is not None else None,
                     "total_records": len(data) if isinstance(data, list) else None,
                 }
 
-            if refs["data_ids"]:
+            if refs["file_paths"]:
                 logger.debug(
-                    "hybrid_memory_using_existing_data_ids",
-                    data_ids=refs["data_ids"],
+                    "hybrid_memory_using_existing_data_files",
+                    file_paths=refs["file_paths"],
                     source="observation"
                 )
                 return {
                     "success": observation.get("success"),
                     "summary": observation.get("summary"),
                     "error": observation.get("error"),
-                    "data_id": refs["data_ids"][0],
-                    "data_ids": refs["data_ids"],
+                    "file_path": refs["file_paths"][0],
+                    "file_paths": refs["file_paths"],
                     "sampled_data": self._sample_data(data) if data is not None else None,
                     "total_records": len(data) if isinstance(data, list) else None,
                 }
 
             # 没有data_id/report_data_id的情况，为了安全起见返回原observation
             logger.warning(
-                "hybrid_memory_no_data_id_in_observation",
+                "hybrid_memory_no_data_file_in_observation",
                 has_data=(data is not None),
                 observation_keys=list(observation.keys())
             )
@@ -200,14 +192,14 @@ class HybridMemoryManager:
     def _extract_observation_refs(self, observation: Dict[str, Any]) -> Dict[str, List[str]]:
         """Extract data and report registry references from a tool observation."""
 
-        data_ids: List[str] = []
-        report_data_ids: List[str] = []
+        file_paths: List[str] = []
+        report_file_paths: List[str] = []
 
         def add_unique(target: List[str], value: Any) -> None:
             if isinstance(value, str) and value and value not in target:
                 target.append(value)
             elif isinstance(value, dict):
-                nested = value.get("data_id")
+                nested = value.get("file_path")
                 if isinstance(nested, str) and nested and nested not in target:
                     target.append(nested)
 
@@ -215,22 +207,22 @@ class HybridMemoryManager:
             if not isinstance(payload, dict):
                 return
 
-            add_unique(data_ids, payload.get("data_id"))
-            add_unique(report_data_ids, payload.get("report_data_id"))
+            add_unique(file_paths, payload.get("file_path"))
+            add_unique(report_file_paths, payload.get("report_file_path"))
 
-            for item in payload.get("data_ids") or []:
-                add_unique(data_ids, item)
-            for item in payload.get("report_data_ids") or []:
-                add_unique(report_data_ids, item)
+            for item in payload.get("file_paths") or []:
+                add_unique(file_paths, item)
+            for item in payload.get("report_file_paths") or []:
+                add_unique(report_file_paths, item)
 
             metadata = payload.get("metadata")
             if isinstance(metadata, dict):
-                add_unique(data_ids, metadata.get("data_id"))
-                add_unique(report_data_ids, metadata.get("report_data_id"))
-                for item in metadata.get("source_data_ids") or []:
-                    add_unique(data_ids, item)
-                for item in metadata.get("source_report_data_ids") or []:
-                    add_unique(report_data_ids, item)
+                add_unique(file_paths, metadata.get("file_path"))
+                add_unique(report_file_paths, metadata.get("report_file_path"))
+                for item in metadata.get("source_file_paths") or []:
+                    add_unique(file_paths, item)
+                for item in metadata.get("source_report_file_paths") or []:
+                    add_unique(report_file_paths, item)
 
         scan_mapping(observation)
         for tool_result in observation.get("tool_results") or []:
@@ -240,8 +232,8 @@ class HybridMemoryManager:
             scan_mapping(tool_result.get("result"))
 
         return {
-            "data_ids": data_ids,
-            "report_data_ids": report_data_ids,
+            "file_paths": file_paths,
+            "report_file_paths": report_file_paths,
         }
 
     def get_iterations(self) -> List[Dict[str, Any]]:

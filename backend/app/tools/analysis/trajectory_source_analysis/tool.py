@@ -335,7 +335,7 @@ class TrajectorySourceAnalysisTool(LLMTool):
                         "days": days
                     }
                 )
-                data_id = data_ref["data_id"]
+                data_id = data_ref
                 file_path = data_ref["file_path"]
                 result_payload["data_id"] = data_id
                 result_payload["file_path"] = file_path

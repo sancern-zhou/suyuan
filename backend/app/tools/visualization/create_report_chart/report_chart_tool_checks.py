@@ -23,7 +23,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "chart_type",
         "title",
         "data",
-        "data_id",
+        "file_path",
         "output_context",
         "style_profile",
         "notes",
@@ -32,12 +32,12 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert schema["parameters"]["required"] == ["chart_type", "title"]
     assert schema["parameters"]["anyOf"] == [
         {"required": ["data"]},
-        {"required": ["data_id"]},
+        {"required": ["file_path"]},
     ]
     assert len(str(schema)) < 7000
     assert "references/index.md" in schema["description"]
     assert "data-input.md" in schema["description"]
-    assert "不支持文件路径" in schema["description"]
+    assert "data 或 file_path" in schema["description"]
     assert properties["chart_type"]["enum"] == [
         "bar",
         "horizontal_bar",
@@ -69,12 +69,12 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "series[0].data" in properties["data"]["description"]
     assert "series[0].values" in properties["data"]["description"]
     assert "多序列" in properties["data"]["description"]
-    assert "data_id" in properties["data"]["description"]
+    assert "file_path" in properties["data"]["description"]
     assert "不会自动推断" in properties["data"]["description"]
-    assert "ExecutionContext" in properties["data_id"]["description"]
-    assert "无需调用 get_raw_data" in properties["data_id"]["description"]
-    assert "来源追踪" in properties["data_id"]["description"]
-    assert "文件路径" in properties["data_id"]["description"]
+    assert "ExecutionContext" in properties["file_path"]["description"]
+    assert "无需调用 get_raw_data" in properties["file_path"]["description"]
+    assert "来源追踪" in properties["file_path"]["description"]
+    assert "绝对路径" in properties["file_path"]["description"]
     assert "reference_lines" in properties["options"]["description"]
 
 
@@ -125,8 +125,8 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "广东省专用" in pollutant_wind_rose_text
     assert "pollutant_calendar" in pollutant_calendar_text
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
-    assert "`data` 或 `data_id`" in data_input_text
-    assert "不支持文件路径" in data_input_text
+    assert "`data` 或 `file_path`" in data_input_text
+    assert "当前会话已授权" in data_input_text
     assert "不会自动推断" in data_input_text
 
 
@@ -170,7 +170,7 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
         chart_type="bar",
         title="资源协议测试图",
         data={"labels": ["A"], "values": [1]},
-        data_id="chart_data:v1:resource_refs",
+        file_path="/configured/data/root/sessions/agent_session_test/data/resource-refs.json",
     )
 
     image_path = Path(result["visuals"][0]["local_path"])
@@ -179,16 +179,15 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
     assert image_path.exists()
     assert result["refs"]["data"] == [
         {
-            "data_id": "chart_data:v1:resource_refs",
+            "file_path": "/configured/data/root/sessions/agent_session_test/data/resource-refs.json",
             "usage": "source",
-            "tool": "read_data_registry",
         }
     ]
     assert result["refs"]["files"][0]["path"] == str(image_path)
     assert result["refs"]["files"][0]["type"] == "image"
     assert result["refs"]["files"][0]["usage"] == "report_chart"
     assert result["refs"]["visuals"][0]["tool_path"] == str(image_path)
-    assert result["llm_resume"]["source_data_id"] == "chart_data:v1:resource_refs"
+    assert result["llm_resume"]["source_file_path"] == "/configured/data/root/sessions/agent_session_test/data/resource-refs.json"
     assert result["llm_resume"]["generated_visuals"][0]["tool_path"] == str(image_path)
     assert str(image_path) in result["llm_resume"]["tool_hint"]
 
@@ -219,7 +218,7 @@ async def test_aqi_calendar_renders_prepared_city_data_map():
 
 
 @pytest.mark.asyncio
-async def test_aqi_calendar_renders_records_loaded_from_context_data_id():
+async def test_aqi_calendar_renders_records_loaded_from_context_file_path():
     records = [
         {"city": "广州", "date": "2026-05-01", "aqi": 82},
         {"city": "广州", "date": "2026-05-02", "aqi": 49},
@@ -229,15 +228,15 @@ async def test_aqi_calendar_renders_records_loaded_from_context_data_id():
 
     result = await CreateReportChartTool().execute(
         context=FakeChartContext(records),
-        chart_id="aqi_calendar_data_id_case",
+        chart_id="aqi_calendar_file_path_case",
         chart_type="aqi_calendar",
         title="AQI 日历",
-        data_id="chart_data:v1:abc",
+        file_path="chart_data:v1:abc",
         options={"year": 2026, "month": 5, "pollutant": "AQI", "cities": ["广州", "深圳"]},
     )
 
     assert result["success"] is True
-    assert result["metadata"]["source_data_id"] == "chart_data:v1:abc"
+    assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
     assert result["data"]["metadata"]["applied_chart_type"] == "aqi_calendar"
     assert result["data"]["metadata"]["scope"] == "guangdong_only"
     assert result["data"]["metadata"]["covered_days"] == 4
@@ -272,7 +271,7 @@ async def test_pollutant_wind_rose_renders_prepared_arrays():
 
 
 @pytest.mark.asyncio
-async def test_pollutant_wind_rose_renders_records_loaded_from_context_data_id():
+async def test_pollutant_wind_rose_renders_records_loaded_from_context_file_path():
     records = []
     for index, direction in enumerate(list(range(0, 360, 15)) * 2):
         records.append(
@@ -286,15 +285,15 @@ async def test_pollutant_wind_rose_renders_records_loaded_from_context_data_id()
 
     result = await CreateReportChartTool().execute(
         context=FakeChartContext(records),
-        chart_id="pollutant_wind_rose_data_id_case",
+        chart_id="pollutant_wind_rose_file_path_case",
         chart_type="pollutant_wind_rose",
         title="PM10 污染物风玫瑰图",
-        data_id="chart_data:v1:abc",
+        file_path="chart_data:v1:abc",
         options={"pollutant_name": "PM10", "unit": "μg/m³", "time_resolution": "5min", "use_six_level": False},
     )
 
     assert result["success"] is True
-    assert result["metadata"]["source_data_id"] == "chart_data:v1:abc"
+    assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
     assert result["data"]["metadata"]["applied_chart_type"] == "pollutant_wind_rose"
     assert result["data"]["metadata"]["scope"] == "guangdong_only"
     assert result["data"]["metadata"]["valid_point_count"] == len(records)
@@ -891,7 +890,7 @@ async def test_line_chart_rejects_mismatched_label_and_value_lengths():
 
 
 @pytest.mark.asyncio
-async def test_missing_data_and_data_id_returns_input_contract_error():
+async def test_missing_data_and_file_path_returns_input_contract_error():
     result = await CreateReportChartTool().execute(
         chart_type="bar",
         title="缺少数据输入",
@@ -899,15 +898,15 @@ async def test_missing_data_and_data_id_returns_input_contract_error():
 
     assert result["success"] is False
     assert result["status"] == "failed"
-    assert "必须提供 data 或 data_id" in result["error"]
+    assert "必须提供 data 或 file_path" in result["error"]
 
 
 @pytest.mark.asyncio
-async def test_data_id_without_context_returns_tool_error():
+async def test_file_path_without_context_returns_tool_error():
     result = await CreateReportChartTool().execute(
         chart_type="line",
-        title="data_id 趋势",
-        data_id="chart_data:v1:abc",
+        title="file_path 趋势",
+        file_path="chart_data:v1:abc",
     )
 
     assert result["success"] is False
@@ -918,23 +917,23 @@ class FakeChartContext:
     def __init__(self, payload):
         self.payload = payload
 
-    def get_raw_data(self, data_id):
-        assert data_id == "chart_data:v1:abc"
+    def get_raw_data(self, file_path):
+        assert file_path == "chart_data:v1:abc"
         return [self.payload]
 
 
 @pytest.mark.asyncio
-async def test_data_id_loads_chart_payload_from_context():
+async def test_file_path_loads_chart_payload_from_context():
     result = await CreateReportChartTool().execute(
         context=FakeChartContext({"labels": ["A", "B"], "values": [1, 2]}),
-        chart_id="data_id_case",
+        chart_id="file_path_case",
         chart_type="bar",
-        title="data_id 柱状图",
-        data_id="chart_data:v1:abc",
+        title="file_path 柱状图",
+        file_path="chart_data:v1:abc",
     )
 
     assert result["success"] is True
-    assert result["metadata"]["source_data_id"] == "chart_data:v1:abc"
+    assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
     assert Path(result["visuals"][0]["local_path"]).exists()
 
 
@@ -945,11 +944,11 @@ async def test_runtime_positional_context_call_does_not_conflict_with_chart_type
         chart_id="runtime_context_case",
         chart_type="bar",
         title="runtime context 柱状图",
-        data_id="chart_data:v1:abc",
+        file_path="chart_data:v1:abc",
     )
 
     assert result["success"] is True
-    assert result["metadata"]["source_data_id"] == "chart_data:v1:abc"
+    assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
     assert Path(result["visuals"][0]["local_path"]).exists()
 
 

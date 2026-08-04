@@ -11,8 +11,8 @@ DashboardStatus = Literal["idle", "loading", "success", "partial", "error", "sta
 class DashboardSource(BaseModel):
     source_id: str
     tool_name: str
-    data_id: str | None = None
-    data_ids: list[str] = Field(default_factory=list)
+    file_path: str | None = None
+    file_paths: list[str] = Field(default_factory=list)
     query_params: dict[str, Any] = Field(default_factory=dict)
     record_count: int | None = None
     updated_at: str | None = None

@@ -25,10 +25,8 @@ def build_query_prompt(
 
     if memory_file_path:
         prompt_parts.extend([
-            f"**记忆文件路径**：`{memory_file_path}`",
-            "- 查看记忆：`read_file(path='" + memory_file_path + "')`",
-            "- 编辑记忆：`edit_file(path='" + memory_file_path + "', old_string='...', new_string='...')`",
-            "- 禁止操作其他路径的 MEMORY.md 文件",
+            f"记忆文件路径：{memory_file_path}",
+            "该路径仅用于本模式记忆，不得操作其他模式的记忆文件。",
             "",
         ])
 
@@ -40,18 +38,8 @@ def build_query_prompt(
         "- 需要数据或证据时调用工具；信息足够时直接回答查询结果。",
         "- 避免重复查询同一口径数据；工具结果已覆盖用户范围时，直接基于结果作答。",
         "- 工具参数以本次请求提供的 tool schema 为准，不在文本中伪造工具调用。",
-        "- 文件读取统一使用 `read_file`；当前不暴露 Word 编辑工具，用户要求编辑 Word 时说明该能力暂不在本模式工具范围内。",
-        "- 数据读取只能使用查询工具或 `read_data_registry`；禁止在 `execute_python` 中绕过 `read_data_registry` 直接访问 DataRegistry 底层接口。",
-        "- 使用工具返回的 data_id/report_data_id 做计算前，必须先调用 `read_data_registry` 读取所需视图/字段；读取完成后才能在 `execute_python` 中基于已读取快照计算。",
-        "- DataRegistry 简单筛选、取列、别名映射优先使用 `read_data_registry` 的 `where`/`select` 结构化参数；只有结构化参数无法表达聚合或复杂变换时，才使用 `jq_filter`。",
-        "- 数值计算优先使用查询工具或 `read_data_registry` 的结构化参数/`jq_filter` 完成；只有已读取到上下文中的小规模数据仍需自定义计算时，才使用 `execute_python`。",
         "- 业务默认值、区域口径和评价标准以工具 schema、工具返回和问数记忆为准；缺少依据时先检索或说明不确定。",
         "- 知识类问题先查可用资料，不编造。",
-        "",
-        "## 查询决策",
-        "",
-        "简单统计查询优先使用标准统计报表工具；只有标准工具和 read_data_registry 无法满足自定义聚合、计算或加工时，才使用 execute_python。",
-        "同比环比、标准类型、区域别名、默认城市范围和专用数据源选择，以相关工具 schema、工具返回和问数记忆为准。",
         "",
         "## Agentic GIS 视觉交互",
         "",
@@ -66,19 +54,19 @@ def build_query_prompt(
         "",
         "## 数据展示",
         "",
-        "- 大量数据或完整结果应提供 data_id，并说明完整数据已保存。",
+        "- 大量数据或完整结果应提供 file_path，并说明完整数据已保存。",
         "- 图片结果优先使用工具返回的可访问 URL 或 Markdown 图片，不展示本地图片路径。",
-        "- 最终回复先用一到三句话给出可朗读核心结论，再附表格或 data_id。",
+        "- 最终回复先用一到三句话给出可朗读核心结论，再附表格或数据文件路径。",
         "",
         "## 数据真实性原则",
         "",
         "- 不知道或缺少依据时直接说明，不编造数据或结论。",
-        "- 所有具体数值必须来自工具查询、data_id、报告或用户提供内容。",
+        "- 所有具体数值必须来自工具查询、已读取的数据文件、报告或用户提供内容。",
         "- 数据缺失或查询失败时，明确说明缺失内容和影响，不用流畅文字掩盖证据不足。",
         "",
         "## 子Agent返回",
         "",
-        "作为子Agent返回时，最终回复必须列出所有可追溯 data_id 及简短说明，便于父Agent收集证据。",
+        "作为子Agent返回时，最终回复必须列出所有可追溯 file_path 及简短说明，便于父Agent收集证据。",
     ])
 
     return "\n".join(prompt_parts)

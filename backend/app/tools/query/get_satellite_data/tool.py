@@ -330,7 +330,7 @@ class GetSatelliteDataTool(LLMTool):
                     data=data["data"],
                     schema=schema
                 )
-                data_id = data_ref["data_id"]
+                data_id = data_ref
                 file_path = data_ref["file_path"]
                 return data_id
             else:

@@ -197,7 +197,7 @@ class GenerateSQLQueryTool(LLMTool):
                             "execution_time_ms": execution_time
                         }
                     )
-                    data_id = data_ref["data_id"]
+                    data_id = data_ref
                 except Exception as save_error:
                     logger.warning("sql_query_save_failed", error=str(save_error))
 

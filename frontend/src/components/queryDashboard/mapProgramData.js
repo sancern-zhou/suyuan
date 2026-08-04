@@ -8,7 +8,7 @@ export async function loadProgramLayerFeatures(layer, options = {}) {
     return Array.isArray(layer.data.features) ? layer.data.features : []
   }
 
-  if (layer?.data?.type !== 'data_id' || !layer.data.id) return []
+  if (layer?.data?.type !== 'file_path' || !layer.data.path) return []
 
   const fetchMapDataFeatures = options.fetchMapDataFeatures || defaultFetchMapDataFeatures
   const requestOptions = {
@@ -24,7 +24,7 @@ export async function loadProgramLayerFeatures(layer, options = {}) {
     requestOptions.lat = latitudeField
   }
 
-  const result = await fetchMapDataFeatures(layer.data.id, requestOptions)
+  const result = await fetchMapDataFeatures(layer.data.path, requestOptions)
   return Array.isArray(result?.features) ? result.features : []
 }
 

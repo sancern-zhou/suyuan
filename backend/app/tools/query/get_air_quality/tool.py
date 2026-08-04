@@ -192,7 +192,7 @@ class GetAirQualityTool(LLMTool):
                             "field_mapping_info": data_standardizer.get_field_mapping_info() if data_standardizer else {}
                         }
                     )
-                    data_id = data_ref["data_id"]
+                    data_id = data_ref
                     file_path = data_ref["file_path"]
                     logger.info(
                         "air_quality_data_saved",

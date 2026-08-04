@@ -36,7 +36,7 @@ export function normalizeConversationResources(response) {
     .filter(resource => (
       resource &&
       resource.status === 'active' &&
-      ['file', 'artifact'].includes(resource.kind)
+      ['data', 'file', 'artifact'].includes(resource.kind)
     ))
     .map(resource => {
       const uploaded = resource.role === 'attachment' || resource.metadata?.source === 'user_upload'

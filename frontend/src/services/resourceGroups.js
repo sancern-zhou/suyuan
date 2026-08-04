@@ -1,5 +1,5 @@
 const PRODUCT_ROLES = new Set(['output', 'report'])
-const PRODUCT_KINDS = new Set(['file', 'artifact', 'visual'])
+const PRODUCT_KINDS = new Set(['data', 'file', 'artifact', 'visual'])
 const SUPPORTED_RENDERERS = new Set([
   'pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'image', 'chart', 'board'
 ])

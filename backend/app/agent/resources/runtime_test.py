@@ -302,7 +302,15 @@ async def test_executor_does_not_guess_outputs_from_result_fields(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_executor_declares_handles_created_by_save_data_api():
+async def test_executor_declares_files_created_by_save_data_api(tmp_path, monkeypatch):
+    from config.settings import settings
+
+    data_root = tmp_path / "data-root"
+    data_root.mkdir()
+    data_file = data_root / "analysis.json"
+    data_file.write_text('[{"value": 1}]', encoding="utf-8")
+    monkeypatch.setattr(settings, "data_registry_dir", str(data_root))
+
     async def tool(**_):
         return {"success": True, "data": {"count": 2}}
 
@@ -310,7 +318,7 @@ async def test_executor_declares_handles_created_by_save_data_api():
     executor = ToolExecutor(tool_registry={"analysis": tool})
     executor.memory_manager = SimpleNamespace(session_id="session-a")
     executor._create_execution_context = lambda _iteration: SimpleNamespace(
-        available_data_ids=["analysis:v1:abc"]
+        available_file_paths=[str(data_file)]
     )
     executor.configure_resource_tracking(
         service=service,
@@ -320,8 +328,8 @@ async def test_executor_declares_handles_created_by_save_data_api():
     result = await executor.execute_tool("analysis", {}, iteration=2)
     page = await service.list_resources("session-a")
 
-    assert result["resources"][0]["locator"]["data_id"] == "analysis:v1:abc"
-    assert page.resources[0].locator["data_id"] == "analysis:v1:abc"
+    assert result["resources"][0]["locator"]["path"] == str(data_file)
+    assert page.resources[0].locator["path"] == str(data_file)
 
 
 @pytest.mark.asyncio
@@ -386,7 +394,7 @@ def test_agent_resource_map_is_bounded_and_includes_actionable_path(tmp_path):
     assert len(projected) <= 500
 
 
-def test_agent_resource_map_shortens_paths_under_backend_root():
+def test_agent_resource_map_uses_canonical_absolute_paths():
     source = Path(__file__).resolve()
     declaration = _file_declaration(
         source,
@@ -396,8 +404,7 @@ def test_agent_resource_map_shortens_paths_under_backend_root():
 
     projected = project_agent_resource_map([stored])
 
-    assert "path=app/agent/resources/runtime_test.py" in projected
-    assert str(source) not in projected
+    assert f"path={source}" in projected
 
 
 def test_agent_resource_map_collapses_same_locator_but_reports_all_roles(tmp_path):

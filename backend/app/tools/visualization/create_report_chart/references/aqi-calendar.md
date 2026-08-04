@@ -34,7 +34,7 @@ Raw records may be used when the adapter supports field extraction:
 }
 ```
 
-When using `data_id`, the tool should load records through the execution
+When using `file_path`, the tool should load records through the execution
 context and apply the same contract. Do not ask the Agent to hard-code dataset
 file paths.
 

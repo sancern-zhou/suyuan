@@ -48,10 +48,13 @@ export function validateMapProgram(program) {
       errors.push(error(`${prefix}.data`, 'data reference is required'))
       return
     }
-    if (!['data_id', 'artifact_id', 'inline_geojson'].includes(layer.data.type)) {
-      errors.push(error(`${prefix}.data.type`, 'data.type must be data_id, artifact_id, or inline_geojson'))
+    if (!['file_path', 'artifact_id', 'inline_geojson'].includes(layer.data.type)) {
+      errors.push(error(`${prefix}.data.type`, 'data.type must be file_path, artifact_id, or inline_geojson'))
     }
-    if ((layer.data.type === 'data_id' || layer.data.type === 'artifact_id') && !layer.data.id) {
+    if (layer.data.type === 'file_path' && !layer.data.path) {
+      errors.push(error(`${prefix}.data.path`, 'data.path is required'))
+    }
+    if (layer.data.type === 'artifact_id' && !layer.data.id) {
       errors.push(error(`${prefix}.data.id`, 'data.id is required'))
     }
     if (layer.data.type === 'inline_geojson' && !Array.isArray(layer.data.features)) {

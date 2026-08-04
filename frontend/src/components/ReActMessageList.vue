@@ -844,7 +844,7 @@ const getProcessResultSummary = (message) => {
   if (result?.summary) return result.summary
   if (result?.error) return result.error
   if (data.status) return `状态: ${data.status}`
-  if (Array.isArray(data.data_ids)) return `产生 ${data.data_ids.length} 个数据结果`
+  if (Array.isArray(data.file_paths)) return `产生 ${data.file_paths.length} 个数据结果`
   const text = contentToString(getMessageContent(message)).trim()
   return text.replace(/^[\u{1F527}\u2705\u274C]\s*/u, '') || ''
 }

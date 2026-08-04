@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.utils.path_config import get_data_registry
+from app.agent.context.data_files import resolve_data_path
 
 
 def _file_format(path: Path) -> str:
@@ -204,8 +205,8 @@ def directory_artifact(
     }
 
 
-def data_resource(
-    data_id: str,
+def data_file_resource(
+    file_path: str,
     *,
     tool_name: str,
     role: str = "output",
@@ -213,22 +214,28 @@ def data_resource(
     logical_key: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    group_key = logical_key or f"data:{data_id}"
+    resolved = resolve_data_path(file_path)
+    group_key = logical_key or _path_group_key(resolved, tool_name)
     return {
         "kind": "data",
         "group_key": group_key,
         "resource_key": "primary:data",
         "relation": "primary",
         "role": role,
-        "label": label or data_id,
-        "locator": {"data_id": data_id},
-        "format": "data",
-        "media_type": "application/vnd.suyuan.data",
+        "label": label or resolved.name,
+        "locator": {"path": str(resolved)},
+        "format": _file_format(resolved),
+        "media_type": _media_type(resolved),
         "renderer": "file",
-        "capabilities": [],
+        "capabilities": ["preview", "download"],
         "metadata": _safe_metadata(metadata),
         "tool_name": tool_name,
     }
+
+
+# Internal source compatibility for producers not yet renamed. It creates the
+# same path-backed resource and does not expose a second data identity.
+data_resource = data_file_resource
 
 
 def artifact_resource(
@@ -394,11 +401,24 @@ def resources_for_visuals(
         )
         chart["resource_key"] = "chart-spec"
         resources.append(chart)
+        data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
+        meta = visual.get("meta") if isinstance(visual.get("meta"), dict) else {}
+        static_preview = (
+            meta.get("static_preview")
+            if isinstance(meta.get("static_preview"), dict)
+            else {}
+        )
         raw_image_path = (
             visual.get("local_path")
             or visual.get("file_path")
             or payload.get("local_path")
             or payload.get("file_path")
+            or data.get("local_path")
+            or data.get("file_path")
+            or data.get("source_file_path")
+            or meta.get("local_path")
+            or meta.get("file_path")
+            or static_preview.get("local_path")
         )
         if isinstance(raw_image_path, str):
             image_path = Path(raw_image_path).expanduser().resolve()
@@ -414,6 +434,66 @@ def resources_for_visuals(
                 image["resource_key"] = "chart-image"
                 resources.append(image)
         seen.add(visual_id)
+    return resources
+
+
+def generated_file_products(
+    paths: Iterable[str | Path],
+    *,
+    tool_name: str,
+    preview_paths: dict[str, str | Path] | None = None,
+) -> list[dict[str, Any]]:
+    """Declare generated files with renderer/capability-aware resource groups."""
+    resources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    previews = {
+        str(Path(primary).expanduser().resolve()): Path(preview).expanduser().resolve()
+        for primary, preview in (preview_paths or {}).items()
+        if primary and preview
+    }
+    for path in paths:
+        resolved = Path(path).expanduser().resolve()
+        identity = str(resolved)
+        if identity in seen or not resolved.is_file():
+            continue
+        suffix = resolved.suffix.lower()
+        renderer = "file"
+        capabilities: tuple[str, ...] = ("download",)
+        if suffix == ".pdf":
+            renderer, capabilities = "pdf", ("preview", "download")
+        elif suffix in {".html", ".htm"}:
+            renderer, capabilities = "html", ("preview", "download")
+        elif suffix in {".md", ".qmd"}:
+            renderer, capabilities = "markdown", ("preview", "download")
+        elif suffix in {".xlsx", ".xls"}:
+            renderer, capabilities = "spreadsheet", ("preview", "download", "edit")
+        elif suffix in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}:
+            renderer, capabilities = "image", ("preview", "download")
+        elif suffix in {".ppt", ".pptx"}:
+            capabilities = ("download",)
+
+        group_key = _path_group_key(resolved, tool_name)
+        preview_path = previews.get(identity)
+        preview_specs = []
+        if preview_path is not None and preview_path.is_file():
+            preview_specs.append(
+                preview_file(
+                    preview_path,
+                    renderer="pdf" if preview_path.suffix.lower() == ".pdf" else "file",
+                    capabilities=("preview", "download"),
+                )
+            )
+        resources.extend(
+            file_product(
+                primary_path=resolved,
+                group_key=group_key,
+                tool_name=tool_name,
+                previews=preview_specs,
+                renderer=renderer,
+                capabilities=capabilities,
+            )
+        )
+        seen.add(identity)
     return resources
 
 

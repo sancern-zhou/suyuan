@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from app.services.data_registry import data_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 
 
@@ -25,7 +24,7 @@ class CreateMapPointAssetTool(LLMTool):
         super().__init__(
             name="create_map_point_asset",
             description=(
-                "Create a real DataRegistry point dataset from Agent-selected records with coordinates. "
+                "Create a session point-data file from Agent-selected records with coordinates. "
                 "Use this after the Agent has selected stations/features and before calling visual_interaction point-layer."
             ),
             category=ToolCategory.VISUALIZATION,
@@ -33,7 +32,7 @@ class CreateMapPointAssetTool(LLMTool):
                 "name": "create_map_point_asset",
                 "description": (
                     "地图点数据资产创建工具。Agent 已经从查询/分析结果中确定要上图的点对象后，"
-                    "传入带经纬度的 records，工具注册真实 DataRegistry data_id，并返回可继续传给 visual_interaction 的命令草案。"
+                    "传入带经纬度的 records，工具保存会话数据文件并登记统一资源，返回可继续传给 visual_interaction 的命令草案。"
                     "本工具不负责判断最高值或业务结论。"
                 ),
                 "parameters": {
@@ -57,21 +56,18 @@ class CreateMapPointAssetTool(LLMTool):
                         "color_by": {"type": "string", "description": "可选，后续 visual_interaction 着色字段。"},
                         "zoom": {"type": "number", "description": "可选，单点定位缩放级别。"},
                         "turn_id": {"type": "string", "description": "可选，对话轮次 ID。"},
-                        "data_id": {
-                            "type": "string",
-                            "description": "可选，指定 DataRegistry data_id；通常留空由工具生成。",
-                        },
                         "metadata": {"type": "object", "description": "可选，附加元数据。"},
                     },
                     "required": ["name", "records"],
                 },
             },
             version="0.1.0",
-            requires_context=False,
+            requires_context=True,
         )
 
     async def execute(
         self,
+        context,
         name: str,
         records: list[dict[str, Any]],
         longitude_field: str = "longitude",
@@ -80,7 +76,6 @@ class CreateMapPointAssetTool(LLMTool):
         color_by: str | None = None,
         zoom: float | int | None = 14,
         turn_id: str | None = None,
-        data_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
@@ -88,7 +83,7 @@ class CreateMapPointAssetTool(LLMTool):
             return self._failed(
                 "MAP_POINT_RECORDS_REQUIRED",
                 "No point records were provided.",
-                ["read_data_registry", "resolve_station_geo"],
+                ["resolve_station_geo", "execute_python"],
             )
 
         clean_records = [_clean_record(record) for record in records if isinstance(record, dict)]
@@ -108,7 +103,7 @@ class CreateMapPointAssetTool(LLMTool):
             return self._failed(
                 "MAP_POINT_COORDINATES_REQUIRED",
                 f"No records contain usable {longitude_field}/{latitude_field} coordinates.",
-                ["resolve_station_geo", "read_data_registry"],
+                ["resolve_station_geo", "execute_python"],
                 metadata_extra={
                     "longitude_field": longitude_field,
                     "latitude_field": latitude_field,
@@ -117,12 +112,9 @@ class CreateMapPointAssetTool(LLMTool):
             )
 
         layer_id = layer_id or f"agent_point_{uuid4().hex[:10]}"
-        data_id = data_id or f"map_point_asset:v1:{uuid4().hex}"
-        entry = data_registry.register_dataset(
-            "map_point_asset",
-            "v1",
+        file_path = context.save_data(
             valid_records,
-            data_id=data_id,
+            schema="map_point_asset",
             metadata={
                 "name": name,
                 "source": "create_map_point_asset",
@@ -140,7 +132,7 @@ class CreateMapPointAssetTool(LLMTool):
             "family": "map-spec",
             "action": "create",
             "kind": "point-layer",
-            "data_id": entry.data_id,
+            "file_path": file_path,
             "layer_id": layer_id,
             "name": name,
             "lon": longitude_field,
@@ -167,9 +159,10 @@ class CreateMapPointAssetTool(LLMTool):
         return {
             "status": "success",
             "success": True,
-            "summary": f"已创建地图点数据资产 {entry.data_id}，包含 {len(valid_records)} 个点。",
+            "file_path": file_path,
+            "summary": f"已创建地图点数据文件 {file_path}，包含 {len(valid_records)} 个点。",
             "data": {
-                "data_id": entry.data_id,
+                "file_path": file_path,
                 "record_count": len(valid_records),
                 "longitude_field": longitude_field,
                 "latitude_field": latitude_field,
@@ -181,7 +174,7 @@ class CreateMapPointAssetTool(LLMTool):
             "metadata": {
                 "tool_name": "create_map_point_asset",
                 "generator": "create_map_point_asset",
-                "data_id": entry.data_id,
+                "file_path": file_path,
                 "record_count": len(valid_records),
                 "invalid_record_count": invalid_count,
                 "longitude_field": longitude_field,
@@ -201,7 +194,7 @@ class CreateMapPointAssetTool(LLMTool):
             "status": "failed",
             "success": False,
             "summary": summary,
-            "data": {"data_id": None, "suggested_visual_interaction_commands": [], "suggested_gisctl_commands": []},
+            "data": {"file_path": None, "suggested_visual_interaction_commands": [], "suggested_gisctl_commands": []},
             "metadata": {
                 "tool_name": "create_map_point_asset",
                 "generator": "create_map_point_asset",

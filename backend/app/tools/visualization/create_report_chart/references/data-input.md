@@ -1,13 +1,14 @@
 # create_report_chart 数据输入契约
 
-`create_report_chart` 必须通过 `data` 或 `data_id` 至少获得一种数据输入，不支持文件路径。两者都提供时，内联 `data` 用于渲染，`data_id` 仅用于来源追踪。
+`create_report_chart` 必须通过 `data` 或 `file_path` 至少获得一种数据输入。两者都提供时，内联 `data` 用于渲染，`file_path` 仅用于来源追踪。
 
 ## 选择输入方式
 
 - 数据量较小且已经整理为目标图型结构：直接传 `data`。
-- 上游已经保存了图表数据资产：传 DataRegistry `data_id`。
-- 已有内联图表数据，同时需要保留原始数据溯源：同时传 `data` 和来源 `data_id`。
-- 只有 JSON、CSV、Excel 等文件路径：先读取并整理为 `data`，或者注册为 DataRegistry 数据资产后传 `data_id`；不要把路径传给本工具。
+- 上游已经保存了会话数据文件：传工具返回的绝对 `file_path`。
+- 已有内联图表数据，同时需要保留原始数据溯源：同时传 `data` 和来源 `file_path`。
+- 已有整理成目标图型结构的会话 JSON 数据文件：直接传其 `file_path`。
+- CSV、Excel 或尚未整理的记录文件：先用 `execute_python` 整理并通过 `save_data()` 保存，再传返回的 `file_path`。
 
 ## 内联 data
 
@@ -36,24 +37,24 @@
 
 其他图型的数据结构应按 `references/index.md` 路由到对应图型文档读取。
 
-## data_id
+## file_path
 
-`data_id` 必须是有效的 DataRegistry 数据资产 ID。未提供内联 `data` 时，工具会通过 `ExecutionContext.get_raw_data(data_id)` 自动读取；Agent 无需调用 `get_raw_data`，也不应猜测底层物理文件路径。
+`file_path` 必须是上游工具返回、且属于当前会话的数据文件绝对路径。未提供内联 `data` 时，工具会通过 `ExecutionContext.get_raw_data(file_path)` 自动读取，Agent 无需自行读取文件。
 
-普通 `bar`、`line`、`pie` 等图表不会自动推断任意记录中的横轴、纵轴、数值或系列字段。它们的 `data_id` 应预先保存为 `labels+values`、`x+y`、`series` 或对应图型要求的数据对象。
+普通 `bar`、`line`、`pie` 等图表不会自动推断任意记录中的横轴、纵轴、数值或系列字段。它们的 `file_path` 应预先保存为 `labels+values`、`x+y`、`series` 或对应图型要求的数据对象。
 
 领域图表 `aqi_calendar`、`pollutant_calendar`、`generic_pollutant_wind_rose` 和 `pollutant_wind_rose` 支持按各自领域文档消费 `records`。调用前必须读取对应参考文档并确认字段契约。
 
-## 不支持文件路径
+## 路径约束
 
-schema 中没有 `file_path`、`data_path` 或类似参数。以下输入无效：
+只接受当前会话已授权的数据文件路径，不接受猜测路径、跨会话路径或普通外部文件路径。有效调用示例：
 
 ```json
 {
   "chart_type": "bar",
   "title": "示例",
-  "file_path": "/path/to/data.json"
+  "file_path": "/configured/data/root/sessions/agent_session_x/data/chart-input--abc.json"
 }
 ```
 
-不要把文件路径塞入 `data_id`，也不要根据 DataRegistry 目录结构推测数据文件。文件数据必须先转换为内联图表对象，或通过正式注册链路获得真实 `data_id`。
+不要根据数据目录结构推测路径；只使用查询工具或 `execute_python.save_data()` 明确返回的 `file_path`。

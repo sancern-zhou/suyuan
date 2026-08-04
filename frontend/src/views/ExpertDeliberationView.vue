@@ -126,8 +126,8 @@
         </label>
 
         <label class="field">
-          <span>已有 data_id</span>
-          <input v-model="dataIdsText" type="text" placeholder="air_quality:v1:xxx, weather:v1:xxx" />
+          <span>已有数据文件路径</span>
+          <input v-model="filePathsText" type="text" placeholder="/path/to/session/data/air_quality--xxx.json" />
         </label>
 
         <label class="field">
@@ -135,7 +135,7 @@
           <textarea
             v-model="discussionPrompt"
             spellcheck="false"
-            placeholder="例如：请气象专家重新判断静稳条件影响；质疑高共识结论；补充读取某个 data_id。"
+            placeholder="例如：请气象专家重新判断静稳条件影响；质疑高共识结论；补充读取某个数据文件。"
           />
         </label>
 
@@ -425,7 +425,7 @@ const form = reactive({
 })
 
 const pollutantsText = ref('PM2.5, O3')
-const dataIdsText = ref('air_quality:v1:example, weather:v1:example')
+const filePathsText = ref('')
 const discussionPrompt = ref('')
 const targetExpertsText = ref('')
 const tablesText = ref(JSON.stringify([
@@ -577,7 +577,7 @@ async function runDeliberation() {
       consultation_tables: buildConsultationTables(),
       monthly_report_text: form.monthlyReportText,
       stage5_report_text: form.stage5ReportText,
-      data_ids: parseList(dataIdsText.value),
+      file_paths: parseList(filePathsText.value),
       discussion_prompt: discussionPrompt.value,
       target_experts: parseList(targetExpertsText.value)
     }
@@ -650,7 +650,7 @@ function sourceLabel(sourceType) {
     consultation_table: '会商表格',
     monthly_trace_report: '上月报告',
     stage5_analysis: '阶段5',
-    data_id: '数据资产'
+    data_file: '数据资产'
   }
   return labels[sourceType] || sourceType
 }

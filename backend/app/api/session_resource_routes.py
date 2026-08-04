@@ -39,7 +39,7 @@ from app.utils.path_config import get_data_registry
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/sessions", tags=["session-resources"])
 USER_VISIBLE_RESOURCE_ROLES = {"output", "report", "attachment"}
-USER_VISIBLE_RESOURCE_KINDS = {"file", "artifact", "visual"}
+USER_VISIBLE_RESOURCE_KINDS = {"data", "file", "artifact", "visual"}
 
 
 class RenderResourceRequest(BaseModel):

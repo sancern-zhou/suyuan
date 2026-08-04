@@ -254,7 +254,7 @@ class GetParticulateComponentsTool(LLMTool):
                             "detection_item_codes": self.DETECTION_ITEM_CODES
                         }
                     )
-                    data_id = data_ref["data_id"]
+                    data_id = data_ref
                     file_path = data_ref["file_path"]
                     logger.info("pm25_components_saved", data_id=data_id, file_path=file_path, count=len(records))
 

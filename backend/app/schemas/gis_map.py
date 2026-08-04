@@ -40,10 +40,12 @@ class MapLayerSpec(BaseModel):
     @model_validator(mode="after")
     def validate_data_reference(self) -> "MapLayerSpec":
         source_type = self.data.get("type")
-        if source_type not in {"data_id", "artifact_id", "inline_geojson"}:
-            raise ValueError("data.type must be data_id, artifact_id, or inline_geojson")
-        if source_type in {"data_id", "artifact_id"} and not self.data.get("id"):
-            raise ValueError("data.id is required for data_id and artifact_id references")
+        if source_type not in {"file_path", "artifact_id", "inline_geojson"}:
+            raise ValueError("data.type must be file_path, artifact_id, or inline_geojson")
+        if source_type == "file_path" and not self.data.get("path"):
+            raise ValueError("data.path is required for file_path references")
+        if source_type == "artifact_id" and not self.data.get("id"):
+            raise ValueError("data.id is required for artifact_id references")
         if source_type == "inline_geojson" and "features" not in self.data:
             raise ValueError("data.features is required for inline_geojson references")
         return self

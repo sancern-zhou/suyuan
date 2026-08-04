@@ -86,7 +86,8 @@ class ReadFileTool(LLMTool):
         super().__init__(
             name="read_file",
             description=(
-                "读取文件/目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
+                "读取文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
+                "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
             ),
             category=ToolCategory.QUERY,
             version="4.0.0",
@@ -1451,14 +1452,15 @@ class ReadFileTool(LLMTool):
         return {
             "name": "read_file",
             "description": (
-                "读取文件/目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
+                "读取文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
+                "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "路径"
+                        "description": "文档、源码、配置、图片或目录路径；不得传入查询/分析工具返回的会话数据文件路径，大量数据文件使用 execute_python 处理"
                     },
                     "offset": {
                         "type": "integer",

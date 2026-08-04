@@ -37,15 +37,6 @@ class SupplementToolRunner:
         for analysis in analyses:
             for plan in analysis.tool_call_plan:
                 params = dict(plan.params)
-                if request.data_ids and (plan.tool_name == "load_data_from_memory" or not params):
-                    for data_id in request.data_ids:
-                        params = {"data_id": data_id, "max_records": 100}
-                        fact = await self._execute_one(registry, request, analysis.expert_id, "load_data_from_memory", plan.purpose, params, len(ledger.all()) + len(new_facts) + 1)
-                        if fact and fact.fact_id not in executed_keys:
-                            new_facts.append(fact)
-                            executed_keys.add(fact.fact_id)
-                    continue
-
                 fact = await self._execute_one(registry, request, analysis.expert_id, plan.tool_name, plan.purpose, params, len(ledger.all()) + len(new_facts) + 1)
                 if fact and fact.fact_id not in executed_keys:
                     new_facts.append(fact)
@@ -64,10 +55,10 @@ class SupplementToolRunner:
         params: dict[str, Any],
         index: int,
     ) -> FactRecord | None:
-        tool = registry.get(tool_name)
-        if not tool:
-            return None
         try:
+            tool = registry.get(tool_name)
+            if not tool:
+                return None
             result = await tool(context=None, **params)
         except Exception as exc:
             logger.warning("expert_supplement_tool_failed", tool_name=tool_name, expert_id=expert_id, error=str(exc))
@@ -88,7 +79,7 @@ class SupplementToolRunner:
             statement=statement,
             method=f"补证工具执行：{tool_name}",
             quality=FactQuality(completeness="medium", temporal_coverage=request.time_range.display or "unknown", confidence=0.78),
-            tags=["补证", "数据资产" if tool_name == "load_data_from_memory" else "工具结果"],
+            tags=["补证", "工具结果"],
         )
 
     def _summarize_result(self, tool_name: str, purpose: str, params: dict[str, Any], result: Any) -> str:

@@ -86,6 +86,7 @@
 
 <script setup>
 import { authFetch } from '@/auth/http.js'
+import { downloadManagedFile } from '@/services/fileManagerDownload.js'
 import { ref, computed, onMounted } from 'vue'
 
 const API_BASE = '/api/file-manager'
@@ -150,14 +151,17 @@ const handleItemClick = (item) => {
   if (item.is_dir) {
     loadDirectory(item.path)
   } else {
-    downloadFile(item.path)
+    downloadFile(item)
   }
 }
 
-const downloadFile = (path) => {
-  const url = new URL(`${API_BASE}/download`, window.location.origin)
-  url.searchParams.set('path', path)
-  window.open(url.toString(), '_blank')
+const downloadFile = async (item) => {
+  try {
+    await downloadManagedFile(item)
+  } catch (e) {
+    console.error('下载文件失败:', e)
+    window.alert(e?.message || '下载文件失败')
+  }
 }
 
 // 生命周期

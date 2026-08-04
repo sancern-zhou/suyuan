@@ -80,7 +80,7 @@ class CompareStationStandardReportsTool(LLMTool):
             "description": (
                 "【第一优先级】站点级新/旧国标双时段对比工具，直接调用广东联网统计报表接口。"
                 "支持城市展开站点或直接指定站点，返回接口统计指标、对比值和增幅；不要手算。"
-                "result可直接用于报告；report_data_id可用read_data_registry按stations/aggregate/result视图读取。"
+                "result可直接用于报告；完整 stations/aggregate/result 视图保存在 report_file_path。"
                 "ns_type=2为新国标，ns_type=1为旧国标；本工具不保存日报明细。"
             ),
             "parameters": {

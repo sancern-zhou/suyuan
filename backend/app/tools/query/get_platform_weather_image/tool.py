@@ -428,7 +428,7 @@ class GetPlatformWeatherImageTool(LLMTool):
             "name": "get_platform_weather_image",
             "description": (
                 "获取气象图片URL并保存。调用前必须阅读："
-                "backend/app/tools/query/get_platform_weather_image/GET_PLATFORM_WEATHER_IMAGE_GUIDE.md。"
+                "app/tools/query/get_platform_weather_image/GET_PLATFORM_WEATHER_IMAGE_GUIDE.md。"
             ),
             "parameters": {
                 "type": "object",

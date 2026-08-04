@@ -39,7 +39,7 @@ class TypedDataHandle:
     - Type-safe deserialization
 
     Attributes:
-        data_id: Unique identifier (without schema prefix)
+        file_path: Canonical session data path
         schema: Data schema (e.g., "vocs", "particulate")
         version: Schema version (e.g., "v1")
         record_count: Number of records in dataset
@@ -50,7 +50,7 @@ class TypedDataHandle:
 
     Example:
         handle = TypedDataHandle(
-            data_id="abc123",
+            file_path="/data/session/vocs.json",
             schema="vocs",
             version="v1",
             record_count=48,
@@ -64,7 +64,7 @@ class TypedDataHandle:
             data = context.get_data(handle.full_id)
     """
 
-    data_id: str
+    file_path: str
     schema: str
     version: str
     record_count: int
@@ -75,13 +75,8 @@ class TypedDataHandle:
 
     @property
     def full_id(self) -> str:
-        """
-        Full data identifier with schema prefix.
-
-        Returns:
-            Formatted as "schema:version:data_id" (e.g., "vocs:v1:abc123")
-        """
-        return f"{self.schema}:{self.version}:{self.data_id}"
+        """Backward-compatible property returning the canonical file path."""
+        return self.file_path
 
     def is_compatible_with(self, required_schema: str) -> bool:
         """
@@ -285,12 +280,11 @@ class TypedDataHandle:
             Dictionary representation
         """
         return {
-            "data_id": self.data_id,
-            "full_id": self.full_id,
+            "file_path": self.file_path,
             "schema": self.schema,
             "version": self.version,
             "record_count": self.record_count,
-            "model_class": self.model_class.__name__,
+            "model_class": self.model_class.__name__ if self.model_class else None,
             "quality_summary": self.get_quality_summary(),
             "available_fields": self.get_available_fields(),
             "metadata": self.metadata

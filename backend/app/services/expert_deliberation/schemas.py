@@ -40,7 +40,7 @@ class DeliberationRequest(BaseModel):
     consultation_tables: List[TableInput] = Field(default_factory=list)
     monthly_report_text: str = ""
     stage5_report_text: str = ""
-    data_ids: List[str] = Field(default_factory=list)
+    file_paths: List[str] = Field(default_factory=list)
     discussion_prompt: str = ""
     target_experts: List[str] = Field(default_factory=list)
     options: DeliberationOptions = Field(default_factory=DeliberationOptions)

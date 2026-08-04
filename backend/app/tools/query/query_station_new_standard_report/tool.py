@@ -966,7 +966,7 @@ class QueryStationNewStandardReportTool(LLMTool):
             "description": (
                 "【第一优先级】站点级HJ 633-2026新标准统计报表。"
                 "用于站点综合指数、超标天数、达标率、六参数和首要污染物统计；不要手算。"
-                "result可直接用于报告；report_data_id可用read_data_registry按stations/aggregate/result视图读取。"
+                "result可直接用于报告；完整 stations/aggregate/result 视图保存在 report_file_path。"
                 "本工具不保存日报明细；如需日数据，请调用站点日数据查询工具。cities和stations至少提供一个。"
             ),
             "parameters": {

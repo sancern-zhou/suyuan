@@ -37,7 +37,6 @@ def get_default_experts() -> list[ExpertCard]:
                 "query_gd_suncere_station_day_new",
                 "query_city_standard_report",
                 "query_city_standard_yoy_report",
-                "read_data_registry",
                 "execute_python",
             ],
         ),
@@ -74,7 +73,6 @@ def get_default_experts() -> list[ExpertCard]:
                 "meteorological_trajectory_analysis",
                 "analyze_upwind_enterprises",
                 "analyze_trajectory_sources",
-                "read_data_registry",
             ],
         ),
         ExpertCard(
@@ -117,7 +115,6 @@ def get_default_experts() -> list[ExpertCard]:
                 "calculate_carbon",
                 "calculate_soluble",
                 "calculate_crustal",
-                "read_data_registry",
             ],
         ),
         ExpertCard(
@@ -126,6 +123,6 @@ def get_default_experts() -> list[ExpertCard]:
             prompt_file="backend/config/prompts/report_expert.md",
             deliberation_mode="deliberation_reviewer",
             tags_any=[],
-            tool_whitelist=["read_data_registry"],
+            tool_whitelist=[],
         ),
     ]

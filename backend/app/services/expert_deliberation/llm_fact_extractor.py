@@ -90,13 +90,13 @@ class LLMFactExtractor:
         request: DeliberationRequest,
         start_index: int,
     ) -> list[FactRecord]:
-        if not request.data_ids:
+        if not request.file_paths:
             return []
         prompt = self._build_data_asset_prompt(request)
         return await self._extract_from_prompt(
             request=request,
             prompt=prompt,
-            source_type="data_id",
+            source_type="data_file",
             start_index=start_index,
             max_facts=30,
         )
@@ -343,17 +343,17 @@ class LLMFactExtractor:
 """.strip()
 
     def _build_data_asset_prompt(self, request: DeliberationRequest) -> str:
-        payload = json.dumps({"data_ids": request.data_ids}, ensure_ascii=False)
+        payload = json.dumps({"file_paths": request.file_paths}, ensure_ascii=False)
         return f"""
-你是空气质量会商的事实入账引擎。请把已有 data_id 清单转成可审计的数据资产事实，输出严格 JSON。
+你是空气质量会商的事实入账引擎。请把已有 file_path 清单转成可审计的数据资产事实，输出严格 JSON。
 
 区域：{request.region}
 时段：{request.time_range.display or request.time_range.start or ""}
 
 要求：
-1. 只能描述 data_id 本身可作为后续补证数据资产，不得声称已经读取其中数据。
-2. schema 或数据类型只能依据 data_id 字符串中明确出现的信息。
-3. 每个 data_id 至少生成一条 data_asset 事实。
+1. 只能描述 file_path 本身可作为后续补证数据资产，不得声称已经读取其中数据。
+2. schema 或数据类型只能依据文件名中明确出现的信息。
+3. 每个 file_path 至少生成一条 data_asset 事实。
 
 输出 JSON 格式：
 {{
@@ -372,6 +372,6 @@ class LLMFactExtractor:
   ]
 }}
 
-data_id 清单：
+file_path 清单：
 {payload}
 """.strip()

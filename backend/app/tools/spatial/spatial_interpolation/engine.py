@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 import matplotlib
 
@@ -10,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import griddata
 
-from app.services.data_registry import data_registry
 
 try:  # pragma: no cover - environment dependent
     from pykrige.ok import OrdinaryKriging
@@ -50,21 +48,21 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _load_points(spec: dict[str, Any]) -> tuple[list[dict[str, float]], dict[str, Any] | None]:
-    data_id = str(spec.get("data_id") or "")
+def _load_points(spec: dict[str, Any], context) -> tuple[list[dict[str, float]], dict[str, Any] | None]:
+    file_path = str(spec.get("file_path") or "")
     lon_field = str(spec.get("lon") or spec.get("longitude") or "longitude")
     lat_field = str(spec.get("lat") or spec.get("latitude") or "latitude")
     value_field = str(spec.get("value") or spec.get("value_field") or "")
-    if not data_id or not value_field:
-        return [], _failed("SPATIAL_SPEC_INVALID_INPUT", "data_id and value field are required")
+    if not file_path or not value_field:
+        return [], _failed("SPATIAL_SPEC_INVALID_INPUT", "file_path and value field are required")
 
     try:
-        dataset = data_registry.load_dataset(data_id)
+        dataset = context.get_raw_data(file_path)
     except KeyError:
-        return [], _failed("SPATIAL_INPUT_NOT_FOUND", f"data_id not found: {data_id}", data_id=data_id)
+        return [], _failed("SPATIAL_INPUT_NOT_FOUND", f"file_path not found: {file_path}", file_path=file_path)
 
     if not isinstance(dataset, list):
-        return [], _failed("SPATIAL_INPUT_INVALID", "interpolation input dataset must be a list", data_id=data_id)
+        return [], _failed("SPATIAL_INPUT_INVALID", "interpolation input dataset must be a list", file_path=file_path)
 
     points: list[dict[str, float]] = []
     seen: dict[tuple[float, float], list[float]] = {}
@@ -222,18 +220,12 @@ def _contour_records(xi: np.ndarray, yi: np.ndarray, zi: np.ndarray, contour_lev
     return records
 
 
-def _register_dataset(asset_schema: str, records: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[str, Any]:
-    entry = data_registry.register_dataset(
-        asset_schema,
-        "v1",
-        records,
-        data_id=f"{asset_schema}:v1:{uuid4().hex}",
-        metadata=metadata,
-    )
-    return {"data_id": entry.data_id, "record_count": len(records), "asset_schema": asset_schema}
+def _register_dataset(asset_schema: str, records: list[dict[str, Any]], metadata: dict[str, Any], context) -> dict[str, Any]:
+    file_path = context.save_data(records, schema=asset_schema, metadata=metadata)
+    return {"file_path": file_path, "record_count": len(records), "asset_schema": asset_schema}
 
 
-def execute_interpolation(spec: dict[str, Any]) -> dict[str, Any]:
+def execute_interpolation(spec: dict[str, Any], context) -> dict[str, Any]:
     if not isinstance(spec, dict):
         return _failed("SPATIAL_SPEC_INVALID", "spatial_interpolation requires a JSON object spec")
 
@@ -245,7 +237,7 @@ def execute_interpolation(spec: dict[str, Any]) -> dict[str, Any]:
             supported_methods=sorted(SUPPORTED_METHODS),
         )
 
-    points, error = _load_points(spec)
+    points, error = _load_points(spec, context)
     if error:
         return error
 
@@ -298,7 +290,7 @@ def execute_interpolation(spec: dict[str, Any]) -> dict[str, Any]:
 
     common_metadata = {
         "source": "spatial_interpolation",
-        "source_data_id": spec.get("data_id"),
+        "source_file_path": spec.get("file_path"),
         "method_requested": method_requested,
         "method_applied": method_applied,
         "pollutant": pollutant,
@@ -318,7 +310,7 @@ def execute_interpolation(spec: dict[str, Any]) -> dict[str, Any]:
             "name": f"{pollutant} interpolation grid",
             "asset_type": "interpolation_grid_asset",
             "map_capabilities": {"geometry": "point", "lon_field": "longitude", "lat_field": "latitude"},
-        },
+        }, context,
     )
     surface_output = _register_dataset(
         "interpolation_surface_asset",
@@ -333,7 +325,7 @@ def execute_interpolation(spec: dict[str, Any]) -> dict[str, Any]:
                 "colors": SURFACE_COLORS,
                 "value_range": common_metadata["value_range"],
             },
-        },
+        }, context,
     )
     contour_output = _register_dataset(
         "contour_line_asset",
@@ -343,7 +335,7 @@ def execute_interpolation(spec: dict[str, Any]) -> dict[str, Any]:
             "name": f"{pollutant} contour lines",
             "asset_type": "contour_line_asset",
             "map_capabilities": {"geometry": "linestring"},
-        },
+        }, context,
     )
 
     return {

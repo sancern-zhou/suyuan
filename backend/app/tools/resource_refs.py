@@ -72,11 +72,10 @@ def build_url_ref(url: str, *, usage: str, source: str) -> Dict[str, str]:
     }
 
 
-def build_data_ref(data_id: str, *, usage: str = "primary") -> Dict[str, str]:
+def build_data_file_ref(file_path: str, *, usage: str = "primary") -> Dict[str, str]:
     return {
-        "data_id": data_id,
+        "file_path": file_path,
         "usage": usage,
-        "tool": "read_data_registry",
     }
 
 
@@ -90,26 +89,22 @@ def build_data_resume_context(
     generated_ids = _unique_strings(generated_data_ids or [])
     refs = {
         "data": [
-            *[build_data_ref(data_id, usage="source") for data_id in source_ids],
-            *[build_data_ref(data_id, usage="generated") for data_id in generated_ids],
+            *[build_data_file_ref(file_path, usage="source") for file_path in source_ids],
+            *[build_data_file_ref(file_path, usage="generated") for file_path in generated_ids],
         ]
     }
     llm_resume: Dict[str, Any] = {}
     if source_ids:
-        llm_resume["source_data_ids"] = source_ids
+        llm_resume["source_file_paths"] = source_ids
     if generated_ids:
-        llm_resume["data_ids"] = generated_ids
+        llm_resume["file_paths"] = generated_ids
     if tool_hint:
         llm_resume["tool_hint"] = tool_hint
-    elif generated_ids:
-        llm_resume["tool_hint"] = (
-            f"Use read_data_registry(data_id='{generated_ids[0]}') to inspect the generated data."
-        )
-    elif source_ids:
-        llm_resume["tool_hint"] = (
-            f"Use read_data_registry(data_id='{source_ids[0]}') to inspect the source data."
-        )
     return {"refs": refs, "llm_resume": llm_resume}
+
+
+# Internal import compatibility. Returned references remain path-only.
+build_data_ref = build_data_file_ref
 
 
 def _unique_strings(values: List[str]) -> List[str]:

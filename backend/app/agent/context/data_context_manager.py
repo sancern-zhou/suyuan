@@ -27,7 +27,6 @@ import structlog
 from pydantic import BaseModel
 
 from app.agent.context.typed_data_handle import TypedDataHandle
-from app.agent.context.execution_context import DataReference
 from app.agent.memory.hybrid_manager import HybridMemoryManager
 from app.schemas.common import DataQualityReport, FieldStats
 from app.schemas.particulate import ParticulateSample, UnifiedParticulateData
@@ -38,7 +37,7 @@ from app.schemas.visualization import ChartResponse
 from app.schemas.obm import OBMOFPResult
 from app.schemas.enhanced_obm import EnhancedOBMResult
 from app.schemas.trajectory import TrajectorySourceAnalysisResult
-from app.services.data_registry import data_registry
+from app.agent.context.data_files import safe_file_stem
 from app.utils.data_standardizer import get_data_standardizer  # UDF v2.0 强制标准化
 
 logger = structlog.get_logger()
@@ -101,7 +100,6 @@ class DataContextManager:
             memory_manager: Underlying hybrid memory manager
         """
         self.memory = memory_manager
-        self.registry = data_registry
         self._handles: Dict[str, TypedDataHandle] = {}
 
         logger.info(
@@ -111,12 +109,12 @@ class DataContextManager:
 
     def save_data(
         self,
-        data: Union[List[BaseModel], List[Dict]],  # 支持两种输入格式
+        data: Union[List[BaseModel], List[Dict], Dict[str, Any], BaseModel],
         schema: str,
         quality_report: Optional[DataQualityReport] = None,
         field_stats: Optional[List[FieldStats]] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> DataReference:
+    ) -> str:
         """
         Save data and return the data ID string.
 
@@ -368,8 +366,18 @@ class DataContextManager:
                     error=str(exc)
                 )
 
-        # 6. Check data type and convert to dict if needed (使用标准化后的数据)
-        if isinstance(standardized_data[0], BaseModel):
+        # 6. Check data type and convert to JSON-compatible values. Report
+        # packages are objects; ordinary query datasets are lists.
+        if isinstance(standardized_data, BaseModel):
+            model_class = type(standardized_data)
+            serialized_data = standardized_data.model_dump()
+            standardized_data = serialized_data
+            is_pydantic = True
+        elif isinstance(standardized_data, dict):
+            model_class = dict
+            serialized_data = standardized_data
+            is_pydantic = False
+        elif isinstance(standardized_data[0], BaseModel):
             # Pydantic models - convert to dict
             model_class = type(standardized_data[0])
             serialized_data = [item.dict() for item in standardized_data]
@@ -394,7 +402,9 @@ class DataContextManager:
                 has_species_data=has_species_data
             )
 
-        if not all(isinstance(item, (BaseModel, dict)) for item in standardized_data):
+        if isinstance(standardized_data, list) and not all(
+            isinstance(item, (BaseModel, dict)) for item in standardized_data
+        ):
             raise TypeError("All items must be Pydantic models or dictionaries")
 
         # 6.1 【修复】将field_stats从字典列表转换为FieldStats对象列表
@@ -422,7 +432,12 @@ class DataContextManager:
 
         # 6.2 【关键修复】无条件从species_data/components字段提取field_stats
         # 【修复】即使field_mapping_applied=False，也尝试提取field_stats（支持手动构造的数据）
-        if not field_stats and serialized_data and isinstance(serialized_data[0], dict):
+        if (
+            not field_stats
+            and isinstance(serialized_data, list)
+            and serialized_data
+            and isinstance(serialized_data[0], dict)
+        ):
             first_record = serialized_data[0]
 
             # VOCs数据：从species_data提取
@@ -466,9 +481,9 @@ class DataContextManager:
                         found_at_record=serialized_data.index(component_record)
                     )
 
-        # 7. Generate data ID
-        data_id = uuid4().hex
-        full_id = f"{schema}:v1:{data_id}"
+        # 7. Generate an immutable file name. The path, not a second logical
+        # identifier, is the value passed between tools.
+        file_stem = f"{safe_file_stem(schema)}--{uuid4().hex}"
 
         # 8. 【优化】直接保存序列化数据，不在每条记录中添加data_id字段
         # 避免重复冗余，减少上下文大小
@@ -476,14 +491,17 @@ class DataContextManager:
         sample_keys = []
         if serialized_data:
             from app.utils.data_standardizer import _safe_for_logging
-            raw_keys = list(serialized_data[0].keys())[:5]
+            sample_record = serialized_data[0] if isinstance(serialized_data, list) else serialized_data
+            raw_keys = list(sample_record.keys())[:5] if isinstance(sample_record, dict) else []
             sample_keys = _safe_for_logging(raw_keys)
 
+        record_count = len(standardized_data) if isinstance(standardized_data, list) else 1
+
         logger.debug(
-            "saving_data_without_item_data_id",
-            full_id=full_id,
+            "saving_session_data_file",
+            file_stem=file_stem,
             schema=schema,
-            record_count=len(serialized_data),
+            record_count=record_count,
             sample_keys=sample_keys
         )
 
@@ -491,7 +509,7 @@ class DataContextManager:
         # 【关键修复】使用标准化后的数据 standardized_data，而非原始的 serialized_data
         path = self.memory.session.save_data_to_file(
             data=standardized_data,
-            data_id=full_id,
+            file_stem=file_stem,
             registry_schema=schema,
             registry_metadata=metadata or {},
             quality_report=quality_report,
@@ -513,79 +531,38 @@ class DataContextManager:
                 )
 
         handle = TypedDataHandle(
-            data_id=data_id,
+            file_path=path,
             schema=schema,
             version="v1",
-            record_count=len(standardized_data),  # 使用标准化后的数据计数
+            record_count=record_count,
             model_class=handle_model_class,
-            quality_report=quality_report or self._create_default_report(schema, len(standardized_data)),
+            quality_report=quality_report or self._create_default_report(schema, record_count),
             field_stats=field_stats or [],
             metadata=metadata
         )
 
         # 11. Cache handle
-        self._handles[full_id] = handle
+        self._handles[path] = handle
 
         logger.info(
-            "data_saved_with_id",
-            full_id=full_id,
+            "session_data_file_saved",
+            file_path=path,
             schema=schema,
-            record_count=len(standardized_data),
+            record_count=record_count,
             data_type="pydantic" if is_pydantic else "dict",
             path=path,
             field_mapping_applied=field_mapping_applied  # 记录是否应用了标准化
         )
 
-        # ✅ 返回字符串兼容对象，同时支持 ref["data_id"] / ref["file_path"]
-        # 计算绝对路径（供 Agent 使用）
-        try:
-            # path 可能是字符串或 Path 对象，统一转换为 Path
-            if isinstance(path, str):
-                path_obj = Path(path)
-            else:
-                path_obj = path
-
-            if path_obj.is_absolute():
-                # 已经是绝对路径
-                file_path = str(path_obj)
-            else:
-                # 相对路径，转换为绝对路径
-                file_path = str(Path.cwd().parent / path_obj)
-
-            # 统一路径分隔符为 /（适用于 Windows 和 Linux）
-            file_path = file_path.replace("\\", "/")
-        except Exception as e:
-            logger.warning("failed_to_calculate_file_path", path=str(path), error=str(e))
-            # 回退到原始路径
-            file_path = str(path)
-
-        return DataReference(full_id, file_path)
+        return path
 
     def get_data(
         self,
-        data_id: str,
+        file_path: str,
         expected_schema: Optional[str] = None
     ) -> List[BaseModel]:
-        """
-        Load data and automatically deserialize to Pydantic models.
-
-        Args:
-            data_id: Full data identifier (e.g., "vocs:v1:abc123")
-            expected_schema: Expected schema for validation (optional)
-
-        Returns:
-            List of Pydantic model instances
-
-        Raises:
-            KeyError: Data ID not found
-            ValueError: Schema mismatch
-
-        Example:
-            vocs_data = manager.get_data("vocs:v1:abc123", expected_schema="vocs")
-            # Returns List[VOCsSample]
-        """
-        # 1. Get handle
-        handle = self.get_handle(data_id)
+        """Load a session data file and deserialize it when a model is known."""
+        handle = self.get_handle(file_path)
 
         # 2. Schema validation
         if expected_schema and not handle.is_compatible_with(expected_schema):
@@ -595,7 +572,7 @@ class DataContextManager:
             )
 
         # 3. Load raw data
-        raw_data = self._load_raw_data(data_id)
+        raw_data = self._load_raw_data(file_path)
 
         # 4. Deserialize to Pydantic objects
         model_class = handle.model_class
@@ -604,7 +581,7 @@ class DataContextManager:
         if model_class is None:
             logger.warning(
                 "model_class_is_none_returning_raw_data",
-                data_id=data_id,
+                file_path=file_path,
                 schema=handle.schema,
                 message=f"Schema '{handle.schema}' not in SCHEMA_MODEL_MAP, returning raw data as dicts"
             )
@@ -625,14 +602,14 @@ class DataContextManager:
         except Exception as exc:
             logger.error(
                 "deserialization_failed",
-                data_id=data_id,
+                file_path=file_path,
                 model_class=model_class.__name__ if model_class else "Unknown",
                 error=str(exc)
             )
             # 【修复】降级返回原始数据，避免反序列化失败导致工具调用完全失败
             logger.warning(
                 "deserialization_failed_fallback_to_raw",
-                data_id=data_id,
+                file_path=file_path,
                 reason="反序列化失败，降级返回原始字典数据",
                 record_count=len(raw_data)
             )
@@ -644,200 +621,138 @@ class DataContextManager:
 
         logger.info(
             "data_loaded_and_typed",
-            data_id=data_id,
+            file_path=file_path,
             schema=handle.schema,
             record_count=len(typed_data)
         )
 
         return typed_data
 
-    def get_raw_data(self, data_id: str) -> List[Dict[str, Any]]:
-        """
-        Load raw data without deserializing to Pydantic models.
-
-        This method returns data in its original dictionary format, which is useful
-        for analysis results (PMF, OBM) that are already in standard dictionary format.
-
-        Args:
-            data_id: Full data identifier
-
-        Returns:
-            List of dictionaries (raw data)
-
-        Raises:
-            KeyError: Data ID not found
-
-        Example:
-            # Get PMF result as raw dictionary
-            pmf_result = manager.get_raw_data("pmf_result:v1:abc123")
-            # Returns [{'sources': [...], 'timeseries': [...], ...}]
-        """
-        logger.info(
-            "loading_raw_data",
-            data_id=data_id
-        )
-        raw_data = self._load_raw_data(data_id)
+    def get_raw_data(self, file_path: str) -> List[Dict[str, Any]]:
+        """Load raw records from a canonical session data path."""
+        logger.info("loading_raw_data", file_path=file_path)
+        raw_data = self._load_raw_data(file_path)
 
         logger.info(
             "raw_data_loaded",
-            data_id=data_id,
+            file_path=file_path,
             record_count=len(raw_data),
             data_type="dict" if raw_data and isinstance(raw_data[0], dict) else type(raw_data[0]).__name__
         )
 
         return raw_data
 
-    def get_handle(self, data_id: str) -> TypedDataHandle:
+    def get_data_payload(self, file_path: str) -> Any:
+        """Load the authorized JSON payload without applying record coercion.
+
+        Record-oriented tools should continue to use ``get_raw_data``. Tools
+        with their own structured input contract, such as report charts, need
+        the original JSON object (for example ``labels`` + ``values``).
         """
-        Get data handle without loading full data.
-
-        方案A优化：只支持长格式ID (schema:v1:hash)
-        - 移除了短格式ID (data_N) 的支持
-        - 简化解析逻辑，提高性能
-        - 统一ID格式，避免混淆
-
-        Args:
-            data_id: Full data identifier (format: schema:v1:hash)
-
-        Returns:
-            TypedDataHandle with metadata
-
-        Raises:
-            KeyError: Data ID not found
-            ValueError: Invalid data_id format (must be long format)
-        """
-        # Check cache first
-        if data_id in self._handles:
-            return self._handles[data_id]
-
-        # Try to reconstruct from session memory
-        raw_data = self._load_raw_data(data_id)
-        if not raw_data:
-            raise KeyError(f"Data not found: {data_id}")
-
-        # Parse data_id - 只支持长格式
-        parts = data_id.split(":")
-        if len(parts) != 3:
-            raise ValueError(
-                f"Invalid data_id format: {data_id}. "
-                f"Expected format: 'schema:v1:hash' (long format)"
-            )
-
-        schema, version, short_id = parts
-
+        logger.info("loading_data_payload", file_path=file_path)
+        payload = self.memory.session.load_data_from_file(file_path)
+        if payload is None:
+            raise KeyError(f"Data not found in session: {file_path}")
         logger.info(
-            "data_id_parsed",
-            data_id=data_id,
-            schema=schema,
-            version=version
+            "data_payload_loaded",
+            file_path=file_path,
+            payload_type=type(payload).__name__,
         )
+        return payload
+
+    def get_handle(self, file_path: str) -> TypedDataHandle:
+        """Return cached metadata, or reconstruct it from the immutable filename."""
+        if file_path in self._handles:
+            return self._handles[file_path]
+
+        raw_data = self._load_raw_data(file_path)
+        if not raw_data:
+            raise KeyError(f"Data not found: {file_path}")
+
+        name = Path(file_path).stem
+        if "--" in name:
+            schema = name.split("--", 1)[0]
+            version = "v1"
+        elif ":" in file_path:  # reopen old persisted conversations internally
+            schema, version = (file_path.split(":") + ["v1"])[:2]
+        else:
+            schema, version = "unknown", "v1"
 
         # Get model class
         model_class = SCHEMA_MODEL_MAP.get(schema)
         if not model_class:
             logger.warning(
-                "unknown_schema_for_data_id",
-                data_id=data_id,
+                "unknown_schema_for_data_file",
+                file_path=file_path,
                 schema=schema,
                 message="Using dict type for unknown schema"
             )
             model_class = None
 
-        # Get registry ID to fetch quality info and metadata
-        registry_id = self.memory.session.get_registry_id(data_id)
-
-        quality_report = None
-        field_stats = []
-        metadata = None
-
-        if registry_id:
-            try:
-                entry = self.registry.get_metadata(registry_id)
-                if entry:
-                    quality_report = entry.quality_report
-                    # Convert field_stats from List[Dict] to List[FieldStats] objects
-                    field_stats = [FieldStats(**stat_dict) for stat_dict in entry.field_stats] if entry.field_stats else []
-                    # Load registry metadata for downstream data interpretation.
-                    metadata = entry.metadata if hasattr(entry, 'metadata') else None
-                    logger.info(
-                        "registry_metadata_loaded",
-                        data_id=data_id,
-                        has_metadata=metadata is not None,
-                        metadata_keys=list(metadata.keys()) if metadata else []
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "failed_to_load_registry_metadata",
-                    data_id=data_id,
-                    error=str(exc)
-                )
-
-        # Create handle with registry metadata preserved for downstream consumers.
         handle = TypedDataHandle(
-            data_id=short_id,
+            file_path=file_path,
             schema=schema,
             version=version,
             record_count=len(raw_data) if isinstance(raw_data, list) else 1,
             model_class=model_class,
-            quality_report=quality_report or self._create_default_report(schema, len(raw_data) if isinstance(raw_data, list) else 1),
-            field_stats=field_stats,
-            metadata=metadata
+            quality_report=self._create_default_report(schema, len(raw_data) if isinstance(raw_data, list) else 1),
+            field_stats=[],
+            metadata=None,
         )
 
-        # Cache for next access
-        self._handles[data_id] = handle
+        self._handles[file_path] = handle
 
         logger.info(
-            "data_handle_created_and_cached",
-            data_id=data_id,
+            "data_file_handle_created_and_cached",
+            file_path=file_path,
             schema=schema,
             cached=True
         )
 
         return handle
 
-    def exists(self, data_id: str) -> bool:
-        """Check if data ID exists."""
-        if data_id in self._handles:
+    def exists(self, file_path: str) -> bool:
+        """Check whether a data file exists and belongs to this session."""
+        if file_path in self._handles:
             return True
         try:
-            raw_data = self._load_raw_data(data_id)
+            raw_data = self._load_raw_data(file_path)
             return raw_data is not None
         except Exception:
             return False
 
     def list_data(self, schema: Optional[str] = None) -> List[str]:
         """
-        List all available data IDs in current session.
+        List all available data file paths in current session.
 
         Args:
             schema: Optional schema filter
 
         Returns:
-            List of full data IDs
+            Canonical data-root-relative paths
         """
-        all_ids = list(self._handles.keys())
+        all_paths = list(self._handles.keys())
 
         # Also check session memory for non-cached data
-        for data_id in self.memory.session.data_files.keys():
-            if data_id not in all_ids:
-                all_ids.append(data_id)
+        for file_path in self.memory.session.data_files.keys():
+            if file_path not in all_paths:
+                all_paths.append(file_path)
 
         # Filter by schema if specified
         if schema:
-            all_ids = [
-                data_id for data_id in all_ids
-                if data_id.startswith(f"{schema}:")
+            all_paths = [
+                file_path for file_path in all_paths
+                if Path(file_path).name.startswith(f"{safe_file_stem(schema)}--")
             ]
 
-        return sorted(all_ids)
+        return sorted(all_paths)
 
-    def _load_raw_data(self, data_id: str) -> List[Dict[str, Any]]:
+    def _load_raw_data(self, file_path: str) -> List[Dict[str, Any]]:
         """Load raw data from session memory."""
-        raw_data = self.memory.session.load_data_from_file(data_id)
+        raw_data = self.memory.session.load_data_from_file(file_path)
 
         if raw_data is None:
-            raise KeyError(f"Data not found in session: {data_id}")
+            raise KeyError(f"Data not found in session: {file_path}")
 
         # 智能适配不同工具的保存格式
         if not isinstance(raw_data, list):
@@ -849,7 +764,7 @@ class DataContextManager:
                     # 顶层有sources（单模式结果）
                     logger.info(
                         "extracting_analysis_result_top_level",
-                        data_id=data_id,
+                        file_path=file_path,
                         available_keys=list(raw_data.keys())[:5]
                     )
                     return [raw_data]
@@ -859,7 +774,7 @@ class DataContextManager:
                     if "sources" in nnls_result:
                         logger.info(
                             "extracting_nnls_result_for_dual_mode",
-                            data_id=data_id,
+                            file_path=file_path,
                             sources_count=len(nnls_result.get("sources", []))
                         )
                         # 【修复】确保station_name被保留（从顶层合并到nnls_result）
@@ -867,7 +782,7 @@ class DataContextManager:
                             nnls_result["station_name"] = raw_data["station_name"]
                             logger.info(
                                 "preserving_station_name_for_visualization",
-                                data_id=data_id,
+                                file_path=file_path,
                                 station_name=raw_data["station_name"]
                             )
                         # 提取nnls_result用于可视化，保留完整的raw_data用于其他用途
@@ -876,7 +791,7 @@ class DataContextManager:
                 if any(key in raw_data for key in ["timeseries", "species_ofp", "category_summary"]):
                     logger.info(
                         "extracting_analysis_result",
-                        data_id=data_id,
+                        file_path=file_path,
                         available_keys=list(raw_data.keys())[:5]
                     )
                     return [raw_data]  # 包装为列表
@@ -885,7 +800,7 @@ class DataContextManager:
                 if "data" in raw_data and isinstance(raw_data["data"], list):
                     logger.info(
                         "extracting_data_from_dict",
-                        data_id=data_id,
+                        file_path=file_path,
                         source_field="data"
                     )
                     return raw_data["data"]

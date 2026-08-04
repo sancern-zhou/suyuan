@@ -194,6 +194,6 @@
 
 - `spatial_polygon_asset`：用 `map-spec create polygon-layer`。
 - `spatial_point_asset`：用 `map-spec create point-layer`。
-- `analysis_table_asset`：先用 `read_data_registry` 读取再回答或制表。
+- `analysis_table_asset`：作为数据文件路径交给后续分析或制表流程。
 
 不得在 `spatial_analysis` 失败后声称缓冲区或相交图层已经生成。

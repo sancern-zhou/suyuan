@@ -725,13 +725,10 @@ async def _execute_split_query_city_standard_report(
         "data_view": "reporting",
         "data_is_complete_for_requested_scope": success,
         "report_data_ids": combined_report_data_ids,
-        "registry_usage": {
-            "note": (
-                "跨 2025-01-01 且未显式指定 ns_type 时，工具已按旧国标/新国标拆分查询；"
-                "data 合并返回两个分段的请求范围报告口径记录。"
-                "如需任一分段完整城市明细或原始接口字段，请按 metadata.segments 中的 report_data_id 读取 registry。"
-            )
-        },
+        "report_note": (
+            "跨 2025-01-01 且未显式指定 ns_type 时，工具已按旧国标/新国标拆分查询；"
+            "data 合并返回两个分段的请求范围报告口径记录，完整分段报表路径见 metadata.segments。"
+        ),
     }
     summary = (
         "城市统计报表跨标准时段查询完成："
@@ -957,14 +954,6 @@ async def execute_query_city_standard_report(
                 f" | data 已返回请求范围内完整报告口径记录，"
                 f"完整接口报表已保存为 report_data_id: {report_data_id}"
             )
-            metadata["registry_usage"] = {
-                "default": f'read_data_registry(data_id="{report_data_id}")',
-                "reporting": f'read_data_registry(data_id="{report_data_id}")',
-                "cities": f'read_data_registry(data_id="{report_data_id}", view="cities")',
-                "raw": f'read_data_registry(data_id="{report_data_id}", view="raw")',
-                "result": f'read_data_registry(data_id="{report_data_id}", view="result")',
-                "note": "data 已包含请求范围内完整报告口径记录；只有追溯原始接口字段或额外区域记录时才读取 registry。",
-            }
 
         return result
 
@@ -1222,14 +1211,6 @@ async def execute_query_city_standard_yoy_report(
                 f" | data 已返回请求范围内完整报告口径记录，"
                 f"完整接口报表已保存为 report_data_id: {report_data_id}"
             )
-            metadata["registry_usage"] = {
-                "default": f'read_data_registry(data_id="{report_data_id}")',
-                "reporting": f'read_data_registry(data_id="{report_data_id}")',
-                "cities": f'read_data_registry(data_id="{report_data_id}", view="cities")',
-                "raw": f'read_data_registry(data_id="{report_data_id}", view="raw")',
-                "result": f'read_data_registry(data_id="{report_data_id}", view="result")',
-                "note": "data 已包含请求范围内完整报告口径记录；只有追溯原始接口字段或额外区域记录时才读取 registry。",
-            }
 
         return result
 
@@ -1262,15 +1243,15 @@ class QueryCityStandardReportTool(LLMTool):
                 "2025-01-01 之前默认旧国标，2025-01-01 及之后默认新国标；"
                 "跨 2025-01-01 时自动拆成旧国标、新国标两次查询并合并返回分段结果。"
                 "注意：2025-01-01 之前接口只有旧标准数据，指定 ns_type=2 查询 2025 年前时段通常无数据返回。"
-                "工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
+                "工具返回默认使用 reporting 报告口径视图，"
                 "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
                 "cities 传入粤东、粤西、粤北、珠三角、非珠三角、粤东西北、全省/广东省等区域别名时，"
                 "接口仍获取含城市和区域的完整报表，但 data 只返回对应区域汇总行，不返回下辖城市明细；"
-                "如需城市明细或原始27条记录，读取 read_data_registry 的 reporting/raw/result 视图。"
+                "完整城市明细和原始记录保存在 report_file_path 的结构化视图中。"
                 "reporting/data 是报告口径精简视图，缺少完整排名明细、单项指数、首要污染物天数/占比、"
                 "各等级天数/占比、最大值、小数字段等接口字段；需要这些字段时读取 raw/result/cities 视图。"
                 "当 metadata.data_is_complete_for_requested_scope=true 时，data 已是请求范围完整结果，"
-                "应直接用 data 作答，不需要再读取 read_data_registry；"
+                "应直接用 data 作答；"
                 "只有需要追溯原始接口字段时才读取 raw/result 视图。"
             ),
             "parameters": {
@@ -1390,7 +1371,7 @@ class QueryCityStandardYoyReportTool(LLMTool):
                 "不再本地计算城市新/旧国标同比统计报表。"
                 "ns_type=2 表示新国标；ns_type=1 表示旧国标。"
                 "适用于同比、环比、双时段对比、变化率、改善/恶化分析。"
-                "工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
+                "工具返回默认使用 reporting 报告口径视图，"
                 "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
                 "按新标准，PM2.5 使用阶段均值进行统计评价，因此 reporting/data 中的 "
                 "PM2.5对比值 使用补算字段 pM2_5_Decimal_Compare，PM2.5同比变化率 "
@@ -1399,11 +1380,11 @@ class QueryCityStandardYoyReportTool(LLMTool):
                 "PM2.5接口原始对比值/PM2.5接口原始同比变化率 保留供追溯。"
                 "cities 传入粤东、粤西、粤北、珠三角、非珠三角、粤东西北、全省/广东省等区域别名时，"
                 "接口仍获取含城市和区域的完整报表，但 data 只返回对应区域汇总行，不返回下辖城市明细；"
-                "如需城市明细或原始27条记录，读取 read_data_registry 的 reporting/raw/result 视图。"
+                "完整城市明细和原始记录保存在 report_file_path 的结构化视图中。"
                 "reporting/data 是报告口径精简视图，缺少完整排名明细、单项指数、首要污染物天数/占比、"
                 "各等级天数/占比、最大值、小数字段等接口字段；需要这些字段时读取 raw/result/cities 视图。"
                 "当 metadata.data_is_complete_for_requested_scope=true 时，data 已是请求范围完整结果，"
-                "应直接用 data 作答，不需要再读取 read_data_registry；"
+                "应直接用 data 作答；"
                 "只有需要追溯原始接口字段时才读取 raw/result 视图。"
             ),
             "parameters": {

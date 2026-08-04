@@ -100,7 +100,7 @@ class LLMExpertAgentRunner:
         ]
         global_context = "\n".join(f"- {fact.fact_id}: {fact.statement}" for fact in facts[:60])
         user_discussion = request.discussion_prompt.strip() or "无"
-        data_ids = ", ".join(request.data_ids) or "无"
+        file_paths = ", ".join(request.file_paths) or "无"
         return f"""
 你是“{expert.display_name}”，必须使用会商专用 ReAct 模式 `{expert.deliberation_mode}` 完成第 {round_index} 轮专家会商。
 本轮讨论阶段：{turn_type}
@@ -113,7 +113,7 @@ class LLMExpertAgentRunner:
 区域：{request.region}
 时段：{request.time_range.display or request.time_range.start or ""}
 污染物：{"、".join(request.pollutants) or "未指定"}
-已有 data_id：{data_ids}
+已有数据文件：{file_paths}
 用户追加讨论/追问：{user_discussion}
 
 ## 与你最相关的事实
@@ -126,7 +126,7 @@ class LLMExpertAgentRunner:
 {discussion_context or "初判阶段暂无其他专家讨论记录。"}
 
 ## 工具要求
-- 你可以调用的工具：{", ".join(expert.tool_whitelist) or "无"}；读取已有数据资产时使用 read_data_registry 或当前模式提供的数据读取工具。
+- 你可以调用的工具：{", ".join(expert.tool_whitelist) or "无"}。
 - 如果事实不足以支持你的判断，必须先调用工具补证；工具 Observation 会被转成新 FactRecord。
 - 不得编造事实编号，不得把未经工具读取的数据内容写成已知事实。
 - 如果共享讨论上下文中有指向你的问题，必须在 position、claims 或 questions_to_others 中明确回应；仍缺证据时列入 missing_facts 或 tool_call_plan。
@@ -258,17 +258,17 @@ class LLMExpertAgentRunner:
             )
 
         plans: list[ToolCallPlan] = []
-        allowed_tools = set(expert.tool_whitelist) | {"read_data_registry"}
+        allowed_tools = set(expert.tool_whitelist)
         raw_plans = payload.get("tool_call_plan", []) if isinstance(payload.get("tool_call_plan"), list) else []
         for item in raw_plans:
             if not isinstance(item, dict):
                 continue
             tool_name = str(item.get("tool_name") or "").strip()
-            if tool_name and tool_name not in allowed_tools:
+            if not tool_name or tool_name not in allowed_tools:
                 continue
             plans.append(
                 ToolCallPlan(
-                    tool_name=tool_name or "read_data_registry",
+                    tool_name=tool_name,
                     purpose=str(item.get("purpose") or "补充验证"),
                     expected_fact_type=str(item.get("expected_fact_type") or "supplement"),
                     params=item.get("params") if isinstance(item.get("params"), dict) else {},
@@ -325,7 +325,7 @@ class LLMExpertAgentRunner:
                     statement=statement,
                     method=f"ReAct补证工具执行：{tool_name}",
                     quality=FactQuality(completeness="medium", temporal_coverage=request.time_range.display or "unknown", confidence=0.78),
-                    tags=["补证", "工具结果", "数据资产" if tool_name in {"read_data_registry", "load_data_from_memory"} else "ReAct"],
+                    tags=["补证", "工具结果", "ReAct"],
                 )
             )
         return facts

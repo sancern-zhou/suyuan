@@ -5,47 +5,40 @@ Execute Python Code Tool
 执行 Python 代码工具（用于数据处理、可视化、中间资源生成）
 
 特性：
-- 在隔离的临时目录中执行代码
+- 在 Bubblewrap Linux namespace 沙箱和隔离的临时目录中执行代码
 - 30 秒超时保护（可配置）
-- 使用 IPython 自动捕获输出（stdout/stderr/display）
+- 始终在独立子进程中执行，避免带崩 Web worker
 - 返回生成的文件列表
 - 自动清理临时文件
 - 支持所有 Python 库（python-docx, matplotlib, pandas 等）
-- 支持魔法命令（%time, %matplotlib inline 等）
-- 如果 IPython 不可用，自动回退到 subprocess 方案
 
 安全措施：
-1. 临时目录隔离
-2. 超时保护
-3. 输出截断（1MB 限制）
+1. 文件系统、PID、IPC、UTS、cgroup 和网络 namespace 隔离
+2. 仅挂载 Python 运行时、本次会话数据和临时输出目录
+3. 默认无网络、丢弃全部 capabilities，并清除主进程敏感环境变量
+4. CPU、虚拟内存、文件大小、进程数和文件描述符限制
+5. 超时、输出截断（1MB）和子进程组级别终止
 """
 
+import asyncio
 import tempfile
 import os
 import shutil
 import subprocess
 import sys
-import threading
 import time
 import base64
 import re
 import ast
 import json
+import signal
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
+from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
 from app.utils.path_config import get_charts_dir, get_data_registry, get_images_dir, get_python_output_dir, get_reports_dir
-from app.tools.system.data_registry_read_state import get_data_registry_read_state
-
-# 尝试导入 IPython
-try:
-    from IPython.terminal.interactiveshell import TerminalInteractiveShell
-    HAS_IPYTHON = True
-except ImportError:
-    HAS_IPYTHON = False
 
 logger = structlog.get_logger()
 
@@ -77,8 +70,8 @@ class ExecutePythonTool(LLMTool):
             description=(
                 "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
                 "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
-                "每次调用是独立环境；跨调用复用结果请用 save_data(...) 保存 data_id。"
-                "使用 data_id 前先用 read_data_registry 读取。"
+                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "跨调用复用结果请用 save_data(...) 保存并获取 file_path。"
                 "⚠️ **图表选择策略**："
                 "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
                 "② 复杂/自定义图表（3D图/多子图/任意极坐标/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
@@ -90,89 +83,29 @@ class ExecutePythonTool(LLMTool):
             requires_context=True  # ✅ 需要上下文以支持数据访问功能
         )
 
-        # 记录是否使用 IPython
-        self.use_ipython = HAS_IPYTHON
+        # Agent 生成的代码绝不能在 Web worker 进程内执行。
+        # 生产环境默认 fail-closed：沙箱不可用时返回工具失败，不回退到宿主机直接执行。
+        self.execution_engine = os.getenv("PYTHON_EXECUTION_ENGINE", "bubblewrap").strip().lower()
         self.default_timeout = 30
         self.max_output_size = 1024 * 1024  # 1MB
         self.enable_echarts_visuals = False
 
         logger.info(
             "execute_python_tool_initialized",
-            use_ipython=self.use_ipython,
+            execution_engine=self.execution_engine,
             permanent_dir=self.PERMANENT_DIR,
             charts_dir=self.CHARTS_DIR,
             timeout=self.default_timeout
         )
 
-    def _validate_data_registry_pre_read(self, code: str) -> Optional[Dict[str, Any]]:
-        """Require read_data_registry before Python reads a DataRegistry id.
-
-        This is intentionally tool-level and mode-independent, mirroring the
-        read_file/edit_file read-before-edit contract. Pure calculations over
-        literal data are unaffected.
-        """
-        result = self._find_data_registry_accesses(code)
-        if result["direct_registry_access"]:
-            return self._data_registry_pre_read_error(
-                reason=result["direct_registry_access"][0],
-                data_id=None,
-                details="execute_python 不允许直接导入或调用 DataRegistry 底层读取接口；请先使用 read_data_registry。"
-            )
-
-        state = get_data_registry_read_state()
-        for data_id in result["get_raw_data_ids"]:
-            record = state.get(data_id)
-            if not record:
-                return self._data_registry_pre_read_error(
-                    reason="data_id_not_read",
-                    data_id=data_id,
-                    details=f"data_id {data_id} 尚未通过 read_data_registry 读取。"
-                )
-            if not record.is_data_snapshot:
-                return self._data_registry_pre_read_error(
-                    reason="metadata_only_read",
-                    data_id=data_id,
-                    details=(
-                        f"data_id {data_id} 只读取了字段/视图结构，尚未读取可用于计算的数据视图。"
-                    )
-                )
-
-        if result["unknown_get_raw_data"]:
-            return self._data_registry_pre_read_error(
-                reason="dynamic_data_id",
-                data_id=None,
-                details="get_raw_data 的 data_id 必须是字符串字面量，或赋值为字符串字面量的变量，以便校验是否已读取。"
-            )
-
-        return None
-
-    def _find_data_registry_accesses(self, code: str) -> Dict[str, Any]:
-        get_raw_data_ids: List[str] = []
-        unknown_get_raw_data = False
-        direct_registry_access: List[str] = []
+    def _find_data_file_accesses(self, code: str) -> List[str]:
+        file_paths: List[str] = []
         assigned_strings: Dict[str, str] = {}
 
         try:
             tree = ast.parse(code)
         except SyntaxError:
-            # Let the Python executor surface syntax errors. Only catch obvious
-            # pre-read bypasses in unparsable snippets.
-            # 使用更精确的模式匹配，避免路径字符串误报
-            # 检测 import 语句
-            if re.search(r"\bimport\s+backend_data_registry\b", code):
-                direct_registry_access.append("import backend_data_registry")
-            if re.search(r"\bfrom\s+(backend_data_registry|app\.services\.data_registry)\s+import\b", code):
-                direct_registry_access.append("import from data_registry")
-            # 检测函数调用（但不检测字符串中的函数名）
-            if re.search(r"\bget_raw_data\s*\(", code):
-                unknown_get_raw_data = True
-            if re.search(r"\.(load_dataset|load_payload)\s*\(", code):
-                direct_registry_access.append("direct data registry method call")
-            return {
-                "get_raw_data_ids": get_raw_data_ids,
-                "unknown_get_raw_data": unknown_get_raw_data,
-                "direct_registry_access": direct_registry_access,
-            }
+            return []
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
@@ -180,36 +113,18 @@ class ExecutePythonTool(LLMTool):
                     if isinstance(target, ast.Name):
                         assigned_strings[target.id] = node.value.value
 
-            if isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                if module in {"app.services.data_registry", "backend_data_registry"}:
-                    direct_registry_access.append(f"import from {module}")
-
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "backend_data_registry":
-                        direct_registry_access.append("import backend_data_registry")
-
             if isinstance(node, ast.Call):
                 func_name = self._call_name(node.func)
-                if func_name == "get_raw_data":
-                    if not node.args:
-                        unknown_get_raw_data = True
-                    else:
-                        data_id = self._literal_or_assigned_string(node.args[0], assigned_strings)
-                        if data_id:
-                            get_raw_data_ids.append(data_id)
-                        else:
-                            unknown_get_raw_data = True
+                # Canonical session paths are documented as directly usable by
+                # Python. Discover ordinary open(...) calls as well as the
+                # injected helpers so Bubblewrap can stage the authorized file.
+                if func_name in {"open", "io.open", "get_raw_data", "load_data"}:
+                    if node.args:
+                        file_path = self._literal_or_assigned_string(node.args[0], assigned_strings)
+                        if file_path:
+                            file_paths.append(file_path)
 
-                if func_name.endswith(".load_dataset") or func_name.endswith(".load_payload"):
-                    direct_registry_access.append(func_name)
-
-        return {
-            "get_raw_data_ids": list(dict.fromkeys(get_raw_data_ids)),
-            "unknown_get_raw_data": unknown_get_raw_data,
-            "direct_registry_access": direct_registry_access,
-        }
+        return list(dict.fromkeys(file_paths))
 
     def _call_name(self, node: ast.AST) -> str:
         if isinstance(node, ast.Name):
@@ -226,49 +141,27 @@ class ExecutePythonTool(LLMTool):
             return assigned_strings.get(node.id)
         return None
 
-    def _data_registry_pre_read_error(
-        self,
-        *,
-        reason: str,
-        data_id: Optional[str],
-        details: str,
-    ) -> Dict[str, Any]:
-        logger.warning(
-            "execute_python_data_registry_pre_read_required",
-            reason=reason,
-            data_id=data_id,
-        )
-        return {
-            "status": "failed",
-            "success": False,
-            "error": (
-                "使用 DataRegistry 数据计算前必须先调用 read_data_registry 读取数据。"
-                f"{details}"
-            ),
-            "data": None,
-            "metadata": {
-                "tool_name": "execute_python",
-                "blocked_by": "data_registry_read_before_compute",
-                "reason": reason,
-                "data_id": data_id,
-            },
-            "summary": "执行失败：请先使用 read_data_registry 读取 data_id/report_data_id 后再计算。",
+    def _build_allowed_data_files_payload(self, code: str, context) -> str:
+        """Build a small allowlist; the child loads data instead of embedding it in code."""
+        session_data_dir = Path(context.data_manager.memory.session.data_dir).resolve()
+        available_paths = {
+            str(Path(path).resolve())
+            for path in getattr(context, "available_file_paths", []) or []
+            if path
         }
-
-    def _build_read_snapshot_payload(self, code: str) -> str:
-        """Serialize read_data_registry snapshots referenced by get_raw_data."""
-        try:
-            accesses = self._find_data_registry_accesses(code)
-            state = get_data_registry_read_state()
-            snapshots = {}
-            for data_id in accesses.get("get_raw_data_ids", []):
-                record = state.get(data_id)
-                if record and record.is_data_snapshot:
-                    snapshots[data_id] = record.data
-            return json.dumps(snapshots, ensure_ascii=False, default=str)
-        except Exception as exc:
-            logger.warning("data_registry_snapshot_payload_build_failed", error=str(exc))
-            return "{}"
+        requested_paths = []
+        for file_path in self._find_data_file_accesses(code):
+            resolved = Path(file_path).resolve()
+            resolved_path = str(resolved)
+            is_session_file = resolved == session_data_dir or session_data_dir in resolved.parents
+            if resolved_path not in available_paths and not is_session_file:
+                logger.warning(
+                    "execute_python_data_file_not_in_context",
+                    file_path=resolved_path,
+                )
+                continue
+            requested_paths.append(resolved_path)
+        return json.dumps(list(dict.fromkeys(requested_paths)), ensure_ascii=False)
 
     async def execute(
         self,
@@ -290,7 +183,7 @@ class ExecutePythonTool(LLMTool):
                 "data": {
                     "output": "代码输出",
                     "files": ["/path/to/generated/file.docx"],
-                    "engine": "ipython" or "subprocess"
+                    "engine": "subprocess"
                 },
                 "summary": "执行成功"
             }
@@ -308,16 +201,11 @@ class ExecutePythonTool(LLMTool):
                 "summary": "缺少代码参数"
             }
 
-        pre_read_error = self._validate_data_registry_pre_read(code)
-        if pre_read_error:
-            return pre_read_error
-
         # ✅ 确保图表目录存在（每次执行时都检查）
         os.makedirs(self.CHARTS_DIR, exist_ok=True)
 
         # 创建临时目录
         temp_dir = tempfile.mkdtemp(prefix="python_exec_")
-        original_dir = os.getcwd()
 
         # 获取 backend 目录（用于相对路径访问数据文件）
         # ✅ 修复：从 execute_python_tool.py 往上 3 级到达 backend/ 目录
@@ -327,59 +215,28 @@ class ExecutePythonTool(LLMTool):
         backend_dir = os.path.abspath(backend_dir)
 
         try:
-            # 根据是否安装 IPython 选择执行方式
-            if self.use_ipython:
-                # ⚠️ 在 backend 目录执行代码，以便相对路径能找到数据文件
-                os.chdir(backend_dir)
+            # 只在独立子进程中执行，且不修改 Web worker 的全局 cwd。
+            original_code = code
+            code = self._inject_data_context(code, context)
+            code = self._inject_matplotlib_save_support(code)
+            code = self._inject_excel_helpers(code)
 
-                # ✅ 注入数据访问上下文（让用户可以通过 data_id 访问数据）
-                original_code = code
-                code = self._inject_data_context(code, context)
+            logger.info(
+                "code_injection_completed",
+                original_code_length=len(original_code),
+                injected_code_length=len(code),
+                code_modified=(code != original_code),
+                mode=self.execution_engine,
+                has_context=context is not None,
+                available_data_count=len(context.available_file_paths) if context and hasattr(context, 'available_file_paths') else 0,
+            )
 
-                # ✅ 注入 matplotlib 保存路径捕获（不接管图表视觉设计）
-                code = self._inject_matplotlib_save_support(code)
-
-                # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
-                code = self._inject_excel_helpers(code)
-
-                logger.info(
-                    "code_injection_completed",
-                    original_code_length=len(original_code),
-                    injected_code_length=len(code),
-                    code_modified=(code != original_code),
-                    has_matplotlib_import='import matplotlib' in original_code or 'from matplotlib' in original_code,
-                    has_matplotlib_save_support='import matplotlib' in original_code or 'from matplotlib' in original_code,
-                    has_excel_usage='openpyxl' in original_code or 'pandas' in original_code and 'read_excel' in original_code or '.xlsx' in original_code,
-                    has_context=context is not None,
-                    available_data_count=len(context.available_data_ids) if context and hasattr(context, 'available_data_ids') else 0
-                )
-
-                result = await self._execute_with_ipython(code, timeout or self.default_timeout)
-                # 切回临时目录，用于查找生成的文件
-                os.chdir(temp_dir)
-            else:
-                # subprocess 模式：在临时目录执行
-                os.chdir(temp_dir)
-
-                # ✅ 注入数据访问上下文（让用户可以通过 data_id 访问数据）
-                original_code = code
-                code = self._inject_data_context(code, context)
-
-                # ✅ 注入 matplotlib 保存路径捕获（不接管图表视觉设计）
-                code = self._inject_matplotlib_save_support(code)
-
-                # ✅ 条件性注入 Excel 辅助函数（保留图表和格式）
-                code = self._inject_excel_helpers(code)
-
-                logger.info(
-                    "code_injection_completed",
-                    original_code_length=len(original_code),
-                    injected_code_length=len(code),
-                    code_modified=(code != original_code),
-                    mode="subprocess"
-                )
-
-                result = await self._execute_with_subprocess(code, timeout or self.default_timeout)
+            result = await self._execute_with_subprocess(
+                code,
+                timeout or self.default_timeout,
+                working_dir=temp_dir,
+                context=context,
+            )
 
             # ✅ 从 output 中提取用户保存的文件路径（绝对路径保存的文件）
             output = result["data"].get("output", "")
@@ -402,7 +259,7 @@ class ExecutePythonTool(LLMTool):
             final_files = moved_temp_files + user_saved_files
 
             result["data"]["files"] = final_files
-            result["data"]["engine"] = "ipython" if self.use_ipython else "subprocess"
+            result["data"]["engine"] = self.execution_engine
             result["data"]["artifact_schema"] = self._artifact_schema()
 
             # ✅ DOCX 后处理：优先用同目录 report.html 作为源重建正式 Word；
@@ -507,17 +364,21 @@ class ExecutePythonTool(LLMTool):
             # ✅ 检测图表输出（CHART_SAVED:xxx.png 或 CHART_SAVED:data:image/png;base64,...）
             chart_data = self._extract_chart_paths(result["data"].get("output", ""))
 
-            # ✅ 检测 Python 中通过 save_data() 保存的 data_id
-            python_data_refs = self._extract_python_data_refs(result["data"].get("output", ""))
-            if python_data_refs:
-                result["data"]["data_ids"] = python_data_refs
-                result["data_ids"] = python_data_refs
+            # 检测 Python 中通过 save_data() 保存的会话数据文件。
+            python_data_paths = self._extract_python_data_file_paths(
+                result["data"].get("output", "")
+            )
+            if python_data_paths:
+                for file_path in python_data_paths:
+                    if file_path not in context.available_file_paths:
+                        context.available_file_paths.append(file_path)
+                result["data"]["data_file_paths"] = python_data_paths
                 result.setdefault("metadata", {})
-                result["metadata"]["data_ids"] = python_data_refs
+                result["metadata"]["data_file_paths"] = python_data_paths
                 if result.get("success", False):
                     result["summary"] = (
                         f"{result.get('summary', '✅ 工具已执行完成')} | "
-                        f"已保存中间结果 data_id: {', '.join(python_data_refs)}"
+                        f"已保存中间结果文件: {', '.join(python_data_paths)}"
                     )
 
             # ECharts 标准 JSON 只由 execute_echarts_python 专用工具处理。
@@ -598,7 +459,6 @@ class ExecutePythonTool(LLMTool):
                                 "type": "image",
                                 "title": f"图表 {Path(chart_path).stem}",
                                 "data": {
-                                    "url": image_info["url"],  # /api/image/{image_id}（前端用）
                                     "image_id": image_info["image_id"],
                                     "local_path": image_info["local_path"],  # 图片缓存真实本地路径
                                     "source_file_path": abs_chart_path,  # execute_python 生成的真实图片路径
@@ -616,7 +476,7 @@ class ExecutePythonTool(LLMTool):
                             })
 
                             # 更新摘要
-                            result["summary"] = f"✅ 工具已执行完成，图表生成成功：![Chart]({image_info['url']})"
+                            result["summary"] = "✅ 工具已执行完成，图表已登记到统一资源目录。"
 
                         except Exception as e:
                             logger.error(
@@ -633,7 +493,6 @@ class ExecutePythonTool(LLMTool):
                                 "type": "image",
                                 "title": f"图表 {Path(chart_path).stem}",
                                 "data": {
-                                    "url": None,
                                     "file_path": abs_chart_path,
                                     "error": str(e)
                                 },
@@ -679,7 +538,6 @@ class ExecutePythonTool(LLMTool):
                                 "type": "image",
                                 "title": f"图表 {chart_id}",
                                 "data": {
-                                    "url": image_info["url"],  # /api/image/{image_id}（前端用）
                                     "image_id": image_info["image_id"],
                                     "local_path": image_info["local_path"],  # 图片缓存真实本地路径
                                     "source_file_path": image_info["local_path"],
@@ -697,7 +555,7 @@ class ExecutePythonTool(LLMTool):
                             })
 
                             # 更新摘要
-                            result["summary"] = f"✅ 工具已执行完成，图表生成成功：![Chart]({image_info['url']})"
+                            result["summary"] = "✅ 工具已执行完成，图表已登记到统一资源目录。"
 
                             # ✅ 从输出中移除 base64 字符串（太长，LLM不需要）
                             output = result["data"].get("output", "")
@@ -721,16 +579,57 @@ class ExecutePythonTool(LLMTool):
                     result["summary"] = f"✅ 工具已执行完成，ECharts图表生成成功：{len(visuals)} 个"
 
             self._attach_resume_context(result)
-            from app.tools.resource_declarations import data_resource, file_products
+            from app.tools.resource_declarations import (
+                data_file_resource,
+                generated_file_products,
+                resources_for_visuals,
+            )
 
-            result["resources"] = file_products(
-                final_files,
+            visual_source_paths: set[str] = set()
+            for visual in result.get("visuals") or []:
+                if not isinstance(visual, dict):
+                    continue
+                visual_data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
+                visual_meta = visual.get("meta") if isinstance(visual.get("meta"), dict) else {}
+                for path in (
+                    visual.get("local_path"),
+                    visual.get("file_path"),
+                    visual_data.get("local_path"),
+                    visual_data.get("file_path"),
+                    visual_data.get("source_file_path"),
+                    visual_meta.get("local_path"),
+                    visual_meta.get("file_path"),
+                ):
+                    if isinstance(path, str) and path:
+                        visual_source_paths.add(str(Path(path).expanduser().resolve()))
+
+            deliverable_files = [
+                path for path in final_files
+                if str(Path(path).expanduser().resolve()) not in visual_source_paths
+            ]
+            pdf_preview = result["data"].get("pdf_preview")
+            preview_paths: dict[str, str] = {}
+            primary_file_path = result["data"].get("file_path")
+            if (
+                isinstance(pdf_preview, dict)
+                and isinstance(pdf_preview.get("pdf_path"), str)
+                and isinstance(primary_file_path, str)
+            ):
+                preview_paths[primary_file_path] = pdf_preview["pdf_path"]
+
+            result["resources"] = generated_file_products(
+                deliverable_files,
                 tool_name=self.name,
+                preview_paths=preview_paths,
             )
             result["resources"].extend(
-                data_resource(data_id, tool_name=self.name)
-                for data_id in python_data_refs
+                data_file_resource(file_path, tool_name=self.name)
+                for file_path in python_data_paths
             )
+            if not self.enable_echarts_visuals:
+                result["resources"].extend(
+                    resources_for_visuals(result.get("visuals", []), tool_name=self.name)
+                )
             return result
 
         except Exception as e:
@@ -747,144 +646,86 @@ class ExecutePythonTool(LLMTool):
                 "summary": f"执行失败: {str(e)}"
             }
         finally:
-            # 恢复工作目录
-            os.chdir(original_dir)
             # 清理临时目录
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    async def _execute_with_ipython(self, code: str, timeout: int) -> Dict[str, Any]:
-        """使用 IPython 执行代码"""
-        shell = TerminalInteractiveShell()
-
-        # 捕获输出
-        outputs = []
-        errors = []
-
-        class OutputCapture:
-            def __init__(self, outputs_list, errors_list, is_stderr=False):
-                self.outputs = outputs_list
-                self.errors = errors_list
-                self.is_stderr = is_stderr
-
-            def write(self, text):
-                if self.is_stderr:
-                    self.errors.append(text)
-                else:
-                    self.outputs.append(text)
-
-            def flush(self):
-                pass
-
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
-
-        sys.stdout = OutputCapture(outputs, errors, is_stderr=False)
-        sys.stderr = OutputCapture(outputs, errors, is_stderr=True)
-
-        # 设置超时（使用线程）
-        execution_result = {"result": None, "error": None}
-        timeout_event = threading.Event()
-
-        def run_with_timeout():
-            try:
-                execution_result["result"] = shell.run_cell(
-                    code,
-                    silent=False,
-                    store_history=False
-                )
-            except Exception as e:
-                execution_result["error"] = e
-            finally:
-                timeout_event.set()
-
-        thread = threading.Thread(target=run_with_timeout)
-        thread.daemon = True
-        thread.start()
-
-        # 等待执行完成或超时
-        thread.join(timeout=timeout)
-
-        # 恢复原始输出流
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-
-        if thread.is_alive():
-            # 超时
-            return {
-                "status": "failed",  # ✅ 添加 status 字段
-                "success": False,
-                "data": {"error": "执行超时"},
-                "summary": "执行超时"
-            }
-
-        if execution_result["error"]:
-            error_info = self._format_python_error(execution_result["error"], code)
-            return {
-                "status": "failed",  # ✅ 添加 status 字段
-                "success": False,
-                "data": {"error": error_info["error_message"], "error_details": error_info},
-                "summary": error_info["summary"]
-            }
-
-        result = execution_result["result"]
-
-        if result.error_in_exec:
-            error_info = self._format_python_error(result.error_in_exec, code)
-            return {
-                "status": "failed",  # ✅ 添加 status 字段
-                "success": False,
-                "data": {"error": error_info["error_message"], "error_details": error_info},
-                "summary": error_info["summary"]
-            }
-
-        # 组合输出
-        output = "".join(outputs)
-        if errors:
-            output += "\n错误输出:\n" + "".join(errors)
-
-        # 如果有返回值，也添加到输出
-        if result.result is not None:
-            output += str(result.result)
-
-        # 截断输出
-        if len(output) > self.max_output_size:
-            output = output[:self.max_output_size] + "\n... (输出被截断)"
-
-        return {
-            "status": "success",  # ✅ 添加 status 字段
-            "success": True,
-            "data": {"output": output},
-            "summary": "✅ 工具已执行完成，计算任务已完成"
-        }
-
-    async def _execute_with_subprocess(self, code: str, timeout: int) -> Dict[str, Any]:
-        """使用 subprocess 执行代码（回退方案）"""
+    async def _execute_with_subprocess(
+        self,
+        code: str,
+        timeout: int,
+        *,
+        working_dir: str,
+        context=None,
+    ) -> Dict[str, Any]:
+        """在独立沙箱进程组中执行代码，同时保持 Web worker 事件循环可运行。"""
         # 写入脚本文件
-        script_file = os.path.join(os.getcwd(), "script.py")
+        script_file = os.path.join(working_dir, "script.py")
         with open(script_file, 'w', encoding='utf-8') as f:
             f.write(code)
 
+        if self.execution_engine != "bubblewrap":
+            return {
+                "status": "failed",
+                "success": False,
+                "data": {"error": f"不安全或未支持的 Python 执行引擎: {self.execution_engine}"},
+                "summary": "Python 沙箱配置错误",
+            }
+
+        sandbox_spec = self._build_bubblewrap_command(
+            code=code,
+            script_file=script_file,
+            working_dir=working_dir,
+            timeout=timeout,
+            context=context,
+        )
+        if sandbox_spec is None:
+            return {
+                "status": "failed",
+                "success": False,
+                "data": {"error": "Bubblewrap 沙箱不可用，已拒绝在宿主机直接执行代码"},
+                "summary": "Python 沙箱不可用",
+            }
+        command, sandbox_sync_dirs = sandbox_spec
+
         # 执行代码
+        process = None
         try:
-            result = subprocess.run(
-                [sys.executable, script_file],
-                capture_output=True,
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
-                cwd=os.getcwd()
+                cwd=working_dir,
+                start_new_session=True,
+            )
+            logger.info(
+                "execute_python_subprocess_started",
+                pid=process.pid,
+                script_size=len(code),
+                timeout_seconds=timeout,
+                sandbox=self.execution_engine,
+            )
+            stdout, stderr = await asyncio.to_thread(process.communicate, timeout=timeout)
+            self._sync_sandbox_session_outputs(sandbox_sync_dirs)
+            logger.info(
+                "execute_python_subprocess_completed",
+                pid=process.pid,
+                returncode=process.returncode,
+                stdout_size=len(stdout or ""),
+                stderr_size=len(stderr or ""),
             )
 
-            output = result.stdout or ""
-            if result.stderr:
-                output += f"\n错误输出:\n{result.stderr}"
+            output = stdout or ""
+            if stderr:
+                output += f"\n错误输出:\n{stderr}"
 
             # 截断输出
             if len(output) > self.max_output_size:
                 output = output[:self.max_output_size] + "\n... (输出被截断)"
 
             # 如果执行失败，尝试解析错误信息
-            if result.returncode != 0:
-                error_info = self._parse_subprocess_error(result.stderr, code)
+            if process.returncode != 0:
+                error_info = self._parse_subprocess_error(stderr, code)
                 return {
                     "status": "failed",
                     "success": False,
@@ -900,17 +741,239 @@ class ExecutePythonTool(LLMTool):
             }
 
         except subprocess.TimeoutExpired:
+            if process is not None:
+                logger.warning("execute_python_subprocess_timeout", pid=process.pid)
+                self._terminate_process_group(process)
+                await asyncio.to_thread(process.communicate)
             return {
                 "status": "failed",
                 "success": False,
                 "data": {"error": "执行超时"},
                 "summary": "执行超时"
             }
+        except asyncio.CancelledError:
+            if process is not None and process.poll() is None:
+                self._terminate_process_group(process)
+                await asyncio.to_thread(process.communicate)
+            raise
+
+    def _build_bubblewrap_command(
+        self,
+        *,
+        code: str,
+        script_file: str,
+        working_dir: str,
+        timeout: int,
+        context=None,
+    ) -> Optional[Tuple[List[str], List[Tuple[Path, Path, set[str]]]]]:
+        """构建 fail-closed Bubblewrap 沙箱命令。
+
+        沙箱不可见项目根目录、宿主机 home、Docker socket 和网络；
+        仅会话数据目录可写，其他显式输入文件只读。
+        """
+        bwrap = shutil.which("bwrap")
+        prlimit = shutil.which("prlimit")
+        if not bwrap or not prlimit:
+            logger.error(
+                "execute_python_sandbox_dependency_missing",
+                bubblewrap=bool(bwrap),
+                prlimit=bool(prlimit),
+            )
+            return None
+
+        python_env = Path(sys.prefix).resolve()
+        required_mounts = [Path("/usr"), Path("/lib"), Path("/lib64"), python_env]
+        if any(not path.exists() for path in required_mounts):
+            logger.error(
+                "execute_python_sandbox_runtime_mount_missing",
+                mounts=[str(path) for path in required_mounts if not path.exists()],
+            )
+            return None
+
+        command = [
+            prlimit,
+            f"--cpu={max(1, timeout + 2)}",
+            "--as=2147483648",
+            "--fsize=104857600",
+            "--nofile=256",
+            "--nproc=128",
+            "--core=0",
+            "--",
+            bwrap,
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-all",
+            "--cap-drop",
+            "ALL",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/lib",
+            "/lib",
+            "--ro-bind",
+            "/lib64",
+            "/lib64",
+            "--dir",
+            "/root",
+            "--dir",
+            "/root/miniconda3",
+            "--dir",
+            "/root/miniconda3/envs",
+            "--ro-bind",
+            str(python_env),
+            str(python_env),
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--bind",
+            working_dir,
+            "/sandbox",
+            "--chdir",
+            "/sandbox",
+        ]
+
+        # 不把 API key、代理、数据库密码等 Web worker 环境变量传给 Agent 代码。
+        for name in os.environ:
+            command.extend(["--unsetenv", name])
+        safe_env = {
+            "PATH": f"{python_env}/bin:/usr/bin:/bin",
+            "HOME": "/tmp",
+            "TMPDIR": "/tmp",
+            "MPLCONFIGDIR": "/tmp/matplotlib",
+            "XDG_CACHE_HOME": "/tmp/cache",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+        }
+        for name, value in safe_env.items():
+            command.extend(["--setenv", name, value])
+
+        session_data_dir = None
+        if context is not None:
+            try:
+                session_data_dir = Path(context.data_manager.memory.session.data_dir).resolve()
+            except (AttributeError, TypeError):
+                session_data_dir = None
+
+        mounted_destinations = set()
+        sync_dirs: List[Tuple[Path, Path, set[str]]] = []
+        context_paths = list(getattr(context, "available_file_paths", []) or [])
+        requested_paths = self._find_data_file_accesses(code)
+        candidate_paths = list(dict.fromkeys([*context_paths, *requested_paths]))
+        try:
+            if session_data_dir and session_data_dir.is_dir():
+                staged_session_dir = Path(working_dir) / "session_data"
+                staged_session_dir.mkdir(parents=True, exist_ok=True)
+                original_relative_paths: set[str] = set()
+                for value in candidate_paths:
+                    source_path = Path(value).resolve()
+                    if not source_path.is_file() or not (
+                        source_path == session_data_dir or session_data_dir in source_path.parents
+                    ):
+                        continue
+                    relative_path = source_path.relative_to(session_data_dir)
+                    staged_path = staged_session_dir / relative_path
+                    staged_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, staged_path)
+                    original_relative_paths.add(str(relative_path))
+
+                self._append_bubblewrap_parent_dirs(command, session_data_dir)
+                command.extend(["--bind", str(staged_session_dir), str(session_data_dir)])
+                mounted_destinations.add(str(session_data_dir))
+                sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
+
+            # Matplotlib helpers write to the canonical images path inside the
+            # sandbox. Bind a staging directory there, then publish only the
+            # generated files after the subprocess exits successfully.
+            images_dir = Path(get_images_dir()).resolve()
+            staged_images_dir = Path(working_dir) / "images_output"
+            staged_images_dir.mkdir(parents=True, exist_ok=True)
+            self._append_bubblewrap_parent_dirs(command, images_dir)
+            command.extend(["--bind", str(staged_images_dir), str(images_dir)])
+            mounted_destinations.add(str(images_dir))
+            sync_dirs.append((staged_images_dir, images_dir, set()))
+
+            for index, value in enumerate(candidate_paths):
+                path = Path(value).resolve()
+                if not path.exists():
+                    continue
+                if session_data_dir and (path == session_data_dir or session_data_dir in path.parents):
+                    continue
+                destination = str(path)
+                if destination in mounted_destinations:
+                    continue
+                staged_input_dir = Path(working_dir) / "inputs"
+                staged_input_dir.mkdir(parents=True, exist_ok=True)
+                staged_input = staged_input_dir / f"{index}_{path.name}"
+                if path.is_dir():
+                    shutil.copytree(path, staged_input)
+                else:
+                    shutil.copy2(path, staged_input)
+                self._append_bubblewrap_parent_dirs(command, path.parent)
+                command.extend(["--ro-bind", str(staged_input), destination])
+                mounted_destinations.add(destination)
+        except OSError as error:
+            logger.error(
+                "execute_python_sandbox_mount_open_failed",
+                error=str(error),
+                error_type=type(error).__name__,
+            )
+            return None
+
+        command.extend([str(python_env / "bin/python"), "/sandbox/script.py"])
+        return command, sync_dirs
+
+    @staticmethod
+    def _sync_sandbox_session_outputs(
+        sync_dirs: List[Tuple[Path, Path, set[str]]],
+    ) -> None:
+        """只发布沙箱新生成的会话文件，不允许代码覆盖原始输入。"""
+        for staged_dir, destination_dir, original_relative_paths in sync_dirs:
+            for staged_path in staged_dir.rglob("*"):
+                if not staged_path.is_file():
+                    continue
+                relative_path = staged_path.relative_to(staged_dir)
+                if str(relative_path) in original_relative_paths:
+                    continue
+                destination = destination_dir / relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(staged_path, destination)
+
+    @staticmethod
+    def _append_bubblewrap_parent_dirs(command: List[str], destination: Path) -> None:
+        """在空 mount namespace 中创建绑定挂载的父目录。"""
+        parents = list(destination.parents)
+        for parent in reversed(parents):
+            parent_text = str(parent)
+            if parent_text in {"/", "/usr", "/lib", "/lib64", "/root"}:
+                continue
+            command.extend(["--dir", parent_text])
+        command.extend(["--dir", str(destination)])
+
+    @staticmethod
+    def _terminate_process_group(process: subprocess.Popen) -> None:
+        """终止工具进程及其派生的所有子进程。"""
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
     def _find_generated_files(self, temp_dir: str) -> list:
         """查找生成的文件（排除临时文件）"""
         generated_files = []
         for root, dirs, files in os.walk(temp_dir):
+            if Path(root).resolve() == Path(temp_dir).resolve():
+                # Bubblewrap 的输入副本和会话输出镜像由沙箱发布逻辑管理，
+                # 不得被误认为用户在 cwd 生成的普通文件。
+                dirs[:] = [
+                    name
+                    for name in dirs
+                    if name not in {"inputs", "session_data", "images_output"}
+                ]
             # 跳过 __pycache__ 目录
             if '__pycache__' in dirs:
                 dirs.remove('__pycache__')
@@ -952,9 +1015,9 @@ class ExecutePythonTool(LLMTool):
             )
 
         data_refs = [
-            build_data_ref(data_id, usage="generated")
-            for data_id in (result.get("data_ids") or data.get("data_ids") or [])
-            if data_id
+            build_data_file_ref(file_path, usage="generated")
+            for file_path in (data.get("data_file_paths") or [])
+            if file_path
         ]
 
         visual_refs = []
@@ -993,7 +1056,7 @@ class ExecutePythonTool(LLMTool):
             llm_resume["generated_files"] = file_paths
             llm_resume["tool_hint"] = "Generated file resources are published automatically; use list_session_resources to inspect them."
         if data_refs:
-            llm_resume["data_ids"] = [ref["data_id"] for ref in data_refs]
+            llm_resume["file_paths"] = [ref["file_path"] for ref in data_refs]
         if visual_refs and "tool_hint" not in llm_resume:
             first_visual_path = visual_refs[0].get("tool_path")
             if first_visual_path:
@@ -1042,7 +1105,7 @@ class ExecutePythonTool(LLMTool):
             "files": "All generated local files as absolute paths.",
             "file_path": "Primary generated file for preview/download.",
             "pdf_preview": "Office/PDF preview metadata for docx/xlsx/pptx/pdf artifacts.",
-            "visuals": "Image/ECharts blocks for frontend rendering. Matplotlib images are cached under /api/image/{image_id}.",
+            "visuals": "Image/ECharts blocks used to declare durable session resources.",
         }
 
     def _extract_chart_paths(self, output: str) -> dict:
@@ -1101,12 +1164,12 @@ class ExecutePythonTool(LLMTool):
 
         return result
 
-    def _extract_python_data_refs(self, output: str) -> List[str]:
-        """Extract data_ids printed by the injected save_data() helper."""
+    def _extract_python_data_file_paths(self, output: str) -> List[str]:
+        """Extract paths printed by the injected save_data() helper."""
         if not output:
             return []
         refs: List[str] = []
-        for match in re.findall(r"PYTHON_DATA_SAVED:([A-Za-z0-9_:\-\.]+)", output):
+        for match in re.findall(r"PYTHON_DATA_FILE_SAVED:([^\s]+\.json)", output):
             if match and match not in refs:
                 refs.append(match)
         return refs
@@ -1258,18 +1321,15 @@ class ExecutePythonTool(LLMTool):
 
     def _inject_data_context(self, code: str, context) -> str:
         """
-        注入数据访问上下文，让用户代码可以通过 data_id 访问数据
+        注入基于会话文件路径的数据访问上下文。
 
         注入内容：
-        - get_raw_data(data_id): 获取原始数据（字典列表格式）
-        - save_data(data, schema="python_result", metadata=None): 保存中间结果并返回 data_id
+        - load_data(file_path): 获取原始数据（字典列表格式）
+        - save_data(data, schema="python_result", metadata=None): 保存中间结果并返回 file_path
 
         ⚠️ 重要：
         - 每次 execute_python 都是独立执行环境，不保留上次调用的变量
-        - LLM 应该在代码中直接使用 data_id
-        - 跨工具调用复用的数据必须先 save_data，再在后续调用中 get_raw_data(data_id)
-        - 不需要从 AVAILABLE_DATA_IDS 列表中选择
-        - 系统会根据 data_id 自动定位文件
+        - 跨工具调用复用的数据必须先 save_data，再在后续调用中 load_data(file_path)
         """
         # 检查 context 是否存在
         if not context:
@@ -1281,59 +1341,49 @@ class ExecutePythonTool(LLMTool):
             has_data_manager=context.data_manager is not None
         )
 
-        snapshot_payload = self._build_read_snapshot_payload(code)
+        allowed_data_files_payload = self._build_allowed_data_files_payload(code, context)
+        session_data_dir = json.dumps(str(context.data_manager.memory.session.data_dir), ensure_ascii=False)
+        session_prefix = json.dumps(
+            str(context.data_manager.memory.session.data_dir), ensure_ascii=False
+        )
 
         # 构建注入的代码
         context_injection_code = '''# ===== 数据访问上下文（自动注入） =====
 # 重要：每次 execute_python 都是独立执行环境，不保留上次调用的变量。
-# 如果中间结果后续还要复用，请调用 save_data(...) 保存为 data_id；
-# 后续 execute_python 调用中再用 get_raw_data(data_id) 显式读取。
+# 使用 load_data(file_path) 读取工具返回的数据文件。
 
-__READ_DATA_REGISTRY_SNAPSHOTS__ = __SNAPSHOT_PAYLOAD__
+import json as __data_context_json
+from pathlib import Path as __DataContextPath
+
+__ALLOWED_DATA_FILES__ = set(__ALLOWED_DATA_FILES_PAYLOAD__)
 
 # 获取原始数据（字典列表格式）
-def get_raw_data(data_id: str):
-    """获取 read_data_registry 已读取的数据快照。
-    
-    Args:
-        data_id: 已通过 read_data_registry 读取过的数据ID
-    
-    Returns:
-        read_data_registry 最近一次读取该 data_id 返回的 data
-    """
-    if data_id in __READ_DATA_REGISTRY_SNAPSHOTS__:
-        return __READ_DATA_REGISTRY_SNAPSHOTS__[data_id]
+def load_data(file_path: str):
+    """读取当前会话中的数据文件。"""
+    resolved_path = str(__DataContextPath(file_path).resolve())
+    if resolved_path not in __ALLOWED_DATA_FILES__:
+        raise RuntimeError(f"未找到会话数据文件: {file_path}")
+    with open(resolved_path, 'r', encoding='utf-8') as data_file:
+        return __data_context_json.load(data_file)
 
-    from app.tools.system.data_registry_read_state import get_data_registry_read_state
-
-    record = get_data_registry_read_state().get(data_id)
-    if record is None:
-        raise RuntimeError(
-            f"DataRegistry 数据 {data_id} 尚未读取。请先调用 read_data_registry(data_id=...)。"
-        )
-    if not record.is_data_snapshot:
-        raise RuntimeError(
-            f"DataRegistry 数据 {data_id} 当前只有结构信息，没有可计算数据。"
-            "请先调用 read_data_registry 读取具体 view/fields。"
-        )
-    return record.data
+get_raw_data = load_data
 
 def save_data(data, schema: str = 'python_result', metadata=None, version: str = 'v1'):
-    """保存 Python 中间结果到数据注册表并返回 data_id。
+    """保存 Python 中间结果到会话数据文件并返回 file_path。
 
     适用于跨多次 execute_python 调用复用的变量、DataFrame 转换结果、核验表等。
     data 可以是 list[dict]、dict、pandas DataFrame 或其他可 JSON 序列化对象。
     """
     import json
-    from datetime import datetime
-    from app.services.data_registry import data_registry
+    from pathlib import Path
+    import re
+    import uuid
 
     if metadata is None:
         metadata = {}
     metadata = dict(metadata)
     metadata.setdefault('generator', 'execute_python')
     metadata.setdefault('created_by', 'save_data_helper')
-    metadata.setdefault('created_at', datetime.utcnow().isoformat())
 
     try:
         import pandas as pd
@@ -1353,36 +1403,23 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
 
     payload = json.loads(json.dumps(payload, ensure_ascii=False, default=_json_default))
 
-    if isinstance(payload, list):
-        records = []
-        for item in payload:
-            if isinstance(item, dict):
-                records.append(item)
-            else:
-                records.append({'value': item})
-        if not records:
-            records = [{'value': None}]
-        entry = data_registry.register_dataset(
-            schema=schema,
-            version=version,
-            records=records,
-            metadata=metadata,
-        )
-    else:
-        entry = data_registry.register_payload(
-            schema=schema,
-            version=version,
-            payload=payload,
-            metadata=metadata,
-        )
-
-    print(f"PYTHON_DATA_SAVED:{entry.data_id}")
-    return entry.data_id
+    safe_schema = re.sub(r'[^A-Za-z0-9._-]+', '_', str(schema)).strip('._') or 'python_result'
+    filename = f"{safe_schema}--{uuid.uuid4().hex}.json"
+    absolute_path = Path(__SESSION_DATA_DIR__) / filename
+    absolute_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    file_path = __SESSION_PREFIX__ + "/" + filename
+    print(f"PYTHON_DATA_FILE_SAVED:{file_path}")
+    return file_path
 
 # ===== 数据访问上下文注入完成 =====
 
 '''
-        context_injection_code = context_injection_code.replace("__SNAPSHOT_PAYLOAD__", snapshot_payload)
+        context_injection_code = context_injection_code.replace(
+            "__ALLOWED_DATA_FILES_PAYLOAD__",
+            allowed_data_files_payload,
+        )
+        context_injection_code = context_injection_code.replace("__SESSION_DATA_DIR__", session_data_dir)
+        context_injection_code = context_injection_code.replace("__SESSION_PREFIX__", session_prefix)
 
         # 在代码开头插入上下文代码
         injected_code = context_injection_code + code
@@ -1676,7 +1713,7 @@ def _suyuan_apply_chinese_font_to_figure(fig):
         pass
 
 def _suyuan_emit_chart_saved(path):
-    '''输出标准图片保存标记，供 execute_python 后处理缓存到 /api/image/{image_id}。'''
+    '''输出标准图片保存标记，供 execute_python 后处理登记统一资源。'''
     try:
         if path is None:
             return
@@ -1703,7 +1740,7 @@ Figure.savefig = _suyuan_patched_figure_savefig
 
 def save_chart(fig, filename, dpi=150, bbox_inches='tight', facecolor='white'):
     '''
-    保存 matplotlib 图表并输出 CHART_SAVED 标记，便于工具缓存为 /api/image/{image_id}。
+    保存 matplotlib 图表并输出 CHART_SAVED 标记，便于工具登记统一资源。
     本函数不修改字体、字号、画布、布局或其他视觉设计。
     '''
     charts_dir = __SUYUAN_IMAGES_DIR__
@@ -2127,19 +2164,43 @@ def merge_excel_with_charts(file_paths, output_path):
         if not output:
             return file_paths
 
-        # 常见的文件保存模式（支持中文路径）
-        patterns = [
-            # WORD_SAVED:/path/to/file.docx, WORD_REPORT_SAVED:/path/to/file.docx, EXCEL_SAVED:/path/to/file.xlsx
-            r'(?:WORD_SAVED|WORD_REPORT_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
-            # 报告已生成：/path/to/文件名.docx
-            r'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)[:：]\s*(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))',
-            # 文件名.xlsx（带中文的后缀）
-            r'(.+?\.(?:docx|xlsx|pptx|pdf|doc|xls|ppt))\s*[已]*[保存生成]*',
+        # 按行扫描且限制候选行长度。旧实现在整段 stdout 上使用
+        # `(.+?\.ext)...` 宽泛匹配，遇到不含文件后缀的大型 ECharts JSON
+        # 会退化为 O(n²)，并占满 Web worker 直到 Uvicorn 健康检查将其终止。
+        extensions = r'(?:docx|xlsx|pptx|pdf|doc|xls|ppt)'
+        marker_patterns = [
+            re.compile(
+                rf'(?:WORD_SAVED|WORD_REPORT_SAVED|DOCX_SAVED|PPT_SAVED|PPTX_SAVED|PDF_SAVED|EXCEL_SAVED)'
+                rf'[:：]\s*(.+?\.{extensions})(?:\s|$)',
+                re.IGNORECASE,
+            ),
+            re.compile(
+                rf'(?:报告已生成|文件已保存|已生成|保存成功|File saved|saved)'
+                rf'[:：]\s*(.+?\.{extensions})(?:\s|$)',
+                re.IGNORECASE,
+            ),
         ]
+        standalone_path = re.compile(
+            rf'^\s*(.+?\.{extensions})\s*(?:已保存|生成完成)?\s*$',
+            re.IGNORECASE,
+        )
 
-        for pattern in patterns:
-            matches = re.findall(pattern, output)
-            file_paths.extend(matches)
+        extension_hint = re.compile(rf'\.{extensions}(?:\s|$)', re.IGNORECASE)
+        for raw_line in output.splitlines():
+            # 生成文件的日志行不应是巨型 payload；跳过长 JSON 也避免
+            # 不受信 stdout 对主进程造成过量 CPU 消耗。
+            if len(raw_line) > 8192 or not extension_hint.search(raw_line):
+                continue
+            line = raw_line.strip()
+            for pattern in marker_patterns:
+                match = pattern.search(line)
+                if match:
+                    file_paths.append(match.group(1))
+                    break
+            else:
+                match = standalone_path.fullmatch(line)
+                if match:
+                    file_paths.append(match.group(1))
 
         # 去重并验证文件存在
         unique_paths = []
@@ -2378,12 +2439,15 @@ def merge_excel_with_charts(file_paths, output_path):
             "name": "execute_python",
             "description": (
                 "通用 Python 代码执行工具，不限制于数据分析、Excel或可视化。"
-                "适合需要复杂逻辑、结构化数据处理、数值计算、调用 Python 库、网络请求、文件读写或文件生成的任务。"
+                "适合需要复杂逻辑、结构化数据处理、数值计算、调用 Python 库、文件读写或文件生成的任务。"
+                "代码在无网络 Bubblewrap 沙箱中执行；外部数据必须先通过查询或浏览工具获取。"
+                "对于会话数据文件，承担全量扫描、复杂聚合、分组排名、关联、窗口计算、清洗和派生字段；"
+                "通过 load_data(file_path) 加载，较大计算结果通过 save_data(...) 保存为新的 file_path，避免直接输出大量明细。"
                 "如果任务只是查看文件、搜索文本、检查进程或调用现成 CLI，优先使用 bash；"
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
-                "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
-                "每次调用是独立环境；跨调用复用请用 save_data(...) 保存 data_id。"
-                "使用 data_id 前先通过 read_data_registry 读取。"
+                "复杂用法先阅读 app/tools/utility/execute_python_manual.md。"
+                "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
+                "跨调用复用请用 save_data(...) 保存并获取 file_path。"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成文件保存到 backend_data_registry；默认超时30秒。"
             ),
@@ -2448,9 +2512,6 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
 
         if not result.get("success"):
             result["visuals"] = echarts_visuals
-            result.setdefault("resources", []).extend(
-                resources_for_visuals(echarts_visuals, tool_name=self.name)
-            )
             return result
 
         if not echarts_visuals:
@@ -2479,12 +2540,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             result["metadata"]["error_type"] = "ECHARTS_COUNT_MISMATCH"
             result["metadata"]["expected_charts"] = expected_charts
             result["metadata"]["actual_charts"] = len(echarts_visuals)
-            result.setdefault("resources", []).extend(
-                resources_for_visuals(echarts_visuals, tool_name=self.name)
-            )
             return result
-
-        await self._attach_static_preview_urls(echarts_visuals)
 
         result["visuals"] = echarts_visuals
         result.setdefault("metadata", {})
@@ -2493,104 +2549,8 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
         result.setdefault("resources", []).extend(
             resources_for_visuals(echarts_visuals, tool_name=self.name)
         )
-        markdown_images = [
-            visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
-            for visual in echarts_visuals
-            if visual.get("markdown_image") or visual.get("meta", {}).get("markdown_image")
-        ]
         result["summary"] = f"✅ ECharts 图表生成完成：{len(echarts_visuals)} 个"
-        if markdown_images:
-            result["summary"] = f"{result['summary']}\n\n" + "\n".join(markdown_images)
         return result
-
-    async def _attach_static_preview_urls(self, visuals: List[Dict[str, Any]]) -> None:
-        """Attach /api/image previews while preserving the interactive ECharts payload."""
-        for visual in visuals:
-            echarts_data = visual.get("data")
-            if not isinstance(echarts_data, dict):
-                continue
-
-            image_info = await self._render_echarts_preview_to_cache(visual)
-            if not image_info:
-                continue
-
-            image_url = image_info["url"]
-            title = visual.get("title") or "ECharts 图表"
-            markdown_image = f"![{title}]({image_url})"
-
-            visual["image_url"] = image_url
-            visual["markdown_image"] = markdown_image
-            visual.setdefault("data", {})
-            visual["data"]["image_url"] = image_url
-            visual["data"]["markdown_image"] = markdown_image
-            visual["data"]["image_id"] = image_info.get("image_id")
-            visual["data"]["local_path"] = image_info.get("local_path")
-            visual.setdefault("meta", {})
-            visual["meta"]["image_url"] = image_url
-            visual["meta"]["markdown_image"] = markdown_image
-            visual["meta"]["image_id"] = image_info.get("image_id")
-            visual["meta"]["static_preview"] = {
-                "url": image_url,
-                "image_id": image_info.get("image_id"),
-                "local_path": image_info.get("local_path"),
-                "size_kb": image_info.get("size_kb"),
-            }
-
-    async def _render_echarts_preview_to_cache(self, visual: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        echarts_data = visual.get("data")
-        if not isinstance(echarts_data, dict):
-            return None
-
-        temp_path = None
-        try:
-            from app.services.image_cache import get_image_cache
-            from app.tools.visualization.chart_image_renderer.tool import ChartImageRenderer
-
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-                temp_path = tmp_file.name
-
-            renderer = ChartImageRenderer()
-            success = await renderer._render_with_playwright(
-                echarts_option=echarts_data,
-                output_path=temp_path,
-                width=1000,
-                height=650,
-            )
-            if not success or not os.path.exists(temp_path):
-                logger.warning(
-                    "echarts_static_preview_render_failed",
-                    visual_id=visual.get("id"),
-                    chart_type=visual.get("type"),
-                )
-                return None
-
-            with open(temp_path, "rb") as image_file:
-                encoded = base64.b64encode(image_file.read()).decode("utf-8")
-
-            image_id = f"{visual.get('id', f'echarts_{time.time_ns()}')}_preview"
-            image_info = get_image_cache().save(encoded, chart_id=image_id)
-            logger.info(
-                "echarts_static_preview_cached",
-                visual_id=visual.get("id"),
-                image_id=image_info.get("image_id"),
-                image_url=image_info.get("url"),
-            )
-            return image_info
-        except Exception as e:
-            logger.warning(
-                "echarts_static_preview_failed",
-                visual_id=visual.get("id"),
-                chart_type=visual.get("type"),
-                error=str(e),
-                exc_info=True,
-            )
-            return None
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
 
     def get_function_schema(self) -> Dict[str, Any]:
         """获取 ECharts 专用 Function Calling Schema"""
@@ -2599,13 +2559,11 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
             "description": (
                 "执行 Python 代码生成 ECharts 图表配置，并返回标准 visuals 给前端渲染。"
                 "首次使用前必须先调用 read_file 阅读 "
-                "backend/app/tools/utility/execute_echarts_python_manual.md。"
-                "使用 DataRegistry 数据前必须先调用 read_data_registry(data_id=...) 读取可计算数据快照，"
-                "代码中再通过系统注入的 get_raw_data(data_id) 获取数据。"
-                "禁止使用 open()、pathlib 或猜测 DataRegistry 物理文件路径直接读取数据。"
+                "app/tools/utility/execute_echarts_python_manual.md。"
+                "使用工具返回的 file_path，代码中通过系统注入的 load_data(file_path) 获取数据。"
                 "仅用于图表模式的 ECharts 输出：Python 必须使用 print(json.dumps(option, ensure_ascii=False))，"
                 "每行输出一个完整、纯 JSON 的 ECharts option，顶层必须包含 series 数组。"
-                "工具会同时生成静态预览 image_url/markdown_image，聊天正文必须直接使用该 /api/image/{image_id} 链接。"
+                "图表通过统一会话资源目录发布和预览，不返回独立图片 URL。"
                 "多图时输出多行纯 JSON。禁止输出 CHART_1: 前缀、Markdown 代码块、解释文字包裹 JSON。"
                 "数据分析、清洗、中间计算和文件生成请使用 execute_python。"
             ),
@@ -2615,8 +2573,7 @@ class ExecuteEChartsPythonTool(ExecutePythonTool):
                     "code": {
                         "type": "string",
                         "description": (
-                            "要执行的 Python 代码。DataRegistry 数据必须使用 get_raw_data(data_id) 获取，"
-                            "禁止通过 open()、pathlib 或物理文件路径读取。"
+                            "要执行的 Python 代码。使用 load_data(file_path) 读取会话数据文件。"
                             "必须在 stdout 中逐行 print 纯 JSON ECharts option；"
                             "不要打印 CHART_1:、Markdown、自然语言说明或本地路径作为图表协议。"
                         )

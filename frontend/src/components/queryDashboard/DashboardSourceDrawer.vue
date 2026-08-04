@@ -36,9 +36,9 @@ defineEmits(['close'])
 
 const MAX_DETAIL_LENGTH = 360
 
-const sourceKey = (source, index) => source?.source_id || source?.id || source?.data_id || source?.name || index
+const sourceKey = (source, index) => source?.source_id || source?.id || source?.file_path || source?.name || index
 
-const sourceTitle = (source, index) => source?.source_id || source?.title || source?.name || source?.data_id || `数据源 ${index + 1}`
+const sourceTitle = (source, index) => source?.source_id || source?.title || source?.name || source?.file_path || `数据源 ${index + 1}`
 
 const sourceDescription = (source) => source?.description || source?.summary || source?.content || source?.tool_name || ''
 
@@ -64,8 +64,8 @@ const sampleCount = (source) => {
 const sourceDetails = (source) => {
   const fields = [
     ['工具', source?.tool_name],
-    ['数据ID', source?.data_id],
-    ['数据集', source?.data_ids],
+    ['数据文件', source?.file_path],
+    ['数据文件集', source?.file_paths],
     ['记录数', source?.record_count],
     ['样本数', sampleCount(source)],
     ['更新', source?.updated_at],
