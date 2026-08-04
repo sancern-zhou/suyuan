@@ -32,6 +32,9 @@ FILESYSTEM_PATH_CONTRACT = (
     "所有工具的相对文件系统路径统一以 suyuan 项目根目录为基准；"
     "backend 内的相对路径必须包含 `backend/` 前缀。工具返回的项目内相对路径也遵循同一格式。"
     "报告包内 `assets/...` 等内部逻辑路径不属于文件系统路径。"
+    "生成工具返回的 `file_path` 是真实归档路径，产物会自动登记到会话资源目录；"
+    "必须原样复用该路径或通过 `list_session_resources` 使用资源 ID，禁止自行拼接 `sessions/...` 路径，"
+    "也禁止对已自动发布的产物再次调用 `publish_session_file`。"
 )
 
 

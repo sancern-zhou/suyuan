@@ -23,7 +23,14 @@ from app.tools.artifact_utils import (
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.office.editable_ppt.delivery_guard import validate_editable_ppt_delivery
 from app.tools.resource_declarations import generated_file_products
-from app.utils.path_config import PROJECT_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
+from app.utils.path_config import (
+    PROJECT_ROOT,
+    TEMP_ROOT,
+    format_agent_path,
+    get_sessions_dir,
+    is_path_within,
+    resolve_agent_path,
+)
 
 logger = structlog.get_logger()
 
@@ -49,7 +56,8 @@ class PublishSessionFileTool(LLMTool):
             description=(
                 "将磁盘上已经存在、但尚未作为本次工具产物发布的文件登记到统一会话资源目录，"
                 "供用户预览或下载。仅在用户明确要求查看、下载或交付某个已有本地文件时使用；"
-                "不要对已经由生成工具自动发布的产物重复调用。"
+                "file_path 必须是上游工具返回的真实现存路径，禁止自行拼接 sessions/... 路径；"
+                "不要对 execute_python 等生成工具已经自动发布的产物重复调用。"
             ),
             category=ToolCategory.REPORTING,
             version="2.0.0",
@@ -71,7 +79,20 @@ class PublishSessionFileTool(LLMTool):
         if not resolved_path:
             return self._failure(f"文件路径无效或超出允许目录范围: {file_path}")
         if not resolved_path.exists():
-            return self._failure(f"文件不存在: {file_path}")
+            result = self._failure(f"文件不存在: {file_path}")
+            guessed_session_path = is_path_within(resolved_path, [get_sessions_dir()])
+            result["error_code"] = (
+                "GUESSED_SESSION_PATH_NOT_FOUND" if guessed_session_path else "FILE_NOT_FOUND"
+            )
+            result["required_action"] = (
+                "不要自行构造会话目录路径。复用生成工具返回的 file_path；"
+                "若产物已自动发布，直接使用 list_session_resources 查询资源。"
+            )
+            result["llm_resume"] = {
+                "requested_file_path": format_agent_path(resolved_path),
+                "tool_hint": result["required_action"],
+            }
+            return result
         if not resolved_path.is_file():
             return self._failure(f"路径不是文件: {file_path}")
 
@@ -299,13 +320,18 @@ class PublishSessionFileTool(LLMTool):
             "description": (
                 "将已有本地文件登记到统一会话资源目录，供用户预览或下载。"
                 "仅在用户明确要求查看、下载或交付尚未自动发布的本地文件时调用。"
+                "execute_python 等生成工具的文件已自动发布，不要重复调用本工具。"
+                "必须传入上游返回的真实现存 file_path，禁止猜测或拼接 sessions/... 路径。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "file_path": {
                         "type": "string",
-                        "description": "允许目录内已存在的文件路径。",
+                        "description": (
+                            "允许目录内已存在的真实文件路径；项目相对路径从项目根解析。"
+                            "必须复用上游返回值，禁止自行构造 sessions/... 路径。"
+                        ),
                     },
                     "label": {
                         "type": "string",
