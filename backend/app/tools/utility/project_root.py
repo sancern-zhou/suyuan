@@ -8,7 +8,7 @@ from app.utils.path_config import PROJECT_ROOT
 def get_project_root() -> Path:
     """Return the project root directory (suyuan).
 
-    This module lives at app/tools/utility/project_root.py, so parents[4]
-    resolves to the suyuan directory (parent of backend).
+    The value comes from the centralized path contract and does not depend on
+    the process working directory or this module's nesting depth.
     """
     return PROJECT_ROOT

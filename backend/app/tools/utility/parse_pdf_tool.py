@@ -32,7 +32,7 @@ from datetime import datetime
 import structlog
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
-from app.utils.path_config import get_data_registry
+from app.utils.path_config import get_data_registry, resolve_agent_path
 from config.settings import settings
 from app.services.bailian_multimodal import call_bailian_vision
 
@@ -412,11 +412,11 @@ class ParsePDFTool(LLMTool):
         """
         try:
             # 1. 验证文件路径
-            file_path = Path(path)
+            file_path = resolve_agent_path(path)
             if not file_path.exists():
                 return {
                     "success": False,
-                    "data": {"error": f"文件不存在: {path}"},
+                    "data": {"error": f"文件不存在: {file_path}"},
                     "summary": "PDF文件不存在"
                 }
 

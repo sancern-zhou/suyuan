@@ -334,7 +334,7 @@ class AggregateDataTool(LLMTool):
                 "\n"
                 "**使用前必读：**\n"
                 "首次使用或需要详细说明时，请先使用read_file工具阅读完整使用指南：\n"
-                "read_file(path='app/tools/analysis/aggregate_data/aggregate_data_guide.md')\n"
+                "read_file(path='backend/app/tools/analysis/aggregate_data/aggregate_data_guide.md')\n"
             ),
             "parameters": {
                 "type": "object",

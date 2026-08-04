@@ -6,7 +6,7 @@
 
 - 数据处理：`pandas`、`numpy`、`scipy`。
 - Excel 读取、修改和生成：优先使用 `openpyxl`，读取分析可用 `pandas`。
-- 临时图表或调试图片生成：`matplotlib`，保存图片到 `/home/xckj/suyuan/backend/backend_data_registry/`。正式报告静态图表优先使用 `create_report_chart`。
+- 临时图表或调试图片生成：`matplotlib`，保存图片到 `backend/backend_data_registry/`。正式报告静态图表优先使用 `create_report_chart`。
 - 报告中间资源生成：图表、表格、结构化 JSON、qmd 草稿片段。
 - 一次性 Office 文件生成：仅当用户明确要求 Word/Excel 文件，且不需要 qmd 同源报告包时使用。
 - 自定义统计：仅当专用查询/统计工具无法直接满足时使用。
@@ -46,7 +46,7 @@ add_government_title(doc, "报告标题")
 add_government_heading(doc, "一、总体情况", level=1)
 add_government_paragraph(doc, "正文内容。")
 add_government_table(doc, [["指标", "数值"], ["PM2.5", "30"]])
-doc.save("/home/xckj/suyuan/backend/backend_data_registry/report.docx")
+doc.save("backend/backend_data_registry/report.docx")
 ```
 
 默认规范：标题小标宋/宋体 fallback、二号居中；正文仿宋三号、首行缩进2字符、固定28磅行距；一级标题黑体三号，二级标题楷体三号，三级标题仿宋加粗三号；页边距上3.7cm、下3.5cm、左右2.8cm。用户明确要求其他格式时，在默认样式基础上局部覆盖。
@@ -65,18 +65,18 @@ from app.services.report.government_docx_style import (
 
 doc = Document()
 apply_government_report_style(doc)
-image_path = Path("/home/xckj/suyuan/backend/backend_data_registry/charts/demo.png")
+image_path = Path("backend/backend_data_registry/charts/demo.png")
 add_government_image(doc, image_path, caption="图1 示例图")
 
-doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.docx")
+doc.save("backend/backend_data_registry/reports/demo/report.docx")
 ```
 
 ## 文件路径
 
-- 生成文件必须保存到项目可访问目录，优先使用 `/home/xckj/suyuan/backend/backend_data_registry/`。
-- 禁止保存到 `/home/xckj/suyuan/backend_data_registry/`，该目录在仓库根目录下，前端下载和后端文件管理不会以它作为标准输出目录。
+- 生成文件必须保存到项目可访问目录，优先使用 `backend/backend_data_registry/`。
+- 禁止保存到 `backend_data_registry/`，该目录在仓库根目录下，前端下载和后端文件管理不会以它作为标准输出目录。
 - 代码中打印中间资源保存路径，便于后续工具传给 `create_report_package`。
-- 工具会检测 `/home/xckj/suyuan/backend/backend_data_registry/` 中新增文件。
+- 工具会检测 `backend/backend_data_registry/` 中新增文件。
 
 ## 输出产物 Schema
 
@@ -88,13 +88,13 @@ doc.save("/home/xckj/suyuan/backend/backend_data_registry/reports/demo/report.do
 正式报告必须使用标准报告包结构：
 
 ```text
-/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}/report.qmd
+backend/backend_data_registry/reports/{report_id}/report.qmd
 ```
 
 不要直接写成根目录文件或绕过报告包：
 
 ```text
-/home/xckj/suyuan/backend/backend_data_registry/reports/{report_id}.qmd
+backend/backend_data_registry/reports/{report_id}.qmd
 ```
 
 生成正式报告时，调用 `create_report_package`，不要把本地绝对路径作为最终交付方式。
@@ -141,7 +141,7 @@ save_chart(fig, "debug_chart.png")
 from docx import Document
 from app.services.report.government_docx_style import apply_government_report_style, add_government_title
 
-out = "/home/xckj/suyuan/backend/backend_data_registry/report.docx"
+out = "backend/backend_data_registry/report.docx"
 doc = Document()
 apply_government_report_style(doc)
 add_government_title(doc, "报告")

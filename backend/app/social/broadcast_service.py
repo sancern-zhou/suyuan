@@ -13,6 +13,7 @@ from app.social.events import OutboundMessage
 from app.social.broadcast_context import persist_broadcast_context
 from app.social.message_bus_singleton import get_message_bus
 from app.social.session_mapper import SessionMapper
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger(__name__)
 
@@ -62,9 +63,7 @@ class SocialBroadcastService:
                 normalized_media.append(media_path)
                 continue
 
-            current_dir = Path.cwd()
-            project_root = current_dir.parent if current_dir.name == "backend" else current_dir
-            abs_path = (project_root / media_path).resolve()
+            abs_path = resolve_agent_path(media_path)
             normalized_media.append(str(abs_path) if abs_path.exists() else media_path)
 
         return normalized_media

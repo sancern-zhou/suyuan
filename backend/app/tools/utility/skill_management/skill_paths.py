@@ -142,6 +142,7 @@ def render_skill_draft_markdown(
         "## 详细流程\n\n"
         f"{_render_steps(workflow_steps)}\n\n"
         "## 注意事项\n"
+        "- 文件系统相对路径统一以 suyuan 项目根目录为基准；后端路径必须包含 `backend/` 前缀。\n"
         f"{_render_bullets(notes or [])}\n\n"
         "## 验证方式\n"
         "- 核对输入条件、关键中间结果和最终产物是否符合用户目标。\n"

@@ -1580,7 +1580,7 @@ class CreatePptxWithPptMasterTool(LLMTool):
             "description": (
                 "业务 PPT 统一入口。operation=create 新建；append/replace/patch 基于上一版 "
                 "base_plan_path/base_project_dir 局部续写或修改；render 只刷新已有 PPTX 的预览/QA。"
-                "生成 PPT 前必须先阅读 app/tools/office/PPT操作指南.md；生成后查 qa_status/quality_gate。"
+                "生成 PPT 前必须先阅读 backend/app/tools/office/PPT操作指南.md；生成后查 qa_status/quality_gate。"
             ),
             "parameters": {
                 "type": "object",

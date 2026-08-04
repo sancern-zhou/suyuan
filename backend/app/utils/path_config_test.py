@@ -46,12 +46,10 @@ def test_core_file_tools_delegate_relative_paths_to_shared_contract(tmp_path, mo
         assert tool._resolve_path("outputs/report.txt") == expected
 
 
-def test_bash_working_directory_uses_backend_relative_contract(tmp_path, monkeypatch):
-    backend_root = tmp_path / "backend"
-    target = backend_root / "jobs"
+def test_bash_working_directory_uses_project_relative_contract(tmp_path, monkeypatch):
+    target = tmp_path / "backend" / "jobs"
     target.mkdir(parents=True)
     monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(bash_tool, "BACKEND_ROOT", backend_root)
     tool = bash_tool.BashTool()
     assert tool._resolve_working_dir("backend/jobs") == target.resolve()
 

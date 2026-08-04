@@ -109,7 +109,7 @@ def _stream_template_report_agent(
 1. 分析模板结构，理解报告章节安排
 2. 并发查询所需数据（使用query_new_standard_report或query_old_standard_report）
 3. 使用execute_python + python-docx生成DOCX报告
-4. 报告保存到：/home/xckj/suyuan/backend/backend_data_registry/report.docx
+4. 报告保存到：backend/backend_data_registry/report.docx
 
 请开始执行。"""
 

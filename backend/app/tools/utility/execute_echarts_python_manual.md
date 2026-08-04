@@ -19,7 +19,7 @@ Data is passed between tools using canonical absolute file paths.
 ```python
 import json
 
-file_path = "/home/xckj/suyuan/backend/backend_data_registry/sessions/agent_session_x/data/air_quality--example.json"
+file_path = "backend/backend_data_registry/sessions/agent_session_x/data/air_quality--example.json"
 records = load_data(file_path)
 
 x_data = [record.get("time") for record in records]
