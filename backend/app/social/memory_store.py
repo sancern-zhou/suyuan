@@ -77,13 +77,9 @@ class MemoryStore(BaseMemoryStore):
             # ✅ 使用统一路径配置
             from app.utils.path_config import get_social_memory_dir
             social_workspace = get_social_memory_dir()
-        elif not workspace.is_absolute():
-            # 如果是相对路径，转换为绝对路径（相对于backend目录）
-            current_file = Path(__file__).resolve()
-            backend_dir = current_file.parent.parent  # app/social -> app -> backend
-            social_workspace = (backend_dir / workspace).resolve()
         else:
-            social_workspace = workspace
+            from app.utils.path_config import resolve_agent_path
+            social_workspace = resolve_agent_path(workspace)
 
         # 调用父类构造函数，传递 mode="social"
         super().__init__(
@@ -186,5 +182,4 @@ class ImprovedMemoryStore(BaseImprovedMemoryStore):
             mode=self.mode,
             workspace=str(self.workspace)
         )
-
 

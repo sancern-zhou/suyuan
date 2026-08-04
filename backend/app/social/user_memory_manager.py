@@ -13,6 +13,7 @@ import asyncio
 import structlog
 
 from app.social.memory_store import ImprovedMemoryStore
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger(__name__)
 
@@ -37,11 +38,8 @@ class UserMemoryManager:
             # ✅ 使用统一路径配置
             from app.utils.path_config import get_social_memory_dir
             base_workspace = get_social_memory_dir()
-        elif not base_workspace.is_absolute():
-            # 如果是相对路径，转换为绝对路径（相对于backend目录）
-            current_file = Path(__file__).resolve()
-            backend_dir = current_file.parent.parent  # app/social -> app -> backend
-            base_workspace = (backend_dir / base_workspace).resolve()
+        else:
+            base_workspace = resolve_agent_path(base_workspace)
 
         self.base_workspace = base_workspace
         self.base_workspace.mkdir(parents=True, exist_ok=True)

@@ -2,8 +2,9 @@
 
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
-from pathlib import Path
 import yaml
+
+from app.utils.path_config import resolve_agent_path
 
 
 @dataclass
@@ -103,7 +104,7 @@ class SocialConfig:
         Returns:
             SocialConfig instance
         """
-        config_path = Path(path)
+        config_path = resolve_agent_path(path)
 
         if not config_path.exists():
             # Return default configuration

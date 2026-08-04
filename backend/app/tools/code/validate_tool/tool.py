@@ -11,6 +11,8 @@ import os
 import subprocess
 import sys
 
+from app.utils.path_config import resolve_agent_path
+
 logger = structlog.get_logger()
 
 
@@ -51,11 +53,8 @@ class ValidateToolTool(LLMTool):
         check_import = kwargs.get("check_import", True)
         check_schema = kwargs.get("check_schema", True)
 
-        # 规范化路径
-        if not os.path.isabs(tool_path):
-            # 如果是相对路径，添加项目根目录前缀
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-            tool_path = os.path.join(project_root, tool_path)
+        # Agent 相对路径统一从 suyuan 项目根解析。
+        tool_path = str(resolve_agent_path(tool_path))
 
         results = {
             "tool_path": tool_path,

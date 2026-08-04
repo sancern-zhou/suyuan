@@ -6,7 +6,7 @@ import os
 import structlog
 from typing import Optional, Dict
 from playwright.sync_api import Page
-from app.utils.path_config import get_data_registry
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -117,17 +117,18 @@ class FileHandler:
                 "filename": str
             }
         """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        resolved_file_path = resolve_agent_path(file_path)
+        if not resolved_file_path.is_file():
+            raise FileNotFoundError(f"File not found: {resolved_file_path}")
 
         context = context or page
 
         try:
             # Set file input
             file_input = context.locator(selector)
-            file_input.set_input_files(file_path)
+            file_input.set_input_files(str(resolved_file_path))
 
-            filename = os.path.basename(file_path)
+            filename = resolved_file_path.name
 
             logger.info(
                 "[FILE_HANDLER] File uploaded",
@@ -137,7 +138,7 @@ class FileHandler:
 
             return {
                 "uploaded": True,
-                "file_path": os.path.abspath(file_path),
+                "file_path": str(resolved_file_path),
                 "filename": filename
             }
 

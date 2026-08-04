@@ -246,7 +246,7 @@ format:
             requires_context=False
         )
 
-        self.working_dir = BACKEND_ROOT
+        self.allowed_project_dir = BACKEND_ROOT
         self.read_state = get_file_read_state()
         # 额外允许的路径列表（用于临时文件）
         self.allowed_extra_paths = [TEMP_ROOT]
@@ -562,7 +562,7 @@ format:
             file_path = resolve_agent_path(path)
 
             # 安全检查：确保在工作目录或允许的额外路径范围内
-            allowed_dirs = [self.working_dir] + [p.resolve() for p in self.allowed_extra_paths]
+            allowed_dirs = [self.allowed_project_dir] + [p.resolve() for p in self.allowed_extra_paths]
 
             if is_path_within(file_path, allowed_dirs):
                 return file_path

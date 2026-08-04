@@ -325,9 +325,8 @@ class EditFileToolV2(LLMTool):
             requires_context=False
         )
 
-        # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
-        self.working_dir = BACKEND_ROOT.resolve()
-        self.allowed_dirs = [self.working_dir, TEMP_ROOT]
+        # 路径从项目根解析，但编辑权限仍限定在后端和临时目录。
+        self.allowed_dirs = [BACKEND_ROOT.resolve(), TEMP_ROOT]
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()

@@ -374,12 +374,7 @@ class CliSessionTool(LLMTool):
             ),
         }
         if success and output_paths:
-            resolved_outputs = [
-                Path(path).expanduser().resolve()
-                if Path(path).expanduser().is_absolute()
-                else (resolved_cwd / path).resolve()
-                for path in output_paths
-            ]
+            resolved_outputs = [resolve_agent_path(path) for path in output_paths]
             tool_result["resources"] = file_products(
                 [path for path in resolved_outputs if path.is_relative_to(PROJECT_ROOT)],
                 tool_name=self.name,

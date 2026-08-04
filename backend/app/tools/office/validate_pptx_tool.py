@@ -23,7 +23,7 @@ from app.tools.office.slides_qa.detect_overflow import (
     inspect_rendered_pages,
 )
 from app.tools.office.slides_qa.render_pptx import render_deck
-from app.utils.path_config import BACKEND_ROOT, get_data_registry, resolve_agent_path
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -80,13 +80,12 @@ class ValidatePptxTool(LLMTool):
             name="validate_pptx",
             description=(
                 "渲染PPTX并执行基础交付检查：PDF/PNG预览、montage、空页/越界/字体检测。\n\n"
-                "⚠️ 使用前请先阅读：app/tools/office/PPT操作指南.md"
+                "⚠️ 使用前请先阅读：backend/app/tools/office/PPT操作指南.md"
             ),
             category=ToolCategory.QUERY,
             version="1.0.0",
             requires_context=False,
         )
-        self.working_dir = BACKEND_ROOT
         self.default_qa_root = get_data_registry() / "presentations" / "qa"
 
     async def execute(

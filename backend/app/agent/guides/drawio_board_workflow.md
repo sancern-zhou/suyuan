@@ -31,13 +31,13 @@
 
 根据用户任务选择性读取以下文档，避免把所有图型规则一次性塞入上下文：
 
-1. 系统架构、技术架构、部署架构、微服务关系、云架构：读取 `app/agent/guides/drawio_patterns/architecture.md`。
-2. 业务流程、审批流程、处置流程、算法步骤、运维流程：读取 `app/agent/guides/drawio_patterns/process_flow.md`。
-3. 数据采集、清洗、分析、报表、模型推理、数据血缘：读取 `app/agent/guides/drawio_patterns/data_flow.md`。
-4. 判断逻辑、规则引擎、告警分级、分诊流程：读取 `app/agent/guides/drawio_patterns/decision_tree.md`。
-5. 平台能力、产品架构、能力地图、治理体系、分层系统：读取 `app/agent/guides/drawio_patterns/layered_system.md`。
-6. 路线图、时间线、里程碑、计划排期：读取 `app/agent/guides/drawio_patterns/timeline.md`。
-7. 方案对比、指标对比、城市对比、工具/策略对比：读取 `app/agent/guides/drawio_patterns/comparison_matrix.md`。
+1. 系统架构、技术架构、部署架构、微服务关系、云架构：读取 `backend/app/agent/guides/drawio_patterns/architecture.md`。
+2. 业务流程、审批流程、处置流程、算法步骤、运维流程：读取 `backend/app/agent/guides/drawio_patterns/process_flow.md`。
+3. 数据采集、清洗、分析、报表、模型推理、数据血缘：读取 `backend/app/agent/guides/drawio_patterns/data_flow.md`。
+4. 判断逻辑、规则引擎、告警分级、分诊流程：读取 `backend/app/agent/guides/drawio_patterns/decision_tree.md`。
+5. 平台能力、产品架构、能力地图、治理体系、分层系统：读取 `backend/app/agent/guides/drawio_patterns/layered_system.md`。
+6. 路线图、时间线、里程碑、计划排期：读取 `backend/app/agent/guides/drawio_patterns/timeline.md`。
+7. 方案对比、指标对比、城市对比、工具/策略对比：读取 `backend/app/agent/guides/drawio_patterns/comparison_matrix.md`。
 
 如果任务同时命中多个类型，优先选择用户主诉最强的 1 到 2 份专项文档；不要无差别读取全部文档。
 

@@ -6,7 +6,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.spatial.spatial_interpolation.engine import execute_interpolation
 
 
-SPATIAL_INTERPOLATION_GUIDE_PATH = "app/tools/spatial/spatial_interpolation/spatial_interpolation_guide.md"
+SPATIAL_INTERPOLATION_GUIDE_PATH = "backend/app/tools/spatial/spatial_interpolation/spatial_interpolation_guide.md"
 
 
 class SpatialInterpolationTool(LLMTool):

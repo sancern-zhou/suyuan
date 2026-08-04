@@ -16,7 +16,7 @@ from datetime import datetime
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
-from app.utils.path_config import BACKEND_ROOT, resolve_agent_path
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -61,8 +61,6 @@ class GenerateRandomDocTool(LLMTool):
             version="1.0.0",
             requires_context=False
         )
-
-        self.working_dir = BACKEND_ROOT
 
     async def execute(
         self,

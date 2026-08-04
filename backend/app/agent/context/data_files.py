@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from app.utils.path_config import get_data_registry
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 
 def get_data_root() -> Path:
@@ -31,7 +31,7 @@ def session_data_dir(session_id: str) -> Path:
 
 def to_data_path(path: str | Path) -> str:
     """Return a validated canonical absolute path exposed to tools/LLMs."""
-    resolved = Path(path).resolve()
+    resolved = resolve_agent_path(path)
     root = get_data_root()
     try:
         resolved.relative_to(root)
@@ -52,11 +52,7 @@ def resolve_data_path(
         raise ValueError("file_path is required")
 
     root = get_data_root()
-    candidate = Path(raw)
-    if not candidate.is_absolute():
-        candidate = root / candidate
-
-    resolved = candidate.resolve()
+    resolved = resolve_agent_path(raw)
     try:
         relative = resolved.relative_to(root)
     except ValueError as exc:
