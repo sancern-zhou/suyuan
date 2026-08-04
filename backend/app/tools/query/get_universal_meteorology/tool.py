@@ -570,7 +570,7 @@ class UniversalMeteorologyTool(LLMTool):
                 )
 
                 # 提取 data_id 和 file_path
-                data_id = data_ref["data_id"]
+                data_id = data_ref
                 file_path = data_ref["file_path"]
 
                 # 获取handle用于访问元数据

@@ -1815,10 +1815,10 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         data_ids = []
         for expert, result in upstream_results.items():
             if isinstance(result, dict):
-                if "data_ids" in result:
-                    data_ids.extend(result["data_ids"])
-                elif "data_id" in result:
-                    data_ids.append(result["data_id"])
+                if "file_paths" in result:
+                    data_ids.extend(result["file_paths"])
+                elif "file_path" in result:
+                    data_ids.append(result["file_path"])
 
         return data_ids
     
@@ -2130,10 +2130,10 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         if expert_type == "report":
             for expert, result in upstream_results.items():
                 if isinstance(result, dict):
-                    if "data_ids" in result:
-                        data_ids.extend(result["data_ids"])
-                    elif "data_id" in result:
-                        data_ids.append(result["data_id"])
+                    if "file_paths" in result:
+                        data_ids.extend(result["file_paths"])
+                    elif "file_path" in result:
+                        data_ids.append(result["file_path"])
         
         return data_ids
     
@@ -2251,10 +2251,10 @@ Zn(锌)、Pb(铅)、Cu(铜)、Ni(镍)、Cr(铬)、Mn(锰)、Cd(镉)、As(砷)、
         all_data_ids = []
         for expert, result in upstream_results.items():
             if isinstance(result, dict):
-                if "data_ids" in result:
-                    all_data_ids.extend(result["data_ids"])
-                elif "data_id" in result:
-                    all_data_ids.append(result["data_id"])
+                if "file_paths" in result:
+                    all_data_ids.extend(result["file_paths"])
+                elif "file_path" in result:
+                    all_data_ids.append(result["file_path"])
         
         # 更新tool_plan中的占位符
         updated_plans = []

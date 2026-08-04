@@ -3,9 +3,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
-
-from app.services.data_registry import data_registry
 from app.tools.spatial.core import (
     buffer_geometry_meters,
     distance_meters,
@@ -123,14 +120,13 @@ def _feature_geometry_type(feature: dict[str, Any]) -> str | None:
     return None
 
 
-def _load_data_asset(input_spec: dict[str, Any]) -> FeatureSet | None:
-    data_id = input_spec.get("data_id")
+def _load_data_asset(input_spec: dict[str, Any], context) -> FeatureSet | None:
+    file_path = input_spec.get("file_path")
     geometry_spec = input_spec.get("geometry")
-    if not data_id:
+    if not file_path:
         return None
 
-    entry = data_registry.get_metadata(str(data_id))
-    dataset = data_registry.load_dataset(str(data_id))
+    dataset = context.get_raw_data(str(file_path))
 
     if isinstance(dataset, list):
         geometry_features: list[dict[str, Any]] = []
@@ -147,7 +143,7 @@ def _load_data_asset(input_spec: dict[str, Any]) -> FeatureSet | None:
                 geometry_type=_feature_geometry_type(geometry_features[0]),
             )
 
-    lon_field, lat_field = _resolve_lon_lat_fields(input_spec, entry.metadata if entry else {}, dataset)
+    lon_field, lat_field = _resolve_lon_lat_fields(input_spec, {}, dataset)
     if not lon_field or not lat_field:
         return None
 
@@ -222,7 +218,7 @@ def _normalize_inputs(inputs_spec: Any) -> dict[str, Any] | None:
     return None
 
 
-def _load_inputs(inputs_spec: dict[str, Any]) -> tuple[dict[str, FeatureSet], dict[str, Any] | None]:
+def _load_inputs(inputs_spec: dict[str, Any], context) -> tuple[dict[str, FeatureSet], dict[str, Any] | None]:
     inputs: dict[str, FeatureSet] = {}
     for input_id, input_spec in inputs_spec.items():
         if not isinstance(input_spec, dict):
@@ -233,7 +229,7 @@ def _load_inputs(inputs_spec: dict[str, Any]) -> tuple[dict[str, FeatureSet], di
             if input_type == "inline-feature":
                 feature_set = _load_inline_feature(input_spec)
             elif input_type == "data-asset":
-                feature_set = _load_data_asset(input_spec)
+                feature_set = _load_data_asset(input_spec, context)
             else:
                 return {}, _failed(
                     "SPATIAL_SPEC_UNSUPPORTED_INPUT",
@@ -246,7 +242,7 @@ def _load_inputs(inputs_spec: dict[str, Any]) -> tuple[dict[str, FeatureSet], di
                 "SPATIAL_SPEC_INPUT_ASSET_NOT_FOUND",
                 f"Input data asset not found for {input_id}",
                 input_id=input_id,
-                missing_data_id=str(exc),
+                missing_file_path=str(exc),
             )
 
         if feature_set is None:
@@ -684,15 +680,14 @@ def _register_output(
     feature_set: FeatureSet,
     *,
     intent: str | None,
+    context,
 ) -> dict[str, Any]:
     output_id = str(output_spec["id"])
     asset_schema = str(output_spec.get("asset_schema") or "spatial_result_asset")
     records = [_feature_to_record(feature, asset_schema) for feature in feature_set.features]
-    entry = data_registry.register_dataset(
-        asset_schema,
-        "v1",
+    file_path = context.save_data(
         records,
-        data_id=f"{asset_schema}:v1:{uuid4().hex}",
+        schema=asset_schema,
         metadata={
             "name": output_spec.get("name") or output_id,
             "source": "spatial_analysis",
@@ -709,7 +704,7 @@ def _register_output(
     )
     return {
         "id": output_id,
-        "data_id": entry.data_id,
+        "file_path": file_path,
         "asset_schema": asset_schema,
         "record_count": len(records),
         "geometry": feature_set.geometry_type,
@@ -781,7 +776,7 @@ def _normalize_step(step: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def execute_spatial_spec(spec: dict[str, Any]) -> dict[str, Any]:
+def execute_spatial_spec(spec: dict[str, Any], context) -> dict[str, Any]:
     if not isinstance(spec, dict):
         return _failed("SPATIAL_SPEC_INVALID", "spatial_analysis requires a JSON object spec")
 
@@ -791,7 +786,7 @@ def execute_spatial_spec(spec: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(inputs_spec, dict) or not isinstance(raw_steps, list) or outputs is None:
         return _failed("SPATIAL_SPEC_INVALID", "spec must contain inputs, steps, and outputs")
 
-    refs, error = _load_inputs(inputs_spec)
+    refs, error = _load_inputs(inputs_spec, context)
     if error:
         return error
 
@@ -846,7 +841,7 @@ def execute_spatial_spec(spec: dict[str, Any]) -> dict[str, Any]:
         if feature_set is None:
             return _failed("SPATIAL_SPEC_REF_NOT_FOUND", f"Unknown output id {source_id}", output_id=source_id)
         output = {**output, "asset_schema": _infer_asset_schema(feature_set, output)}
-        registered_outputs.append(_register_output(output, feature_set, intent=spec.get("intent")))
+        registered_outputs.append(_register_output(output, feature_set, intent=spec.get("intent"), context=context))
 
     return {
         "status": "success",

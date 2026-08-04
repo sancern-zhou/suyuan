@@ -142,17 +142,6 @@ REPORT_RESULT_PREVIEW_LIMIT = 5
 REPORT_PACKAGE_VIEWS = ["cities", "regions", "province", "result"]
 
 
-def _build_report_registry_usage(report_data_id: str, views: Optional[List[str]] = None) -> Dict[str, str]:
-    """Return copyable read_data_registry calls for a saved report package."""
-    available_views = views or REPORT_PACKAGE_VIEWS
-    usage = {
-        "list_views": f'read_data_registry(data_id="{report_data_id}", list_views=true)'
-    }
-    for view in available_views:
-        usage[view] = f'read_data_registry(data_id="{report_data_id}", view="{view}")'
-    return usage
-
-
 def _preview_keyed_report_result(
     result_data: Any,
     *,
@@ -228,23 +217,15 @@ def _apply_report_result_preview(
             preview_metadata["result_returned_count"] = total_count
     metadata.update(preview_metadata)
     metadata["available_report_views"] = views or REPORT_PACKAGE_VIEWS
-    metadata["read_data_registry_usage"] = _build_report_registry_usage(
-        report_data_id,
-        metadata["available_report_views"],
-    )
 
     if preview_metadata.get("result_truncated"):
         result["summary"] += (
             f" | result仅返回前{preview_metadata['result_returned_count']}项预览；"
-            f"{summary_label}已保存为 report_data_id: {report_data_id}，"
-            "优先用 read_data_registry 按 cities/regions/province 等结构化视图按需读取，"
-            "仅在确需完整原始报表时读取 result 视图"
+            f"{summary_label}已保存为 report_data_id: {report_data_id}"
         )
     else:
         result["summary"] += (
-            f" | {summary_label}已保存为 report_data_id: {report_data_id}，"
-            "优先用 read_data_registry 按 cities/regions/province 等结构化视图按需读取，"
-            "仅在确需完整原始报表时读取 result 视图"
+            f" | {summary_label}已保存为 report_data_id: {report_data_id}"
         )
     return result
 
@@ -1948,7 +1929,7 @@ class QueryNewStandardReportTool(LLMTool):
                 "用于综合指数、超标天数、达标率、六参数统计浓度、首要污染物等统计结果；"
                 "不要用execute_python或手算替代。"
                 "result仅返回统计汇总预览；完整统计报表保存在report_data_id中。"
-                "读取完整数据时优先用read_data_registry按cities/regions/province等结构化视图按需读取，"
+                "完整数据和结构化视图保存在 report_file_path 中，"
                 "仅在确需完整原始报表时读取result视图。"
                 "本工具不保存日报明细；如需日数据，请调用城市日数据查询工具。"
                 "默认新综合指数算法为PM2.5权重3、NO2权重2、O3权重2、其他权重1；"

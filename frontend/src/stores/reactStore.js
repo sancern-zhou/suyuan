@@ -1908,10 +1908,10 @@ export const useReactStore = defineStore('react', {
         case 'expert_completed': {
           // 专家完成事件
           const completedExpertName = this.getExpertLabel(data?.expert_type)
-          addMessage('tool_result', `【${completedExpertName}】专家完成 - 状态: ${data?.status} | 数据ID: ${(data?.data_ids || []).length}个`, {
+          addMessage('tool_result', `【${completedExpertName}】专家完成 - 状态: ${data?.status} | 数据文件: ${(data?.file_paths || []).length}个`, {
             expert_type: data?.expert_type,
             status: data?.status,
-            data_ids: data?.data_ids
+            file_paths: data?.file_paths
           })
           break
         }

@@ -336,10 +336,10 @@ class ToolCoordinator:
             if isinstance(result_data, dict):
                 if result_data.get("visuals"):
                     all_visuals.extend(result_data["visuals"])
-                if result_data.get("data_id"):
-                    all_data_ids.append(result_data["data_id"])
-                if result_data.get("report_data_id"):
-                    all_report_data_ids.append(result_data["report_data_id"])
+                if result_data.get("file_path"):
+                    all_data_ids.append(result_data["file_path"])
+                if result_data.get("report_file_path"):
+                    all_report_data_ids.append(result_data["report_file_path"])
 
         if len(streaming_tool_executor._executions) == 1:
             execution = streaming_tool_executor._executions[0]
@@ -362,8 +362,8 @@ class ToolCoordinator:
             and not all(r.get("success", False) for r in all_results if isinstance(r, dict)),
             "data": [r.get("data") for r in all_results if isinstance(r, dict) and r.get("data")],
             "visuals": all_visuals,
-            "data_ids": all_data_ids,
-            "report_data_ids": all_report_data_ids,
+            "file_paths": all_data_ids,
+            "report_file_paths": all_report_data_ids,
             "tool_results": all_tool_results,
             "summary": "; ".join(r.get("summary", "") for r in all_results if isinstance(r, dict) and r.get("summary")),
             "parallel": True,
@@ -423,8 +423,8 @@ class ToolCoordinator:
             "partial_success": parallel_result.get("partial_success", False),
             "data": parallel_result.get("data", []),
             "visuals": parallel_result.get("visuals", []),
-            "data_ids": parallel_result.get("data_ids", []),
-            "report_data_ids": parallel_result.get("report_data_ids", []),
+            "file_paths": parallel_result.get("file_paths", []),
+            "report_file_paths": parallel_result.get("report_file_paths", []),
             "tool_results": parallel_result.get("tool_results", []),
             "summary": parallel_result.get("summary", "并行执行完成"),
             "parallel": True,

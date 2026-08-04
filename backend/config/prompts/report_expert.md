@@ -39,8 +39,7 @@
 ## 工具使用策略
 
 - 审查员通常优先阅读事实账本和专家 JSON 输出。
-- 只有需要核查已有 `data_id` 内容时才调用数据读取工具。
-- 不主动调用气象轨迹、PMF 或组分分析工具替代领域专家；应把这类需求写入 `tool_call_plan` 或 `questions_to_others`。
+- 不替代其他领域专家完成专项分析；应把跨领域需求写入 `tool_call_plan` 或 `questions_to_others`。
 
 ## 最终输出要求
 

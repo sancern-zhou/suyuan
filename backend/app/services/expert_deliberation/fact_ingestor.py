@@ -1,4 +1,4 @@
-"""Convert user supplied tables, reports, and data ids into facts."""
+"""Convert user supplied tables, reports, and data files into facts."""
 
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ class FactIngestor:
         await self._ingest_tables_async(ledger, request, extractor)
         await self._ingest_report_text_async(ledger, request, request.monthly_report_text, "monthly_trace_report", extractor)
         await self._ingest_report_text_async(ledger, request, request.stage5_report_text, "stage5_analysis", extractor)
-        await self._ingest_data_ids_async(ledger, request, extractor)
+        await self._ingest_file_paths_async(ledger, request, extractor)
         if not ledger.all():
-            raise RuntimeError("LLM事实入账未产生任何事实，请提供会商表格、报告文本或可补证 data_id")
+            raise RuntimeError("LLM事实入账未产生任何事实，请提供会商表格、报告文本或可补证数据文件")
         return ledger
 
     async def _ingest_tables_async(
@@ -65,15 +65,15 @@ class FactIngestor:
             raise RuntimeError(f"LLM未能从{source_type}中抽取事实，已按严格模式终止")
         ledger.extend(llm_facts)
 
-    async def _ingest_data_ids_async(
+    async def _ingest_file_paths_async(
         self,
         ledger: FactLedger,
         request: DeliberationRequest,
         extractor: LLMFactExtractor,
     ) -> None:
-        if not request.data_ids:
+        if not request.file_paths:
             return
         facts = await extractor.extract_data_asset_facts(request=request, start_index=len(ledger.all()) + 1)
         if not facts:
-            raise RuntimeError("LLM未能从 data_id 清单中抽取数据资产事实，已按严格模式终止")
+            raise RuntimeError("LLM未能从 file_path 清单中抽取数据资产事实，已按严格模式终止")
         ledger.extend(facts)

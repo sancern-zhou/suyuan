@@ -66,7 +66,6 @@ class ResourceLocator(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    data_id: str | None = None
     path: str | None = None
     artifact_id: str | None = None
     visual_id: str | None = None
@@ -74,7 +73,7 @@ class ResourceLocator(BaseModel):
 
     @model_validator(mode="after")
     def validate_primary_locator(self) -> "ResourceLocator":
-        values = [self.data_id, self.path, self.artifact_id, self.visual_id, self.url]
+        values = [self.path, self.artifact_id, self.visual_id, self.url]
         if sum(bool(value) for value in values) != 1:
             raise ValueError("locator requires exactly one primary identifier")
         if self.path:

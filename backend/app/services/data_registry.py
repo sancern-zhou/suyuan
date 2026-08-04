@@ -54,17 +54,15 @@ class DataRegistryService:
         self.metadata_path = self.base_dir / "registry.jsonl"
         self._lock = threading.Lock()
         self._index: Dict[str, DataRegistryEntry] = {}
+        self._metadata_loaded = False
 
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.datasets_dir.mkdir(parents=True, exist_ok=True)
         self.samples_dir.mkdir(parents=True, exist_ok=True)
-        if self.metadata_path.exists():
-            self._load_metadata()
-
         logger.info(
             "data_registry_initialized",
             base_dir=str(self.base_dir),
-            entries=len(self._index),
+            entries="lazy",
         )
 
     def register_dataset(
@@ -223,6 +221,7 @@ class DataRegistryService:
         return entry
 
     def get_metadata(self, data_id: str) -> Optional[DataRegistryEntry]:
+        self._ensure_metadata_loaded()
         entry = self._index.get(data_id)
         if entry:
             return entry
@@ -230,6 +229,7 @@ class DataRegistryService:
 
     def list_metadata(self, *, schema: Optional[str] = None) -> List[DataRegistryEntry]:
         """List registered entries, newest first, optionally constrained to one schema."""
+        self._ensure_metadata_loaded()
         with self._lock:
             entries = list(self._index.values())
         if schema:
@@ -270,6 +270,14 @@ class DataRegistryService:
                     created_at=datetime.fromisoformat(payload["created_at"]),
                 )
                 self._index[entry.data_id] = entry
+        self._metadata_loaded = True
+
+    def _ensure_metadata_loaded(self) -> None:
+        if self._metadata_loaded or not self.metadata_path.exists():
+            return
+        with self._lock:
+            if not self._metadata_loaded:
+                self._load_metadata()
 
     def _require_entry(self, data_id: str) -> DataRegistryEntry:
         entry = self._index.get(data_id)
@@ -280,11 +288,8 @@ class DataRegistryService:
         return entry
 
     def _reload_and_get_entry(self, data_id: str) -> Optional[DataRegistryEntry]:
-        if not self.metadata_path.exists():
-            return None
-        with self._lock:
-            self._load_metadata()
-            return self._index.get(data_id)
+        self._ensure_metadata_loaded()
+        return self._index.get(data_id)
 
     @staticmethod
     def _sanitize_identifier(identifier: str) -> str:

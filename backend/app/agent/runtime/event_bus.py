@@ -137,18 +137,18 @@ class RuntimeEventBus:
         }
         if tool_name:
             data["tool_name"] = tool_name
-        data_id = self._extract_data_id(result.get("data_id") if isinstance(result, dict) else None)
-        if data_id:
-            data["data_id"] = data_id
-        data_ids = self._extract_data_ids(result.get("data_ids") if isinstance(result, dict) else None)
-        if data_ids:
-            data["data_ids"] = data_ids
-        report_data_id = self._extract_data_id(result.get("report_data_id") if isinstance(result, dict) else None)
-        if report_data_id:
-            data["report_data_id"] = report_data_id
-        report_data_ids = self._extract_data_ids(result.get("report_data_ids") if isinstance(result, dict) else None)
-        if report_data_ids:
-            data["report_data_ids"] = report_data_ids
+        file_path = self._extract_data_id(result.get("file_path") if isinstance(result, dict) else None)
+        if file_path:
+            data["file_path"] = file_path
+        file_paths = self._extract_data_ids(result.get("file_paths") if isinstance(result, dict) else None)
+        if file_paths:
+            data["file_paths"] = file_paths
+        report_file_path = self._extract_data_id(result.get("report_file_path") if isinstance(result, dict) else None)
+        if report_file_path:
+            data["report_file_path"] = report_file_path
+        report_file_paths = self._extract_data_ids(result.get("report_file_paths") if isinstance(result, dict) else None)
+        if report_file_paths:
+            data["report_file_paths"] = report_file_paths
         return {
             "type": "tool_result",
             "stream": "tool",

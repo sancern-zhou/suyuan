@@ -332,7 +332,7 @@ class CalculatePMFTool(LLMTool):
                 "pmf_data_handle_not_found",
                 data_id=data_id,
                 error=str(e),
-                available_data_ids=context.available_data_ids[:10] if hasattr(context, 'available_data_ids') else []
+                available_file_paths=context.available_file_paths[:10] if hasattr(context, 'available_file_paths') else []
             )
             result = {
                 "status": "failed",

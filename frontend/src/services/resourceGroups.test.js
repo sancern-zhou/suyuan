@@ -21,10 +21,11 @@ test('groups versions and exposes only current generated primary products', () =
     primary(),
     primary({ resource_id: 'pdf', relation: 'preview', parent_resource_id: 'report-docx', format: 'pdf', renderer: 'pdf' }),
     primary({ resource_id: 'chart', group_id: 'chart-group', label: '趋势图.png', kind: 'visual', role: 'output', renderer: 'chart' }),
+    primary({ resource_id: 'dataset', group_id: 'data-group', label: '查询数据.json', kind: 'data', role: 'output', renderer: 'file' }),
     primary({ resource_id: 'input', group_id: 'upload', label: '输入.xlsx', role: 'attachment' })
   ])
 
-  assert.deepEqual(topLevelProducts(groups).map(group => group.primary.label), ['报告.docx', '趋势图.png'])
+  assert.deepEqual(topLevelProducts(groups).map(group => group.primary.label), ['报告.docx', '趋势图.png', '查询数据.json'])
   assert.equal(topLevelProducts(groups).some(group => group.primary.relation === 'preview'), false)
   assert.equal(topLevelProducts(groups).some(group => group.primary.role === 'attachment'), false)
   assert.equal(groups.find(group => group.group_id === 'report').versions.length, 2)

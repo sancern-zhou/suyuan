@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, Set
 import structlog
 
 from app.agent.context.execution_context import ExecutionContext
-from app.services.data_registry import data_registry
 
 logger = structlog.get_logger()
 
@@ -43,7 +42,7 @@ def save_report_data_package(
     exclude_primary_keys: Optional[Set[str]] = None,
     package_kind: str = "standard_report",
 ) -> Optional[str]:
-    """Persist a structured statistical report package and return report_data_id.
+    """Persist a structured statistical report package and return its file path.
 
     Statistical report tools should not save raw daily records. If downstream
     analysis needs daily details, call the dedicated daily data query tools.
@@ -71,25 +70,26 @@ def save_report_data_package(
             "source_note": "统计报表包只保存汇总/对比结果；如需日报明细，请调用对应城市或站点日数据查询工具。",
         }
 
-        entry = data_registry.register_payload(
+        if context is None:
+            raise ValueError("ExecutionContext is required to save a report data file")
+        file_path = context.save_data(
+            package,
             schema="standard_report_package",
-            version="v1",
-            payload=package,
             metadata={
                 **metadata,
-                "session_id": context.session_id if context else None,
+                "session_id": context.session_id,
                 "tool_name": tool_name,
                 "package_kind": package_kind,
                 "data_role": "statistical_report",
             },
         )
         logger.info(
-            "report_data_package_saved",
-            report_data_id=entry.data_id,
+            "report_data_file_saved",
+            report_file_path=file_path,
             tool_name=tool_name,
             package_kind=package_kind,
         )
-        return entry.data_id
+        return file_path
     except Exception as e:
         logger.warning("failed_to_save_report_data_package", error=str(e), tool_name=tool_name)
         return None
@@ -101,11 +101,11 @@ def attach_report_data_id(
     *,
     summary_label: str = "统计报表",
 ) -> Dict[str, Any]:
-    """Attach report_data_id to a UDF-style tool result."""
+    """Attach a report file path to a UDF-style tool result."""
     if not report_data_id:
         return result
     metadata = result.setdefault("metadata", {})
-    metadata["report_data_id"] = report_data_id
-    result["report_data_id"] = report_data_id
-    result["summary"] = f"{result.get('summary', '')} | {summary_label}已保存为 report_data_id: {report_data_id}"
+    metadata["report_file_path"] = report_data_id
+    result["report_file_path"] = report_data_id
+    result["summary"] = f"{result.get('summary', '')} | {summary_label}已保存为 report_file_path: {report_data_id}"
     return result

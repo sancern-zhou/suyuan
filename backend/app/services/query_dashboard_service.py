@@ -137,9 +137,9 @@ def extract_dashboard_source(source_id: str, tool_name: str, result: dict[str, A
     records = _records_from_result(result)
     metadata = _metadata(result)
     query_params = metadata.get("query_params") if isinstance(metadata.get("query_params"), dict) else {}
-    data_ids = result.get("data_ids") or metadata.get("data_ids") or []
-    if isinstance(data_ids, str):
-        data_ids = [data_ids]
+    file_paths = result.get("file_paths") or metadata.get("file_paths") or []
+    if isinstance(file_paths, str):
+        file_paths = [file_paths]
     record_count = _first_count(
         result.get("total_count"),
         result.get("record_count"),
@@ -152,8 +152,8 @@ def extract_dashboard_source(source_id: str, tool_name: str, result: dict[str, A
     return DashboardSource(
         source_id=source_id,
         tool_name=tool_name,
-        data_id=result.get("data_id") or metadata.get("data_id"),
-        data_ids=[data_id for data_id in data_ids if isinstance(data_id, str)],
+        file_path=result.get("file_path") or metadata.get("file_path"),
+        file_paths=[file_path for file_path in file_paths if isinstance(file_path, str)],
         query_params=query_params,
         record_count=record_count if record_count is not None else len(records),
         updated_at=result.get("updated_at") or metadata.get("updated_at"),
@@ -523,15 +523,15 @@ class QueryDashboardService:
 
     def _measurement_records_from_result(self, result: dict[str, Any]) -> list[dict[str, Any]]:
         metadata = _metadata(result)
-        data_id = result.get("data_id") or metadata.get("data_id")
-        if metadata.get("externalized") and isinstance(data_id, str) and data_id:
+        file_path = result.get("file_path") or metadata.get("file_path")
+        if metadata.get("externalized") and isinstance(file_path, str) and file_path:
             context = getattr(self.provider, "context", None)
             get_raw_data = getattr(context, "get_raw_data", None)
             if not callable(get_raw_data):
-                raise RuntimeError(f"小时数据已外部化，但当前上下文无法读取完整数据: {data_id}")
-            records = get_raw_data(data_id)
+                raise RuntimeError(f"小时数据已外部化，但当前上下文无法读取完整数据: {file_path}")
+            records = get_raw_data(file_path)
             if not isinstance(records, list):
-                raise RuntimeError(f"小时数据完整数据格式异常: {data_id}")
+                raise RuntimeError(f"小时数据完整数据格式异常: {file_path}")
             return [record for record in records if isinstance(record, dict)]
         return _records_from_result(result)
 

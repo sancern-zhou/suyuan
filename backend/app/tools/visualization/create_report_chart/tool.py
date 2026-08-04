@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products, resources_for_visuals
-from app.tools.resource_refs import build_data_ref, build_file_ref, build_visual_ref, merge_refs
+from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
 from app.tools.visualization.create_report_chart.renderer import ChartDataError
 
 
@@ -52,7 +52,7 @@ class CreateReportChartTool(LLMTool):
             "创建正式报告（Word/QMD）静态图表，支持多种预定义分析图表类型。"
             f"先读 references/index.md={reference_paths['index']}，再按图型读取规则。"
             f"数据输入先读 data-input.md={reference_paths['data_input']}。"
-            "必须通过 data 或 data_id 至少提供一种数据输入，不支持文件路径。"
+            "必须通过 data 或 file_path 至少提供一种数据输入。"
             "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
         )
@@ -107,15 +107,15 @@ class CreateReportChartTool(LLMTool):
                             "line/bar 支持多序列 series，每个序列使用 name + data/values。"
                             "combo 使用 labels + series[{name,type,values,axis,stack}]，type 仅 bar/line。"
                             "普通图表不会自动推断任意 records 的横轴、纵轴或系列字段。"
-                            "与 data_id 同时提供时，data 用于渲染，data_id 仅用于来源追踪。"
+                            "与 file_path 同时提供时，data 用于渲染，file_path 仅用于来源追踪。"
                         ),
                     },
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": (
-                            "DataRegistry 上游数据引用 ID。未提供 data 时，工具通过 ExecutionContext 自动读取，"
+                            "上游数据文件绝对路径。未提供 data 时，工具通过 ExecutionContext 自动读取，"
                             "Agent 无需调用 get_raw_data；普通图表的数据资产应已整理为目标图型结构。"
-                            "与 data 同时提供时仅用于来源追踪。不支持文件路径，也不要猜测物理存储位置。"
+                            "与 data 同时提供时仅用于来源追踪。"
                         ),
                     },
                     "output_context": {
@@ -145,7 +145,7 @@ class CreateReportChartTool(LLMTool):
                 "required": ["chart_type", "title"],
                 "anyOf": [
                     {"required": ["data"]},
-                    {"required": ["data_id"]},
+                    {"required": ["file_path"]},
                 ],
             },
         }
@@ -165,7 +165,7 @@ class CreateReportChartTool(LLMTool):
         title: str = "",
         chart_id: Optional[str] = None,
         data: Optional[Dict[str, Any]] = None,
-        data_id: Optional[str] = None,
+        file_path: Optional[str] = None,
         output_context: str = "word",
         style_profile: str = "report",
         notes: Optional[str] = None,
@@ -181,13 +181,13 @@ class CreateReportChartTool(LLMTool):
             "style_profile": style_profile or "report",
             "reference_paths": report_chart_reference_paths(),
         }
-        if data is None and not data_id:
+        if data is None and not file_path:
             return self._failed_result(
-                "必须提供 data 或 data_id 作为图表数据输入；不支持文件路径。",
+                "必须提供 data 或 file_path 作为图表数据输入。",
                 metadata,
                 chart_type,
                 title,
-                data_id,
+                file_path,
             )
         if opts.get("dry_run"):
             result = {
@@ -199,13 +199,13 @@ class CreateReportChartTool(LLMTool):
                     "chart_type": chart_type,
                     "title": title,
                     "render_mode": "dry_run",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "has_inline_data": data is not None,
                     "notes": notes,
                 },
                 "summary": "报告图表请求已按 create_report_chart 统一入口解析；dry_run 未生成图片。",
             }
-            self._attach_resume_context(result, data_id=data_id)
+            self._attach_resume_context(result, file_path=file_path)
             result["resources"] = file_products(
                 [
                     visual.get("local_path") or visual.get("file_path")
@@ -218,7 +218,7 @@ class CreateReportChartTool(LLMTool):
             return result
 
         try:
-            chart_data = self._resolve_chart_data(data=data, data_id=data_id, context=context)
+            chart_data = self._resolve_chart_data(data=data, file_path=file_path, context=context)
 
             from app.tools.visualization.create_report_chart.renderer import render_report_chart
 
@@ -231,9 +231,22 @@ class CreateReportChartTool(LLMTool):
                 style_profile=style_profile or "report",
                 options=opts,
             )
+            catalog_visuals = []
+            for visual in rendered.get("visuals", []):
+                if not isinstance(visual, dict):
+                    continue
+                catalog_visual = dict(visual)
+                # Preview and download URLs are projected only after the
+                # resource group is persisted; tool results keep server paths
+                # private to the publication boundary.
+                catalog_visual.pop("url", None)
+                catalog_visual.pop("image_url", None)
+                catalog_visual.pop("markdown_image", None)
+                catalog_visuals.append(catalog_visual)
+            rendered = {**rendered, "visuals": catalog_visuals}
             metadata.update(rendered.get("metadata", {}))
-            if data_id:
-                metadata["source_data_id"] = data_id
+            if file_path:
+                metadata["source_file_path"] = file_path
             result = {
                 "success": True,
                 "status": "success",
@@ -242,37 +255,42 @@ class CreateReportChartTool(LLMTool):
                 "visuals": rendered.get("visuals", []),
                 "summary": rendered.get("summary", "报告图表已生成。"),
             }
-            self._attach_resume_context(result, data_id=data_id)
+            self._attach_resume_context(result, file_path=file_path)
             result["resources"] = resources_for_visuals(
                 result.get("visuals", []), tool_name=self.name
             )
             return result
         except ChartDataError as exc:
-            return self._failed_result(str(exc), metadata, chart_type, title, data_id)
+            return self._failed_result(str(exc), metadata, chart_type, title, file_path)
         except (KeyError, ValueError, TypeError) as exc:
-            return self._failed_result(str(exc), metadata, chart_type, title, data_id)
+            return self._failed_result(str(exc), metadata, chart_type, title, file_path)
 
     def _resolve_chart_data(
         self,
         data: Optional[Dict[str, Any]],
-        data_id: Optional[str],
+        file_path: Optional[str],
         context: Optional[Any],
     ) -> Dict[str, Any]:
         if data is not None:
             return data
-        if not data_id:
-            raise ChartDataError("必须提供 data 或 data_id 作为图表数据输入；不支持文件路径。")
+        if not file_path:
+            raise ChartDataError("必须提供 data 或 file_path 作为图表数据输入。")
         if context is None:
-            raise ChartDataError("使用 data_id 调用 create_report_chart 需要 ExecutionContext。")
+            raise ChartDataError("使用 file_path 调用 create_report_chart 需要 ExecutionContext。")
 
         try:
-            loaded = context.get_raw_data(data_id)
+            payload_loader = getattr(context, "get_data_payload", None)
+            loaded = (
+                payload_loader(file_path)
+                if callable(payload_loader)
+                else context.get_raw_data(file_path)
+            )
         except AttributeError as exc:
-            raise ChartDataError("当前上下文不支持 get_raw_data，无法读取 data_id。") from exc
+            raise ChartDataError("当前上下文无法读取 file_path。") from exc
 
-        return self._normalize_loaded_chart_data(loaded, data_id)
+        return self._normalize_loaded_chart_data(loaded, file_path)
 
-    def _normalize_loaded_chart_data(self, loaded: Any, data_id: str) -> Dict[str, Any]:
+    def _normalize_loaded_chart_data(self, loaded: Any, file_path: str) -> Dict[str, Any]:
         if isinstance(loaded, dict):
             return loaded
         if isinstance(loaded, list) and len(loaded) == 1:
@@ -286,7 +304,7 @@ class CreateReportChartTool(LLMTool):
         if isinstance(loaded, list) and all(isinstance(item, dict) for item in loaded):
             return {"records": loaded}
         raise ChartDataError(
-            f"data_id {data_id} 未保存为 create_report_chart 可直接使用的图表数据对象；"
+            f"file_path {file_path} 未保存为 create_report_chart 可直接使用的图表数据对象；"
             "请先整理为 labels+values、x+y 或单序列 series 数据。"
         )
 
@@ -296,10 +314,10 @@ class CreateReportChartTool(LLMTool):
         metadata: Dict[str, Any],
         chart_type: str,
         title: str,
-        data_id: Optional[str],
+        file_path: Optional[str],
     ) -> Dict[str, Any]:
-        if data_id:
-            metadata["source_data_id"] = data_id
+        if file_path:
+            metadata["source_file_path"] = file_path
         return {
             "success": False,
             "status": "failed",
@@ -308,7 +326,7 @@ class CreateReportChartTool(LLMTool):
             "data": {
                 "chart_type": chart_type,
                 "title": title,
-                "data_id": data_id,
+                "file_path": file_path,
             },
             "visuals": [],
             "summary": f"报告图表生成失败：{error}",
@@ -317,11 +335,14 @@ class CreateReportChartTool(LLMTool):
     def _attach_resume_context(
         self,
         result: Dict[str, Any],
-        data_id: Optional[str],
+        file_path: Optional[str],
     ) -> None:
         refs: Dict[str, Any] = {}
-        if data_id:
-            refs = merge_refs(refs, {"data": [build_data_ref(data_id, usage="source")]})
+        if file_path:
+            refs = merge_refs(
+                refs,
+                {"data": [build_data_file_ref(file_path, usage="source")]},
+            )
 
         file_refs = []
         visual_refs = []
@@ -330,11 +351,11 @@ class CreateReportChartTool(LLMTool):
             if not isinstance(visual, dict):
                 continue
             local_path = visual.get("local_path")
-            file_path = visual.get("file_path")
+            visual_file_path = visual.get("file_path")
             image_url = visual.get("image_url")
             visual_id = visual.get("id")
             visual_title = visual.get("title")
-            tool_path = local_path or file_path
+            tool_path = local_path or visual_file_path
 
             visual_ref = build_visual_ref(
                 id=visual_id,
@@ -342,7 +363,7 @@ class CreateReportChartTool(LLMTool):
                 title=visual_title,
                 image_url=image_url,
                 local_path=local_path,
-                file_path=file_path,
+                file_path=visual_file_path,
                 chart_type=result.get("metadata", {}).get("chart_type"),
             )
             if visual_ref:
@@ -379,8 +400,8 @@ class CreateReportChartTool(LLMTool):
             result["refs"] = refs
 
         llm_resume: Dict[str, Any] = {}
-        if data_id:
-            llm_resume["source_data_id"] = data_id
+        if file_path:
+            llm_resume["source_file_path"] = file_path
         if generated_visuals:
             llm_resume["generated_visuals"] = generated_visuals
             first_path = generated_visuals[0].get("tool_path")
@@ -389,7 +410,5 @@ class CreateReportChartTool(LLMTool):
                     f"Use read_file(path='{first_path}', as_multimodal_attachment=true) "
                     "to inspect this image."
                 )
-        elif data_id:
-            llm_resume["tool_hint"] = f"Use read_data_registry(data_id='{data_id}') to reread the source data."
         if llm_resume:
             result["llm_resume"] = llm_resume

@@ -52,10 +52,10 @@ export function mergeMapPrograms(currentProgram, incomingProgram) {
     lineage: {
       ...(currentProgram.lineage || {}),
       ...(incomingProgram.lineage || {}),
-      source_data_ids: [
+      source_file_paths: [
         ...new Set([
-          ...asArray(currentProgram.lineage?.source_data_ids),
-          ...asArray(incomingProgram.lineage?.source_data_ids)
+          ...asArray(currentProgram.lineage?.source_file_paths),
+          ...asArray(incomingProgram.lineage?.source_file_paths)
         ])
       ],
       dashboard_layer_ids: [

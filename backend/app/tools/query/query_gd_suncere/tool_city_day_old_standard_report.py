@@ -16,7 +16,7 @@
 
 【返回数据说明】
 - result字段：统计汇总结果（综合指数、超标天数、首要污染物比例等）
-- report_data_id字段：统计报表包，可通过 read_data_registry 按 cities/regions/province/result 视图读取
+- report_file_path字段：包含 cities/regions/province/result 结构化视图的完整统计报表包
 - 本工具不保存日报明细；如需日数据，请调用城市日数据查询工具
 """
 

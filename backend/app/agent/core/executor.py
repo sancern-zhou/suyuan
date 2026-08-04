@@ -435,19 +435,19 @@ class ToolExecutor:
             # save_data is itself a resource-producing API. Attach its exact
             # handles to the same explicit result contract; never rediscover
             # them by inspecting arbitrary result field names.
-            if execution_context and execution_context.available_data_ids:
-                from app.tools.resource_declarations import data_resource
+            if execution_context and execution_context.available_file_paths:
+                from app.tools.resource_declarations import data_file_resource
 
                 declared = observation.setdefault("resources", [])
-                declared_data_ids = {
-                    item.get("locator", {}).get("data_id")
+                declared_paths = {
+                    item.get("locator", {}).get("path")
                     for item in declared
                     if isinstance(item, dict) and isinstance(item.get("locator"), dict)
                 }
                 declared.extend(
-                    data_resource(data_id, tool_name=tool_name)
-                    for data_id in execution_context.available_data_ids
-                    if data_id not in declared_data_ids
+                    data_file_resource(file_path, tool_name=tool_name)
+                    for file_path in execution_context.available_file_paths
+                    if file_path not in declared_paths
                 )
 
             tracking = await self._persist_boundary_resources(
@@ -799,20 +799,20 @@ class ToolExecutor:
         self,
         tool_name: str,
         result: Dict[str, Any],
-        max_records: int = 24
+        max_records: int = 6
     ) -> Dict[str, Any]:
         """
         对数据查询工具的返回结果进行智能采样
 
         策略：Head-Tail-Middle采样（30% 头部 + 40% 中间均匀采样 + 30% 尾部）
         - 只对数据查询工具生效
-        - 完整数据已存储在data_id中
+        - 完整数据已存储在 file_path 指向的文件中
         - 采样后的数据传递给LLM，减少token消耗
 
         Args:
             tool_name: 工具名称
             result: 工具返回结果
-            max_records: 最大保留记录数（默认24）
+            max_records: 最大保留记录数（默认6）
 
         Returns:
             采样后的结果
@@ -1083,8 +1083,8 @@ class ToolExecutor:
                 "failed_tools": [...],
                 "data": [...],
                 "visuals": [...],
-                "data_ids": [...],
-                "report_data_ids": [...],
+                "file_paths": [...],
+                "report_file_paths": [...],
                 "summary": str
             }
         """
@@ -1167,8 +1167,8 @@ class ToolExecutor:
         # 合并数据和图表
         merged_data = []
         merged_visuals = []
-        merged_data_ids = []
-        merged_report_data_ids = []
+        merged_file_paths = []
+        merged_report_file_paths = []
 
         for res in successful_results:
             result = res.get("result", {})
@@ -1185,18 +1185,18 @@ class ToolExecutor:
                     has_visuals="visuals" in result
                 )
                 merged_visuals.extend(result["visuals"])
-            if result.get("data_id"):
-                merged_data_ids.append(result["data_id"])
-            if result.get("report_data_id"):
-                merged_report_data_ids.append(result["report_data_id"])
+            if result.get("file_path"):
+                merged_file_paths.append(result["file_path"])
+            if result.get("report_file_path"):
+                merged_report_file_paths.append(result["report_file_path"])
 
         # ✅ 添加调试日志
         logger.info(
             "parallel_execution_visuals_merged",
             successful_tools_count=len(successful_results),
             merged_visuals_count=len(merged_visuals),
-            merged_data_ids_count=len(merged_data_ids),
-            merged_report_data_ids_count=len(merged_report_data_ids)
+            merged_file_paths_count=len(merged_file_paths),
+            merged_report_file_paths_count=len(merged_report_file_paths)
         )
 
         # 判断执行状态
@@ -1221,8 +1221,8 @@ class ToolExecutor:
             # 合并后的数据
             "data": merged_data if merged_data else None,
             "visuals": merged_visuals if merged_visuals else None,
-            "data_ids": merged_data_ids if merged_data_ids else None,
-            "report_data_ids": merged_report_data_ids if merged_report_data_ids else None,
+            "file_paths": merged_file_paths if merged_file_paths else None,
+            "report_file_paths": merged_report_file_paths if merged_report_file_paths else None,
 
             # 生成摘要
             "summary": self._generate_parallel_summary(

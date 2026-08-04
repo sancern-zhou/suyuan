@@ -117,7 +117,7 @@ class GetCarbonDataTool(LLMTool):
                     "components": ["OC", "EC"],
                 }
             )
-            data_id = data_ref["data_id"]
+            data_id = data_ref
             file_path = data_ref["file_path"]
             logger.info("carbon_data_saved", data_id=data_id, file_path=file_path, record_count=count)
         except Exception as save_error:

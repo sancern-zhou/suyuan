@@ -10,17 +10,17 @@
 
 ## 标准数据访问流程
 
-DataRegistry 数据必须通过 `data_id` 访问，不得读取其物理存储文件。
+Data is passed between tools using canonical absolute file paths.
 
-1. 调用 `read_data_registry(data_id=..., list_fields=true)` 查看字段。
-2. 需要计算具体数据时，通过 `read_data_registry` 读取相应 view/fields，形成可计算数据快照。
-3. 在 `execute_echarts_python.code` 中调用系统注入的 `get_raw_data(data_id)` 获取该快照。
+1. Use the `file_path` returned by a query or analysis tool.
+2. Use the query result's inline records and field schema to understand fields; use `load_data(file_path)` only when full-data processing is necessary.
+3. In `execute_echarts_python.code`, call the injected `load_data(file_path)` helper directly.
 
 ```python
 import json
 
-data_id = "air_quality_5min:v1:实际ID"
-records = get_raw_data(data_id)
+file_path = "/home/xckj/suyuan/backend/backend_data_registry/sessions/agent_session_x/data/air_quality--example.json"
+records = load_data(file_path)
 
 x_data = [record.get("time") for record in records]
 y_data = [record.get("PM2_5") for record in records]
@@ -33,26 +33,14 @@ option = {
 print(json.dumps(option, ensure_ascii=False))
 ```
 
-禁止通过以下方式绕过 DataRegistry：
-
-```python
-# 错误：猜测并直接读取 DataRegistry 物理文件
-with open("/home/.../backend_data_registry/datasets/data.json") as file:
-    records = json.load(file)
-
-# 错误：pathlib 同样属于直接文件读取
-records = json.loads(Path("/home/.../datasets/data.json").read_text())
-```
-
-物理路径可能不存在、随部署变化或与 `data_id` 的内部编码不一致；直接读取也绕过了数据快照和访问状态约束。
+Do not guess or rewrite a path. Reuse the exact path returned by the producing tool.
 
 ## 执行环境与跨调用复用
 
 每次 `execute_python` 和 `execute_echarts_python` 调用都是独立执行环境，不保留上次脚本变量。跨调用复用中间结果时：
 
-1. 在前一次 Python 调用中使用 `saved_data_id = save_data(result)`。
-2. 后续先用 `read_data_registry(data_id=saved_data_id, ...)` 读取快照。
-3. 再在 Python 代码中使用 `get_raw_data(saved_data_id)`。
+1. In the first Python call, use `saved_file_path = save_data(result)`.
+2. In a later call, use `load_data(saved_file_path)`.
 
 不要依赖前一次调用中的局部变量。
 
@@ -71,16 +59,14 @@ records = json.loads(Path("/home/.../datasets/data.json").read_text())
 ```json
 {
   "expected_charts": 1,
-  "code": "import json; records = get_raw_data('air_quality:v1:实际ID'); option = {'xAxis': {'type': 'category', 'data': [r.get('time') for r in records]}, 'yAxis': {'type': 'value'}, 'series': [{'type': 'line', 'data': [r.get('value') for r in records]}]}; print(json.dumps(option, ensure_ascii=False))"
+  "code": "import json; records = load_data('/absolute/session/data/file.json'); option = {'xAxis': {'type': 'category', 'data': [r.get('time') for r in records]}, 'yAxis': {'type': 'value'}, 'series': [{'type': 'line', 'data': [r.get('value') for r in records]}]}; print(json.dumps(option, ensure_ascii=False))"
 }
 ```
 
-调用这段代码前，必须已经通过 `read_data_registry` 读取对应 `data_id` 的可计算数据快照。
-
 ## 常见错误
 
-- `get_raw_data` 报“尚未读取”：先调用 `read_data_registry` 读取具体数据，而不只是猜测 ID。
+- `load_data` reports a missing file: use the exact `file_path` returned by the producing tool.
 - 没有生成 visuals：检查 stdout 是否为纯 JSON、option 顶层是否有 `series`。
 - 图表数量不匹配：让输出行数与 `expected_charts` 一致。
 - JSON 序列化失败：移除 option 中的函数、lambda 或其他不可序列化对象，先在 Python 中计算为静态值。
-- 数据文件找不到：不要修补物理路径，改用正确的 `data_id` 和 `get_raw_data(data_id)`。
+- 数据文件找不到：不要修补或猜测路径，重用工具返回的 `file_path`。

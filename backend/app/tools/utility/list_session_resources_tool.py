@@ -117,6 +117,9 @@ class ListSessionResourcesTool(LLMTool):
                 "turn_sequence": resource.turn_sequence,
                 "updated_at": resource.updated_at,
             }
+            file_path = str((resource.locator or {}).get("path") or "").strip()
+            if file_path:
+                item["file_path"] = file_path
             if include_locator:
                 item["locator"] = resource.locator
             return item

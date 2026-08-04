@@ -7,8 +7,9 @@ in these progressive reference files.
 ## Data Input
 
 - Read `data-input.md` before the first call or whenever choosing between
-  inline `data` and a DataRegistry `data_id`.
-- The tool does not accept a file path as chart data input.
+  inline `data` and a session data `file_path`.
+- Only use an authorized `file_path` returned by an upstream tool; never guess
+  storage paths.
 
 ## Always Read For Reports
 

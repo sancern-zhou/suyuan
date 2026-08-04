@@ -6,7 +6,7 @@ enabling tools to access data, memory, and session information without requiring
 explicit parameter passing through the LLM.
 
 Key Benefits:
-- Tools can load data by reference (data_id) instead of receiving full payloads
+- Tools can load data from session-scoped paths instead of receiving full payloads
 - Type-safe data access with schema validation
 - Session isolation and iteration tracking
 - Unified data lifecycle management
@@ -25,33 +25,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-class DataReference(str):
-    """String data_id that also supports legacy dict-style access."""
-
-    def __new__(cls, data_id: str, file_path: Optional[str] = None):
-        obj = str.__new__(cls, data_id)
-        obj.data_id = data_id
-        obj.file_path = file_path
-        return obj
-
-    def __getitem__(self, key: str) -> str:
-        if key == "data_id":
-            return self.data_id
-        if key == "file_path":
-            return self.file_path or ""
-        raise KeyError(key)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        if key == "data_id":
-            return self.data_id
-        if key == "file_path":
-            return self.file_path if self.file_path is not None else default
-        return default
-
-    def to_dict(self) -> Dict[str, Optional[str]]:
-        return {"data_id": self.data_id, "file_path": self.file_path}
-
-
 class ExecutionContext:
     """
     Tool execution context providing data access and session information.
@@ -63,15 +36,15 @@ class ExecutionContext:
     - Access session and iteration metadata
 
     Example:
-        async def execute(self, context: ExecutionContext, station_name: str, data_id: str):
-            # Load data by reference
-            vocs_data = context.get_data(data_id, expected_schema="vocs")
+        async def execute(self, context: ExecutionContext, station_name: str, file_path: str):
+            # Load data from the session file
+            vocs_data = context.get_data(file_path, expected_schema="vocs")
 
             # Process and save results
             result = compute_pmf(vocs_data)
-            result_id = context.save_data(result, schema="pmf_result")
+            result_path = context.save_data(result, schema="pmf_result")
 
-            return {"success": True, "data_id": result_id}
+            return {"success": True, "file_path": result_path}
     """
 
     def __init__(
@@ -94,10 +67,8 @@ class ExecutionContext:
         self.iteration = iteration
         self.data_manager = data_manager
         self.task_list = task_list
-        # 跟踪最近一次保存的data_id
-        self.current_data_id: Optional[str] = None
-        # 跟踪所有可用的data_id列表
-        self.available_data_ids: List[str] = []
+        self.current_file_path: Optional[str] = None
+        self.available_file_paths: List[str] = []
 
         logger.debug(
             "execution_context_created",
@@ -108,39 +79,39 @@ class ExecutionContext:
 
     def get_data(
         self,
-        data_id: str,
+        file_path: str,
         expected_schema: Optional[str] = None
     ) -> Any:
         """
-        Load data by reference ID.
+        Load data from an immutable session file.
 
         Args:
-            data_id: Data identifier (e.g., "vocs:v1:abc123")
+            file_path: Canonical absolute session data path
             expected_schema: Expected schema for validation (e.g., "vocs")
 
         Returns:
             Loaded data (typically List[Pydantic model])
 
         Raises:
-            KeyError: Data ID not found
+            KeyError: Data file not found
             ValueError: Schema mismatch
 
         Example:
-            vocs_data = context.get_data("vocs:v1:abc123", expected_schema="vocs")
+            vocs_data = context.get_data("/configured/data/root/sessions/agent_session_123/data/vocs--abc.json", expected_schema="vocs")
         """
         logger.info(
             "context_loading_data",
-            data_id=data_id,
+            file_path=file_path,
             expected_schema=expected_schema,
             session_id=self.session_id
         )
 
         return self.data_manager.get_data(
-            data_id=data_id,
+            file_path=file_path,
             expected_schema=expected_schema
         )
 
-    def get_raw_data(self, data_id: str) -> List[Dict[str, Any]]:
+    def get_raw_data(self, file_path: str) -> List[Dict[str, Any]]:
         """
         Load raw data without deserializing to Pydantic models.
 
@@ -163,11 +134,20 @@ class ExecutionContext:
         """
         logger.info(
             "context_loading_raw_data",
-            data_id=data_id,
+            file_path=file_path,
             session_id=self.session_id
         )
 
-        return self.data_manager.get_raw_data(data_id)
+        return self.data_manager.get_raw_data(file_path)
+
+    def get_data_payload(self, file_path: str) -> Any:
+        """Load an authorized session file without record-shape coercion."""
+        logger.info(
+            "context_loading_data_payload",
+            file_path=file_path,
+            session_id=self.session_id,
+        )
+        return self.data_manager.get_data_payload(file_path)
 
     def save_data(
         self,
@@ -175,9 +155,9 @@ class ExecutionContext:
         schema: str,
         field_stats: Optional[List[Any]] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> DataReference:
+    ) -> str:
         """
-        Save data and return a reference ID.
+        Save data and return its canonical absolute file path.
 
         Args:
             data: Data to save (should be List[Pydantic model] for validation)
@@ -186,12 +166,10 @@ class ExecutionContext:
             metadata: Optional metadata to attach
 
         Returns:
-            Data reference ID as a string-compatible object. It can be used
-            directly as ``str`` or accessed as ``ref["data_id"]`` /
-            ``ref["file_path"]`` for older tools.
+            Canonical absolute path of the saved session data file.
 
         Example:
-            result_id = context.save_data(
+            result_path = context.save_data(
                 data=pmf_results,
                 schema="pmf_result",
                 metadata={"station": "Shenzhen", "pollutant": "VOCs"}
@@ -203,43 +181,30 @@ class ExecutionContext:
             session_id=self.session_id
         )
 
-        # ✅ save_data() 返回字典 {"data_id": str, "file_path": str}
-        saved_ref = self.data_manager.save_data(
+        file_path = self.data_manager.save_data(
             data=data,
             schema=schema,
             field_stats=field_stats,
             metadata=metadata
         )
 
-        # ✅ 提取字符串 ID，同时保留 file_path 兼容旧工具的字典式访问
-        if isinstance(saved_ref, dict):
-            data_id = saved_ref.get("data_id")
-            file_path = saved_ref.get("file_path")
-        elif hasattr(saved_ref, "get"):
-            data_id = saved_ref.get("data_id")
-            file_path = saved_ref.get("file_path")
-        else:
-            data_id = saved_ref
-            file_path = None
+        if not file_path:
+            raise ValueError(f"Data manager returned an empty file path for schema: {schema}")
 
-        if not data_id:
-            raise ValueError(f"Data manager returned empty data_id for schema: {schema}")
-
-        # ✅ 直接使用字符串ID进行跟踪
-        self.current_data_id = data_id
-        if data_id not in self.available_data_ids:
-            self.available_data_ids.append(data_id)
+        self.current_file_path = file_path
+        if file_path not in self.available_file_paths:
+            self.available_file_paths.append(file_path)
 
         logger.info(
-            "context_data_id_updated",
-            data_id=data_id,
-            available_count=len(self.available_data_ids),
+            "context_data_file_updated",
+            file_path=file_path,
+            available_count=len(self.available_file_paths),
             session_id=self.session_id
         )
 
-        return DataReference(data_id, file_path)
+        return file_path
 
-    def get_handle(self, data_id: str) -> TypedDataHandle:
+    def get_handle(self, file_path: str) -> TypedDataHandle:
         """
         Get data handle without loading full data.
 
@@ -247,17 +212,17 @@ class ExecutionContext:
         or validating data quality before loading.
 
         Args:
-            data_id: Data identifier
+            file_path: Canonical absolute session data path
 
         Returns:
             TypedDataHandle with metadata
 
         Example:
-            handle = context.get_handle("vocs:v1:abc123")
+            handle = context.get_handle("/configured/data/root/sessions/agent_session_123/data/vocs--abc.json")
             if handle.record_count < 30:
                 return {"success": False, "error": "Insufficient samples"}
         """
-        return self.data_manager.get_handle(data_id)
+        return self.data_manager.get_handle(file_path)
 
     def get_task_list(self) -> Optional[Any]:
         """
@@ -275,30 +240,30 @@ class ExecutionContext:
 
     def list_data(self, schema: Optional[str] = None) -> List[str]:
         """
-        List all available data IDs in current session.
+        List all available data file paths in current session.
 
         Args:
             schema: Optional schema filter (e.g., "vocs")
 
         Returns:
-            List of data IDs
+            List of canonical absolute data file paths
 
         Example:
             all_vocs = context.list_data(schema="vocs")
         """
         return self.data_manager.list_data(schema=schema)
 
-    def exists(self, data_id: str) -> bool:
+    def exists(self, file_path: str) -> bool:
         """
-        Check if data ID exists.
+        Check whether a session data file exists.
 
         Args:
-            data_id: Data identifier
+            file_path: Canonical absolute session data path
 
         Returns:
             True if data exists
         """
-        return self.data_manager.exists(data_id)
+        return self.data_manager.exists(file_path)
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -340,7 +305,7 @@ class ExecutionContext:
         )
 
         # Copy over the tracking attributes
-        copied.current_data_id = updates.get("current_data_id", self.current_data_id)
-        copied.available_data_ids = list(updates.get("available_data_ids", self.available_data_ids))
+        copied.current_file_path = updates.get("current_file_path", self.current_file_path)
+        copied.available_file_paths = list(updates.get("available_file_paths", self.available_file_paths))
 
         return copied

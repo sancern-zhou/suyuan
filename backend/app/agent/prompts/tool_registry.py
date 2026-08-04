@@ -79,7 +79,6 @@ EXPERT_TOOL_NAMES = [
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new",
     "query_city_standard_report", "query_city_standard_yoy_report",
-    "read_data_registry",
 
     # 分析工具
     "calculate_pm_pmf", "calculate_vocs_pmf",
@@ -121,9 +120,6 @@ QUERY_TOOL_NAMES = [
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
 
-    # === 数据注册表工具 ===
-    "read_data_registry",
-
     # === Agentic GIS 视觉交互工具 ===
     "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "visual_interaction",
     "get_map_program_receipt", "wait_map_program_receipt",
@@ -135,8 +131,6 @@ QUERY_TOOL_NAMES = [
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
-    # 规划工具
-    "complex_query_planner",
 
     # 数据查询
     "get_5min_data",
@@ -150,9 +144,6 @@ REPORT_TOOL_NAMES = [
     "query_station_standard_report",
     "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
-
-    # 数据读取
-    "read_data_registry",
 
     # 文件和执行
     "read_file", "write_file", "edit_file", "grep",
@@ -172,9 +163,6 @@ CHART_TOOL_NAMES = [
 
     # 代码执行和原生多模态视觉参考
     "create_report_chart", "execute_python", "execute_echarts_python",
-
-    # 数据读取
-    "read_data_registry",
 
     # 数据查询工具
     "get_observed_meteorology",
@@ -216,9 +204,6 @@ OPS_TOOL_NAMES = [
 
     # 站点小时/日数据核对
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
-
-    # 数据读取
-    "read_data_registry",
 
     # 代码执行
     "execute_python",
@@ -281,7 +266,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
-    "read_data_registry", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
@@ -290,7 +275,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = [
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
     "query_city_standard_report", "query_city_standard_yoy_report",
-    "read_data_registry", "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
@@ -298,7 +283,7 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
-    "calculate_crustal", "calculate_trace", "read_data_registry",
+    "calculate_crustal", "calculate_trace",
     "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 

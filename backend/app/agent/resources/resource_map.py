@@ -5,8 +5,6 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from app.utils.path_config import BACKEND_ROOT
-
 from .resource_service import StoredResource
 
 
@@ -18,7 +16,7 @@ def _terms(query: str) -> set[str]:
 
 
 def resource_access_path(item: StoredResource) -> str:
-    """Return the shortest path that the Agent's file tools can use directly."""
+    """Return the canonical absolute path ordinary file tools can use directly."""
     raw_path = str((item.locator or {}).get("path") or "").strip()
     if not raw_path:
         return ""
@@ -29,10 +27,7 @@ def resource_access_path(item: StoredResource) -> str:
         return ""
     if not resolved.exists():
         return ""
-    try:
-        return str(resolved.relative_to(Path(BACKEND_ROOT).resolve()))
-    except ValueError:
-        return str(resolved)
+    return str(resolved)
 
 
 def project_agent_resource_map(

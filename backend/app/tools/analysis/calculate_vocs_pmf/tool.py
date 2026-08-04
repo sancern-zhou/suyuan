@@ -446,7 +446,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                     }
                 }
             )
-            pmf_data_id = pmf_data_ref["data_id"]
+            pmf_data_id = pmf_data_ref
             pmf_file_path = pmf_data_ref["file_path"]
             result["registry_schema"] = "pmf_result"
             result["data_id"] = pmf_data_id

@@ -24,12 +24,12 @@ class GisctlResult(BaseModel):
         success: bool = True,
         metadata_extra: dict[str, Any] | None = None,
     ) -> "GisctlResult":
-        data_ids = data_ids or []
+        file_paths = data_ids or []
         artifacts = artifacts or []
         status: Literal["success", "failed"] = "success" if success else "failed"
         payload = {
             "command": command,
-            "data_ids": data_ids,
+            "file_paths": file_paths,
             "artifacts": artifacts,
             "map_program": map_program,
         }
@@ -38,7 +38,7 @@ class GisctlResult(BaseModel):
             "tool_name": "visual_interaction",
             "generator": "visual_interaction",
             "command": command,
-            "data_ids": data_ids,
+            "file_paths": file_paths,
             "artifacts": artifacts,
             "map_program": map_program,
         }

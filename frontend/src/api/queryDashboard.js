@@ -16,14 +16,14 @@ export async function fetchGuangdongOverview(options = {}) {
   return await response.json()
 }
 
-export async function fetchMapDataFeatures(dataId, options = {}) {
+export async function fetchMapDataFeatures(filePath, options = {}) {
   const params = new URLSearchParams()
   if (options.lon) params.set('lon', options.lon)
   if (options.lat) params.set('lat', options.lat)
   if (options.view) params.set('view', options.view)
   if (options.limit) params.set('limit', String(options.limit))
-  const query = params.toString()
-  const response = await authFetch(`${API_BASE_URL}/query-dashboard/map-data/${encodeURIComponent(dataId)}${query ? `?${query}` : ''}`, {
+  params.set('file_path', filePath)
+  const response = await authFetch(`${API_BASE_URL}/query-dashboard/map-data?${params.toString()}`, {
     cache: 'no-store'
   })
   if (!response.ok) {

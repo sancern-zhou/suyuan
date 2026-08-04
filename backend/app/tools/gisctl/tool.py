@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.services.data_registry import data_registry
+from app.agent.context.data_files import resolve_data_path
 from app.tools.gisctl.map_spec import (
     create_dashboard_layer_program,
     create_interpolation_layer_program,
@@ -63,7 +64,7 @@ point-layer 图标：
                     "family": {"type": "string", "enum": ["map-spec"]},
                     "action": {"type": "string", "enum": ["create"]},
                     "kind": {"type": "string", "enum": ["point-layer", "polygon-layer", "line-layer", "interpolation-layer", "set-view", "dashboard-layer"]},
-                    "data_id": {"type": "string", "description": "已存在的数据集 ID。"},
+                    "file_path": {"type": "string", "description": "已存在的会话数据文件绝对路径。"},
                     "layer_id": {"type": "string", "description": "地图图层 ID。"},
                     "name": {"type": "string", "description": "地图图层显示名称；set-view 可省略，默认使用 target。"},
                     "lon": {"type": "string", "description": "经度字段名。"},
@@ -126,13 +127,23 @@ point-layer 图标：
 
 
 def _sample_fields(data_id: str) -> set[str]:
-    sample = data_registry.load_sample(data_id)
-    records = sample if isinstance(sample, list) else []
+    path = resolve_data_path(data_id)
+    with path.open("r", encoding="utf-8") as stream:
+        payload = json.load(stream)
+    records = payload if isinstance(payload, list) else []
     fields: set[str] = set()
     for record in records[:5]:
         if isinstance(record, dict):
             fields.update(str(key) for key in record.keys())
     return fields
+
+
+def _data_file_exists(file_path: str) -> bool:
+    try:
+        resolve_data_path(file_path)
+        return True
+    except (ValueError, PermissionError, FileNotFoundError):
+        return False
 
 
 def _failed_point_layer_result(
@@ -163,8 +174,8 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
     kind = command.get("kind")
 
     if family == "map-spec" and action == "create" and kind == "point-layer":
-        data_id = command["data_id"]
-        if data_registry.get_metadata(data_id) is None:
+        data_id = command["file_path"]
+        if not _data_file_exists(data_id):
             return _failed_point_layer_result(
                 data_id=data_id,
                 error_code="MAP_DATA_ASSET_NOT_FOUND",
@@ -210,8 +221,8 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         ).model_dump()
 
     if family == "map-spec" and action == "create" and kind == "polygon-layer":
-        data_id = command["data_id"]
-        if data_registry.get_metadata(data_id) is None:
+        data_id = command["file_path"]
+        if not _data_file_exists(data_id):
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create polygon-layer",
@@ -260,8 +271,8 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         ).model_dump()
 
     if family == "map-spec" and action == "create" and kind == "line-layer":
-        data_id = command["data_id"]
-        if data_registry.get_metadata(data_id) is None:
+        data_id = command["file_path"]
+        if not _data_file_exists(data_id):
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create line-layer",
@@ -309,8 +320,8 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         ).model_dump()
 
     if family == "map-spec" and action == "create" and kind == "interpolation-layer":
-        data_id = command["data_id"]
-        if data_registry.get_metadata(data_id) is None:
+        data_id = command["file_path"]
+        if not _data_file_exists(data_id):
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create interpolation-layer",

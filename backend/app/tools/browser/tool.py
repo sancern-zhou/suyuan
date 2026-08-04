@@ -517,7 +517,7 @@ If operation times out: selector is not unique. Use more specific attributes or 
             "name": "browser",
             "description": (
                 "浏览器自动化工具。首次使用 browser 前必须阅读 "
-                "backend/app/tools/browser/browser_skills_guide.md。"
+                "app/tools/browser/browser_skills_guide.md。"
                 "默认先snapshot，再用ref；iframe使用fN:eM或frame_*参数。"
             ),
             "parameters": {

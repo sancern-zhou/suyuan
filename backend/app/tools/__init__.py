@@ -70,13 +70,6 @@ def create_global_tool_registry() -> ToolRegistry:
     # ========================================
 
     try:
-        from app.tools.system.read_data_registry.tool import ReadDataRegistryTool
-        registry.register(ReadDataRegistryTool(), priority=5)
-        logger.info("tool_loaded", tool="read_data_registry")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="read_data_registry", error=str(e))
-
-    try:
         from app.tools.query.get_air_quality.tool import GetAirQualityTool
         registry.register(GetAirQualityTool(), priority=10)
         logger.info("tool_loaded", tool="get_air_quality")
@@ -1041,17 +1034,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="knowledge_document_reader")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_document_reader", error=str(e))
-
-    # ========================================
-    # Planning Tools（规划工具）
-    # ========================================
-
-    try:
-        from app.tools.planning.complex_query_planner.tool import ComplexQueryPlannerTool
-        registry.register(ComplexQueryPlannerTool(), priority=55)
-        logger.info("tool_loaded", tool="complex_query_planner")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="complex_query_planner", error=str(e))
 
     logger.info(
         "global_tool_registry_created",

@@ -135,7 +135,7 @@ get_5min_data(
 
 2. 加载数据：
    ```python
-   read_data_registry(data_id, list_fields=true)
+   execute_python 中使用 load_data(file_path) 处理完整数据
    ```
 
 3. LLM 生成 Python 代码处理数据并生成 ECharts 配置

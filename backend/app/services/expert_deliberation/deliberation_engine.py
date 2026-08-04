@@ -73,7 +73,7 @@ class ExpertDeliberationEngine:
             progress_callback,
             "started",
             "会商启动",
-            f"开始处理 {len(request.consultation_tables)} 张表、{len(request.data_ids)} 个 data_id。",
+            f"开始处理 {len(request.consultation_tables)} 张表、{len(request.file_paths)} 个数据文件。",
         )
         await self._emit_progress(
             progress_callback,
@@ -419,7 +419,7 @@ class ExpertDeliberationEngine:
         used_ids = [fact.fact_id for fact in facts]
         missing = [
             "定量贡献比例必须有模型或计算方法支撑",
-            "报告文字结论需要回链到原始表格、data_id或工具输出",
+            "报告文字结论需要回链到原始表格、数据文件或工具输出",
         ]
         claim = ClaimRecord(
             claim_id="claim_reviewer_moderator_001",

@@ -45,6 +45,7 @@ test('normalizes active file and artifact resources for the at menu', () => {
     resources: [
       { ref_id: 'upload-1', kind: 'file', label: '数据.xlsx', status: 'active', role: 'attachment', metadata: { source: 'user_upload' } },
       { ref_id: 'report-1', kind: 'artifact', label: '报告.docx', status: 'active', role: 'report', tool_name: 'generate_report' },
+      { ref_id: 'data-1', kind: 'data', label: '查询数据.json', status: 'active', role: 'output' },
       { ref_id: 'old-1', kind: 'file', label: '旧文件.txt', status: 'superseded' },
       { ref_id: 'url-1', kind: 'url', label: '网页', status: 'active' }
     ]
@@ -52,7 +53,8 @@ test('normalizes active file and artifact resources for the at menu', () => {
 
   assert.deepEqual(resources.map(item => [item.id, item.group]), [
     ['upload-1', '用户上传'],
-    ['report-1', 'Agent 生成']
+    ['report-1', 'Agent 生成'],
+    ['data-1', 'Agent 生成']
   ])
 })
 

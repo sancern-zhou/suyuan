@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.schemas.query_dashboard import DashboardOverviewResponse
-from app.services.data_registry import data_registry
+import json
+
+from app.agent.context.data_files import resolve_data_path
 from app.services.map_program_receipts import map_program_receipt_store
 from app.services.query_dashboard_map_data import dataset_to_geojson_features
 from app.services.query_dashboard_service import QueryDashboardService
@@ -37,18 +39,20 @@ def get_guangdong_overview(
     return service.build_guangdong_overview(include=_parse_include(include))
 
 
-@router.get("/map-data/{data_id:path}")
+@router.get("/map-data")
 def get_map_data_features(
-    data_id: str,
+    file_path: str = Query(description="会话数据文件绝对路径"),
     lon: str | None = Query(default=None, description="经度字段名；GeoJSON geometry 资产可省略"),
     lat: str | None = Query(default=None, description="纬度字段名；GeoJSON geometry 资产可省略"),
     view: str | None = Query(default=None, description="可选 DataRegistry view 名称"),
     limit: int = Query(default=1000, ge=1, le=5000),
 ) -> dict:
     try:
-        dataset = data_registry.load_dataset(data_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=f"data_id not found: {data_id}") from exc
+        path = resolve_data_path(file_path)
+        with path.open("r", encoding="utf-8") as stream:
+            dataset = json.load(stream)
+    except (ValueError, PermissionError, FileNotFoundError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=404, detail=f"data file unavailable: {file_path}") from exc
 
     features = dataset_to_geojson_features(
         dataset,
@@ -59,7 +63,7 @@ def get_map_data_features(
     )
     return {
         "type": "FeatureCollection",
-        "data_id": data_id,
+        "file_path": file_path,
         "features": features,
     }
 

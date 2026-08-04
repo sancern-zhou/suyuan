@@ -2,9 +2,8 @@ const visibleProgramLayers = (mapProgram) => Array.isArray(mapProgram?.state?.la
   ? mapProgram.state.layers.filter(layer => layer?.lifecycle?.visible !== false)
   : []
 
-const layerDataId = (layer) => {
-  if (layer?.data?.type === 'data_id') return layer.data.id || null
-  if (layer?.data?.type === 'artifact_id') return layer.data.id || null
+const layerFilePath = (layer) => {
+  if (layer?.data?.type === 'file_path') return layer.data.path || null
   return null
 }
 
@@ -14,7 +13,8 @@ export function summarizeProgramLayerRenderResults(mapProgram, entries = []) {
     return {
       layer_id: layer.id,
       layer_type: layer.layer_type,
-      data_id: layerDataId(layer),
+      file_path: layerFilePath(layer),
+      artifact_id: layer?.data?.type === 'artifact_id' ? (layer.data.id || null) : null,
       status: featureCount > 0 ? 'layer_rendered' : 'layer_empty',
       visible: true,
       feature_count: featureCount
@@ -30,4 +30,3 @@ export function createMapProgramExecutionReceipt(mapProgram, options = {}) {
     errors: Array.isArray(options.errors) ? options.errors : []
   }
 }
-

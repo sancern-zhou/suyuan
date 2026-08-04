@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import structlog
 
 from app.schemas.common import DataQualityReport, FieldStats, ValidationIssue, ValidationSeverity
-from app.services.data_registry import data_registry
+from app.agent.context.data_files import resolve_data_path, safe_file_stem, to_data_path
 from app.agent.memory.tool_protocol_repair import repair_tool_result_pairing
 
 logger = structlog.get_logger()
@@ -334,10 +334,10 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         }
 
     keep_keys = {
-        "success", "status", "summary", "error", "error_type", "data_id",
-        "data_ids", "report_data_id", "report_data_ids", "file_path", "count", "total_count", "sample_count",
+        "success", "status", "summary", "error", "error_type", "file_path",
+        "file_paths", "report_file_path", "report_file_paths", "count", "total_count", "sample_count",
         "original_count", "metadata", "has_chart", "chart_summary",
-        "source_data_ids", "source_report_data_ids",
+        "source_file_paths", "source_report_file_paths",
         "refs", "context_refs", "llm_resume", "content_preview", "visual_ids",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
@@ -369,11 +369,10 @@ def _as_list(value: Any) -> List[Any]:
     return []
 
 
-def _compact_data_ref(data_id: Any, usage: str) -> Dict[str, Any]:
+def _compact_data_ref(file_path: Any, usage: str) -> Dict[str, Any]:
     return {
-        "data_id": str(data_id),
+        "file_path": str(file_path),
         "usage": usage,
-        "tool": "read_data_registry",
     }
 
 
@@ -425,20 +424,20 @@ def _extract_context_refs(result_dict: Dict[str, Any]) -> Dict[str, Any]:
 
     data_refs: List[Dict[str, Any]] = []
     for key, usage in (
-        ("data_id", "primary"),
-        ("report_data_id", "report"),
+        ("file_path", "primary"),
+        ("report_file_path", "report"),
     ):
         value = result_dict.get(key) or data_payload.get(key)
         if value:
-            _append_unique(data_refs, _compact_data_ref(value, usage), "data_id")
+            _append_unique(data_refs, _compact_data_ref(value, usage), "file_path")
     for key, usage in (
-        ("data_ids", "primary"),
-        ("report_data_ids", "report"),
-        ("source_data_ids", "source"),
+        ("file_paths", "primary"),
+        ("report_file_paths", "report"),
+        ("source_file_paths", "source"),
     ):
         for value in _as_list(result_dict.get(key) or data_payload.get(key)):
             if value:
-                _append_unique(data_refs, _compact_data_ref(value, usage), "data_id")
+                _append_unique(data_refs, _compact_data_ref(value, usage), "file_path")
     if data_refs:
         refs = _merge_context_refs(refs, {"data": data_refs})
 
@@ -611,24 +610,21 @@ class SessionMemory:
             base_dir = project_root / "backend_data_registry" / "sessions"
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir = self.session_dir / "data"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
         self.use_llm_compression = use_llm_compression
         self.compressed_iterations: List[Dict[str, Any]] = []
         self.data_files: Dict[str, str] = {}
-        self.data_registry_refs: Dict[str, str] = {}
         self.conversation_history: List[ConversationTurn] = []
         self.llm_source_until_sequence: Optional[int] = None
-
-        # ✅ 修复：初始化 data_registry 引用（溯源模式需要）
-        # 使用全局单例，确保所有模式兼容
-        self.data_registry = data_registry
 
         logger.info(
             "session_memory_initialized",
             session_id=session_id,
             directory=str(self.session_dir),
             use_llm_compression=use_llm_compression,
-            has_data_registry=True,
+            resource_catalog="session_resources",
         )
 
     # ------------------------------------------------------------------ #
@@ -661,28 +657,19 @@ class SessionMemory:
         prompt = (
             "You are an expert at compressing agent execution steps while preserving CRITICAL information. "
             "Summarize the following agent step in 2-3 short sentences, but you MUST preserve:\n"
-            "1. ALL data_id references - use SHORT ALIASES (e.g., 'PMF:abc12345' for 'pmf_result:v1:abc12345...')\n"
+            "1. ALL file_path references exactly as returned by tools\n"
             "2. The tool name and key parameters\n"
             "3. Any notable findings, results, or errors\n"
             "4. Success/failure status\n\n"
-            "ID Alias Format Rules:\n"
-            "- Extract schema from data_id (before first ':')\n"
-            "- Take first 8 characters of hash (after last ':')\n"
-            "- Format: 'SCHEMA:abcdef12' (uppercase, compact)\n"
-            "- Examples:\n"
-            "  'pmf_result:v1:abc12345...' → 'PMF:abc12345'\n"
-            "  'vocs_unified:v1:def6789...' → 'VOCS:def6789'\n"
-            "  'obm_ofp_result:v1:xyz...' → 'OBM:xyz12345'\n\n"
-            "Format: [ToolName] [Status] :: [Key info with ID alias] :: [Result summary]\n\n"
+            "Format: [ToolName] [Status] :: [Key info with file path] :: [Result summary]\n\n"
             f"Thought: {iteration.get('thought', '')}\n"
             f"Action: {action.get('tool', 'FINISH')}\n"
             f"Action Args: {action.get('args', {})}\n"
             f"Observation success: {observation.get('success', False)}\n"
             f"Observation summary: {observation.get('summary', '')}\n"
-            f"Data ID: {observation.get('data_id', 'N/A')}\n"
-            f"Data Ref: {observation.get('data_ref', 'N/A')}\n"
+            f"File path: {observation.get('file_path', 'N/A')}\n"
             f"Observation data preview: {data_preview}\n\n"
-            "IMPORTANT: Create a short, readable ID alias for any data_id you see!"
+            "IMPORTANT: Preserve file paths exactly."
         )
 
         try:
@@ -732,25 +719,6 @@ class SessionMemory:
         - 保持信息完整性的同时节省token
         """
 
-        def _create_id_alias(data_id: str) -> str:
-            """创建智能ID别名"""
-            if not data_id or ":" not in data_id:
-                return data_id
-
-            # 解析 schema:v1:hash 格式
-            parts = data_id.split(":")
-            if len(parts) >= 3:
-                schema = parts[0]
-                hash_part = parts[-1][:8]  # 取前8位hash
-                # 转换为大写并简化schema
-                if "_" in schema:
-                    schema = schema.split("_")[0].upper()  # pmf_result → PMF
-                else:
-                    schema = schema.upper()
-                return f"{schema}:{hash_part}"
-
-            return data_id[:12]  # fallback: 取前12字符
-
         action = iteration.get("action", {})
         observation = iteration.get("observation", {})
 
@@ -759,19 +727,16 @@ class SessionMemory:
             success = observation.get('success', False)
             status = '[OK]' if success else '[FAIL]'
 
-            # 优先保留data_id/report_data_id信息 - 使用智能别名
-            data_id = (
-                observation.get('data_id')
-                or observation.get('data_ref')
-                or observation.get('report_data_id')
+            file_path = (
+                observation.get('file_path')
+                or observation.get('report_file_path')
             )
-            if data_id:
-                id_alias = _create_id_alias(data_id)
-                data_id_str = f" (ID: {id_alias})"
+            if file_path:
+                file_path_text = f" (file: {file_path})"
             else:
-                data_id_str = ""
+                file_path_text = ""
 
-            summary = f"{tool_name} {status}{data_id_str}"
+            summary = f"{tool_name} {status}{file_path_text}"
 
             # 添加摘要
             if observation.get("summary"):
@@ -827,7 +792,7 @@ class SessionMemory:
     def save_data_to_file(
         self,
         data: Any,
-        data_id: str,
+        file_stem: str,
         *,
         file_format: str = "json",
         registry_schema: Optional[str] = None,
@@ -836,163 +801,43 @@ class SessionMemory:
         quality_report: Optional[DataQualityReport] = None,
         field_stats: Optional[Iterable[FieldStats]] = None,
     ) -> str:
-        """Persist data to DataRegistry (backend_data_registry/).
+        """Persist an immutable session file and return its canonical path."""
+        safe_filename = safe_file_stem(file_stem)
+        target_dir = self.data_dir if file_format == "json" else self.session_dir
+        path = target_dir / f"{safe_filename}.{file_format}"
+        if path.exists():
+            raise FileExistsError(f"Session data files are immutable: {path}")
 
-        所有数据统一存储到 backend_data_registry/ 目录，不再使用会话临时目录。
-        """
-
-        if file_format != "json":
-            # 非 JSON 格式保存到会话目录（用于 Markdown 报告等）
-            safe_filename = data_id.replace(":", "_")
-            path = self.session_dir / f"{safe_filename}.{file_format}"
-            with path.open("w", encoding="utf-8") as stream:
-                stream.write(str(data))
-            self.data_files[data_id] = str(path)
-            logger.info("session_memory_non_json_saved", data_id=data_id, path=str(path))
-            return str(path)
-
-        # JSON 数据统一保存到 DataRegistry
-        quality_report_obj = self._coerce_quality_report(quality_report)
-        field_stats_list = self._coerce_field_stats(field_stats)
-
-        # 构建 metadata
-        metadata = {"session_id": self.session_id}
-        if registry_metadata:
-            metadata.update(registry_metadata)
-
-        # 使用 data_id 中指定的 schema，如果没有则使用传入的 registry_schema
-        if registry_schema is None:
-            # 从 data_id 中提取 schema (格式: "schema:v1:hash")
-            parts = data_id.split(":")
-            if len(parts) >= 1:
-                registry_schema = parts[0]
+        with path.open("w", encoding="utf-8") as stream:
+            if file_format == "json":
+                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
             else:
-                registry_schema = "unknown"
+                stream.write(str(data))
 
-        # 检查数据格式
-        if not isinstance(data, list):
-            # 非列表数据（如单个对象）保存到会话目录
-            safe_filename = data_id.replace(":", "_")
-            path = self.session_dir / f"{safe_filename}.{file_format}"
-            with path.open("w", encoding="utf-8") as stream:
-                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
-            self.data_files[data_id] = str(path)
-            logger.info("session_memory_non_list_saved", data_id=data_id, path=str(path))
-            return str(path)
+        file_path = to_data_path(path)
+        self.data_files[file_path] = str(path)
+        logger.info(
+            "session_data_file_saved",
+            file_path=file_path,
+            schema=registry_schema,
+            record_count=len(data) if isinstance(data, list) else 1,
+            session_id=self.session_id,
+        )
+        return file_path
 
-        # 检查是否所有项都是字典
-        if not all(isinstance(item, dict) for item in data):
-            # 混合类型数据保存到会话目录
-            safe_filename = data_id.replace(":", "_")
-            path = self.session_dir / f"{safe_filename}.{file_format}"
-            with path.open("w", encoding="utf-8") as stream:
-                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
-            self.data_files[data_id] = str(path)
-            logger.info("session_memory_mixed_type_saved", data_id=data_id, path=str(path))
-            return str(path)
-
-        # 标准列表字典数据 - 保存到 DataRegistry
-        try:
-            # ✅ 修复：传入 data_id 参数，避免 register_dataset 重新生成 ID 导致不匹配
-            entry = data_registry.register_dataset(
-                schema=registry_schema,
-                version=registry_version,
-                records=data,  # type: ignore[arg-type]
-                quality_report=quality_report_obj,
-                field_stats=field_stats_list,
-                metadata=metadata,
-                data_id=data_id,  # ✅ 传入完整的 data_id (schema:v1:hash 格式)
-            )
-            registry_id = entry.data_id
-            self.data_registry_refs[data_id] = registry_id
-            self.data_files[data_id] = str(entry.dataset_path)
-
-            logger.info(
-                "session_memory_data_saved_to_registry",
-                data_id=data_id,
-                registry_id=registry_id,
-                dataset_path=str(entry.dataset_path),
-                record_count=len(data),
-            )
-            return str(entry.dataset_path)
-
-        except Exception as exc:
-            logger.error(
-                "session_memory_registry_register_failed",
-                data_id=data_id,
-                error=str(exc),
-                exc_info=True,
-            )
-            # 降级：保存到会话目录
-            safe_filename = data_id.replace(":", "_")
-            path = self.session_dir / f"{safe_filename}.{file_format}"
-            with path.open("w", encoding="utf-8") as stream:
-                json.dump(data, stream, ensure_ascii=False, indent=2, default=str)
-            self.data_files[data_id] = str(path)
-            return str(path)
-
-    def get_registry_id(self, data_id: str) -> Optional[str]:
-        """Return the registry identifier for a persisted dataset."""
-
-        return self.data_registry_refs.get(data_id)
-
-    def load_data_from_file(self, data_id: str) -> Optional[Any]:
+    def load_data_from_file(self, file_path: str) -> Optional[Any]:
         """Load data from disk if it exists."""
-
-        # 【修复】添加空值检查
-        if data_id is None:
-            logger.warning(
-                "session_memory_data_id_is_none",
-                data_id=data_id,
-                available_ids=list(self.data_files.keys())[:5]
-            )
+        if not file_path:
+            logger.warning("session_memory_file_path_is_empty")
             return None
 
-        file_path = self.data_files.get(data_id)
-        if not file_path:
-            # ✅ 增强：尝试从 DataRegistry 查找文件
-            safe_filename = data_id.replace(":", "_")
-            registry_path = self.data_registry.base_dir / "datasets" / f"{safe_filename}.json"
-
-            logger.info(
-                "session_memory_trying_registry_path",
-                data_id=data_id,
-                safe_filename=safe_filename,
-                registry_path=str(registry_path),
-                registry_exists=registry_path.exists()
+        registered_path = self.data_files.get(file_path)
+        try:
+            path = Path(registered_path) if registered_path else resolve_data_path(
+                file_path, session_id=self.session_id
             )
-
-            if registry_path.exists():
-                logger.info(
-                    "session_memory_file_found_in_registry",
-                    data_id=data_id,
-                    registry_path=str(registry_path)
-                )
-                file_path = str(registry_path)
-            else:
-                # 尝试从 session_dir 查找（备用）
-                logger.warning(
-                    "session_memory_file_not_registered",
-                    data_id=data_id,
-                    available_ids=list(self.data_files.keys())[:5],  # 只显示前5个
-                    registry_path=str(registry_path)
-                )
-
-                alternative_path = self.session_dir / f"{safe_filename}.json"
-
-                if alternative_path.exists():
-                    logger.info(
-                        "session_memory_file_found_by_pattern",
-                        data_id=data_id,
-                        alternative_path=str(alternative_path)
-                    )
-                    file_path = str(alternative_path)
-                else:
-                    return None
-
-        path = Path(file_path)
-        if not path.exists():
-            logger.warning("session_memory_file_missing", data_id=data_id, path=str(path))
+        except (ValueError, PermissionError, FileNotFoundError) as exc:
+            logger.warning("session_memory_file_missing", file_path=file_path, error=str(exc))
             return None
 
         try:
@@ -1014,7 +859,7 @@ class SessionMemory:
         except Exception as e:
             logger.error(
                 "session_memory_file_load_error",
-                data_id=data_id,
+                file_path=file_path,
                 path=str(path),
                 error=str(e)
             )
@@ -1496,7 +1341,7 @@ class SessionMemory:
             summary_key = "summary_text" if result_dict.get("summary_text") else "summary"
             lightweight[summary_key] = _truncate_string(str(summary_text), 2_000)
 
-        for key in ("data_id", "data_ids", "report_data_id", "report_data_ids"):
+        for key in ("file_path", "file_paths", "report_file_path", "report_file_paths"):
             value = result_dict.get(key) or data.get(key)
             if value:
                 lightweight[key] = value
@@ -1527,16 +1372,16 @@ class SessionMemory:
 
         has_reference = any(
             lightweight.get(key)
-            for key in ("data_id", "data_ids", "report_data_id", "report_data_ids")
+            for key in ("file_path", "file_paths", "report_file_path", "report_file_paths")
         )
         if "summary" not in lightweight and "summary_text" not in lightweight:
-            if lightweight.get("data_id"):
+            if lightweight.get("file_path"):
                 lightweight["summary"] = (
-                    f"结果已保存为 data_id={lightweight['data_id']}，可用 read_data_registry 读取。"
+                    f"完整结果已保存为 file_path={lightweight['file_path']}。"
                 )
-            elif lightweight.get("data_ids"):
+            elif lightweight.get("file_paths"):
                 lightweight["summary"] = (
-                    f"结果已保存为 data_ids={lightweight['data_ids']}，可用 read_data_registry 读取。"
+                    f"完整结果已保存为 file_paths={lightweight['file_paths']}。"
                 )
             elif result:
                 lightweight["summary"] = _safe_content_preview(result, 800)
@@ -1545,7 +1390,7 @@ class SessionMemory:
 
         keep_keys = {
             "status", "summary", "summary_text", "message", "error",
-            "data_id", "data_ids", "report_data_id", "report_data_ids",
+            "file_path", "file_paths", "report_file_path", "report_file_paths",
             "tool_name", "tool_use_id", "is_error", "visuals",
             "context_refs", "content_preview", "llm_resume",
         }
@@ -1596,7 +1441,6 @@ class SessionMemory:
         projector.use_llm_compression = False
         projector.compressed_iterations = []
         projector.data_files = {}
-        projector.data_registry_refs = {}
         projector.conversation_history = []
         projector.load_history_messages(messages)
         return projector.get_messages_for_llm(repair_strategy="conservative")
@@ -2110,7 +1954,6 @@ class SessionMemory:
 
         self.compressed_iterations.clear()
         self.data_files.clear()
-        self.data_registry_refs.clear()
         self.conversation_history.clear()
 
         logger.info("session_memory_cleaned", session_id=self.session_id)

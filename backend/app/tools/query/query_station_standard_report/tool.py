@@ -304,13 +304,6 @@ def execute_query_station_standard_report(
             result["data"] = preview
             result.pop("result", None)
             result["summary"] += f" | 完整接口报表已保存为 report_data_id: {report_data_id}"
-            result["registry_usage"] = {
-                "default": f'read_data_registry(data_id="{report_data_id}")',
-                "reporting": f'read_data_registry(data_id="{report_data_id}")',
-                "stations": f'read_data_registry(data_id="{report_data_id}", view="stations")',
-                "raw": f'read_data_registry(data_id="{report_data_id}", view="raw")',
-                "result": f'read_data_registry(data_id="{report_data_id}", view="result")',
-            }
         return result
     except Exception as exc:
         logger.error("query_station_standard_report_failed", error=str(exc), error_type=type(exc).__name__)
@@ -497,13 +490,6 @@ def execute_query_station_standard_yoy_report(
             result["data"] = preview
             result.pop("result", None)
             result["summary"] += f" | 完整接口报表已保存为 report_data_id: {report_data_id}"
-            result["registry_usage"] = {
-                "default": f'read_data_registry(data_id="{report_data_id}")',
-                "reporting": f'read_data_registry(data_id="{report_data_id}")',
-                "stations": f'read_data_registry(data_id="{report_data_id}", view="stations")',
-                "raw": f'read_data_registry(data_id="{report_data_id}", view="raw")',
-                "result": f'read_data_registry(data_id="{report_data_id}", view="result")',
-            }
         return result
     except Exception as exc:
         logger.error("query_station_standard_yoy_report_failed", error=str(exc), error_type=type(exc).__name__)
@@ -528,7 +514,7 @@ class QueryStationStandardReportTool(LLMTool):
                 "不进行本地日报重算。用于站点综合指数、达标/超标天数、污染物统计浓度、首要污染物、排名等统计报表。"
                 "ns_type=2 表示新国标；ns_type=1 表示旧国标。"
                 "cities 支持城市名或带“市”后缀的城市名，会按 station_type 自动映射为下辖站点编码，默认国控；"
-                "stations 支持站点名称或站点编码。工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
+                "stations 支持站点名称或站点编码。工具返回默认使用 reporting 报告口径视图，"
                 "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
                 "只有需要追溯原始接口字段时才读取 raw/result 视图。"
             ),
@@ -620,7 +606,7 @@ class QueryStationStandardYoyReportTool(LLMTool):
                 "不再本地计算站点新/旧国标双时段统计报表。ns_type=2 表示新国标；"
                 "ns_type=1 表示旧国标。cities 支持城市名或带“市”后缀的城市名，会按 station_type 自动映射为下辖站点编码，默认国控；"
                 "stations 支持站点名称或站点编码。适用于站点同比、环比、变化率、改善/恶化分析。"
-                "工具返回和 read_data_registry(data_id) 默认使用 reporting 报告口径视图，"
+                "工具返回默认使用 reporting 报告口径视图，"
                 "其中 PM2.5 已按信息公开规范取 pM2_5_Decimal 并保留1位小数；"
                 "只有需要追溯原始接口字段时才读取 raw/result 视图。"
             ),
