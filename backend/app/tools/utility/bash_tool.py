@@ -35,7 +35,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products
-from app.utils.path_config import BACKEND_ROOT
+from app.utils.path_config import BACKEND_ROOT, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -1005,7 +1005,7 @@ class BashTool(LLMTool):
             Path 对象或 None（如果无效）
         """
         try:
-            requested = Path(requested_dir).resolve()
+            requested = resolve_agent_path(requested_dir)
 
             # 检查是否在工作目录范围内
             if not requested.is_relative_to(self.working_dir):

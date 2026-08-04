@@ -21,8 +21,8 @@ class ConfigCrypto:
 
     def __init__(self, secret_key_path: str | None = None):
         if secret_key_path is None:
-            from config.settings import settings
-            secret_key_path = Path(settings.data_registry_dir) / "social" / ".crypto_key"
+            from app.utils.path_config import get_data_registry
+            secret_key_path = get_data_registry() / "social" / ".crypto_key"
         else:
             secret_key_path = Path(secret_key_path)
 

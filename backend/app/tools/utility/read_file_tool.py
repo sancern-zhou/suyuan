@@ -33,7 +33,7 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products
 from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.resource_refs import build_file_ref
-from app.utils.path_config import BACKEND_ROOT
+from app.utils.path_config import PROJECT_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -94,10 +94,10 @@ class ReadFileTool(LLMTool):
             requires_context=False
         )
 
-        # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
-        self.working_dir = BACKEND_ROOT
+        # Agent 相对路径统一从仓库根目录解析。
+        self.working_dir = PROJECT_ROOT
         # 允许访问的目录：整个项目目录（包含backend_data_registry）和临时目录
-        self.allowed_dirs = [Path("/home/xckj/suyuan"), Path("/tmp")]
+        self.allowed_dirs = [PROJECT_ROOT, TEMP_ROOT]
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB
@@ -1423,15 +1423,10 @@ class ReadFileTool(LLMTool):
     def _resolve_path(self, path: str) -> Optional[Path]:
         """解析文件路径，确保在允许的目录范围内"""
         try:
-            file_path = Path(path)
-
-            if not file_path.is_absolute():
-                file_path = self.working_dir / file_path
-
-            file_path = file_path.resolve()
+            file_path = resolve_agent_path(path)
 
             # 检查是否在允许的目录范围内
-            is_allowed = any(file_path.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs)
+            is_allowed = is_path_within(file_path, self.allowed_dirs)
 
             if not is_allowed:
                 logger.warning(

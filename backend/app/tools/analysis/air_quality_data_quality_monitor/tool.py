@@ -15,6 +15,7 @@ from app.services.air_quality_data_quality_monitor import (
     run_air_quality_data_quality_monitor,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -52,7 +53,7 @@ class AirQualityDataQualityMonitorTool(LLMTool):
                     },
                     "output_root": {
                         "type": "string",
-                        "description": "固定输出目录；相对路径基于 backend 目录",
+                        "description": "固定输出目录",
                     },
                     "end_time": {
                         "type": "string",
@@ -95,7 +96,7 @@ class AirQualityDataQualityMonitorTool(LLMTool):
                 cities=selected_cities,
                 hours=max(6, int(hours or 24)),
                 station_type=station_type or "国控",
-                output_root=Path(output_root) if output_root else None,
+                output_root=resolve_agent_path(output_root) if output_root else None,
                 end_time=self._parse_time(end_time),
                 session_id=getattr(context, "session_id", "data_quality_monitor_tool"),
             )

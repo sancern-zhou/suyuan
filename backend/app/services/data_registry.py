@@ -11,7 +11,7 @@ from uuid import uuid4
 import structlog
 
 from app.schemas.common import DataQualityReport, FieldStats
-from config.settings import settings
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -41,12 +41,7 @@ class DataRegistryService:
     """Persistent registry for structured datasets."""
 
     def __init__(self, base_dir: Optional[str] = None) -> None:
-        default_dir = Path(settings.data_registry_dir)
-        if not default_dir.is_absolute():
-            project_root = Path(__file__).resolve().parents[2]
-            default_dir = project_root / default_dir
-
-        base_path = Path(base_dir) if base_dir else default_dir
+        base_path = resolve_agent_path(base_dir) if base_dir else get_data_registry()
 
         self.base_dir = base_path
         self.datasets_dir = self.base_dir / "datasets"

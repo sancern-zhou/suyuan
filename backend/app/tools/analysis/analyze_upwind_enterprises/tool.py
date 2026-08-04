@@ -689,7 +689,8 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
         index: int,
         map_url: str,
     ) -> Path:
-        base_dir = Path(output_dir) if output_dir else Path(settings.data_registry_dir) / "upwind_enterprises" / "images"
+        from app.utils.path_config import get_data_registry, resolve_agent_path
+        base_dir = resolve_agent_path(output_dir) if output_dir else get_data_registry() / "upwind_enterprises" / "images"
         suffix = self._image_suffix_from_url(map_url)
         if output_dir:
             return base_dir / f"upwind_enterprises_{index}{suffix}"

@@ -8,23 +8,66 @@
 - 禁止使用绝对路径或相对路径硬编码
 - 所有工具必须使用此配置获取路径
 """
+import os
 from pathlib import Path
-from functools import lru_cache
+import tempfile
+from typing import Iterable
 import structlog
 
 logger = structlog.get_logger()
 
-# 项目根目录：backend/ 目录
-# __file__ 位于 backend/app/utils/path_config.py
-# parents[1] = backend/app
-# parents[2] = backend
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+# 安装位置可由部署配置覆盖；未配置时才从本模块位置推导。
+_DISCOVERED_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(
+    os.environ.get("SUYUAN_BACKEND_ROOT", str(_DISCOVERED_BACKEND_ROOT))
+).expanduser().resolve()
+PROJECT_ROOT = Path(
+    os.environ.get("SUYUAN_PROJECT_ROOT", str(BACKEND_ROOT.parent))
+).expanduser().resolve()
+TEMP_ROOT = Path(tempfile.gettempdir()).resolve()
 
-# 项目根目录：suyuan/ 目录（如果需要）
-PROJECT_ROOT = BACKEND_ROOT.parent
+
+def resolve_agent_path(path: str | Path) -> Path:
+    """Resolve an Agent-facing filesystem path using the one shared contract.
+
+    Relative paths are always relative to ``PROJECT_ROOT`` (the ``suyuan``
+    repository root). Absolute paths are
+    accepted and normalized. Access control is deliberately handled separately
+    by :func:`is_path_within`, because each tool has a different permission
+    boundary.
+    """
+    raw = str(path or "").strip()
+    if not raw:
+        raise ValueError("path is required")
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    return candidate.resolve()
 
 
-@lru_cache(maxsize=1)
+def is_path_within(path: str | Path, allowed_roots: Iterable[str | Path]) -> bool:
+    """Return whether a resolved path is contained by any allowed root."""
+    resolved = Path(path).expanduser().resolve()
+    return any(
+        resolved.is_relative_to(Path(root).expanduser().resolve())
+        for root in allowed_roots
+    )
+
+
+def format_agent_path(path: str | Path) -> str:
+    """Format a filesystem path for Agent output without an ambiguous base.
+
+    Paths inside the repository are returned relative to ``PROJECT_ROOT``. A
+    backend path therefore always starts with ``backend/``. Paths outside the
+    repository (for example temporary files) remain canonical absolute paths.
+    """
+    resolved = Path(path).expanduser().resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def get_data_registry() -> Path:
     """
     获取 data registry 的绝对路径
@@ -34,7 +77,12 @@ def get_data_registry() -> Path:
     Returns:
         Path: backend_data_registry 目录的绝对路径
     """
-    return (BACKEND_ROOT / "backend_data_registry").resolve()
+    from config.settings import settings
+
+    configured = Path(settings.data_registry_dir).expanduser()
+    if not configured.is_absolute():
+        configured = BACKEND_ROOT / configured
+    return configured.resolve()
 
 
 def get_datasets_dir() -> Path:

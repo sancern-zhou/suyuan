@@ -58,6 +58,7 @@ backend/tests/
 **/__tests__/
 **/*_test.py
 !backend/app/services/ops_audit/semantic/test_reviewer.py
+!backend/app/utils/path_config_test.py
 **/*.test.mjs
 *.backup*
 *.bak

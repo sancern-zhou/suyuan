@@ -23,7 +23,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products
-from app.utils.path_config import PROJECT_ROOT, get_social_dir
+from app.utils.path_config import PROJECT_ROOT, get_social_dir, resolve_agent_path
 
 logger = structlog.get_logger(__name__)
 
@@ -825,7 +825,7 @@ class CliSessionTool(LLMTool):
     def _resolve_cwd(self, cwd: Optional[str]) -> Optional[Path]:
         try:
             base = PROJECT_ROOT.resolve()
-            requested = Path(cwd).resolve() if cwd else base
+            requested = resolve_agent_path(cwd) if cwd else base
             if requested == base or requested.is_relative_to(base):
                 if requested.exists() and requested.is_dir():
                     return requested
