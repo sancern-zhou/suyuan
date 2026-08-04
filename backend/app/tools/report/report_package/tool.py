@@ -36,6 +36,7 @@ from app.tools.artifact_utils import (
     preview_output_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 from app.utils.path_config import get_images_dir
 
 logger = structlog.get_logger()
@@ -67,7 +68,7 @@ def _safe_report_id(raw_id: str) -> str:
 
 
 def _copy_file_to_dir(source: str, target_dir: Path, *, preferred_name: str | None = None) -> Dict[str, Any]:
-    src = Path(source).expanduser().resolve()
+    src = resolve_agent_path(source)
     if not src.exists() or not src.is_file():
         return {"source": source, "success": False, "error": "file not found"}
 
@@ -598,7 +599,7 @@ format:
         source_qmd = None
         if source_qmd_path:
             try:
-                candidate = Path(source_qmd_path).expanduser().resolve()
+                candidate = resolve_agent_path(source_qmd_path)
                 if candidate.exists() and candidate.is_file() and candidate != qmd_path.resolve():
                     source_unsupported_r_features = _find_unsupported_r_qmd_features(
                         candidate.read_text(encoding="utf-8")

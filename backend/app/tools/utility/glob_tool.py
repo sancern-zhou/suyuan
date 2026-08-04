@@ -17,7 +17,7 @@ import fnmatch
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.path_config import BACKEND_ROOT
+from app.utils.path_config import PROJECT_ROOT, TEMP_ROOT, format_agent_path, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -56,9 +56,9 @@ class GlobTool(LLMTool):
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
         # 所有相对路径都从项目根目录解析
-        self.working_dir = BACKEND_ROOT
+        self.working_dir = PROJECT_ROOT
         # 允许访问的额外目录（临时目录）
-        self.allowed_dirs = [self.working_dir, Path("/tmp")]
+        self.allowed_dirs = [self.working_dir, TEMP_ROOT]
 
     async def execute(
         self,
@@ -126,13 +126,7 @@ class GlobTool(LLMTool):
                 matches = matches[:limit]
 
             # 5. 转换为相对路径（便于显示）
-            file_paths = []
-            for match in matches:
-                try:
-                    rel_path = str(match.relative_to(resolved_path))
-                except ValueError:
-                    rel_path = str(match)
-                file_paths.append(rel_path)
+            file_paths = [format_agent_path(match) for match in matches]
 
             logger.info(
                 "glob_search_success",
@@ -223,13 +217,10 @@ class GlobTool(LLMTool):
     def _resolve_path(self, path: str) -> Optional[Path]:
         """解析路径，确保在允许的目录范围内"""
         try:
-            p = Path(path)
-            if not p.is_absolute():
-                p = self.working_dir / p
-            p = p.resolve()
+            p = resolve_agent_path(path)
 
             # 检查是否在允许的目录范围内
-            is_allowed = any(p.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs)
+            is_allowed = is_path_within(p, self.allowed_dirs)
 
             if not is_allowed:
                 logger.warning("glob_path_escape", requested=path, allowed_dirs=[str(d) for d in self.allowed_dirs])

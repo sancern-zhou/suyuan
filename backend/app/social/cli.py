@@ -33,6 +33,7 @@ from config.settings import settings
 from app.social.config import SocialConfig
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
+from app.utils.path_config import get_data_registry
 from app.social.agent_bridge import AgentBridge
 from app.channels.manager import ChannelManager
 from app.agent.react_agent import create_react_agent
@@ -77,7 +78,7 @@ async def main():
 
     logger.info("Initializing session mapper")
     session_mapper = SessionMapper(
-        data_dir=settings.data_registry_dir
+        data_dir=str(get_data_registry())
     )
     await session_mapper.load()
 

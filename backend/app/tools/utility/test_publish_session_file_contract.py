@@ -3,6 +3,7 @@ import pytest
 from app.agent.resources.normalizer import normalize_tool_resources
 from app.tools.utility import publish_session_file_tool
 from app.tools.utility.publish_session_file_tool import PublishSessionFileTool
+from app.utils import path_config
 from app.utils.path_config import PROJECT_ROOT
 
 
@@ -95,13 +96,14 @@ def test_schema_describes_catalog_registration_instead_of_frontend_push():
 
 
 @pytest.mark.asyncio
-async def test_relative_path_is_resolved_from_backend_root(tmp_path, monkeypatch):
+async def test_relative_path_is_resolved_from_project_root(tmp_path, monkeypatch):
     nested = tmp_path / "outputs"
     nested.mkdir()
     document = nested / "report.pdf"
     document.write_bytes(b"pdf")
-    monkeypatch.setattr(publish_session_file_tool, "BACKEND_ROOT", tmp_path)
+    monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
     tool = PublishSessionFileTool()
+    tool.allowed_dirs = [tmp_path]
 
     result = await tool.execute("outputs/report.pdf")
 

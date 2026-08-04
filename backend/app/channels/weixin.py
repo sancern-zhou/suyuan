@@ -604,7 +604,8 @@ class WeixinChannel(BaseChannel):
             d = Path(state_dir).expanduser()
         else:
             # ✅ 多实例支持：每个账号独立的子目录
-            d = Path(settings.data_registry_dir) / "social" / "weixin" / self.instance_id
+            from app.utils.path_config import get_data_registry
+            d = get_data_registry() / "social" / "weixin" / self.instance_id
 
         d.mkdir(parents=True, exist_ok=True)
         self._state_dir = d

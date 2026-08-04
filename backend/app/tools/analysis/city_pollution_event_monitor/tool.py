@@ -12,6 +12,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.services.pollution_event_monitor import MonitorConfig, run_pollution_event_monitor
+from app.utils.path_config import resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -49,7 +50,7 @@ class CityPollutionEventMonitorTool(LLMTool):
                     },
                     "output_root": {
                         "type": "string",
-                        "description": "固定输出目录；相对路径基于 backend 目录"
+                        "description": "固定输出目录"
                     },
                     "force_collect": {
                         "type": "boolean",
@@ -102,7 +103,7 @@ class CityPollutionEventMonitorTool(LLMTool):
                 cities=selected_cities,
                 hours=max(2, int(hours or 24)),
                 station_type=station_type or "国控",
-                output_root=Path(output_root) if output_root else None,
+                output_root=resolve_agent_path(output_root) if output_root else None,
                 force_collect=bool(force_collect),
                 include_components=bool(include_components),
                 end_time=self._parse_time(end_time),
@@ -153,4 +154,3 @@ class CityPollutionEventMonitorTool(LLMTool):
             except ValueError:
                 continue
         return datetime.fromisoformat(text)
-

@@ -18,6 +18,7 @@ from app.services.ops_work_order_audit import (
     run_ops_audit_rules,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.utils.path_config import resolve_agent_path
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, merge_refs
 
 logger = structlog.get_logger()
@@ -168,7 +169,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
                     maintenance_types=_merge_single_and_many(maintenance_type, maintenance_types),
                     working_order_codes=_as_list(working_order_codes),
                     evidence_level=evidence_level,
-                    output_dir=Path(output_dir) if output_dir else None,
+                    output_dir=resolve_agent_path(output_dir) if output_dir else None,
                 )
             )
             summary_text = self._summary_text(result)
@@ -260,7 +261,7 @@ def _latest_dataset_path() -> Optional[Path]:
 
 
 def _resolve_dataset_path(dataset_path: Path) -> Path:
-    resolved = dataset_path.expanduser().resolve()
+    resolved = resolve_agent_path(dataset_path)
     if resolved.exists():
         return resolved
     latest = _latest_dataset_path()
@@ -339,7 +340,7 @@ class OpsAuditRunRulesTool(LLMTool):
             result = await asyncio.to_thread(
                 _run_ops_audit_rules_with_lock,
                 resolved_dataset_path,
-                output_dir=Path(output_dir) if output_dir else None,
+                output_dir=resolve_agent_path(output_dir) if output_dir else None,
                 evidence_level=evidence_level,
                 enable_visual=visual_enabled,
             )
@@ -450,8 +451,8 @@ class OpsAuditInspectTool(LLMTool):
                 if not audit_result_path:
                     return _standard_failure(self.name, "该模式需要 audit_result_path。", "missing_audit_result_path")
                 result = inspect_ops_audit(
-                    Path(audit_result_path),
-                    dataset_path=Path(dataset_path) if dataset_path else None,
+                    resolve_agent_path(audit_result_path),
+                    dataset_path=resolve_agent_path(dataset_path) if dataset_path else None,
                     mode=mode,
                     working_order_code=working_order_code,
                     rule_id=rule_id,

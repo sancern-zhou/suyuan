@@ -35,7 +35,7 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.utils.path_config import BACKEND_ROOT
+from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -327,7 +327,7 @@ class EditFileToolV2(LLMTool):
 
         # 工作目录：使用项目根目录（稳定路径，不依赖 cwd）
         self.working_dir = BACKEND_ROOT.resolve()
-        self.allowed_dirs = [self.working_dir, Path("/tmp").resolve()]
+        self.allowed_dirs = [self.working_dir, TEMP_ROOT]
 
         # 文件读取状态管理器
         self.read_state = get_file_read_state()
@@ -550,14 +550,9 @@ class EditFileToolV2(LLMTool):
     def _resolve_path(self, path: str) -> Optional[Path]:
         """解析文件路径，确保在允许目录范围内"""
         try:
-            file_path = Path(path)
+            file_path = resolve_agent_path(path)
 
-            if not file_path.is_absolute():
-                file_path = self.working_dir / file_path
-
-            file_path = file_path.resolve()
-
-            if not any(file_path.is_relative_to(allowed_dir) for allowed_dir in self.allowed_dirs):
+            if not is_path_within(file_path, self.allowed_dirs):
                 logger.warning(
                     "edit_file_v2_path_escape",
                     requested_path=path,
@@ -792,7 +787,7 @@ class EditFileToolV2(LLMTool):
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "文件路径，绝对或相对路径"
+                        "description": "文件路径"
                     },
                     "old_string": {
                         "type": "string",

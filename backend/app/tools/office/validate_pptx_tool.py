@@ -23,6 +23,7 @@ from app.tools.office.slides_qa.detect_overflow import (
     inspect_rendered_pages,
 )
 from app.tools.office.slides_qa.render_pptx import render_deck
+from app.utils.path_config import BACKEND_ROOT, get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -85,8 +86,8 @@ class ValidatePptxTool(LLMTool):
             version="1.0.0",
             requires_context=False,
         )
-        self.working_dir = Path.cwd().parent
-        self.default_qa_root = self.working_dir / "backend" / "backend_data_registry" / "presentations" / "qa"
+        self.working_dir = BACKEND_ROOT
+        self.default_qa_root = get_data_registry() / "presentations" / "qa"
 
     async def execute(
         self,
@@ -229,17 +230,11 @@ class ValidatePptxTool(LLMTool):
             }
 
     def _resolve_path(self, path: str) -> Path:
-        file_path = Path(path)
-        if not file_path.is_absolute():
-            file_path = self.working_dir / file_path
-        return file_path.resolve()
+        return resolve_agent_path(path)
 
     def _resolve_output_dir(self, output_dir: Optional[str], pptx_path: Path) -> Path:
         if output_dir:
-            path = Path(output_dir)
-            if not path.is_absolute():
-                path = self.working_dir / path
-            return path.resolve()
+            return resolve_agent_path(output_dir)
         return (self.default_qa_root / f"{pptx_path.stem}_{uuid.uuid4().hex[:8]}").resolve()
 
     def _build_structured_quality_sections(self, report: Dict[str, Any]) -> Dict[str, Any]:
