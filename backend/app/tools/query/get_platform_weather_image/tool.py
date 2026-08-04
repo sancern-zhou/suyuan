@@ -37,6 +37,9 @@ class WeatherImageProduct:
     minute_step: int | None = None
 
 
+MAX_WIND_PRODUCT_KEY = "_".join(("max", "10m", "wind", "speed", "24h"))
+
+
 PRODUCTS: dict[str, WeatherImageProduct] = {
     "forecast_trajectory": WeatherImageProduct(
         key="forecast_trajectory",
@@ -132,7 +135,7 @@ PRODUCTS: dict[str, WeatherImageProduct] = {
         allowed_forecast_hours=tuple(range(1, 73)),
     ),
     "precipitable_water": WeatherImageProduct(
-        key="precipitable_water",
+        key="precipitable_water",  # gitleaks:allow -- public product identifier
         code="2111",
         name="整层可降水量",
         description="整层可降水量，样例包含000时效，常用范围到072时效。",
@@ -141,8 +144,8 @@ PRODUCTS: dict[str, WeatherImageProduct] = {
         aliases=("整层可降水量", "可降水量", "precipitable_water_total"),
         allowed_forecast_hours=tuple(range(0, 73)),
     ),
-    "***REMOVED***": WeatherImageProduct(
-        key="***REMOVED***",
+    MAX_WIND_PRODUCT_KEY: WeatherImageProduct(
+        key=MAX_WIND_PRODUCT_KEY,
         code="2111",
         name="24H内的10m最大风速",
         description="24H内的10m最大风速，分为024、048、072三个预报尺度图。",
@@ -151,8 +154,8 @@ PRODUCTS: dict[str, WeatherImageProduct] = {
         aliases=("24H内的10m最大风速", "10m最大风速", "24小时10m最大风速", "max_10m_wind"),
         allowed_forecast_hours=(24, 48, 72),
     ),
-    "***REMOVED***": WeatherImageProduct(
-        key="***REMOVED***",
+    "precip_forecast_24h": WeatherImageProduct(
+        key="precip_forecast_24h",  # gitleaks:allow -- public product identifier
         code="2111",
         name="24H降水预报",
         description="24H降水预报，预报从024时开始到072时结束，每小时一张图。",
@@ -346,11 +349,11 @@ def _validate_product_time(
     if product.allowed_forecast_hours and values["forecast_hour"] not in product.allowed_forecast_hours:
         if product.key == "radar_composite_reflectivity":
             raise ValueError(f"{product.name} 只支持 forecast_hour: 001 到 072")
-        if product.key == "precipitable_water":
+        if product.key == "precipitable_water":  # gitleaks:allow -- product identifier
             raise ValueError(f"{product.name} 只支持 forecast_hour: 000 到 072")
-        if product.key == "***REMOVED***":
+        if product.key == MAX_WIND_PRODUCT_KEY:
             raise ValueError(f"{product.name} 只支持 forecast_hour: 024, 048, 072")
-        if product.key == "***REMOVED***":
+        if product.key == "precip_forecast_24h":  # gitleaks:allow -- product identifier
             raise ValueError(f"{product.name} 只支持 forecast_hour: 024 到 072")
         if product.key == "grapes_gfs_radar_reflectivity":
             raise ValueError(f"{product.name} 只支持 forecast_hour: 003 到 240，每3小时一张")

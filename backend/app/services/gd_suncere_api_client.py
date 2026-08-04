@@ -6,6 +6,7 @@
 """
 import requests
 import base64
+import os
 import time
 import structlog
 from typing import Dict, Any, List, Optional
@@ -31,14 +32,13 @@ class GDSuncereAPIClient:
     TOKEN_ENDPOINT = "/api/airprovinceproduct/AirCityBaseCommon/GetExternalApiToken"
 
     # 认证凭据
-    USERNAME = "ScGuanLy"
-    PASSWORD = "Suncere$0717"
-
     # Token 缓存配置
     TOKEN_CACHE_DURATION = 1800  # 30分钟
 
     def __init__(self):
         """初始化 API 客户端"""
+        self.username = os.getenv("GD_SUNCERE_API_USERNAME", "")
+        self.password = os.getenv("GD_SUNCERE_API_PASSWORD", "")
         self._token = None
         self._token_expires_at = None
         self._session = requests.Session()
@@ -64,6 +64,11 @@ class GDSuncereAPIClient:
         Returns:
             访问令牌字符串
         """
+        if not self.username or not self.password:
+            raise RuntimeError(
+                "GD_SUNCERE_API_USERNAME and GD_SUNCERE_API_PASSWORD are required"
+            )
+
         # 检查是否需要刷新 token
         if not force_refresh and self._token is not None:
             if self._token_expires_at and time.time() < self._token_expires_at:
@@ -86,15 +91,15 @@ class GDSuncereAPIClient:
             }
 
             params = {
-                "UserName": self.USERNAME,
-                "Pwd": self.PASSWORD
+                "UserName": self.username,
+                "Pwd": self.password,
             }
 
             logger.debug(
                 "token_request",
                 url=auth_url,
                 method="GET",
-                username=self.USERNAME
+                username=self.username,
             )
 
             # 首选 GET 方式（依据 Vanna 文档）

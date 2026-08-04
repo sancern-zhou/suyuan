@@ -66,7 +66,9 @@ class OldStandardIndexUpdater:
         self.port = port
         self.database = database
         self.user = user
-        self.password = password or "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
+        self.password = password or os.getenv("SQLSERVER_PASSWORD", "")
+        if not self.password:
+            raise RuntimeError("SQLSERVER_PASSWORD is required")
         self.connection_string = self._build_connection_string()
 
     def _build_connection_string(self) -> str:

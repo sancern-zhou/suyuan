@@ -6,7 +6,11 @@ REM ========================================
 
 set SERVER=180.184.30.94
 set USERNAME=sa
-set PASSWORD=#Ph981,6J2bOkWYT7p?5slH$I~g_0itR
+if "%SQLSERVER_PASSWORD%"=="" (
+    echo SQLSERVER_PASSWORD is required
+    exit /b 1
+)
+set PASSWORD=%SQLSERVER_PASSWORD%
 set DATABASE=AirPollutionAnalysis
 set SCRIPT_FILE=init_history_table_complete.sql
 

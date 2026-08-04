@@ -10,7 +10,7 @@ echo
 
 SERVER="180.184.30.94"
 USERNAME="sa"
-PASSWORD="#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
+PASSWORD="${SQLSERVER_PASSWORD:?SQLSERVER_PASSWORD is required}"
 DATABASE="AirPollutionAnalysis"
 SCRIPT_FILE="init_history_table_complete.sql"
 

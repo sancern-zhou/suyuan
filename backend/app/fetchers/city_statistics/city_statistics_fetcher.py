@@ -625,11 +625,18 @@ class SQLServerClient:
         self.port = port
         self.database = database
         self.user = user
-        self.password = password or "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
-        self.connection_string = self._build_connection_string()
+        self.password = password or os.getenv("SQLSERVER_PASSWORD", "")
+
+    @property
+    def connection_string(self) -> str:
+        """Build the secret-bearing connection string only when it is needed."""
+        return self._build_connection_string()
 
     def _build_connection_string(self) -> str:
         """构建ODBC连接字符串"""
+        if not self.password:
+            raise RuntimeError("SQLSERVER_PASSWORD is required")
+
         return (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={self.host},{self.port};"

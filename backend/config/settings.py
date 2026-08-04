@@ -673,25 +673,6 @@ class Settings(BaseSettings):
         description="SQL Server ODBC driver name"
     )
 
-    def model_post_init(self, __context) -> None:
-        """
-        Post-initialization hook to handle password with leading # character.
-
-        WORKAROUND: .env files treat lines starting with # as comments.
-        If password is empty after loading from .env, use the hardcoded value.
-        This is a temporary solution until the .env parsing issue is resolved.
-        """
-        if not self.sqlserver_password or len(self.sqlserver_password.strip()) == 0:
-            # Hardcoded password as fallback (SECURITY: Remove in production!)
-            self.sqlserver_password = "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
-            import structlog
-            logger = structlog.get_logger()
-            logger.warning(
-                "sqlserver_password_override",
-                reason="Empty password in .env, using hardcoded fallback",
-                message="SECURITY WARNING: Hardcoded password in use!"
-            )
-
     @property
     def sqlserver_connection_string(self) -> str:
         """
@@ -857,7 +838,21 @@ class Settings(BaseSettings):
             import structlog
             logger = structlog.get_logger()
             logger.warning("Failed to load social config, using defaults", error=str(e))
-            return self.load_social_config()  # Return default config
+            return self._default_social_config()
+
+    @staticmethod
+    def _default_social_config() -> Dict[str, Any]:
+        """Return a fresh, side-effect-free fallback social configuration."""
+        return {
+            "qq": {"enabled": False, "allow_from": ["*"]},
+            "weixin": {"enabled": False, "allow_from": ["*"]},
+            "dingtalk": {"enabled": False, "allow_from": ["*"]},
+            "channels": {
+                "send_progress": True,
+                "send_tool_hints": False,
+                "send_max_retries": 3,
+            },
+        }
 
 
 # Global settings instance

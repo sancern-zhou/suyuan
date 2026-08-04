@@ -31,7 +31,7 @@ async def init_database() -> bool:
 
     try:
         initialize_schema = os.getenv(
-            "DATABASE_SCHEMA_INIT_ON_STARTUP", "true"
+            "DATABASE_SCHEMA_INIT_ON_STARTUP", "false"
         ).lower() in {"1", "true", "yes", "on"}
         if initialize_schema:
             await init_db()

@@ -2,13 +2,14 @@
 """
 执行省级统计表数据库迁移脚本
 """
+import os
 import pyodbc
 
 # 数据库连接配置
 server = "180.184.30.94,1433"
 database = "XcAiDb"
 username = "sa"
-password = "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
+password = os.getenv("SQLSERVER_PASSWORD", "")
 
 # 构建连接字符串
 connection_string = (
@@ -22,6 +23,8 @@ connection_string = (
 
 def execute_migration():
     """执行迁移脚本"""
+    if not password:
+        raise RuntimeError("SQLSERVER_PASSWORD is required")
     print("连接数据库...")
     conn = pyodbc.connect(connection_string, timeout=30)
     cursor = conn.cursor()

@@ -7,9 +7,9 @@ __pycache__/
 *.pyd
 
 # Environment files
-.env
-.env.local
-.env.production
+.env*
+system_config.json
+*.backup*
 
 # Testing
 .pytest_cache/
@@ -36,3 +36,11 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+backend_data_registry/
+app/deprecated/
+*_game.py
+chess_game.py
+monopoly_game.py
+dungeon.py
+guess_transfer.py
+christmas_tree.py
