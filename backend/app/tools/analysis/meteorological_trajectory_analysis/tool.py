@@ -312,10 +312,10 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
 
             # 保存数据到Context
             endpoints = result.get("endpoints_data", [])
-            trajectory_data_id = None
+            trajectory_file_path = None
             if endpoints:
                 try:
-                    trajectory_data_id = context.data_manager.save_data(
+                    trajectory_file_path = context.data_manager.save_data(
                         data=endpoints,
                         schema="trajectory_endpoints",
                         metadata={
@@ -336,34 +336,34 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                             "schema_version": "v2.0"
                         }
                     )
-                    logger.info("trajectory_data_saved", data_id=trajectory_data_id)
+                    logger.info("trajectory_data_saved", file_path=trajectory_file_path)
                 except Exception as save_error:
                     logger.warning("trajectory_data_save_failed", error=str(save_error))
             
-            # 更新图表的meta信息，添加source_data_id
+            # 更新图表的meta信息，添加source_file_path
             visuals = chart_result.get("visuals", []) if chart_result else []
-            if visuals and trajectory_data_id:
+            if visuals and trajectory_file_path:
                 for visual in visuals:
                     # 更新payload.meta
                     if "payload" in visual and isinstance(visual["payload"], dict):
                         if "meta" not in visual["payload"]:
                             visual["payload"]["meta"] = {}
-                        visual["payload"]["meta"]["source_data_id"] = trajectory_data_id
-                        visual["payload"]["meta"]["data_id"] = trajectory_data_id
+                        visual["payload"]["meta"]["source_file_path"] = trajectory_file_path
+                        visual["payload"]["meta"]["file_path"] = trajectory_file_path
                         visual["payload"]["meta"]["expert"] = "weather"  # 轨迹分析属于气象分析
                         visual["payload"]["meta"]["generator"] = "meteorological_trajectory_analysis"
                     
                     # 更新VisualBlock的meta
                     if "meta" not in visual:
                         visual["meta"] = {}
-                    visual["meta"]["source_data_id"] = trajectory_data_id
-                    visual["meta"]["source_data_ids"] = [trajectory_data_id]
+                    visual["meta"]["source_file_path"] = trajectory_file_path
+                    visual["meta"]["source_file_paths"] = [trajectory_file_path]
                     visual["meta"]["expert"] = "weather"
                     visual["meta"]["generator"] = "meteorological_trajectory_analysis"
                     
                     logger.debug("trajectory_chart_meta_updated", 
                                visual_id=visual.get("id"),
-                               source_data_id=trajectory_data_id)
+                               source_file_path=trajectory_file_path)
 
             # 计算主导方向
             dominant_direction = self._calculate_dominant_direction(endpoints)
@@ -374,9 +374,9 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
             pblh_stats = None
             try:
                 # 获取历史气象数据（如果有）
-                weather_data_id = context.get_data("historical_weather") if hasattr(context, 'get_data') else None
-                if weather_data_id:
-                    raw_data = context.get_raw_data(weather_data_id) if hasattr(context, 'get_raw_data') else None
+                weather_file_path = context.get_data("historical_weather") if hasattr(context, 'get_data') else None
+                if weather_file_path:
+                    raw_data = context.get_raw_data(weather_file_path) if hasattr(context, 'get_raw_data') else None
                     if raw_data and isinstance(raw_data, dict):
                         records = raw_data.get("data", [])
                         if records:
@@ -432,7 +432,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                 meteo_source=meteo_source,
                 pblh_stats=pblh_stats,
                 trajectory_image_url=trajectory_image_url,
-                data_id=trajectory_data_id  # 添加 data_id
+                file_path=trajectory_file_path  # 添加 file_path
             )
 
             logger.info(
@@ -443,7 +443,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
             )
 
             response = {
-                "data_id": trajectory_data_id,
+                "file_path": trajectory_file_path,
                 "trajectory_data": {
                     "endpoints": endpoints,
                     "start_lat": lat,
@@ -486,16 +486,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
                         "meteo_source": meteo_source
                     }
                 },
-                # 详细摘要（给LLM用）
                 "summary": detailed_summary,
-                # 简化摘要（向后兼容）
-                "brief_summary": (
-                    f"✓ NOAA HYSPLIT {direction}轨迹分析完成。"
-                    f"起点: ({lat:.2f}, {lon:.2f}), "
-                    f"高度层: {heights}m, "
-                    f"时长: {hours}小时, "
-                    f"主导方向: {dominant_direction}。"
-                )
             }
             self._attach_resume_context(response)
             return response
@@ -522,9 +513,9 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
             }
 
     def _attach_resume_context(self, result: Dict[str, Any]) -> None:
-        data_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        file_path = result.get("file_path") if isinstance(result.get("file_path"), str) else None
         context = build_data_resume_context(
-            generated_data_ids=[data_id] if data_id else [],
+            generated_file_paths=[file_path] if file_path else [],
         )
         result["refs"] = merge_refs(result.get("refs"), context["refs"])
         result["llm_resume"] = context["llm_resume"]
@@ -542,7 +533,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
         meteo_source: str,
         pblh_stats: Optional[Dict[str, float]] = None,
         trajectory_image_url: str = "N/A",
-        data_id: str = None
+        file_path: str = None
     ) -> str:
         """
         格式化轨迹数据供LLM分析
@@ -554,7 +545,7 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
         - 轨迹质量评估
         - 边界层特征（如果提供PBLH数据）
         - 轨迹图片URL
-        - 数据引用（data_id）
+        - 数据引用（file_path）
         """
         if not endpoints:
             return "## NOAA HYSPLIT后向轨迹分析\n\n轨迹数据为空，分析失败。"
@@ -572,9 +563,9 @@ NOAA HYSPLIT气象轨迹分析工具 - 自动生成轨迹图和数据
         ]
 
         # 添加数据引用
-        if data_id:
+        if file_path:
             lines.extend([
-                f"**数据引用**: `{data_id}`",
+                f"**数据引用**: `{file_path}`",
                 ""
             ])
 

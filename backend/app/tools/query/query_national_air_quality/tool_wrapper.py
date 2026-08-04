@@ -107,7 +107,7 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
 
             # 数据外部化存储
             if context and len(data) > 24:
-                data_id = context.save_data(
+                file_path = context.save_data(
                     data=data,
                     schema="national_province_statistics"
                 )
@@ -119,7 +119,7 @@ class QueryNationalProvinceAirQualityTool(LLMTool):
                     "status": "success",
                     "success": True,
                     "data": sample_data,  # 只返回样本数据
-                    "data_id": data_id,    # 完整数据ID
+                    "file_path": file_path,    # 完整数据文件路径
                     "metadata": {
                         "total_count": len(data),
                         "sample_count": len(sample_data),
@@ -254,7 +254,7 @@ class QueryNationalCityAirQualityTool(LLMTool):
 
             # 数据外部化存储
             if context and len(data) > 24:
-                data_id = context.save_data(
+                file_path = context.save_data(
                     data=data,
                     schema="national_city_statistics"
                 )
@@ -266,7 +266,7 @@ class QueryNationalCityAirQualityTool(LLMTool):
                     "status": "success",
                     "success": True,
                     "data": sample_data,  # 只返回样本数据
-                    "data_id": data_id,    # 完整数据ID
+                    "file_path": file_path,    # 完整数据文件路径
                     "metadata": {
                         "total_count": len(data),
                         "sample_count": len(sample_data),

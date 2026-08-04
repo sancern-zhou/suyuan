@@ -131,7 +131,7 @@ class CalculateVOCSPMFTool(LLMTool):
 
 **数据获取步骤**:
 1. 获取 VOCs 数据（使用 get_vocs_data），必须包含关键VOCs物种
-2. 调用此工具，传入 data_id 和 station_name
+2. 调用此工具，传入 file_path 和 station_name
 
 **返回结果**：
 - **因子载荷矩阵**：每个因子对应各VOCs物种的载荷值
@@ -146,7 +146,7 @@ class CalculateVOCSPMFTool(LLMTool):
 
 **示例**:
 data = get_vocs_data("阳江市2025年12月27日的小时VOCs数据，要求包含 乙烯、丙烯、苯、甲苯")
-result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx")
+result = calculate_vocs_pmf(station_name="阳江市", file_path="vocs_unified:xxx")
             """.strip(),
             "parameters": {
                 "type": "object",
@@ -155,7 +155,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                         "type": "string",
                         "description": "超级站点名称"
                     },
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": "VOCs数据引用ID（来自 get_vocs_data）"
                     },
@@ -173,7 +173,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                         "default": 5
                     }
                 },
-                "required": ["station_name", "data_id"]
+                "required": ["station_name", "file_path"]
             }
         }
 
@@ -207,7 +207,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
         self,
         context: "ExecutionContext",
         station_name: str,
-        data_id: str,
+        file_path: str,
         start_time: str = "",
         end_time: str = "",
         nimfa_rank: int = None,
@@ -223,18 +223,18 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
         logger.info(
             "calculate_vocs_pmf_nimfa_start",
             station_name=station_name,
-            data_id=data_id,
+            file_path=file_path,
             nimfa_rank=nimfa_rank
         )
 
         # Step 1: Get data handle
         try:
-            handle = context.get_handle(data_id)
+            handle = context.get_handle(file_path)
         except KeyError:
             return {
                 "status": "failed", "success": False, "data": None,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_not_found"},
-                "summary": f"[FAIL] 未找到数据引用 {data_id}，请先调用 get_vocs_data"
+                "summary": f"[FAIL] 未找到数据引用 {file_path}，请先调用 get_vocs_data"
             }
         file_path = getattr(handle, "file_path", None)
 
@@ -247,7 +247,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                 "status": "failed", "success": False, "data": None,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "schema_mismatch",
                             "expected": "vocs 或 vocs_unified", "actual": handle.schema},
-                "summary": f"[FAIL] 需要 vocs 或 vocs_unified 数据，但 {data_id} 是 {handle.schema} 数据"
+                "summary": f"[FAIL] 需要 vocs 或 vocs_unified 数据，但 {file_path} 是 {handle.schema} 数据"
             }
 
         # Step 3: Validate data
@@ -256,30 +256,30 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": None,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "validation_failed",
-                            "data_id": data_id,
+                            "file_path": file_path,
             "file_path": file_path, "record_count": handle.record_count},
                 "summary": f"[FAIL] VOCs PMF 数据验证失败: {error_msg}"
             }
 
         # Step 4: Load data
         try:
-            typed_data = context.get_data(data_id, expected_schema=handle.schema)
+            typed_data = context.get_data(file_path, expected_schema=handle.schema)
         except Exception as exc:
-            logger.error("calculate_vocs_pmf_data_load_failed", data_id=data_id, error=str(exc))
+            logger.error("calculate_vocs_pmf_data_load_failed", file_path=file_path, error=str(exc))
             return {
                 "status": "failed", "success": False, "data": None,
-                "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_load_failed", "data_id": data_id},
-                "summary": f"[FAIL] 无法加载数据 {data_id}: {str(exc)}"
+                "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_load_failed", "file_path": file_path},
+                "summary": f"[FAIL] 无法加载数据 {file_path}: {str(exc)}"
             }
 
         # Step 5: Transform
         try:
             component_data = self._transform_vocs_to_pmf_input(typed_data)
         except Exception as exc:
-            logger.error("calculate_vocs_pmf_transform_failed", data_id=data_id, error=str(exc))
+            logger.error("calculate_vocs_pmf_transform_failed", file_path=file_path, error=str(exc))
             return {
                 "status": "failed", "success": False, "data": None,
-                "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_transform_failed", "data_id": data_id},
+                "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_transform_failed", "file_path": file_path},
                 "summary": f"[FAIL] VOCs PMF 数据格式转换失败: {str(exc)}"
             }
 
@@ -287,7 +287,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": None,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "insufficient_data",
-                            "data_id": data_id,
+                            "file_path": file_path,
             "file_path": file_path, "record_count": len(component_data)},
                 "summary": f"[FAIL] 有效样本数不足（需>=10个，当前{len(component_data)}个）"
             }
@@ -300,7 +300,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                 "metadata": {
                     "tool_name": "calculate_vocs_pmf",
                     "error_type": "insufficient_species_coverage",
-                    "data_id": data_id,
+                    "file_path": file_path,
             "file_path": file_path,
                     "available_species": species_coverage["available_species"],
                     "required_species": species_coverage["required_species"],
@@ -372,7 +372,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             return {
                 "status": "failed", "success": False, "data": result,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "calculation_failed",
-                            "data_id": data_id,
+                            "file_path": file_path,
             "file_path": file_path, "error": result.get("error", "未知计算错误"),
                             "algorithm": result.get("algorithm", "nimfa")},
                 "summary": f"[FAIL] VOCs PMF计算失败: {result.get('error', '未知错误')}"
@@ -383,11 +383,11 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
         missing_fields = [f for f in required_fields if f not in result or not result[f]]
         if missing_fields:
             logger.error("calculate_vocs_pmf_missing_required_fields",
-                        data_id=data_id, missing_fields=missing_fields)
+                        file_path=file_path, missing_fields=missing_fields)
             return {
                 "status": "failed", "success": False, "data": result,
                 "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "incomplete_result",
-                            "data_id": data_id,
+                            "file_path": file_path,
             "file_path": file_path, "missing_fields": missing_fields,
                             "result_keys": list(result.keys())},
                 "summary": f"[FAIL] VOCs PMF结果不完整，缺少字段: {', '.join(missing_fields)}"
@@ -397,7 +397,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
         result["station_name"] = station_name
         result["start_time"] = start_time
         result["end_time"] = end_time
-        result["input_data_id"] = data_id
+        result["input_file_path"] = file_path
         result["sample_count"] = len(component_data)
 
         # 添加权重配置信息
@@ -426,13 +426,13 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
 
         # Step 10: Save result
         try:
-            pmf_data_ref = context.save_data(
+            pmf_file_path = context.save_data(
                 data=[result],
                 schema="pmf_result",
                 metadata={
                     "station_name": station_name,
                     "pollutant_type": "VOCs",
-                    "input_data_id": data_id,
+                    "input_file_path": file_path,
                     "sources_count": len(result.get("sources", [])),
                     "sample_count": len(component_data),
                     "optimal_rank": optimal_rank,
@@ -446,16 +446,14 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                     }
                 }
             )
-            pmf_data_id = pmf_data_ref
-            pmf_file_path = pmf_data_ref["file_path"]
             result["registry_schema"] = "pmf_result"
-            result["data_id"] = pmf_data_id
-            logger.info("calculate_vocs_pmf_saved", pmf_data_id=pmf_data_id, pmf_file_path=pmf_file_path)
+            result["file_path"] = pmf_file_path
+            logger.info("calculate_vocs_pmf_saved", pmf_file_path=pmf_file_path)
         except Exception as exc:
             logger.error("calculate_vocs_pmf_save_failed", error=str(exc))
             return {
                 "status": "failed", "success": False, "data": None,
-                "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_save_failed", "data_id": data_id},
+                "metadata": {"tool_name": "calculate_vocs_pmf", "error_type": "data_save_failed", "file_path": file_path},
                 "summary": f"[FAIL] VOCs PMF结果保存失败: {str(exc)}"
             }
 
@@ -540,7 +538,7 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             f"- 因子1-2：通常对应一次排放源（高C2-C3烷烃/烯烃，如机动车尾气）\n"
             f"- 因子3-4：通常对应工业/溶剂源（高芳烃，如苯、甲苯、二甲苯）\n"
             f"- 请根据因子载荷判断每个因子的物理含义和VOCs源类型\n\n"
-            f"**数据存储**: ID: `{pmf_data_id}`"
+            f"**数据文件**: `{pmf_file_path}`"
         )
 
         result, _ = truncate_data_for_llm(result, max_tokens=20000)
@@ -557,16 +555,16 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
             "status": "success",
             "success": True,
             "data": result,
-            "data_id": pmf_data_id,
+            "file_path": pmf_file_path,
             "visuals": [],
             "metadata": {
                 "schema_version": "v2.0",
                 "tool_name": "calculate_vocs_pmf",
                 "station_name": station_name,
                 "pollutant_type": "VOCs",
-                "data_id": data_id,
+                "file_path": file_path,
             "file_path": file_path,
-                "pmf_result_id": pmf_data_id,
+                "pmf_result_file_path": pmf_file_path,
                 "sources_count": len(sources),
                 "sample_count": len(component_data),
                 "optimal_rank": optimal_rank,
@@ -580,10 +578,10 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
                     "6.1.2_weight_selection": True,
                     "6.1.3_factor_determination": True
                 },
-                "source_data_ids": [data_id, pmf_data_id]
+                "source_file_paths": [file_path, pmf_file_path]
             },
             "summary": (
-                f"[OK] VOCs PMF源解析完成（最优因子数{optimal_rank}，识别{len(sources)}个源），已保存为 {pmf_data_id}。"
+                f"[OK] VOCs PMF源解析完成（最优因子数{optimal_rank}，识别{len(sources)}个源），文件路径: {pmf_file_path}。"
                 f"置信度{factor_analysis_result.confidence:.1%}，"
                 f"主要因子{main_source} ({main_contribution:.1f}%)，"
                 f"模型R2={r2_str}。请根据因子载荷矩阵解读各因子对应的VOCs污染源类型。"
@@ -594,12 +592,12 @@ result = calculate_vocs_pmf(station_name="阳江市", data_id="vocs_unified:xxx"
 
     def _attach_resume_context(self, result: Dict[str, Any]) -> None:
         metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-        generated_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
-        source_id = metadata.get("data_id")
+        generated_id = result.get("file_path") if isinstance(result.get("file_path"), str) else None
+        source_id = metadata.get("file_path")
         source_ids = [source_id] if isinstance(source_id, str) and source_id != generated_id else []
         context = build_data_resume_context(
-            source_data_ids=source_ids,
-            generated_data_ids=[generated_id] if generated_id else [],
+            source_file_paths=source_ids,
+            generated_file_paths=[generated_id] if generated_id else [],
         )
         result["refs"] = merge_refs(result.get("refs"), context["refs"])
         result["llm_resume"] = context["llm_resume"]

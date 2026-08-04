@@ -403,7 +403,7 @@ The more you know, the better you can help. But remember — you're learning abo
 
 1. **具体任务内容**：某次具体查询、分析、操作的详细过程或结果
 2. **技术架构细节**：系统架构、工具调用流程、数据流转路径
-3. **一次性数据**：具体的data_id、临时查询结果、单次统计数值
+3. **一次性数据**：具体的file_path、临时查询结果、单次统计数值
 4. **时间敏感信息**：具体某天/某月的排名、临时统计数据、时效性结论
 5. **操作细节**：具体的工具调用步骤、中间过程、调试信息
 6. **可查询数据**：可以通过数据库查询获得的任何数值数据
@@ -751,7 +751,7 @@ class ImprovedMemoryStore(MemoryStore):
 
 1. **具体任务内容**：某次具体查询、分析、操作的详细过程或结果
 2. **技术架构细节**：系统架构、工具调用流程、数据流转路径
-3. **一次性数据**：具体的data_id、临时查询结果、单次统计数值
+3. **一次性数据**：具体的file_path、临时查询结果、单次统计数值
 4. **时间敏感信息**：具体某天/某月的排名、临时统计数据、时效性结论
 5. **操作细节**：具体的工具调用步骤、中间过程、调试信息
 6. **可查询数据**：可以通过数据库查询获得的任何数值数据
@@ -956,10 +956,10 @@ class ImprovedMemoryStore(MemoryStore):
 
             # 如果当前在有效的章节中，保留内容
             if current_section is not None:
-                # 过滤掉包含data_id的行
-                if 'data_id:' in line or 'data_id：' in line:
+                # 一次性文件路径不进入长期记忆。
+                if 'file_path:' in line or 'file_path：' in line:
                     logger.debug(
-                        "memory_filtered_data_id",
+                        "memory_filtered_file_path",
                         line=line[:50],
                         user_id=self.user_id,
                         mode=self.mode

@@ -123,7 +123,7 @@ class GetWeatherForecastTool(LLMTool):
             daily: 是否返回每日预报
 
         Returns:
-            Dict: UDF v2.0 格式的预报数据，包含 data_id
+            Dict: UDF v2.0 格式的预报数据，持久化成功时包含 file_path
 
         Note:
             使用 past_days=1 可以获取：
@@ -131,12 +131,9 @@ class GetWeatherForecastTool(LLMTool):
             - 今天00:00到当前时刻的数据（分析场数据）
             - 未来7天预报数据
         """
-        data_id = f"weather_forecast_{uuid.uuid4().hex[:12]}"
-
         try:
             logger.info(
                 "weather_forecast_query_started",
-                data_id=data_id,
                 lat=lat,
                 lon=lon,
                 location=location_name,
@@ -200,7 +197,6 @@ class GetWeatherForecastTool(LLMTool):
 
             # 构建元数据
             metadata = DataMetadata(
-                data_id=data_id,
                 data_type=DataType.WEATHER,
                 schema_version="v2.0",
                 record_count=len(records),
@@ -259,8 +255,6 @@ class GetWeatherForecastTool(LLMTool):
                 summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。{daily_summary}。包含边界层高度预报数据，可用于污染扩散条件分析。"
 
             # 【Context-Aware V2】保存数据到 session_memory
-            saved_data_ref = None
-            saved_data_id = None  # ✅ 修复：初始化变量，避免 UnboundLocalError
             saved_file_path = None
 
             logger.info(
@@ -282,8 +276,7 @@ class GetWeatherForecastTool(LLMTool):
                         schema="weather"
                     )
 
-                    # ✅ 修复：save_data() 返回字符串 ID
-                    saved_data_id = context.save_data(
+                    saved_file_path = context.save_data(
                         data=records_dicts,
                         schema="weather",
                         metadata={
@@ -295,21 +288,17 @@ class GetWeatherForecastTool(LLMTool):
                             "source": "Open-Meteo Forecast API"
                         }
                     )
-                    # context.save_data() 返回字符串 data_id
                     logger.info(
                         "weather_forecast_data_saved",
-                        original_id=data_id,
-                        saved_id=saved_data_id,
+                        file_path=saved_file_path,
                         records_count=len(records_dicts)
                     )
-                    # 更新摘要，包含保存的data_id
-                    summary = f"{summary} 数据已保存为 {saved_data_id}。"
+                    summary = f"{summary} 文件路径: {saved_file_path}。"
                 except Exception as save_error:
                     logger.error(
                         "weather_forecast_data_save_failed",
                         error=str(save_error),
                         error_type=type(save_error).__name__,
-                        data_id=data_id,
                         exc_info=True
                     )
             else:
@@ -329,15 +318,14 @@ class GetWeatherForecastTool(LLMTool):
                 summary=summary,
             )
 
-            # 如果成功保存数据，添加 data_id 到返回结果
             result_dict = result.dict()
-            if saved_data_id:
-                result_dict["data_id"] = saved_data_id
+            if saved_file_path:
+                result_dict["file_path"] = saved_file_path
+                result_dict["metadata"]["file_path"] = saved_file_path
 
             logger.info(
                 "weather_forecast_query_successful",
-                data_id=data_id,
-                saved_data_id=saved_data_id,
+                file_path=saved_file_path,
                 lat=lat,
                 lon=lon,
                 hourly_points=len(records),
@@ -349,7 +337,6 @@ class GetWeatherForecastTool(LLMTool):
         except Exception as e:
             logger.error(
                 "weather_forecast_query_failed",
-                data_id=data_id,
                 lat=lat,
                 lon=lon,
                 error=str(e),
@@ -362,7 +349,6 @@ class GetWeatherForecastTool(LLMTool):
                 success=False,
                 error=str(e),
                 metadata=DataMetadata(
-                    data_id=data_id,
                     data_type=DataType.WEATHER,
                     schema_version="v2.0",
                     record_count=0,

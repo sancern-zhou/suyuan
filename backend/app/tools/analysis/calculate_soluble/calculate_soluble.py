@@ -233,7 +233,7 @@ def _extract_ion_columns(records: List[Dict], ion_info: Dict[str, Dict]) -> pd.D
 
 def calculate_soluble(
     data: Union[pd.DataFrame, List[Dict]],
-    data_id: Optional[str] = None,
+    file_path: Optional[str] = None,
     analysis_type: str = "full",
     ion_info: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Dict[str, Any]:
@@ -245,7 +245,7 @@ def calculate_soluble(
 
     Args:
         data: 输入数据（DataFrame 或 包含 components 的记录列表）
-        data_id: 原始数据ID
+        file_path: 原始数据文件路径
         analysis_type: 分析类型
         ion_info: 离子分子量与电荷信息
 
@@ -255,7 +255,7 @@ def calculate_soluble(
     if data is None:
         raise ValueError("data 参数不能为 None")
 
-    original_data_id = data_id
+    original_file_path = file_path
     ion_info = ion_info or DEFAULT_ION_INFO
 
     # 统一转换为 DataFrame
@@ -524,17 +524,17 @@ def calculate_soluble(
         # 保留其他专业图表：三元图、SOR/NOR图、电荷平衡图
 
         if has_ternary:
-            ternary_chart = visualizer.generate_ternary_chart(ternary_df, pm25_series, source_data_id=original_data_id)
+            ternary_chart = visualizer.generate_ternary_chart(ternary_df, pm25_series, source_file_path=original_file_path)
             if ternary_chart:
                 visuals.append(ternary_chart)
 
         if nor_series is not None or sor_series is not None:
-            sor_nor_chart = visualizer.generate_sor_nor_chart(nor_series, sor_series, pm25_series, source_data_id=original_data_id)
+            sor_nor_chart = visualizer.generate_sor_nor_chart(nor_series, sor_series, pm25_series, source_file_path=original_file_path)
             if sor_nor_chart:
                 visuals.append(sor_nor_chart)
 
         if not cation_total.isna().all() and not anion_total.isna().all():
-            balance_chart = visualizer.generate_charge_balance_chart(cation_total, anion_total, source_data_id=original_data_id)
+            balance_chart = visualizer.generate_charge_balance_chart(cation_total, anion_total, source_file_path=original_file_path)
             if balance_chart:
                 visuals.append(balance_chart)
     except Exception as viz_err:
@@ -547,7 +547,7 @@ def calculate_soluble(
         "source_data_hash": _hash_dataframe(df) if isinstance(data, pd.DataFrame) else "",
         "schema_version": "v2.0",
         "scenario": "pm_soluble_ion_analysis",
-        "source_data_id": original_data_id,
+        "source_file_path": original_file_path,
     }
 
     logger.info(
@@ -643,7 +643,7 @@ class CalculateSolubleTool(LLMTool):
    - 正确示例: `gas_data = get_air_quality_data("揭阳市2025年12月24日的小时污染物数据，包含 NO2、SO2")`
 
 3. **调用此工具**：
-   - 传入 data_id（必需）和 gas_data_id（必需）
+   - 传入 file_path（必需）和 gas_file_path（必需）
 
 **需要的水溶性离子字段**:
 - SO4（硫酸盐，SO4^2-）
@@ -674,21 +674,21 @@ gas_data = get_air_quality_data("深圳市2025年12月24日的小时污染物数
 
 # 步骤3: 执行分析
 result = calculate_soluble(
-    data_id=ion_data["data_id"],
-    gas_data_id=gas_data["data_id"]
+    file_path=ion_data["file_path"],
+    gas_file_path=gas_data["file_path"]
 )
 ```
             """.strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
-                        "description": "颗粒物组分数据ID（来自 get_particulate_data）"
+                        "description": "颗粒物组分数据文件路径（来自 get_particulate_data）"
                     },
-                    "gas_data_id": {
+                    "gas_file_path": {
                         "type": "string",
-                        "description": "空气质量数据ID（来自 get_air_quality_data），**必需参数**，用于SOR/NOR计算，必须提供 NO2 和 SO2 数据"
+                        "description": "空气质量数据文件路径（来自 get_air_quality_data），**必需参数**，用于SOR/NOR计算，必须提供 NO2 和 SO2 数据"
                     },
                     "analysis_type": {
                         "type": "string",
@@ -696,7 +696,7 @@ result = calculate_soluble(
                         "default": "full"
                     }
                 },
-                "required": ["data_id", "gas_data_id"]  # gas_data_id 改为必需
+                "required": ["file_path", "gas_file_path"]  # gas_file_path 改为必需
             }
         }
 
@@ -712,24 +712,24 @@ result = calculate_soluble(
     async def execute(
         self,
         context: "ExecutionContext",
-        data_id: str,
-        gas_data_id: Optional[str] = None,
+        file_path: str,
+        gas_file_path: Optional[str] = None,
         analysis_type: str = "full",
         **kwargs
     ) -> Dict[str, Any]:
         """执行水溶性离子分析"""
         # 【关键日志】确认接收到的参数
         logger.info("[calculate_soluble] execute接收参数",
-            data_id=data_id,
-            gas_data_id=gas_data_id,
-            data_id_length=len(data_id) if data_id else 0,
-            gas_data_id_length=len(gas_data_id) if gas_data_id else 0
+            file_path=file_path,
+            gas_file_path=gas_file_path,
+            file_path_length=len(file_path) if file_path else 0,
+            gas_file_path_length=len(gas_file_path) if gas_file_path else 0
         )
 
         # Step 1: 获取标准化后的离子数据
         try:
-            handle = context.get_handle(data_id)
-            ion_records = context.get_data(data_id)
+            handle = context.get_handle(file_path)
+            ion_records = context.get_data(file_path)
             if not isinstance(ion_records, list) or len(ion_records) == 0:
                 return {
                     "status": "failed",
@@ -756,7 +756,7 @@ result = calculate_soluble(
                 "success": False,
                 "data": None,
                 "metadata": {"tool_name": "calculate_soluble", "error_type": "data_not_found"},
-                "summary": f"[FAIL] 未找到数据 {data_id}"
+                "summary": f"[FAIL] 未找到数据 {file_path}"
             }
         except Exception as exc:
             return {
@@ -769,9 +769,9 @@ result = calculate_soluble(
 
         # Step 2: 获取气体数据（可选）
         gas_records = None
-        if gas_data_id:
+        if gas_file_path:
             try:
-                gas_records = context.get_data(gas_data_id)
+                gas_records = context.get_data(gas_file_path)
                 if isinstance(gas_records, list) and len(gas_records) > 0:
                     logger.info("[calculate_soluble] 加载气体数据", records=len(gas_records))
             except Exception as exc:
@@ -785,7 +785,7 @@ result = calculate_soluble(
         # Step 4: 执行计算
         result = calculate_soluble(
             data=data_to_process,
-            data_id=data_id,
+            file_path=file_path,
             analysis_type=analysis_type
         )
 
@@ -809,12 +809,12 @@ result = calculate_soluble(
                     ]
                 }
                 # context.save_data() 直接返回字符串ID
-                result_data_id = context.save_data(
+                result_file_path = context.save_data(
                     data=[summary],
                     schema="particulate_analysis",
                     metadata={
-                        "source_data_id": data_id,
-                        "gas_data_id": gas_data_id,
+                        "source_file_path": file_path,
+                        "gas_file_path": gas_file_path,
                         "ion_count": len(summary.get("available_ions", [])),
                         "secondary_type": statistics.get("ternary", {}).get("secondary_inorganic_type"),
                         "balance_r2": statistics.get("balance", {}).get("r_squared"),
@@ -822,7 +822,7 @@ result = calculate_soluble(
                         "nor_mean": statistics.get("sor_nor", {}).get("nor_mean")
                     }
                 )
-                result["data_id"] = result_data_id
+                result["file_path"] = result_file_path
             except Exception as save_err:
                 logger.warning(f"[calculate_soluble] 保存失败: {save_err}")
 

@@ -267,7 +267,7 @@ A read-only `list_session_resources` tool supports filters for:
 - `run_id`;
 - `logical_key`.
 
-The tool only lists resources belonging to the current authorized session. Existing tools perform actual reads: `read_data_registry` for data, `read_file` or `present_artifact` for files, and the appropriate URL or visual tool for other kinds.
+The tool only lists resources belonging to the current authorized session. Existing tools perform actual reads: `read_data_registry` for data, `read_file` or `publish_session_file` for files, and the appropriate URL or visual tool for other kinds.
 
 ## Security
 

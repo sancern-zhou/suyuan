@@ -291,7 +291,7 @@ def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any
         "title": qmd_path.stem,
         "created_at": existing_meta.get("created_at") or now,
         "updated_at": now,
-        "source": "present_artifact_source_qmd",
+        "source": "publish_session_file_source_qmd",
         "files": {
             "qmd": str(report_dir / "report.qmd"),
             "source_qmd": str(qmd_path),
@@ -306,7 +306,7 @@ def create_report_preview_for_source_qmd_path(path: str | Path) -> Dict[str, Any
         preview = build_html_preview(report_id, html_path)
         meta = record_report_update(
             report_id,
-            source="present_artifact_source_qmd_render",
+            source="publish_session_file_source_qmd_render",
             html_path=html_path,
         )
         logger.info(

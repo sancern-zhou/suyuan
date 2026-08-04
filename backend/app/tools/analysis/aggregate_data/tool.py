@@ -339,7 +339,7 @@ class AggregateDataTool(LLMTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": "查询结果的数据ID（来自各查询工具返回的数据ID）"
                     },
@@ -405,7 +405,7 @@ class AggregateDataTool(LLMTool):
                         "description": "结束日期（可选，格式：YYYY-MM-DD，用于只计算指定日期范围的数据）"
                     }
                 },
-                "required": ["data_id", "aggregations"]
+                "required": ["file_path", "aggregations"]
             }
         }
 
@@ -420,7 +420,7 @@ class AggregateDataTool(LLMTool):
     async def execute(
         self,
         context: "ExecutionContext",
-        data_id: str,
+        file_path: str,
         aggregations: List[Dict[str, Any]],
         group_by: Union[List[str], None] = None,
         time_granularity: Optional[str] = None,
@@ -432,11 +432,11 @@ class AggregateDataTool(LLMTool):
         """执行数据聚合分析"""
 
         # 参数验证
-        if not data_id:
+        if not file_path:
             return {
                 "status": "failed",
                 "success": False,
-                "error": "必须提供data_id参数"
+                "error": "必须提供file_path参数"
             }
 
         if not aggregations:
@@ -498,7 +498,7 @@ class AggregateDataTool(LLMTool):
 
         logger.info(
             "data_aggregation_start",
-            data_id=data_id,
+            file_path=file_path,
             aggregations=aggregations,
             group_by=group_by,
             time_granularity=time_granularity,
@@ -508,12 +508,12 @@ class AggregateDataTool(LLMTool):
 
         try:
             # 步骤1：加载数据
-            data = context.get_raw_data(data_id)
+            data = context.get_raw_data(file_path)
             if not data:
                 return {
                     "status": "failed",
                     "success": False,
-                    "error": f"找不到数据: {data_id}"
+                    "error": f"找不到数据: {file_path}"
                 }
 
             if not isinstance(data, list):
@@ -631,20 +631,20 @@ class AggregateDataTool(LLMTool):
             )
 
             # 步骤4：保存聚合结果
-            aggregated_data_id = None
+            aggregated_file_path = None
             try:
                 data_ref = context.save_data(
                     data=result["aggregated_data"],
                     schema="aggregated_result",
                     metadata={
-                        "source_data_id": data_id,
+                        "source_file_path": file_path,
                         "aggregations": aggregations,
                         "group_by": group_by,
                         "time_granularity": time_granularity,
                         "row_count": len(result["aggregated_data"])
                     }
                 )
-                aggregated_data_id = data_ref
+                aggregated_file_path = data_ref
             except Exception as save_error:
                 logger.warning("aggregation_save_failed", error=str(save_error))
 
@@ -655,14 +655,14 @@ class AggregateDataTool(LLMTool):
                 "status": "success",
                 "success": True,
                 "data": result["aggregated_data"],
-                "data_id": aggregated_data_id,
+                "file_path": aggregated_file_path,
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "aggregate_data",
                     "generator_version": "2.0.0",
                     "field_mapping_applied": True,
                     "field_mapping_info": {"source": "aggregate_data"},
-                    "source_data_ids": [data_id],
+                    "source_file_paths": [file_path],
                     "aggregations": aggregations,
                     "group_by": group_by,
                     "time_granularity": time_granularity,
@@ -672,8 +672,8 @@ class AggregateDataTool(LLMTool):
             }
             response.update(
                 build_data_resume_context(
-                    source_data_ids=[data_id],
-                    generated_data_ids=[aggregated_data_id] if aggregated_data_id else [],
+                    source_file_paths=[file_path],
+                    generated_file_paths=[aggregated_file_path] if aggregated_file_path else [],
                 )
             )
             return response
@@ -684,7 +684,7 @@ class AggregateDataTool(LLMTool):
                 "status": "failed",
                 "success": False,
                 "error": f"聚合分析失败: {str(e)}",
-                "data_id": data_id
+                "file_path": file_path
             }
 
     def _aggregate(

@@ -1,6 +1,6 @@
 """
 calculate_reconstruction: 物质重构工具。
-输入：data_id 或 UnifiedParticulateData（components嵌套结构）。
+输入：file_path 或 UnifiedParticulateData（components嵌套结构）。
 输出：遵循 UDF v2.0 的 dict（status, data, metadata, visuals 可选）。
 支持 Context-Aware V2 架构，使用 DataStandardizer 进行字段标准化。
 """
@@ -48,10 +48,10 @@ DEFAULT_OC_TO_OM = 1.4
 
 def merge_particulate_data_from_multiple_sources(
     data_context_manager: "DataContextManager",
-    data_id: Optional[str] = None,
-    data_id_carbon: Optional[str] = None,
-    data_id_crustal: Optional[str] = None,
-    data_id_trace: Optional[str] = None,
+    file_path: Optional[str] = None,
+    carbon_file_path: Optional[str] = None,
+    crustal_file_path: Optional[str] = None,
+    trace_file_path: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     从多个独立的组分查询结果中合并数据。
@@ -61,10 +61,10 @@ def merge_particulate_data_from_multiple_sources(
 
     Args:
         data_context_manager: 数据上下文管理器
-        data_id: 水溶性离子数据ID
-        data_id_carbon: 碳组分数据ID (OC, EC)
-        data_id_crustal: 地壳元素数据ID (Al, Si, Fe, Ca, Mg, K, Na, Ti)
-        data_id_trace: 微量元素数据ID (Zn, Pb, Cu, Cd, As, etc.)
+        file_path: 水溶性离子数据ID
+        carbon_file_path: 碳组分数据ID (OC, EC)
+        crustal_file_path: 地壳元素数据ID (Al, Si, Fe, Ca, Mg, K, Na, Ti)
+        trace_file_path: 微量元素数据ID (Zn, Pb, Cu, Cd, As, etc.)
 
     Returns:
         合并后的数据列表（字典格式）
@@ -74,10 +74,10 @@ def merge_particulate_data_from_multiple_sources(
 
     logger.info(
         "merge_particulate_data_from_multiple_sources",
-        data_id=data_id,
-        data_id_carbon=data_id_carbon,
-        data_id_crustal=data_id_crustal,
-        data_id_trace=data_id_trace
+        file_path=file_path,
+        carbon_file_path=carbon_file_path,
+        crustal_file_path=crustal_file_path,
+        trace_file_path=trace_file_path
     )
 
     if data_context_manager is None:
@@ -86,14 +86,14 @@ def merge_particulate_data_from_multiple_sources(
 
     # 收集所有数据源
     data_sources = []
-    if data_id:
-        data_sources.append(("soluble", data_id))
-    if data_id_carbon:
-        data_sources.append(("carbon", data_id_carbon))
-    if data_id_crustal:
-        data_sources.append(("crustal", data_id_crustal))
-    if data_id_trace:
-        data_sources.append(("trace", data_id_trace))
+    if file_path:
+        data_sources.append(("soluble", file_path))
+    if carbon_file_path:
+        data_sources.append(("carbon", carbon_file_path))
+    if crustal_file_path:
+        data_sources.append(("crustal", crustal_file_path))
+    if trace_file_path:
+        data_sources.append(("trace", trace_file_path))
 
     if not data_sources:
         logger.warning("merge_particulate_data: no data sources provided")
@@ -306,10 +306,10 @@ def _aggregate_time(df: pd.DataFrame, reconstruction_type: str) -> pd.DataFrame:
 
 def calculate_reconstruction(
     data: Optional[Union[pd.DataFrame, List[Dict]]] = None,
-    data_id: Optional[str] = None,
-    data_id_carbon: Optional[str] = None,
-    data_id_crustal: Optional[str] = None,
-    data_id_trace: Optional[str] = None,
+    file_path: Optional[str] = None,
+    carbon_file_path: Optional[str] = None,
+    crustal_file_path: Optional[str] = None,
+    trace_file_path: Optional[str] = None,
     reconstruction_type: str = "full",
     oc_to_om: float = DEFAULT_OC_TO_OM,
     negative_handling: str = "clip",
@@ -322,24 +322,24 @@ def calculate_reconstruction(
     支持两种输入格式：
     1. DataFrame: 扁平结构，字段直接在顶层
     2. 字典列表: UnifiedParticulateData 格式，离子在 components 字段中
-    3. 多个独立数据源（data_id, data_id_carbon, data_id_crustal, data_id_trace）
+    3. 多个独立数据源（file_path, carbon_file_path, crustal_file_path, trace_file_path）
 
     返回遵循 UDF v2.0 的 dict，使用统一的 visual 格式。
     """
-    original_data_id = data_id
+    original_file_path = file_path
 
     if data is None:
         # 检查是否提供了多个独立的数据源
-        if (data_id or data_id_carbon or data_id_crustal or data_id_trace) and data_context_manager:
+        if (file_path or carbon_file_path or crustal_file_path or trace_file_path) and data_context_manager:
             data = merge_particulate_data_from_multiple_sources(
                 data_context_manager=data_context_manager,
-                data_id=data_id,
-                data_id_carbon=data_id_carbon,
-                data_id_crustal=data_id_crustal,
-                data_id_trace=data_id_trace
+                file_path=file_path,
+                carbon_file_path=carbon_file_path,
+                crustal_file_path=crustal_file_path,
+                trace_file_path=trace_file_path
             )
-        elif data_id and data_context_manager:
-            raw = data_context_manager.get_raw_data(data_id)
+        elif file_path and data_context_manager:
+            raw = data_context_manager.get_raw_data(file_path)
             if isinstance(raw, list):
                 data = raw
             elif isinstance(raw, dict):
@@ -428,13 +428,13 @@ def calculate_reconstruction(
     df_out = _aggregate_time(df, reconstruction_type)
 
     # 收集所有源数据ID
-    source_data_ids = [original_data_id] if original_data_id else []
-    if data_id_carbon:
-        source_data_ids.append(data_id_carbon)
-    if data_id_crustal:
-        source_data_ids.append(data_id_crustal)
-    if data_id_trace:
-        source_data_ids.append(data_id_trace)
+    source_file_paths = [original_file_path] if original_file_path else []
+    if carbon_file_path:
+        source_file_paths.append(carbon_file_path)
+    if crustal_file_path:
+        source_file_paths.append(crustal_file_path)
+    if trace_file_path:
+        source_file_paths.append(trace_file_path)
 
     metadata = {
         "generator": "calculate_reconstruction",
@@ -444,8 +444,8 @@ def calculate_reconstruction(
         "source_data_hash": _hash_dataframe(df) if isinstance(df, pd.DataFrame) else "",
         "schema_version": "v2.0",
         "scenario": "pm_reconstruction",
-        "source_data_id": original_data_id,
-        "source_data_ids": source_data_ids,  # 记录所有源数据ID
+        "source_file_path": original_file_path,
+        "source_file_paths": source_file_paths,  # 记录所有源数据ID
     }
 
     # 构建时间轴数据
@@ -471,7 +471,7 @@ def calculate_reconstruction(
     if ParticulateVisualizer is not None:
         try:
             visualizer = ParticulateVisualizer()
-            visuals = visualizer.generate_reconstruction_charts(df_out, available_cols, timestamps, source_data_id=original_data_id)
+            visuals = visualizer.generate_reconstruction_charts(df_out, available_cols, timestamps, source_file_path=original_file_path)
         except Exception as e:
             import logging
             logging.warning(f"使用 ParticulateVisualizer 生成图表失败: {e}")
@@ -678,7 +678,7 @@ class CalculateReconstructionTool(LLMTool):
    - **正确示例**: get_particulate_data("深圳市2025年12月24日的PM2.5碳组分、水溶性离子、地壳元素、微量金属数据，时间粒度为小时，要求并发查询，要求包含 OC、EC、SO4（硫酸盐）、NO3（硝酸盐）、NH4（铵盐）、Ca（钙）、Mg（镁）、K（钾）、Na（钠）、Al（铝）、Si（硅）、Fe（铁）、Pb（铅）、Zn（锌）、Cu（铜）")
 
 2. **调用此工具**：
-   - 传入 data_id（必需）
+   - 传入 file_path（必需）
    - 可选参数：oc_to_om（OC转OM系数，默认1.4）
 
 **返回结果**:
@@ -690,7 +690,7 @@ class CalculateReconstructionTool(LLMTool):
 **示例**:
 步骤1: particle_data = get_particulate_data("深圳市2025年12月24日的PM2.5组分数据...")
 步骤2: result = calculate_reconstruction(
-    data_id=particle_data["data_id"]  # 必需
+    file_path=particle_data["file_path"]  # 必需
 )
 
 **质量闭合度解读**:
@@ -702,19 +702,19 @@ class CalculateReconstructionTool(LLMTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": "水溶性离子/主颗粒物组分数据ID（来自 get_particulate_data），必需参数"
                     },
-                    "data_id_carbon": {
+                    "carbon_file_path": {
                         "type": "string",
                         "description": "碳组分数据ID（来自独立的 get_particulate_data 查询 OC、EC），可选"
                     },
-                    "data_id_crustal": {
+                    "crustal_file_path": {
                         "type": "string",
                         "description": "地壳元素数据ID（来自独立的 get_particulate_data 查询 Al、Si、Fe 等），可选"
                     },
-                    "data_id_trace": {
+                    "trace_file_path": {
                         "type": "string",
                         "description": "微量元素数据ID（来自独立的 get_particulate_data 查询 Zn、Pb、Cu 等），可选"
                     },
@@ -740,7 +740,7 @@ class CalculateReconstructionTool(LLMTool):
                         "description": "自定义地壳元素氧化物系数，如 {'Al': 1.89, 'Si': 2.14}"
                     }
                 },
-                "required": ["data_id"]
+                "required": ["file_path"]
             }
         }
 
@@ -753,7 +753,7 @@ class CalculateReconstructionTool(LLMTool):
             function_schema=function_schema
         )
 
-    async def execute(self, context=None, data_id=None, data_id_carbon=None, data_id_crustal=None, data_id_trace=None, data=None, reconstruction_type="full", oc_to_om=1.4, negative_handling="clip", oxide_coeff_dict=None, **kwargs):
+    async def execute(self, context=None, file_path=None, carbon_file_path=None, crustal_file_path=None, trace_file_path=None, data=None, reconstruction_type="full", oc_to_om=1.4, negative_handling="clip", oxide_coeff_dict=None, **kwargs):
         """执行7大组分重构计算"""
         data_context_manager = kwargs.get('data_context_manager')
 
@@ -768,10 +768,10 @@ class CalculateReconstructionTool(LLMTool):
                 data_context_manager = context
 
         result = calculate_reconstruction(
-            data_id=data_id,
-            data_id_carbon=data_id_carbon,
-            data_id_crustal=data_id_crustal,
-            data_id_trace=data_id_trace,
+            file_path=file_path,
+            carbon_file_path=carbon_file_path,
+            crustal_file_path=crustal_file_path,
+            trace_file_path=trace_file_path,
             data=data,
             reconstruction_type=reconstruction_type,
             oc_to_om=oc_to_om,
@@ -798,17 +798,17 @@ class CalculateReconstructionTool(LLMTool):
                         for v in result.get("visuals", [])
                     ]
                 }
-                result_data_id = data_context_manager.save_data(
+                result_file_path = data_context_manager.save_data(
                     data=[summary],
                     schema="particulate_analysis",
                     metadata={
-                        "source_data_id": data_id,
+                        "source_file_path": file_path,
                         "closure_ratio": statistics.get("mass_closure", {}).get("closure_ratio"),
                         "missing_mass_ratio": statistics.get("mass_closure", {}).get("missing_mass_ratio"),
                         "component_count": len(summary.get("available_components", []))
                     }
                 )
-                result["data_id"] = result_data_id
+                result["file_path"] = result_file_path
             except Exception as save_err:
                 logger.warning(f"[calculate_reconstruction] 保存失败: {save_err}")
 

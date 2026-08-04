@@ -96,24 +96,24 @@ def divide_by_taylor(normalized_data: pd.DataFrame, taylor_dict: Dict[str, float
 
 def calculate_trace(
     data: Optional[pd.DataFrame] = None,
-    data_id: Optional[str] = None,
+    file_path: Optional[str] = None,
     al_column: str = "Al",
     taylor_dict: Optional[Dict[str, float]] = None,
     data_context_manager: Optional["DataContextManager"] = None,
 ) -> Dict[str, Any]:
     """
     微量元素分析（铝归一化、Taylor 丰度对比、富集度）。
-    计算完成后保留原始 data_id，供图表模式按需生成可视化。
+    计算完成后保留原始 file_path，供图表模式按需生成可视化。
 
     Args:
         data: DataFrame 包含微量元素列与铝列（已通过DataStandardizer标准化）
-        data_id: 原始数据 ID（供下游读取与可视化）
+        file_path: 原始数据 ID（供下游读取与可视化）
         al_column: 铝列名（用于归一化，默认"Al"，英文字段名）
         taylor_dict: Taylor丰度字典，如果不提供则使用默认字典（英文字段名）
         data_context_manager: 数据上下文管理器（包含DataStandardizer）
 
     Returns:
-        遵循 UDF v2.0 的 dict，包含计算结果和原始 data_id
+        遵循 UDF v2.0 的 dict，包含计算结果和原始 file_path
 
     Note:
         - 数据字段应在DataStandardizer中标准化为英文字段名
@@ -122,15 +122,15 @@ def calculate_trace(
     import structlog
     logger = structlog.get_logger()
 
-    # 保存原始数据ID
-    original_data_id = data_id
+    # 保存原始数据文件路径
+    original_file_path = file_path
 
-    # 【调试日志】记录 data_id 的完整值
+    # 【调试日志】记录 file_path 的完整值
     logger.info(
-        "calculate_trace_data_id_received",
-        data_id=data_id,
-        data_id_length=len(data_id) if data_id else 0,
-        data_id_hash=data_id.split(":")[-1] if data_id and ":" in data_id else None,
+        "calculate_trace_file_path_received",
+        file_path=file_path,
+        file_path_length=len(file_path) if file_path else 0,
+        file_path_hash=file_path.split(":")[-1] if file_path and ":" in file_path else None,
         data_context_manager_type=type(data_context_manager).__name__ if data_context_manager else None,
         session_id=data_context_manager.memory.session_id if data_context_manager else None,
         data_files_keys_count=len(data_context_manager.memory.session.data_files) if data_context_manager else 0,
@@ -141,33 +141,33 @@ def calculate_trace(
     effective_taylor = taylor_dict or DEFAULT_TAYLOR_ABUNDANCE
 
     if data is None:
-        if data_id and data_context_manager:
+        if file_path and data_context_manager:
             try:
                 # 使用 get_data() 获取类型化数据
-                typed_data = data_context_manager.get_data(data_id)
+                typed_data = data_context_manager.get_data(file_path)
                 if isinstance(typed_data, list):
                     data = typed_data
             except Exception as e1:
                 logger.warning(
                     "calculate_trace_get_data_failed",
-                    data_id=data_id,
+                    file_path=file_path,
                     error=str(e1),
                     error_type=type(e1).__name__
                 )
                 # 降级到 get_raw_data()
                 try:
-                    raw = data_context_manager.get_raw_data(data_id)
+                    raw = data_context_manager.get_raw_data(file_path)
                     if isinstance(raw, list):
                         data = pd.DataFrame(raw)
                 except Exception as e2:
                     logger.error(
                         "calculate_trace_get_raw_data_failed",
-                        data_id=data_id,
+                        file_path=file_path,
                         error=str(e2),
                         error_type=type(e2).__name__
                     )
         if data is None:
-            raise ValueError(f"无法加载数据: data_id={data_id}")
+            raise ValueError(f"无法加载数据: file_path={file_path}")
 
     # 处理 UnifiedParticulateData 格式（字典列表）
     if isinstance(data, list) and len(data) > 0:
@@ -228,7 +228,7 @@ def calculate_trace(
                 "schema_version": "v2.0",
                 "scenario": "pm_trace_analysis",
                 "note": "数据已通过DataStandardizer标准化，但缺少参考列（Al或其他地壳元素）",
-                "source_data_id": original_data_id,
+                "source_file_path": original_file_path,
             },
             "visuals": []
         }
@@ -257,7 +257,7 @@ def calculate_trace(
                 "version": "1.2.0",
                 "schema_version": "v2.0",
                 "scenario": "pm_trace_analysis",
-                "source_data_id": original_data_id,
+                "source_file_path": original_file_path,
             },
             "visuals": []
         }
@@ -273,7 +273,7 @@ def calculate_trace(
             "status": "success",
             "success": True,
             "data": {"message": "所有微量元素列均为空"},
-            "metadata": {"generator": "calculate_trace", "version": "1.1.0", "schema_version": "v2.0", "source_data_id": original_data_id},
+            "metadata": {"generator": "calculate_trace", "version": "1.1.0", "schema_version": "v2.0", "source_file_path": original_file_path},
             "visuals": []
         }
 
@@ -299,7 +299,7 @@ def calculate_trace(
         "reference_column": al_column,
         "trace_elements": trace_cols,
         # 保留原始数据 ID，供下游读取与可视化。
-        "source_data_id": original_data_id,
+        "source_file_path": original_file_path,
     }
 
     # 计算基础统计
@@ -319,7 +319,7 @@ def calculate_trace(
     try:
         if divided is not None and not divided.empty:
             visualizer = ParticulateVisualizer()
-            enrichment_chart = visualizer.generate_trace_enrichment_chart(divided, source_data_id=original_data_id)
+            enrichment_chart = visualizer.generate_trace_enrichment_chart(divided, source_file_path=original_file_path)
             if enrichment_chart:
                 visuals.append(enrichment_chart)
                 logger.info("[calculate_trace] 微量元素富集因子图生成成功")
@@ -366,7 +366,7 @@ def calculate_trace(
 # ============================================================================
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_declarations import data_resource, resources_for_visuals
+from app.tools.resource_declarations import data_file_resource, resources_for_visuals
 
 
 class CalculateTraceTool(LLMTool):
@@ -408,10 +408,10 @@ class CalculateTraceTool(LLMTool):
             data: 原始数据（已通过DataStandardizer标准化）
             al_column: 铝列名（默认"Al"，英文字段名）
             taylor_dict: Taylor丰度字典（可选，默认使用内置字典）
-            **kwargs: 其他参数（包括data_context_manager, data_id）
+            **kwargs: 其他参数（包括data_context_manager, file_path）
         """
         data_context_manager = kwargs.get('data_context_manager')
-        data_id = kwargs.get('data_id')
+        file_path = kwargs.get('file_path')
 
         if data_context_manager is None and context is not None:
             if hasattr(context, 'data_manager'):
@@ -425,7 +425,7 @@ class CalculateTraceTool(LLMTool):
 
         result = calculate_trace(
             data=data,
-            data_id=data_id,
+            file_path=file_path,
             al_column=al_column,
             taylor_dict=taylor_dict,
             data_context_manager=data_context_manager
@@ -433,18 +433,18 @@ class CalculateTraceTool(LLMTool):
 
         if data_context_manager is not None and result.get("success"):
             try:
-                result_data_id = data_context_manager.save_data(
+                result_file_path = data_context_manager.save_data(
                     data=[result],
                     schema="particulate_analysis"
                 )
-                result["data_id"] = result_data_id
+                result["file_path"] = result_file_path
             except Exception as save_err:
                 import structlog
                 logging.warning(f"[calculate_trace] 保存结果失败: {save_err}")
 
         result["resources"] = resources_for_visuals(result.get("visuals", []), tool_name=self.name)
-        if result.get("data_id"):
-            result["resources"].append(data_resource(str(result["data_id"]), tool_name=self.name))
+        if result.get("file_path"):
+            result["resources"].append(data_file_resource(str(result["file_path"]), tool_name=self.name))
         return result
 
 

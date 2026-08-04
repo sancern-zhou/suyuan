@@ -372,7 +372,7 @@ class CallSubAgentTool(LLMTool):
 
             # 提取结构化数据
             structured_data = {
-                "data_ids": self._extract_data_ids(result_events),
+                "file_paths": self._extract_file_paths(result_events),
                 "chart_urls": self._extract_chart_urls(result_events),  # 图片URL（前端渲染）
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
@@ -394,7 +394,7 @@ class CallSubAgentTool(LLMTool):
                 "generator": "call_sub_agent",
                 "sub_agent_mode": target_mode,
                 "iterations": len([e for e in result_events if e.get("type") == "tool_call"]),
-                "data_ids_count": len(structured_data["data_ids"]),
+                "file_paths_count": len(structured_data["file_paths"]),
                 "chart_urls_count": len(structured_data["chart_urls"]),
                 "image_paths_count": len(structured_data["image_paths"]),
                 # ✅ 返回session_id给父Agent
@@ -493,18 +493,18 @@ class CallSubAgentTool(LLMTool):
         hint = mode_hints.get(target_mode, "")
         parts.append(hint)
 
-        # ⚠️ 添加data_id返回要求（所有子Agent必须遵守）
+        # ⚠️ 添加file_path返回要求（所有子Agent必须遵守）
         parts.append("\n## ⚠️ 子Agent返回格式要求（CRITICAL）\n")
-        parts.append("**必须在最终回复中明确列出所有data_id**，格式如下：\n")
+        parts.append("**必须在最终回复中明确列出所有file_path**，格式如下：\n")
         parts.append("```markdown\n")
         parts.append("**数据溯源**：\n")
-        parts.append("- data_id: xxx-xxx (说明)\n")
-        parts.append("- data_id: yyy-yyy (说明)\n")
+        parts.append("- file_path: xxx-xxx (说明)\n")
+        parts.append("- file_path: yyy-yyy (说明)\n")
         parts.append("```\n\n")
         parts.append("**提取规则**：\n")
-        parts.append("- 从工具返回的 `data_id`、`metadata.data_id`、`data.data_ids` 字段提取\n")
+        parts.append("- 从工具返回的 `file_path`、`metadata.file_path`、`data.file_paths` 字段提取\n")
         parts.append("- 父Agent依赖此信息收集数据溯源\n")
-        parts.append("- 即使只有一个data_id也必须列出\n")
+        parts.append("- 即使只有一个file_path也必须列出\n")
 
         return "\n".join(parts)
 
@@ -559,33 +559,27 @@ class CallSubAgentTool(LLMTool):
         }
         return mode_names.get(mode, mode)
 
-    def _extract_data_ids(self, events: list) -> list:
-        """从事件流中提取所有data_id"""
-        data_ids = []
+    def _extract_file_paths(self, events: list) -> list:
+        """从事件流中提取所有file_path"""
+        file_paths = []
         for event in events:
             # 从observation中提取
             if event.get("type") == "observation":
-                if "data_id" in event:
-                    data_ids.append(event["data_id"])
+                if "file_path" in event:
+                    file_paths.append(event["file_path"])
                 # 从data字段中提取
                 if "data" in event and isinstance(event["data"], dict):
-                    if "data_id" in event["data"]:
-                        data_ids.append(event["data"]["data_id"])
-                    # 从data字段中的data_ids数组提取
-                    if "data_ids" in event["data"] and isinstance(event["data"]["data_ids"], list):
-                        data_ids.extend(event["data"]["data_ids"])
-                    # ✅ 从metadata.data_id中提取（支持嵌套格式）
+                    if "file_path" in event["data"]:
+                        file_paths.append(event["data"]["file_path"])
+                    # 从data字段中的file_paths数组提取
+                    if "file_paths" in event["data"] and isinstance(event["data"]["file_paths"], list):
+                        file_paths.extend(event["data"]["file_paths"])
+                    # 从 metadata.file_path 中提取
                     if "metadata" in event["data"] and isinstance(event["data"]["metadata"], dict):
                         metadata = event["data"]["metadata"]
-                        if "data_id" in metadata:
-                            # 处理字符串格式
-                            if isinstance(metadata["data_id"], str):
-                                data_ids.append(metadata["data_id"])
-                            # 处理字典格式 {"data_id": "...", "file_path": "..."}
-                            elif isinstance(metadata["data_id"], dict):
-                                if "data_id" in metadata["data_id"]:
-                                    data_ids.append(metadata["data_id"]["data_id"])
-        return list(set(data_ids))  # 去重
+                        if isinstance(metadata.get("file_path"), str):
+                            file_paths.append(metadata["file_path"])
+        return list(set(file_paths))  # 去重
 
     def _extract_chart_urls(self, events: list) -> list:
         """从事件流中提取所有图表URL（用于前端渲染）"""
@@ -740,8 +734,8 @@ class CallSubAgentTool(LLMTool):
             "timestamp": datetime.now().isoformat()
         })
 
-        # 提取并添加data_ids（visual_ids不再提取，社交模式用chart_urls渲染图片）
-        data_ids = self._extract_data_ids(result_events)
+        # 提取并添加file_paths（visual_ids不再提取，社交模式用chart_urls渲染图片）
+        file_paths = self._extract_file_paths(result_events)
 
         # 去重后添加
         # Data resources are persisted by the unified resource service.

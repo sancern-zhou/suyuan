@@ -142,7 +142,7 @@ class ContextDiagnostics:
                     "status": self._find_first_key(parsed_payload, ["status"]),
                     "success": self._find_first_key(parsed_payload, ["success"]),
                     "tool_name": self._find_first_key(parsed_payload, ["tool_name"]),
-                    "has_data_id": self._contains_key(parsed_payload, {"data_id", "data_ids"}),
+                    "has_file_path": self._contains_key(parsed_payload, {"file_path", "file_paths"}),
                     "has_visual_id": self._contains_key(parsed_payload, {"visual_id", "visual_ids"}),
                     "summary_chars": len(str(self._find_first_key(parsed_payload, ["summary"]) or "")),
                     "top_level_keys": self._top_level_keys(parsed_payload),

@@ -9,7 +9,7 @@ from typing import Any
 from app.services.data_registry import DataRegistryService, data_registry
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products
-from app.tools.resource_refs import build_data_ref, build_file_ref, build_url_ref, build_visual_ref
+from app.tools.resource_refs import build_file_ref, build_registry_data_ref, build_url_ref, build_visual_ref
 
 
 class LocalSatelliteImageTool(LLMTool):
@@ -120,7 +120,7 @@ class LocalSatelliteImageTool(LLMTool):
             for image in images
         ]
         refs = {
-            "data": [build_data_ref(image["data_id"], usage="source") for image in images],
+            "data": [build_registry_data_ref(image["data_id"]) for image in images],
             "files": [
                 build_file_ref(image["local_path"], type="image", format="png", usage="display")
                 for image in images
@@ -154,7 +154,7 @@ class LocalSatelliteImageTool(LLMTool):
             ),
             "refs": refs,
             "llm_resume": {
-                "source_data_ids": list(dict.fromkeys(image["data_id"] for image in images)),
+                "source_registry_data_ids": list(dict.fromkeys(image["data_id"] for image in images)),
                 "tool_hint": f"Use {self.name} with a product_type or time range to retrieve another local satellite image.",
             },
             "metadata": {"generator": self.name, "schema": self.schema_name},

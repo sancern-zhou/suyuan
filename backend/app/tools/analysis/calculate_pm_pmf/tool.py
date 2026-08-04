@@ -9,7 +9,7 @@ PMF 源解析工具（Context-Aware V2）- NIMFA无监督模式
 - 因子数确定：Q值变化曲线分析（主方法）+ 残差分析/回归诊断（验证）
 
 数据流程：
-1. 接受 data_id 参数（来自 get_particulate_data）
+1. 接受 file_path 参数（来自 get_particulate_data）
 2. 从 Context 加载数据
 3. 计算组分权重（规范6.1.2）
 4. 分析最优因子数（规范6.1.3）：Q值曲线+残差+回归诊断
@@ -169,7 +169,7 @@ class CalculatePMFTool(LLMTool):
    - 核心字段：OC（有机碳）、EC（元素碳）
 
 3. **调用此工具**:
-   - 传入 data_id、gas_data_id、station_name
+   - 传入 file_path、gas_file_path、station_name
 
 **返回结果**：
 - **因子载荷矩阵**：每个因子对应各组分的载荷值
@@ -187,8 +187,8 @@ class CalculatePMFTool(LLMTool):
 步骤2: carbon_data = get_particulate_data("阳江市2025年12月27日小时粒度的PM2.5碳组分数据", role="carbon")
 步骤3: result = calculate_pm_pmf(
             station_name="阳江市",
-            data_id="particulate_unified:xxx",
-            gas_data_id="particulate_unified:yyy"
+            file_path="particulate_unified:xxx",
+            gas_file_path="particulate_unified:yyy"
         )
             """.strip(),
             "parameters": {
@@ -198,7 +198,7 @@ class CalculatePMFTool(LLMTool):
                         "type": "string",
                         "description": "超级站点名称（例：深圳南山、广州天河）"
                     },
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": (
                             "小时粒度的水溶性离子数据引用ID（来自 get_particulate_data 工具的返回值，role=water-soluble）。"
@@ -224,7 +224,7 @@ class CalculatePMFTool(LLMTool):
                         "description": "NIMFA因子数（预设为5个污染源）",
                         "default": 5
                     },
-                    "gas_data_id": {
+                    "gas_file_path": {
                         "type": "string",
                         "description": (
                             "碳组分数据引用ID（来自 get_particulate_data 工具的返回值，role=carbon）。"
@@ -232,7 +232,7 @@ class CalculatePMFTool(LLMTool):
                         )
                     }
                 },
-                "required": ["station_name", "data_id", "gas_data_id"]
+                "required": ["station_name", "file_path", "gas_file_path"]
             }
         }
 
@@ -267,16 +267,16 @@ class CalculatePMFTool(LLMTool):
         self,
         context: "ExecutionContext",
         station_name: str,
-        data_id: str,
+        file_path: str,
         pollutant_type: str = "PM2.5",
         start_time: str = "",
         end_time: str = "",
         nimfa_rank: int = None,
-        gas_data_id: str = None,
+        gas_file_path: str = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        执行 NIMFA PMF 源解析（使用 data_id 引用）
+        执行 NIMFA PMF 源解析（使用 file_path 引用）
 
         符合规范6.1.2和6.1.3要求：
         - 6.1.2 权重选择：关键组分权重1.0，非关键组分权重0.5
@@ -285,12 +285,12 @@ class CalculatePMFTool(LLMTool):
         Args:
             context: 执行上下文（用于加载数据）
             station_name: 超级站点名称
-            data_id: 数据引用ID（来自 get_particulate_data）
+            file_path: 数据引用ID（来自 get_particulate_data）
             pollutant_type: 污染物类型（PM2.5/PM10）
             start_time: 起始时间（可选）
             end_time: 结束时间（可选）
             nimfa_rank: NIMFA因子数（可选，不指定则自动分析最优因子数）
-            gas_data_id: 碳组分数据ID（可选）
+            gas_file_path: 碳组分数据ID（可选）
 
         Returns:
             NIMFA分析结果，包含因子载荷、贡献率、时间序列、权重配置、因子分析结果
@@ -299,9 +299,9 @@ class CalculatePMFTool(LLMTool):
         logger.info(
             "calculate_pm_pmf_execute_entry",
             station_name=station_name,
-            data_id=data_id,
+            file_path=file_path,
             pollutant_type=pollutant_type,
-            gas_data_id=gas_data_id,
+            gas_file_path=gas_file_path,
             nimfa_rank=nimfa_rank,
             start_time=start_time,
             end_time=end_time,
@@ -312,7 +312,7 @@ class CalculatePMFTool(LLMTool):
         logger.info(
             "calculate_pmf_nimfa_start",
             station_name=station_name,
-            data_id=data_id,
+            file_path=file_path,
             pollutant_type=pollutant_type,
             nimfa_rank=nimfa_rank,
             session_id=context.session_id
@@ -320,17 +320,17 @@ class CalculatePMFTool(LLMTool):
 
         # Step 1: Get data handle
         try:
-            handle = context.get_handle(data_id)
+            handle = context.get_handle(file_path)
             logger.info(
                 "pmf_data_handle_loaded",
-                data_id=data_id,
+                file_path=file_path,
                 schema=handle.schema,
                 record_count=handle.record_count
             )
         except KeyError as e:
             logger.error(
                 "pmf_data_handle_not_found",
-                data_id=data_id,
+                file_path=file_path,
                 error=str(e),
                 available_file_paths=context.available_file_paths[:10] if hasattr(context, 'available_file_paths') else []
             )
@@ -342,14 +342,14 @@ class CalculatePMFTool(LLMTool):
                     "tool_name": "calculate_pm_pmf",
                     "error_type": "data_not_found"
                 },
-                "summary": f"[FAIL] 未找到数据引用 {data_id}，错误: {str(e)}"
+                "summary": f"[FAIL] 未找到数据引用 {file_path}，错误: {str(e)}"
             }
             logger.info("pmf_exiting_with_error", step="data_handle_not_found", error_type="KeyError")
             return result
         except Exception as e:
             logger.error(
                 "pmf_data_handle_error",
-                data_id=data_id,
+                file_path=file_path,
                 error=str(e),
                 error_type=type(e).__name__
             )
@@ -371,7 +371,7 @@ class CalculatePMFTool(LLMTool):
         is_compatible = any(handle.is_compatible_with(s) for s in accepted_schemas)
         logger.info(
             "pmf_schema_validation",
-            data_id=data_id,
+            file_path=file_path,
             actual_schema=handle.schema,
             accepted_schemas=accepted_schemas,
             is_compatible=is_compatible
@@ -380,7 +380,7 @@ class CalculatePMFTool(LLMTool):
         if not is_compatible:
             logger.error(
                 "pmf_schema_incompatible",
-                data_id=data_id,
+                file_path=file_path,
                 actual_schema=handle.schema,
                 accepted_schemas=accepted_schemas
             )
@@ -394,7 +394,7 @@ class CalculatePMFTool(LLMTool):
                     "expected": "particulate 或 particulate_unified",
                     "actual": handle.schema
                 },
-                "summary": f"[FAIL] PMF分析需要 particulate 数据，但 {data_id} 是 {handle.schema} 数据"
+                "summary": f"[FAIL] PMF分析需要 particulate 数据，但 {file_path} 是 {handle.schema} 数据"
             }
             _log_exit(logger, "schema_validation", "failed", reason="schema_incompatible")
             return result
@@ -403,7 +403,7 @@ class CalculatePMFTool(LLMTool):
         is_valid, error_msg = handle.validate_for_pmf()
         logger.info(
             "pmf_data_validation",
-            data_id=data_id,
+            file_path=file_path,
             is_valid=is_valid,
             error_msg=error_msg if not is_valid else None,
             record_count=handle.record_count
@@ -411,7 +411,7 @@ class CalculatePMFTool(LLMTool):
         if not is_valid:
             logger.error(
                 "pmf_validation_failed",
-                data_id=data_id,
+                file_path=file_path,
                 error_msg=error_msg,
                 record_count=handle.record_count
             )
@@ -422,7 +422,7 @@ class CalculatePMFTool(LLMTool):
                 "metadata": {
                     "tool_name": "calculate_pm_pmf",
                     "error_type": "validation_failed",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "record_count": handle.record_count
                 },
                 "summary": f"[FAIL] PMF数据验证失败: {error_msg}"
@@ -431,19 +431,19 @@ class CalculatePMFTool(LLMTool):
             return result
 
         # Step 4: Load data
-        logger.info("pmf_loading_data", data_id=data_id, record_count=handle.record_count)
+        logger.info("pmf_loading_data", file_path=file_path, record_count=handle.record_count)
         try:
-            typed_data = context.get_data(data_id, expected_schema=handle.schema)
+            typed_data = context.get_data(file_path, expected_schema=handle.schema)
             logger.info(
                 "pmf_data_loaded_success",
-                data_id=data_id,
+                file_path=file_path,
                 loaded_records=len(typed_data) if typed_data else 0,
                 data_type=type(typed_data).__name__
             )
         except Exception as exc:
             logger.error(
                 "pmf_data_load_failed",
-                data_id=data_id,
+                file_path=file_path,
                 error=str(exc),
                 error_type=type(exc).__name__,
                 traceback=traceback.format_exc()
@@ -454,16 +454,16 @@ class CalculatePMFTool(LLMTool):
                 "success": False,
                 "data": None,
                 "metadata": {"tool_name": "calculate_pm_pmf", "error_type": "data_load_failed"},
-                "summary": f"[FAIL] 无法加载数据 {data_id}: {type(exc).__name__}: {str(exc)}"
+                "summary": f"[FAIL] 无法加载数据 {file_path}: {type(exc).__name__}: {str(exc)}"
             }
 
         # Step 5: Load gas data if provided
         gas_records = None
-        if gas_data_id:
-            logger.info("pmf_loading_gas_data", gas_data_id=gas_data_id)
+        if gas_file_path:
+            logger.info("pmf_loading_gas_data", gas_file_path=gas_file_path)
             try:
-                gas_handle = context.get_handle(gas_data_id)
-                gas_data = context.get_data(gas_data_id, expected_schema=gas_handle.schema)
+                gas_handle = context.get_handle(gas_file_path)
+                gas_data = context.get_data(gas_file_path, expected_schema=gas_handle.schema)
                 # 转换为字典格式（UDF v2.0标准格式）
                 gas_records = []
                 for record in gas_data:
@@ -473,20 +473,20 @@ class CalculatePMFTool(LLMTool):
                         gas_records.append(dict(record))
                 logger.info(
                     "pmf_gas_data_loaded",
-                    gas_data_id=gas_data_id,
+                    gas_file_path=gas_file_path,
                     record_count=len(gas_records),
                     schema=gas_handle.schema
                 )
             except Exception as exc:
                 logger.warning(
                     "pmf_gas_data_load_failed",
-                    gas_data_id=gas_data_id,
+                    gas_file_path=gas_file_path,
                     error=str(exc),
                     error_type=type(exc).__name__
                 )
 
         # Step 6: Transform data
-        logger.info("pmf_transforming_data", data_id=data_id, record_count=len(typed_data))
+        logger.info("pmf_transforming_data", file_path=file_path, record_count=len(typed_data))
         try:
             component_data = self._transform_particulate_to_pmf_input(typed_data)
             logger.info(
@@ -638,7 +638,7 @@ class CalculatePMFTool(LLMTool):
                 "metadata": {
                     "tool_name": "calculate_pm_pmf",
                     "error_type": "calculation_failed",
-                    "data_id": data_id
+                    "file_path": file_path
                 },
                 "summary": f"[FAIL] PMF计算失败: {result.get('error', '未知错误')}"
             }
@@ -647,7 +647,7 @@ class CalculatePMFTool(LLMTool):
         result["station_name"] = station_name
         result["start_time"] = start_time
         result["end_time"] = end_time
-        result["input_data_id"] = data_id
+        result["input_file_path"] = file_path
         result["sample_count"] = len(component_data)
 
         # 添加权重配置信息
@@ -676,14 +676,14 @@ class CalculatePMFTool(LLMTool):
 
         # Step 12: 保存结果
         try:
-            pmf_data_id = context.save_data(
+            pmf_file_path = context.save_data(
                 data=[result],
                 schema="pmf_result",
                 metadata={
                     "station_name": station_name,
                     "pollutant_type": pollutant_type,
-                    "input_data_id": data_id,
-                    "gas_data_id": gas_data_id,
+                    "input_file_path": file_path,
+                    "gas_file_path": gas_file_path,
                     "sources_count": len(result.get("sources", [])),
                     "sample_count": len(component_data),
                     "optimal_rank": optimal_rank,
@@ -697,13 +697,13 @@ class CalculatePMFTool(LLMTool):
                     }
                 }
             )
-            # context.save_data() 返回字符串 data_id，不是字典
-            result["data_id"] = pmf_data_id
+            # context.save_data() 返回字符串 file_path，不是字典
+            result["file_path"] = pmf_file_path
             result["registry_schema"] = "pmf_result"
 
             logger.info(
                 "pmf_result_saved",
-                pmf_data_id=pmf_data_id,
+                pmf_file_path=pmf_file_path,
                 sources_count=len(result.get("sources", [])),
                 sample_count=len(component_data)
             )
@@ -814,7 +814,7 @@ class CalculatePMFTool(LLMTool):
             f"- 因子1-2：通常对应一次排放源（高EC/OC或金属元素）\n"
             f"- 因子3-4：通常对应二次生成（高SO4/NO3/NH4）\n"
             f"- 请根据因子载荷判断每个因子的物理含义和污染源类型\n\n"
-            f"**数据存储**: PMF结果已存储，ID: `{pmf_data_id}`"
+            f"**数据文件**: `{pmf_file_path}`"
         )
 
         # Apply token truncation
@@ -827,7 +827,7 @@ class CalculatePMFTool(LLMTool):
             optimal_rank=optimal_rank,
             confidence=factor_analysis_result.confidence if factor_analysis_result else None,
             success=result.get("success"),
-            data_id=pmf_data_id,
+            file_path=pmf_file_path,
             sample_count=len(component_data),
             main_source=main_source,
             main_contribution=main_contribution
@@ -837,16 +837,16 @@ class CalculatePMFTool(LLMTool):
             "status": "success",
             "success": True,
             "data": result,
-            "data_id": pmf_data_id,
+            "file_path": pmf_file_path,
             "visuals": [],
             "metadata": {
                 "schema_version": "v2.0",
                 "tool_name": "calculate_pm_pmf",
                 "station_name": station_name,
                 "pollutant_type": pollutant_type,
-                "data_id": data_id,
-                "pmf_result_id": pmf_data_id,
-                "gas_data_id": gas_data_id,
+                "file_path": file_path,
+                "pmf_result_file_path": pmf_file_path,
+                "gas_file_path": gas_file_path,
                 "sources_count": len(sources),
                 "sample_count": len(component_data),
                 "optimal_rank": optimal_rank,
@@ -860,10 +860,10 @@ class CalculatePMFTool(LLMTool):
                     "6.1.2_weight_selection": True,
                     "6.1.3_factor_determination": True
                 },
-                "source_data_ids": [data_id, pmf_data_id] + ([gas_data_id] if gas_data_id else [])
+                "source_file_paths": [file_path, pmf_file_path] + ([gas_file_path] if gas_file_path else [])
             },
             "summary": (
-                f"[OK] PMF源解析完成（最优因子数{optimal_rank}，识别{len(sources)}个源），已保存为 {pmf_data_id}。"
+                f"[OK] PMF源解析完成（最优因子数{optimal_rank}，识别{len(sources)}个源），文件路径: {pmf_file_path}。"
                 f"置信度{factor_analysis_result.confidence:.1%}，"
                 f"主要因子{main_source} ({main_contribution:.1f}%)，"
                 f"模型R²={r2_str}。请根据因子载荷矩阵解读各因子对应的污染源类型。"
@@ -875,26 +875,26 @@ class CalculatePMFTool(LLMTool):
             status=final_result["status"],
             success=final_result["success"],
             has_data=final_result["data"] is not None,
-            data_id=final_result["data_id"],
+            file_path=final_result["file_path"],
             sources_count=len(sources),
             summary_length=len(final_result["summary"])
         )
 
         self._attach_resume_context(final_result)
-        _log_exit(logger, "success", "completed", data_id=final_result["data_id"], sources_count=len(sources))
+        _log_exit(logger, "success", "completed", file_path=final_result["file_path"], sources_count=len(sources))
         return final_result
 
     def _attach_resume_context(self, result: Dict[str, Any]) -> None:
         metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
-        generated_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        generated_id = result.get("file_path") if isinstance(result.get("file_path"), str) else None
         source_ids = []
-        for key in ("data_id", "gas_data_id"):
+        for key in ("file_path", "gas_file_path"):
             value = metadata.get(key)
             if isinstance(value, str) and value and value != generated_id:
                 source_ids.append(value)
         context = build_data_resume_context(
-            source_data_ids=source_ids,
-            generated_data_ids=[generated_id] if generated_id else [],
+            source_file_paths=source_ids,
+            generated_file_paths=[generated_id] if generated_id else [],
         )
         result["refs"] = merge_refs(result.get("refs"), context["refs"])
         result["llm_resume"] = context["llm_resume"]

@@ -48,7 +48,7 @@ class UniversalMeteorologyTool(LLMTool):
     - Context-Aware V2架构
     - UDF v1.0格式输出
     - 数据通过context.save_data()存储
-    - 返回data_id而非完整数据
+    - 返回file_path而非完整数据
     """
 
     def __init__(self):
@@ -59,7 +59,7 @@ class UniversalMeteorologyTool(LLMTool):
 **Context-Aware V2工具，采用混合模式**
 
 特点：
-- 既返回完整数据给LLM智能分析，又保存data_id供下游工具使用
+- 既返回完整数据给LLM智能分析，又保存file_path供下游工具使用
 - 支持多数据源融合（实时+预报+历史+风廓线）
 - 返回72小时完整预报序列（而非样本）
 - 优先使用ERA5压力层数据构建11层风廓线
@@ -77,7 +77,7 @@ class UniversalMeteorologyTool(LLMTool):
     "status": "success",
     "success": true,
     "data": [UnifiedDataRecord, ...],  # 完整的100+条气象记录，LLM可直接分析
-    "data_id": "meteorology_unified:v1:32位十六进制字符串",  # 供下游工具使用
+    "file_path": "/srv/suyuan/sessions/example/data/meteorology.json",  # 供下游工具使用
     "metadata": {
         "tool_name": "get_universal_meteorology",
         "record_count": 155,
@@ -157,7 +157,7 @@ class UniversalMeteorologyTool(LLMTool):
             include_historical: 是否包含历史参考
 
         Returns:
-            Dict: UDF v1.0格式，包含data_id引用
+            Dict: UDF v1.0格式，包含file_path引用
         """
         try:
             logger.info(
@@ -526,7 +526,7 @@ class UniversalMeteorologyTool(LLMTool):
 
                 # 构建metadata - 使用临时ID，稍后会更新
                 metadata = DataMetadata(
-                    data_id="temp_id",
+                    file_path="temp_id",
                     data_type=DataType.WEATHER,
                     record_count=len(standardized_records),
                     station_name=station_name,
@@ -546,7 +546,7 @@ class UniversalMeteorologyTool(LLMTool):
                 )
 
                 # 保存到context（传递标准化后的字典列表）
-                # save_data() 返回 {"data_id": str, "file_path": str}
+                # save_data() 返回 {"file_path": str, "file_path": str}
                 data_ref = context.data_manager.save_data(
                     data=standardized_records,  # List[Dict]，已标准化的数据
                     schema="meteorology_unified",
@@ -569,23 +569,23 @@ class UniversalMeteorologyTool(LLMTool):
                     }
                 )
 
-                # 提取 data_id 和 file_path
-                data_id = data_ref
+                # 提取 file_path 和 file_path
+                file_path = data_ref
                 file_path = data_ref["file_path"]
 
                 # 获取handle用于访问元数据
-                handle = context.data_manager.get_handle(data_id)
+                handle = context.data_manager.get_handle(file_path)
 
-                # 更新metadata的data_id为真实的data_id
-                metadata.data_id = data_id
+                # 更新metadata的file_path为真实的file_path
+                metadata.file_path = file_path
 
                 # 生成样本预览（前3条记录）
                 sample_preview = [record.dict() for record in records[:3]]
 
-                # ========== 混合模式：既返回完整数据给LLM，又保存data_id供下游使用 ==========
-                # 使用get_air_quality的成功模式：返回完整UnifiedData + data_id
+                # ========== 混合模式：既返回完整数据给LLM，又保存file_path供下游使用 ==========
+                # 使用get_air_quality的成功模式：返回完整UnifiedData + file_path
                 result = unified_data.dict()
-                result["data_id"] = data_id  # 添加data_id字段
+                result["file_path"] = file_path  # 添加file_path字段
 
                 # 在metadata中补充额外信息
                 result["metadata"]["sample"] = sample_preview
@@ -615,7 +615,7 @@ class UniversalMeteorologyTool(LLMTool):
 
                 # 增强summary信息（包含 file_path）
                 result["summary"] = (
-                    f"✅ 成功获取气象数据，已保存为 {data_id}，文件路径: {file_path}。"
+                    f"✅ 成功获取气象数据，已保存为 {file_path}，文件路径: {file_path}。"
                     f"记录数: {handle.record_count}。"
                     f"{'风廓线数据使用ERA5压力层（高精度）。' if wind_profile_data.get('era5_data') else '风廓线数据使用经验估算。'}"
                 )

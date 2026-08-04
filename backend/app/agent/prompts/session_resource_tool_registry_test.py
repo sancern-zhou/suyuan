@@ -25,6 +25,12 @@ ALL_MODE_LISTS = [
     tool_registry.DELIBERATION_REVIEWER_TOOL_NAMES,
 ]
 
+USER_FACING_MODE_LISTS = [
+    tool_names
+    for tool_names in ALL_MODE_LISTS
+    if tool_names is not tool_registry.MEMORY_CONSOLIDATOR_TOOL_NAMES
+]
+
 RETIRED_CHART_TOOL_NAMES = {
     "generate_chart",
     "smart_chart_generator",
@@ -44,9 +50,13 @@ def test_retired_chart_tools_are_not_exposed_by_any_agent_mode(tool_names):
     assert RETIRED_CHART_TOOL_NAMES.isdisjoint(tool_names)
 
 
-@pytest.mark.parametrize("tool_names", ALL_MODE_LISTS)
-def test_artifact_publication_is_automatic_in_every_agent_mode(tool_names):
-    assert "present_artifact" not in tool_names
+@pytest.mark.parametrize("tool_names", USER_FACING_MODE_LISTS)
+def test_existing_files_can_be_published_through_the_resource_catalog(tool_names):
+    assert tool_names.count("publish_session_file") == 1
+
+
+def test_background_memory_consolidation_cannot_publish_user_files():
+    assert "publish_session_file" not in tool_registry.MEMORY_CONSOLIDATOR_TOOL_NAMES
 
 
 def test_retired_chart_modules_and_runtime_references_are_removed():

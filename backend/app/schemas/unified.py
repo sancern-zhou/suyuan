@@ -89,14 +89,14 @@ class VisualBlock(BaseModel):
                     "meta": {
                         "schema_version": "3.1",
                         "generator": "execute_echarts_python",
-                        "original_data_ids": ["pmf_result:v2:abc123"],
+                        "original_file_paths": ["/srv/suyuan/sessions/example/data/pmf_result.json"],
                         "scenario": "pmf_analysis",
                         "layout_hint": "main"
                     }
                 }
             },
             "meta": {
-                "source_data_ids": ["pmf_result:v2:abc123"],
+                "source_file_paths": ["/srv/suyuan/sessions/example/data/pmf_result.json"],
                 "template": "pmf_analysis",
                 "layout_hint": "main"
             }
@@ -125,7 +125,7 @@ class StandardField(BaseModel):
 
 class DataMetadata(BaseModel):
     """数据元信息 (UDF v2.0 扩展)"""
-    data_id: str = Field(..., description="数据唯一标识符")
+    file_path: Optional[str] = Field(default=None, description="会话数据文件的绝对路径")
     data_type: DataType = Field(..., description="数据类型")
     schema_version: str = Field(default="v2.0", description="数据格式版本")
     record_count: int = Field(default=0, description="数据记录数")
@@ -154,7 +154,7 @@ class DataMetadata(BaseModel):
 
     # v2.0 新增字段 - 用于统一数据流
     source_schema: Optional[str] = Field(default=None, description="源数据schema类型")
-    source_data_ids: Optional[List[str]] = Field(default=None, description="源数据ID列表（支持多源）")
+    source_file_paths: Optional[List[str]] = Field(default=None, description="源数据文件路径列表（支持多源）")
     scenario: Optional[str] = Field(default=None, description="场景标识：vocs_analysis | pmf_analysis等")
     generator: Optional[str] = Field(default=None, description="生成工具：execute_echarts_python | create_report_chart | calculate_pmf 等")
     dimensions: Optional[List[str]] = Field(default=None, description="数据维度列表：['station', 'time', 'pollutant']")
@@ -331,9 +331,6 @@ class UnifiedData(BaseModel):
     # 数据验证报告
     validation_report: Optional[Dict[str, Any]] = Field(default=None, description="验证报告")
 
-    # 向后兼容字段
-    legacy_fields: Optional[Dict[str, Any]] = Field(default=None, description="旧格式兼容字段")
-
     # v2.0 新增：可视化块（用于多图表场景）
     visuals: List[VisualBlock] = Field(default_factory=list, description="可视化块列表（v2.0新增）")
 
@@ -358,45 +355,6 @@ class UnifiedData(BaseModel):
         """转换为字典格式"""
         return self.dict()
 
-    def to_pmf_format(self) -> Dict[str, Any]:
-        """
-        转换为PMF工具期望的格式（向后兼容）
-
-        PMF工具期望格式：
-        {
-            "source_contributions": {"机动车排放": 6.22, "石油化工": 71.96},
-            "timeseries": [{"time": "2025-08-09 00:00:00", "机动车排放": 1.23}],
-            "performance": {"R2": 0.85}
-        }
-        """
-        # 提取源解析结果
-        source_contributions = {}
-        timeseries = []
-
-        if self.data:
-            for record in self.data:
-                # 假设测量值中包含源贡献信息
-                for key, value in record.measurements.items():
-                    if key in ["机动车排放", "石油化工", "燃料挥发", "生物质燃烧", "溶剂使用", "工业排放"]:
-                        if key not in source_contributions:
-                            source_contributions[key] = 0.0
-                        source_contributions[key] += value
-
-        # 转换为时序格式
-        for record in self.data:
-            ts_entry = {
-                "time": record.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                **record.measurements
-            }
-            timeseries.append(ts_entry)
-
-        return {
-            "source_contributions": source_contributions,
-            "timeseries": timeseries,
-            "performance": {"R2": self.metadata.quality_score or 0.0},
-            "success": self.success
-        }
-
     def to_chart_format(self) -> Dict[str, Any]:
         """
         转换为图表格式（v2.0）
@@ -413,7 +371,7 @@ class UnifiedData(BaseModel):
         if self.data:
             # 默认转换为时序图
             return {
-                "id": f"default_chart_{self.metadata.data_id}",
+                "id": "default_chart",
                 "type": "timeseries",
                 "title": f"{self.metadata.station_name}数据时序",
                 "data": {
@@ -430,107 +388,6 @@ class UnifiedData(BaseModel):
             }
 
         return {"error": "无数据可转换"}
-
-    @classmethod
-    def from_legacy_format(
-        cls,
-        status: DataStatus,
-        data: Any,
-        metadata: Dict[str, Any],
-        summary: str = ""
-    ) -> "UnifiedData":
-        """
-        从旧格式转换为统一格式（v2.0增强版）
-
-        Args:
-            status: 执行状态
-            data: 旧格式数据
-            metadata: 元数据
-            summary: 摘要
-
-        Returns:
-            UnifiedData实例
-        """
-        # 转换数据为UnifiedDataRecord列表
-        records = []
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    # 提取时间戳
-                    timestamp_str = item.get("time", item.get("timestamp", ""))
-                    if isinstance(timestamp_str, str):
-                        try:
-                            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-                        except ValueError:
-                            timestamp = datetime.now()
-                    else:
-                        timestamp = timestamp_str
-
-                    # v2.0: 保留原始字段用于调试
-                    original_fields = {
-                        k: v for k, v in item.items()
-                        if k not in ["time", "timestamp", "station_name", "lat", "lon", "location"]
-                    }
-
-                    # 提取测量值（v2.0：保留原始字段名）
-                    measurements = {
-                        k: v for k, v in item.items()
-                        if k not in ["time", "timestamp", "station_name", "lat", "lon", "location"]
-                    }
-
-                    # 提取地理信息
-                    station_name = item.get("station_name", metadata.get("station_name"))
-                    lat = item.get("lat", metadata.get("lat"))
-                    lon = item.get("lon", metadata.get("lon"))
-
-                    if isinstance(lat, str) or isinstance(lon, str):
-                        # 尝试从location中提取
-                        location = item.get("location", {})
-                        if isinstance(location, dict):
-                            lat = lat or location.get("lat")
-                            lon = lon or location.get("lon")
-
-                    record = UnifiedDataRecord(
-                        timestamp=timestamp,
-                        station_name=station_name,
-                        lat=lat,
-                        lon=lon,
-                        measurements=measurements,
-                        original_fields=original_fields
-                    )
-                    records.append(record)
-
-        # v2.0: 构建元数据
-        data_metadata = DataMetadata(
-            data_id=metadata.get("data_id", f"custom:v2:{id(records)}"),
-            data_type=DataType(metadata.get("data_type", "custom")),
-            schema_version="v2.0",  # v2.0版本
-            record_count=len(records),
-            station_name=metadata.get("station_name"),
-            lat=metadata.get("lat"),
-            lon=metadata.get("lon"),
-            quality_score=metadata.get("quality_score"),
-            source=metadata.get("source"),
-            # v2.0新增字段
-            source_data_ids=metadata.get("source_data_ids"),
-            scenario=metadata.get("scenario"),
-            generator=metadata.get("generator")
-        )
-
-        return UnifiedData(
-            status=status,
-            success=status != DataStatus.FAILED,
-            data=records,
-            metadata=data_metadata,
-            summary=summary,
-            legacy_fields=data,  # 保留旧格式用于向后兼容
-            data_flow={
-                "source_format": "legacy",
-                "target_format": "UDF_v2.0",
-                "transformation": "from_legacy_format"
-            }
-        )
-
 
 # ============================================================================
 # 便利构造函数
@@ -550,7 +407,6 @@ def create_unified_data(
 
     # v2.0: 构建元数据
     metadata = DataMetadata(
-        data_id=f"{data_type.value}:v2:{id(records)}",
         data_type=data_type,
         schema_version="v2.0",
         record_count=len(records),
@@ -578,7 +434,7 @@ def create_unified_data(
 
 def create_visual_unified_data(
     visuals: List[VisualBlock],
-    source_data_ids: List[str],
+    source_file_paths: List[str],
     scenario: str,
     generator: str,
     **kwargs
@@ -586,11 +442,10 @@ def create_visual_unified_data(
     """创建可视化统一数据实例 (v2.0新增)"""
 
     metadata = DataMetadata(
-        data_id=f"chart_config:v2:{id(visuals)}",
         data_type=DataType.CHART_CONFIG,
         schema_version="v2.0",
         record_count=len(visuals),
-        source_data_ids=source_data_ids,
+        source_file_paths=source_file_paths,
         scenario=scenario,
         generator=generator,
         **kwargs
@@ -610,115 +465,6 @@ def create_visual_unified_data(
             "chart_count": len(visuals)
         }
     )
-
-
-# ============================================================================
-# 示例用法 (v2.0)
-# ============================================================================
-
-"""
-示例1: VOCs数据 (v2.0)
-```python
-from app.schemas.unified import create_unified_data, DataType, UnifiedDataRecord
-from datetime import datetime
-
-records = [
-    UnifiedDataRecord(
-        timestamp=datetime(2025, 8, 9, 0, 0),
-        station_name="深圳南山站",
-        measurements={"乙烯": 12.5, "丙烯": 8.3, "苯": 5.2},
-        original_fields={"乙烯": 12.5, "丙烯": 8.3, "苯": 5.2}  # v2.0新增
-    )
-]
-
-vocs_data = create_unified_data(
-    data_type=DataType.VOCs,
-    records=records,
-    station_name="深圳南山站",
-    city="深圳市",
-    source="component_monitor",
-    scenario="vocs_analysis",
-    generator="get_component_data"
-)
-```
-"""
-
-"""
-示例2: PMF分析结果 (v2.0)
-```python
-from app.schemas.unified import UnifiedData, DataType, DataStatus, VisualBlock
-from datetime import datetime
-
-pmf_chart = VisualBlock(
-    id="pmf_pie_001",
-    type="chart",
-    schema="chart_config",
-    payload={
-        "id": "pmf_pie_chart",
-        "type": "pie",
-        "title": "污染源贡献率",
-        "data": {"type": "pie", "data": [{"name": "石油化工", "value": 71.96}]},
-        "meta": {
-            "schema_version": "3.1",
-            "generator": "execute_echarts_python",
-            "original_data_ids": ["pmf_result:v2:abc123"],
-            "scenario": "pmf_analysis"
-        }
-    },
-    meta={
-        "source_data_ids": ["pmf_result:v2:abc123"],
-        "layout_hint": "main"
-    }
-)
-
-pmf_result = UnifiedData(
-    status=DataStatus.SUCCESS,
-    success=True,
-    data=[
-        UnifiedDataRecord(
-            timestamp=datetime.now(),
-            measurements={"石油化工": 71.96, "燃料挥发": 14.80, "机动车排放": 6.22}
-        )
-    ],
-    metadata=DataMetadata(
-        data_id="pmf_result:v2:abc123",
-        data_type=DataType.PMF_RESULT,
-        station_name="深圳南山站",
-        quality_score=0.85,
-        schema_version="v2.0",  # v2.0版本
-        scenario="pmf_analysis",
-        generator="calculate_pmf"
-    ),
-    summary="✅ PMF源解析完成，识别出6个污染源 (UDF v2.0)"
-)
-```
-"""
-
-"""
-示例3: 工具调用转换 (v2.0)
-```python
-# 旧格式 -> UDF v2.0
-legacy_data = {
-    "success": True,
-    "data": [
-        {"time": "2025-08-09 00:00:00", "乙烯": 12.5, "丙烯": 8.3}
-    ],
-    "station_name": "深圳南山站"
-}
-
-unified = UnifiedData.from_legacy_format(
-    status=DataStatus.SUCCESS,
-    data=legacy_data["data"],
-    metadata={
-        "data_type": "vocs",
-        "station_name": legacy_data["station_name"],
-        "scenario": "vocs_analysis",
-        "generator": "get_component_data"
-    },
-    summary="成功获取数据 (UDF v2.0)"
-)
-```
-"""
 
 
 # ============================================================================
@@ -748,11 +494,9 @@ class ParticulateAnalysisResult(BaseModel):
     # 摘要信息
     summary: Optional[str] = Field(default="", description="结果摘要")
 
-    # 数据ID (保存后注入)
-    data_id: Optional[str] = Field(default=None, description="数据唯一标识符")
+    file_path: Optional[str] = Field(default=None, description="保存后的会话数据文件路径")
 
-    # 源数据ID
-    source_data_ids: Optional[List[str]] = Field(default_factory=list, description="源数据ID列表")
+    source_file_paths: Optional[List[str]] = Field(default_factory=list, description="源数据文件路径列表")
 
     class Config:
         """允许保留扩展字段"""

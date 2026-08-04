@@ -222,12 +222,12 @@ class GetSatelliteDataTool(LLMTool):
 
             # 保存数据到上下文（可选）
             if output_format == "full":
-                data_id = await self._save_data_to_context(
+                file_path = await self._save_data_to_context(
                     context,
                     standardized_data,
                     schema="satellite_data_unified"
                 )
-                standardized_data["data_id"] = data_id
+                standardized_data["file_path"] = file_path
 
             logger.info(
                 "satellite_data_query_completed",
@@ -322,17 +322,15 @@ class GetSatelliteDataTool(LLMTool):
             schema: 数据模式
 
         Returns:
-            数据ID
+            数据文件路径
         """
         try:
             if context.requires_context:
-                data_ref = context.save_data(
+                file_path = context.save_data(
                     data=data["data"],
                     schema=schema
                 )
-                data_id = data_ref
-                file_path = data_ref["file_path"]
-                return data_id
+                return file_path
             else:
                 logger.info("context_not_available", skip_save=True)
                 return "no_context"

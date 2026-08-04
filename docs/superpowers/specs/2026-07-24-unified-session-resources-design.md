@@ -210,7 +210,7 @@ The actual dataset remains in DataRegistry.
 
 A file is available to the model and composer but does not appear in the document
 panel until a tool explicitly returns a document presentation. A `file` or
-`artifact` resource may carry a document presentation. When `present_artifact`
+`artifact` resource may carry a document presentation. When `publish_session_file`
 previews an existing selected file, it must preserve that resource's `logical_key`
 and replace the same row with an added presentation instead of creating a second
 resource.

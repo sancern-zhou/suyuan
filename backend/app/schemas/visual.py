@@ -28,7 +28,7 @@ class VisualMeta(BaseModel):
     schema_version: str = Field(default="v1.0", description="格式版本")
     generator: Optional[str] = Field(default=None, description="生成工具名称（如 execute_echarts_python、create_report_chart）")
     scenario: Optional[str] = Field(default=None, description="场景标识（如时序分析、空间分布）")
-    source_data_ids: List[str] = Field(default_factory=list, description="源数据ID列表")
+    source_file_paths: List[str] = Field(default_factory=list, description="源数据ID列表")
     created_at: Optional[str] = Field(default=None, description="创建时间（ISO 8601格式）")
 
     class Config:
@@ -110,7 +110,7 @@ def create_visual(
     data: Dict[str, Any],
     generator: Optional[str] = None,
     scenario: Optional[str] = None,
-    source_data_ids: Optional[List[str]] = None
+    source_file_paths: Optional[List[str]] = None
 ) -> Visual:
     """
     创建Visual对象的便捷函数
@@ -122,7 +122,7 @@ def create_visual(
         data: 核心数据
         generator: 生成工具名称
         scenario: 场景标识
-        source_data_ids: 源数据ID列表
+        source_file_paths: 源数据ID列表
 
     Returns:
         Visual对象
@@ -144,7 +144,7 @@ def create_visual(
         meta=VisualMeta(
             generator=generator,
             scenario=scenario,
-            source_data_ids=source_data_ids or [],
+            source_file_paths=source_file_paths or [],
             created_at=datetime.now().isoformat()
         )
     )

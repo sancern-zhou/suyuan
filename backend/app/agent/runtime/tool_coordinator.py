@@ -299,8 +299,8 @@ class ToolCoordinator:
 
         all_results: List[Dict[str, Any]] = []
         all_visuals: List[Any] = []
-        all_data_ids: List[Any] = []
-        all_report_data_ids: List[Any] = []
+        all_file_paths: List[Any] = []
+        all_report_file_paths: List[Any] = []
         all_tool_results: List[Dict[str, Any]] = []
         tool_records: List[Dict[str, Any]] = []
 
@@ -337,9 +337,9 @@ class ToolCoordinator:
                 if result_data.get("visuals"):
                     all_visuals.extend(result_data["visuals"])
                 if result_data.get("file_path"):
-                    all_data_ids.append(result_data["file_path"])
+                    all_file_paths.append(result_data["file_path"])
                 if result_data.get("report_file_path"):
-                    all_report_data_ids.append(result_data["report_file_path"])
+                    all_report_file_paths.append(result_data["report_file_path"])
 
         if len(streaming_tool_executor._executions) == 1:
             execution = streaming_tool_executor._executions[0]
@@ -362,8 +362,8 @@ class ToolCoordinator:
             and not all(r.get("success", False) for r in all_results if isinstance(r, dict)),
             "data": [r.get("data") for r in all_results if isinstance(r, dict) and r.get("data")],
             "visuals": all_visuals,
-            "file_paths": all_data_ids,
-            "report_file_paths": all_report_data_ids,
+            "file_paths": all_file_paths,
+            "report_file_paths": all_report_file_paths,
             "tool_results": all_tool_results,
             "summary": "; ".join(r.get("summary", "") for r in all_results if isinstance(r, dict) and r.get("summary")),
             "parallel": True,

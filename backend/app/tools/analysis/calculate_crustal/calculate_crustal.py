@@ -159,13 +159,13 @@ def _hash_dataframe(df: pd.DataFrame) -> str:
 
 def calculate_crustal(
     data: Optional[Union[pd.DataFrame, List[Dict]]] = None,
-    data_id: Optional[str] = None,
+    file_path: Optional[str] = None,
     oxide_coeff_dict: Optional[Dict[str, float]] = None,
     reconstruction_type: str = "full",
 ) -> Dict[str, Any]:
     """
     计算地壳元素氧化物转换和时间序列。
-    计算完成后保留原始 data_id，供图表模式按需生成可视化。
+    计算完成后保留原始 file_path，供图表模式按需生成可视化。
 
     支持两种输入格式：
     1. DataFrame: 地壳元素字段直接在顶层（如 Al, Si, Fe, Ca, Mg）
@@ -173,15 +173,15 @@ def calculate_crustal(
 
     Args:
         data: 输入数据（DataFrame 或 包含 components 的记录列表）
-        data_id: 原始数据 ID（供下游读取与可视化）
+        file_path: 原始数据 ID（供下游读取与可视化）
         oxide_coeff_dict: dict mapping column -> oxide coefficient
         reconstruction_type: 时间聚合类型
 
     Returns:
-        遵循 UDF v2.0 的 dict，包含计算结果和原始 data_id
+        遵循 UDF v2.0 的 dict，包含计算结果和原始 file_path
     """
     # 保存原始数据ID
-    original_data_id = data_id
+    original_file_path = file_path
 
     if data is None:
         return {
@@ -262,7 +262,7 @@ def calculate_crustal(
                     "schema_version": "v2.0",
                     "note": "no valid crustal elements",
                     "available_components": list(all_components),
-                    "source_data_id": original_data_id,
+                    "source_file_path": original_file_path,
                 },
                 "visuals": [],
                 "summary": f"✅ calculate_crustal 执行完成 - 未检测到有效的地壳元素，可用组分: {list(all_components)}"
@@ -294,7 +294,7 @@ def calculate_crustal(
         "schema_version": "v2.0",
         "scenario": "pm_crustal_analysis",
         # 保留原始数据 ID，供下游读取与可视化。
-        "source_data_id": original_data_id,
+        "source_file_path": original_file_path,
     }
 
     # 构建时间轴数据
@@ -334,7 +334,7 @@ def calculate_crustal(
         visualizer = ParticulateVisualizer()
 
         # 地壳元素箱线图
-        boxplot_chart = visualizer.generate_crustal_boxplot_chart(dust_df, source_data_id=original_data_id)
+        boxplot_chart = visualizer.generate_crustal_boxplot_chart(dust_df, source_file_path=original_file_path)
         if boxplot_chart:
             visuals.append(boxplot_chart)
             logger.info("[calculate_crustal] 地壳元素箱线图生成成功")
@@ -373,11 +373,11 @@ def calculate_crustal(
 
     summary = "\n".join(summary_lines)
 
-    # 时序图如有需要，由图表模式读取 source_data_id 后生成。
+    # 时序图如有需要，由图表模式读取 source_file_path 后生成。
     logger.info(
         "[calculate_crustal] 计算完成",
         dust_df_columns=list(dust_df.columns),
-        source_data_id=original_data_id,
+        source_file_path=original_file_path,
         visuals_count=len(visuals),
         note="地壳元素箱线图由 ParticulateVisualizer 生成，时序图可在图表模式中按需生成"
     )
@@ -464,13 +464,13 @@ class CalculateCrustalTool(LLMTool):
 
 **示例**:
 calculate_crustal(
-    data_id="particulate_unified:v1:xxx"  # 来自 get_particulate_data
+    file_path="/srv/suyuan/sessions/example/data/particulate.json"  # 来自上游颗粒物查询工具
 )
             """.strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": "颗粒物组分数据ID（来自 get_particulate_data）"
                     },
@@ -485,7 +485,7 @@ calculate_crustal(
                         "description": "时间聚合类型"
                     }
                 },
-                "required": ["data_id"]
+                "required": ["file_path"]
             }
         }
 
@@ -501,7 +501,7 @@ calculate_crustal(
     async def execute(
         self,
         context: "ExecutionContext",
-        data_id: str,
+        file_path: str,
         oxide_coeff_dict: Optional[Dict[str, float]] = None,
         reconstruction_type: str = "full",
         **kwargs
@@ -509,7 +509,7 @@ calculate_crustal(
         """执行地壳元素分析"""
         # Step 1: 获取标准化后的地壳元素数据
         try:
-            crustal_records = context.get_data(data_id)
+            crustal_records = context.get_data(file_path)
             if not isinstance(crustal_records, list) or len(crustal_records) == 0:
                 return {
                     "status": "failed",
@@ -525,7 +525,7 @@ calculate_crustal(
                 "success": False,
                 "data": None,
                 "metadata": {"tool_name": "calculate_crustal", "error_type": "data_not_found"},
-                "summary": f"[FAIL] 未找到数据 {data_id}"
+                "summary": f"[FAIL] 未找到数据 {file_path}"
             }
         except Exception as exc:
             return {
@@ -539,7 +539,7 @@ calculate_crustal(
         # Step 2: 执行计算
         result = calculate_crustal(
             data=crustal_records,
-            data_id=data_id,
+            file_path=file_path,
             oxide_coeff_dict=oxide_coeff_dict,
             reconstruction_type=reconstruction_type,
         )
@@ -568,16 +568,16 @@ calculate_crustal(
                         for v in visuals
                     ]
                 }
-                result_data_id = context.save_data(
+                result_file_path = context.save_data(
                     data=[summary],
                     schema="particulate_analysis",
                     metadata={
-                        "source_data_id": data_id,
+                        "source_file_path": file_path,
                         "element_count": element_count,
                         "crustal_mean": crustal_mean,
                     }
                 )
-                result["data_id"] = result_data_id
+                result["file_path"] = result_file_path
             except Exception as save_err:
                 logger.warning(f"[calculate_crustal] 保存失败: {save_err}")
 

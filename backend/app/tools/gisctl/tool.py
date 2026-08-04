@@ -25,10 +25,10 @@ GISCTL_FUNCTION_SCHEMA = {
 本工具不是简单的地图控制命令。每次问数查询都应同时判断是否需要更新用户视觉上下文：定位视角、叠加图层、高亮对象、打开/关闭看板图层或清除/替换当前回答图层。只要用户问题涉及城市、区域、站点、污染源、经纬度、空间范围或“在地图上看”的表达，就应优先考虑调用本工具让答案进入地图。
 
 当前支持：
-- map-spec create point-layer: 基于已有 data_id 生成点图层 map_program
-- map-spec create polygon-layer: 基于已有 GeoJSON geometry data_id 生成面图层 map_program
-- map-spec create line-layer: 基于已有 GeoJSON geometry data_id 生成线图层 map_program，适合插值等值线
-- map-spec create interpolation-layer: 基于 spatial_interpolation 返回的 surface data_id 生成插值渲染面图层
+- map-spec create point-layer: 基于已有 file_path 生成点图层 map_program
+- map-spec create polygon-layer: 基于已有 GeoJSON geometry file_path 生成面图层 map_program
+- map-spec create line-layer: 基于已有 GeoJSON geometry file_path 生成线图层 map_program，适合插值等值线
+- map-spec create interpolation-layer: 基于 spatial_interpolation 返回的 surface file_path 生成插值渲染面图层
 - map-spec create set-view: 生成地图视图定位/缩放 map_program
 - map-spec create dashboard-layer: 控制问数看板内置图层显隐，支持 city_metrics、stations、heatmap
 
@@ -42,16 +42,16 @@ point-layer 图标：
 - 用户要求“在地图上显示/高亮/叠加”某类站点、污染物、区域分析结果
 - 用户要求“定位到/缩放到/移动到”某城市、区域或坐标
 - 用户要求“打开/关闭城市指标、站点、热力图”等问数看板内置图层
-- 已有查询或分析结果 data_id，需要转成地图图层
-- spatial_interpolation 已返回 surface data_id，需要在地图上新增插值渲染图层
+- 已有查询或分析结果 file_path，需要转成地图图层
+- spatial_interpolation 已返回 surface file_path，需要在地图上新增插值渲染图层
 - 对话中有 map_context，用户框选/切换图层后需要继续控制地图
 - 查询结果有明确空间对象时，即使用户没有显式说“显示地图”，也应判断是否需要同步视觉呈现
 
 注意：
-- point-layer 必须使用真实存在的 DataRegistry data_id；如果不知道 data_id，先调用 resolve_map_data_asset。
-- 插值分析展示优先使用 spatial_interpolation 输出的 surface data_id 调用 interpolation-layer；contours line-layer 只作为可选等值线叠加。
+- point-layer 必须使用真实存在的 DataRegistry file_path；如果不知道 file_path，先调用 resolve_map_data_asset。
+- 插值分析展示优先使用 spatial_interpolation 输出的 surface file_path 调用 interpolation-layer；contours line-layer 只作为可选等值线叠加。
 - 创建 point-layer、polygon-layer、line-layer、interpolation-layer 时默认 fit_bounds=true，前端会自动移动/放大到 Agent 本次操作生成的图层位置；只有用户明确要求保持当前视角时才传 fit_bounds=false。
-- 不要编造 gd_stations 之类语义 data_id。
+- 不要编造 gd_stations 之类语义 file_path。
 - map_program 是前端执行协议对象，不是给用户阅读的最终答案；生成 map_program 后应等待前端回执确认用户真实看见。
 """,
     "parameters": {
@@ -126,8 +126,8 @@ point-layer 图标：
 }
 
 
-def _sample_fields(data_id: str) -> set[str]:
-    path = resolve_data_path(data_id)
+def _sample_fields(file_path: str) -> set[str]:
+    path = resolve_data_path(file_path)
     with path.open("r", encoding="utf-8") as stream:
         payload = json.load(stream)
     records = payload if isinstance(payload, list) else []
@@ -150,19 +150,19 @@ def _failed_point_layer_result(
     *,
     summary: str,
     error_code: str,
-    data_id: str | None = None,
+    file_path: str | None = None,
     missing_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     return GisctlResult.from_map_program(
         success=False,
         command="map-spec create point-layer",
-        data_ids=[data_id] if data_id else [],
+        file_paths=[file_path] if file_path else [],
         map_program=None,
         summary=summary,
         metadata_extra={
             "error_code": error_code,
             "suggested_next_tool": "resolve_map_data_asset",
-            **({"data_id": data_id} if data_id else {}),
+            **({"file_path": file_path} if file_path else {}),
             **({"missing_fields": missing_fields} if missing_fields else {}),
         },
     ).model_dump()
@@ -174,15 +174,15 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
     kind = command.get("kind")
 
     if family == "map-spec" and action == "create" and kind == "point-layer":
-        data_id = command["file_path"]
-        if not _data_file_exists(data_id):
+        file_path = command["file_path"]
+        if not _data_file_exists(file_path):
             return _failed_point_layer_result(
-                data_id=data_id,
+                file_path=file_path,
                 error_code="MAP_DATA_ASSET_NOT_FOUND",
-                summary=f"data_id not found: {data_id}. Call resolve_map_data_asset before creating a layer.",
+                summary=f"file_path not found: {file_path}. Call resolve_map_data_asset before creating a layer.",
             )
 
-        fields = _sample_fields(data_id)
+        fields = _sample_fields(file_path)
         required_fields = [command["lon"], command["lat"]]
         if command.get("color_by"):
             required_fields.append(command["color_by"])
@@ -191,14 +191,14 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         missing_fields = [field for field in required_fields if field not in fields]
         if missing_fields:
             return _failed_point_layer_result(
-                data_id=data_id,
+                file_path=file_path,
                 error_code="MAP_DATA_ASSET_FIELDS_NOT_FOUND",
                 missing_fields=missing_fields,
-                summary=f"data_id {data_id} is missing map fields: {', '.join(missing_fields)}",
+                summary=f"file_path {file_path} is missing map fields: {', '.join(missing_fields)}",
             )
 
         program = create_point_layer_program(
-            data_id=data_id,
+            file_path=file_path,
             layer_id=command["layer_id"],
             name=command["name"],
             longitude_field=command["lon"],
@@ -215,45 +215,45 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         )
         return GisctlResult.from_map_program(
             command="map-spec create point-layer",
-            data_ids=[data_id],
+            file_paths=[file_path],
             map_program=program.model_dump(),
             summary=f"Created point layer map program {command['layer_id']}",
         ).model_dump()
 
     if family == "map-spec" and action == "create" and kind == "polygon-layer":
-        data_id = command["file_path"]
-        if not _data_file_exists(data_id):
+        file_path = command["file_path"]
+        if not _data_file_exists(file_path):
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create polygon-layer",
-                data_ids=[data_id],
+                file_paths=[file_path],
                 map_program=None,
-                summary=f"data_id not found: {data_id}. Call spatial_analysis or resolve_map_data_asset before creating a layer.",
+                summary=f"file_path not found: {file_path}. Call spatial_analysis or resolve_map_data_asset before creating a layer.",
                 metadata_extra={
                     "error_code": "MAP_DATA_ASSET_NOT_FOUND",
                     "suggested_next_tool": "spatial_analysis",
-                    "data_id": data_id,
+                    "file_path": file_path,
                 },
             ).model_dump()
 
-        fields = _sample_fields(data_id)
+        fields = _sample_fields(file_path)
         if "geometry" not in fields:
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create polygon-layer",
-                data_ids=[data_id],
+                file_paths=[file_path],
                 map_program=None,
-                summary=f"data_id {data_id} is missing GeoJSON geometry field.",
+                summary=f"file_path {file_path} is missing GeoJSON geometry field.",
                 metadata_extra={
                     "error_code": "MAP_DATA_ASSET_FIELDS_NOT_FOUND",
                     "suggested_next_tool": "spatial_analysis",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "missing_fields": ["geometry"],
                 },
             ).model_dump()
 
         program = create_polygon_layer_program(
-            data_id=data_id,
+            file_path=file_path,
             layer_id=command["layer_id"],
             name=command["name"],
             fill_color=command.get("fill_color"),
@@ -265,45 +265,45 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         )
         return GisctlResult.from_map_program(
             command="map-spec create polygon-layer",
-            data_ids=[data_id],
+            file_paths=[file_path],
             map_program=program.model_dump(),
             summary=f"Created polygon layer map program {command['layer_id']}",
         ).model_dump()
 
     if family == "map-spec" and action == "create" and kind == "line-layer":
-        data_id = command["file_path"]
-        if not _data_file_exists(data_id):
+        file_path = command["file_path"]
+        if not _data_file_exists(file_path):
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create line-layer",
-                data_ids=[data_id],
+                file_paths=[file_path],
                 map_program=None,
-                summary=f"data_id not found: {data_id}. Call spatial_interpolation or resolve_map_data_asset before creating a layer.",
+                summary=f"file_path not found: {file_path}. Call spatial_interpolation or resolve_map_data_asset before creating a layer.",
                 metadata_extra={
                     "error_code": "MAP_DATA_ASSET_NOT_FOUND",
                     "suggested_next_tool": "spatial_interpolation",
-                    "data_id": data_id,
+                    "file_path": file_path,
                 },
             ).model_dump()
 
-        fields = _sample_fields(data_id)
+        fields = _sample_fields(file_path)
         if "geometry" not in fields:
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create line-layer",
-                data_ids=[data_id],
+                file_paths=[file_path],
                 map_program=None,
-                summary=f"data_id {data_id} is missing GeoJSON geometry field.",
+                summary=f"file_path {file_path} is missing GeoJSON geometry field.",
                 metadata_extra={
                     "error_code": "MAP_DATA_ASSET_FIELDS_NOT_FOUND",
                     "suggested_next_tool": "spatial_interpolation",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "missing_fields": ["geometry"],
                 },
             ).model_dump()
 
         program = create_line_layer_program(
-            data_id=data_id,
+            file_path=file_path,
             layer_id=command["layer_id"],
             name=command["name"],
             stroke_color=command.get("stroke_color"),
@@ -314,45 +314,45 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         )
         return GisctlResult.from_map_program(
             command="map-spec create line-layer",
-            data_ids=[data_id],
+            file_paths=[file_path],
             map_program=program.model_dump(),
             summary=f"Created line layer map program {command['layer_id']}",
         ).model_dump()
 
     if family == "map-spec" and action == "create" and kind == "interpolation-layer":
-        data_id = command["file_path"]
-        if not _data_file_exists(data_id):
+        file_path = command["file_path"]
+        if not _data_file_exists(file_path):
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create interpolation-layer",
-                data_ids=[data_id],
+                file_paths=[file_path],
                 map_program=None,
-                summary=f"data_id not found: {data_id}. Call spatial_interpolation before creating an interpolation layer.",
+                summary=f"file_path not found: {file_path}. Call spatial_interpolation before creating an interpolation layer.",
                 metadata_extra={
                     "error_code": "MAP_DATA_ASSET_NOT_FOUND",
                     "suggested_next_tool": "spatial_interpolation",
-                    "data_id": data_id,
+                    "file_path": file_path,
                 },
             ).model_dump()
 
-        fields = _sample_fields(data_id)
+        fields = _sample_fields(file_path)
         if "geometry" not in fields:
             return GisctlResult.from_map_program(
                 success=False,
                 command="map-spec create interpolation-layer",
-                data_ids=[data_id],
+                file_paths=[file_path],
                 map_program=None,
-                summary=f"data_id {data_id} is missing GeoJSON geometry field.",
+                summary=f"file_path {file_path} is missing GeoJSON geometry field.",
                 metadata_extra={
                     "error_code": "MAP_DATA_ASSET_FIELDS_NOT_FOUND",
                     "suggested_next_tool": "spatial_interpolation",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "missing_fields": ["geometry"],
                 },
             ).model_dump()
 
         program = create_interpolation_layer_program(
-            data_id=data_id,
+            file_path=file_path,
             layer_id=command["layer_id"],
             name=command["name"],
             fill_color=command.get("fill_color"),
@@ -365,7 +365,7 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         )
         return GisctlResult.from_map_program(
             command="map-spec create interpolation-layer",
-            data_ids=[data_id],
+            file_paths=[file_path],
             map_program=program.model_dump(),
             summary=f"Created interpolation surface map program {command['layer_id']}",
         ).model_dump()
@@ -393,7 +393,7 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         )
         return GisctlResult.from_map_program(
             command="map-spec create dashboard-layer",
-            data_ids=[],
+            file_paths=[],
             map_program=program.model_dump(),
             summary=f"Set dashboard layer {layer_id} visible={command.get('visible', True)}",
             metadata_extra={"dashboard_layer_id": layer_id},
@@ -425,7 +425,7 @@ def execute_gisctl(command: dict[str, Any]) -> dict[str, Any]:
         )
         return GisctlResult.from_map_program(
             command="map-spec create set-view",
-            data_ids=[],
+            file_paths=[],
             map_program=program.model_dump(),
             summary=f"Created set-view map program {name}",
         ).model_dump()

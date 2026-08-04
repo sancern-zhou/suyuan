@@ -119,17 +119,17 @@ class ExecutionContext:
         for analysis results (PMF, OBM) that are already in standard dictionary format.
 
         Args:
-            data_id: Data identifier (e.g., "pmf_result:v1:abc123")
+            file_path: Canonical absolute session data path
 
         Returns:
             List of dictionaries (raw data)
 
         Raises:
-            KeyError: Data ID not found
+            KeyError: Session file not found or not authorized
 
         Example:
             # Get PMF result as raw dictionary
-            pmf_result = context.get_raw_data("pmf_result:v1:abc123")
+            pmf_result = context.get_raw_data("/absolute/session/path/pmf_result.json")
             # Returns [{'sources': [...], 'timeseries': [...], ...}]
         """
         logger.info(

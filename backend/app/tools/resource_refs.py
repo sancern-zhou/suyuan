@@ -79,32 +79,37 @@ def build_data_file_ref(file_path: str, *, usage: str = "primary") -> Dict[str, 
     }
 
 
+def build_registry_data_ref(data_id: str, *, usage: str = "source") -> Dict[str, str]:
+    """Reference a business asset stored in DataRegistry, not a session data file."""
+    return {
+        "data_id": data_id,
+        "usage": usage,
+        "scope": "data_registry",
+    }
+
+
 def build_data_resume_context(
     *,
-    generated_data_ids: Optional[List[str]] = None,
-    source_data_ids: Optional[List[str]] = None,
+    generated_file_paths: Optional[List[str]] = None,
+    source_file_paths: Optional[List[str]] = None,
     tool_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
-    source_ids = _unique_strings(source_data_ids or [])
-    generated_ids = _unique_strings(generated_data_ids or [])
+    source_paths = _unique_strings(source_file_paths or [])
+    generated_paths = _unique_strings(generated_file_paths or [])
     refs = {
         "data": [
-            *[build_data_file_ref(file_path, usage="source") for file_path in source_ids],
-            *[build_data_file_ref(file_path, usage="generated") for file_path in generated_ids],
+            *[build_data_file_ref(file_path, usage="source") for file_path in source_paths],
+            *[build_data_file_ref(file_path, usage="generated") for file_path in generated_paths],
         ]
     }
     llm_resume: Dict[str, Any] = {}
-    if source_ids:
-        llm_resume["source_file_paths"] = source_ids
-    if generated_ids:
-        llm_resume["file_paths"] = generated_ids
+    if source_paths:
+        llm_resume["source_file_paths"] = source_paths
+    if generated_paths:
+        llm_resume["file_paths"] = generated_paths
     if tool_hint:
         llm_resume["tool_hint"] = tool_hint
     return {"refs": refs, "llm_resume": llm_resume}
-
-
-# Internal import compatibility. Returned references remain path-only.
-build_data_ref = build_data_file_ref
 
 
 def _unique_strings(values: List[str]) -> List[str]:

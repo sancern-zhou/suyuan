@@ -60,7 +60,7 @@ class GetJiningRegularStationsTool(LLMTool):
 示例："查询济宁市各区县空气质量综合排名，TimePoint=2025-01-01至2025-12-31，时间粒度为月度，返回各区县的AQI达标率、PM2.5浓度、PM10浓度、O3浓度、综合指数等指标，按综合指数排序"
 
 【返回数据】
-- data_id: 数据引用ID（UDF v2.0格式）
+- file_path: 数据引用ID（UDF v2.0格式）
 - 包含济宁市各区县/站点的污染物时序数据
 - 可直接传递给可视化工具生成多系列时序图
             """.strip(),
@@ -158,7 +158,7 @@ class GetJiningRegularStationsTool(LLMTool):
             # 根据对比类型生成schema名称
             schema_name = f"jining_{comparison_type}_comparison"
 
-            data_id = context.data_manager.save_data(
+            file_path = context.data_manager.save_data(
                 data=standardized_records,
                 schema=schema_name,
                 metadata={
@@ -179,11 +179,11 @@ class GetJiningRegularStationsTool(LLMTool):
                 }
             )
 
-            handle = context.data_manager.get_handle(data_id)
+            handle = context.data_manager.get_handle(file_path)
 
             logger.info(
                 "jining_regional_data_saved",
-                data_id=data_id,
+                file_path=file_path,
                 record_count=handle.record_count,
                 comparison_type=comparison_type
             )
@@ -200,7 +200,7 @@ class GetJiningRegularStationsTool(LLMTool):
                 "data": standardized_records[:50],
                 "metadata": {
                     "tool_name": "get_jining_regular_stations",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "registry_schema": schema_name,
                     "record_count": handle.record_count,
                     "question": question,
@@ -210,7 +210,7 @@ class GetJiningRegularStationsTool(LLMTool):
                     "chart_title": chart_title,
                     "analysis_type": f"jining_{comparison_type}_comparison"
                 },
-                "summary": f"{summary}，已保存为 {data_id}。"
+                "summary": f"{summary}，已保存为 {file_path}。"
             }
 
         except Exception as e:

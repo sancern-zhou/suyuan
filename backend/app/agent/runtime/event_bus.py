@@ -137,16 +137,16 @@ class RuntimeEventBus:
         }
         if tool_name:
             data["tool_name"] = tool_name
-        file_path = self._extract_data_id(result.get("file_path") if isinstance(result, dict) else None)
+        file_path = self._extract_file_path(result.get("file_path") if isinstance(result, dict) else None)
         if file_path:
             data["file_path"] = file_path
-        file_paths = self._extract_data_ids(result.get("file_paths") if isinstance(result, dict) else None)
+        file_paths = self._extract_file_paths(result.get("file_paths") if isinstance(result, dict) else None)
         if file_paths:
             data["file_paths"] = file_paths
-        report_file_path = self._extract_data_id(result.get("report_file_path") if isinstance(result, dict) else None)
+        report_file_path = self._extract_file_path(result.get("report_file_path") if isinstance(result, dict) else None)
         if report_file_path:
             data["report_file_path"] = report_file_path
-        report_file_paths = self._extract_data_ids(result.get("report_file_paths") if isinstance(result, dict) else None)
+        report_file_paths = self._extract_file_paths(result.get("report_file_paths") if isinstance(result, dict) else None)
         if report_file_paths:
             data["report_file_paths"] = report_file_paths
         return {
@@ -234,21 +234,17 @@ class RuntimeEventBus:
             },
         }
 
-    def _extract_data_id(self, value: Any) -> str | None:
+    def _extract_file_path(self, value: Any) -> str | None:
         if isinstance(value, str) and value:
             return value
-        if isinstance(value, dict):
-            nested = value.get("data_id")
-            if isinstance(nested, str) and nested:
-                return nested
         return None
 
-    def _extract_data_ids(self, value: Any) -> list[str]:
+    def _extract_file_paths(self, value: Any) -> list[str]:
         if not isinstance(value, list):
             return []
-        data_ids = []
+        file_paths = []
         for item in value:
-            data_id = self._extract_data_id(item)
-            if data_id:
-                data_ids.append(data_id)
-        return data_ids
+            file_path = self._extract_file_path(item)
+            if file_path:
+                file_paths.append(file_path)
+        return file_paths

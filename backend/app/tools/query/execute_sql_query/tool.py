@@ -529,7 +529,7 @@ class BaseSQLQueryTool(LLMTool):
 
             # 4. 数据外部化：超过24条记录时采样
             sample_data = results
-            data_id = None
+            file_path = None
 
             if context and len(results) > 24:
                 try:
@@ -540,7 +540,7 @@ class BaseSQLQueryTool(LLMTool):
                         columns = []
 
                     # 保存完整数据
-                    data_id = context.save_data(
+                    file_path = context.save_data(
                         data=results,
                         schema="sql_query_result",  # 通用schema
                         metadata={
@@ -564,13 +564,13 @@ class BaseSQLQueryTool(LLMTool):
                         "sql_query_data_externalized",
                         total_count=len(results),
                         sample_count=len(sample_data),
-                        data_id=data_id
+                        file_path=file_path
                     )
 
                     return {
                         "success": True,
                         "data": sample_data,  # 只返回样本数据
-                        "data_id": data_id,    # 完整数据ID
+                        "file_path": file_path,    # 完整数据文件路径
                         "count": len(results),
                         "sample_count": len(sample_data),
                         "summary": f"查询到{len(results)}条记录（已外部化，返回样本{len(sample_data)}条）",
@@ -584,13 +584,13 @@ class BaseSQLQueryTool(LLMTool):
                 except Exception as save_error:
                     logger.warning("sql_query_save_failed", error=str(save_error))
                     # 外部化失败，降级到返回全部数据
-                    data_id = None
+                    file_path = None
 
             # 未外部化，返回全部数据
             return {
                 "success": True,
                 "data": results,
-                "data_id": data_id,
+                "file_path": file_path,
                 "count": len(results),
                 "summary": f"查询到{len(results)}条记录",
                 "metadata": {

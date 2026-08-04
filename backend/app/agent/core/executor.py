@@ -354,7 +354,7 @@ class ToolExecutor:
             {
                 "success": bool,
                 "data": Any (if success),
-                "data_id": str (if using context),
+                "file_path": str (if using context),
                 "error": str (if failed),
                 "summary": str
             }
@@ -498,20 +498,12 @@ class ToolExecutor:
             logger.info("="*80)
             # ========================================
 
-            # 检查是否有data_id（支持多种格式：根级别、metadata.data_id）
-            has_data_id = (
-                "data_id" in observation or
-                ("metadata" in observation and
-                 isinstance(observation.get("metadata"), dict) and
-                 "data_id" in observation["metadata"])
-            )
-
             execution_success = observation.get("success", False)
             logger.info(
                 "tool_execution_success" if execution_success else "tool_execution_failed",
                 tool_name=tool_name,
                 has_data="data" in observation,
-                has_data_id=has_data_id,
+                has_file_path="file_path" in observation,
                 success=execution_success,
             )
 
@@ -738,12 +730,10 @@ class ToolExecutor:
             if "summary" not in result and "result" not in result:
                 result["summary"] = self._generate_summary(tool_name, result)
 
-            # ✅ 增强：处理v3.0图表格式数据
-            # 方案A：工具直接返回v3.0格式在data字段，data_id在metadata中
+            # 处理工具直接返回在 data 字段中的图表格式。
             chart_config = None
             is_chart_result = False
 
-            # Case 1: data字段本身就是v3.0图表格式 (方案A：工具直接输出v3.0)
             if "data" in result and isinstance(result.get("data"), dict):
                 data = result["data"]
                 # 检查是否是v3.0图表格式：包含type、id、data字段
@@ -756,30 +746,18 @@ class ToolExecutor:
                         chart_id=chart_config.get("id")
                     )
 
-            # Case 2: 兼容旧版本：工具返回chart_config字段
-            elif "chart_config" in result:
-                chart_config = result["chart_config"]
-                is_chart_result = True
-
-            # Case 3: 兼容旧版本：工具返回chart字段
-            elif "chart" in result:
-                chart_config = result["chart"]
-                is_chart_result = True
-
             if is_chart_result and chart_config:
-                data_id = result.get("metadata", {}).get("data_id")
-                data_id_display = data_id[:16] if data_id else 'N/A'
+                file_path = result.get("metadata", {}).get("file_path")
                 chart_type = chart_config.get("type", "unknown")
 
                 result["summary"] = (
                     f"✅ {tool_name} 成功生成图表: {chart_type} 类型"
-                    f", 数据ID: {data_id_display}..."
+                    + (f"，数据文件: {file_path}" if file_path else "")
                 )
                 result["has_chart"] = True
-                result["chart_config"] = chart_config  # 设置chart_config字段，供loop.py使用
                 result["chart_summary"] = {
                     "chart_type": chart_type,
-                    "source_data_id": result.get("metadata", {}).get("source_data_id"),
+                    "source_file_path": result.get("metadata", {}).get("source_file_path"),
                     "schema_type": result.get("metadata", {}).get("schema_type"),
                     "chart_id": chart_config.get("id") if chart_config else None
                 }

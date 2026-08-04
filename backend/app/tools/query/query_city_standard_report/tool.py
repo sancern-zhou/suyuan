@@ -659,7 +659,7 @@ async def _execute_split_query_city_standard_report(
 ) -> Dict[str, Any]:
     segment_results: List[Dict[str, Any]] = []
     combined_data: List[Dict[str, Any]] = []
-    combined_report_data_ids: List[str] = []
+    combined_report_file_paths: List[str] = []
     failures: List[str] = []
 
     for segment in segments:
@@ -677,8 +677,8 @@ async def _execute_split_query_city_standard_report(
             max_result_count=max_result_count,
             context=context,
         )
-        if result.get("report_data_id"):
-            combined_report_data_ids.append(str(result["report_data_id"]))
+        if result.get("report_file_path"):
+            combined_report_file_paths.append(str(result["report_file_path"]))
 
         segment_meta = {
             "standard": segment["standard"],
@@ -688,7 +688,7 @@ async def _execute_split_query_city_standard_report(
             "status": result.get("status"),
             "success": result.get("success"),
             "summary": result.get("summary"),
-            "report_data_id": result.get("report_data_id"),
+            "report_file_path": result.get("report_file_path"),
             "data_records": len(result.get("data") or []),
         }
         segment_results.append(segment_meta)
@@ -724,7 +724,7 @@ async def _execute_split_query_city_standard_report(
         "data_records": len(combined_data),
         "data_view": "reporting",
         "data_is_complete_for_requested_scope": success,
-        "report_data_ids": combined_report_data_ids,
+        "report_file_paths": combined_report_file_paths,
         "report_note": (
             "跨 2025-01-01 且未显式指定 ns_type 时，工具已按旧国标/新国标拆分查询；"
             "data 合并返回两个分段的请求范围报告口径记录，完整分段报表路径见 metadata.segments。"
@@ -912,7 +912,7 @@ async def execute_query_city_standard_report(
 
         grouped = _records_by_city(records)
         reporting_records = build_city_reporting_records(records, expanded_cities or PUBLIC_REPORT_CITY_ORDER)
-        report_data_id = save_report_data_package(
+        report_file_path = save_report_data_package(
             context=context,
             tool_name="query_city_standard_report",
             query={
@@ -935,8 +935,8 @@ async def execute_query_city_standard_report(
             extra_views={"reporting": reporting_records, "raw": records, "result": records},
             package_kind="city_standard_report_api",
         )
-        if report_data_id:
-            metadata["report_data_id"] = report_data_id
+        if report_file_path:
+            metadata["report_file_path"] = report_file_path
             metadata["result_externalized"] = True
             metadata["default_view"] = "reporting"
             answer_records = _answer_ready_city_records(
@@ -947,12 +947,12 @@ async def execute_query_city_standard_report(
             metadata["data_records"] = len(answer_records)
             metadata["data_view"] = "reporting"
             metadata["data_is_complete_for_requested_scope"] = True
-            result["report_data_id"] = report_data_id
+            result["report_file_path"] = report_file_path
             result["data"] = answer_records
             result.pop("result", None)
             result["summary"] += (
                 f" | data 已返回请求范围内完整报告口径记录，"
-                f"完整接口报表已保存为 report_data_id: {report_data_id}"
+                f"完整接口报表已保存为 report_file_path: {report_file_path}"
             )
 
         return result
@@ -1169,7 +1169,7 @@ async def execute_query_city_standard_yoy_report(
 
         grouped = _records_by_city(records)
         reporting_records = build_city_reporting_records(records, expanded_cities or PUBLIC_REPORT_CITY_ORDER)
-        report_data_id = save_report_data_package(
+        report_file_path = save_report_data_package(
             context=context,
             tool_name="query_city_standard_yoy_report",
             query={
@@ -1192,8 +1192,8 @@ async def execute_query_city_standard_yoy_report(
             extra_views={"reporting": reporting_records, "raw": records, "result": records},
             package_kind="city_standard_yoy_report_api",
         )
-        if report_data_id:
-            metadata["report_data_id"] = report_data_id
+        if report_file_path:
+            metadata["report_file_path"] = report_file_path
             metadata["result_externalized"] = True
             metadata["default_view"] = "reporting"
             answer_records = _answer_ready_city_records(
@@ -1204,12 +1204,12 @@ async def execute_query_city_standard_yoy_report(
             metadata["data_records"] = len(answer_records)
             metadata["data_view"] = "reporting"
             metadata["data_is_complete_for_requested_scope"] = True
-            result["report_data_id"] = report_data_id
+            result["report_file_path"] = report_file_path
             result["data"] = answer_records
             result.pop("result", None)
             result["summary"] += (
                 f" | data 已返回请求范围内完整报告口径记录，"
-                f"完整接口报表已保存为 report_data_id: {report_data_id}"
+                f"完整接口报表已保存为 report_file_path: {report_file_path}"
             )
 
         return result

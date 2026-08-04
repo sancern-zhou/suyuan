@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import math
-import json
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import structlog
 
 from app.agent.context.execution_context import ExecutionContext
-from app.services.data_registry import data_registry
 from app.tools.base import LLMTool, ToolCategory
 
 logger = structlog.get_logger()
@@ -297,15 +295,16 @@ def _air_quality_result_row(row: Dict[str, Any], rank: int) -> Dict[str, Any]:
     }
 
 
-def _records_from_data_id(data_id: str, preferred_view: Optional[str] = None) -> Tuple[List[Dict[str, Any]], str]:
-    try:
-        payload = data_registry.load_dataset(data_id)
-    except KeyError:
-        payload = _load_payload_from_dataset_file(data_id)
+def _records_from_file_path(
+    context: ExecutionContext,
+    file_path: str,
+    preferred_view: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    payload = context.get_data_payload(file_path)
     if isinstance(payload, list):
         return payload, "dataset"
     if not isinstance(payload, dict):
-        raise ValueError(f"data_id 数据格式不支持: {type(payload).__name__}")
+        raise ValueError(f"file_path 数据格式不支持: {type(payload).__name__}")
 
     views = payload.get("views")
     if isinstance(views, dict):
@@ -321,16 +320,6 @@ def _records_from_data_id(data_id: str, preferred_view: Optional[str] = None) ->
             return payload[key], key
     raise ValueError("对象型数据中未找到可排名的记录列表")
 
-
-def _load_payload_from_dataset_file(data_id: str) -> Any:
-    safe_id = data_id.replace(":", "_")
-    dataset_path = data_registry.datasets_dir / f"{safe_id}.json"
-    if not dataset_path.exists():
-        raise KeyError(f"data_id {data_id} not found in registry")
-    with dataset_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 class CityPollutantRankingsTool(LLMTool):
     """Deterministic city pollutant ranking tool for report mode."""
 
@@ -340,7 +329,7 @@ class CityPollutantRankingsTool(LLMTool):
             "description": (
                 "确定性城市排名分析工具。用于空气质量通报中空气质量较好/较差各5市，以及 "
                 "PM2.5、PM10、O3 浓度较低/较高各5市排名。一次调用可完成空气质量和多个污染物排名。"
-                "优先传 query_city_standard_report/query_city_standard_yoy_report 返回的 report_data_id；"
+                "优先传 query_city_standard_report/query_city_standard_yoy_report 返回的 report_file_path；"
                 "工具会优先读取 cities/raw/result/reporting 视图并按固定并列规则排序，避免模型手工排序错误。"
                 "字段口径：PM2.5只能使用阶段均值pM2_5_Decimal；PM10、O3、NO2等其他污染物指标"
                 "只能使用修约均值pM10、o3_8h、nO2，缺少这些字段时直接失败。"
@@ -348,9 +337,9 @@ class CityPollutantRankingsTool(LLMTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
-                        "description": "统计报表数据包ID/report_data_id。优先传入，由工具自动读取数据注册表。",
+                        "description": "统计报表的会话文件路径（通常为上游工具返回的 report_file_path）。",
                     },
                     "view": {
                         "type": "string",
@@ -359,7 +348,7 @@ class CityPollutantRankingsTool(LLMTool):
                     "records": {
                         "type": "array",
                         "items": {"type": "object"},
-                        "description": "可选，直接传城市统计记录。通常不建议大批量直接传，优先用 data_id。",
+                        "description": "可选，直接传城市统计记录。通常不建议大批量直接传，优先用 file_path。",
                     },
                     "pollutants": {
                         "type": "array",
@@ -372,7 +361,7 @@ class CityPollutantRankingsTool(LLMTool):
                         "default": 5,
                     },
                 },
-                "anyOf": [{"required": ["data_id"]}, {"required": ["records"]}],
+                "anyOf": [{"required": ["file_path"]}, {"required": ["records"]}],
             },
         }
         super().__init__(
@@ -387,7 +376,7 @@ class CityPollutantRankingsTool(LLMTool):
     async def execute(
         self,
         context: Optional[ExecutionContext] = None,
-        data_id: Optional[str] = None,
+        file_path: Optional[str] = None,
         view: Optional[str] = None,
         records: Optional[List[Dict[str, Any]]] = None,
         pollutants: Optional[List[str]] = None,
@@ -397,54 +386,51 @@ class CityPollutantRankingsTool(LLMTool):
         try:
             source = "records"
             if records is None:
-                if not data_id:
+                if not file_path:
                     return {
                         "status": "failed",
                         "success": False,
                         "data": {},
                         "metadata": {"tool_name": self.name, "error": "missing_data_source"},
-                        "summary": "缺少 records 或 data_id，无法进行排名分析。",
+                        "summary": "缺少 records 或 file_path，无法进行排名分析。",
                     }
-                records, source = _records_from_data_id(data_id, view)
+                if context is None:
+                    raise ValueError("读取 file_path 需要执行上下文")
+                records, source = _records_from_file_path(context, file_path, view)
 
             result = build_city_pollutant_rankings(records, pollutants=pollutants, top_n=top_n)
             metadata = {
                 "tool_name": self.name,
                 "source": source,
-                "input_data_id": data_id,
+                "input_file_path": file_path,
                 "pollutants": list(result["rankings"].keys()),
                 "top_n": result["top_n"],
             }
-            output_id = None
+            output_file_path = None
             try:
-                entry = data_registry.register_payload(
+                if context is None:
+                    raise ValueError("保存排名结果需要执行上下文")
+                output_file_path = context.save_data(
+                    data={"metadata": metadata, **result},
                     schema="city_pollutant_rankings",
-                    version="v1",
-                    payload={"metadata": metadata, **result},
                     metadata={**metadata, "session_id": context.session_id if context else None},
-                    record_count=(
-                        len(result["air_quality"]["good"])
-                        + len(result["air_quality"]["poor"])
-                        + sum(len(v["low"]) + len(v["high"]) for v in result["rankings"].values())
-                    ),
                 )
-                output_id = entry.data_id
-                metadata["data_id"] = output_id
+                metadata["file_path"] = output_file_path
             except Exception as exc:
-                logger.warning("city_pollutant_rankings_register_failed", error=str(exc))
+                logger.warning("city_pollutant_rankings_save_failed", error=str(exc))
 
             summary = (
                 f"已完成空气质量较好/较差及{', '.join(result['rankings'].keys())}城市污染物较低/较高排名分析，"
                 f"每类返回前{result['top_n']}市。"
             )
-            if output_id:
-                summary += f" 排名结果已保存为 data_id: {output_id}"
+            if output_file_path:
+                summary += f" 排名结果已保存为 file_path: {output_file_path}"
 
             return {
                 "status": "success",
                 "success": True,
                 "data": result,
-                "data_id": output_id,
+                "file_path": output_file_path,
                 "metadata": metadata,
                 "summary": summary,
             }
