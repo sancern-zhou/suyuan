@@ -28,7 +28,7 @@ def _slug(value: str) -> str:
 
 def create_point_layer_program(
     *,
-    data_id: str,
+    file_path: str,
     layer_id: str,
     name: str,
     longitude_field: str,
@@ -63,7 +63,7 @@ def create_point_layer_program(
         id=layer_id,
         name=name,
         layer_type="point",
-        data={"type": "file_path", "path": data_id},
+        data={"type": "file_path", "path": file_path},
         geometry={
             "type": "point",
             "longitude_field": longitude_field,
@@ -85,7 +85,7 @@ def create_point_layer_program(
             "layers": [layer],
         },
         lineage={
-            "source_file_paths": [data_id],
+            "source_file_paths": [file_path],
             **({"turn_id": turn_id} if turn_id else {}),
         },
     )
@@ -93,7 +93,7 @@ def create_point_layer_program(
 
 def create_polygon_layer_program(
     *,
-    data_id: str,
+    file_path: str,
     layer_id: str,
     name: str,
     fill_color: str | None = None,
@@ -115,7 +115,7 @@ def create_polygon_layer_program(
         id=layer_id,
         name=name,
         layer_type="polygon",
-        data={"type": "file_path", "path": data_id},
+        data={"type": "file_path", "path": file_path},
         geometry={"type": "geojson", "geometry_field": "geometry"},
         style=style,
         interactions={
@@ -133,7 +133,7 @@ def create_polygon_layer_program(
             "layers": [layer],
         },
         lineage={
-            "source_file_paths": [data_id],
+            "source_file_paths": [file_path],
             **({"turn_id": turn_id} if turn_id else {}),
         },
     )
@@ -141,7 +141,7 @@ def create_polygon_layer_program(
 
 def create_line_layer_program(
     *,
-    data_id: str,
+    file_path: str,
     layer_id: str,
     name: str,
     stroke_color: str | None = None,
@@ -161,7 +161,7 @@ def create_line_layer_program(
         id=layer_id,
         name=name,
         layer_type="line",
-        data={"type": "file_path", "path": data_id},
+        data={"type": "file_path", "path": file_path},
         geometry={"type": "geojson", "geometry_field": "geometry"},
         style=style,
         interactions={
@@ -179,7 +179,7 @@ def create_line_layer_program(
             "layers": [layer],
         },
         lineage={
-            "source_file_paths": [data_id],
+            "source_file_paths": [file_path],
             **({"turn_id": turn_id} if turn_id else {}),
         },
     )
@@ -187,7 +187,7 @@ def create_line_layer_program(
 
 def create_interpolation_layer_program(
     *,
-    data_id: str,
+    file_path: str,
     layer_id: str,
     name: str,
     fill_color: str | None = None,
@@ -215,7 +215,7 @@ def create_interpolation_layer_program(
         id=layer_id,
         name=name,
         layer_type="polygon",
-        data={"type": "file_path", "path": data_id, "limit": 5000},
+        data={"type": "file_path", "path": file_path, "limit": 5000},
         geometry={"type": "geojson", "geometry_field": "geometry"},
         style=style,
         interactions={
@@ -233,7 +233,7 @@ def create_interpolation_layer_program(
             "layers": [layer],
         },
         lineage={
-            "source_file_paths": [data_id],
+            "source_file_paths": [file_path],
             **({"turn_id": turn_id} if turn_id else {}),
         },
     )

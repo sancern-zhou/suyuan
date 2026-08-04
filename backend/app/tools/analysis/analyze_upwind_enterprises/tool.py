@@ -42,19 +42,19 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
 【调用方式 - 二选一】
 
 1. 直接指定站点（推荐）：
-   - 必填：station_name（站点名称），weather_data_id（气象数据ID）或 weather_records（风场记录）
+   - 必填：station_name（站点名称），weather_file_path（气象数据ID）或 weather_records（风场记录）
    - 可选：search_range_km, max_enterprises, top_n, map_type, mode
-   - 示例：station_name="广雅中学", city_name="清远市", weather_data_id="weather:v1:xxx"
+   - 示例：station_name="广雅中学", city_name="清远市", weather_file_path="/srv/suyuan/sessions/example/data/weather.json"
 
 2. 通过城市自动获取站点：
-   - 必填：city_name（城市名称），weather_data_id（气象数据ID）或 weather_records（风场记录）
+   - 必填：city_name（城市名称），weather_file_path（气象数据ID）或 weather_records（风场记录）
    - 可选：search_range_km, max_enterprises, top_n, map_type, mode
    - 工具自动获取该城市前2个国控站点进行分析
 
 【参数说明】
 - station_name: 站点名称（如"广雅中学"），指定具体监测站点
 - city_name: 城市名称（如"清远市"），自动获取该城市站点
-- weather_data_id: 气象数据ID，工具从context自动提取风向风速
+- weather_file_path: 气象数据ID，工具从context自动提取风向风速
 - weather_records: 风场记录列表，可直接传入包含wind_direction_10m/wind_speed_10m或measurements嵌套字段的记录
 - search_range_km: 搜索半径（公里），默认5.0
 - max_enterprises: 最大企业数量，默认10
@@ -78,13 +78,13 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                         "type": "string",
                         "description": "站点名称（如：广雅中学），与city_name二选一。优先使用station_name"
                     },
-                    "weather_data_id": {
+                    "weather_file_path": {
                         "type": "string",
-                        "description": "气象数据ID，get_weather_data返回的data_id；与weather_records至少提供一个"
+                        "description": "气象数据ID，get_weather_data返回的file_path；与weather_records至少提供一个"
                     },
                     "weather_records": {
                         "type": "array",
-                        "description": "直接传入的风场记录；与weather_data_id至少提供一个",
+                        "description": "直接传入的风场记录；与weather_file_path至少提供一个",
                         "items": {"type": "object"}
                     },
                     "search_range_km": {
@@ -143,7 +143,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
     async def execute(
         self,
         context,  # Context-Aware V2: ExecutionContext 对象
-        weather_data_id: str = None,
+        weather_file_path: str = None,
         weather_records: list = None,
         city_name: str = None,
         station_name: str = None,
@@ -160,7 +160,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
 
         Args:
             context: Context-Aware V2 执行上下文
-            weather_data_id: 气象数据ID（从 context.get_data() 获取风场数据）
+            weather_file_path: 气象数据ID（从 context.get_data() 获取风场数据）
             city_name: 城市名称（station_name未指定时，自动获取该城市站点）
             station_name: 站点名称（优先使用，直接指定分析站点）
             search_range_km: 搜索半径（公里）
@@ -173,7 +173,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
             {
                 "success": True,
                 "data": {...},
-                "data_id": "分析结果ID",
+                "file_path": "分析结果ID",
                 "visuals": [地图可视化],
                 "summary": "摘要信息"
             }
@@ -195,36 +195,36 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                     "wind_data_retrieved_from_direct_records",
                     record_count=len(winds),
                 )
-            if weather_data_id and context is not None:
+            if weather_file_path and context is not None:
                 logger.info(
                     "retrieving_wind_data_from_context",
-                    weather_data_id=weather_data_id
+                    weather_file_path=weather_file_path
                 )
                 try:
-                    weather_data = context.get_raw_data(weather_data_id)
+                    weather_data = context.get_raw_data(weather_file_path)
                     if weather_data and len(weather_data) > 0:
                         winds.extend(self._extract_winds_from_records(weather_data))
                         logger.info(
                             "wind_data_retrieved_from_context",
-                            weather_data_id=weather_data_id,
+                            weather_file_path=weather_file_path,
                             record_count=len(winds)
                         )
                     else:
                         logger.warning(
                             "no_wind_data_in_context",
-                            weather_data_id=weather_data_id,
+                            weather_file_path=weather_file_path,
                             data=weather_data
                         )
                 except Exception as e:
                     logger.error(
                         "failed_to_get_wind_data_from_context",
-                        weather_data_id=weather_data_id,
+                        weather_file_path=weather_file_path,
                         error=str(e)
                     )
                     return {
                         "success": False,
                         "error": f"无法从context获取风场数据: {str(e)}",
-                        "summary": f"上风向企业分析失败：无法获取风场数据（ID: {weather_data_id}）"
+                        "summary": f"上风向企业分析失败：无法获取风场数据（ID: {weather_file_path}）"
                     }
 
             # 防御性检查：未能获取风场数据
@@ -586,7 +586,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                             "schema_version": "3.1",
                             "generator": "analyze_upwind_enterprises",
                             "generator_version": "2.0.0",
-                            "source_data_ids": [],
+                            "source_file_paths": [],
                             "scenario": "upwind_enterprise_analysis",
                             "layout_hint": "map-full",
                             "timestamp": timestamp
@@ -640,7 +640,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 "resources": resources,
                 "metadata": {
                     "schema_version": "v2.0",
-                    "source_data_ids": [],
+                    "source_file_paths": [],
                     "generator": "analyze_upwind_enterprises",
                     "record_count": total_enterprises,
                     "stations_count": len(all_results),
@@ -673,7 +673,7 @@ class AnalyzeUpwindEnterprisesTool(LLMTool):
                 "map_images": [],
                 "metadata": {
                     "schema_version": "v2.0",
-                    "source_data_ids": [],
+                    "source_file_paths": [],
                     "generator": "analyze_upwind_enterprises",
                     "record_count": 0
                 },

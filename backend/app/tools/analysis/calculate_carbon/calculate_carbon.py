@@ -4,7 +4,7 @@ calculate_carbon: 碳组分分析（SOC/POC/EC、EC/OC 比值）
 支持 Context-Aware V2，使用 ExecutionContext 管理数据生命周期。
 支持 UnifiedParticulateData 格式（components 嵌套结构）和扁平 DataFrame 格式。
 
-计算完成后保留原始 data_id，供图表模式按需生成碳组分堆积图，
+计算完成后保留原始 file_path，供图表模式按需生成碳组分堆积图，
 同时使用 ParticulateVisualizer 生成 EC/OC 散点图。
 """
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -203,7 +203,7 @@ def _extract_carbon_columns(records: List[Dict], carbon_info: Dict[str, Dict]) -
 
 def calculate_carbon(
     data: Union[pd.DataFrame, List[Dict]],
-    data_id: Optional[str] = None,
+    file_path: Optional[str] = None,
     carbon_type: str = "pm25",
     oc_to_om: float = DEFAULT_OC_TO_OM,
     poc_method: str = "ec_normalization",
@@ -216,7 +216,7 @@ def calculate_carbon(
 
     Args:
         data: 输入数据（DataFrame 或 包含 components 的记录列表）
-        data_id: 原始数据ID
+        file_path: 原始数据ID
         carbon_type: 碳类型（pm25, pm10）
         oc_to_om: OC转OM系数
         poc_method: POC计算方法
@@ -227,7 +227,7 @@ def calculate_carbon(
     if data is None:
         raise ValueError("data 参数不能为 None")
 
-    original_data_id = data_id
+    original_file_path = file_path
 
     # 统一转换为 DataFrame
     if isinstance(data, list):
@@ -399,7 +399,7 @@ def calculate_carbon(
         "source_data_hash": _hash_dataframe(df) if isinstance(data, pd.DataFrame) else "",
         "schema_version": "v2.0",
         "scenario": "pm_carbon_analysis",
-        "source_data_id": original_data_id,
+        "source_file_path": original_file_path,
         "field_mapping_applied": True,
         "field_mapping_info": field_mapping_info,
     }
@@ -429,7 +429,7 @@ def calculate_carbon(
     visuals = []
     try:
         visualizer = ParticulateVisualizer()
-        scatter_chart = visualizer.generate_ec_oc_scatter_chart(result_df, source_data_id=original_data_id)
+        scatter_chart = visualizer.generate_ec_oc_scatter_chart(result_df, source_file_path=original_file_path)
         if scatter_chart:
             visuals.append(scatter_chart)
             logger.info("[calculate_carbon] EC/OC散点图生成成功")
@@ -456,7 +456,7 @@ def calculate_carbon(
 
     summary = "\n".join(summary_lines)
 
-    # 碳组分堆积图如有需要，由图表模式读取 source_data_id 后生成。
+    # 碳组分堆积图如有需要，由图表模式读取 source_file_path 后生成。
     logger.info(
         "[calculate_carbon] 计算完成",
         has_oc="OC" in result_df.columns,
@@ -464,7 +464,7 @@ def calculate_carbon(
         has_pm25=pm25 is not None,
         has_poc="POC" in result_df.columns,
         has_soc="SOC" in result_df.columns,
-        source_data_id=original_data_id,
+        source_file_path=original_file_path,
         visuals_count=len(visuals),
         note="EC/OC 散点图由 ParticulateVisualizer 生成，碳组分堆积图可在图表模式中按需生成"
     )
@@ -522,7 +522,7 @@ class CalculateCarbonTool(LLMTool):
    - **正确示例**: get_particulate_data("揭阳市2025年12月24日的PM2.5碳组分数据，时间粒度为小时，要求包含 OC、EC")
 
 2. **调用此工具**：
-   - 传入 data_id（必需）
+   - 传入 file_path（必需）
 
 **返回结果**:
 - POC（一次有机碳）、SOC（二次有机碳）浓度
@@ -533,13 +533,13 @@ class CalculateCarbonTool(LLMTool):
 
 **示例**:
 calculate_carbon(
-    data_id="particulate_unified:v1:xxx"  # 来自 get_particulate_data
+    file_path="/srv/suyuan/sessions/example/data/particulate.json"  # 来自上游颗粒物查询工具
 )
             """.strip(),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "data_id": {
+                    "file_path": {
                         "type": "string",
                         "description": "颗粒物组分数据ID（来自 get_particulate_data）"
                     },
@@ -561,7 +561,7 @@ calculate_carbon(
                         "description": "POC计算方法"
                     }
                 },
-                "required": ["data_id"]
+                "required": ["file_path"]
             }
         }
 
@@ -577,7 +577,7 @@ calculate_carbon(
     async def execute(
         self,
         context: "ExecutionContext",
-        data_id: str,
+        file_path: str,
         carbon_type: str = "pm25",
         oc_to_om: float = 1.4,
         poc_method: str = "ec_normalization",
@@ -586,7 +586,7 @@ calculate_carbon(
         """执行碳组分分析"""
         # Step 1: 获取标准化后的碳组分数据
         try:
-            carbon_records = context.get_data(data_id)
+            carbon_records = context.get_data(file_path)
             if not isinstance(carbon_records, list) or len(carbon_records) == 0:
                 return {
                     "status": "failed",
@@ -602,7 +602,7 @@ calculate_carbon(
                 "success": False,
                 "data": None,
                 "metadata": {"tool_name": "calculate_carbon", "error_type": "data_not_found"},
-                "summary": f"[FAIL] 未找到数据 {data_id}"
+                "summary": f"[FAIL] 未找到数据 {file_path}"
             }
         except Exception as exc:
             return {
@@ -616,7 +616,7 @@ calculate_carbon(
         # Step 2: 执行计算
         result = calculate_carbon(
             data=carbon_records,
-            data_id=data_id,
+            file_path=file_path,
             carbon_type=carbon_type,
             oc_to_om=oc_to_om,
             poc_method=poc_method
@@ -643,18 +643,18 @@ calculate_carbon(
                     ]
                 }
                 # context.save_data() 直接返回字符串ID
-                result_data_id = context.save_data(
+                result_file_path = context.save_data(
                     data=[summary],
                     schema="particulate_analysis",
                     metadata={
-                        "source_data_id": data_id,
+                        "source_file_path": file_path,
                         "ec_oc_mean": statistics.get("ec_oc", {}).get("mean"),
                         "soc_mean": statistics.get("poc_soc", {}).get("soc_mean"),
                         "poc_mean": statistics.get("poc_soc", {}).get("poc_mean"),
                         "secondary_level": statistics.get("secondary_organic", {}).get("level"),
                     }
                 )
-                result["data_id"] = result_data_id
+                result["file_path"] = result_file_path
             except Exception as save_err:
                 logger.warning(f"[calculate_carbon] 保存失败: {save_err}")
 

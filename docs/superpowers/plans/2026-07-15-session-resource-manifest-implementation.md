@@ -518,9 +518,9 @@ def project_session_resources(
     resolver_tool = {
         ResourceKind.DATA: "read_data_registry",
         ResourceKind.FILE: "read_file",
-        ResourceKind.ARTIFACT: "present_artifact",
+        ResourceKind.ARTIFACT: "publish_session_file",
         ResourceKind.URL: "web_fetch",
-        ResourceKind.VISUAL: "present_artifact",
+        ResourceKind.VISUAL: "publish_session_file",
     }
 
     def score(ref: SessionResourceRef) -> tuple[int, int, int, str]:

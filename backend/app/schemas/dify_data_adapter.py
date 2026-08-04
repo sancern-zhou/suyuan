@@ -627,7 +627,6 @@ class DifyDataAdapter:
 
         # 构建元数据
         metadata = DataMetadata(
-            data_id=f"air_quality:{conversation_id or 'unknown'}",
             data_type=DataType.AIR_QUALITY,
             record_count=len(data_list),
             station_name=station_name,
@@ -665,12 +664,7 @@ class DifyDataAdapter:
             success=success,
             data=data_list,
             metadata=metadata,
-            summary=summary,
-            legacy_fields={
-                "conversation_id": conversation_id,
-                "answer": answer,
-                "raw_response": response
-            }
+            summary=summary
         )
 
     @staticmethod
@@ -682,7 +676,6 @@ class DifyDataAdapter:
             error=error_msg,
             data=[],
             metadata=DataMetadata(
-                data_id=f"air_quality_error:{id(error_msg)}",
                 data_type=DataType.AIR_QUALITY,
                 source="dify_api",
                 parameters={"question": query}

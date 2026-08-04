@@ -25,13 +25,13 @@ from datetime import datetime
 
 class DataReference(BaseModel):
     """数据引用"""
-    data_id: str = Field(description="数据ID，格式：schema:version:hash")
+    file_path: str = Field(description="数据ID，格式：schema:version:hash")
     schema: str = Field(description="数据类型，如vocs、pmf_result、air_quality等")
 
     class Config:
         schema_extra = {
             "example": {
-                "data_id": "vocs:v1:abc123",
+                "file_path": "/srv/suyuan/sessions/example/data/vocs.json",
                 "schema": "vocs"
             }
         }
@@ -129,7 +129,7 @@ class VisualizationSpec(BaseModel):
     ] = Field(description="图形标记类型")
 
     data: Union[DataReference, Dict[str, Any]] = Field(
-        description="数据引用（data_id）或内联数据"
+        description="数据引用（file_path）或内联数据"
     )
 
     encoding: Dict[str, EncodingChannel] = Field(
@@ -212,7 +212,7 @@ class VisualizationSpec(BaseModel):
             "example": {
                 "mark": "line",
                 "data": {
-                    "data_id": "air_quality:v1:abc123",
+                    "file_path": "/srv/suyuan/sessions/example/data/air_quality.json",
                     "schema": "air_quality"
                 },
                 "encoding": {
@@ -292,7 +292,7 @@ class ChartConfig(BaseModel):
                 "chart_id": "chart_001",
                 "specification": {
                     "mark": "bar",
-                    "data": {"data_id": "vocs:v1:abc", "schema": "vocs"},
+                    "data": {"file_path": "/srv/suyuan/sessions/example/data/vocs.json", "schema": "vocs"},
                     "encoding": {
                         "x": {"field": "species_name", "type": "nominal"},
                         "y": {"field": "concentration", "type": "quantitative"}
@@ -368,7 +368,7 @@ def spec_to_vegalite(spec: VisualizationSpec) -> Dict[str, Any]:
 
     # 处理数据引用
     if isinstance(spec.data, DataReference):
-        vegalite_spec["data"] = {"name": spec.data.data_id}
+        vegalite_spec["data"] = {"name": spec.data.file_path}
     else:
         vegalite_spec["data"] = {"values": spec.data}
 
@@ -518,8 +518,8 @@ def validate_spec(spec: VisualizationSpec) -> Dict[str, Any]:
 
     # 检查数据引用
     if isinstance(spec.data, DataReference):
-        if not spec.data.data_id or not spec.data.schema:
-            errors.append("数据引用必须包含data_id和schema")
+        if not spec.data.file_path or not spec.data.schema:
+            errors.append("数据引用必须包含file_path和schema")
 
     # 检查编码字段的合理性
     for channel, encoding in spec.encoding.items():
@@ -541,7 +541,7 @@ def validate_spec(spec: VisualizationSpec) -> Dict[str, Any]:
 
 def create_simple_spec(
     mark: str,
-    data_id: str,
+    file_path: str,
     schema: str,
     x_field: str,
     y_field: str,
@@ -555,7 +555,7 @@ def create_simple_spec(
     示例：
         spec = create_simple_spec(
             mark="bar",
-            data_id="vocs:v1:abc123",
+            file_path="/srv/suyuan/sessions/example/data/vocs.json",
             schema="vocs",
             x_field="species_name",
             y_field="concentration",
@@ -564,7 +564,7 @@ def create_simple_spec(
     """
     return VisualizationSpec(
         mark=mark,
-        data=DataReference(data_id=data_id, schema=schema),
+        data=DataReference(file_path=file_path, schema=schema),
         encoding={
             "x": EncodingChannel(field=x_field, type=x_type),
             "y": EncodingChannel(field=y_field, type=y_type)

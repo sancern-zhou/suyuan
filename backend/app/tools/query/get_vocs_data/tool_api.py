@@ -200,13 +200,13 @@ class GetVOCsDataTool(LLMTool):
             # 标准化数据格式
             standardized_records = self._standardize_voc_data(records)
 
-            # 数据外部化：下游PMF依赖data_id，即使只有24小时数据也需要保存引用。
-            data_id = None
+            # 数据外部化：下游PMF依赖file_path，即使只有24小时数据也需要保存引用。
+            file_path = None
             file_path = None
             sample_data = standardized_records
 
             try:
-                data_id = context.save_data(
+                file_path = context.save_data(
                     data=standardized_records,
                     schema="vocs_unified",
                     metadata={
@@ -232,14 +232,14 @@ class GetVOCsDataTool(LLMTool):
                     "voc_categories_data_externalized",
                     total_count=len(standardized_records),
                     sample_count=len(sample_data),
-                    data_id=data_id
+                    file_path=file_path
                 )
             except Exception as save_error:
                 logger.warning("voc_categories_save_failed", error=str(save_error))
-                data_id = None
+                file_path = None
 
             # 构建返回消息
-            if data_id:
+            if file_path:
                 summary_msg = f"成功获取{len(standardized_records)}条VOCs类别数据（已保存数据引用，返回样本{len(sample_data)}条）"
             else:
                 summary_msg = f"成功获取{len(standardized_records)}条VOCs类别数据"
@@ -247,7 +247,7 @@ class GetVOCsDataTool(LLMTool):
             return {
                 "success": True,
                 "data": sample_data,
-                "data_id": data_id,
+                "file_path": file_path,
                 "file_path": file_path,
                 "count": len(standardized_records),
                 "sample_count": len(sample_data),
@@ -262,12 +262,12 @@ class GetVOCsDataTool(LLMTool):
                 "metadata": {
                     "schema_version": "v2.0",
                     "generator": "get_vocs_data",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "station_name": station,
                     "station": station,
                     "code": code,
                     "total_count": len(standardized_records),
-                    "externalized": data_id is not None
+                    "externalized": file_path is not None
                 }
             }
 

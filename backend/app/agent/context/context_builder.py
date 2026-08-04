@@ -640,9 +640,9 @@ class SimplifiedContextBuilder:
                         if not isinstance(layer, dict):
                             continue
                         layer_summary = f"{layer.get('layer_id')}:{layer.get('status')}:{layer.get('feature_count', 0)}"
-                        data_id = layer.get("data_id")
-                        if data_id:
-                            layer_summary = f"{layer_summary}:data_id={data_id}"
+                        file_path = layer.get("file_path")
+                        if file_path:
+                            layer_summary = f"{layer_summary}:file_path={file_path}"
                         layer_summaries.append(layer_summary)
                     if layer_summaries:
                         details.append(f"receipt_layers={json.dumps(layer_summaries, ensure_ascii=False)}")

@@ -5,7 +5,7 @@ LLM工具的基础接口
 
 Updated to support ExecutionContext for context-based data access.
 Tools can now optionally receive an ExecutionContext parameter for:
-- Loading data by reference (data_id)
+- Loading data from a canonical session file path
 - Saving results for downstream tools
 - Accessing session metadata
 """
@@ -47,25 +47,19 @@ class LLMTool(ABC):
     Version 2.0 Changes:
     - Tools can now optionally accept an ExecutionContext parameter
     - Enables context-based data access without passing full payloads through LLM
-    - Backward compatible: context parameter is optional
 
     Example (New Context-Aware Tool):
         async def execute(
             self,
             context: ExecutionContext,
             station_name: str,
-            data_id: str
+            file_path: str
         ):
             # Load data by reference
-            vocs_data = context.get_data(data_id, expected_schema="vocs")
+            vocs_data = context.get_data(file_path, expected_schema="vocs")
             # Process...
-            result_id = context.save_data(result, schema="pmf_result")
-            return {"success": True, "data_id": result_id}
-
-    Example (Legacy Tool - Still Works):
-        async def execute(self, station_name: str, pollutant: str):
-            # Traditional implementation without context
-            return {"success": True, "data": result}
+            result_path = context.save_data(result, schema="pmf_result")
+            return {"success": True, "file_path": result_path}
     """
 
     def __init__(
@@ -98,7 +92,7 @@ class LLMTool(ABC):
 
         Returns:
             Any: 工具执行结果
-                Standard format: {"success": bool, "data_id": str, "summary": str, ...}
+                Standard format: {"success": bool, "file_path": str, "summary": str, ...}
         """
         pass
 

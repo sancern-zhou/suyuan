@@ -88,7 +88,7 @@ class DataContextManager:
         )
 
         # Load with type safety
-        vocs_data = manager.get_data(handle.full_id, expected_schema="vocs")
+        vocs_data = manager.get_data(handle.file_path, expected_schema="vocs")
         # Returns List[VOCsSample]
     """
 
@@ -116,11 +116,11 @@ class DataContextManager:
         metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """
-        Save data and return the data ID string.
+        Save data and return its canonical session file path.
 
-        优化：不在每条记录中重复添加data_id字段
+        优化：不在每条记录中重复添加file_path字段
         - 减少数据冗余和上下文大小
-        - data_id在观察结果级别引用即可
+        - file_path在观察结果级别引用即可
         - 避免采样数据展示时的重复
 
         Args:
@@ -131,7 +131,7 @@ class DataContextManager:
             metadata: Additional metadata
 
         Returns:
-            str: Full data ID (format: "schema:v1:hash") for accessing the data
+            str: Canonical absolute session file path for accessing the data
                  TypedDataHandle is cached internally and accessible via get_handle()
 
         Raises:
@@ -139,23 +139,23 @@ class DataContextManager:
             TypeError: If data items are not Pydantic models or dicts
 
         Example:
-            # Save Pydantic models - returns string ID directly
-            data_id = manager.save_data(
+            # Save Pydantic models - returns the canonical path directly
+            file_path = manager.save_data(
                 data=vocs_samples,  # List[VOCsSample]
                 schema="vocs",
                 quality_report=validation_result.report,
                 field_stats=validation_result.field_stats,
                 metadata={"question": "深圳市VOCs数据"}
             )
-            # data_id = "vocs:v1:abc123def456..." (string)
+            # file_path = "/absolute/session/path/vocs.json"
 
             # Save dictionary data (UDF v2.0 format)
-            data_id = manager.save_data(
+            file_path = manager.save_data(
                 data=result_list,  # List[Dict]
                 schema="pmf_result",
                 metadata={"tool": "calculate_pmf"}
             )
-            # Directly use data_id in tool results
+            # Directly use file_path in tool results
         """
         # 0. 【空列表防护】提前检查数据是否为空
         if not data:
@@ -485,7 +485,7 @@ class DataContextManager:
         # identifier, is the value passed between tools.
         file_stem = f"{safe_file_stem(schema)}--{uuid4().hex}"
 
-        # 8. 【优化】直接保存序列化数据，不在每条记录中添加data_id字段
+        # 8. 【优化】直接保存序列化数据，不在每条记录中添加file_path字段
         # 避免重复冗余，减少上下文大小
         # 使用safe处理避免Unicode字符导致的编码错误（Windows GBK问题）
         sample_keys = []
@@ -673,8 +673,6 @@ class DataContextManager:
         if "--" in name:
             schema = name.split("--", 1)[0]
             version = "v1"
-        elif ":" in file_path:  # reopen old persisted conversations internally
-            schema, version = (file_path.split(":") + ["v1"])[:2]
         else:
             schema, version = "unknown", "v1"
 

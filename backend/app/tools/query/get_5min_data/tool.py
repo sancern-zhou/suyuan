@@ -105,7 +105,7 @@ class Get5MinDataTool(LLMTool):
 - status: "success" | "failed"
 - data: 5分钟数据列表（宽表格式）
 - metadata.schema_version: "v2.0"
-- metadata.data_id: 数据存储ID（供下游工具使用）
+- metadata.file_path: 数据存储ID（供下游工具使用）
             """.strip(),
             "parameters": {
                 "type": "object",
@@ -243,7 +243,7 @@ class Get5MinDataTool(LLMTool):
             )
 
             # 8. 保存数据
-            data_id = context.save_data(
+            file_path = context.save_data(
                 data=standardized_records,
                 schema="air_quality_5min"
             )
@@ -254,7 +254,7 @@ class Get5MinDataTool(LLMTool):
                 station_code=station_code,
                 table_name=table_name,
                 record_count=len(standardized_records),
-                data_id=data_id
+                file_path=file_path
             )
 
             return {
@@ -272,7 +272,7 @@ class Get5MinDataTool(LLMTool):
                     "generator": "get_5min_data",
                     "scenario": "5min_pollutant_weather",
                     "record_count": len(standardized_records),
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "station_code": station_code,
                     "table_name": table_name
                 },

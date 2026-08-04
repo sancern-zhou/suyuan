@@ -29,7 +29,7 @@ class GetWeatherDataTool(LLMTool):
 
     Context-Aware V2 架构：
     - 使用 context.save_data() 保存数据
-    - 返回 data_id 供下游工具引用
+    - 返回 file_path 供下游工具引用
     """
 
     def __init__(self):
@@ -56,7 +56,7 @@ class GetWeatherDataTool(LLMTool):
 【返回格式】
 {
     "success": bool,              # 查询是否成功
-    "data_id": string,            # 数据ID（下游工具通过 context.get_data() 获取）
+    "file_path": string,            # 数据ID（下游工具通过 context.get_data() 获取）
     "has_data": bool,             # 是否有实际数据
     "data_type": "era5|observed", # 查询的数据类型
     "count": int,                 # 记录数量
@@ -151,15 +151,12 @@ class GetWeatherDataTool(LLMTool):
                 return await self._query_observed(context, station_id, start_dt, end_dt)
             else:
                 from app.schemas.unified import UnifiedData, DataType, DataStatus, DataMetadata
-                # 生成标准的长格式data_id用于错误情况
-                error_data_id = f"weather_error:v1:{uuid4().hex}"
                 return UnifiedData(
                     status=DataStatus.FAILED,
                     success=False,
                     error=f"不支持的数据类型: {data_type}",
                     data=[],
                     metadata=DataMetadata(
-                        data_id=error_data_id,
                         data_type=DataType.WEATHER,
                         source="weather_repo"
                     ),
@@ -173,15 +170,12 @@ class GetWeatherDataTool(LLMTool):
                 exc_info=True
             )
             from app.schemas.unified import UnifiedData, DataType, DataStatus, DataMetadata
-            # 生成标准的长格式data_id用于异常情况
-            exception_data_id = f"weather_error:v1:{uuid4().hex}"
             return UnifiedData(
                 status=DataStatus.FAILED,
                 success=False,
                 error=str(e),
                 data=[],
                 metadata=DataMetadata(
-                    data_id=exception_data_id,
                     data_type=DataType.WEATHER,
                     source="weather_repo"
                 ),
@@ -202,15 +196,12 @@ class GetWeatherDataTool(LLMTool):
         )
 
         if lat is None or lon is None:
-            # 生成标准的长格式data_id用于错误情况
-            error_data_id = f"weather_error:v1:{uuid4().hex}"
             return UnifiedData(
                 status=DataStatus.FAILED,
                 success=False,
                 error="ERA5查询需要提供 lat 和 lon 参数",
                 data=[],
                 metadata=DataMetadata(
-                    data_id=error_data_id,
                     data_type=DataType.WEATHER,
                     source="weather_repo"
                 ),
@@ -302,10 +293,6 @@ class GetWeatherDataTool(LLMTool):
             standardized_count=len(standardized_records)
         )
 
-        # 生成标准的长格式data_id（schema:v1:hash）
-        data_id_hash = uuid4().hex
-        standard_data_id = f"weather:v1:{data_id_hash}"
-
         summary = f"[OK] 查询到 {len(standardized_records)} 条ERA5气象数据"
         if standardized_records:
             summary += f"（网格点 {grid_lat:.2f}, {grid_lon:.2f}，{start_time.date()} 至 {end_time.date()}）"
@@ -347,33 +334,31 @@ class GetWeatherDataTool(LLMTool):
         summary = summary + quality_suffix
 
         # 【Context-Aware V2】使用 context.save_data() 保存数据
-        saved_data_id = None  # 初始化变量
-        file_path = None
+        saved_file_path = None  # 初始化变量
         if standardized_records and context is not None:
             try:
                 # save_data() 返回字符串 ID
-                saved_data_id = context.save_data(
+                saved_file_path = context.save_data(
                     data=standardized_records,
                     schema="weather"
                 )
                 logger.info(
                     "era5_data_saved_to_context",
-                    data_id=saved_data_id,
+                    file_path=saved_file_path,
                     record_count=len(standardized_records)
                 )
             except Exception as e:
                 logger.warning(
                     "era5_data_save_failed",
                     error=str(e),
-                    message="将继续使用本地data_id，但下游工具可能无法通过context获取数据"
+                    message="将继续使用本地file_path，但下游工具可能无法通过context获取数据"
                 )
 
-        # 使用保存的 data_id 或本地生成的 ID
-        final_data_id = saved_data_id if saved_data_id else standard_data_id
+        final_file_path = saved_file_path
 
-        # 添加 data_id 到 summary（修复：确保 final_data_id 已定义）
-        if final_data_id:
-            summary = f"{summary}，已保存为 {final_data_id}。"
+        # 添加 file_path 到 summary（修复：确保 final_file_path 已定义）
+        if final_file_path:
+            summary = f"{summary}，已保存为 {final_file_path}。"
 
         # 生成数据样本（第一条记录，用于LLM快速了解数据结构）
         sample_record = None
@@ -389,7 +374,7 @@ class GetWeatherDataTool(LLMTool):
 
         # 构建元数据（使用对齐后的网格坐标）
         metadata = DataMetadata(
-            data_id=final_data_id,
+            file_path=final_file_path,
             data_type=DataType.WEATHER,
             record_count=len(standardized_records),
             lat=grid_lat,
@@ -407,8 +392,7 @@ class GetWeatherDataTool(LLMTool):
             "status": "success",
             "success": len(standardized_records) > 0,
             "data": standardized_records,  # 保留 data 字段供直接访问
-            "data_id": final_data_id,       # Context-Aware V2: 返回 data_id
-            "file_path": file_path,         # 添加文件路径
+            "file_path": final_file_path,
             "metadata": {
                 **metadata.dict(),
                 "schema_version": "v2.0",  # UDF v2.0 标记
@@ -421,16 +405,7 @@ class GetWeatherDataTool(LLMTool):
                 "quality_report": quality_report.dict(),  # ✅ 【优化3】数据质量报告
                 "sample_record": sample_record  # ✅ 数据样本
             },
-            "summary": summary,
-            "legacy_fields": {
-                "data_type": "era5",
-                "location": {"lat": grid_lat, "lon": grid_lon},
-                "original_query": {"lat": original_lat, "lon": original_lon},
-                "time_range": {
-                    "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
-                }
-            }
+            "summary": summary
         }
 
     async def _query_observed(
@@ -446,15 +421,12 @@ class GetWeatherDataTool(LLMTool):
         )
 
         if not station_id:
-            # 生成标准的长格式data_id用于错误情况
-            error_data_id = f"weather_error:v1:{uuid4().hex}"
             return UnifiedData(
                 status=DataStatus.FAILED,
                 success=False,
                 error="观测数据查询需要提供 station_id 参数",
                 data=[],
                 metadata=DataMetadata(
-                    data_id=error_data_id,
                     data_type=DataType.WEATHER,
                     source="weather_repo"
                 ),
@@ -520,13 +492,8 @@ class GetWeatherDataTool(LLMTool):
             standardized_count=len(standardized_records)
         )
 
-        # 生成标准的长格式data_id（schema:v1:hash）
-        data_id_hash = uuid4().hex
-        standard_data_id = f"weather:v1:{data_id_hash}"
-
         # 构建元数据
         metadata = DataMetadata(
-            data_id=standard_data_id,  # ✅ 使用标准长格式ID
             data_type=DataType.WEATHER,
             record_count=len(standardized_records),
             station_name=station_id,
@@ -581,38 +548,35 @@ class GetWeatherDataTool(LLMTool):
 
         summary = summary + quality_suffix
 
-        # 添加 data_id 到 summary
-        if final_data_id:
-            summary = f"{summary}，已保存为 {final_data_id}。"
-
         # 【Context-Aware V2】使用 context.save_data() 保存数据
-        saved_data_id = None  # 初始化变量
-        file_path = None
+        saved_file_path = None  # 初始化变量
         if standardized_records and context is not None:
             try:
                 # save_data() 返回字符串 ID
-                saved_data_id = context.save_data(
+                saved_file_path = context.save_data(
                     data=standardized_records,
                     schema="weather"
                 )
                 logger.info(
                     "observed_data_saved_to_context",
-                    data_id=saved_data_id,
+                    file_path=saved_file_path,
                     record_count=len(standardized_records)
                 )
             except Exception as e:
                 logger.warning(
                     "observed_data_save_failed",
                     error=str(e),
-                    message="将继续使用本地data_id，但下游工具可能无法通过context获取数据"
+                    message="将继续使用本地file_path，但下游工具可能无法通过context获取数据"
                 )
 
-        # 使用保存的 data_id 或本地生成的 ID
-        final_data_id = saved_data_id if saved_data_id else standard_data_id
+        final_file_path = saved_file_path
 
-        # 更新 metadata 中的 data_id
+        if final_file_path:
+            summary = f"{summary}，文件路径: {final_file_path}。"
+
+        # 更新 metadata 中的 file_path
         metadata = DataMetadata(
-            data_id=final_data_id,
+            file_path=final_file_path,
             data_type=DataType.WEATHER,
             record_count=len(standardized_records),
             station_name=station_id,
@@ -629,8 +593,7 @@ class GetWeatherDataTool(LLMTool):
             "status": "success",
             "success": len(standardized_records) > 0,
             "data": standardized_records,
-            "data_id": final_data_id,       # Context-Aware V2: 返回 data_id
-            "file_path": file_path,         # 添加文件路径
+            "file_path": final_file_path,
             "metadata": {
                 **metadata.dict(),
                 "schema_version": "v2.0",  # UDF v2.0 标记
@@ -643,13 +606,5 @@ class GetWeatherDataTool(LLMTool):
                 "quality_report": quality_report.dict(),  # ✅ 【优化3】数据质量报告
                 "sample_record": sample_record  # ✅ 数据样本
             },
-            "summary": summary,
-            "legacy_fields": {
-                "data_type": "observed",
-                "station_id": station_id,
-                "time_range": {
-                    "start": start_time.isoformat(),
-                    "end": end_time.isoformat()
-                }
-            }
+            "summary": summary
         }

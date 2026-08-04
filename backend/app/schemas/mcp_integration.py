@@ -132,7 +132,6 @@ class MCPTool:
         """创建错误元数据"""
         from app.schemas.unified import DataMetadata
         return DataMetadata(
-            data_id=f"mcp_error:{self.name}:{id(self)}",
             data_type=self.data_type,
             source=f"mcp:{self.name}"
         )
@@ -207,16 +206,16 @@ class MCPOrchestrator:
             depends_on = step.get("depends_on")
 
             # 如果有依赖，传递上下文数据
-            if depends_on and depends_on in [r.metadata.data_id for r in results]:
+            if depends_on and depends_on in [r.metadata.file_path for r in results]:
                 # 找到依赖结果
                 dep_result = next(
-                    (r for r in results if r.metadata.data_id == depends_on),
+                    (r for r in results if r.metadata.file_path == depends_on),
                     None
                 )
                 if dep_result:
                     # 转换数据格式
-                    if params.get("data_id"):
-                        params["data_id"] = dep_result.metadata.data_id
+                    if params.get("file_path"):
+                        params["file_path"] = dep_result.metadata.file_path
                     else:
                         # 将数据嵌入参数
                         params["data"] = dep_result.to_dict()

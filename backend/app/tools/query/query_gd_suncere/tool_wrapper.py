@@ -32,8 +32,8 @@ def _apply_externalization_if_needed(result: Dict[str, Any], context: ExecutionC
     if not isinstance(result, dict):
         return result
 
-    # 检查是否有 data_id 且数据量大
-    has_data_id = 'data_id' in result and result.get('data_id')
+    # 检查是否有 file_path 且数据量大
+    has_file_path = 'file_path' in result and result.get('file_path')
     data = result.get('data', [])
 
     if not isinstance(data, list):
@@ -41,7 +41,7 @@ def _apply_externalization_if_needed(result: Dict[str, Any], context: ExecutionC
 
     has_large_data = len(data) > 24
 
-    if has_data_id and has_large_data:
+    if has_file_path and has_large_data:
         # 已外部化，只返回样本数据
         original_data = result['data']
         sample_data = original_data[:24]  # 前24条作为样本
@@ -62,13 +62,13 @@ def _apply_externalization_if_needed(result: Dict[str, Any], context: ExecutionC
             tool=tool_name,
             original_count=len(original_data),
             sample_count=len(sample_data),
-            data_id=result.get('data_id')[:50] if result.get('data_id') else None
+            file_path=result.get('file_path')[:50] if result.get('file_path') else None
         )
 
-    elif not has_data_id and has_large_data:
+    elif not has_file_path and has_large_data:
         # 未外部化但数据量大，需要外部化
         try:
-            data_id = context.save_data(
+            file_path = context.save_data(
                 data=data,
                 schema="air_quality_unified",
                 metadata={
@@ -80,7 +80,7 @@ def _apply_externalization_if_needed(result: Dict[str, Any], context: ExecutionC
 
             sample_data = data[:24]
             result['data'] = sample_data
-            result['data_id'] = data_id
+            result['file_path'] = file_path
             result['original_count'] = len(data)
             result['sample_count'] = len(sample_data)
             result['externalized'] = True
@@ -95,7 +95,7 @@ def _apply_externalization_if_needed(result: Dict[str, Any], context: ExecutionC
                 tool=tool_name,
                 original_count=len(data),
                 sample_count=len(sample_data),
-                data_id=data_id[:50] if data_id else None
+                file_path=file_path[:50] if file_path else None
             )
         except Exception as save_error:
             logger.warning(
@@ -1045,7 +1045,7 @@ end_time="2026-02-28 23:59:59"
 time_type=8  # 任意时间报表
 
 【返回数据】
-- data_id: 数据引用ID（UDF v2.0格式）
+- file_path: 数据引用ID（UDF v2.0格式）
 - 包含多城市的综合统计数据
 - 包含综合指数、各污染物浓度、达标天数等指标
             """.strip(),
@@ -1364,7 +1364,7 @@ time_point=["2026-02-01 00:00:00", "2026-02-28 23:59:59"]
 contrast_time=["2025-02-01 00:00:00", "2025-02-28 23:59:59"]
 
 【返回数据】
-- data_id: 数据引用ID（UDF v2.0格式）
+- file_path: 数据引用ID（UDF v2.0格式）
 - 包含当前时间段和对比时间段的数据
 - 包含对比值、增幅、排名变化等对比指标
             """.strip(),

@@ -61,7 +61,7 @@ class TypedDataHandle:
 
         # Check compatibility before loading
         if handle.is_compatible_with("vocs"):
-            data = context.get_data(handle.full_id)
+            data = context.get_data(handle.file_path)
     """
 
     file_path: str
@@ -72,11 +72,6 @@ class TypedDataHandle:
     quality_report: DataQualityReport
     field_stats: List[FieldStats]
     metadata: Optional[Dict[str, Any]] = None
-
-    @property
-    def full_id(self) -> str:
-        """Backward-compatible property returning the canonical file path."""
-        return self.file_path
 
     def is_compatible_with(self, required_schema: str) -> bool:
         """
@@ -153,7 +148,7 @@ class TypedDataHandle:
 
         Example:
             if handle.has_quality_errors():
-                logger.warning("data_quality_issues", data_id=handle.full_id)
+                logger.warning("data_quality_issues", file_path=handle.file_path)
         """
         return self.quality_report.has_errors()
 
@@ -292,7 +287,7 @@ class TypedDataHandle:
 
     def __repr__(self) -> str:
         return (
-            f"<TypedDataHandle {self.full_id} "
+            f"<TypedDataHandle {self.file_path} "
             f"records={self.record_count} "
             f"fields={len(self.field_stats)}>"
         )

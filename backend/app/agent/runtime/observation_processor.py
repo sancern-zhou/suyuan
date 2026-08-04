@@ -148,7 +148,7 @@ class ObservationProcessor:
                     "chart_id": visual.get("id", f"echarts_{idx}"),
                     "chart_type": visual.get("type", first_series.get("type", "unknown")),
                     "chart_title": visual.get("title", title.get("text", "")),
-                    "data_id": self._first_source_data_id(meta),
+                    "file_path": self._first_source_file_path(meta),
                     "source_tools": source_tools,
                     "schema_version": meta.get("schema_version", "echarts_standard"),
                 }
@@ -159,7 +159,7 @@ class ObservationProcessor:
                     "chart_id": payload.get("id", f"chart_{idx}"),
                     "chart_type": payload.get("type", "unknown"),
                     "chart_title": payload.get("title", ""),
-                    "data_id": self._first_source_data_id(meta),
+                    "file_path": self._first_source_file_path(meta),
                     "source_tools": source_tools,
                     "schema_version": "v2.0",
                 }
@@ -172,9 +172,9 @@ class ObservationProcessor:
         tool_name = action.get("tool")
         return [tool_name] if tool_name else []
 
-    def _first_source_data_id(self, meta: Dict[str, Any]) -> Any:
-        """获取第一个源数据ID"""
-        source_ids = meta.get("source_data_ids")
-        if isinstance(source_ids, list) and source_ids:
-            return source_ids[0]
-        return meta.get("data_id")
+    def _first_source_file_path(self, meta: Dict[str, Any]) -> Any:
+        """获取第一个源数据文件路径。"""
+        source_paths = meta.get("source_file_paths")
+        if isinstance(source_paths, list) and source_paths:
+            return source_paths[0]
+        return meta.get("file_path")

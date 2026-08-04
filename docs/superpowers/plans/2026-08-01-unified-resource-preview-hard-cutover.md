@@ -697,7 +697,7 @@ git commit -m "refactor: declare generic tool file products explicitly"
 ### Task 6: Convert Office, report, and HTML artifact producers and actions
 
 **Files:**
-- Modify: `backend/app/tools/utility/present_artifact_tool.py`
+- Modify: `backend/app/tools/utility/publish_session_file_tool.py`
 - Modify: `backend/app/tools/report/report_package/tool.py`
 - Modify: `backend/app/tools/report/read_docx/tool.py`
 - Modify: `backend/app/tools/html_artifact/tool.py`
@@ -763,7 +763,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit rich artifact conversion**
 
 ```bash
-git add backend/app/tools/utility/present_artifact_tool.py backend/app/tools/report backend/app/tools/html_artifact backend/app/tools/office backend/app/services/report_preview_refresh.py backend/app/services/html_artifact_service.py backend/app/api/office_routes.py backend/app/api/report_routes.py backend/app/api/html_artifact_routes.py backend/tests/tools/test_rich_artifact_resource_groups.py backend/tests/api/test_resource_actions_refresh_catalog.py
+git add backend/app/tools/utility/publish_session_file_tool.py backend/app/tools/report backend/app/tools/html_artifact backend/app/tools/office backend/app/services/report_preview_refresh.py backend/app/services/html_artifact_service.py backend/app/api/office_routes.py backend/app/api/report_routes.py backend/app/api/html_artifact_routes.py backend/tests/tools/test_rich_artifact_resource_groups.py backend/tests/api/test_resource_actions_refresh_catalog.py
 git commit -m "refactor: publish office and report previews as resources"
 ```
 

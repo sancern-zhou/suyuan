@@ -314,16 +314,15 @@ class TrajectorySourceAnalysisTool(LLMTool):
             }
 
             result_payload["summary"] = (
-                    f"[OK] {'后向溯源' if mode == 'backward' else '前向预测'}分析完成，已保存为 {data_id}。"
+                    f"[OK] {'后向溯源' if mode == 'backward' else '前向预测'}分析完成，已保存为 {file_path}。"
                     f"分析{days}天轨迹，识别{len(contributions)}家企业，"
                     f"Top1: {top_contributors[0]['enterprise_name'] if top_contributors else 'N/A'} "
                     f"({top_contributors[0]['contribution_percent'] if top_contributors else '0%'})"
                 )
 
-            data_ref = None
             file_path = None
             try:
-                data_ref = context.save_data(
+                file_path = context.save_data(
                     data=[result_payload],
                     schema="trajectory_analysis_result",
                     metadata={
@@ -335,14 +334,10 @@ class TrajectorySourceAnalysisTool(LLMTool):
                         "days": days
                     }
                 )
-                data_id = data_ref
-                file_path = data_ref["file_path"]
-                result_payload["data_id"] = data_id
                 result_payload["file_path"] = file_path
                 result_payload["registry_schema"] = "trajectory_analysis_result"
                 logger.info(
                     "trajectory_source_result_saved",
-                    data_id=data_id,
                     file_path=file_path,
                     schema="trajectory_analysis_result"
                 )
@@ -417,9 +412,9 @@ class TrajectorySourceAnalysisTool(LLMTool):
         }
 
     def _attach_resume_context(self, result: Dict[str, Any]) -> None:
-        data_id = result.get("data_id") if isinstance(result.get("data_id"), str) else None
+        file_path = result.get("file_path") if isinstance(result.get("file_path"), str) else None
         context = build_data_resume_context(
-            generated_data_ids=[data_id] if data_id else [],
+            generated_file_paths=[file_path] if file_path else [],
         )
         result["refs"] = merge_refs(result.get("refs"), context["refs"])
         result["llm_resume"] = context["llm_resume"]

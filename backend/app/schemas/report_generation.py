@@ -107,7 +107,7 @@ class ToolResult(BaseModel):
     success: bool = Field(..., description="是否成功")
     data: Optional[Dict[str, Any]] = Field(None, description="返回数据")
     error: Optional[str] = Field(None, description="错误信息")
-    data_id: Optional[str] = Field(None, description="数据ID（Context-Aware V2）")
+    file_path: Optional[str] = Field(None, description="数据ID（Context-Aware V2）")
     execution_time: Optional[float] = Field(None, description="执行时间")
 
 class SectionContent(BaseModel):

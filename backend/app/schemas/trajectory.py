@@ -25,6 +25,6 @@ class TrajectorySourceAnalysisResult(BaseModel):
     metadata: Dict[str, Any]
     summary: str
     data: Optional[Dict[str, Any]] = None
-    data_id: Optional[str] = None
+    file_path: Optional[str] = None
     registry_schema: Optional[str] = None
 

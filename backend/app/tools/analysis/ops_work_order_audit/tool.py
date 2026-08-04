@@ -18,7 +18,7 @@ from app.services.ops_work_order_audit import (
     run_ops_audit_rules,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.resource_refs import build_data_ref, build_file_ref, merge_refs
+from app.tools.resource_refs import build_data_file_ref, build_file_ref, merge_refs
 
 logger = structlog.get_logger()
 
@@ -50,8 +50,8 @@ def _declared_resource_refs(data: Dict[str, Any]) -> Dict[str, list[Dict[str, An
             })
         files.append(build_file_ref(path, **metadata))
     data_refs = []
-    if isinstance(data.get("data_id"), str) and data["data_id"]:
-        ref = build_data_ref(data["data_id"], usage="primary")
+    if isinstance(data.get("file_path"), str) and data["file_path"]:
+        ref = build_data_file_ref(data["file_path"], usage="primary")
         ref.update({"label": "Operations audit summary", "role": "primary"})
         data_refs.append(ref)
     return merge_refs({"files": files}, {"data": data_refs})
@@ -62,9 +62,9 @@ def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dic
         "tool_name": tool_name,
         "generator": tool_name,
     }
-    data_id = data.get("data_id") if isinstance(data, dict) else None
-    if data_id:
-        metadata["data_id"] = data_id
+    file_path = data.get("file_path") if isinstance(data, dict) else None
+    if file_path:
+        metadata["file_path"] = file_path
 
     result = {
         "status": "success",
@@ -74,8 +74,8 @@ def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dic
         "metadata": metadata,
         "refs": _declared_resource_refs(data),
     }
-    if data_id:
-        result["data_id"] = data_id
+    if file_path:
+        result["file_path"] = file_path
     return result
 
 
@@ -344,7 +344,7 @@ class OpsAuditRunRulesTool(LLMTool):
                 enable_visual=visual_enabled,
             )
             if context and hasattr(context, "save_data"):
-                result["data_id"] = context.save_data(
+                result["file_path"] = context.save_data(
                     data=[_context_summary_record(result)],
                     schema="ops_audit_rule_summary",
                     metadata={"tool": self.name, "dataset_path": str(resolved_dataset_path)},

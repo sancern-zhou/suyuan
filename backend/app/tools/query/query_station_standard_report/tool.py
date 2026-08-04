@@ -268,7 +268,7 @@ def execute_query_station_standard_report(
 
         grouped = _records_by_station(records)
         reporting_records = build_station_reporting_records(records, _station_name_from_record)
-        report_data_id = save_report_data_package(
+        report_file_path = save_report_data_package(
             context=context,
             tool_name=tool_name,
             query={
@@ -294,16 +294,16 @@ def execute_query_station_standard_report(
             extra_views={"reporting": reporting_records, "raw": records, "result": records},
             package_kind="station_standard_report_api",
         )
-        if report_data_id:
-            metadata["report_data_id"] = report_data_id
+        if report_file_path:
+            metadata["report_file_path"] = report_file_path
             metadata["result_externalized"] = True
             metadata["default_view"] = "reporting"
             preview = reporting_records[:5]
             metadata["preview_records"] = len(preview)
-            result["report_data_id"] = report_data_id
+            result["report_file_path"] = report_file_path
             result["data"] = preview
             result.pop("result", None)
-            result["summary"] += f" | 完整接口报表已保存为 report_data_id: {report_data_id}"
+            result["summary"] += f" | 完整接口报表已保存为 report_file_path: {report_file_path}"
         return result
     except Exception as exc:
         logger.error("query_station_standard_report_failed", error=str(exc), error_type=type(exc).__name__)
@@ -454,7 +454,7 @@ def execute_query_station_standard_yoy_report(
 
         grouped = _records_by_station(records)
         reporting_records = build_station_reporting_records(records, _station_name_from_record)
-        report_data_id = save_report_data_package(
+        report_file_path = save_report_data_package(
             context=context,
             tool_name=tool_name,
             query={
@@ -480,16 +480,16 @@ def execute_query_station_standard_yoy_report(
             extra_views={"reporting": reporting_records, "raw": records, "result": records},
             package_kind="station_standard_yoy_report_api",
         )
-        if report_data_id:
-            metadata["report_data_id"] = report_data_id
+        if report_file_path:
+            metadata["report_file_path"] = report_file_path
             metadata["result_externalized"] = True
             metadata["default_view"] = "reporting"
             preview = reporting_records[:5]
             metadata["preview_records"] = len(preview)
-            result["report_data_id"] = report_data_id
+            result["report_file_path"] = report_file_path
             result["data"] = preview
             result.pop("result", None)
-            result["summary"] += f" | 完整接口报表已保存为 report_data_id: {report_data_id}"
+            result["summary"] += f" | 完整接口报表已保存为 report_file_path: {report_file_path}"
         return result
     except Exception as exc:
         logger.error("query_station_standard_yoy_report_failed", error=str(exc), error_type=type(exc).__name__)

@@ -10,10 +10,10 @@ RESOLVE_MAP_DATA_ASSET_SCHEMA = {
 
 适用场景：
 - 用户要求打开站点图层、热力图、高亮站点、把查询结果显示到地图
-- 需要为 visual_interaction point-layer 命令选择真实 data_id
+- 需要为 visual_interaction point-layer 命令选择真实 file_path
 - 需要确认 longitude/latitude 或等价经纬度字段名
 
-不要编造 data_id；不要选择 test/temp/debug/hidden 资产；如果没有候选资产，应先查询数据或告知缺少可地图化数据。""",
+不要编造 file_path；不要选择 test/temp/debug/hidden 资产；如果没有候选资产，应先查询数据或告知缺少可地图化数据。""",
     "parameters": {
         "type": "object",
         "properties": {

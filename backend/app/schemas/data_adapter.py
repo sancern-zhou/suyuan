@@ -129,7 +129,6 @@ class DataAdapter:
                 error=f"数据转换失败: {str(e)}",
                 data=[],
                 metadata=DataMetadata(
-                    data_id="conversion_failed",
                     data_type=DataType.CUSTOM
                 ),
                 summary=f"❌ 数据转换失败: {format_type}"
@@ -211,14 +210,12 @@ class DataAdapter:
             success=data.get("success", True),
             data=records,
             metadata=DataMetadata(
-                data_id=f"pmf_result:{id(data)}",
                 data_type=DataType.PMF_RESULT,
                 station_name=data.get("station_name"),
                 quality_score=data.get("performance", {}).get("R2", 0.0),
                 source=hints.get("source", "unknown")
             ),
-            summary=data.get("summary", "PMF分析完成"),
-            legacy_fields=data
+            summary=data.get("summary", "PMF分析完成")
         )
 
     @staticmethod
@@ -238,7 +235,6 @@ class DataAdapter:
             success=data.get("success", True),
             data=records,
             metadata=DataMetadata(
-                data_id=f"obm_result:{id(data)}",
                 data_type=DataType.OBM_RESULT,
                 quality_score=0.9,
                 source=hints.get("source", "unknown")
@@ -247,8 +243,7 @@ class DataAdapter:
             validation_report={
                 "key_species_count": len(key_species),
                 "total_ofp": data.get("total_ofp", 0)
-            },
-            legacy_fields=data
+            }
         )
 
     @staticmethod
@@ -342,13 +337,12 @@ class DataAdapter:
             success=True,
             data=records,
             metadata=DataMetadata(
-                data_id=data.get("data_id", f"chart:{id(data)}"),
+                file_path=data.get("file_path"),
                 data_type=DataType.CHART_CONFIG,
                 quality_score=1.0,
                 source=hints.get("source", "unknown")
             ),
-            summary="图表配置",
-            legacy_fields=data
+            summary="图表配置"
         )
 
     @staticmethod
@@ -368,14 +362,12 @@ class DataAdapter:
             success=data.get("success", True),
             data=[],
             metadata=DataMetadata(
-                data_id=f"generic:{id(data)}",
                 data_type=DataType.CUSTOM,
                 station_name=station_name,
                 time_range=time_range,
                 source=hints.get("source", "unknown")
             ),
-            summary=data.get("summary", "通用数据"),
-            legacy_fields=data
+            summary=data.get("summary", "通用数据")
         )
 
 

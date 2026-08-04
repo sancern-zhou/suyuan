@@ -128,7 +128,6 @@ class GetCurrentWeatherTool(LLMTool):
                 error=str(e),
                 data=[],
                 metadata=DataMetadata(
-                    data_id=f"current_weather_error:{id(e)}",
                     data_type=DataType.WEATHER,
                     schema_version="v2.0",  # ✅ UDF v2.0 标记
                     lat=lat,
@@ -137,14 +136,7 @@ class GetCurrentWeatherTool(LLMTool):
                     scenario="current_weather_query",
                     generator="get_current_weather"
                 ),
-                summary=f"❌ 当前天气查询失败: {str(e)}",
-                legacy_fields={
-                    "location": {
-                        "lat": lat,
-                        "lon": lon,
-                        "name": location_name
-                    }
-                }
+                summary=f"❌ 当前天气查询失败: {str(e)}"
             ).dict()
 
     def _format_current_weather(
@@ -202,7 +194,6 @@ class GetCurrentWeatherTool(LLMTool):
 
         # 构建元数据
         metadata = DataMetadata(
-            data_id=f"current_weather:{lat}:{lon}:{datetime.now().strftime('%Y%m%d%H%M%S')}",
             data_type=DataType.WEATHER,
             schema_version="v2.0",  # ✅ UDF v2.0 标记
             record_count=1,
@@ -233,16 +224,5 @@ class GetCurrentWeatherTool(LLMTool):
             success=True,
             data=[record],
             metadata=metadata,
-            summary=summary,
-            legacy_fields={
-                "location": {
-                    "lat": lat,
-                    "lon": lon,
-                    "name": location_name or f"({lat}, {lon})"
-                },
-                "observation_time": current.get("time", datetime.now().isoformat()),
-                "data_source": "Open-Meteo Current Weather API",
-                "timezone": weather_data.get("timezone", "UTC"),
-                "elevation": weather_data.get("elevation"),
-            }
+            summary=summary
         ).dict()

@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 
 class CarbonRequest(BaseModel):
-    data_id: Optional[str] = Field(None, description="数据 id（与 Context-Aware 存储交互）")
+    file_path: Optional[str] = Field(None, description="数据 id（与 Context-Aware 存储交互）")
     carbon_type: str = Field("pm25", description="pm25/vocs")
     poc_method: str = Field("ec_normalization", description="POC 计算方法")
 

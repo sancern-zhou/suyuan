@@ -102,7 +102,7 @@ class HybridMemoryManager:
         简化的observation处理：直接使用已有的file_path，无重复外部化。
 
         由于所有工具都已通过context.save_data()保存数据，
-        HybridMemoryManager只需检查observation中的data_id并直接引用，
+        HybridMemoryManager只需检查 observation 中的 file_path 并直接引用，
         无需重复保存数据。
         """
 
@@ -181,7 +181,7 @@ class HybridMemoryManager:
                     "total_records": len(data) if isinstance(data, list) else None,
                 }
 
-            # 没有data_id/report_data_id的情况，为了安全起见返回原observation
+            # 没有数据或报告文件路径时返回原 observation。
             logger.warning(
                 "hybrid_memory_no_data_file_in_observation",
                 has_data=(data is not None),
@@ -257,7 +257,7 @@ class HybridMemoryManager:
                 "chart_id": chart_info.get("chart_id", "未知图表"),
                 "chart_type": chart_info.get("chart_type", "unknown"),
                 "chart_title": chart_info.get("chart_title", "无标题"),
-                "data_id": chart_info.get("data_id"),
+                "file_path": chart_info.get("file_path"),
                 "source_tool": chart_info.get("source_tool", "未知工具"),
                 "has_chart": True
             },

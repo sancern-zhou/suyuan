@@ -126,9 +126,9 @@ class DeepTraceWorkflow(WorkflowTool):
             if not data_result.get("success"):
                 raise Exception(f"获取{pollutant}数据失败: {data_result.get('summary')}")
 
-            data_id = data_result.get("data_id")
+            file_path = data_result.get("file_path")
             self._record_step("fetch_component_data", "success", {
-                "data_id": data_id,
+                "file_path": file_path,
                 "record_count": data_result.get("metadata", {}).get("record_count", 0)
             })
 
@@ -138,7 +138,7 @@ class DeepTraceWorkflow(WorkflowTool):
             pmf_result = await call_llm_tool(
                 pmf_tool,
                 context=context,
-                data_id=data_id,
+                file_path=file_path,
                 city=city
             )
 
@@ -154,7 +154,7 @@ class DeepTraceWorkflow(WorkflowTool):
                 obm_result = await call_llm_tool(
                     "calculate_obm_ofp",
                     context=context,
-                    data_id=data_id
+                    file_path=file_path
                 )
 
                 self._record_step("obm_ofp_analysis", "success" if obm_result.get("success") else "failed", {
@@ -179,7 +179,7 @@ class DeepTraceWorkflow(WorkflowTool):
             data = {
                 "pmf_result": pmf_result.get("data"),
                 "obm_result": obm_result.get("data") if obm_result else None,
-                "source_data_id": data_id
+                "source_file_path": file_path
             }
 
             return self._build_udf_v2_result(

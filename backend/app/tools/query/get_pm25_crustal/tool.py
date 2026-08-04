@@ -281,13 +281,13 @@ class GetPM25CrustalTool(LLMTool):
             logger.info("crustal_filtered", original_count=len(records), filtered_count=len(records))
 
             # 数据外部化：无条件保存完整数据到文件系统
-            data_id = None
+            file_path = None
             file_path = None
             sample_data = records
 
-            # 无条件外部化数据（确保下游分析工具能通过data_id获取数据）
+            # 无条件外部化数据（确保下游分析工具能通过file_path获取数据）
             try:
-                data_id = context.save_data(
+                file_path = context.save_data(
                     data=records,
                     schema="particulate_unified",
                     metadata={
@@ -316,11 +316,11 @@ class GetPM25CrustalTool(LLMTool):
                     "pm25_crustal_data_externalized",
                     total_count=len(records),
                     sample_count=len(sample_data),
-                    data_id=data_id
+                    file_path=file_path
                 )
             except Exception as save_error:
                 logger.warning("pm25_crustal_save_failed", error=str(save_error))
-                data_id = None
+                file_path = None
 
             # 分析数据质量
             quality_report = self._analyze_quality(records, elements)
@@ -337,7 +337,7 @@ class GetPM25CrustalTool(LLMTool):
                 }
 
             # 构建返回消息
-            if data_id:
+            if file_path:
                 summary_msg = f"成功获取{len(records)}条PM2.5地壳元素数据（已外部化，返回样本{len(sample_data)}条）"
             else:
                 summary_msg = f"成功获取{len(records)}条PM2.5地壳元素数据"
@@ -345,7 +345,7 @@ class GetPM25CrustalTool(LLMTool):
             return {
                 "success": True,
                 "data": sample_data,  # 只返回样本数据
-                "data_id": data_id,
+                "file_path": file_path,
                 "file_path": file_path,
                 "count": len(records),
                 "sample_count": len(sample_data),
@@ -357,7 +357,7 @@ class GetPM25CrustalTool(LLMTool):
                 "metadata": {
                     "sample_record": sample_record,
                     "total_count": len(records),
-                    "externalized": data_id is not None
+                    "externalized": file_path is not None
                 }
             }
 

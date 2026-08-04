@@ -18,6 +18,7 @@ from typing import Dict, Iterable, List
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # 浏览
     "list_directory", "search_files", "read_file",
 
@@ -56,6 +57,7 @@ ASSISTANT_TOOL_NAMES = [
 # ===== 幻灯片模式工具 =====
 PPT_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # PPT 源码项目和交付
     "manage_editable_ppt", "validate_pptx", "create_pptx_with_ppt_master",
     # 文件读取与直接源码编辑
@@ -70,6 +72,7 @@ PPT_TOOL_NAMES = [
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # 数据查询工具
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
@@ -100,6 +103,7 @@ EXPERT_TOOL_NAMES = [
 # ===== 问数模式工具 =====
 QUERY_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # === 源码查看工具 ===
     "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
 
@@ -131,6 +135,7 @@ QUERY_TOOL_NAMES = [
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
 
     # 数据查询
     "get_5min_data",
@@ -157,6 +162,7 @@ REPORT_TOOL_NAMES = [
 # ===== 图表模式工具 =====
 CHART_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # 文件操作
     "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
     "bash",
@@ -176,6 +182,7 @@ CHART_TOOL_NAMES = [
 # ===== 画板模式工具 =====
 BOARD_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     "read_file",
     "edit_file",
     "create_drawio_board",
@@ -186,6 +193,7 @@ BOARD_TOOL_NAMES = [
 # ===== 运维管理模式工具 =====
 OPS_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # 技能发现与按需读取
     "list_skills", "view_skill", "read_file",
 
@@ -215,6 +223,7 @@ OPS_TOOL_NAMES = [
 # ===== 知识库图谱编辑模式工具 =====
 GRAPH_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     "knowledge_graph_query",
     "knowledge_graph_build",
     "read_file",
@@ -227,6 +236,7 @@ GRAPH_TOOL_NAMES = [
 # ===== 社交模式工具（移动端助理） =====
 SOCIAL_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     # 文件操作
     "read_file", "edit_file", "grep", "write_file",
     "list_directory", "search_files", "list_skills", "view_skill",
@@ -263,6 +273,7 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
 # ===== 会商专用模式工具 =====
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
     "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
     "analyze_upwind_enterprises", "analyze_trajectory_sources",
@@ -271,6 +282,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
@@ -280,6 +292,7 @@ DELIBERATION_MONITORING_TOOL_NAMES = [
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
     "calculate_vocs_pmf",
     "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
@@ -289,6 +302,7 @@ DELIBERATION_CHEMISTRY_TOOL_NAMES = [
 
 DELIBERATION_REVIEWER_TOOL_NAMES = [
     "list_session_resources",
+    "publish_session_file",
     "read_file", "write_file", "edit_file", "grep",
     "list_directory", "search_files", "execute_python",
     "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",

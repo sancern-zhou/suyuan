@@ -35,7 +35,7 @@ Write a concise working memory with these sections:
 - Next useful actions
 
 Rules:
-- Prefer concrete data_id/report_data_id values, file paths, numeric results, URLs, and grounded facts.
+- Prefer concrete file_path/report_file_path values, file paths, numeric results, URLs, and grounded facts.
 - Mention uncertainty when details may need to be re-read from files or tool results.
 - Merge any prior compressed memory with the newer history below into one refreshed memory.
 - Deduplicate repeated sections and do not repeat earlier summaries verbatim.
@@ -58,7 +58,7 @@ Older history to compress:
 1. **user** - 用户问题（完整保留）
 2. **thought** - 思考过程（提炼关键决策点）
 3. **action** - 工具调用（保留工具名和关键参数）
-4. **observation** - 工具结果（保留 data_id 和摘要）
+4. **observation** - 工具结果（保留 file_path 和摘要）
 5. **final/assistant** - 最终答案（完整保留）
 
 **压缩策略（按消息类型）**：
@@ -77,15 +77,15 @@ Older history to compress:
 - 压缩后："调用 get_weather_data，参数：城市=广州，日期=2024-03-01"
 
 **observation 消息**：
-- 保留 data_id 和摘要，省略详细数据
+- 保留 file_path 和摘要，省略详细数据
 - 原始：包含完整的工具返回数据（可能有数千条记录）
-- 压缩后："成功获取 30 条气象记录，data_id: weather_001，平均温度 25°C"
+- 压缩后："成功获取 30 条气象记录，file_path: weather_001，平均温度 25°C"
 
 **final/assistant 消息**：
 - 完整保留，不压缩（这是用户看到的最终答案）
 
 **重要提示**：
-- 保留所有 data_id 引用（后续分析可能需要）
+- 保留所有 file_path 引用（后续分析可能需要）
 - 保持对话的逻辑连贯性
 - 不要合并或删除任何消息
 
@@ -109,7 +109,7 @@ Older history to compress:
   {{"type": "user", "role": "user", "content": "分析广州O3污染"}},
   {{"type": "thought", "role": "assistant", "content": "决定先查询气象数据"}},
   {{"type": "tool_use", "role": "assistant", "content": "调用 get_weather_data，参数：城市=广州"}},
-  {{"type": "tool_result", "role": "user", "content": "成功获取 30 条记录，data_id: weather_001"}},
+  {{"type": "tool_result", "role": "user", "content": "成功获取 30 条记录，file_path: weather_001"}},
   {{"type": "final", "role": "assistant", "content": "根据分析，发现..."}}
 ]
 
@@ -839,7 +839,7 @@ Older history to compress:
         阶段一：在 LLM 压缩前，预截断过长的工具输出
 
         策略：
-        - observation/tool_result 类型：截断到 MAX_OBSERVATION_CHARS，保留 data_id
+        - observation/tool_result 类型：截断到 MAX_OBSERVATION_CHARS，保留 file_path
         - action/tool_use 类型：保留工具名和关键参数
         - user/final 类型：不处理
         """
@@ -852,8 +852,8 @@ Older history to compress:
 
         def extract_data_ref(value: Any) -> str:
             text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
-            match = re.search(r'(?:report_data_id|data_id)["\s:]+([^\s,}"]+)', text)
-            return f"，data_id: {match.group(1)}" if match else ""
+            match = re.search(r'(?:report_file_path|file_path)["\s:]+([^\s,}"]+)', text)
+            return f"，file_path: {match.group(1)}" if match else ""
 
         def truncate_text(text: str, max_chars: int) -> str:
             if len(text) <= max_chars:

@@ -9,7 +9,7 @@ XcAiDb城市历史数据查询工具
 - 多城市查询
 - 自定义时间范围
 
-返回格式：UDF v2.0标准（包含data_id供下游工具使用）
+返回格式：UDF v2.0标准（包含file_path供下游工具使用）
 """
 from typing import Dict, Any, List, TYPE_CHECKING
 import structlog
@@ -37,7 +37,7 @@ class QueryXcAiCityHistoryTool(LLMTool):
             "name": "query_xcai_city_history",
             "description": (
                 "查询全国城市历史空气质量小时/日数据（XcAiDb SQL Server）。"
-                "hour表自2017-01-01起，day表自2021-06-25起；返回data_id供下游读取。"
+                "hour表自2017-01-01起，day表自2021-06-25起；返回file_path供下游读取。"
                 "城市名用中文全称，时间格式为YYYY-MM-DD HH:MM:SS。"
             ),
             "parameters": {
@@ -162,8 +162,8 @@ class QueryXcAiCityHistoryTool(LLMTool):
                 standardized_count=len(standardized_records)
             )
 
-            # Step 4: 保存数据（返回 data_id）
-            data_id = context.data_manager.save_data(
+            # Step 4: 保存数据（返回 file_path）
+            file_path = context.data_manager.save_data(
                 data=standardized_records,
                 schema="air_quality_unified",
                 metadata={
@@ -180,7 +180,7 @@ class QueryXcAiCityHistoryTool(LLMTool):
 
             logger.info(
                 "query_xcai_city_history_data_saved",
-                data_id=data_id,
+                file_path=file_path,
                 record_count=len(standardized_records)
             )
 
@@ -192,7 +192,7 @@ class QueryXcAiCityHistoryTool(LLMTool):
                 "data": standardized_records[:preview_count],
                 "metadata": {
                     "tool_name": "query_xcai_city_history",
-                    "data_id": data_id,
+                    "file_path": file_path,
                     "total_records": len(standardized_records),
                     "returned_records": preview_count,
                     "cities": cities,
@@ -203,7 +203,7 @@ class QueryXcAiCityHistoryTool(LLMTool):
                     "source": "xcai_sql_server",
                     "field_mapping_applied": True
                 },
-                "summary": f"成功查询 {', '.join(cities)} 的{data_type}数据共 {len(standardized_records)} 条，已保存为 {data_id}"
+                "summary": f"成功查询 {', '.join(cities)} 的{data_type}数据共 {len(standardized_records)} 条，已保存为 {file_path}"
             }
 
         except Exception as e:

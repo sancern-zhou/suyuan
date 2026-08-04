@@ -64,7 +64,7 @@ Agent 不必把每次修改都转换成 Patch。可以用 `read_file` / `edit_fi
 
 - `validate` 执行 LibreOffice、PNG、montage、字体和空页检查；失败时返回对应源码继续修复。
 - 只有当前 revision 的 strict compile 和 validate 均通过后才能 `finalize`。
-- 只有 `finalize` 成功后才能 `present_artifact`。
+- 只有 `finalize` 成功后才能用 `publish_session_file` 登记已有 PPTX；生成工具本次返回的产物会自动登记，无需重复发布。
 - 最终回复说明实际页数、验证结果、产物和仍存在的限制。
 
 退出条件：源码 revision、编译产物和验证结果一致，质量门通过。

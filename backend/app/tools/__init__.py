@@ -693,14 +693,12 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="write_file", error=str(e))
 
-    # Compatibility-only backend entry point. Agent modes intentionally do not
-    # expose this tool: artifact producers publish resources automatically.
     try:
-        from app.tools.utility.present_artifact_tool import PresentArtifactTool
-        registry.register(PresentArtifactTool(), priority=306)
-        logger.info("tool_loaded", tool="present_artifact")
+        from app.tools.utility.publish_session_file_tool import PublishSessionFileTool
+        registry.register(PublishSessionFileTool(), priority=306)
+        logger.info("tool_loaded", tool="publish_session_file")
     except ImportError as e:
-        logger.warning("tool_import_failed", tool="present_artifact", error=str(e))
+        logger.warning("tool_import_failed", tool="publish_session_file", error=str(e))
 
     try:
         from app.tools.utility.glob_tool import GlobTool

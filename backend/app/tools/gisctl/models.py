@@ -19,12 +19,12 @@ class GisctlResult(BaseModel):
         command: str,
         summary: str,
         map_program: dict[str, Any] | None,
-        data_ids: list[str] | None = None,
+        file_paths: list[str] | None = None,
         artifacts: list[str] | None = None,
         success: bool = True,
         metadata_extra: dict[str, Any] | None = None,
     ) -> "GisctlResult":
-        file_paths = data_ids or []
+        file_paths = file_paths or []
         artifacts = artifacts or []
         status: Literal["success", "failed"] = "success" if success else "failed"
         payload = {

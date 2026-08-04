@@ -7,7 +7,7 @@ LLM可调用的空气质量查询工具
 - 通过 Dify 工作流查询全国各城市空气质量数据
 - 支持小时、日、月、年粒度查询
 - 支持历史时间范围查询
-- 支持Context-Aware V2架构（保存data_id供下游使用）
+- 支持Context-Aware V2架构（保存file_path供下游使用）
 """
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime
@@ -53,7 +53,7 @@ class GetAirQualityTool(LLMTool):
 
 请使用自然语言描述您的查询需求，系统会自动理解并返回相应数据。
 
-**Context-Aware V2**: 成功获取数据后，会自动保存data_id供下游工具使用。
+**Context-Aware V2**: 成功获取数据后，会自动保存file_path供下游工具使用。
             """.strip(),
             "parameters": {
                 "type": "object",
@@ -95,7 +95,7 @@ class GetAirQualityTool(LLMTool):
             Dict: 统一数据格式的空气质量数据，包含：
                 - success: 是否成功
                 - data: UnifiedDataRecord列表
-                - data_id: 数据存储ID（供下游使用）
+                - file_path: 数据存储ID（供下游使用）
                 - metadata: 数据元信息
                 - summary: 摘要信息
         """
@@ -192,24 +192,22 @@ class GetAirQualityTool(LLMTool):
                             "field_mapping_info": data_standardizer.get_field_mapping_info() if data_standardizer else {}
                         }
                     )
-                    data_id = data_ref
-                    file_path = data_ref["file_path"]
+                    file_path = data_ref
                     logger.info(
                         "air_quality_data_saved",
-                        data_id=data_id,
                         file_path=file_path,
                         record_count=len(unified_data.data),
                         success_flag=unified_data.success
                     )
 
-                    # UDF v2.0: 更新metadata中的data_id为正确的格式
+                    # UDF v2.0: 更新metadata中的file_path为正确的格式
                     result = unified_data.dict()
                     result["data"] = standardized_records  # 返回标准化数据
-                    result["data_id"] = data_id
+                    result["file_path"] = file_path
 
-                    # 更新metadata中的data_id
+                    # 更新metadata中的file_path
                     if isinstance(result.get("metadata"), dict):
-                        result["metadata"]["data_id"] = data_id
+                        result["metadata"]["file_path"] = file_path
                         # 确保schema_version为v2.0
                         result["metadata"]["schema_version"] = "v2.0"
                         # 添加数据样本
@@ -217,15 +215,15 @@ class GetAirQualityTool(LLMTool):
                     else:
                         # 如果metadata不是字典，创建新的metadata
                         result["metadata"] = {
-                            "data_id": data_id,
+                            "file_path": file_path,
                             "schema_version": "v2.0",
                             "source": "dify_api",
                             "sample_record": sample_record
                         }
 
-                    # 修改 summary 包含 data_id 和 file_path
+                    # 在摘要中保留可复用的数据文件路径。
                     if result.get("summary"):
-                        result["summary"] = f"{result['summary']}，已保存为 {data_id}，文件路径: {file_path}。"
+                        result["summary"] = f"{result['summary']}，文件路径: {file_path}。"
 
                     # 添加 file_path 到返回结果（供后续工具使用）
                     result["file_path"] = file_path
@@ -254,7 +252,6 @@ class GetAirQualityTool(LLMTool):
                 error=str(e),
                 data=[],
                 metadata=DataMetadata(
-                    data_id=f"air_quality_error:{id(e)}",
                     data_type=DataType.AIR_QUALITY,
                     source="dify_api"
                 ),

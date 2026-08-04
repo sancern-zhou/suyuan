@@ -60,7 +60,7 @@ class ChartMeta(BaseModel):
 
     # v3.1 新增字段
     schema_version: str = Field(default="3.1", description="Schema版本号")
-    original_data_ids: Optional[List[str]] = Field(default=None, description="原始数据ID列表（支持多源数据）")
+    original_file_paths: Optional[List[str]] = Field(default=None, description="原始数据ID列表（支持多源数据）")
     generator: Optional[str] = Field(default=None, description="生成器标识：execute_echarts_python | create_report_chart | domain renderer")
     scenario: Optional[str] = Field(default=None, description="场景标识：vocs_analysis | pmf_analysis | custom等")
     layout_hint: Optional[str] = Field(default=None, description="布局提示：wide | tall | map-full | side | main")

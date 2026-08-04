@@ -300,9 +300,9 @@ class GetObservedMeteorologyTool(LLMTool):
                 )
                 records.extend(parse_hour_spi_table(html)["records"])
 
-            data_id = None
+            file_path = None
             if context is not None and hasattr(context, "save_data") and records:
-                data_id = context.save_data(
+                file_path = context.save_data(
                     records,
                     schema="observed_meteorology_hourly",
                     metadata={
@@ -321,7 +321,7 @@ class GetObservedMeteorologyTool(LLMTool):
             return {
                 "status": "success",
                 "success": True,
-                "data_id": data_id,
+                "file_path": file_path,
                 "data": records,
                 "metadata": {
                     "tool_name": self.name,

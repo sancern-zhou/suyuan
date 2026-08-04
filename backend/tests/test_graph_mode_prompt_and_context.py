@@ -19,7 +19,11 @@ def test_graph_mode_exposes_existing_safe_tools_only():
     tools = get_tools_by_mode("graph")
 
     assert list(tools.keys()) == [
+        "list_session_resources",
+        "read_session_resource",
+        "publish_session_file",
         "knowledge_graph_query",
+        "knowledge_graph_build",
         "read_file",
         "edit_file",
         "grep",
@@ -33,7 +37,11 @@ def test_graph_mode_exposes_existing_safe_tools_only():
 
 def test_graph_mode_tool_order_matches_registry_order():
     assert get_tool_order_by_mode("graph") == [
+        "list_session_resources",
+        "read_session_resource",
+        "publish_session_file",
         "knowledge_graph_query",
+        "knowledge_graph_build",
         "read_file",
         "edit_file",
         "grep",
@@ -42,10 +50,10 @@ def test_graph_mode_tool_order_matches_registry_order():
     ]
 
 
-def test_present_artifact_tool_is_available_in_expert_and_chart_modes():
-    assert "present_artifact" in get_tools_by_mode("expert")
-    assert "present_artifact" in get_tools_by_mode("chart")
-    assert "present_artifact" in CHART_TOOL_ORDER
+def test_session_file_publication_is_available_in_expert_and_chart_modes():
+    assert "publish_session_file" in get_tools_by_mode("expert")
+    assert "publish_session_file" in get_tools_by_mode("chart")
+    assert "publish_session_file" in CHART_TOOL_ORDER
 
 
 def test_graph_prompt_routes_from_prompt_builder():

@@ -223,7 +223,7 @@ conda run -p /root/miniconda3/envs/backend_py311 pytest -q tests/tools/test_reso
 ```bash
 git add backend/app/tools/resource_refs.py backend/app/tools/artifact_utils.py \
   backend/app/tools/report/report_package/tool.py backend/app/tools/html_artifact/tool.py \
-  backend/app/tools/report/read_docx/tool.py backend/app/tools/utility/present_artifact_tool.py \
+  backend/app/tools/report/read_docx/tool.py backend/app/tools/utility/publish_session_file_tool.py \
   backend/app/tools/utility/read_file_tool.py backend/app/tools/utility/execute_python_tool.py \
   backend/app/tools/visualization/create_report_chart/tool.py \
   backend/app/tools/office/read_pptx_tool.py backend/app/tools/office/ppt_master_tool.py \

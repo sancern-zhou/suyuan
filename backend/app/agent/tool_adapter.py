@@ -15,7 +15,6 @@ Tool Adapter for ReAct Agent - 单一注册源适配器
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
 import copy
-import re
 import structlog
 from app.agent.context.data_result_policy import (
     persist_large_inline_data,
@@ -34,112 +33,6 @@ from app.agent.runtime.mode_capabilities import supports_native_multimodal
 logger = structlog.get_logger()
 
 NATIVE_MULTIMODAL_HIDDEN_TOOLS = frozenset({"analyze_image"})
-
-DATA_KEY_TO_PATH = {
-    "data_id": "file_path",
-    "data_ids": "file_paths",
-    "report_data_id": "report_file_path",
-    "report_data_ids": "report_file_paths",
-    "source_data_id": "source_file_path",
-    "source_data_ids": "source_file_paths",
-    "source_report_data_id": "source_report_file_path",
-    "source_report_data_ids": "source_report_file_paths",
-    "data_ref": "file_path",
-    "data_path": "file_path",
-}
-
-
-def _public_data_key(key: str) -> str:
-    if key in DATA_KEY_TO_PATH:
-        return DATA_KEY_TO_PATH[key]
-    if key.startswith("data_id_"):
-        return "file_path_" + key[len("data_id_"):]
-    if key.startswith("data_ids_"):
-        return "file_paths_" + key[len("data_ids_"):]
-    if key.endswith("_data_id"):
-        return key[:-len("_data_id")] + "_file_path"
-    if key.endswith("_data_ids"):
-        return key[:-len("_data_ids")] + "_file_paths"
-    return key
-
-
-def _find_legacy_data_key(value: Any) -> Optional[str]:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if _public_data_key(str(key)) != str(key):
-                return str(key)
-            nested = _find_legacy_data_key(item)
-            if nested:
-                return nested
-    elif isinstance(value, list):
-        for item in value:
-            nested = _find_legacy_data_key(item)
-            if nested:
-                return nested
-    return None
-
-
-def _replace_data_terms(text: str) -> str:
-    replacements = (
-        ("DataRegistry", "data file"),
-        ("report_data_ids", "report_file_paths"),
-        ("report_data_id", "report_file_path"),
-        ("source_data_ids", "source_file_paths"),
-        ("source_data_id", "source_file_path"),
-        ("data_ids", "file_paths"),
-        ("data_id", "file_path"),
-        ("数据ID", "数据文件路径"),
-    )
-    for old, new in replacements:
-        if old in {"DataRegistry", "数据ID"}:
-            text = text.replace(old, new)
-        else:
-            text = re.sub(
-                rf"(?<![A-Za-z0-9_]){re.escape(old)}(?![A-Za-z0-9_])",
-                new,
-                text,
-            )
-    return text
-
-
-def publicize_data_paths(value: Any) -> Any:
-    """Remove logical dataset identifiers from the model-facing protocol."""
-    if isinstance(value, str):
-        if value.startswith(("/", "./", "../")):
-            return value
-        return _replace_data_terms(value)
-    if isinstance(value, list):
-        return [publicize_data_paths(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    public: Dict[str, Any] = {}
-    for key, item in value.items():
-        public_key = _public_data_key(key)
-        if key == "required" and isinstance(item, list):
-            public[public_key] = [_public_data_key(name) for name in item]
-        else:
-            public[public_key] = publicize_data_paths(item)
-    return public
-
-
-def _clean_schema_data_terms(value: Any) -> Any:
-    """Aggressively clean legacy parameter names inside schema descriptions."""
-    if isinstance(value, list):
-        return [_clean_schema_data_terms(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _clean_schema_data_terms(item) for key, item in value.items()}
-    if not isinstance(value, str):
-        return value
-
-    def replace_identifier(match: re.Match[str]) -> str:
-        return _public_data_key(match.group(0))
-
-    return re.sub(
-        r"(?<![A-Za-z0-9_])[A-Za-z0-9_]*data_ids?[A-Za-z0-9_]*(?![A-Za-z0-9_])",
-        replace_identifier,
-        value,
-    )
-
 
 def _native_multimodal_read_file_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Expose native multimodal image attachment while hiding legacy image analysis."""
@@ -213,17 +106,6 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
     runtime_context = kwargs.pop("__execution_context", None)
     if runtime_context is not None:
         context = runtime_context
-
-    legacy_key = _find_legacy_data_key(kwargs)
-    if legacy_key:
-        return {
-            "status": "failed",
-            "success": False,
-            "error": f"不再支持旧数据参数 {legacy_key}，请使用 file_path/file_paths",
-            "data": [],
-            "metadata": {"tool_name": tool_name, "error_type": "legacy_data_protocol_removed"},
-            "summary": "旧 data_id 协议已移除。",
-        }
 
     start_time = datetime.now()
     try:
@@ -302,20 +184,7 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
             elif hasattr(execution_context, 'get_data_manager'):
                 data_context_manager = execution_context.get_data_manager()
 
-        # Model-facing schemas use file paths. Older tool implementations may
-        # retain internal parameter names until they are simplified separately.
         exec_kwargs = kwargs.copy()
-        original_properties = (
-            tool.get_function_schema().get("parameters", {}).get("properties", {})
-        )
-        for internal_key in original_properties:
-            public_key = _public_data_key(internal_key)
-            if (
-                public_key in exec_kwargs
-                and public_key not in original_properties
-                and internal_key in original_properties
-            ):
-                exec_kwargs[internal_key] = exec_kwargs.pop(public_key)
         # 移除 data_context_manager（如果来自 kwargs），后续按工具类型选择性注入
         exec_kwargs.pop('data_context_manager', None)
 
@@ -363,9 +232,7 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
 
         # 标准化返回格式（符合UDF v1.0）
         execution_time = (datetime.now() - start_time).total_seconds()
-        public_result = publicize_data_paths(
-            _standardize_tool_result(tool_name, result, execution_time)
-        )
+        public_result = _standardize_tool_result(tool_name, result, execution_time)
         public_result = persist_large_inline_data(
             public_result,
             context=execution_context,
@@ -517,11 +384,6 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
                 if "error" in result:
                     summary += f": {result['error'][:50]}"
 
-        # 【修复】保留 data_id 字段（用于参数绑定）
-        data_id = result.get("data_id")
-        if data_id and "data_id" not in metadata:
-            metadata["data_id"] = data_id
-
         # 确保metadata包含必要信息
         if "tool_name" not in metadata:
             metadata["tool_name"] = tool_name
@@ -544,21 +406,20 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             if key in result:
                 standard_result[key] = result[key]
 
-        # 【修复】保留 data_id 到顶层（供 parameter_binder 使用）
-        if data_id:
-            standard_result["data_id"] = data_id
-
         passthrough_fields = (
             "resources",
             "refs",
             "llm_resume",
             "context_refs",
             "content_preview",
-            "data_ids",
-            "report_data_id",
-            "report_data_ids",
-            "source_data_ids",
-            "source_report_data_ids",
+            "file_path",
+            "file_paths",
+            "report_file_path",
+            "report_file_paths",
+            "source_file_path",
+            "source_file_paths",
+            "source_report_file_path",
+            "source_report_file_paths",
             "visual_ids",
         )
         for key in passthrough_fields:
@@ -879,9 +740,7 @@ def get_tool_schemas(
                 continue
             if allowed_tools is not None and tool.name not in allowed_tools:
                 continue
-            schema = _clean_schema_data_terms(
-                publicize_data_paths(tool.get_function_schema())
-            )
+            schema = tool.get_function_schema()
             if supports_native_multimodal(mode) and tool.name == "read_file":
                 schema = _native_multimodal_read_file_schema(schema)
             schemas.append(schema)

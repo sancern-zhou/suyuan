@@ -41,7 +41,7 @@ def test_removed_backend_preview_modules_have_no_source_files() -> None:
 def test_tool_delivery_has_no_legacy_artifact_adapter() -> None:
     production_files = [
         BACKEND_ROOT / "app/tools/artifact_utils.py",
-        BACKEND_ROOT / "app/tools/utility/present_artifact_tool.py",
+        BACKEND_ROOT / "app/tools/utility/publish_session_file_tool.py",
         BACKEND_ROOT / "app/tools/html_artifact/tool.py",
         BACKEND_ROOT / "app/tools/report/report_package/tool.py",
         BACKEND_ROOT / "app/tools/office/ppt_master_tool.py",

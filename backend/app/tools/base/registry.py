@@ -330,7 +330,7 @@ class ToolRegistry:
                     "metadata": {
                         "type": "object",
                         "properties": {
-                            "data_id": {"type": "string"},
+                            "file_path": {"type": "string"},
                             "data_type": {"type": "string"},
                             "record_count": {"type": "integer"},
                             "source": {"type": "string"}
@@ -351,7 +351,7 @@ class ToolRegistry:
                     },
                     "success": {"type": "boolean"},
                     "data": {"type": "object"},  # 添加data字段
-                    "data_id": {"type": "string"},
+                    "file_path": {"type": "string"},
                     "summary": {"type": "string"},
                     "detailed_summary": {"type": "string"},
                     "metadata": {
@@ -376,31 +376,21 @@ class ToolRegistry:
                         "enum": ["success", "failed", "partial", "empty"]
                     },
                     "success": {"type": "boolean"},
-                    "chart": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "type": {"type": "string", "enum": ["pie", "bar", "line", "timeseries", "radar"]},
-                            "title": {"type": "string"},
-                            "data": {"type": "object"},
-                            "meta": {"type": "object"}
-                        },
-                        "required": ["id", "type", "data"]
-                    },
-                    "data_id": {"type": "string"},
-                    "source_data_id": {"type": "string"},
+                    "visuals": {"type": "array", "items": {"type": "object"}},
+                    "file_path": {"type": "string"},
+                    "source_file_path": {"type": "string"},
                     "detailed_summary": {"type": "string"},
                     "metadata": {
                         "type": "object",
                         "properties": {
                             "chart_id": {"type": "string"},
                             "chart_type": {"type": "string"},
-                            "source_data_id": {"type": "string"}
+                            "source_file_path": {"type": "string"}
                         }
                     },
                     "summary": {"type": "string"}
                 },
-                "required": ["status", "success", "chart", "metadata", "summary"]
+                "required": ["status", "success", "visuals", "metadata", "summary"]
             }
             return schema
         else:
@@ -420,7 +410,7 @@ class ToolRegistry:
                 "metadata": {
                     "type": "object",
                     "properties": {
-                        "data_id": {"type": "string"},
+                        "file_path": {"type": "string"},
                         "data_type": {"type": "string"},
                         "record_count": {"type": "integer"}
                     }
@@ -524,8 +514,8 @@ class ToolRegistry:
                 return "广州"
             elif "question" in field_name.lower():
                 return "查询广州昨日小时空气质量"
-            elif "data_id" in field_name:
-                return "air_quality:v1:1234567890abcdef"
+            elif "file_path" in field_name:
+                return "/data/sessions/example/data/air_quality--example.json"
             else:
                 return "test_value"
         elif field_type == "number":

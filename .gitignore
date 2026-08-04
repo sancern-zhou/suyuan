@@ -143,6 +143,7 @@ unpacked_pm25_doc*/
 
 # Test scripts (development only)
 test_*.py
+!backend/app/tools/utility/test_publish_session_file_contract.py
 !backend/app/services/ops_audit/rules/test_rf_range_rules.py
 !backend/app/services/ops_audit/rules/test_rf_required_rules.py
 !backend/app/services/ops_audit/rules/test_rf_position_rules.py
