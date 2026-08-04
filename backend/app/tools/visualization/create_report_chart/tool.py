@@ -15,12 +15,7 @@ REFERENCE_DIR = Path(__file__).resolve().parent / "references"
 def report_chart_reference_paths() -> Dict[str, str]:
     return {
         "index": str(REFERENCE_DIR / "index.md"),
-        "data_input": str(REFERENCE_DIR / "data-input.md"),
-        "word_a4_rules": str(REFERENCE_DIR / "word-a4-rules.md"),
-        "layout_rules": str(REFERENCE_DIR / "layout-rules.md"),
-        "long_label_rules": str(REFERENCE_DIR / "long-label-rules.md"),
         "pie_rules": str(REFERENCE_DIR / "pie-rules.md"),
-        "chart_types": str(REFERENCE_DIR / "chart-types.md"),
         "bar_chart": str(REFERENCE_DIR / "bar-chart.md"),
         "line_chart": str(REFERENCE_DIR / "line-chart.md"),
         "scatter_chart": str(REFERENCE_DIR / "scatter-chart.md"),
@@ -50,8 +45,8 @@ class CreateReportChartTool(LLMTool):
         reference_paths = report_chart_reference_paths()
         description = (
             "创建正式报告（Word/QMD）静态图表，支持多种预定义分析图表类型。"
-            f"先读 references/index.md={reference_paths['index']}，再按图型读取规则。"
-            f"数据输入先读 data-input.md={reference_paths['data_input']}。"
+            f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
+            "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
             "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"

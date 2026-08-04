@@ -36,7 +36,8 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     ]
     assert len(str(schema)) < 7000
     assert "references/index.md" in schema["description"]
-    assert "data-input.md" in schema["description"]
+    assert "两层规范" in schema["description"]
+    assert "无需另读输入、A4 或布局规范" in schema["description"]
     assert "data 或 file_path" in schema["description"]
     assert properties["chart_type"]["enum"] == [
         "bar",
@@ -83,12 +84,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
 
     expected_keys = {
         "index",
-        "data_input",
-        "word_a4_rules",
-        "layout_rules",
-        "long_label_rules",
         "pie_rules",
-        "chart_types",
         "bar_chart",
         "line_chart",
         "scatter_chart",
@@ -118,16 +114,17 @@ def test_reference_paths_include_specialized_chart_type_documents():
     pollutant_wind_rose_text = Path(paths["pollutant_wind_rose"]).read_text(encoding="utf-8")
     pollutant_calendar_text = Path(paths["pollutant_calendar"]).read_text(encoding="utf-8")
     generic_wind_rose_text = Path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
-    data_input_text = Path(paths["data_input"]).read_text(encoding="utf-8")
+    index_text = Path(paths["index"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
     assert "pollutant_wind_rose" in pollutant_wind_rose_text
     assert "广东省专用" in pollutant_wind_rose_text
     assert "pollutant_calendar" in pollutant_calendar_text
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
-    assert "`data` 或 `file_path`" in data_input_text
-    assert "当前会话已授权" in data_input_text
-    assert "不会自动推断" in data_input_text
+    assert "Supply at least one of `data` or `file_path`" in index_text
+    assert "current session" in index_text
+    assert "not infer arbitrary record fields" in index_text
+    assert "exactly one matching chart document" in index_text
 
 
 def test_renderer_selects_existing_chinese_font_file_when_available():
