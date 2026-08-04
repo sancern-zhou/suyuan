@@ -80,10 +80,14 @@ doc.save("backend/backend_data_registry/reports/demo/report.docx")
 
 ## 输出产物 Schema
 
-- `files`：本次生成的本地文件绝对路径列表。
-- `file_path`：主文件路径，用于预览或下载。
+- `files`：本次生成文件的项目相对真实归档路径列表；后端路径显式包含 `backend/` 前缀。
+- `file_path`：主文件的真实归档路径，用于预览、下载或传给后续工具，必须原样复用。
+- `generated_artifacts`：生成产物的结构化交付状态；`auto_published=true` 表示已自动登记到会话资源目录。
 - `pdf_preview`：Office/PDF 文件预览信息，适用于 `.docx/.xlsx/.pptx/.pdf`。
 - `visuals`：图片或 ECharts 可视化块；`matplotlib` 图片会缓存为 `/api/image/{image_id}`。
+
+生成文件由 `execute_python` 自动归档并发布，不需要再调用 `publish_session_file`。禁止根据文件名自行拼接
+`backend/backend_data_registry/sessions/...` 路径；需要资源 ID 时使用 `list_session_resources` 查询。
 
 正式报告必须使用标准报告包结构：
 
