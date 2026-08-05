@@ -314,22 +314,28 @@ def create_global_tool_registry() -> ToolRegistry:
             logger.warning("tool_import_failed", tool="get_sentinel5p_image", error=str(e))
 
     # 江西项目专属噪声数据查询工具
-    if is_project_tool_enabled(
-        context,
-        "jiangxi-noise",
-        "get_jiangxi_noise_data",
-    ):
-        try:
-            from app.tools.query.query_jiangxi_noise.tool import GetJiangxiNoiseDataTool
-
-            registry.register(GetJiangxiNoiseDataTool(), priority=48)
-            logger.info("tool_loaded", tool="get_jiangxi_noise_data")
-        except ImportError as e:
-            logger.warning(
-                "tool_import_failed",
-                tool="get_jiangxi_noise_data",
-                error=str(e),
-            )
+    jiangxi_noise_tools = [
+        ("query_jiangxi_noise_city_hour", "QueryJiangxiNoiseCityHourTool", 48),
+        ("query_jiangxi_noise_station_minute", "QueryJiangxiNoiseStationMinuteTool", 49),
+        ("query_jiangxi_noise_station_hour", "QueryJiangxiNoiseStationHourTool", 50),
+        ("query_jiangxi_noise_station_day", "QueryJiangxiNoiseStationDayTool", 51),
+        (
+            "query_jiangxi_noise_station_statistics",
+            "QueryJiangxiNoiseStationStatisticsTool",
+            52,
+        ),
+    ]
+    for tool_name, class_name, priority in jiangxi_noise_tools:
+        if is_project_tool_enabled(context, "jiangxi-noise", tool_name):
+            try:
+                module = __import__(
+                    "app.tools.query.query_jiangxi_noise.tool",
+                    fromlist=[class_name],
+                )
+                registry.register(getattr(module, class_name)(), priority=priority)
+                logger.info("tool_loaded", tool=tool_name)
+            except ImportError as e:
+                logger.warning("tool_import_failed", tool=tool_name, error=str(e))
 
     # XcAiDb SQL Server 城市历史数据查询工具
     try:

@@ -5,6 +5,7 @@ import {
   createMarkdownApiImageHydrator,
   deferredApiImageAttributes,
   escapeRawHtmlImageTags,
+  isServerLocalImagePath,
   renderDeferredApiImage
 } from './markdownApiImages.js'
 
@@ -144,6 +145,17 @@ test('renderDeferredApiImage handles HTML artifact media without endpoint-specif
 
   assert.match(html, new RegExp(`data-api-image-src="${source}"`))
   assert.doesNotMatch(html, new RegExp(`\\s+src="${source}"`))
+})
+
+test('renderDeferredApiImage blocks server-local file paths before the browser requests them', () => {
+  const source = '/root/suyuan/backend/backend_data_registry/images/%E5%9B%BE%E8%A1%A8.png'
+  const html = renderDeferredApiImage({ src: source, alt: '图表' })
+
+  assert.equal(isServerLocalImagePath(source), true)
+  assert.match(html, /data-blocked-image="true"/)
+  assert.doesNotMatch(html, /<img\b/i)
+  assert.doesNotMatch(html, /backend_data_registry/)
+  assert.doesNotMatch(html, /\/root\/suyuan/)
 })
 
 test('escapeRawHtmlImageTags prevents raw HTML images from issuing browser requests', () => {

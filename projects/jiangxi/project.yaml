@@ -11,11 +11,107 @@ frontend:
     - query
     - expert
     - report
-    - chart
+  default_agent_mode: query
+  agent_mode_overrides:
+    query:
+      name: 智能问数生图智能体
+      description: 查询噪声数据、生成图表与统计分析
+      welcome:
+        description: 查询江西省噪声监测数据，生成可视化图表，快速完成统计分析和结论整理。
+        features:
+          - 查询江西省噪声站点分钟值、小时值、日均值和城市小时聚合数据
+          - 生成数据图表与可视化展示
+          - 完成统计汇总、对比和排名分析
+          - 将查询结果整理为清晰的表格和结论
+        example: '例如："查询南昌本月噪声监测数据，并生成对比图表"'
+      tags:
+        - 噪声查询
+        - 图表生成
+        - 统计分析
   agent_platform_layout: environment-grid
 backend:
   tools:
-    - get_jiangxi_noise_data
+    - query_jiangxi_noise_city_hour
+    - query_jiangxi_noise_station_minute
+    - query_jiangxi_noise_station_hour
+    - query_jiangxi_noise_station_day
+    - query_jiangxi_noise_station_statistics
+  fetchers_enabled: false
+  agent_mode_tools:
+    expert:
+      - list_session_resources
+      - publish_session_file
+      - create_report_chart
+      - execute_echarts_python
+      - generate_map
+      - execute_python
+      - read_file
+      - write_file
+      - edit_file
+      - grep
+      - list_directory
+      - search_files
+      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_station_minute
+      - query_jiangxi_noise_station_hour
+      - query_jiangxi_noise_station_day
+      - query_jiangxi_noise_station_statistics
+    query:
+      - list_session_resources
+      - publish_session_file
+      - grep
+      - read_file
+      - write_file
+      - edit_file
+      - list_directory
+      - search_files
+      - create_report_chart
+      - execute_echarts_python
+      - execute_python
+      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_station_minute
+      - query_jiangxi_noise_station_hour
+      - query_jiangxi_noise_station_day
+      - query_jiangxi_noise_station_statistics
+    report:
+      - list_session_resources
+      - publish_session_file
+      - create_report_chart
+      - execute_echarts_python
+      - read_file
+      - write_file
+      - edit_file
+      - grep
+      - list_directory
+      - search_files
+      - bash
+      - execute_python
+      - create_report_package
+      - render_report_package
+      - validate_report_package
+      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_station_minute
+      - query_jiangxi_noise_station_hour
+      - query_jiangxi_noise_station_day
+      - query_jiangxi_noise_station_statistics
+    chart:
+      - list_session_resources
+      - publish_session_file
+      - read_file
+      - write_file
+      - edit_file
+      - grep
+      - list_directory
+      - search_files
+      - bash
+      - create_report_chart
+      - execute_python
+      - execute_echarts_python
+      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_station_minute
+      - query_jiangxi_noise_station_hour
+      - query_jiangxi_noise_station_day
+      - query_jiangxi_noise_station_statistics
 knowledge:
   collections: []
 scheduled_tasks: []

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 
+from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_report_chart.renderer import ChartDataError, WORD_TARGET_WIDTH_IN
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
@@ -24,6 +25,7 @@ def render_specialized_chart(
     style_profile: str,
     options: Dict[str, Any],
 ) -> Dict[str, Any]:
+    configure_chinese_font()
     if chart_type == "aqi_calendar":
         return _render_aqi_calendar(chart_id, title, data, output_context, options)
     if chart_type == "pollutant_wind_rose":
@@ -558,6 +560,7 @@ def _cache_base64_image(image_base64: str, chart_id: str, title: str) -> Dict[st
 
 def _figure_to_base64(fig) -> str:
     buffer = BytesIO()
+    apply_font_to_figure(fig)
     fig.savefig(buffer, format="png", bbox_inches="tight", dpi=180)
     plt.close(fig)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")

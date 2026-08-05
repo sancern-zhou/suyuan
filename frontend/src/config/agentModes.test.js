@@ -62,6 +62,25 @@ test('agent platform selects the project-declared modes without leaking another 
   )
 })
 
+test('project overrides turn query mode into the Jiangxi query-and-chart agent', () => {
+  const [query] = selectAgentModes(['query'], {
+    query: {
+      name: '智能问数生图智能体',
+      description: '查询噪声数据、生成图表与统计分析',
+      tags: ['噪声查询', '图表生成'],
+      welcome: {
+        description: '查询江西省噪声监测数据',
+        features: ['查询噪声数据', '生成可视化图表']
+      }
+    }
+  })
+
+  assert.equal(query.name, '智能问数生图智能体')
+  assert.equal(query.description, '查询噪声数据、生成图表与统计分析')
+  assert.deepEqual(query.tags, ['噪声查询', '图表生成'])
+  assert.deepEqual(query.welcome.features, ['查询噪声数据', '生成可视化图表'])
+})
+
 test('default platform scenes cover every shared agent exactly once', () => {
   const sceneModeIds = AGENT_SCENES.flatMap(scene => scene.modeIds)
   assert.equal(new Set(sceneModeIds).size, AGENT_MODE_IDS.length)

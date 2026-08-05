@@ -2,7 +2,7 @@
 
 ## 1. 平台概述
 
-江西省噪声平台提供噪声、气象和车流量数据查询能力。江西项目通过异步 LLM 工具 `get_jiangxi_noise_data` 访问平台。
+江西省噪声平台提供噪声、气象和车流量数据查询能力。江西项目通过五个按数据粒度拆分的异步 LLM 工具访问平台。
 
 平台访问要求：
 
@@ -17,15 +17,17 @@
 
 ## 2. 当前工具开放范围
 
-当前只开放三个已经验证的分页查询：
+当前开放五个独立分页查询工具：
 
-| 能力 | 端点 | 状态 |
+| 工具 | 能力 | 端点 |
 |---|---|---|
-| 站点小时值 | `/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync` | 已验证 |
-| 站点日均值 | `/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync` | 已验证 |
-| 城市小时聚合值 | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` | 已验证 |
+| `query_jiangxi_noise_city_hour` | 城市小时聚合值 | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` |
+| `query_jiangxi_noise_station_minute` | 站点分钟值 | `/api/noiseproduct/airdata/DATStationMinute/GetDATStationMinuteDisplayPagedListAsync` |
+| `query_jiangxi_noise_station_hour` | 站点小时值 | `/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync` |
+| `query_jiangxi_noise_station_day` | 站点日均值 | `/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync` |
+| `query_jiangxi_noise_station_statistics` | 站点任意时段统计值 | `/api/noiseproduct/airdata/DATStationDay/GetNoiseStationAnyDateDisplayPagedListAsync` |
 
-区县接口、自动翻页、文件导出和站点名称模糊查询也不属于当前工具范围。
+工具支持自动翻页、江西省/地市/站点名称解析、站点编码查询和大结果外部化。
 
 ## 3. 运行配置
 
@@ -49,19 +51,16 @@ Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客�
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
-| `scope` | `station` / `city` | 查询范围 |
-| `granularity` | `hour` / `day` | 时间粒度；城市目前只支持 `hour` |
-| `review_status` | `raw` / `audited` | 原始数据或审核数据，默认 `raw` |
 | `start_time` | ISO 8601 字符串 | 开始时间 |
 | `end_time` | ISO 8601 字符串 | 结束时间 |
-| `max_results` | 1–100 整数 | 最多返回条数，默认 50 |
+| `page_size` | 1-1000 整数 | 单页数量，默认 500 |
+| `max_pages` | 1-100 整数 | 最大页数，默认 20 |
+| `data_type` | 0 / 1 | 支持该参数的接口中，0 为原始数据，1 为审核数据 |
 
 无时区时间按 `Asia/Shanghai` 解释；有时区时间转换为 `Asia/Shanghai`。`start_time` 不能晚于 `end_time`，单次查询跨度不能超过 30 天。
 
-`review_status` 映射：
-
-- `raw` → 平台 `dataType=0`
-- `audited` → 平台 `dataType=1`
+`query_jiangxi_noise_city_hour`、`query_jiangxi_noise_station_hour` 和
+`query_jiangxi_noise_station_day` 默认使用审核数据（`data_type=1`）；分钟值和时段统计默认使用原始数据。
 
 ### 4.2 站点查询
 
@@ -69,13 +68,12 @@ Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客�
 
 ```json
 {
-  "scope": "station",
-  "granularity": "hour",
-  "review_status": "raw",
   "station_codes": ["1737A"],
   "start_time": "2026-07-27T00:00:00+08:00",
   "end_time": "2026-07-28T00:00:00+08:00",
-  "max_results": 50
+  "data_type": 1,
+  "page_size": 500,
+  "max_pages": 20
 }
 ```
 
@@ -87,13 +85,12 @@ Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客�
 
 ```json
 {
-  "scope": "city",
-  "granularity": "hour",
-  "review_status": "audited",
-  "city_names": ["南昌市", "赣州市"],
+  "cities": ["南昌市", "赣州市"],
   "start_time": "2026-07-27T00:00:00+08:00",
   "end_time": "2026-07-28T00:00:00+08:00",
-  "max_results": 50
+  "data_type": 1,
+  "page_size": 500,
+  "max_pages": 20
 }
 ```
 
@@ -112,11 +109,11 @@ Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客�
 
 ## 6. 平台请求参数
 
-三个已开放端点使用相同的基础分页和时间参数：
+已开放端点使用相同的基础分页和时间参数：
 
 ```text
 skipCount=0
-maxResultCount=<1..100>
+maxResultCount=<1..1000>
 dataType=<0|1>
 timePoint[0]=YYYY-MM-DD HH:MM:SS
 timePoint[1]=YYYY-MM-DD HH:MM:SS
@@ -154,28 +151,31 @@ CityCodes[1]=...
 
 ```json
 {
+  "status": "success",
   "success": true,
-  "scope": "station",
-  "granularity": "hour",
-  "review_status": "raw",
   "data": [],
-  "count": 0,
-  "total_count": 0,
-  "truncated": false,
-  "start_time": "2026-07-27T00:00:00+08:00",
-  "end_time": "2026-07-28T00:00:00+08:00"
+  "metadata": {
+    "tool_name": "query_jiangxi_noise_station_hour",
+    "granularity": "hour",
+    "total_records": 0,
+    "pagination_truncated": false
+  },
+  "summary": "江西噪声站点小时数据查询完成"
 }
 ```
 
-当 `total_count > count` 时，`truncated=true`，并返回提示要求缩小时间或地点范围。工具不会自动请求后续页面，也不会向 LLM 返回超过 100 条记录。
+工具自动翻页；结果超过对话预览上限时会保存完整数据并返回文件资源引用。达到 `max_pages` 仍未取完时，`metadata.pagination_truncated=true`。
 
 失败返回：
 
 ```json
 {
+  "status": "failed",
   "success": false,
+  "data": [],
   "error_code": "invalid_city",
-  "error": "不支持的江西省城市：不存在市"
+  "error": "不支持的江西省城市：不存在市",
+  "summary": "不支持的江西省城市：不存在市"
 }
 ```
 
@@ -222,7 +222,7 @@ asyncio.run(main())
 - 专属分支：`project/jiangxi-noise`
 - 项目清单：`projects/jiangxi/project.yaml`
 - 模块清单：`modules/jiangxi-noise/module.yaml`
-- 工具仅在项目同时启用 `jiangxi-noise` 模块和 `get_jiangxi_noise_data` 时注册。
+- 工具仅在项目启用 `jiangxi-noise` 模块并在项目清单中声明对应拆分工具时注册。
 - `default` 项目不会注册该工具，其他项目无需拉取江西专属分支。
 
 江西部署应直接检出并更新 `project/jiangxi-noise` 分支，不要把该分支拉取合并到其他项目分支。

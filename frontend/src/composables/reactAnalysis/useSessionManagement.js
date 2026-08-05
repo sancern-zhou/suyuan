@@ -8,6 +8,8 @@ import { preserveCatalogFields } from '@/components/management/sessionHistoryAcc
 import { restoredConversationPolicy } from '@/components/socialHistoryReadOnly.js'
 import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreModePolicy.js'
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
+import { AGENT_MODE_IDS } from '@/config/agentModes.js'
+import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
@@ -383,6 +385,10 @@ export function useSessionManagement(store) {
   const startNewWebConversation = async () => {
     if (!await confirmResourcePreviewLeave()) return false
     restoreRequestToken += 1
+    const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
+    if (store.currentMode !== defaultAgentMode) {
+      store.switchMode(defaultAgentMode)
+    }
     store.reset()
     resourceStore.activateSession(null)
     store.currentState.conversationAccess = {

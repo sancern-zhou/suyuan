@@ -322,6 +322,7 @@ import {
   resolveMessageAttachmentResource
 } from '@/services/messageAttachmentPreview.js'
 import { getAgentMode } from '@/config/agentModes.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
@@ -641,8 +642,10 @@ const reportContentCacheMap = computed(() => {
 
 // 根据所选智能体返回欢迎消息内容
 const welcomeContent = computed(() => {
-  const selectedAgent = getAgentMode(props.agentMode)
-  const agent = selectedAgent?.welcome ? selectedAgent : getAgentMode('assistant')
+  const selectedAgent = getAgentMode(props.agentMode, projectConfig.agentModeOverrides)
+  const agent = selectedAgent?.welcome
+    ? selectedAgent
+    : getAgentMode('assistant', projectConfig.agentModeOverrides)
 
   return {
     title: agent.name,

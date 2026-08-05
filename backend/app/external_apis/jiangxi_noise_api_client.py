@@ -76,11 +76,17 @@ class JiangxiNoiseDataClient:
     TOKEN_ENDPOINT = "/api/noiseproduct/AirCityBaseCommon/GetExternalApiToken"
 
     API_ENDPOINTS = {
+        "station_minute": (
+            "/api/noiseproduct/airdata/DATStationMinute/GetDATStationMinuteDisplayPagedListAsync"
+        ),
         "station_hour": (
             "/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync"
         ),
         "station_day": (
             "/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync"
+        ),
+        "station_statistics": (
+            "/api/noiseproduct/airdata/DATStationDay/GetNoiseStationAnyDateDisplayPagedListAsync"
         ),
         "city_hour": ("/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync"),
     }
@@ -298,14 +304,37 @@ class JiangxiNoiseDataClient:
         end_time: datetime,
         data_type: int,
         max_result_count: int,
+        skip_count: int = 0,
     ) -> dict[str, Any]:
         return {
-            "skipCount": 0,
+            "skipCount": skip_count,
             "maxResultCount": max_result_count,
             "dataType": data_type,
             "timePoint[0]": format_platform_time(start_time),
             "timePoint[1]": format_platform_time(end_time),
         }
+
+    async def query_station_minute_data(
+        self,
+        *,
+        station_codes: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        data_type: int = 0,
+        max_result_count: int = 50,
+        skip_count: int = 0,
+    ) -> dict[str, Any]:
+        params = self._base_params(
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type,
+            max_result_count=max_result_count,
+            skip_count=skip_count,
+        )
+        for index, code in enumerate(station_codes):
+            params[f"codes[{index}]"] = code
+        result = await self._request_result(self.API_ENDPOINTS["station_minute"], params)
+        return self._paged_result(result)
 
     async def query_station_hour_data(
         self,
@@ -315,12 +344,14 @@ class JiangxiNoiseDataClient:
         end_time: datetime,
         data_type: int = 0,
         max_result_count: int = 50,
+        skip_count: int = 0,
     ) -> dict[str, Any]:
         params = self._base_params(
             start_time=start_time,
             end_time=end_time,
             data_type=data_type,
             max_result_count=max_result_count,
+            skip_count=skip_count,
         )
         for index, code in enumerate(station_codes):
             params[f"codes[{index}]"] = code
@@ -335,16 +366,43 @@ class JiangxiNoiseDataClient:
         end_time: datetime,
         data_type: int = 0,
         max_result_count: int = 50,
+        skip_count: int = 0,
     ) -> dict[str, Any]:
         params = self._base_params(
             start_time=start_time,
             end_time=end_time,
             data_type=data_type,
             max_result_count=max_result_count,
+            skip_count=skip_count,
         )
         for index, code in enumerate(station_codes):
             params[f"codes[{index}]"] = code
         result = await self._request_result(self.API_ENDPOINTS["station_day"], params)
+        return self._paged_result(result)
+
+    async def query_station_statistics_data(
+        self,
+        *,
+        station_codes: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        data_type: int = 0,
+        max_result_count: int = 50,
+        skip_count: int = 0,
+    ) -> dict[str, Any]:
+        params = self._base_params(
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type,
+            max_result_count=max_result_count,
+            skip_count=skip_count,
+        )
+        for index, code in enumerate(station_codes):
+            params[f"codes[{index}]"] = code
+        result = await self._request_result(
+            self.API_ENDPOINTS["station_statistics"],
+            params,
+        )
         return self._paged_result(result)
 
     async def query_city_hour_data(
@@ -355,6 +413,7 @@ class JiangxiNoiseDataClient:
         end_time: datetime,
         data_type: int = 0,
         max_result_count: int = 50,
+        skip_count: int = 0,
     ) -> dict[str, Any]:
         city_codes = resolve_city_codes(city_names)
         params = self._base_params(
@@ -362,6 +421,7 @@ class JiangxiNoiseDataClient:
             end_time=end_time,
             data_type=data_type,
             max_result_count=max_result_count,
+            skip_count=skip_count,
         )
         for index, code in enumerate(city_codes):
             params[f"CityCodes[{index}]"] = code

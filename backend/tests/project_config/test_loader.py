@@ -27,7 +27,37 @@ def test_default_project_loads_legacy_module():
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
     assert context.manifest.backend.tools == []
+    assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.knowledge.collections == []
+
+
+def test_jiangxi_project_disables_data_fetchers():
+    context = load_project_context("jiangxi", repo_root=REPO_ROOT)
+
+    assert context.manifest.frontend.brand_name == "江西省噪声智能分析平台"
+    assert context.manifest.frontend.agent_modes == [
+        "query",
+        "expert",
+        "report",
+    ]
+    assert context.manifest.frontend.default_agent_mode == "query"
+    assert (
+        context.manifest.frontend.agent_mode_overrides["query"]["name"]
+        == "智能问数生图智能体"
+    )
+    assert context.manifest.frontend.agent_platform_layout == "environment-grid"
+    assert context.manifest.backend.fetchers_enabled is False
+    assert context.manifest.backend.tools == [
+        "query_jiangxi_noise_city_hour",
+        "query_jiangxi_noise_station_minute",
+        "query_jiangxi_noise_station_hour",
+        "query_jiangxi_noise_station_day",
+        "query_jiangxi_noise_station_statistics",
+    ]
+    query_tools = context.manifest.backend.agent_mode_tools["query"]
+    assert "create_report_chart" in query_tools
+    assert "execute_echarts_python" in query_tools
+    assert "get_jiangxi_noise_data" not in query_tools
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():

@@ -226,6 +226,28 @@ export const AGENT_SCENES = Object.freeze([
   }
 ])
 
-export const getAgentMode = mode => AGENT_MODES.find(agent => agent.id === mode) || null
+function mergeAgentMode(agent, override) {
+  if (!agent || !override) return agent || null
+  return {
+    ...agent,
+    ...override,
+    welcome: override.welcome
+      ? {
+          ...agent.welcome,
+          ...override.welcome,
+          features: override.welcome.features || agent.welcome.features
+        }
+      : agent.welcome,
+    tags: override.tags || agent.tags,
+    iconPaths: override.iconPaths || agent.iconPaths
+  }
+}
 
-export const selectAgentModes = modeIds => modeIds.map(getAgentMode).filter(Boolean)
+export const getAgentMode = (mode, overrides = {}) => {
+  const agent = AGENT_MODES.find(item => item.id === mode)
+  return mergeAgentMode(agent, overrides[mode])
+}
+
+export const selectAgentModes = (modeIds, overrides = {}) => (
+  modeIds.map(mode => getAgentMode(mode, overrides)).filter(Boolean)
+)

@@ -24,16 +24,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 from matplotlib.colors import LinearSegmentedColormap
-import matplotlib.font_manager as fm
 
-# 显式指定中文字体路径（Linux服务器）
-font_path = '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'
-if os.path.exists(font_path):
-    fm.fontManager.addfont(font_path)
-    _chinese_font = fm.FontProperties(fname=font_path)
-    plt.rcParams['font.sans-serif'] = [_chinese_font.get_name()]
-else:
-    _chinese_font = None
+from app.utils.font_utils import apply_font_to_figure, chinese_font_prop, configure_chinese_font
+
+configure_chinese_font()
+_chinese_font = chinese_font_prop()
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['mathtext.fontset'] = 'stix'
 
@@ -78,6 +73,7 @@ class ParticulateVisualizer:
     def _fig_to_base64(self, fig: plt.Figure) -> str:
         """将matplotlib图形转换为base64编码"""
         buf = io.BytesIO()
+        apply_font_to_figure(fig)
         fig.savefig(buf, format='png', dpi=self.dpi, bbox_inches='tight', facecolor='white')
         buf.seek(0)
         # 用PIL重新保存，确保中文字体正确嵌入

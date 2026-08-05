@@ -14,6 +14,7 @@ test('project config exposes module and feature predicates', () => {
       brandName: '演示项目',
       features: { noiseMap: true },
       agentModes: ['assistant', 'query'],
+      defaultAgentMode: 'query',
       agentPlatformLayout: 'scenes'
     }
   })
@@ -24,5 +25,6 @@ test('project config exposes module and feature predicates', () => {
   assert.equal(config.hasFeature('missing'), false)
   assert.equal(config.brandName, '演示项目')
   assert.deepEqual(config.agentModeIds, ['assistant', 'query'])
+  assert.equal(config.defaultAgentMode, 'query')
   assert.equal(config.agentPlatformLayout, 'scenes')
 })

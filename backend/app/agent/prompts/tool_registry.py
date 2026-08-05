@@ -384,7 +384,23 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     if mode not in mode_mapping:
         raise ValueError(f"Unknown mode: {mode}")
 
+    project_tool_names = _get_project_tool_names_by_mode(mode)
+    if project_tool_names is not None:
+        return _build_tool_dict(project_tool_names)
+
     return mode_mapping[mode]
+
+
+def _get_project_tool_names_by_mode(mode: str) -> list[str] | None:
+    """Return project-specific mode tools when the active manifest declares them."""
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        context = load_project_context(settings.project_id)
+    except Exception:
+        return None
+    return context.manifest.backend.agent_mode_tools.get(mode)
 
 
 def get_tool_order(mode: str) -> List[str]:

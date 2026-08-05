@@ -4,13 +4,10 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 
-# 显式指定中文字体路径（Linux服务器）
-font_path = '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'
-if os.path.exists(font_path):
-    fm.fontManager.addfont(font_path)
-    plt.rcParams['font.sans-serif'] = [fm.FontProperties(fname=font_path).get_name()]
+from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
+
+configure_chinese_font()
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['mathtext.fontset'] = 'stix'
 
@@ -22,6 +19,7 @@ def render_trace_from_payload(payload: Dict[str, Any], out_path: str, dpi: int =
         fig = plt.figure(figsize=(6, 4))
         plt.text(0.5, 0.5, "No data", ha="center")
         plt.axis("off")
+        apply_font_to_figure(fig)
         fig.savefig(out_path, dpi=dpi, format=fmt, bbox_inches="tight")
         plt.close(fig)
         return {fmt: out_path}
@@ -33,6 +31,7 @@ def render_trace_from_payload(payload: Dict[str, Any], out_path: str, dpi: int =
         ax.text(0.5, 0.5, "Invalid data", ha="center")
     ax.set_title("Trace elements enrichment")
     plt.tight_layout()
+    apply_font_to_figure(fig)
     fig.savefig(out_path, dpi=dpi, format=fmt, bbox_inches="tight")
     saved = {fmt: out_path}
     try:
@@ -43,7 +42,6 @@ def render_trace_from_payload(payload: Dict[str, Any], out_path: str, dpi: int =
         pass
     plt.close(fig)
     return saved
-
 
 
 

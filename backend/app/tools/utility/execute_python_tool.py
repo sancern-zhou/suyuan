@@ -1116,7 +1116,9 @@ class ExecutePythonTool(LLMTool):
             if first_visual_path:
                 llm_resume["tool_hint"] = (
                     f"Use read_file(path='{first_visual_path}', as_multimodal_attachment=true) "
-                    "to inspect this image."
+                    "to inspect this image internally. Do not place this server "
+                    "path in the final answer or Markdown image URL; generated "
+                    "visuals are published through session resources."
                 )
         if llm_resume:
             result["llm_resume"] = llm_resume
@@ -1686,8 +1688,19 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         from matplotlib import font_manager as _suyuan_font_manager
         from matplotlib.ft2font import FT2Font
         current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
-        default_font_path = '/home/xckj/.local/share/fonts/方正小标宋简.TTF'
-        if not os.path.exists(default_font_path):
+        default_font_paths = [
+            '/home/xckj/.local/share/fonts/方正小标宋简.TTF',
+            '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
+            '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
+            '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf',
+            '/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf',
+            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/truetype/arphic/uming.ttc',
+            '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        ]
+        default_font_path = next((path for path in default_font_paths if os.path.exists(path)), None)
+        if not default_font_path:
             return
         _suyuan_font_manager.fontManager.addfont(default_font_path)
         default_font_prop = _suyuan_font_manager.FontProperties(fname=default_font_path)
@@ -1717,7 +1730,7 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
                 selected_name = font_prop.get_name()
                 selected_prop = font_prop
             elif requested_font and not _SUYUAN_FONT_WARNING_EMITTED:
-                print(f'字体提示：指定字体不支持中文，已回退为方正小标宋简。font={requested_font}')
+                print(f'字体提示：指定字体不支持中文，已回退为小标宋默认字体。font={requested_font}')
                 _SUYUAN_FONT_WARNING_EMITTED = True
 
         if not selected_name:

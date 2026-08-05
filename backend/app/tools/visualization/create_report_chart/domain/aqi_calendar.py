@@ -140,10 +140,11 @@ def setup_chinese_font():
 
     字体优先级（从高到低）：
     1. 方正小标宋简体 - 用户安装字体（对"门"等字符显示更好）
-    2. Microsoft YaHei - Windows系统字体
-    3. Noto Sans CJK SC (Regular) - Google开源字体，系统自带
-    4. Noto Sans CJK SC (Bold/Light/Medium) - Noto系列变体
-    5. PingFang SC - macOS系统字体
+    2. 国标小标宋 - Linux部署常见小标宋字体
+    3. Microsoft YaHei - Windows系统字体
+    4. Noto Sans CJK SC (Regular) - Google开源字体，系统自带
+    5. Noto Sans CJK SC (Bold/Light/Medium) - Noto系列变体
+    6. PingFang SC - macOS系统字体
     """
     import os
     from pathlib import Path
@@ -156,6 +157,16 @@ def setup_chinese_font():
             'path': Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
             'name': 'FZXiaoBiaoSong-B05S',
             'fonts': ['FZXiaoBiaoSong-B05S', 'Microsoft YaHei', 'SimHei']
+        },
+        {
+            'path': '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
+            'name': 'GB_XBS_GB18030',
+            'fonts': ['GB_XBS_GB18030', 'GB_XBS_GBT2312', 'SimSun']
+        },
+        {
+            'path': '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
+            'name': 'GB_XBS_GBT2312',
+            'fonts': ['GB_XBS_GBT2312', 'GB_XBS_GB18030', 'SimSun']
         },
         # Windows Microsoft YaHei
         {

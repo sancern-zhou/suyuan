@@ -178,7 +178,7 @@ import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 
 const props = defineProps({
-  agents: { type: Array, default: () => selectAgentModes(projectConfig.agentModeIds) },
+  agents: { type: Array, default: () => selectAgentModes(projectConfig.agentModeIds, projectConfig.agentModeOverrides) },
   scenes: { type: Array, default: () => AGENT_SCENES },
   layout: { type: String, default: () => projectConfig.agentPlatformLayout },
   runningModes: { type: Array, default: () => [] },

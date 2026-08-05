@@ -4,14 +4,34 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from matplotlib import font_manager
 
 from app.agent.resources.contracts import ResourceDeclaration
 from app.tools.utility.execute_python_tool import ExecuteEChartsPythonTool, ExecutePythonTool
+from app.utils.font_utils import select_preferred_chinese_font_path
 
 
 def test_python_execution_tools_are_pinned_to_sandbox():
     assert ExecutePythonTool().execution_engine == "bubblewrap"
     assert ExecuteEChartsPythonTool().execution_engine == "bubblewrap"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_defaults_matplotlib_to_preferred_biaosong():
+    font_path = select_preferred_chinese_font_path()
+    assert font_path is not None
+    expected_name = font_manager.FontProperties(fname=str(font_path)).get_name()
+
+    result = await ExecutePythonTool().execute(
+        code=(
+            "import matplotlib.pyplot as plt\n"
+            "print('SUYUAN_FONT=' + plt.rcParams['font.sans-serif'][0])\n"
+        ),
+        timeout=10,
+    )
+
+    assert result["success"] is True
+    assert f"SUYUAN_FONT={expected_name}" in result["data"]["output"]
 
 
 @pytest.mark.asyncio
@@ -63,6 +83,7 @@ async def test_execute_python_publishes_matplotlib_as_one_visual_group():
     assert resources[1].renderer.value == "image"
     assert resources[1].parent_key == resources[0].resource_key
     assert "/api/image/" not in result["summary"]
+    assert "Do not place this server path" in result["llm_resume"]["tool_hint"]
 
 
 @pytest.mark.asyncio
