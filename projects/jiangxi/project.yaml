@@ -6,7 +6,8 @@ modules:
 frontend:
   theme: default
   brand_name: 江西省噪声智能分析平台
-  features: {}
+  features:
+    era5HistoricalBackfill: false
   agent_modes:
     - query
     - expert
@@ -19,7 +20,7 @@ frontend:
       welcome:
         description: 查询江西省噪声监测数据，生成可视化图表，快速完成统计分析和结论整理。
         features:
-          - 查询江西省噪声站点分钟值、小时值、日均值和城市小时聚合数据
+          - 查询江西省噪声站点分钟值、小时值、日均值和城市功能区聚合数据
           - 生成数据图表与可视化展示
           - 完成统计汇总、对比和排名分析
           - 将查询结果整理为清晰的表格和结论
@@ -28,14 +29,31 @@ frontend:
         - 噪声查询
         - 图表生成
         - 统计分析
+    expert:
+      welcome:
+        description: 面向复杂的噪声污染问题组织多领域专家协同分析，综合监测数据、声场机理与业务经验形成专业判断。
+        features:
+          - 协同开展噪声监测、声环境敏感点与声源识别分析
+          - 诊断噪声超标成因、影响范围与关键影响因素
+          - 交叉核验多类证据，识别结论的不确定性
+          - 输出专业研判结论与针对性治理建议
+        example: '例如："综合分析南昌近期某工业企业噪声投诉的成因，并给出治理建议"'
+    report:
+      welcome:
+        example: '例如："根据本轮噪声分析结果生成一份声环境投诉分析简报"'
   agent_platform_layout: environment-grid
 backend:
+  gis_tools_enabled: false
+  mode_prompt_files:
+    query: projects/jiangxi/prompts/query.md
   tools:
-    - query_jiangxi_noise_city_hour
+    - query_jiangxi_noise_city
     - query_jiangxi_noise_station_minute
     - query_jiangxi_noise_station_hour
     - query_jiangxi_noise_station_day
     - query_jiangxi_noise_station_statistics
+    - query_jiangxi_noise_city_compliance
+    - query_jiangxi_noise_station_compliance
   fetchers_enabled: false
   agent_mode_tools:
     expert:
@@ -43,7 +61,6 @@ backend:
       - publish_session_file
       - create_report_chart
       - execute_echarts_python
-      - generate_map
       - execute_python
       - read_file
       - write_file
@@ -51,11 +68,13 @@ backend:
       - grep
       - list_directory
       - search_files
-      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_city
       - query_jiangxi_noise_station_minute
       - query_jiangxi_noise_station_hour
       - query_jiangxi_noise_station_day
       - query_jiangxi_noise_station_statistics
+      - query_jiangxi_noise_city_compliance
+      - query_jiangxi_noise_station_compliance
     query:
       - list_session_resources
       - publish_session_file
@@ -68,11 +87,13 @@ backend:
       - create_report_chart
       - execute_echarts_python
       - execute_python
-      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_city
       - query_jiangxi_noise_station_minute
       - query_jiangxi_noise_station_hour
       - query_jiangxi_noise_station_day
       - query_jiangxi_noise_station_statistics
+      - query_jiangxi_noise_city_compliance
+      - query_jiangxi_noise_station_compliance
     report:
       - list_session_resources
       - publish_session_file
@@ -89,11 +110,13 @@ backend:
       - create_report_package
       - render_report_package
       - validate_report_package
-      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_city
       - query_jiangxi_noise_station_minute
       - query_jiangxi_noise_station_hour
       - query_jiangxi_noise_station_day
       - query_jiangxi_noise_station_statistics
+      - query_jiangxi_noise_city_compliance
+      - query_jiangxi_noise_station_compliance
     chart:
       - list_session_resources
       - publish_session_file
@@ -107,11 +130,13 @@ backend:
       - create_report_chart
       - execute_python
       - execute_echarts_python
-      - query_jiangxi_noise_city_hour
+      - query_jiangxi_noise_city
       - query_jiangxi_noise_station_minute
       - query_jiangxi_noise_station_hour
       - query_jiangxi_noise_station_day
       - query_jiangxi_noise_station_statistics
+      - query_jiangxi_noise_city_compliance
+      - query_jiangxi_noise_station_compliance
 knowledge:
   collections: []
 scheduled_tasks: []

@@ -60,9 +60,12 @@ class FrontendManifest(StrictModel):
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
     fetchers_enabled: bool = True
+    gis_tools_enabled: bool = True
+    mode_prompt_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
 
     _unique_tools = field_validator("tools")(unique)
+    _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
 
 

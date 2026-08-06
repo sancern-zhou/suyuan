@@ -5,7 +5,9 @@ import pytest
 
 from app.external_apis.jiangxi_noise_api_client import JiangxiNoiseDataClient
 from app.tools.query.query_jiangxi_noise import (
-    QueryJiangxiNoiseCityHourTool,
+    QueryJiangxiNoiseCityComplianceTool,
+    QueryJiangxiNoiseCityTool,
+    QueryJiangxiNoiseStationComplianceTool,
     QueryJiangxiNoiseStationDayTool,
     QueryJiangxiNoiseStationHourTool,
     QueryJiangxiNoiseStationMinuteTool,
@@ -53,12 +55,48 @@ class FakeNoiseClient:
     async def query_station_statistics_data(self, **kwargs: Any) -> dict[str, Any]:
         return await self._result("station_statistics", kwargs)
 
+    async def query_station_compliance_data(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("station_compliance", kwargs))
+        return {
+            "data": [
+                {
+                    "code": kwargs["station_codes"][0],
+                    "time": "2026-01-01至2026-06-30",
+                    "ld": "55.1",
+                    "ln": "46.2",
+                    "ldStandardReachingRate": 100,
+                    "lnStandardReachingRate": 0,
+                    "isLdStandardReaching": "是",
+                    "isLnStandardReaching": "否",
+                }
+            ],
+            "total_count": 1,
+        }
+
+    async def query_area_compliance_data(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("area_compliance", kwargs))
+        return {
+            "data": [
+                {
+                    "cityCode": "360100",
+                    "cityName": "南昌市",
+                    "dateTimeStr": "2026-01-01至2026-06-30",
+                    "monitorStationDayCount": 20,
+                    "dayTimeComplianceCount": 18,
+                    "dayTimeComplianceRate": 90,
+                    "nightTimeComplianceRate": 0,
+                    "dayTime_31_Rate": 95,
+                }
+            ],
+            "total_count": 1,
+        }
+
 
 @pytest.mark.asyncio
 async def test_split_noise_tools_route_to_dedicated_client_methods() -> None:
     client = FakeNoiseClient()
     tools = [
-        QueryJiangxiNoiseCityHourTool(client),
+        QueryJiangxiNoiseCityTool(client),
         QueryJiangxiNoiseStationMinuteTool(client),
         QueryJiangxiNoiseStationHourTool(client),
         QueryJiangxiNoiseStationDayTool(client),
@@ -107,6 +145,50 @@ async def test_split_noise_tools_route_to_dedicated_client_methods() -> None:
 
 
 @pytest.mark.asyncio
+async def test_custom_range_compliance_tools_use_platform_statistics() -> None:
+    client = FakeNoiseClient()
+    city_tool = QueryJiangxiNoiseCityComplianceTool(client)
+    station_tool = QueryJiangxiNoiseStationComplianceTool(client)
+
+    city_result = await city_tool.execute(
+        area_level="city",
+        cities=["南昌"],
+        start_time="2026-01-01T00:00:00+08:00",
+        end_time="2026-06-30T23:59:59+08:00",
+    )
+    station_result = await station_tool.execute(
+        station_codes=["1737A"],
+        start_time="2026-01-01T00:00:00+08:00",
+        end_time="2026-06-30T23:59:59+08:00",
+    )
+
+    assert city_result["status"] == "success"
+    assert city_result["data"][0]["day_compliance_rate"] == 90
+    assert city_result["data"][0]["night_compliance_rate"] == 0
+    assert city_result["data"][0]["day_compliance_rate_1"] == 95
+    assert city_result["metadata"]["granularity"] == "custom_range_compliance"
+    assert station_result["status"] == "success"
+    assert station_result["data"][0]["ld_compliance_rate"] == 100
+    assert station_result["data"][0]["ln_compliance_rate"] == 0
+    assert station_result["data"][0]["is_ln_compliant"] == "否"
+    assert station_result["metadata"]["stations"]["1737A"] == {
+        "station_name": "东湖区大院街道",
+        "city_name": "南昌市",
+        "longitude": "115.9128",
+        "latitude": "28.6816",
+        "functional_area": {"type": "2", "name": "2类功能区"},
+    }
+    assert "longitude" not in station_result["data"][0]
+    assert "latitude" not in station_result["data"][0]
+    assert [name for name, _ in client.calls] == [
+        "area_compliance",
+        "station_compliance",
+    ]
+    assert client.calls[0][1]["area_level"] == "city"
+    assert client.calls[1][1]["data_type"] == 1
+
+
+@pytest.mark.asyncio
 async def test_client_uses_recovered_minute_and_statistics_endpoints() -> None:
     client = object.__new__(JiangxiNoiseDataClient)
     captured: list[tuple[str, dict[str, Any]]] = []
@@ -139,3 +221,70 @@ async def test_client_uses_recovered_minute_and_statistics_endpoints() -> None:
         assert params["dataType"] == 1
         assert params["maxResultCount"] == 25
         assert params["skipCount"] == 50
+
+
+@pytest.mark.asyncio
+async def test_client_uses_custom_range_compliance_endpoints() -> None:
+    client = object.__new__(JiangxiNoiseDataClient)
+    captured: list[tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]] = []
+
+    async def request(
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        *,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
+    ) -> Any:
+        captured.append((endpoint, method, params, json_body))
+        if endpoint.endswith("GetCiyEvaluateAsync"):
+            return [
+                {"cityCode": "360100", "cityName": "南昌市"},
+                {"cityCode": "360700", "cityName": "赣州市"},
+            ]
+        if endpoint.endswith("GetProEvaluateAsync"):
+            return {"proName": "全省", "dayTimeComplianceRate": 90}
+        return {"items": [], "totalCount": 0}
+
+    client._request_result = request
+    common = {
+        "start_time": datetime.fromisoformat("2026-01-01T00:00:00+08:00"),
+        "end_time": datetime.fromisoformat("2026-06-30T23:59:59+08:00"),
+        "data_type": 1,
+    }
+    city_result = await client.query_area_compliance_data(
+        area_level="city",
+        city_names=["南昌市"],
+        **common,
+    )
+    province_result = await client.query_area_compliance_data(
+        area_level="province",
+        city_names=["南昌市"],
+        **common,
+    )
+    await client.query_station_compliance_data(
+        station_codes=["1737A"],
+        max_result_count=25,
+        skip_count=50,
+        **common,
+    )
+
+    assert [item[0].rsplit("/", 1)[-1] for item in captured] == [
+        "GetCiyEvaluateAsync",
+        "GetProEvaluateAsync",
+        "GetNoiseDATStationMonthOrYearDisplayPagedListAsync",
+    ]
+    assert captured[0][1] == "POST"
+    city_body = captured[0][3]
+    province_body = captured[1][3]
+    station_params = captured[2][2]
+    assert city_body is not None
+    assert province_body is not None
+    assert station_params is not None
+    assert city_body["timeType"] == 100
+    assert city_body["cityCodes"] == ["360100"]
+    assert city_result["total_count"] == 1
+    assert city_result["data"][0]["cityName"] == "南昌市"
+    assert province_body["ciyEvaluateList"] == []
+    assert province_result["total_count"] == 1
+    assert station_params["timeType"] == 100
+    assert station_params["codes[0]"] == "1737A"

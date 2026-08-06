@@ -88,6 +88,16 @@ class JiangxiNoiseDataClient:
         "station_statistics": (
             "/api/noiseproduct/airdata/DATStationDay/GetNoiseStationAnyDateDisplayPagedListAsync"
         ),
+        "station_compliance": (
+            "/api/noiseproduct/airdata/DATStationDay/"
+            "GetNoiseDATStationMonthOrYearDisplayPagedListAsync"
+        ),
+        "city_compliance": (
+            "/api/noiseproduct/airdata/DATStationDay/GetCiyEvaluateAsync"
+        ),
+        "province_compliance": (
+            "/api/noiseproduct/airdata/DATStationDay/GetProEvaluateAsync"
+        ),
         "city_hour": ("/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync"),
     }
 
@@ -219,7 +229,10 @@ class JiangxiNoiseDataClient:
     async def _request_result(
         self,
         endpoint: str,
-        params: dict[str, Any],
+        params: dict[str, Any] | None = None,
+        *,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
     ) -> Any:
         async with self._create_http_client() as client:
             for attempt in range(2):
@@ -227,7 +240,8 @@ class JiangxiNoiseDataClient:
                     await self._authenticate(client)
 
                 try:
-                    response = await client.get(
+                    response = await client.request(
+                        method,
                         endpoint,
                         headers={
                             "Authorization": f"Bearer {self._token}",
@@ -235,6 +249,7 @@ class JiangxiNoiseDataClient:
                             "syscode": "NOISE",
                         },
                         params=params,
+                        json=json_body,
                     )
                 except httpx.TimeoutException as exc:
                     raise JiangxiNoiseClientError(
@@ -404,6 +419,93 @@ class JiangxiNoiseDataClient:
             params,
         )
         return self._paged_result(result)
+
+    async def query_station_compliance_data(
+        self,
+        *,
+        station_codes: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        data_type: int = 1,
+        max_result_count: int = 50,
+        skip_count: int = 0,
+    ) -> dict[str, Any]:
+        """查询平台按任意时段直接统计的站点昼夜达标率。"""
+        params = self._base_params(
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type,
+            max_result_count=max_result_count,
+            skip_count=skip_count,
+        )
+        params["timeType"] = 100
+        params["sandType"] = 0
+        for index, code in enumerate(station_codes):
+            params[f"codes[{index}]"] = code
+        result = await self._request_result(
+            self.API_ENDPOINTS["station_compliance"],
+            params,
+        )
+        return self._paged_result(result)
+
+    async def query_area_compliance_data(
+        self,
+        *,
+        area_level: str,
+        city_names: list[str],
+        start_time: datetime,
+        end_time: datetime,
+        data_type: int = 1,
+    ) -> dict[str, Any]:
+        """查询平台按任意时段直接统计的城市或全省达标率。"""
+        city_codes = resolve_city_codes(city_names)
+        body: dict[str, Any] = {
+            "cityCodes": city_codes,
+            "codes": [],
+            "timePoint": [
+                format_platform_time(start_time),
+                format_platform_time(end_time),
+            ],
+            "dataType": data_type,
+            "timeType": 100,
+        }
+        if area_level == "province":
+            body["ciyEvaluateList"] = []
+            result = await self._request_result(
+                self.API_ENDPOINTS["province_compliance"],
+                method="POST",
+                json_body=body,
+            )
+            if not isinstance(result, dict):
+                raise JiangxiNoiseClientError(
+                    "invalid_response",
+                    "江西噪声平台全省达标率结果格式不正确",
+                )
+            items = [result]
+        elif area_level == "city":
+            result = await self._request_result(
+                self.API_ENDPOINTS["city_compliance"],
+                method="POST",
+                json_body=body,
+            )
+            if not isinstance(result, list):
+                raise JiangxiNoiseClientError(
+                    "invalid_response",
+                    "江西噪声平台城市达标率结果格式不正确",
+                )
+            # 上游接口会忽略 cityCodes 并返回全省地市，此处仅按请求范围裁剪。
+            requested_codes = set(city_codes)
+            items = [
+                item
+                for item in result
+                if isinstance(item, dict) and str(item.get("cityCode", "")) in requested_codes
+            ]
+        else:
+            raise JiangxiNoiseClientError(
+                "invalid_argument",
+                "area_level 仅支持 city 或 province",
+            )
+        return {"success": True, "data": items, "total_count": len(items)}
 
     async def query_city_hour_data(
         self,

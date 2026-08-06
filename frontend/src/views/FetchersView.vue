@@ -54,7 +54,7 @@
     </div>
 
     <!-- ERA5 历史数据补采区域 -->
-    <div class="era5-historical-card">
+    <div v-if="showEra5HistoricalBackfill" class="era5-historical-card">
       <h2>ERA5 历史数据补采</h2>
       <p class="description">手动补采指定日期的 ERA5 气象数据（广东省全境 825 个网格点）</p>
 
@@ -251,6 +251,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '@/services/api.js'
+import { projectConfig } from '@/config/projectConfig.js'
 
 export default {
   name: 'FetchersView',
@@ -263,6 +264,7 @@ export default {
     const selectedFetchers = ref([])
     const notification = ref(null)
     const refreshInterval = ref(null)
+    const showEra5HistoricalBackfill = projectConfig.isFeatureEnabled('era5HistoricalBackfill', true)
 
     // ERA5 历史数据补采相关
     const era5HistoricalDate = ref('')
@@ -466,6 +468,7 @@ export default {
       showCreateDialog,
       selectedFetchers,
       notification,
+      showEra5HistoricalBackfill,
       getStatusClass,
       getStatusText,
       refreshStatus,

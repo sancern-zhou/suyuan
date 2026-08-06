@@ -397,13 +397,24 @@ Older history to compress:
         chat_params = {
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": self.COMPACT_SUMMARY_MAX_TOKENS,
-            "timeout": 300.0,
         }
         if model:
             chat_params["model"] = model
 
-        response = await self.llm_client.chat(**chat_params)
-        summary_text = str(response or "").strip()
+        api_mode = getattr(self.llm_client, "api_mode", "chat_completions")
+        if api_mode != "chat_completions" and getattr(self.llm_client, "anthropic_client", None):
+            chat_params["temperature"] = 0.3
+            raw = await self.llm_client.chat_anthropic(**chat_params)
+            text_parts = []
+            for block in (raw.get("content") or []) if isinstance(raw, dict) else []:
+                if hasattr(block, "text"):
+                    text_parts.append(block.text)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+            summary_text = "".join(text_parts).strip()
+        else:
+            chat_params["timeout"] = 300.0
+            summary_text = str(await self.llm_client.chat(**chat_params) or "").strip()
         if not summary_text:
             raise ValueError("context compaction summary call returned empty text")
 

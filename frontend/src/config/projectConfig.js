@@ -33,7 +33,10 @@ export function createProjectConfig(value) {
     agentModeOverrides,
     agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
     hasModule: moduleId => modules.has(moduleId),
-    hasFeature: featureId => features[featureId] === true
+    hasFeature: featureId => features[featureId] === true,
+    isFeatureEnabled: (featureId, defaultValue = false) => (
+      features[featureId] === undefined ? defaultValue : features[featureId] === true
+    )
   })
 }
 

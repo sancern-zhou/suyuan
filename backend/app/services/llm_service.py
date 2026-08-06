@@ -722,6 +722,19 @@ class LLMService:
                 reason="Provider does not support cache_control (auto KV cache or not supported)",
             )
 
+        if "thinking" in api_params:
+            extra_body = api_params.get("extra_body") or {}
+            if not isinstance(extra_body, dict):
+                extra_body = {}
+            extra_body["thinking"] = api_params.pop("thinking")
+            api_params["extra_body"] = extra_body
+            logger.debug(
+                "thinking_param_via_extra_body",
+                provider=self.provider,
+                model=self.model,
+                reason="anthropic SDK version does not support 'thinking' kwarg natively",
+            )
+
         return api_params
 
     async def _parse_sse_stream(

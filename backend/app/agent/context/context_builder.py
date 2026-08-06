@@ -238,7 +238,7 @@ class SimplifiedContextBuilder:
                 after_tokens=user_tokens_after,
                 history_tokens_before=history_tokens,
                 history_tokens_after=history_tokens_after,
-                compression_ratio=f"{(1 - user_tokens_after/user_tokens)*100:.1f}%",
+                compression_ratio=f"{(1 - user_tokens_after/user_tokens)*100:.1f}%" if user_tokens > 0 else "N/A (user_tokens=0)",
                 history_length_before=len(conversation_history) if conversation_history else 0,
                 history_length_after=len(compressed_history) if compressed_history else 0
             )
@@ -321,6 +321,7 @@ class SimplifiedContextBuilder:
     def _build_system_context_layers(self) -> Dict[str, str]:
         """Return every system layer before rendering it into the final prompt."""
         from ..prompts.prompt_builder import build_react_system_prompt
+        from ...project_config import load_project_context
         from config.settings import settings
 
         # 仅social模式需要backend_host（使用公网可访问的网关地址）
@@ -350,7 +351,11 @@ class SimplifiedContextBuilder:
             board_context=None,
         )
         mode_extensions = []
-        if self.current_mode == "query" and self.map_context:
+        if (
+            self.current_mode == "query"
+            and self.map_context
+            and load_project_context(settings.project_id).manifest.backend.gis_tools_enabled
+        ):
             mode_extensions.append(
                 "## Agentic GIS 视觉交互说明\n"
                 "- 当前请求可能包含前端地图交互上下文，见用户消息中的“当前地图交互上下文”。\n"

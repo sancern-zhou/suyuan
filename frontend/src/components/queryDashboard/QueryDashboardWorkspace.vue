@@ -42,6 +42,7 @@
       <ReActMessageList
         class="overlay-message-list"
         :messages="messages"
+        :is-analyzing="isAnalyzing"
         :show-reflexion="showReflexion"
         :reflexion-count="reflexionCount"
         :use-markdown="true"

@@ -28,6 +28,7 @@ def test_default_project_loads_legacy_module():
     assert context.manifest.frontend.agent_platform_layout == "scenes"
     assert context.manifest.backend.tools == []
     assert context.manifest.backend.fetchers_enabled is True
+    assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
 
 
@@ -47,17 +48,24 @@ def test_jiangxi_project_disables_data_fetchers():
     )
     assert context.manifest.frontend.agent_platform_layout == "environment-grid"
     assert context.manifest.backend.fetchers_enabled is False
+    assert context.manifest.backend.gis_tools_enabled is False
+    assert context.manifest.backend.mode_prompt_files == {
+        "query": "projects/jiangxi/prompts/query.md"
+    }
     assert context.manifest.backend.tools == [
-        "query_jiangxi_noise_city_hour",
+        "query_jiangxi_noise_city",
         "query_jiangxi_noise_station_minute",
         "query_jiangxi_noise_station_hour",
         "query_jiangxi_noise_station_day",
         "query_jiangxi_noise_station_statistics",
+        "query_jiangxi_noise_city_compliance",
+        "query_jiangxi_noise_station_compliance",
     ]
     query_tools = context.manifest.backend.agent_mode_tools["query"]
     assert "create_report_chart" in query_tools
     assert "execute_echarts_python" in query_tools
     assert "get_jiangxi_noise_data" not in query_tools
+    assert "generate_map" not in context.manifest.backend.agent_mode_tools["expert"]
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():

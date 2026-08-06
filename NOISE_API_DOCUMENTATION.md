@@ -21,7 +21,7 @@
 
 | 工具 | 能力 | 端点 |
 |---|---|---|
-| `query_jiangxi_noise_city_hour` | 城市小时聚合值 | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` |
+| `query_jiangxi_noise_city` | 城市功能区聚合值（时间范围汇总） | `/api/noiseproduct/airdata/DATCityHour/GetFunCityHourDisplayListAsync` |
 | `query_jiangxi_noise_station_minute` | 站点分钟值 | `/api/noiseproduct/airdata/DATStationMinute/GetDATStationMinuteDisplayPagedListAsync` |
 | `query_jiangxi_noise_station_hour` | 站点小时值 | `/api/noiseproduct/airdata/DATStationHour/GetDATStationHourDisplayPagedListAsync` |
 | `query_jiangxi_noise_station_day` | 站点日均值 | `/api/noiseproduct/airdata/DATStationDay/GetDATStationDayDisplayPagedListAsync` |
@@ -57,9 +57,9 @@ Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客�
 | `max_pages` | 1-100 整数 | 最大页数，默认 20 |
 | `data_type` | 0 / 1 | 支持该参数的接口中，0 为原始数据，1 为审核数据 |
 
-无时区时间按 `Asia/Shanghai` 解释；有时区时间转换为 `Asia/Shanghai`。`start_time` 不能晚于 `end_time`，单次查询跨度不能超过 30 天。
+无时区时间按 `Asia/Shanghai` 解释；有时区时间转换为 `Asia/Shanghai`。`start_time` 不能晚于 `end_time`。`query_jiangxi_noise_city`、`query_jiangxi_noise_station_minute`、`query_jiangxi_noise_station_hour` 单次查询跨度不能超过 31 天；`query_jiangxi_noise_station_day` 和 `query_jiangxi_noise_station_statistics` 不限查询时间范围，可查询半年、全年等长周期。
 
-`query_jiangxi_noise_city_hour`、`query_jiangxi_noise_station_hour` 和
+`query_jiangxi_noise_city`、`query_jiangxi_noise_station_hour` 和
 `query_jiangxi_noise_station_day` 默认使用审核数据（`data_type=1`）；分钟值和时段统计默认使用原始数据。
 
 ### 4.2 站点查询
@@ -81,7 +81,7 @@ Token 在客户端内存中缓存。数据请求首次收到 HTTP 401 时，客�
 
 ### 4.3 城市查询
 
-城市查询必须提供 `city_names`，不能同时提供 `station_codes`，且 `granularity` 必须为 `hour`。`city_names` 接受下表中的城市名称或 6 位代码。
+城市查询必须提供 `city_names`，不能同时提供 `station_codes`，且 `granularity` 固定为 `range`。`city_names` 接受下表中的城市名称或 6 位代码。该工具返回的是整个查询时间范围内的城市级聚合值（每个城市 1 条记录，按 4 个功能区汇总），不返回逐小时时间序列。
 
 ```json
 {

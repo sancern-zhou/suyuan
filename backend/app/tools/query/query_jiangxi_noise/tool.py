@@ -90,13 +90,21 @@ def _parse_time(value: str, field_name: str) -> datetime:
     return normalize_to_shanghai(parsed)
 
 
-def _parse_time_range(start_time: str, end_time: str) -> tuple[datetime, datetime]:
+def _parse_time_range(
+    start_time: str,
+    end_time: str,
+    *,
+    max_range: timedelta | None = MAX_QUERY_RANGE,
+) -> tuple[datetime, datetime]:
     start = _parse_time(start_time, "start_time")
     end = _parse_time(end_time, "end_time")
     if start > end:
         raise ToolInputError("invalid_time_range", "start_time 不能晚于 end_time")
-    if end - start > MAX_QUERY_RANGE:
-        raise ToolInputError("time_range_too_large", "单次查询时间范围不能超过 31 天")
+    if max_range is not None and end - start > max_range:
+        raise ToolInputError(
+            "time_range_too_large",
+            f"单次查询时间范围不能超过 {max_range.days} 天",
+        )
     return start, end
 
 
@@ -199,6 +207,32 @@ NOISE_RECORD_KEEP_FIELDS = frozenset(
         "station_code",
         "city_code",
         "city_name",
+        "province_name",
+        "area_name",
+        # 任意时段达标率统计
+        "build_station_count",
+        "monitor_day_count",
+        "monitor_night_count",
+        "day_compliance_count",
+        "night_compliance_count",
+        "day_compliance_rate",
+        "night_compliance_rate",
+        "day_compliance_rate_0",
+        "night_compliance_rate_0",
+        "day_compliance_rate_1",
+        "night_compliance_rate_1",
+        "day_compliance_rate_2",
+        "night_compliance_rate_2",
+        "day_compliance_rate_3",
+        "night_compliance_rate_3",
+        "day_compliance_rate_4a",
+        "night_compliance_rate_4a",
+        "day_compliance_rate_4b",
+        "night_compliance_rate_4b",
+        "ld_compliance_rate",
+        "ln_compliance_rate",
+        "is_ld_compliant",
+        "is_ln_compliant",
         # 城市小时功能区 Leq
         "leq_1",
         "leq_2",
@@ -260,6 +294,12 @@ NOISE_FIELD_ALIASES = {
     "CityCode": "city_code",
     "cityName": "city_name",
     "CityName": "city_name",
+    "provinceName": "province_name",
+    "ProvinceName": "province_name",
+    "proName": "province_name",
+    "ProName": "province_name",
+    "areaName": "area_name",
+    "AreaName": "area_name",
     "districtCode": "district_code",
     "DistrictCode": "district_code",
     "districtName": "district_name",
@@ -276,6 +316,35 @@ NOISE_FIELD_ALIASES = {
     "TimePoint": "time",
     "timePointStr": "time",
     "TimePointStr": "time",
+    "dateTimeStr": "time",
+    "DateTimeStr": "time",
+    "buildStationCount": "build_station_count",
+    "monitorStationDayCount": "monitor_day_count",
+    "monitorStationNightCount": "monitor_night_count",
+    "dayTimeComplianceCount": "day_compliance_count",
+    "nightTimeComplianceCount": "night_compliance_count",
+    "dayTimeComplianceRate": "day_compliance_rate",
+    "nightTimeComplianceRate": "night_compliance_rate",
+    "dayTime_30_Rate": "day_compliance_rate_0",
+    "nightTime_30_Rate": "night_compliance_rate_0",
+    "dayTime_31_Rate": "day_compliance_rate_1",
+    "nightTime_31_Rate": "night_compliance_rate_1",
+    "dayTime_32_Rate": "day_compliance_rate_2",
+    "nightTime_32_Rate": "night_compliance_rate_2",
+    "dayTime_33_Rate": "day_compliance_rate_3",
+    "nightTime_33_Rate": "night_compliance_rate_3",
+    "dayTime_34_Rate": "day_compliance_rate_4a",
+    "nightTime_34_Rate": "night_compliance_rate_4a",
+    "dayTime_35_Rate": "day_compliance_rate_4b",
+    "nightTime_35_Rate": "night_compliance_rate_4b",
+    "ld_Value": "ld",
+    "ln_Value": "ln",
+    "ldn_Value": "ldn",
+    "vdr_Value": "vdr",
+    "ldStandardReachingRate": "ld_compliance_rate",
+    "lnStandardReachingRate": "ln_compliance_rate",
+    "isLdStandardReaching": "is_ld_compliant",
+    "isLnStandardReaching": "is_ln_compliant",
 }
 
 NOISE_FIELD_ALIAS_PRIORITY = {
@@ -291,6 +360,31 @@ NOISE_RECORD_FIELD_ORDER = (
     "station_code",
     "city_name",
     "city_code",
+    "province_name",
+    "area_name",
+    "build_station_count",
+    "monitor_day_count",
+    "monitor_night_count",
+    "day_compliance_count",
+    "night_compliance_count",
+    "day_compliance_rate",
+    "night_compliance_rate",
+    "ld_compliance_rate",
+    "ln_compliance_rate",
+    "is_ld_compliant",
+    "is_ln_compliant",
+    "day_compliance_rate_0",
+    "night_compliance_rate_0",
+    "day_compliance_rate_1",
+    "night_compliance_rate_1",
+    "day_compliance_rate_2",
+    "night_compliance_rate_2",
+    "day_compliance_rate_3",
+    "night_compliance_rate_3",
+    "day_compliance_rate_4a",
+    "night_compliance_rate_4a",
+    "day_compliance_rate_4b",
+    "night_compliance_rate_4b",
     "leq",
     "ldn",
     "ld",
@@ -833,18 +927,20 @@ class _BaseJiangxiNoiseTool(LLMTool):
         return self._client
 
 
-class QueryJiangxiNoiseCityHourTool(_BaseJiangxiNoiseTool):
-    """Query city-level hourly Jiangxi noise data."""
+class QueryJiangxiNoiseCityTool(_BaseJiangxiNoiseTool):
+    """Query aggregated city-level Jiangxi noise data over a time range."""
 
     def __init__(self, client: JiangxiNoiseDataClient | None = None) -> None:
         function_schema = {
-            "name": "query_jiangxi_noise_city_hour",
+            "name": "query_jiangxi_noise_city",
             "description": (
-                "查询江西省城市小时聚合噪声数据。cities 传江西/江西省/全省时自动查询全部11个地市；"
+                "查询江西省城市噪声数据（按功能区汇总）。cities 传江西/江西省/全省时自动查询全部11个地市；"
                 "传南昌或南昌市时自动映射城市编码。"
-                "返回规范字段 time/city_name/city_code/leq_1..leq_4，"
-                "功能区列含义见 metadata.functional_area_columns。"
-                "适合全省或多地市小时趋势、城市对比。"
+                "注意：本工具返回的是 start_time~end_time 整个时间范围内的城市级聚合值，"
+                "每个城市仅 1 条记录，按 4 个功能区（leq_1..leq_4）汇总，"
+                "time 字段为“起始时-结束时”的时间范围字符串；不返回逐小时时间序列。"
+                "适合全省或多地市的城市对比、整体水平评估。"
+                "如需逐小时趋势，请改用 query_jiangxi_noise_station_hour 查询站点小时值。"
                 "data_type 对应接口 dataType，可选值 1=审核数据、0=原始数据；默认 1。"
             ),
             "parameters": {
@@ -883,8 +979,8 @@ class QueryJiangxiNoiseCityHourTool(_BaseJiangxiNoiseTool):
             },
         }
         super().__init__(
-            name="query_jiangxi_noise_city_hour",
-            description="查询江西省城市小时聚合噪声数据",
+            name="query_jiangxi_noise_city",
+            description="查询江西省城市噪声数据（按功能区汇总）",
             function_schema=function_schema,
             client=client,
         )
@@ -926,7 +1022,7 @@ class QueryJiangxiNoiseCityHourTool(_BaseJiangxiNoiseTool):
             )
             metadata = {
                 "scope": "city",
-                "granularity": "hour",
+                "granularity": "range",
                 "data_type": data_type_value,
                 "data_type_label": DATA_TYPE_LABELS[data_type_value],
                 "functional_area_columns": CITY_FUNCTIONAL_AREA_COLUMNS,
@@ -947,7 +1043,7 @@ class QueryJiangxiNoiseCityHourTool(_BaseJiangxiNoiseTool):
                 pagination_truncated=truncated,
                 metadata=metadata,
                 summary_prefix=(
-                    f"江西噪声城市小时数据查询完成，{start.isoformat()} 至 {end.isoformat()}，"
+                    f"江西噪声城市数据查询完成，{start.isoformat()} 至 {end.isoformat()}，"
                     f"{len(resolved_cities)} 个地市"
                 ),
                 context=context,
@@ -955,14 +1051,141 @@ class QueryJiangxiNoiseCityHourTool(_BaseJiangxiNoiseTool):
         except ToolInputError as exc:
             return _error_response(tool_name=tool_name, code=exc.code, message=exc.message)
         except JiangxiNoiseClientError as exc:
-            logger.warning("jiangxi_noise_city_hour_failed", error_code=exc.code)
+            logger.warning("jiangxi_noise_city_failed", error_code=exc.code)
             return _error_response(tool_name=tool_name, code=exc.code, message=exc.message)
         except Exception as exc:
-            logger.error("jiangxi_noise_city_hour_unexpected_error", error_type=type(exc).__name__)
+            logger.error("jiangxi_noise_city_unexpected_error", error_type=type(exc).__name__)
             return _error_response(
                 tool_name=tool_name,
                 code="internal_error",
-                message="江西噪声城市小时数据查询发生内部错误",
+                message="江西噪声城市数据查询发生内部错误",
+            )
+
+
+class QueryJiangxiNoiseCityComplianceTool(_BaseJiangxiNoiseTool):
+    """Query platform-calculated city or province compliance rates."""
+
+    def __init__(self, client: JiangxiNoiseDataClient | None = None) -> None:
+        function_schema = {
+            "name": "query_jiangxi_noise_city_compliance",
+            "description": (
+                "查询江西省城市或全省在自选起止时间内的昼间、夜间噪声达标率。"
+                "area_level=city 返回所选地市，area_level=province 返回全省汇总。"
+                "统计值由江西噪声平台直接计算，本地不查询日明细、不重新汇总。"
+                "仅支持自选时段，不提供月、季、年统计类型参数。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "area_level": {
+                        "type": "string",
+                        "enum": ["city", "province"],
+                        "default": "city",
+                        "description": "统计层级：city=城市，province=全省。",
+                    },
+                    "cities": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["江西省"],
+                        "description": "城市层级的地市范围，如 ['南昌市']；默认全省11个地市。",
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "description": "ISO 8601 自选时段开始时间。",
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "description": "ISO 8601 自选时段结束时间。",
+                    },
+                    "data_type": _data_type_schema(DEFAULT_AUDITED_DATA_TYPE),
+                },
+                "required": ["start_time", "end_time"],
+                "additionalProperties": False,
+            },
+        }
+        super().__init__(
+            name="query_jiangxi_noise_city_compliance",
+            description="查询江西城市或全省任意时段噪声达标率",
+            function_schema=function_schema,
+            client=client,
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext | None = None,
+        area_level: str = "city",
+        cities: list[str] | None = None,
+        start_time: str = "",
+        end_time: str = "",
+        data_type: Any = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        tool_name = self.name
+        try:
+            if area_level not in {"city", "province"}:
+                raise ToolInputError(
+                    "invalid_area_level",
+                    "area_level 仅支持 city 或 province",
+                )
+            city_values = _clean_string_list(cities, "cities")
+            resolved_cities, warnings = resolve_city_names(city_values, default_all=True)
+            if not resolved_cities:
+                raise ToolInputError("missing_cities", "未解析到江西地市")
+            data_type_value = _resolve_data_type_argument(
+                data_type,
+                kwargs,
+                DEFAULT_AUDITED_DATA_TYPE,
+            )
+            start, end = _parse_time_range(start_time, end_time, max_range=None)
+            result = await self._get_client().query_area_compliance_data(
+                area_level=area_level,
+                city_names=resolved_cities,
+                start_time=start,
+                end_time=end,
+                data_type=data_type_value,
+            )
+            records = result.get("data", [])
+            total_count = result.get("total_count", len(records))
+            metadata = {
+                "scope": area_level,
+                "granularity": "custom_range_compliance",
+                "calculation_source": "江西噪声平台直接统计，本地未按明细重新计算",
+                "data_type": data_type_value,
+                "data_type_label": DATA_TYPE_LABELS[data_type_value],
+                "requested_cities": city_values or ["江西省"],
+                "resolved_cities": resolved_cities,
+                "resolved_city_codes": [JIANGXI_CITY_CODES[city] for city in resolved_cities],
+                "warnings": warnings,
+                "start_time": start.isoformat(),
+                "end_time": end.isoformat(),
+            }
+            return _success_response(
+                tool_name=tool_name,
+                records=records,
+                total_count=total_count,
+                pages_fetched=1,
+                pagination_truncated=False,
+                metadata=metadata,
+                summary_prefix=(
+                    f"江西噪声{area_level}达标率统计完成，"
+                    f"{start.isoformat()} 至 {end.isoformat()}"
+                ),
+                context=context,
+            )
+        except ToolInputError as exc:
+            return _error_response(tool_name=tool_name, code=exc.code, message=exc.message)
+        except JiangxiNoiseClientError as exc:
+            logger.warning("jiangxi_noise_area_compliance_failed", error_code=exc.code)
+            return _error_response(tool_name=tool_name, code=exc.code, message=exc.message)
+        except Exception as exc:
+            logger.error(
+                "jiangxi_noise_area_compliance_unexpected_error",
+                error_type=type(exc).__name__,
+            )
+            return _error_response(
+                tool_name=tool_name,
+                code="internal_error",
+                message="江西噪声城市/全省达标率查询发生内部错误",
             )
 
 
@@ -970,6 +1193,7 @@ class _BaseJiangxiNoiseStationTool(_BaseJiangxiNoiseTool):
     granularity: str
     supports_data_type: bool = False
     default_data_type: int = DEFAULT_ORIGINAL_DATA_TYPE
+    enforce_time_range_limit: bool = True
 
     async def _execute_station_query(
         self,
@@ -1008,7 +1232,11 @@ class _BaseJiangxiNoiseStationTool(_BaseJiangxiNoiseTool):
             )
             page_size = _validate_page_size(page_size)
             max_pages = _validate_max_pages(max_pages)
-            start, end = _parse_time_range(start_time, end_time)
+            start, end = _parse_time_range(
+                start_time,
+                end_time,
+                max_range=MAX_QUERY_RANGE if self.enforce_time_range_limit else None,
+            )
             client = self._get_client()
             if self.granularity == "minute":
                 query = client.query_station_minute_data
@@ -1016,6 +1244,8 @@ class _BaseJiangxiNoiseStationTool(_BaseJiangxiNoiseTool):
                 query = client.query_station_hour_data
             elif self.granularity == "day":
                 query = client.query_station_day_data
+            elif self.granularity == "compliance":
+                query = client.query_station_compliance_data
             else:
                 query = client.query_station_statistics_data
             records, total_count, pages_fetched, truncated = await _fetch_all_pages(
@@ -1045,11 +1275,16 @@ class _BaseJiangxiNoiseStationTool(_BaseJiangxiNoiseTool):
             if self.supports_data_type:
                 metadata["data_type"] = data_type_value
                 metadata["data_type_label"] = DATA_TYPE_LABELS[data_type_value]
+            if self.granularity == "compliance":
+                metadata["calculation_source"] = (
+                    "江西噪声平台直接统计，本地未按日明细重新计算"
+                )
             granularity_label = {
                 "minute": "分钟",
                 "hour": "小时",
                 "day": "日均",
                 "statistics": "统计",
+                "compliance": "周期达标率",
             }.get(self.granularity, self.granularity)
             return _success_response(
                 tool_name=tool_name,
@@ -1249,6 +1484,7 @@ class QueryJiangxiNoiseStationStatisticsTool(_BaseJiangxiNoiseStationTool):
     """Query station-level period statistics Jiangxi noise data."""
 
     granularity = "statistics"
+    enforce_time_range_limit = False
 
     def __init__(self, client: JiangxiNoiseDataClient | None = None) -> None:
         function_schema = {
@@ -1259,6 +1495,7 @@ class QueryJiangxiNoiseStationStatisticsTool(_BaseJiangxiNoiseStationTool):
                 "返回每个站点在查询时段内聚合的统计指标（非逐日均值）：ldn 昼夜等效声级、ld 昼间等效声级、"
                 "ln 夜间等效声级、l5/l10/l50/l90/l95 统计声级、lMin/lMax、sd 标准偏差、"
                 "超标标志 isLdOverStandard/isLnOverStandard，以及车流量与气象辅助指标。"
+                "本工具不限查询时间范围，可查询半年、全年等长周期统计数据。"
             ),
             "parameters": _station_parameters_schema("站点统计噪声查询参数"),
         }
@@ -1296,12 +1533,68 @@ class QueryJiangxiNoiseStationStatisticsTool(_BaseJiangxiNoiseStationTool):
         )
 
 
+class QueryJiangxiNoiseStationComplianceTool(_BaseJiangxiNoiseStationTool):
+    """Query platform-calculated station compliance rates for a custom range."""
+
+    granularity = "compliance"
+    supports_data_type = True
+    default_data_type = DEFAULT_AUDITED_DATA_TYPE
+    enforce_time_range_limit = False
+
+    def __init__(self, client: JiangxiNoiseDataClient | None = None) -> None:
+        function_schema = {
+            "name": "query_jiangxi_noise_station_compliance",
+            "description": (
+                "查询江西省噪声站点在自选起止时间内的昼间、夜间达标率。"
+                "可按地市、站点名称或站点编码选择范围；统计值由江西噪声平台直接计算，"
+                "本地不查询日明细、不重新汇总。仅支持自选时段，不提供月、季、年统计类型参数。"
+            ),
+            "parameters": _station_parameters_schema(
+                "站点自选时段达标率查询参数",
+                data_type_default=DEFAULT_AUDITED_DATA_TYPE,
+            ),
+        }
+        super().__init__(
+            name="query_jiangxi_noise_station_compliance",
+            description="查询江西噪声站点任意时段昼夜达标率",
+            function_schema=function_schema,
+            client=client,
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext | None = None,
+        cities: list[str] | None = None,
+        stations: list[str] | None = None,
+        station_codes: list[str] | None = None,
+        start_time: str = "",
+        end_time: str = "",
+        data_type: Any = None,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        max_pages: int = DEFAULT_MAX_PAGES,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._execute_station_query(
+            context=context,
+            cities=cities,
+            stations=stations,
+            station_codes=station_codes,
+            start_time=start_time,
+            end_time=end_time,
+            data_type=data_type,
+            page_size=page_size,
+            max_pages=max_pages,
+            extra_kwargs=kwargs,
+        )
+
+
 class QueryJiangxiNoiseStationDayTool(_BaseJiangxiNoiseStationTool):
     """Query station-level daily Jiangxi noise data."""
 
     granularity = "day"
     supports_data_type = True
     default_data_type = DEFAULT_AUDITED_DATA_TYPE
+    enforce_time_range_limit = False
 
     def __init__(self, client: JiangxiNoiseDataClient | None = None) -> None:
         function_schema = {
@@ -1311,6 +1604,7 @@ class QueryJiangxiNoiseStationDayTool(_BaseJiangxiNoiseStationTool):
                 "传南昌或南昌市时自动展开南昌下辖噪声站点；也可传站点名称或编码。"
                 "data 每条仅保留 station_code/time/指标，站点名称、城市、经纬度和功能区见 metadata.stations。"
                 "data_type 对应接口 dataType，可选值 1=审核数据、0=原始数据；默认 1。"
+                "本工具不限查询时间范围，可查询半年、全年等长周期日均值。"
             ),
             "parameters": _station_parameters_schema(
                 "站点日均噪声查询参数",

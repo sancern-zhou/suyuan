@@ -12,7 +12,7 @@ test('project config exposes module and feature predicates', () => {
     frontend: {
       theme: 'demo',
       brandName: '演示项目',
-      features: { noiseMap: true },
+      features: { noiseMap: true, era5HistoricalBackfill: false },
       agentModes: ['assistant', 'query'],
       defaultAgentMode: 'query',
       agentPlatformLayout: 'scenes'
@@ -23,6 +23,8 @@ test('project config exposes module and feature predicates', () => {
   assert.equal(config.hasModule('atmosphere'), false)
   assert.equal(config.hasFeature('noiseMap'), true)
   assert.equal(config.hasFeature('missing'), false)
+  assert.equal(config.isFeatureEnabled('era5HistoricalBackfill', true), false)
+  assert.equal(config.isFeatureEnabled('unspecified', true), true)
   assert.equal(config.brandName, '演示项目')
   assert.deepEqual(config.agentModeIds, ['assistant', 'query'])
   assert.equal(config.defaultAgentMode, 'query')
