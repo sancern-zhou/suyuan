@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 import structlog
@@ -76,8 +78,11 @@ class KnowledgeIngestionService:
 
     async def ingest_document(self, document_id: str) -> IngestionResult:
         snapshot = await self._load_and_mark_processing(document_id)
+        staging_path = snapshot.file_path
+        stored_now = False
         try:
-            content = await self.processor.parse(snapshot.file_path)
+            snapshot, stored_now = await self._store_original_file(snapshot)
+            content = await self._parse_original(snapshot)
             chunks = await self.processor.chunk(
                 content=content,
                 strategy=self.processing_options.get("chunking_strategy", "llm"),
@@ -93,10 +98,12 @@ class KnowledgeIngestionService:
                 expected_generation=snapshot.content_generation,
             )
             raise
+        finally:
+            if stored_now and staging_path and staging_path != snapshot.file_path:
+                Path(staging_path).unlink(missing_ok=True)
 
         drafts = build_chunk_drafts(chunks)
         persisted = await self._persist_chunks_and_outbox(snapshot, drafts)
-        await self._store_original_file(snapshot)
 
         graph_errors: list[str] = []
         changed_entity_ids: set[str] = set()
@@ -164,17 +171,49 @@ class KnowledgeIngestionService:
             new_file_path=new_file_path,
             file_metadata=file_metadata,
         )
-        await self._delete_original_file(old_snapshot)
         try:
-            return await self.ingest_document(document_id)
+            result = await self.ingest_document(document_id)
         except Exception:
-            await self._purge_document_derivatives(
-                kb_id=old_snapshot.kb_id,
-                document_id=document_id,
-                payload_version=old_snapshot.content_generation + 1,
-                expected_generation=old_snapshot.content_generation + 1,
-            )
+            failed_snapshot = await self._get_current_snapshot(document_id)
+            if failed_snapshot is not None:
+                await self._delete_original_file(failed_snapshot)
+            await self._restore_replacement(old_snapshot)
             raise
+        await self._delete_original_file(old_snapshot)
+        return result
+
+    async def _get_current_snapshot(self, document_id: str) -> _DocumentSnapshot | None:
+        async with self.session_factory() as session:
+            document = await session.get(Document, document_id)
+            if document is None:
+                return None
+            kb = await session.get(KnowledgeBase, document.knowledge_base_id)
+            return self._snapshot(document, kb) if kb is not None else None
+
+    async def _restore_replacement(self, snapshot: _DocumentSnapshot) -> None:
+        async with self.session_factory() as session, session.begin():
+            document = await session.scalar(
+                select(Document).where(Document.id == snapshot.document_id).with_for_update()
+            )
+            if document is None or document.content_generation != snapshot.content_generation + 1:
+                return
+            document.content_generation = snapshot.content_generation
+            document.filename = snapshot.filename
+            document.file_path = snapshot.file_path
+            document.file_type = snapshot.file_type
+            document.file_size = snapshot.file_size
+            document.file_hash = snapshot.file_hash
+            document.extra_metadata = dict(snapshot.extra_metadata or {})
+            document.original_file_oid = snapshot.original_file_oid
+            document.file_storage_type = snapshot.file_storage_type
+            document.file_mime_type = snapshot.file_mime_type
+            document.file_checksum = snapshot.file_checksum
+            document.storage_size = snapshot.storage_size
+            document.status = snapshot.status
+            document.ingestion_status = snapshot.ingestion_status
+            document.graph_status = snapshot.graph_status
+            document.processing_error = snapshot.processing_error
+            document.error_message = snapshot.error_message
 
     async def delete_document(self, kb_id: str, document_id: str) -> None:
         snapshot = await self._begin_delete(kb_id, document_id)
@@ -232,6 +271,19 @@ class KnowledgeIngestionService:
                 graph_enabled=bool(kb.graph_enabled),
                 schema=schema,
                 rule_version=int(kb.rule_version or 0),
+                original_file_oid=document.original_file_oid,
+                file_storage_type=document.file_storage_type,
+                file_type=document.file_type,
+                file_hash=document.file_hash,
+                file_mime_type=document.file_mime_type,
+                file_checksum=document.file_checksum,
+                storage_size=document.storage_size or 0,
+                extra_metadata=dict(document.extra_metadata or {}),
+                status=document.status,
+                ingestion_status=document.ingestion_status,
+                graph_status=document.graph_status,
+                processing_error=document.processing_error,
+                error_message=document.error_message,
             )
 
     async def _persist_chunks_and_outbox(self, snapshot, drafts):
@@ -502,12 +554,22 @@ class KnowledgeIngestionService:
             document.chunk_count = chunk_count
             document.file_preview_text = content[:500] if content else None
             document.processed_at = datetime.utcnow()
+            if document.file_storage_type == "database" and document.original_file_oid:
+                document.file_path = None
 
             await self._recalculate_kb_stats(session, snapshot.kb_id)
 
-    async def _store_original_file(self, snapshot) -> None:
+    async def _store_original_file(self, snapshot) -> tuple[_DocumentSnapshot, bool]:
         if self.file_storage is None:
-            return
+            return snapshot, False
+        if snapshot.file_storage_type == "database" and snapshot.original_file_oid:
+            return replace(snapshot, file_path=None), False
+        if snapshot.file_storage_type == "local" and snapshot.file_path:
+            return snapshot, False
+        if not snapshot.file_path:
+            raise FileNotFoundError("document has no staging file or durable original")
+
+        info = None
         try:
             async with self.session_factory() as session, session.begin():
                 document = await session.scalar(
@@ -527,23 +589,53 @@ class KnowledgeIngestionService:
                     document_id=snapshot.document_id,
                     knowledge_base_id=snapshot.kb_id,
                 )
-                if info:
-                    document.file_storage_type = info.get("storage_type", "none")
-                    document.file_mime_type = info.get("mime_type")
-                    document.file_checksum = info.get("checksum")
-                    document.storage_size = info.get("size", 0)
-                    if info.get("storage_type") == "database" and info.get("loid"):
-                        document.original_file_oid = int(info["loid"])
-                    elif info.get("storage_type") == "local":
-                        document.file_path = info.get("storage_path", snapshot.file_path)
-        except StaleContentGeneration:
+                if not info:
+                    raise RuntimeError("original file storage returned no durable reference")
+                storage_type = info.get("storage_type", "none")
+                document.file_storage_type = storage_type
+                document.file_mime_type = info.get("mime_type")
+                document.file_checksum = info.get("checksum")
+                document.storage_size = info.get("size", 0)
+                if storage_type == "database" and info.get("loid"):
+                    document.original_file_oid = int(info["loid"])
+                    document.file_path = None
+                elif storage_type == "local" and info.get("storage_path"):
+                    document.original_file_oid = None
+                    document.file_path = str(info["storage_path"])
+                else:
+                    raise RuntimeError("original file storage returned an invalid durable reference")
+                updated = replace(
+                    snapshot,
+                    file_path=document.file_path,
+                    original_file_oid=document.original_file_oid,
+                    file_storage_type=document.file_storage_type,
+                )
+        except Exception:
+            if info and info.get("storage_type") == "local" and info.get("storage_path"):
+                Path(str(info["storage_path"])).unlink(missing_ok=True)
             raise
-        except Exception as exc:
-            logger.warning(
-                "original_file_storage_failed",
-                document_id=snapshot.document_id,
-                error=str(exc),
+        return updated, True
+
+    async def _parse_original(self, snapshot: _DocumentSnapshot) -> str:
+        if snapshot.file_path:
+            return await self.processor.parse(snapshot.file_path)
+        if snapshot.file_storage_type != "database" or not snapshot.original_file_oid:
+            raise FileNotFoundError("durable original file is unavailable")
+
+        from app.knowledge_base.file_storage import DatabaseFileStorageService
+
+        async with self.session_factory() as session:
+            file_bytes, _ = await DatabaseFileStorageService(session).retrieve_file(
+                int(snapshot.original_file_oid)
             )
+        suffix = Path(snapshot.filename).suffix
+        with tempfile.NamedTemporaryFile(prefix="kb-parse-", suffix=suffix, delete=False) as handle:
+            handle.write(file_bytes)
+            materialized_path = Path(handle.name)
+        try:
+            return await self.processor.parse(str(materialized_path))
+        finally:
+            materialized_path.unlink(missing_ok=True)
 
     async def _begin_replacement(
         self,
@@ -724,18 +816,32 @@ class KnowledgeIngestionService:
         )
 
     def _snapshot(self, document: Document, kb: KnowledgeBase) -> _DocumentSnapshot:
+        file_path = document.file_path
+        if document.file_storage_type == "database" and document.original_file_oid:
+            file_path = None
         return _DocumentSnapshot(
             document_id=document.id,
             kb_id=kb.id,
             content_generation=document.content_generation,
             filename=document.filename,
-            file_path=document.file_path,
+            file_path=file_path,
             file_size=document.file_size or 0,
             graph_enabled=bool(kb.graph_enabled),
             schema=self._schema(kb.graph_schema),
             rule_version=int(kb.rule_version or 0),
             original_file_oid=document.original_file_oid,
             file_storage_type=document.file_storage_type,
+            file_type=document.file_type,
+            file_hash=document.file_hash,
+            file_mime_type=document.file_mime_type,
+            file_checksum=document.file_checksum,
+            storage_size=document.storage_size or 0,
+            extra_metadata=dict(document.extra_metadata or {}),
+            status=document.status,
+            ingestion_status=document.ingestion_status,
+            graph_status=document.graph_status,
+            processing_error=document.processing_error,
+            error_message=document.error_message,
         )
 
     @staticmethod
@@ -758,6 +864,7 @@ class KnowledgeIngestionService:
                 "document_id": chunk.document_id,
                 "chunk_index": chunk.chunk_index,
                 "chunk_id": chunk.id,
+                "content_hash": chunk.content_hash,
             },
         }
 
@@ -807,10 +914,21 @@ class _DocumentSnapshot:
     kb_id: str
     content_generation: int
     filename: str
-    file_path: str
+    file_path: str | None
     file_size: int
     graph_enabled: bool
     schema: GraphExtractionSchema
     rule_version: int = 0
     original_file_oid: int | None = None
     file_storage_type: str | None = None
+    file_type: str | None = None
+    file_hash: str | None = None
+    file_mime_type: str | None = None
+    file_checksum: str | None = None
+    storage_size: int = 0
+    extra_metadata: dict | None = None
+    status: DocumentStatus = DocumentStatus.PROCESSING
+    ingestion_status: str = "processing"
+    graph_status: str = "pending"
+    processing_error: str | None = None
+    error_message: str | None = None

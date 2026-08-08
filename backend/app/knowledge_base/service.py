@@ -25,6 +25,7 @@ from .models import (
 from .permissions import KnowledgeBasePermissions
 from . import get_vector_store, get_document_processor
 from .file_storage import SmartFileStorage
+from .retrieval_utils import deduplicate_results_by_content
 
 logger = structlog.get_logger()
 
@@ -580,10 +581,10 @@ class KnowledgeBaseService:
         top_k: int = 5,
         score_threshold: float = 0.25,
         filters: Optional[Dict[str, Any]] = None,
-        use_reranker: bool | str = True,
+        use_reranker: bool | str = "never",
         use_hybrid: bool = True,
         alpha: float = 0.7,
-        use_graph_retrieval: bool = True,
+        use_graph_retrieval: bool = False,
         graph_depth: int = 2,
         graph_seed_top_k: int = 10,
         graph_chunk_top_k: int = 20,
@@ -646,7 +647,7 @@ class KnowledgeBaseService:
                 query=query,
                 kb_ids=[kb.id for kb in kbs],
                 top_k=top_k,
-                use_graph_retrieval=True,
+                use_graph_retrieval=use_graph_retrieval,
                 graph_depth=graph_depth,
                 graph_seed_top_k=graph_seed_top_k,
                 graph_chunk_top_k=graph_chunk_top_k,
@@ -716,6 +717,7 @@ class KnowledgeBaseService:
         results = []
         for kb_results in all_results:
             results.extend(kb_results)
+        results = deduplicate_results_by_content(results)
 
         logger.info(
             "knowledge_search_candidates_collected",
@@ -765,7 +767,7 @@ class KnowledgeBaseService:
         """兼容旧的 bool 参数，同时支持 auto/always/never。"""
         if isinstance(use_reranker, bool):
             return "always" if use_reranker else "never"
-        mode = str(use_reranker or "auto").strip().lower()
+        mode = str(use_reranker or "never").strip().lower()
         aliases = {
             "true": "always",
             "false": "never",
@@ -775,7 +777,7 @@ class KnowledgeBaseService:
             "off": "never",
         }
         mode = aliases.get(mode, mode)
-        return mode if mode in {"auto", "always", "never"} else "auto"
+        return mode if mode in {"auto", "always", "never"} else "never"
 
     def _should_rerank(
         self,
@@ -883,7 +885,11 @@ class KnowledgeBaseService:
                 )
                 for c in candidates
             ]
-            scores = reranker.predict(pairs)
+            timeout_seconds = max(0.1, float(os.getenv("KNOWLEDGE_RERANK_TIMEOUT_SECONDS", "8")))
+            scores = await asyncio.wait_for(
+                asyncio.to_thread(reranker.predict, pairs),
+                timeout=timeout_seconds,
+            )
 
             for i, score in enumerate(scores):
                 candidates[i]["rerank_score"] = float(score)
@@ -897,6 +903,14 @@ class KnowledgeBaseService:
                 top_k=top_k,
                 elapsed_ms=round((time.time() - rerank_started_at) * 1000, 2)
             )
+            return candidates[:top_k]
+        except asyncio.TimeoutError:
+            logger.warning(
+                "rerank_timeout_fallback_to_recall_score",
+                candidate_count=len(candidates),
+                top_k=top_k,
+            )
+            candidates.sort(key=lambda x: x.get("original_score", x.get("score", 0)), reverse=True)
             return candidates[:top_k]
         except Exception as e:
             logger.warning("rerank_failed_fallback_to_vector_score", error=str(e))
@@ -1053,6 +1067,57 @@ class KnowledgeBaseService:
             "filename": doc.filename,
             "chunks": chunks,
             "total": len(chunks)
+        }
+
+    async def get_document_original(
+        self,
+        kb_id: str,
+        doc_id: str,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Read and verify one durable original without exposing storage internals."""
+        kb = await self.get_knowledge_base(kb_id)
+        if not kb:
+            raise ValueError(f"Knowledge base not found: {kb_id}")
+        if kb.is_private and kb.owner_id != user_id:
+            raise PermissionError("No permission to access this knowledge base")
+        result = await self.db.execute(
+            select(Document).where(
+                Document.id == doc_id,
+                Document.knowledge_base_id == kb_id,
+            )
+        )
+        document = result.scalar_one_or_none()
+        if document is None:
+            raise ValueError(f"Document not found: {doc_id}")
+
+        from app.knowledge_base.file_storage import (
+            DatabaseFileStorageService,
+            LocalFileStorageService,
+        )
+
+        if document.file_storage_type == "database" and document.original_file_oid:
+            content, _ = await DatabaseFileStorageService(self.db).retrieve_file(
+                int(document.original_file_oid)
+            )
+        elif document.file_storage_type == "local" and document.file_path:
+            content, _ = await LocalFileStorageService().retrieve_file(document.file_path)
+        else:
+            raise FileNotFoundError("durable original file is unavailable")
+
+        checksum = hashlib.sha256(content).hexdigest()
+        if document.file_checksum and checksum != document.file_checksum:
+            raise IOError("original file checksum verification failed")
+        if document.storage_size and len(content) != document.storage_size:
+            raise IOError("original file size verification failed")
+        return {
+            "document_id": document.id,
+            "filename": document.filename,
+            "content": content,
+            "checksum": checksum,
+            "size": len(content),
+            "mime_type": document.file_mime_type or "application/octet-stream",
+            "storage_type": document.file_storage_type,
         }
 
     async def _get_chunks_from_database(self, document_id: str) -> List[Dict[str, Any]]:

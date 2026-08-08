@@ -36,6 +36,7 @@ from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.schemas import ConversationSource
 from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
+from app.knowledge_base.retrieval_utils import deduplicate_results_by_content
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/knowledge-qa", tags=["Knowledge QA"])
@@ -61,7 +62,7 @@ class KnowledgeQARequest(BaseModel):
         description="检索结果相似度阈值（可选）"
     )
     use_reranker: Optional[bool] = Field(default=None, description="兼容旧参数：是否强制使用Reranker精排")
-    rerank_mode: str = Field(default="auto", description="Reranker精排模式：auto/always/never，默认auto")
+    rerank_mode: str = Field(default="never", description="Reranker精排模式：auto/always/never，默认never")
 
 
 class ConversationHistoryResponse(BaseModel):
@@ -100,6 +101,7 @@ _hyde_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
 
 def _dedupe_search_results(results: List[dict]) -> List[dict]:
     """合并召回结果，同一分块只保留得分更高的一条，并记录命中路由。"""
+    results = deduplicate_results_by_content(results)
     deduped: "OrderedDict[tuple, dict]" = OrderedDict()
     for item in results:
         kb_info = item.get("knowledge_base", {}) or {}
@@ -263,7 +265,7 @@ async def search_knowledge_bases(
     knowledge_base_ids: Optional[List[str]] = None,
     top_k: int = 5,
     score_threshold: Optional[float] = None,
-    use_reranker: bool | str = "auto",
+    use_reranker: bool | str = "never",
     use_hyde: bool | str = False  # 是否使用HyDE关键词增强；不再双路检索
 ) -> List[dict]:
     """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
@@ -312,7 +314,8 @@ async def search_knowledge_bases(
                     top_k=top_k,
                     score_threshold=score_threshold,
                     filters=None,
-                    use_reranker=use_reranker
+                    use_reranker=use_reranker,
+                    use_graph_retrieval=False,
                 )
             route_elapsed = (time.time() - route_started_at) * 1000
             for item in route_results:

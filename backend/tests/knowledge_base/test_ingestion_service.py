@@ -70,6 +70,11 @@ class _FailingExtractor:
         raise RuntimeError("graph provider unavailable")
 
 
+class _FailingFileStorage:
+    async def store_file(self, **kwargs):
+        raise RuntimeError("original storage unavailable")
+
+
 @pytest.fixture
 async def ingestion_database(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'ingestion.db'}")
@@ -183,3 +188,23 @@ async def test_graph_failure_keeps_chunk_outbox_and_marks_partial(ingestion_data
         assert record_types == ["chunk", "chunk"]
         chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
         assert {chunk.graph_status for chunk in chunks} == {"failed"}
+
+
+@pytest.mark.asyncio
+async def test_original_storage_failure_marks_failed_before_chunks(ingestion_database):
+    service = KnowledgeIngestionService(
+        session_factory=ingestion_database,
+        processor=_Processor(),
+        extractor=_Extractor(),
+        file_storage=_FailingFileStorage(),
+    )
+
+    with pytest.raises(RuntimeError, match="original storage unavailable"):
+        await service.ingest_document("doc1")
+
+    async with ingestion_database() as session:
+        document = await session.get(Document, "doc1")
+        chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
+    assert document.status == DocumentStatus.FAILED
+    assert document.ingestion_status == "failed"
+    assert chunks == []

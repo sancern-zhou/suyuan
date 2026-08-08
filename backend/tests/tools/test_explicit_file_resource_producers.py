@@ -95,3 +95,29 @@ def test_existing_generic_producer_seams_emit_only_valid_grouped_members(tmp_pat
     assert all(declaration.relation.value == "primary" for declaration in declarations)
     assert all(declaration.group_key for declaration in declarations)
     assert all(declaration.format and declaration.media_type for declaration in declarations)
+
+
+def test_single_file_product_infers_preview_contract_for_supported_documents(tmp_path):
+    html = tmp_path / "report.html"
+    html.write_text("<h1>report</h1>", encoding="utf-8")
+    pdf = tmp_path / "source.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    binary = tmp_path / "archive.bin"
+    binary.write_bytes(b"data")
+
+    html_resource = single_file_product(html, tool_name="write_file")
+    pdf_resource = single_file_product(pdf, tool_name="browser")
+    binary_resource = single_file_product(binary, tool_name="bash")
+
+    assert (html_resource["renderer"], html_resource["capabilities"]) == (
+        "html",
+        ["preview", "download"],
+    )
+    assert (pdf_resource["renderer"], pdf_resource["capabilities"]) == (
+        "pdf",
+        ["preview", "download"],
+    )
+    assert (binary_resource["renderer"], binary_resource["capabilities"]) == (
+        "file",
+        ["download"],
+    )

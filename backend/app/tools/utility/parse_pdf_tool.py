@@ -224,9 +224,10 @@ class ParsePDFTool(LLMTool):
             if "tables" in data and len(data["tables"]) <= 10:
                 # 显示所有表格（最多10个）
                 for idx, table in enumerate(data["tables"]):
-                    lines.append(f"### 表格 {idx + 1}: 页码{table['page']}\n")
-                    lines.append(f"- **行数**: {table['rows']}")
-                    lines.append(f"- **列数**: {table['cols']}")
+                    rows, cols = self._table_dimensions(table)
+                    lines.append(f"### 表格 {idx + 1}: 页码{table.get('page', '未知')}\n")
+                    lines.append(f"- **行数**: {rows}")
+                    lines.append(f"- **列数**: {cols}")
                     lines.append("")
 
                     # 显示表格数据（Markdown表格格式）
@@ -256,6 +257,25 @@ class ParsePDFTool(LLMTool):
                 lines.append(f"图片数量过多（{data['image_count']}个），已省略详细显示\n")
 
         return lines
+
+    @staticmethod
+    def _table_dimensions(table: Dict[str, Any]) -> tuple[int, int]:
+        """Return declared dimensions or derive them from extracted table data."""
+        table_data = table.get("data")
+        rows = table.get("rows")
+        cols = table.get("cols")
+        if rows is None:
+            rows = len(table_data) if isinstance(table_data, list) else 0
+        if cols is None:
+            cols = max(
+                (
+                    len(row)
+                    for row in table_data or []
+                    if isinstance(row, (list, tuple))
+                ),
+                default=0,
+            )
+        return int(rows), int(cols)
 
     def _build_ocr_markdown(self, data: Dict[str, Any]) -> List[str]:
         """构建OCR识别结果的Markdown"""
@@ -298,10 +318,11 @@ class ParsePDFTool(LLMTool):
         # 表格数据
         if "tables" in data and data["tables"]:
             for idx, table in enumerate(data["tables"]):
+                rows, cols = self._table_dimensions(table)
                 lines.append(f"### 表格 {idx + 1}\n")
-                lines.append(f"- **页码**: {table['page']}")
-                lines.append(f"- **行数**: {table['rows']}")
-                lines.append(f"- **列数**: {table['cols']}")
+                lines.append(f"- **页码**: {table.get('page', '未知')}")
+                lines.append(f"- **行数**: {rows}")
+                lines.append(f"- **列数**: {cols}")
                 lines.append("")
 
                 # 显示表格数据（Markdown表格格式）

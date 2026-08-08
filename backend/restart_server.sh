@@ -74,7 +74,7 @@ fi
 # 3. 启动服务器
 echo "启动服务器..."
 export DATABASE_SCHEMA_INIT_ON_STARTUP=false
-WORKERS="${WORKERS:-4}"
+WORKERS="${WORKERS:-1}"
 # Authentication must see the raw TCP peer; Nginx owns public-client-IP logging.
 nohup setsid "${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "${WORKERS}" --env-file .env --no-proxy-headers > /tmp/backend.log 2>&1 &
 NEW_PID=$!

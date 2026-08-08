@@ -206,6 +206,11 @@ async def test_web_role_starts_only_document_processing_queue(monkeypatch):
         "start_document_processing_queue",
         lambda: record("start_document_processing_queue"),
     )
+    monkeypatch.setattr(
+        startup,
+        "warmup_knowledge_base_models_if_enabled",
+        lambda: record("warmup_knowledge_base_models_if_enabled"),
+    )
 
     await startup.run_startup(SimpleNamespace(state=SimpleNamespace()))
 
@@ -214,6 +219,7 @@ async def test_web_role_starts_only_document_processing_queue(monkeypatch):
         "initialize_tools_and_agents",
         "init_database",
         "start_document_processing_queue",
+        "warmup_knowledge_base_models_if_enabled",
     ]
 
 

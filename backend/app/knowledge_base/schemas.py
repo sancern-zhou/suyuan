@@ -170,12 +170,12 @@ class SearchRequest(BaseModel):
         description="相似度阈值"
     )
     use_reranker: Optional[bool] = Field(default=None, description="兼容旧参数：是否强制使用Reranker精排")
-    rerank_mode: str = Field(default="auto", description="Reranker精排模式：auto/always/never")
+    rerank_mode: str = Field(default="never", description="Reranker精排模式：auto/always/never")
     filters: Optional[Dict[str, Any]] = Field(
         default=None,
         description="元数据过滤条件"
     )
-    use_graph_retrieval: bool = True
+    use_graph_retrieval: bool = False
     graph_depth: int = Field(default=2, ge=1, le=2)
     graph_seed_top_k: int = Field(default=10, ge=1, le=50)
     graph_chunk_top_k: int = Field(default=20, ge=1, le=100)

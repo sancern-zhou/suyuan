@@ -13,10 +13,13 @@
 import json
 import structlog
 import time
+from enum import Enum
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, timezone
 from datetime import time as datetime_time
 from decimal import Decimal
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
 from sqlalchemy import select, update, delete, func
@@ -76,28 +79,38 @@ class SessionRepository:
         }
 
     @staticmethod
-    def _convert_json_value(obj: Any) -> Any:
-        """
-        递归地将数据库消息字段转换为 JSON 可序列化值。
-
-        Args:
-            obj: 任意 Python 对象
-
-        Returns:
-            转换后的 JSON 兼容对象
-        """
+    def _normalize_json_value(obj: Any) -> Any:
+        """Recursively convert runtime values to JSON-compatible primitives."""
+        if isinstance(obj, Enum):
+            return SessionRepository._normalize_json_value(obj.value)
         if isinstance(obj, Decimal):
             return float(obj)
-        elif isinstance(obj, (datetime, date, datetime_time)):
+        if isinstance(obj, (datetime, date, datetime_time)):
             return obj.isoformat()
-        elif isinstance(obj, dict):
-            return {key: SessionRepository._convert_json_value(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [SessionRepository._convert_json_value(item) for item in obj]
-        elif isinstance(obj, tuple):
-            return [SessionRepository._convert_json_value(item) for item in obj]
-        else:
+        if isinstance(obj, (UUID, Path)):
+            return str(obj)
+        if isinstance(obj, dict):
+            return {
+                str(SessionRepository._normalize_json_value(key)): (
+                    SessionRepository._normalize_json_value(value)
+                )
+                for key, value in obj.items()
+            }
+        if isinstance(obj, (list, tuple)):
+            return [SessionRepository._normalize_json_value(item) for item in obj]
+        if isinstance(obj, (set, frozenset)):
+            return [
+                SessionRepository._normalize_json_value(item)
+                for item in sorted(obj, key=str)
+            ]
+        if obj is None or isinstance(obj, (str, bool, int, float)):
             return obj
+        return str(obj)
+
+    @staticmethod
+    def _convert_json_value(obj: Any) -> Any:
+        """Backward-compatible alias for JSON normalization."""
+        return SessionRepository._normalize_json_value(obj)
 
     @staticmethod
     def _resolve_role_and_type(msg: Dict[str, Any]) -> tuple:

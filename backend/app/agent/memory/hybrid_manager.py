@@ -108,6 +108,23 @@ class HybridMemoryManager:
 
         data = observation.get("data")
         refs = self._extract_observation_refs(observation)
+        resources = observation.get("resources")
+        tracking = observation.get("resource_tracking")
+        has_unified_resources = (
+            isinstance(resources, list)
+            and any(isinstance(item, dict) for item in resources)
+        ) or (
+            isinstance(tracking, dict)
+            and tracking.get("durable") is True
+        )
+
+        if has_unified_resources:
+            logger.debug(
+                "hybrid_memory_using_unified_resources",
+                resource_count=len(resources) if isinstance(resources, list) else 0,
+                durable=bool(isinstance(tracking, dict) and tracking.get("durable")),
+            )
+            return observation
 
         if data is None and not refs["file_paths"] and not refs["report_file_paths"]:
             # data为None且没有可引用结果的情况，直接返回
@@ -140,12 +157,12 @@ class HybridMemoryManager:
                     "total_records": len(data) if isinstance(data, list) else None,
                 }
             else:
-                # 数据未保存（不应该发生，因为所有工具都保存了），但仍需处理
-                logger.warning(
-                    "hybrid_memory_data_file_not_registered",
+                # Compatibility path for tools that return a file_path without
+                # an explicit unified resource declaration.
+                logger.debug(
+                    "hybrid_memory_untracked_file_path_preserved",
                     file_path=existing_path
                 )
-                # 返回原observation，让上层处理
                 return observation
         else:
             if refs["report_file_paths"]:
@@ -182,8 +199,8 @@ class HybridMemoryManager:
                 }
 
             # 没有数据或报告文件路径时返回原 observation。
-            logger.warning(
-                "hybrid_memory_no_data_file_in_observation",
+            logger.debug(
+                "hybrid_memory_inline_data_preserved",
                 has_data=(data is not None),
                 observation_keys=list(observation.keys())
             )
@@ -199,7 +216,7 @@ class HybridMemoryManager:
             if isinstance(value, str) and value and value not in target:
                 target.append(value)
             elif isinstance(value, dict):
-                nested = value.get("file_path")
+                nested = value.get("file_path") or value.get("path")
                 if isinstance(nested, str) and nested and nested not in target:
                     target.append(nested)
 
@@ -214,6 +231,10 @@ class HybridMemoryManager:
                 add_unique(file_paths, item)
             for item in payload.get("report_file_paths") or []:
                 add_unique(report_file_paths, item)
+
+            for resource in payload.get("resources") or []:
+                if isinstance(resource, dict):
+                    add_unique(file_paths, resource.get("locator"))
 
             metadata = payload.get("metadata")
             if isinstance(metadata, dict):
