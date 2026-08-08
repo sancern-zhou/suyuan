@@ -284,9 +284,10 @@ async def upload_document(
     - hybrid: 混合分块
 
     LLM模式 (llm_mode，仅chunking_strategy=llm时有效):
-    - online: 线上API（60000字符分段阈值，使用DeepSeek/MiniMax/Mimo等，根据LLM_PROVIDER环境变量自动选择）
+    - online: 线上API（60000字符分段阈值，按照知识库配置的Flash模型链自动选择）
 
-    注意：上传文档到公共知识库不需要管理员权限
+    文档记录创建后立即返回，解析、分块和知识图谱抽取由后台队列处理。
+    上传文档到公共知识库不需要管理员权限。
     """
     # 个人知识库需要user_id，公共知识库允许匿名上传
 
@@ -344,7 +345,8 @@ async def upload_document(
             chunking_strategy=chunking_strategy,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            llm_mode=llm_mode
+            llm_mode=llm_mode,
+            defer_processing=True,
         )
 
         return _doc_to_response(doc)

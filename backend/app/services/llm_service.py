@@ -280,7 +280,10 @@ class LLMService:
             )
             yield
         finally:
+            temporary_client = self.anthropic_client
             _llm_request_state.reset(token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
 
     @staticmethod
     def _strip_thinking_blocks(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -611,6 +614,19 @@ class LLMService:
                 provider=self.provider,
                 model=self.model,
                 reason="Provider does not support cache_control (auto KV cache or not supported)",
+            )
+
+        if "thinking" in api_params:
+            extra_body = api_params.get("extra_body") or {}
+            if not isinstance(extra_body, dict):
+                extra_body = {}
+            extra_body["thinking"] = api_params.pop("thinking")
+            api_params["extra_body"] = extra_body
+            logger.debug(
+                "thinking_param_via_extra_body",
+                provider=self.provider,
+                model=self.model,
+                reason="anthropic SDK version does not support 'thinking' kwarg natively",
             )
 
         return api_params

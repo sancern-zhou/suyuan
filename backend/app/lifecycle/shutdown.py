@@ -13,7 +13,10 @@ from fastapi import FastAPI
 import structlog
 
 from app.lifecycle.database import close_database, stop_data_fetchers
-from app.lifecycle.knowledge_base import stop_knowledge_base_services
+from app.lifecycle.knowledge_base import (
+    stop_document_processing_queue,
+    stop_knowledge_base_services,
+)
 from app.lifecycle.nacos import stop_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
 from app.lifecycle.scheduled import stop_scheduled_task_service
@@ -39,6 +42,8 @@ async def run_shutdown(app: FastAPI) -> None:
         await stop_social_platform_service(app)
         await stop_data_fetchers()
         await stop_knowledge_base_services()
+    else:
+        await stop_document_processing_queue()
     await close_database()
     await http_client.close()
     auth_service = getattr(app.state, "auth_service", None)

@@ -23,7 +23,7 @@
       </div>
 
       <!-- ERA5 历史数据补采 -->
-      <div class="era5-card">
+      <div v-if="showEra5HistoricalBackfill" class="era5-card">
         <h4>ERA5 历史数据补采</h4>
         <p class="era5-desc">手动补采指定日期的 ERA5 气象数据（广东省全境 825 个网格点）</p>
 
@@ -153,6 +153,9 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import { projectConfig } from '@/config/projectConfig.js'
+
+const showEra5HistoricalBackfill = projectConfig.isFeatureEnabled('era5HistoricalBackfill', true)
 
 // Props
 const props = defineProps({

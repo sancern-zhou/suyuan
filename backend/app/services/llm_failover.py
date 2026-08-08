@@ -8,6 +8,7 @@ on the compaction path instead of moving them to another model.
 import asyncio
 import re
 import time
+import weakref
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -44,8 +45,8 @@ class LLMFailoverError(Exception):
         super().__init__(f"All LLM fallback candidates failed: {summary}")
 
 
-_pool_semaphores: dict[str, asyncio.Semaphore] = {}
-_pool_semaphore_limits: dict[str, int] = {}
+_pool_semaphores: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_pool_semaphore_limits: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _cooldowns: dict[str, tuple[float, LLMFailure]] = {}
 
 
@@ -56,14 +57,17 @@ def _pool_key(provider: Optional[str] = None, model: Optional[str] = None) -> st
 
 
 def get_llm_pool_semaphore(provider: Optional[str] = None, model: Optional[str] = None) -> asyncio.Semaphore:
-    """Return a semaphore scoped to a provider/model pool."""
+    """Return a provider/model semaphore scoped to the running event loop."""
     key = _pool_key(provider, model)
     limit = max(1, int(getattr(settings, "llm_global_max_concurrency", 2) or 2))
-    if key not in _pool_semaphores or _pool_semaphore_limits.get(key) != limit:
-        _pool_semaphores[key] = asyncio.Semaphore(limit)
-        _pool_semaphore_limits[key] = limit
+    loop = asyncio.get_running_loop()
+    semaphores = _pool_semaphores.setdefault(loop, {})
+    limits = _pool_semaphore_limits.setdefault(loop, {})
+    if key not in semaphores or limits.get(key) != limit:
+        semaphores[key] = asyncio.Semaphore(limit)
+        limits[key] = limit
         logger.info("llm_pool_concurrency_configured", pool_key=key, limit=limit)
-    return _pool_semaphores[key]
+    return semaphores[key]
 
 
 def get_global_llm_semaphore() -> asyncio.Semaphore:

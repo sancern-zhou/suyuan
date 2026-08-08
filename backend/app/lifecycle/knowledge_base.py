@@ -7,6 +7,7 @@ Dependency note:
 """
 
 import asyncio
+import os
 import time
 
 import structlog
@@ -14,22 +15,50 @@ import structlog
 logger = structlog.get_logger()
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def start_document_processing_queue() -> None:
+    """Start the upload-processing queue for API workers."""
+    from app.knowledge_base.tasks import start_processing_queue
+
+    await start_processing_queue()
+    logger.info("knowledge_base_processing_queue_started")
+
+
+async def stop_document_processing_queue() -> None:
+    """Stop the upload-processing queue before database shutdown."""
+    from app.knowledge_base.tasks import stop_processing_queue
+
+    await stop_processing_queue()
+    logger.info("knowledge_base_processing_queue_stopped")
+    await asyncio.sleep(1.0)
+
+
 async def start_knowledge_base_services() -> None:
     """Start knowledge base processing queue and warm up retrieval models."""
     try:
-        from app.knowledge_base.tasks import start_processing_queue
-
-        await start_processing_queue()
-        logger.info("knowledge_base_processing_queue_started")
+        await start_document_processing_queue()
     except Exception as e:
         logger.warning("knowledge_base_queue_start_failed", error=str(e))
 
-    try:
-        from app.knowledge_base.index_outbox import start_index_outbox_worker
+    if _env_flag("KNOWLEDGE_BASE_INDEX_OUTBOX_ON_STARTUP"):
+        try:
+            from app.knowledge_base.index_outbox import start_index_outbox_worker
 
-        await start_index_outbox_worker()
-    except Exception as e:
-        logger.warning("knowledge_index_outbox_start_failed", error=str(e))
+            await start_index_outbox_worker()
+        except Exception as e:
+            logger.warning("knowledge_index_outbox_start_failed", error=str(e))
+    else:
+        logger.info("knowledge_index_outbox_worker_skipped", reason="disabled_on_startup")
+
+    if not _env_flag("KNOWLEDGE_BASE_WARMUP_ON_STARTUP"):
+        logger.info("knowledge_base_warmup_skipped", reason="disabled_on_startup")
+        return
 
     try:
         await warmup_knowledge_base_models()
@@ -77,10 +106,6 @@ async def stop_knowledge_base_services() -> None:
         logger.warning("knowledge_index_outbox_stop_failed", error=str(e))
 
     try:
-        from app.knowledge_base.tasks import stop_processing_queue
-
-        await stop_processing_queue()
-        logger.info("knowledge_base_processing_queue_stopped")
-        await asyncio.sleep(1.0)
+        await stop_document_processing_queue()
     except Exception as e:
         logger.warning("knowledge_base_queue_stop_failed", error=str(e))

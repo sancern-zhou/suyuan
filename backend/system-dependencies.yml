@@ -9,6 +9,7 @@ debian_packages:
   - libreoffice-calc
   - libreoffice-impress
   - libreoffice-writer
+  - libmagic1
   - librsvg2-bin
   - nodejs
   - npm
@@ -40,6 +41,7 @@ commands:
   tesseract: PDF and image OCR
   rsvg-convert: SVG preview conversion
   jq: Optional structured filtering with a Python fallback
+  libmagic: File type detection for knowledge-base document partitioning
   node: Editable PPT compilation
   quarto: Report HTML and DOCX rendering
 

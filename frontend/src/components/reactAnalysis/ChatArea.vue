@@ -26,6 +26,7 @@
     <ReActMessageList
       v-show="!showManagementPanel"
       :messages="messages"
+      :is-analyzing="isAnalyzing"
       :show-reflexion="showReflexion"
       :reflexion-count="reflexionCount"
       :use-markdown="true"

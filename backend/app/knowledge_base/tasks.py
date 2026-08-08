@@ -33,6 +33,7 @@ class DocumentTask:
     kb_id: str
     file_path: str
     user_id: str
+    processing_options: Dict[str, Any] = field(default_factory=dict)
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None
@@ -79,7 +80,8 @@ class DocumentProcessingQueue:
         doc_id: str,
         kb_id: str,
         file_path: str,
-        user_id: str
+        user_id: str,
+        processing_options: Optional[Dict[str, Any]] = None,
     ) -> DocumentTask:
         """
         添加文档到处理队列
@@ -97,7 +99,8 @@ class DocumentProcessingQueue:
             doc_id=doc_id,
             kb_id=kb_id,
             file_path=file_path,
-            user_id=user_id
+            user_id=user_id,
+            processing_options=dict(processing_options or {}),
         )
 
         self._tasks[doc_id] = task
@@ -129,6 +132,50 @@ class DocumentProcessingQueue:
             "document_processing_queue_started",
             workers=self._max_workers
         )
+
+    async def recover_interrupted(self) -> int:
+        """Claim processing documents left behind by a stopped worker."""
+        from sqlalchemy import select
+
+        from app.db.database import async_session
+        from app.knowledge_base.models import Document, DocumentStatus
+
+        async with async_session() as db, db.begin():
+            documents = list(
+                (
+                    await db.execute(
+                        select(Document)
+                        .where(
+                            Document.status == DocumentStatus.PROCESSING,
+                            Document.ingestion_status == "processing",
+                        )
+                        .with_for_update(skip_locked=True)
+                    )
+                ).scalars()
+            )
+            recoveries = [
+                (document.id, document.knowledge_base_id, document.file_path)
+                for document in documents
+                if document.file_path
+            ]
+            for document in documents:
+                document.ingestion_status = "queued"
+
+        for doc_id, kb_id, file_path in recoveries:
+            await self.enqueue(
+                doc_id=doc_id,
+                kb_id=kb_id,
+                file_path=file_path,
+                user_id="system-recovery",
+            )
+
+        if recoveries:
+            logger.warning(
+                "document_tasks_recovered",
+                count=len(recoveries),
+                document_ids=[item[0] for item in recoveries],
+            )
+        return len(recoveries)
 
     async def stop(self):
         """停止处理队列"""
@@ -228,7 +275,7 @@ class DocumentProcessingQueue:
                 raise ValueError(f"Document not found: {task.doc_id}")
 
             # 统一状态机负责 Chunk、图谱事实和 Outbox，不再直接写向量。
-            await service.ingest_document(task.doc_id)
+            await service.ingest_document(task.doc_id, **task.processing_options)
 
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.utcnow()
@@ -302,6 +349,7 @@ async def start_processing_queue():
     """启动全局处理队列（应用启动时调用）"""
     queue = get_processing_queue()
     await queue.start()
+    await queue.recover_interrupted()
 
 
 async def stop_processing_queue():

@@ -14,7 +14,8 @@ const forbidden = [
   'pdf_preview', 'html_preview', 'markdown_preview', 'spreadsheet_preview', 'ppt_preview',
   'visualizationPanelRef', 'officePanelVisible', 'hasOfficeDocuments',
   'getOrFetchScreenshots', 'replaceEchartsPlaceholders', 'ECHARTS_PLACEHOLDER',
-  'extractVisualsFromMessages'
+  'extractVisualsFromMessages',
+  'task-files', 'TaskOutputFilesPanel', 'taskOutputFiles'
 ]
 
 async function productionFiles(directory) {

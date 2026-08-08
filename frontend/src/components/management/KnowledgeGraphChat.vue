@@ -5,6 +5,7 @@
         v-if="graphMessages.length"
         class="graph-chat-message-list"
         :messages="graphMessages"
+        :is-analyzing="isGraphAnalyzing"
         :show-reflexion="false"
         :reflexion-count="0"
         :use-markdown="true"
@@ -79,7 +80,7 @@ const graphMessages = computed(() => {
   ))
 })
 
-const isGraphAnalyzing = computed(() => !!store.modeStates.graph?.isAnalyzing)
+const isGraphAnalyzing = computed(() => !!graphState.value?.isAnalyzing)
 
 const canSend = computed(() => (
   !!props.knowledgeBaseId &&

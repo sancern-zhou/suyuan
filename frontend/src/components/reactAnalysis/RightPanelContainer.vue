@@ -63,7 +63,7 @@
             <path d="M9 12h6" />
             <path d="M9 15.5h5" />
           </svg>
-          <span>文档</span>
+          <span>文档预览</span>
           <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
         </button>
         <button
@@ -79,7 +79,7 @@
             <path d="M8 11.5h8" />
             <path d="M8 15h5" />
           </svg>
-          <span>溯源</span>
+          <span>知识溯源</span>
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
         <button
@@ -92,16 +92,6 @@
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7h6l2 2h9v9.5a2 2 0 0 1-2 2h-17v-13.5Z"/><path d="M3.5 10h17"/></svg>
           <span>文件产物</span>
           <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
-        </button>
-        <button
-          v-if="taskWorkspaceTask"
-          :class="['tab-btn', { active: activeTab === 'task-files' }]"
-          role="tab"
-          :aria-selected="activeTab === 'task-files'"
-          @click="handleTabChange('task-files')"
-        >
-          <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7h6l2 2h9v9.5a2 2 0 0 1-2 2h-17v-13.5Z"/><path d="M3.5 10h17"/></svg>
-          <span>文件产出</span>
         </button>
         <button
           v-if="showBoardTab"
@@ -145,13 +135,6 @@
         :selected-message-id="selectedMessageId"
       />
 
-      <TaskOutputFilesPanel
-        v-if="activeTab === 'task-files' && taskWorkspaceTask"
-        class="panel-content"
-        :task="taskWorkspaceTask"
-        @restore-session="emit('restore-session', $event)"
-      />
-
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
         class="panel-content"
@@ -165,7 +148,6 @@
 import { ref, computed, watch } from 'vue'
 import ReportGenerationPanel from '@/components/ReportGenerationPanel.vue'
 import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSourcePanel.vue'
-import TaskOutputFilesPanel from '@/components/management/TaskOutputFilesPanel.vue'
 import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.vue'
 import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
@@ -217,10 +199,6 @@ const props = defineProps({
   board: {
     type: Object,
     default: null
-  },
-  taskWorkspaceTask: {
-    type: Object,
-    default: null
   }
 })
 
@@ -229,8 +207,7 @@ const emit = defineEmits([
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
-  'board-version-restore',
-  'restore-session'
+  'board-version-restore'
 ])
 const resourceStore = useSessionResourceStore()
 
@@ -260,7 +237,7 @@ const explicitTarget = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.sessionId || props.taskWorkspaceTask || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value
+  return props.sessionId || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)

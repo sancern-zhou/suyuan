@@ -59,6 +59,12 @@ def initialize_fetchers():
     """
     try:
         project_context = load_project_context(settings.project_id)
+        if not project_context.manifest.backend.fetchers_enabled:
+            logger.info(
+                "fetchers_disabled_by_project",
+                project=settings.project_id,
+            )
+            return False
         project_allowlist = set(project_context.manifest.backend.fetchers)
         raw_allowlist = os.getenv("FETCHER_ALLOWLIST", "").strip()
         environment_allowlist = {

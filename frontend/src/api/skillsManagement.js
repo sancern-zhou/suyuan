@@ -68,7 +68,8 @@ export async function refreshSkillsIndex() {
     method: 'POST'
   })
   if (!response.ok) {
-    throw new Error(`刷新技能索引失败: ${response.statusText}`)
+    const data = await response.json().catch(() => ({}))
+    throw new Error(data.detail || data.message || response.statusText || `HTTP ${response.status}`)
   }
   return response.json()
 }

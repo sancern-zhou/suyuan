@@ -1,7 +1,7 @@
 """
 文档处理器
 
-使用Unstructured进行文档解析，LlamaIndex进行智能分块。
+使用PyMuPDF快速解析PDF，使用Unstructured解析其他文档，LlamaIndex进行智能分块。
 支持格式：PDF, DOCX, XLSX, PPTX, HTML, TXT, MD, CSV, JSON
 
 分块策略：
@@ -37,10 +37,6 @@ class LLMMode(str, Enum):
 
 # LLM分块的最大字符数限制（从.env配置读取）
 LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE"))
-
-# 线上LLM配置
-ONLINE_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek")  # deepseek, minimax, openai, mimo
-
 
 class DocumentProcessor:
     """
@@ -507,42 +503,40 @@ class DocumentProcessor:
         Returns:
             (content, is_scanned): 内容和是否为扫描件
         """
-        partition = self._get_unstructured()
-        
         try:
             # 使用 gmft 提取表格
             tables_text = self._extract_tables_with_gmft(file_path)
-            
-            # 使用 fast 策略提取文本
-            elements = partition(
-                filename=file_path,
-                strategy="fast",
-                include_page_breaks=False,
-                languages=["chi_sim", "eng"]
-            )
-            
+
+            # PyMuPDF直接读取文本层，避免fast路径加载Unstructured的高精度推理栈。
+            import fitz
+
+            content_parts = []
+            with fitz.open(file_path) as document:
+                page_count = document.page_count
+                for page in document:
+                    page_text = page.get_text("text").strip()
+                    if page_text:
+                        content_parts.append(page_text)
+
             # 检查是否提取到内容
-            text_content = "".join(str(el) for el in elements).strip()
+            text_content = "\n\n".join(content_parts)
             
             if not text_content and not tables_text:
                 # 没有文本也没有表格，是扫描件
                 logger.info("pdf_detected_as_scanned", file_path=file_path)
                 return ("", True)
-            
-            # 有内容，处理并返回
+
             if tables_text:
-                from unstructured.documents.elements import Table
-                for table_content in tables_text:
-                    elements.append(Table(text=table_content))
-            
-            content = self._process_elements(elements)
+                content_parts.extend(tables_text)
+
+            content = "\n\n".join(content_parts)
             
             logger.info(
                 "document_parsed",
                 file_path=file_path,
-                element_count=len(elements),
+                page_count=page_count,
                 content_length=len(content),
-                table_count=content.count("[表格 - 第")
+                table_count=len(tables_text)
             )
             
             return (content, False)
@@ -1231,165 +1225,23 @@ class DocumentProcessor:
         return await self._call_online_llm(prompt)
 
     async def _call_online_llm(self, prompt: str) -> str:
-        """调用线上LLM API（DeepSeek/MiniMax/OpenAI/Mimo），带重试机制"""
-        import httpx
-        import asyncio
-        
-        provider = ONLINE_LLM_PROVIDER.lower()
-
-        if provider == "bailian":
+        """Call the shared LLM service using the knowledge-base model tier."""
+        tier = settings.knowledge_base_llm_model_tier
+        with llm_service.use_model_tier(tier):
             response = await llm_service.chat_anthropic(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=8192,
                 temperature=0.1,
                 system="你是文档分析助手。直接返回JSON，不要解释。",
             )
-            content = "\n".join(
-                str(getattr(block, "text", ""))
-                for block in response.get("content", [])
-                if getattr(block, "type", None) == "text"
-            ).strip()
-            if not content:
-                raise RuntimeError("Bailian document chunking response contained no text")
-            return content
-        
-        if provider == "deepseek":
-            api_key = os.getenv("DEEPSEEK_API_KEY")
-            base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-            model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-        elif provider == "minimax":
-            api_key = os.getenv("MINIMAX_API_KEY")
-            base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.chat/v1")
-            model = os.getenv("MINIMAX_MODEL", "abab6.5s-chat")
-        elif provider == "mimo":
-            api_key = os.getenv("MIMO_API_KEY")
-            base_url = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
-            model = os.getenv("MIMO_MODEL", "mimo-v2.5")
-        else:  # openai
-            api_key = os.getenv("OPENAI_API_KEY")
-            base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-            model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
-        
-        if not api_key:
-            raise ValueError(f"API key not configured for provider: {provider}")
-        
-        # 重试配置：最多重试1次（总共2次尝试）
-        max_retries = 2
-        base_delay = 2  # 基础延迟（秒）
-        
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    # 构建请求体
-                    request_body = {
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": "你是文档分析助手。直接返回JSON，不要解释。"},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.1
-                    }
-                    
-                    # MiniMax API: 禁用思考模式
-                    if provider == "minimax":
-                        request_body["reasoning_split"] = False
-                    
-                    # Xiaomi Mimo API: 禁用思考模式
-                    if provider == "mimo":
-                        request_body["extra_body"] = {"thinking": {"type": "disabled"}}
-                    
-                    response = await client.post(
-                        f"{base_url}/chat/completions",
-                        headers={
-                            "Content-Type": "application/json",
-                            "Authorization": f"Bearer {api_key}"
-                        },
-                        json=request_body
-                    )
-                    response.raise_for_status()
-                    result = response.json()
-                    content = result["choices"][0]["message"]["content"]
-                    
-                    # 防御性过滤：移除可能的思考内容标记
-                    thinking_patterns = [
-                        r'<think>.*?</think>',
-                        r'<thinking>.*?</thinking>',
-                        r'<reasoning>.*?</reasoning>',
-                        r'<thought>.*?</thought>',
-                    ]
-                    for pattern in thinking_patterns:
-                        content = re.sub(pattern, '', content, flags=re.DOTALL | re.IGNORECASE)
-                    
-                    # 成功则返回
-                    if attempt > 0:
-                        logger.info("llm_api_retry_success", attempt=attempt + 1, provider=provider)
-                    return content
-                    
-            except httpx.HTTPStatusError as e:
-                # HTTP 错误：429 限流、5xx 服务端错误等
-                is_retryable = e.response.status_code in [429, 500, 502, 503, 504]
-                is_last_attempt = attempt == max_retries - 1
-                
-                if is_retryable and not is_last_attempt:
-                    delay = base_delay * (2 ** attempt)  # 指数退避：2s, 4s, 8s
-                    logger.warning(
-                        "llm_api_http_error_retry",
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        status_code=e.response.status_code,
-                        provider=provider,
-                        retry_delay=delay
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    # 不可重试的错误或最后一次尝试失败
-                    logger.error(
-                        "llm_api_http_error_final",
-                        attempt=attempt + 1,
-                        status_code=e.response.status_code,
-                        provider=provider
-                    )
-                    raise
-                    
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout) as e:
-                # 网络错误、超时等
-                is_last_attempt = attempt == max_retries - 1
-                
-                if not is_last_attempt:
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(
-                        "llm_api_network_error_retry",
-                        attempt=attempt + 1,
-                        max_retries=max_retries,
-                        error_type=type(e).__name__,
-                        provider=provider,
-                        retry_delay=delay
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    logger.error(
-                        "llm_api_network_error_final",
-                        attempt=attempt + 1,
-                        error_type=type(e).__name__,
-                        provider=provider
-                    )
-                    raise
-                    
-            except Exception as e:
-                # 其他未预期错误，不重试
-                logger.error(
-                    "llm_api_unexpected_error",
-                    attempt=attempt + 1,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    provider=provider
-                )
-                raise
-        
-        # 理论上不会到这里，但保险起见
-        raise RuntimeError(f"LLM API调用失败，已尝试{max_retries}次")
+        content = "\n".join(
+            str(getattr(block, "text", ""))
+            for block in response.get("content", [])
+            if getattr(block, "type", None) == "text"
+        ).strip()
+        if not content:
+            raise RuntimeError("Knowledge-base document chunking response contained no text")
+        return content
 
     def _enhance_chunks_with_context_prefix(
         self,

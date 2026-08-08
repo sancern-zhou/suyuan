@@ -58,8 +58,10 @@ async def init_database_and_fetchers() -> bool:
 
     try:
         if os.getenv("ENABLE_AUTO_FETCHING", "true").lower() == "true":
-            initialize_fetchers()
-            logger.info("data_fetchers_started")
+            if initialize_fetchers():
+                logger.info("data_fetchers_started")
+            else:
+                logger.info("data_fetchers_disabled_by_project")
         else:
             logger.info("data_fetchers_disabled")
         return True

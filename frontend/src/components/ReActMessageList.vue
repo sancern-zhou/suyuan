@@ -225,6 +225,17 @@
       </div>
     </div>
 
+    <div
+      v-if="showThinkingPlaceholder"
+      class="thinking-placeholder"
+      role="status"
+      aria-live="polite"
+      aria-label="AI 正在思考"
+    >
+      <span class="thinking-indicator" aria-hidden="true"></span>
+      <span>正在思考</span>
+    </div>
+
     <!-- 当前轮实时分析过程：默认折叠，用户可点击展开查看 -->
     <details
       v-if="liveProcessItems.length > 0"
@@ -322,13 +333,15 @@ import {
   resolveMessageAttachmentResource
 } from '@/services/messageAttachmentPreview.js'
 import { getAgentMode } from '@/config/agentModes.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import AuthenticatedImage from './AuthenticatedImage.vue'
 import {
   getExecutingProcessMessages,
   getMessageType,
   getUnifiedProcessMessages as collectUnifiedProcessMessages,
-  isProcessMessage
+  isProcessMessage,
+  isWaitingForAgentResponse
 } from './reactAnalysis/messageProcessGrouping.js'
 
 const reactStore = useReactStore()
@@ -365,6 +378,10 @@ const props = defineProps({
   messages: {
     type: Array,
     default: () => []
+  },
+  isAnalyzing: {
+    type: Boolean,
+    default: false
   },
   showReflexion: {
     type: Boolean,
@@ -641,8 +658,10 @@ const reportContentCacheMap = computed(() => {
 
 // 根据所选智能体返回欢迎消息内容
 const welcomeContent = computed(() => {
-  const selectedAgent = getAgentMode(props.agentMode)
-  const agent = selectedAgent?.welcome ? selectedAgent : getAgentMode('assistant')
+  const selectedAgent = getAgentMode(props.agentMode, projectConfig.agentModeOverrides)
+  const agent = selectedAgent?.welcome
+    ? selectedAgent
+    : getAgentMode('assistant', projectConfig.agentModeOverrides)
 
   return {
     title: agent.name,
@@ -663,6 +682,10 @@ const displayedMessages = computed(() => {
     return type === 'user' || type === 'final' || type === 'error'
   })
 })
+
+const showThinkingPlaceholder = computed(() => (
+  isWaitingForAgentResponse(props.messages, props.isAnalyzing)
+))
 
 // 【新增】details展开状态管理（用于控制<details>的open属性）
 const expandedProcessIds = ref(new Set())
@@ -2167,6 +2190,47 @@ const downloadPreviewedImage = async () => {
 
   &[open] summary::before {
     transform: rotate(90deg);
+  }
+}
+
+.thinking-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 9px 12px;
+  color: #35425f;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.6;
+  animation: fadeIn 0.2s;
+}
+
+.thinking-indicator {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
+  background: #6f7f97;
+  animation: thinking-indicator-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-indicator {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+@keyframes thinking-indicator-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scale(1);
   }
 }
 

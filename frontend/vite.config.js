@@ -14,7 +14,16 @@ export default defineConfig(({ mode }) => {
     define: {
       __SUYUAN_PROJECT_CONFIG__: JSON.stringify(projectConfig)
     },
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      {
+        name: 'set-project-title',
+        transformIndexHtml(html) {
+          const brandName = projectConfig.frontend.brandName
+          return html.replace(/<title>[\s\S]*?<\/title>/, `<title>${brandName}</title>`)
+        }
+      }
+    ],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src')

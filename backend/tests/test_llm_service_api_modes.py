@@ -232,13 +232,13 @@ def test_inherited_chain_takes_priority_over_multimodal_profile(monkeypatch):
     with service.use_provider_chain(
         "bailian",
         "qwen3.8-max-preview",
-        "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+        "agnes/agnes-2.0-flash,mimo/mimo-v2.5",
     ):
         with service.use_auto_profile("multimodal"):
             assert service.resolve_model_chain("multimodal") == (
                 "bailian",
                 "qwen3.8-max-preview",
-                "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+                "agnes/agnes-2.0-flash,mimo/mimo-v2.5",
             )
 
 
@@ -267,7 +267,7 @@ async def test_call_sub_agent_inherits_chain_and_propagates_failure(monkeypatch)
             assert child_service.active_chain == (
                 "bailian",
                 "qwen3.8-max-preview",
-                "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+                "agnes/agnes-2.0-flash,mimo/mimo-v2.5",
             )
             if False:
                 yield {}
@@ -280,7 +280,7 @@ async def test_call_sub_agent_inherits_chain_and_propagates_failure(monkeypatch)
         llm_model_chain=(
             "bailian",
             "qwen3.8-max-preview",
-            "agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+            "agnes/agnes-2.0-flash,mimo/mimo-v2.5",
         ),
     )
     context = SimpleNamespace(
@@ -354,6 +354,35 @@ def test_multimodal_profile_closes_temporary_client_on_exception(monkeypatch):
     assert service.anthropic_client is original_client
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_model_tier_closes_temporary_client_on_exit(monkeypatch, raises):
+    service = LLMService()
+    original_client = service.anthropic_client
+    scheduled_to_close = []
+    monkeypatch.setattr(
+        settings,
+        "llm_flash_models",
+        "bailian/qwen3.6-flash,mimo/mimo-v2.5",
+    )
+    monkeypatch.setattr(
+        service,
+        "_schedule_anthropic_client_close",
+        scheduled_to_close.append,
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match="request failed"):
+            with service.use_model_tier("flash"):
+                temporary_client = service.anthropic_client
+                raise RuntimeError("request failed")
+    else:
+        with service.use_model_tier("flash"):
+            temporary_client = service.anthropic_client
+
+    assert scheduled_to_close == [temporary_client]
+    assert service.anthropic_client is original_client
+
+
 def test_ocr_configuration_follows_global_bailian_model(monkeypatch):
     from app.services.ops_audit.semantic import ocr_adapter
 
@@ -419,8 +448,8 @@ def test_ocr_adapter_keeps_mimo_on_openai_protocol(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("tier", "chain", "expected_model"),
     [
-        ("pro", "bailian/deepseek-v4-pro,minimax/MiniMax-M3", "deepseek-v4-pro"),
-        ("flash", "bailian/qwen3.6-flash,minimax/MiniMax-M3", "qwen3.6-flash"),
+        ("pro", "bailian/deepseek-v4-pro,mimo/mimo-v2.5", "deepseek-v4-pro"),
+        ("flash", "bailian/qwen3.6-flash,mimo/mimo-v2.5", "qwen3.6-flash"),
     ],
 )
 def test_model_tiers_select_bailian_first(monkeypatch, tier, chain, expected_model):
@@ -433,7 +462,7 @@ def test_model_tiers_select_bailian_first(monkeypatch, tier, chain, expected_mod
     with service.use_model_tier(tier):
         assert service.provider == "bailian"
         assert service.model == expected_model
-        assert service.request_fallbacks == "minimax/MiniMax-M3"
+        assert service.request_fallbacks == "mimo/mimo-v2.5"
 
 
 def test_bailian_multimodal_uses_native_anthropic_image_blocks(monkeypatch):
@@ -497,25 +526,30 @@ def test_default_multimodal_chain_keeps_existing_fallbacks_after_bailian(monkeyp
     defaults = Settings(_env_file=None)
 
     assert defaults.llm_multimodal_models == (
-        "bailian/qwen3.8-max-preview,mimo/mimo-v2-pro,"
-        "agnes/agnes-2.0-flash,minimax/MiniMax-M3"
+        "bailian/qwen3.8-max-preview,mimo/mimo-v2.5,"
+        "agnes/agnes-2.0-flash"
     )
 
 
 @pytest.mark.asyncio
-async def test_document_processor_routes_online_text_to_bailian(monkeypatch):
+async def test_document_processor_uses_configured_model_tier(monkeypatch):
     from app.knowledge_base import document_processor
 
     captured = {}
 
     class FakeLLMService:
+        @contextmanager
+        def use_model_tier(self, tier):
+            captured["tier"] = tier
+            yield
+
         async def chat_anthropic(self, **kwargs):
             captured.update(kwargs)
             return {
                 "content": [SimpleNamespace(type="text", text='[{"title":"片段"}]')]
             }
 
-    monkeypatch.setattr(document_processor, "ONLINE_LLM_PROVIDER", "bailian")
+    monkeypatch.setattr(settings, "knowledge_base_llm_model_tier", "flash")
     monkeypatch.setattr(document_processor, "llm_service", FakeLLMService())
     processor = document_processor.DocumentProcessor.__new__(
         document_processor.DocumentProcessor
@@ -524,6 +558,7 @@ async def test_document_processor_routes_online_text_to_bailian(monkeypatch):
     result = await processor._call_online_llm("请分块")
 
     assert result == '[{"title":"片段"}]'
+    assert captured["tier"] == "flash"
     assert captured["messages"] == [{"role": "user", "content": "请分块"}]
     assert captured["system"] == "你是文档分析助手。直接返回JSON，不要解释。"
 

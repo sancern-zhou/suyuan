@@ -404,7 +404,9 @@ class CreateReportChartTool(LLMTool):
             if first_path:
                 llm_resume["tool_hint"] = (
                     f"Use read_file(path='{first_path}', as_multimodal_attachment=true) "
-                    "to inspect this image."
+                    "to inspect this image internally. Do not place this server "
+                    "path in the final answer or Markdown image URL; the chart is "
+                    "published through session resources."
                 )
         if llm_resume:
             result["llm_resume"] = llm_resume

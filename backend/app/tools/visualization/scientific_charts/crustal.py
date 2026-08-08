@@ -4,17 +4,11 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 
-# 显式指定中文字体路径（Linux服务器）
-font_path = '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'
-if os.path.exists(font_path):
-    fm.fontManager.addfont(font_path)
-    # 创建字体属性对象，供后续使用
-    _chinese_font = fm.FontProperties(fname=font_path)
-    plt.rcParams['font.sans-serif'] = [_chinese_font.get_name()]
-else:
-    _chinese_font = None
+from app.utils.font_utils import apply_font_to_figure, chinese_font_prop, configure_chinese_font
+
+configure_chinese_font()
+_chinese_font = chinese_font_prop()
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['mathtext.fontset'] = 'stix'
 
@@ -38,6 +32,7 @@ def render_crustal_from_payload(payload: Dict[str, Any], out_path: str, dpi: int
         ax.text(0.5, 0.5, "No data", ha="center")
     ax.set_title("Crustal elements distribution")
     plt.tight_layout()
+    apply_font_to_figure(fig)
     fig.savefig(out_path, dpi=dpi, format=fmt, bbox_inches="tight")
     saved = {fmt: out_path}
     try:
@@ -48,7 +43,6 @@ def render_crustal_from_payload(payload: Dict[str, Any], out_path: str, dpi: int
         pass
     plt.close(fig)
     return saved
-
 
 
 
