@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from contextlib import nullcontext
 from typing import Any
 
 from llama_index.core.llms import (
@@ -37,6 +38,14 @@ class ProjectLLMAdapter(CustomLLM):
             model_name=self.model_name,
         )
 
+    def _knowledge_base_model_tier(self):
+        use_model_tier = getattr(self.llm_service, "use_model_tier", None)
+        if not callable(use_model_tier):
+            return nullcontext()
+        from config.settings import settings
+
+        return use_model_tier(settings.knowledge_base_llm_model_tier)
+
     def complete(self, prompt: str, formatted: bool = False, **kwargs: Any) -> CompletionResponse:
         raise RuntimeError(
             "ProjectLLMAdapter only supports async completion. Use acomplete() "
@@ -49,11 +58,12 @@ class ProjectLLMAdapter(CustomLLM):
         formatted: bool = False,
         **kwargs: Any,
     ) -> CompletionResponse:
-        text = await self.llm_service.chat(
-            [{"role": "user", "content": prompt}],
-            temperature=kwargs.get("temperature", self.temperature),
-            max_tokens=kwargs.get("max_tokens", self.max_tokens),
-        )
+        with self._knowledge_base_model_tier():
+            text = await self.llm_service.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=kwargs.get("temperature", self.temperature),
+                max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            )
         return CompletionResponse(text=text)
 
     async def achat(
@@ -65,11 +75,12 @@ class ProjectLLMAdapter(CustomLLM):
             {"role": str(message.role.value), "content": message.content or ""}
             for message in messages
         ]
-        text = await self.llm_service.chat(
-            project_messages,
-            temperature=kwargs.get("temperature", self.temperature),
-            max_tokens=kwargs.get("max_tokens", self.max_tokens),
-        )
+        with self._knowledge_base_model_tier():
+            text = await self.llm_service.chat(
+                project_messages,
+                temperature=kwargs.get("temperature", self.temperature),
+                max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            )
         return ChatResponse(message=ChatMessage(role="assistant", content=text))
 
     async def astructured_predict(
@@ -85,20 +96,21 @@ class ProjectLLMAdapter(CustomLLM):
             text=text,
             max_triplets=max_triplets,
         )
-        if hasattr(self.llm_service, "call_llm_with_json_response"):
-            payload = await self.llm_service.call_llm_with_json_response(
-                extraction_prompt,
-                max_retries=2,
-            )
-        else:
-            raw = await self.llm_service.chat(
-                [{"role": "user", "content": extraction_prompt}],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-            import json
+        with self._knowledge_base_model_tier():
+            if hasattr(self.llm_service, "call_llm_with_json_response"):
+                payload = await self.llm_service.call_llm_with_json_response(
+                    extraction_prompt,
+                    max_retries=2,
+                )
+            else:
+                raw = await self.llm_service.chat(
+                    [{"role": "user", "content": extraction_prompt}],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                import json
 
-            payload = json.loads(raw)
+                payload = json.loads(raw)
         payload = self._normalize_structured_payload(payload)
         self.last_structured_payload = payload
         return output_cls.model_validate(payload)

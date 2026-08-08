@@ -87,9 +87,13 @@ openpyxl>=3.1.0  # Excel file manipulation for Office tools
 pypdf>=5.0.0  # PDF processing for Office document preview
 PyMuPDF==1.26.7  # PDF rendering, font inspection, and OCR preprocessing
 pdfplumber==0.11.9  # PDF text and table extraction
+pdfminer.six==20251230  # Fast PDF text-layer extraction used by Unstructured and pdfplumber
 pdf2image==1.17.0  # PDF page rasterization through Poppler
 pytesseract==0.3.13  # OCR integration through the Tesseract executable
 Pillow==12.0.0  # Image processing for Office, reports, OCR, and visualizations
+unstructured==0.22.32  # Knowledge-base parsing for non-PDF document formats
+unstructured-client==0.32.4  # Keep Unstructured compatible with the pinned HTTP/Pydantic stack
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl  # Offline sentence splitting for Unstructured
 markdown==3.7
 jinja2==3.1.4
 beautifulsoup4==4.14.3  # HTML parsing for reports, knowledge base, and query tools

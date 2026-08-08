@@ -375,7 +375,7 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
     workspace.value = 'chat'
     if (taskWorkspaceTask.value) {
       rightPanelVisible.value = true
-      activeRightTab.value = 'task-files'
+      activeRightTab.value = 'files'
     }
   }
   return restored

@@ -59,6 +59,8 @@ backend:
     expert:
       - list_session_resources
       - publish_session_file
+      - knowledge_qa_workflow
+      - knowledge_document_reader
       - create_report_chart
       - execute_echarts_python
       - execute_python

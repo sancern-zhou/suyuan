@@ -65,7 +65,10 @@ def test_jiangxi_project_disables_data_fetchers():
     assert "create_report_chart" in query_tools
     assert "execute_echarts_python" in query_tools
     assert "get_jiangxi_noise_data" not in query_tools
-    assert "generate_map" not in context.manifest.backend.agent_mode_tools["expert"]
+    expert_tools = context.manifest.backend.agent_mode_tools["expert"]
+    assert "knowledge_qa_workflow" in expert_tools
+    assert "knowledge_document_reader" in expert_tools
+    assert "generate_map" not in expert_tools
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():

@@ -22,13 +22,27 @@ def _env_flag(name: str, default: bool = True) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+async def start_document_processing_queue() -> None:
+    """Start the upload-processing queue for API workers."""
+    from app.knowledge_base.tasks import start_processing_queue
+
+    await start_processing_queue()
+    logger.info("knowledge_base_processing_queue_started")
+
+
+async def stop_document_processing_queue() -> None:
+    """Stop the upload-processing queue before database shutdown."""
+    from app.knowledge_base.tasks import stop_processing_queue
+
+    await stop_processing_queue()
+    logger.info("knowledge_base_processing_queue_stopped")
+    await asyncio.sleep(1.0)
+
+
 async def start_knowledge_base_services() -> None:
     """Start knowledge base processing queue and warm up retrieval models."""
     try:
-        from app.knowledge_base.tasks import start_processing_queue
-
-        await start_processing_queue()
-        logger.info("knowledge_base_processing_queue_started")
+        await start_document_processing_queue()
     except Exception as e:
         logger.warning("knowledge_base_queue_start_failed", error=str(e))
 
@@ -92,10 +106,6 @@ async def stop_knowledge_base_services() -> None:
         logger.warning("knowledge_index_outbox_stop_failed", error=str(e))
 
     try:
-        from app.knowledge_base.tasks import stop_processing_queue
-
-        await stop_processing_queue()
-        logger.info("knowledge_base_processing_queue_stopped")
-        await asyncio.sleep(1.0)
+        await stop_document_processing_queue()
     except Exception as e:
         logger.warning("knowledge_base_queue_stop_failed", error=str(e))

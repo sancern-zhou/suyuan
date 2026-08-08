@@ -278,7 +278,8 @@ class KnowledgeBaseService:
         chunking_strategy: str = "llm",
         chunk_size: int = 800,
         chunk_overlap: int = 100,
-        llm_mode: str = "online"  # 优先使用线上API（更快）
+        llm_mode: str = "online",  # 优先使用线上API（更快）
+        defer_processing: bool = False,
     ) -> Document:
         """
         上传并处理文档
@@ -294,6 +295,7 @@ class KnowledgeBaseService:
             chunk_size: 分块大小
             chunk_overlap: 分块重叠
             llm_mode: LLM模式，仅支持 "online"（线上API）
+            defer_processing: 创建记录后交给后台队列处理并立即返回
 
         Returns:
             文档对象
@@ -321,6 +323,8 @@ class KnowledgeBaseService:
             file_size=file_size,
             file_hash=file_hash,
             status=DocumentStatus.PROCESSING,
+            ingestion_status="processing",
+            graph_status="pending",
             extra_metadata=metadata or {}
         )
 
@@ -328,7 +332,24 @@ class KnowledgeBaseService:
         await self.db.commit()
         await self.db.refresh(doc)
 
-        # 异步处理文档（传入分块参数）
+        if defer_processing:
+            from app.knowledge_base.tasks import get_processing_queue
+
+            await get_processing_queue().enqueue(
+                doc_id=doc.id,
+                kb_id=kb_id,
+                file_path=file_path,
+                user_id=user_id or "anonymous",
+                processing_options={
+                    "chunking_strategy": chunking_strategy,
+                    "chunk_size": chunk_size,
+                    "chunk_overlap": chunk_overlap,
+                    "llm_mode": llm_mode,
+                },
+            )
+            return doc
+
+        # 同步处理供内部调用和兼容场景使用。
         try:
             await self._process_document(
                 doc, kb,
@@ -1024,8 +1045,8 @@ class KnowledgeBaseService:
         if not doc:
             raise ValueError(f"Document not found: {doc_id}")
 
-        # 从Qdrant获取分段
-        chunks = await self._get_chunks_from_qdrant(kb.qdrant_collection, doc_id)
+        # 分块事实以关系库为准；Qdrant仅作为可重建的检索索引。
+        chunks = await self._get_chunks_from_database(doc_id)
 
         return {
             "document_id": doc_id,
@@ -1034,56 +1055,30 @@ class KnowledgeBaseService:
             "total": len(chunks)
         }
 
-    async def _get_chunks_from_qdrant(
-        self,
-        collection_name: str,
-        document_id: str
-    ) -> List[Dict[str, Any]]:
-        """从Qdrant获取文档的所有分段"""
-        try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
+    async def _get_chunks_from_database(self, document_id: str) -> List[Dict[str, Any]]:
+        """Read canonical document chunks from the relational database."""
+        from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
 
-            # 使用scroll获取所有匹配的点
-            results = self.vector_store.qdrant_client.scroll(
-                collection_name=collection_name,
-                scroll_filter=Filter(
-                    must=[FieldCondition(
-                        key="document_id",
-                        match=MatchValue(value=document_id)
-                    )]
-                ),
-                limit=1000,  # 最多1000个分块
-                with_payload=True,
-                with_vectors=False
-            )
-
-            chunks = []
-            for point in results[0]:
-                payload = point.payload
-                chunks.append({
-                    "chunk_index": payload.get("chunk_index", 0),
-                    "content": payload.get("content", ""),
-                    "original_content": payload.get("original_content") or payload.get("content", ""),
-                    "context_prefix": payload.get("context_prefix", ""),
-                    "embedding_text": payload.get("embedding_text", ""),
-                    "chunk_id": payload.get("chunk_id"),
-                    "start_char": payload.get("start_char"),
-                    "end_char": payload.get("end_char"),
-                    "metadata": payload.get("chunk_metadata", {})
-                })
-
-            # 按chunk_index排序
-            chunks.sort(key=lambda x: x["chunk_index"])
-            return chunks
-
-        except Exception as e:
-            logger.error(
-                "get_chunks_from_qdrant_failed",
-                collection=collection_name,
-                document_id=document_id,
-                error=str(e)
-            )
-            raise
+        records = await KnowledgeChunkRepository(self.db).list_by_document(document_id)
+        chunks = []
+        for record in records:
+            metadata = dict(record.chunk_metadata or {})
+            if record.page_number is not None:
+                metadata.setdefault("page_number", record.page_number)
+            if record.section_path:
+                metadata.setdefault("section_path", list(record.section_path))
+            chunks.append({
+                "chunk_index": record.chunk_index,
+                "content": record.content,
+                "original_content": record.content,
+                "context_prefix": record.context_prefix,
+                "embedding_text": record.embedding_text,
+                "chunk_id": record.id,
+                "start_char": record.start_char,
+                "end_char": record.end_char,
+                "metadata": metadata,
+            })
+        return chunks
 
     # ============ 辅助方法 ============
 

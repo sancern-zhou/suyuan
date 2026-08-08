@@ -73,6 +73,10 @@ PPT_TOOL_NAMES = [
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
+
+    # 知识库检索与命中文档上下文阅读
+    "knowledge_qa_workflow", "knowledge_document_reader",
+
     # 数据查询工具
     "get_vocs_data",
     "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",

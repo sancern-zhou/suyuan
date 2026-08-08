@@ -314,7 +314,10 @@ class LLMService:
             )
             yield
         finally:
+            temporary_client = self.anthropic_client
             _llm_request_state.reset(token)
+            if temporary_client is not None:
+                self._schedule_anthropic_client_close(temporary_client)
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):

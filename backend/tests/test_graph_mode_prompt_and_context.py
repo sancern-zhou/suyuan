@@ -2,7 +2,12 @@ from pathlib import Path
 
 from app.agent.context.context_builder import SimplifiedContextBuilder
 from app.agent.react_agent import ReActAgent
-from app.agent.prompts.tool_registry import CHART_TOOL_ORDER, get_tool_order_by_mode, get_tools_by_mode
+from app.agent.prompts.tool_registry import (
+    CHART_TOOL_ORDER,
+    EXPERT_TOOL_ORDER,
+    get_tool_order_by_mode,
+    get_tools_by_mode,
+)
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.tools.social.remember_fact.tool import RememberFactTool
 from app.tools.social.replace_memory.tool import ReplaceMemoryTool
@@ -54,6 +59,15 @@ def test_session_file_publication_is_available_in_expert_and_chart_modes():
     assert "publish_session_file" in get_tools_by_mode("expert")
     assert "publish_session_file" in get_tools_by_mode("chart")
     assert "publish_session_file" in CHART_TOOL_ORDER
+
+
+def test_expert_mode_exposes_knowledge_retrieval_tools():
+    expert_tools = get_tools_by_mode("expert")
+
+    assert "knowledge_qa_workflow" in expert_tools
+    assert "knowledge_document_reader" in expert_tools
+    assert "knowledge_qa_workflow" in EXPERT_TOOL_ORDER
+    assert "knowledge_document_reader" in EXPERT_TOOL_ORDER
 
 
 def test_graph_prompt_routes_from_prompt_builder():

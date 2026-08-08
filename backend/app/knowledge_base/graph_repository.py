@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.knowledge_base.chunk_diff import normalize_chunk_text
@@ -702,9 +702,11 @@ class KnowledgeGraphRepository:
         bind = self.session.get_bind()
         if bind.dialect.name == "postgresql":
             await self.session.execute(
-                select(
-                    func.pg_advisory_xact_lock(func.hashtextextended(f"knowledge-graph:{kb_id}", 0))
-                )
+                text(
+                    "SELECT pg_advisory_xact_lock("
+                    "hashtext(CAST(:lock_key AS text)))"
+                ),
+                {"lock_key": f"knowledge-graph:{kb_id}"},
             )
 
     @staticmethod

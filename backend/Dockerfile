@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     libreoffice-calc \
     libreoffice-impress \
     libreoffice-writer \
+    libmagic1 \
     librsvg2-bin \
     nodejs \
     npm \

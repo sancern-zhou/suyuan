@@ -186,6 +186,38 @@ async def test_database_failure_skips_worker_social_services(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_role_starts_only_document_processing_queue(monkeypatch):
+    calls = []
+
+    async def record(name):
+        calls.append(name)
+        return True
+
+    monkeypatch.setattr(startup.settings, "app_role", "web")
+    monkeypatch.setattr(startup, "start_nacos", lambda app: record("start_nacos"))
+    monkeypatch.setattr(
+        startup,
+        "initialize_tools_and_agents",
+        lambda: record("initialize_tools_and_agents"),
+    )
+    monkeypatch.setattr(startup, "init_database", lambda: record("init_database"))
+    monkeypatch.setattr(
+        startup,
+        "start_document_processing_queue",
+        lambda: record("start_document_processing_queue"),
+    )
+
+    await startup.run_startup(SimpleNamespace(state=SimpleNamespace()))
+
+    assert calls == [
+        "start_nacos",
+        "initialize_tools_and_agents",
+        "init_database",
+        "start_document_processing_queue",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_fetcher_failure_does_not_mark_database_unavailable(monkeypatch):
     async def database_ready():
         return True
