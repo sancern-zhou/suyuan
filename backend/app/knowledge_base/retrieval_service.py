@@ -12,6 +12,7 @@ from app.knowledge_base.graph_models import KnowledgeChunk
 from app.knowledge_base.graph_repository import KnowledgeGraphRepository
 from app.knowledge_base.graph_schemas import TRUSTED_REVIEW_STATUSES
 from app.knowledge_base.models import KnowledgeBase
+from app.knowledge_base.retrieval_utils import deduplicate_results_by_content
 from app.knowledge_base.scene_models import KnowledgeBusinessRule
 
 
@@ -34,7 +35,7 @@ class KnowledgeRetrievalService:
         query: str,
         kb_ids: list[str],
         top_k: int,
-        use_graph_retrieval: bool = True,
+        use_graph_retrieval: bool = False,
         graph_depth: int = 2,
         graph_seed_top_k: int = 10,
         graph_chunk_top_k: int = 20,
@@ -56,6 +57,7 @@ class KnowledgeRetrievalService:
             )
         )
         results = [item for kb_results in results_by_kb for item in kb_results]
+        results = deduplicate_results_by_content(results)
         results.sort(key=lambda item: item.get("rrf_score", 0.0), reverse=True)
         candidate_limit = min(max(top_k * 4, top_k), 60)
         results = results[:candidate_limit]
@@ -207,6 +209,7 @@ class KnowledgeRetrievalService:
                     "embedding_text": chunk.embedding_text,
                     "document_id": chunk.document_id,
                     "chunk_index": chunk.chunk_index,
+                    "content_hash": chunk.content_hash,
                     "knowledge_base_id": kb_id,
                     "knowledge_base": {
                         "id": kb.id,

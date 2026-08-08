@@ -22,7 +22,7 @@
 - query: 原问题全文 + 3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
 - top_k: 检索文档数量（默认3）
-- reranker: 精排模式，auto/always/never，默认auto
+- reranker: 精排模式，auto/always/never，默认never
 
 返回：
 标准UDF v2.0格式，包含：
@@ -117,7 +117,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
         question: Optional[str] = None,  # 别名，兼容 LLM 调用
         knowledge_base_ids: Optional[List[str]] = None,  # 知识库ID列表
         top_k: int = 3,
-        reranker: str = "auto"
+        reranker: str = "never"
     ) -> Dict[str, Any]:
         """
         执行知识库检索
@@ -317,7 +317,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                         "type": "string",
                         "enum": ["auto", "always", "never"],
                         "description": "精排模式。",
-                        "default": "auto"
+                        "default": "never"
                     }
                 },
                 "required": []  # query 和 question 都可选，因为有一个即可

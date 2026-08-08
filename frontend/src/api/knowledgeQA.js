@@ -28,7 +28,7 @@ export async function knowledgeQAStream(query, options = {}, onMessage, onError,
     knowledge_base_ids = null,
     top_k = 5,
     score_threshold = null,
-    use_reranker = true
+    use_reranker = false
   } = options
 
   const requestBody = {
@@ -134,7 +134,7 @@ export async function knowledgeQA(query, options = {}) {
     knowledge_base_ids = null,
     top_k = 5,
     score_threshold = null,
-    use_reranker = true
+    use_reranker = false
   } = options
 
   const requestBody = {

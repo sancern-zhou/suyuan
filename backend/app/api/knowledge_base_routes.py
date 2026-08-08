@@ -8,7 +8,9 @@ import json
 import os
 import shutil
 import time
+from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ from app.db.database import get_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.service import KnowledgeBaseService
+from app.utils.path_config import get_uploads_dir
 from app.knowledge_base.schemas import (
     KnowledgeBaseCreate,
     KnowledgeBaseUpdate,
@@ -304,10 +307,10 @@ async def upload_document(
         )
 
     # 保存上传的文件
-    storage_dir = os.getenv("KNOWLEDGE_BASE_STORAGE_DIR", "data/knowledge_base")
-    os.makedirs(storage_dir, exist_ok=True)
-
-    tmp_path = os.path.join(storage_dir, f"{kb_id}_{file.filename}")
+    storage_dir = get_uploads_dir() / "knowledge_base_staging"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "upload").suffix
+    tmp_path = str(storage_dir / f"{kb_id}_{uuid4().hex}{suffix}")
     try:
         with open(tmp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)

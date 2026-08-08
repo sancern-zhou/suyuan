@@ -31,7 +31,7 @@ class DocumentTask:
     """文档处理任务"""
     doc_id: str
     kb_id: str
-    file_path: str
+    file_path: Optional[str]
     user_id: str
     processing_options: Dict[str, Any] = field(default_factory=dict)
     status: TaskStatus = TaskStatus.PENDING
@@ -79,7 +79,7 @@ class DocumentProcessingQueue:
         self,
         doc_id: str,
         kb_id: str,
-        file_path: str,
+        file_path: Optional[str],
         user_id: str,
         processing_options: Optional[Dict[str, Any]] = None,
     ) -> DocumentTask:
@@ -157,6 +157,8 @@ class DocumentProcessingQueue:
                 (document.id, document.knowledge_base_id, document.file_path)
                 for document in documents
                 if document.file_path
+                or document.original_file_oid
+                or document.file_storage_type == "local"
             ]
             for document in documents:
                 document.ingestion_status = "queued"
@@ -347,9 +349,33 @@ def get_processing_queue() -> DocumentProcessingQueue:
 
 async def start_processing_queue():
     """启动全局处理队列（应用启动时调用）"""
+    await normalize_database_original_paths()
     queue = get_processing_queue()
     await queue.start()
     await queue.recover_interrupted()
+
+
+async def normalize_database_original_paths() -> int:
+    """Clear legacy staging paths once PostgreSQL is the durable source."""
+    from sqlalchemy import update
+
+    from app.db.database import async_session
+    from app.knowledge_base.models import Document
+
+    async with async_session() as db, db.begin():
+        result = await db.execute(
+            update(Document)
+            .where(
+                Document.file_storage_type == "database",
+                Document.original_file_oid.is_not(None),
+                Document.file_path.is_not(None),
+            )
+            .values(file_path=None)
+        )
+    count = int(result.rowcount or 0)
+    if count:
+        logger.info("knowledge_database_original_paths_normalized", count=count)
+    return count
 
 
 async def stop_processing_queue():

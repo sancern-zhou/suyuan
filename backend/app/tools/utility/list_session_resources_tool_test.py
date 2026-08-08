@@ -1,3 +1,5 @@
+import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +39,9 @@ async def test_tool_reads_only_authorized_context_session_and_filters(tmp_path):
 
     assert result["success"] is True
     assert result["data"][0]["label"] == "Final issue list"
+    assert isinstance(result["data"][0]["updated_at"], str)
+    datetime.fromisoformat(result["data"][0]["updated_at"])
+    json.dumps(result)
     assert "locator" not in result["data"][0]
     assert "session_id" not in tool.get_function_schema()["parameters"]["properties"]
 

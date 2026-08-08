@@ -115,7 +115,11 @@ class ListSessionResourcesTool(LLMTool):
                 "mime_type": (resource.metadata or {}).get("mime_type"),
                 "tool_name": resource.tool_name,
                 "turn_sequence": resource.turn_sequence,
-                "updated_at": resource.updated_at,
+                "updated_at": (
+                    resource.updated_at.isoformat()
+                    if resource.updated_at is not None
+                    else None
+                ),
             }
             file_path = str((resource.locator or {}).get("path") or "").strip()
             if file_path:

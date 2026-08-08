@@ -499,7 +499,7 @@ const searchForm = ref({
   query: '',
   top_k: 5,
   score_threshold: 0.5,
-  use_reranker: true
+  use_reranker: false
 })
 
 const uploadOptions = ref({
