@@ -45,13 +45,21 @@ fetcher_scheduler = FetcherScheduler()
 # 注意：不再创建独立的 tool_registry，统一使用 global_tool_registry
 
 
-def initialize_fetchers():
+def initialize_fetchers() -> bool:
     """
     初始化并启动数据获取后台
 
     注册所有Fetchers并启动调度器
     """
     try:
+        project_context = load_project_context(settings.project_id)
+        if not project_context.manifest.backend.fetchers_enabled:
+            logger.info(
+                "fetchers_disabled_by_project",
+                project=settings.project_id,
+            )
+            return False
+
         # 注册Weather Fetchers
         fetcher_scheduler.register(ERA5Fetcher())
         fetcher_scheduler.register(ObservedWeatherFetcher())
@@ -61,7 +69,7 @@ def initialize_fetchers():
 
         # 注册Satellite Fetchers
         fetcher_scheduler.register(NASAFirmsFetcher())
-        enabled_modules = load_project_context(settings.project_id).enabled_modules
+        enabled_modules = project_context.enabled_modules
         if "xuchang-satellite" in enabled_modules:
             fetcher_scheduler.register(GemsImageFetcher())
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
@@ -109,6 +117,7 @@ def initialize_fetchers():
         fetcher_scheduler.start()
 
         logger.info("fetcher_scheduler_started")
+        return True
 
     except Exception as e:
         logger.error("fetchers_initialization_failed", error=str(e), exc_info=True)

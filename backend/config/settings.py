@@ -414,20 +414,24 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="minimax/MiniMax-M3,deepseek/deepseek-v4-flash",
+        default="mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
         description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_flash_models: str = Field(
-        default="bailian/qwen3.6-flash,minimax/MiniMax-M3,deepseek/deepseek-v4-flash",
+        default="bailian/qwen3.6-flash,mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
         description="Comma-separated Flash model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
-        default="bailian/deepseek-v4-pro,minimax/MiniMax-M3,deepseek/deepseek-v4-pro",
+        default="bailian/deepseek-v4-pro,mimo/mimo-v2.5,deepseek/deepseek-v4-pro",
         description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
-        default="bailian/qwen3.8-max-preview,mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
+        default="bailian/qwen3.8-max-preview,mimo/mimo-v2.5,agnes/agnes-2.0-flash",
         description="Comma-separated multimodal model priority chain used by all Agent modes"
+    )
+    knowledge_base_llm_model_tier: Literal["auto", "flash", "pro"] = Field(
+        default="flash",
+        description="Model tier used for knowledge-base LLM document parsing",
     )
     llm_failover_cooldown_seconds: int = Field(
         default=60,

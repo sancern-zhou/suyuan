@@ -76,7 +76,8 @@ def project_agent_resource_map(
 
     projected_items.sort(key=score, reverse=True)
     lines = [
-        f"Resources: {len(active)} catalog rows, {len(projected_items)} unique locators; shown paths are directly usable.",
+        f"Resources: {len(active)} catalog rows, {len(projected_items)} unique locators; shown paths are tool-only.",
+        "Never place shown paths in final Markdown links or image URLs; users access outputs through resource previews.",
         "Search omitted items with list_session_resources; read_session_resource is fallback.",
     ]
     included = 0

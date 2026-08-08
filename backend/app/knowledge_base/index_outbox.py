@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.knowledge_base.graph_models import KnowledgeIndexOutbox
@@ -80,7 +80,11 @@ class KnowledgeIndexOutboxRepository:
         if bind.dialect.name == "postgresql":
             lock_key = f"knowledge-index:{kb_id}:{record_type}:{record_id}"
             await self.session.execute(
-                select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0)))
+                text(
+                    "SELECT pg_advisory_xact_lock("
+                    "hashtext(CAST(:lock_key AS text)))"
+                ),
+                {"lock_key": lock_key},
             )
         latest = await self.session.scalar(
             select(func.max(KnowledgeIndexOutbox.payload_version)).where(

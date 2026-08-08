@@ -5,20 +5,15 @@
 """
 
 from fastapi import APIRouter, HTTPException
-from pathlib import Path
-import sys
-import subprocess
+from app.services.skills_index import generate_skills_index
 from app.tools.utility.skill_management.skill_paths import (
     DRAFTS_DIR,
+    SKILLS_DIR,
     parse_skill_metadata,
     resolve_skill_file,
 )
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
-
-# 技能目录路径
-SKILLS_DIR = Path(__file__).parent.parent.parent / "docs" / "skills"
-
 
 @router.get("")
 async def list_skills(keyword: str = None, mode: str = None):
@@ -287,30 +282,12 @@ async def refresh_skills_index():
         }
     """
     try:
-        # 运行索引生成脚本
-        script_path = Path(__file__).parent.parent.parent / "scripts" / "generate_skills_index.py"
-
-        if not script_path.exists():
-            raise HTTPException(status_code=404, detail=f"Script not found: {script_path}")
-
-        result = subprocess.run(
-            [sys.executable, str(script_path)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            cwd=str(script_path.parent)
-        )
-
-        if result.returncode == 0:
-            return {
-                "success": True,
-                "message": "技能索引刷新成功"
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to refresh index: {result.stderr}"
-            )
+        result = generate_skills_index(SKILLS_DIR)
+        return {
+            "success": True,
+            "message": "技能索引刷新成功",
+            "data": result,
+        }
 
     except HTTPException:
         raise

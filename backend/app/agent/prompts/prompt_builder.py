@@ -16,6 +16,7 @@ from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
 from .custom_prompt import build_custom_prompt
+from .project_prompt import load_project_mode_prompt
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -122,6 +123,10 @@ def build_react_system_prompt(
         has_heartbeat_context=heartbeat_context is not None,
         has_board_context=board_context is not None,
     )
+
+    project_prompt = load_project_mode_prompt(mode)
+    if project_prompt is not None:
+        return project_prompt
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":

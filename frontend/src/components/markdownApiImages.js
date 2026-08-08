@@ -3,6 +3,24 @@ import {
   sameOriginApiMediaPath
 } from '../services/apiMediaBlob.js'
 
+function decodePathForInspection(source) {
+  try {
+    return decodeURI(source)
+  } catch {
+    return source
+  }
+}
+
+export function isServerLocalImagePath(source) {
+  if (typeof source !== 'string') return false
+  const value = decodePathForInspection(source.trim()).replace(/\\/g, '/')
+  if (!value) return false
+
+  return /^file:/i.test(value) ||
+    /^\/(?:root|home|tmp|var|opt|srv)\//.test(value) ||
+    /(?:^|\/)backend_data_registry\//.test(value)
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -27,6 +45,10 @@ export function renderDeferredApiImage({
   alt = '',
   cssClass = 'md-external-image'
 }) {
+  if (isServerLocalImagePath(src)) {
+    return `<span class="md-local-image-reference" data-blocked-image="true" aria-label="${escapeHtml(alt)}"></span>`
+  }
+
   const attributes = deferredApiImageAttributes(src)
   if (!attributes) return ''
 

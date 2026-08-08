@@ -5,7 +5,10 @@ import router from './router/index'
 import { useAuthStore } from './auth/authStore.js'
 import { installAuthGuard } from './auth/routerGuard.js'
 import { initializeAuthStore } from './auth/runtimeConfig.js'
+import { registerVitePreloadRecovery } from './services/vitePreloadRecovery.js'
 import './styles/main.scss'
+
+registerVitePreloadRecovery()
 
 async function bootstrapApplication() {
   const app = createApp(App)

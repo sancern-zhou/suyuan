@@ -24,6 +24,8 @@ class FontManager:
     # 字体配置优先级（从高到低）
     FONT_FALLBACK_CHAIN = [
         'FZXiaoBiaoSong-B05S',  # 方正小标宋，create_report_chart优先字体
+        'GB_XBS_GB18030',       # 国标小标宋，Linux部署常见小标宋字体
+        'GB_XBS_GBT2312',
         # Linux 系统字体
         'Noto Sans CJK SC',     # 简体中文（推荐）
         'Noto Sans CJK TC',     # 繁体中文
@@ -47,7 +49,13 @@ class FontManager:
     # 字体文件路径（Linux）
     FONT_FILE_PATHS = [
         Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
+        Path('/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF'),
+        Path('/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF'),
         Path('/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'),
+        Path('/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf'),
+        Path('/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf'),
+        Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'),
+        Path('/usr/share/fonts/truetype/arphic/uming.ttc'),
         Path('/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc'),
     ]
 
@@ -185,6 +193,15 @@ def get_font_manager() -> FontManager:
 def configure_chinese_font() -> bool:
     """快捷函数：配置中文字体"""
     return get_font_manager().configure_chinese_font()
+
+
+def select_preferred_chinese_font_path() -> Path | None:
+    """Return the first available preferred Chinese font file path."""
+    font_manager = get_font_manager()
+    for font_path in font_manager.FONT_FILE_PATHS:
+        if font_path.exists():
+            return font_path
+    return None
 
 
 def chinese_font_prop() -> fm.FontProperties | None:

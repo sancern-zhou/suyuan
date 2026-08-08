@@ -23,14 +23,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator, FormatStrFormatter
 from scipy.ndimage import gaussian_filter1d
-import matplotlib.font_manager as fm
 
-# 显式指定中文字体路径（Linux服务器）
-font_path = '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'
-if os.path.exists(font_path):
-    fm.fontManager.addfont(font_path)
-    plt.rcParams['font.sans-serif'] = [fm.FontProperties(fname=font_path).get_name()]
-plt.rcParams['axes.unicode_minus'] = False
+from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
+
+configure_chinese_font()
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['mathtext.fontset'] = 'stix'
 
@@ -54,6 +50,7 @@ class EKMAVisualizer:
     def _fig_to_base64(self, fig: plt.Figure) -> str:
         """将matplotlib图形转换为base64编码"""
         buf = io.BytesIO()
+        apply_font_to_figure(fig)
         fig.savefig(buf, format='png', dpi=self.dpi, bbox_inches='tight', facecolor='white')
         buf.seek(0)
         img_base64 = base64.b64encode(buf.read()).decode('utf-8')

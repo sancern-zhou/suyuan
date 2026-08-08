@@ -451,6 +451,7 @@ def test_agent_resource_map_is_bounded_and_includes_actionable_path(tmp_path):
 
     assert stored.resource_id in projected
     assert f"path={path}" in projected
+    assert "shown paths are tool-only" in projected
     assert len(projected) <= 500
 
 
@@ -465,6 +466,7 @@ def test_agent_resource_map_uses_canonical_absolute_paths():
     projected = project_agent_resource_map([stored])
 
     assert f"path={source}" in projected
+    assert "Never place shown paths in final Markdown" in projected
 
 
 def test_agent_resource_map_collapses_same_locator_but_reports_all_roles(tmp_path):

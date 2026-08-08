@@ -148,6 +148,7 @@ import {
 import { PANEL_SIZES } from '@/utils/constants'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
+import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
 import {
   getRunningAgentSessionId,
   isAgentModeRunning,
@@ -172,6 +173,7 @@ import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/Knowle
 // Stores
 const route = useRoute()
 const store = useReactStore()
+const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
 const taskWorkspaceTask = ref(null)
@@ -373,7 +375,7 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
     workspace.value = 'chat'
     if (taskWorkspaceTask.value) {
       rightPanelVisible.value = true
-      activeRightTab.value = 'task-files'
+      activeRightTab.value = 'files'
     }
   }
   return restored
@@ -425,7 +427,7 @@ const handleSidebarAction = async (actionId) => {
   }
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
   const newTaskMode = actionId === 'restart-session'
-    ? (workspace.value === 'platform' ? 'assistant' : store.currentMode)
+    ? (workspace.value === 'platform' ? defaultAgentMode : store.currentMode)
     : null
 
   if (actionId === 'agent-platform') {

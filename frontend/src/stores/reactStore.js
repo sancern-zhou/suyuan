@@ -6,6 +6,11 @@ import { defineStore } from 'pinia'
 import { agentAPI } from '../services/reactApi.js'
 import { uploadChatFile } from '../services/uploadApi.js'
 import {
+  isProjectAgentMode,
+  projectConfig,
+  resolveProjectDefaultAgentMode
+} from '../config/projectConfig.js'
+import {
   commitManualBoardVersion,
   getBoardVersions,
   saveBoardDraft
@@ -49,6 +54,7 @@ import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
 const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops', 'graph']
+const DEFAULT_AGENT_MODE = resolveProjectDefaultAgentMode(projectConfig, VALID_MODES)
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const drawioDraftTimers = new Map()
 const DRAWIO_DRAFT_DEBOUNCE_MS = 1000
@@ -381,8 +387,10 @@ const createEmptyModeState = () => ({
 export const useReactStore = defineStore('react', {
   state: () => {
     // 从localStorage恢复currentMode
-    const savedMode = localStorage.getItem('current-mode') || 'assistant'
-    const initialMode = VALID_MODES.includes(savedMode) ? savedMode : 'assistant'
+    const savedMode = localStorage.getItem('current-mode')
+    const initialMode = isProjectAgentMode(savedMode, projectConfig, VALID_MODES)
+      ? savedMode
+      : DEFAULT_AGENT_MODE
     if (initialMode !== savedMode) {
       localStorage.setItem('current-mode', initialMode)
     }

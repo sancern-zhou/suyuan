@@ -13,8 +13,8 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
 
+from app.utils.font_utils import chinese_font_prop, select_preferred_chinese_font_path
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
 from app.tools.visualization.create_report_chart.text_layout import (
@@ -27,14 +27,6 @@ from app.tools.visualization.create_report_chart.validation import ChartDataErro
 WORD_TARGET_WIDTH_IN = 5.8
 WORD_SOURCE_WIDTH_IN = 8.2
 WORD_SOURCE_HEIGHT_IN = 5.2
-CHINESE_FONT_CANDIDATES = [
-    "/home/xckj/.local/share/fonts/方正小标宋简.TTF",
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/truetype/arphic/uming.ttc",
-]
 _CHINESE_FONT_PROP = None
 
 GENERAL_CHART_TYPES = {
@@ -332,21 +324,15 @@ def _apply_fonts() -> None:
 
 
 def select_chinese_font() -> str | None:
-    for candidate in CHINESE_FONT_CANDIDATES:
-        if Path(candidate).exists():
-            return candidate
-    return None
+    font_path = select_preferred_chinese_font_path()
+    return str(font_path) if font_path is not None else None
 
 
 def _chinese_font_prop():
     global _CHINESE_FONT_PROP
     if _CHINESE_FONT_PROP is not None:
         return _CHINESE_FONT_PROP
-    font_path = select_chinese_font()
-    if not font_path:
-        return None
-    font_manager.fontManager.addfont(font_path)
-    _CHINESE_FONT_PROP = font_manager.FontProperties(fname=font_path)
+    _CHINESE_FONT_PROP = chinese_font_prop()
     return _CHINESE_FONT_PROP
 
 

@@ -17,6 +17,26 @@ const PROCESS_MESSAGE_TYPES = new Set(['thought', 'tool_use', 'tool_result'])
 
 export const isProcessMessage = (message) => PROCESS_MESSAGE_TYPES.has(getMessageType(message))
 
+const VISIBLE_AGENT_MESSAGE_TYPES = new Set(['thought', 'tool_use', 'tool_result', 'final', 'error'])
+
+export const isWaitingForAgentResponse = (messages = [], isAnalyzing = false) => {
+  if (!isAnalyzing || !Array.isArray(messages)) return false
+
+  let latestUserIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (getMessageType(messages[index]) === 'user') {
+      latestUserIndex = index
+      break
+    }
+  }
+
+  if (latestUserIndex === -1) return false
+
+  return !messages
+    .slice(latestUserIndex + 1)
+    .some(message => VISIBLE_AGENT_MESSAGE_TYPES.has(getMessageType(message)))
+}
+
 export const getExecutingProcessMessages = (messages = []) => {
   let lastFinalIndex = -1
   let lastUserIndex = -1

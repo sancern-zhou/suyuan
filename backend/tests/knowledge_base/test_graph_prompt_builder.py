@@ -1,5 +1,11 @@
+from contextlib import contextmanager
+
+import pytest
+from pydantic import BaseModel
+
 from app.knowledge_base.graph_extraction.llm_factory import ProjectLLMAdapter
 from app.knowledge_base.graph_extraction.models import GraphExtractionSchema
+from config.settings import settings
 
 
 class FakeLLMService:
@@ -36,3 +42,37 @@ def test_prompt_contains_confirmed_rules_and_ignored_content():
     prompt = adapter._build_structured_kg_prompt("正文", 10)
     assert "监测结果必须关联昼夜时段" in prompt
     assert "不要抽取：页眉页脚" in prompt
+
+
+@pytest.mark.asyncio
+async def test_structured_graph_extraction_uses_knowledge_base_model_tier(monkeypatch):
+    calls = []
+
+    class Payload(BaseModel):
+        triplets: list = []
+
+    class TieredLLMService:
+        @contextmanager
+        def use_model_tier(self, tier):
+            calls.append(("enter", tier))
+            try:
+                yield
+            finally:
+                calls.append(("exit", tier))
+
+        async def call_llm_with_json_response(self, prompt, max_retries):
+            calls.append(("call", max_retries))
+            return {"triplets": []}
+
+    monkeypatch.setattr(settings, "knowledge_base_llm_model_tier", "flash")
+    adapter = ProjectLLMAdapter(llm_service=TieredLLMService())
+
+    result = await adapter.astructured_predict(
+        Payload,
+        "unused",
+        text="噪声监测",
+        max_triplets_per_chunk=3,
+    )
+
+    assert result.triplets == []
+    assert calls == [("enter", "flash"), ("call", 2), ("exit", "flash")]

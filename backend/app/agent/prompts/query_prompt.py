@@ -55,6 +55,7 @@ def build_query_prompt(
         "## 数据展示",
         "",
         "- 大量数据或完整结果应提供 file_path，并说明完整数据已保存。",
+        "- file_path 只用于溯源和后续工具读取，不是 Web 图片/下载 URL；不得把 `/root/...`、`/home/...` 或 `backend_data_registry/...` 放进最终 Markdown 链接或图片。",
         "- 图片结果优先使用工具返回的可访问 URL 或 Markdown 图片，不展示本地图片路径。",
         "- 最终回复先用一到三句话给出可朗读核心结论，再附表格或数据文件路径。",
         "",
