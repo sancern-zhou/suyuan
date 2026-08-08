@@ -328,11 +328,11 @@ DEFAULT_RULE_CATALOG = [
     },
     {
         "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
-        "name": "RF 表单异常值无说明",
+        "name": "RF 表单异常值备注说明不充分",
         "category": "结果合理性",
         "default_severity": "中",
         "scope": "RF_*",
-        "rationale": "检查值超限或关键值漏填时，应说明原因、处置或免填依据。",
+        "rationale": "检查值超限或关键值漏填时，即使存在备注，也应说明异常原因、处置措施、处理结果或合理免填依据。",
     },
     {
         "rule_id": "REMARK_SEMANTIC_INCOMPLETE",

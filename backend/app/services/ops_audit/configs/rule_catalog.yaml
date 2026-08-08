@@ -96,11 +96,11 @@ rules:
     scope: RF_M_GASEOUSFLOWCHECK
     rationale: 流量范围单位为 L/min 或 ml/min 时，显示值、测量值应落在对应量级；否则可能存在单位误填或数值未换算。
   - rule_id: RF_ABNORMAL_VALUE_NO_REMARK
-    name: RF 表单异常值无说明
+    name: RF 表单异常值备注说明不充分
     category: 结果合理性
     default_severity: 中
     scope: RF_*
-    rationale: 检查值超限或关键值漏填时，应说明原因、处置或免填依据。
+    rationale: 检查值超限或关键值漏填时，即使存在备注，也应说明异常原因、处置措施、处理结果或合理免填依据。
   - rule_id: RF_NO_DEVICE_WITHOUT_REMARK
     name: 其他设备无对应设备但说明不清
     category: 异常说明问题
@@ -220,7 +220,7 @@ rules:
     category: 时间合理性
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck/RF_TW_PmFlowCheck/RF_TW_PmFlowCalibrate/RF_Q_GASEOUSMULTIPOINT_*
-    rationale: 上次校准日期不得晚于下次校准日期，下次校准日期或有效期必须晚于检查/校准作业日期。
+    rationale: 上次校准日期不得晚于下次校准日期，下次校准日期或有效期不得早于检查/校准作业日期；同日仍视为有效。
   - rule_id: RF_CALIBRATION_DATE_SHOULD_BE_EMPTY
     name: RF 表单校准有效期应为空
     category: 填报规范性

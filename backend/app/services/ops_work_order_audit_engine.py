@@ -95,6 +95,9 @@ OUTPUT_DIR = BACKEND / "backend_data_registry" / "memory" / "ops" / "audit"
 logger = logging.getLogger(__name__)
 
 RF_TABLES = [
+    # Only include RF tables that are keyed by WORKINGORDERCODE. Standalone
+    # quality-control ledgers (qa_*) and obsolete/missing form tables must be
+    # queried by their own business keys, not as work-order RF evidence.
     "RF_W_GASEOUSCHECK_CO",
     "RF_W_GASEOUSCHECK_NOX",
     "RF_W_GASEOUSCHECK_O3",
@@ -153,17 +156,9 @@ RF_TABLES = [
     "RF_HY_EnvironmentHumidity",
     "RF_HY_GASEOUSCALIDEVICECHECK",
     "RF_HY_STATIONDEVICEMAINTAIN",
-    "RF_HY_StationMaintainCheck",
     "RF_HY_O3VALUEPASS",
     "RF_HY_VISIBILITYCALI",
     "RF_HY_NOXCONVERSIONRATE",
-    "qa_appraisalcalibrationlog",
-    "qa_appraisalcalibrationmanagem",
-    "qa_calibrationpass",
-    "qa_ozonecalibration",
-    "qa_ozonetransfer",
-    "qa_standardmateriallog",
-    "qa_standardmaterialstorage",
 ]
 
 LOW_VALUE_REMARKS = load_low_value_remarks()
