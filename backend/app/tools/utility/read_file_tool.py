@@ -6,8 +6,8 @@ ReadFile 工具 - 统一文件读取入口（支持分页、大小限制、多�
 - 图片文件：自动调用 Vision API 进行内容分析
 - Word XML：智能分层读取（自动推断最优模式）
 - PDF 文件：委托给 parse_pdf 工具（支持OCR、表格、图片提取）
-- DOCX 文件：委托给 read_docx 工具（支持PDF预览）
-- PPTX 文件：委托给 read_pptx 工具（支持结构化读取和PDF预览）
+- DOCX 文件：委托给 read_docx 工具进行结构化读取
+- PPTX 文件：委托给 read_pptx 工具进行结构化读取
 - 目录列表：查看目录中的文件和子目录
 
 智能分页策略：
@@ -47,8 +47,8 @@ class ReadFileTool(LLMTool):
     - 读取文本文件内容（支持分页）
     - 读取图片文件并自动分析
     - 读取 PDF 文件（委托给 parse_pdf，支持OCR、表格、图片提取）
-    - 读取 DOCX 文件（委托给 read_docx，支持PDF预览）
-    - 读取 PPTX 文件（委托给 read_pptx，支持PDF预览）
+    - 读取 DOCX 文件（委托给 read_docx）
+    - 读取 PPTX 文件（委托给 read_pptx）
     - 读取 Word XML（支持多种模式）
     - 自动检测文件类型和大小
     """
@@ -122,7 +122,7 @@ class ReadFileTool(LLMTool):
         max_paragraphs: Optional[int] = None,
         extract_tables: bool = True,
         extract_images: bool = False,
-        enable_preview: bool = True,
+        enable_preview: bool = False,
         as_multimodal_attachment: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
@@ -143,7 +143,7 @@ class ReadFileTool(LLMTool):
             max_paragraphs: 最大段落数（Word XML/DOCX 专用，默认不限制）
             extract_tables: PDF是否提取表格（默认 True）
             extract_images: PDF是否提取图片（默认 False）
-            enable_preview: PDF/DOCX是否生成预览（默认 True）
+            enable_preview: 内部兼容参数；统一资源预览不由 read_file 创建
             as_multimodal_attachment: 图片文件是否返回原生多模态附件（所有Agent模式可用）
 
         Returns:
@@ -1509,11 +1509,6 @@ class ReadFileTool(LLMTool):
                         "type": "boolean",
                         "description": "提取图片",
                         "default": False
-                    },
-                    "enable_preview": {
-                        "type": "boolean",
-                        "description": "生成预览",
-                        "default": True
                     },
                     "raw_mode": {
                         "type": "boolean",

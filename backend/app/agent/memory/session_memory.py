@@ -30,6 +30,16 @@ MAX_TOOL_RESULT_STRING_CHARS = 8_000
 # Keep individual model-facing tool results bounded. The full runtime event or
 # materialized resource remains persisted separately for display/download.
 MAX_TOOL_RESULT_JSON_CHARS = 20_000
+MAX_RESTORED_CONTENT_PREVIEW_CHARS = 2_000
+
+CONTENT_PREVIEW_TOOL_NAMES = {
+    "read_file",
+    "parse_pdf",
+    "read_docx",
+    "read_pptx",
+    "knowledge_document_reader",
+    "web_fetch",
+}
 
 
 def _todo_status_counts(items: Any) -> Dict[str, int]:
