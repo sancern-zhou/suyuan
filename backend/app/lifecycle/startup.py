@@ -19,6 +19,7 @@ from app.lifecycle.database import init_database, init_database_and_fetchers
 from app.lifecycle.knowledge_base import (
     start_document_processing_queue,
     start_knowledge_base_services,
+    warmup_knowledge_base_models_if_enabled,
 )
 from app.lifecycle.nacos import start_nacos
 from app.lifecycle.roles import normalize_app_role, starts_background_services
@@ -74,6 +75,7 @@ async def run_startup(app: FastAPI) -> None:
         database_ready = await init_database()
         if database_ready:
             await start_document_processing_queue()
+            await warmup_knowledge_base_models_if_enabled()
         else:
             logger.warning(
                 "database_dependent_services_skipped",

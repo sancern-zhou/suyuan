@@ -237,6 +237,51 @@ class SessionResourceService:
             )
         return materialized
 
+    def materialize_file_bytes(
+        self,
+        *,
+        session_id: str,
+        group_key: str,
+        resource_key: str,
+        filename: str,
+        content: bytes,
+        checksum: str | None = None,
+    ) -> Path:
+        """Idempotently materialize bytes in the canonical session resource store."""
+        if self._storage_root is None:
+            raise RuntimeError("session resource storage is not configured")
+        actual_checksum = hashlib.sha256(content).hexdigest()
+        if checksum and checksum != actual_checksum:
+            raise ValueError("resource content checksum mismatch")
+        safe_name = Path(
+            str(filename).replace("\x00", "").replace("\\", "/")
+        ).name
+        if safe_name in {"", ".", ".."}:
+            safe_name = "document"
+        session_key = hashlib.sha256(session_id.encode()).hexdigest()[:24]
+        group_key_hash = hashlib.sha256(group_key.encode()).hexdigest()[:20]
+        resource_key_hash = hashlib.sha256(resource_key.encode()).hexdigest()[:20]
+        destination_dir = (
+            self._storage_root
+            / session_key
+            / "materialized"
+            / group_key_hash
+            / resource_key_hash
+            / actual_checksum[:20]
+        ).resolve()
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination = destination_dir / safe_name
+        if destination.is_symlink():
+            destination.unlink()
+        if destination.is_file():
+            existing_checksum = hashlib.sha256(destination.read_bytes()).hexdigest()
+            if existing_checksum == actual_checksum:
+                return destination
+        temporary = destination_dir / f".{safe_name}.tmp-{uuid4().hex}"
+        temporary.write_bytes(content)
+        temporary.replace(destination)
+        return destination
+
     async def publish_group(
         self,
         session_id: str,

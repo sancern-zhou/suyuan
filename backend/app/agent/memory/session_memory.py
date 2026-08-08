@@ -27,7 +27,9 @@ logger = structlog.get_logger()
 _llm_service = None
 MAX_TOOL_RESULT_RECORDS = 24
 MAX_TOOL_RESULT_STRING_CHARS = 8_000
-MAX_TOOL_RESULT_JSON_CHARS = 200_000  # 支持完整的21城市统计对比结果
+# Keep individual model-facing tool results bounded. The full runtime event or
+# materialized resource remains persisted separately for display/download.
+MAX_TOOL_RESULT_JSON_CHARS = 20_000
 MAX_RESTORED_CONTENT_PREVIEW_CHARS = 2_000
 
 CONTENT_PREVIEW_TOOL_NAMES = {
@@ -325,6 +327,18 @@ def _compact_tool_result_value(value: Any, *, path: str = "") -> Any:
     return value
 
 
+def _tool_result_value_was_truncated(value: Any) -> bool:
+    if isinstance(value, str):
+        return "\n\n...[truncated " in value
+    if isinstance(value, list):
+        return any(_tool_result_value_was_truncated(item) for item in value)
+    if isinstance(value, dict):
+        if value.get("_truncated") is True or "tool_result_sampling" in value:
+            return True
+        return any(_tool_result_value_was_truncated(item) for item in value.values())
+    return False
+
+
 def _minimal_tool_result(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict):
         return {
@@ -492,6 +506,10 @@ def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
         return compacted_todo
 
     compacted = _compact_tool_result_value(result)
+    if isinstance(compacted, dict) and _tool_result_value_was_truncated(compacted):
+        compacted = dict(compacted)
+        compacted["tool_result_truncated"] = True
+        compacted["truncation_reason"] = "tool result fields exceeded per-field history limits"
     try:
         serialized = json.dumps(compacted, ensure_ascii=False, indent=2, default=str)
     except Exception as e:
@@ -1419,7 +1437,8 @@ class SessionMemory:
 
         blocks: List[Dict[str, Any]] = []
         for result in result_values:
-            history_result = self._lightweight_tool_result_for_restore(data, result)
+            result_dict = result if isinstance(result, dict) else {"result": result}
+            history_result = _prepare_tool_result_for_history(result_dict)
             blocks.append({
                 "type": "tool_result",
                 "content": json.dumps(history_result, ensure_ascii=False, indent=2, default=str),
@@ -1450,9 +1469,9 @@ class SessionMemory:
         批量导入历史对话消息（用于会话恢复）
 
         Args:
-            messages: 历史消息列表。前端展示型 thought/tool_use/tool_result
-                     事件不会作为普通文本恢复到 LLM 上下文；只有用户消息、
-                     最终回复和原生 Anthropic content blocks 会被恢复。
+            messages: 持久化历史消息。成对的展示型 tool_use/tool_result 会被
+                     确定性转换为 Anthropic content blocks；thought、暂停通知和
+                     其他展示事件不会作为普通文本进入模型上下文。
         """
         if not messages:
             logger.warning("load_history_messages_empty", session_id=self.session_id)
@@ -1482,20 +1501,8 @@ class SessionMemory:
         skipped_count = 0
         error_count = 0
         paired_display_tool_ids = self._paired_display_tool_ids(messages)
-        paused_run_ids = {
-            str(data.get("run_id"))
-            for message in messages
-            if message.get("type") == "user_pause"
-            for data in [message.get("data")]
-            if isinstance(data, dict) and data.get("run_id")
-        }
         pending_tool_uses: List[Dict[str, Any]] = []
         pending_tool_results: List[Dict[str, Any]] = []
-
-        def is_paused_run_event(message: Dict[str, Any]) -> bool:
-            data = message.get("data")
-            run_id = data.get("run_id") if isinstance(data, dict) else message.get("run_id")
-            return bool(run_id and str(run_id) in paused_run_ids)
 
         def flush_tool_uses(timestamp: Optional[str] = None) -> None:
             nonlocal loaded_count
@@ -1538,19 +1545,6 @@ class SessionMemory:
                 timestamp = msg.get("timestamp", datetime.utcnow().isoformat())
 
                 is_native_content_blocks = isinstance(msg.get("content"), list)
-                paused_run_event = is_paused_run_event(msg)
-
-                if (
-                    msg_type in {"tool_use", "tool_result"}
-                    and not is_native_content_blocks
-                    and not paused_run_event
-                ):
-                    # Display transcript tool rows are UI/runtime events. Replaying
-                    # them on a later turn makes stale failures and old tool output
-                    # compete with the user's current request. Native content blocks
-                    # produced inside the active LLM session are still handled below.
-                    skipped_count += 1
-                    continue
 
                 if msg_type == "tool_use" and not is_native_content_blocks:
                     tool_use_block = self._display_tool_use_block(msg)
@@ -1597,14 +1591,10 @@ class SessionMemory:
                         elif "tool_use" in content_types:
                             role = "assistant"
                             msg_type = "tool_use"
-                    elif msg_type == "thought" and paused_run_event:
-                        content = f"[暂停前的可见分析]\n{content}"
-                        role = "assistant"
-                        msg_type = "assistant"
-                    elif msg_type == "user_pause":
-                        role = "user"
-                        content = content or "用户主动暂停了上一轮分析"
-                    elif msg_type in {"thought", "tool_use", "tool_result", "start", "error", "interrupted"}:
+                    elif msg_type in {
+                        "thought", "tool_use", "tool_result", "user_pause",
+                        "start", "error", "interrupted",
+                    }:
                         # These rows are UI/display transcript events. Replaying
                         # them as assistant/user text teaches the model to emit
                         # pseudo tool calls such as "[思考] 准备调用工具...".
@@ -1630,33 +1620,10 @@ class SessionMemory:
                     data = msg.get("data", {})
 
                     # 提取消息内容
-                    if msg_type == "thought" and paused_run_event:
-                        thought_content = msg.get("content") or data.get("thought") or ""
-                        if thought_content:
-                            self.conversation_history.append(
-                                ConversationTurn(
-                                    role="assistant",
-                                    content=f"[暂停前的可见分析]\n{thought_content}",
-                                    timestamp=timestamp,
-                                    type="assistant",
-                                    data={"restored_from_paused_run": True},
-                                )
-                            )
-                            loaded_count += 1
-                        else:
-                            skipped_count += 1
-                    elif msg_type == "user_pause":
-                        self.conversation_history.append(
-                            ConversationTurn(
-                                role="user",
-                                content=msg.get("content") or "用户主动暂停了上一轮分析",
-                                timestamp=timestamp,
-                                type="user_pause",
-                                data=data if isinstance(data, dict) else None,
-                            )
-                        )
-                        loaded_count += 1
-                    elif msg_type in {"tool_use", "tool_result", "start", "error", "interrupted"}:
+                    if msg_type in {
+                        "thought", "tool_use", "tool_result", "user_pause",
+                        "start", "error", "interrupted",
+                    }:
                         skipped_count += 1
                     elif msg_type == "complete":
                         answer = data.get("answer", "")

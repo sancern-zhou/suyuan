@@ -13,12 +13,12 @@ def _paused_display_history():
     return [
         {
             "type": "user",
-            "content": "查询站点数据并生成报告",
+            "content": "USER_MESSAGE_1",
             "timestamp": "2026-08-02T10:00:00",
         },
         {
             "type": "thought",
-            "content": "先查询站点数据",
+            "content": "DISPLAY_THOUGHT_1",
             "data": {"run_id": "run_pause", "iteration": 1},
             "timestamp": "2026-08-02T10:00:01",
         },
@@ -35,12 +35,12 @@ def _paused_display_history():
         },
         {
             "type": "tool_result",
-            "content": "查询到 12 条数据",
+            "content": "TOOL_RESULT_DISPLAY_1",
             "data": {
                 "run_id": "run_pause",
                 "tool_use_id": "tool_1",
                 "tool_name": "query_station_data",
-                "result": {"status": "success", "summary": "查询到 12 条数据"},
+                "result": {"status": "success", "summary": "TOOL_RESULT_1"},
                 "is_error": False,
             },
             "timestamp": "2026-08-02T10:00:03",
@@ -56,14 +56,14 @@ def test_append_paused_preserves_visible_trajectory_and_is_idempotent():
         session,
         display_history=_paused_display_history(),
         run_id="run_pause",
-        partial_answer="已完成数据查询，正在生成报告。",
+        partial_answer="PARTIAL_ASSISTANT_1",
         paused_at="2026-08-02T10:00:04",
     )
     persistence.append_paused(
         session,
         display_history=_paused_display_history(),
         run_id="run_pause",
-        partial_answer="重复内容不应写入",
+        partial_answer="DUPLICATE_PARTIAL_1",
         paused_at="2026-08-02T10:00:05",
     )
 
@@ -106,7 +106,7 @@ def test_paused_trajectory_is_projected_into_next_llm_context():
         session,
         display_history=_paused_display_history(),
         run_id="run_pause",
-        partial_answer="已完成数据查询。",
+        partial_answer="PARTIAL_ASSISTANT_1",
         paused_at="2026-08-02T10:00:04",
     )
 
@@ -115,12 +115,14 @@ def test_paused_trajectory_is_projected_into_next_llm_context():
         session_id="session_a",
     )
 
-    serialized = str(projected)
-    assert "暂停前的可见分析" in serialized
-    assert "query_station_data" in serialized
-    assert "查询到 12 条数据" in serialized
-    assert "已完成数据查询" in serialized
-    assert "用户主动暂停了上一轮分析" in serialized
+    assert [message["role"] for message in projected] == [
+        "user", "assistant", "user", "assistant",
+    ]
+    assert projected[1]["content"][0]["name"] == "query_station_data"
+    assert projected[2]["content"][0]["tool_use_id"] == "tool_1"
+    assert "TOOL_RESULT_1" in projected[2]["content"][0]["content"]
+    assert projected[3]["content"] == "PARTIAL_ASSISTANT_1"
+    assert all("DISPLAY_THOUGHT_1" not in str(message) for message in projected)
 
 
 @pytest.mark.asyncio

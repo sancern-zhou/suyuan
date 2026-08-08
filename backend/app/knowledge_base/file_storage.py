@@ -9,8 +9,11 @@ import shutil
 from typing import Optional, Tuple, Dict, Any
 import mimetypes
 import structlog
+from uuid import uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+
+from app.utils.path_config import get_data_registry, resolve_agent_path
 
 logger = structlog.get_logger()
 
@@ -167,11 +170,13 @@ class LocalFileStorageService:
     """本地文件存储服务"""
 
     def __init__(self, storage_dir: str = None):
-        self.storage_dir = storage_dir or os.getenv(
-            "KNOWLEDGE_BASE_STORAGE_DIR",
-            "data/knowledge_base/files"
+        configured = storage_dir or os.getenv("KNOWLEDGE_BASE_STORAGE_DIR")
+        self.storage_dir = (
+            resolve_agent_path(configured)
+            if configured
+            else (get_data_registry() / "knowledge_base" / "files").resolve()
         )
-        os.makedirs(self.storage_dir, exist_ok=True)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     async def store_original_file(
         self,
@@ -184,19 +189,23 @@ class LocalFileStorageService:
         import shutil
 
         file_ext = os.path.splitext(original_filename)[1].lower()
-        kb_dir = os.path.join(self.storage_dir, knowledge_base_id)
-        os.makedirs(kb_dir, exist_ok=True)
+        kb_dir = self.storage_dir / knowledge_base_id
+        kb_dir.mkdir(parents=True, exist_ok=True)
 
         storage_filename = f"{document_id}{file_ext}"
-        storage_path = os.path.join(kb_dir, storage_filename)
-
-        shutil.move(temp_file_path, storage_path)
+        storage_path = kb_dir / storage_filename
+        temporary_path = storage_path.with_name(
+            f".{storage_path.name}.tmp-{uuid4().hex}"
+        )
+        shutil.copy2(temp_file_path, temporary_path)
+        temporary_path.replace(storage_path)
 
         return {
             "storage_type": "local",
-            "storage_path": storage_path,
+            "storage_path": str(storage_path),
             "mime_type": mimetypes.guess_type(original_filename)[0],
-            "size": os.path.getsize(storage_path)
+            "checksum": hashlib.sha256(storage_path.read_bytes()).hexdigest(),
+            "size": storage_path.stat().st_size
         }
 
     async def retrieve_file(self, storage_path: str) -> Tuple[bytes, str]:

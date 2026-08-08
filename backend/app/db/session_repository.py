@@ -13,9 +13,12 @@
 import json
 import structlog
 import time
+from enum import Enum
+from pathlib import Path
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import date, datetime, time as datetime_time, timezone
 from decimal import Decimal
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
 from sqlalchemy import select, update, delete, func, cast, Text
@@ -75,26 +78,38 @@ class SessionRepository:
         }
 
     @staticmethod
-    def _convert_decimal_to_float(obj: Any) -> Any:
-        """
-        递归地将 Decimal 对象转换为 float，以便 JSON 序列化
-
-        Args:
-            obj: 任意 Python 对象
-
-        Returns:
-            转换后的对象（Decimal -> float）
-        """
+    def _normalize_json_value(obj: Any) -> Any:
+        """Recursively convert runtime values to JSON-compatible primitives."""
+        if isinstance(obj, Enum):
+            return SessionRepository._normalize_json_value(obj.value)
         if isinstance(obj, Decimal):
             return float(obj)
-        elif isinstance(obj, dict):
-            return {key: SessionRepository._convert_decimal_to_float(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [SessionRepository._convert_decimal_to_float(item) for item in obj]
-        elif isinstance(obj, tuple):
-            return tuple(SessionRepository._convert_decimal_to_float(item) for item in obj)
-        else:
+        if isinstance(obj, (datetime, date, datetime_time)):
+            return obj.isoformat()
+        if isinstance(obj, (UUID, Path)):
+            return str(obj)
+        if isinstance(obj, dict):
+            return {
+                str(SessionRepository._normalize_json_value(key)): (
+                    SessionRepository._normalize_json_value(value)
+                )
+                for key, value in obj.items()
+            }
+        if isinstance(obj, (list, tuple)):
+            return [SessionRepository._normalize_json_value(item) for item in obj]
+        if isinstance(obj, (set, frozenset)):
+            return [
+                SessionRepository._normalize_json_value(item)
+                for item in sorted(obj, key=str)
+            ]
+        if obj is None or isinstance(obj, (str, bool, int, float)):
             return obj
+        return str(obj)
+
+    @staticmethod
+    def _convert_decimal_to_float(obj: Any) -> Any:
+        """Backward-compatible alias for the former JSON normalization helper."""
+        return SessionRepository._normalize_json_value(obj)
 
     @staticmethod
     def _resolve_role_and_type(msg: Dict[str, Any]) -> tuple:
@@ -130,18 +145,8 @@ class SessionRepository:
 
     @staticmethod
     def _serialize_content(content: Any) -> Any:
-        """
-        序列化 content 为 JSONB 兼容格式
-
-        JSONB 列原生支持 str, list, dict, None，
-        只需处理 Decimal 等不可序列化的类型
-        """
-        if content is None:
-            return None
-        if isinstance(content, (str, list, dict, bool, int, float)):
-            return content
-        # 其他类型（Decimal 等）转换为字符串
-        return str(content)
+        """Serialize content to a value accepted by JSON/JSONB columns."""
+        return SessionRepository._normalize_json_value(content)
 
     @staticmethod
     def _message_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
@@ -151,12 +156,12 @@ class SessionRepository:
             for k, v in msg.items()
             if k not in MESSAGE_METADATA_EXCLUDED_KEYS
         }
-        return SessionRepository._convert_decimal_to_float(metadata)
+        return SessionRepository._normalize_json_value(metadata)
 
     @staticmethod
     def _message_data(msg: Dict[str, Any]) -> Any:
         """Return message data with tool runtime fields preserved in one place."""
-        msg_data = SessionRepository._convert_decimal_to_float(msg.get("data"))
+        msg_data = SessionRepository._normalize_json_value(msg.get("data"))
         tool_fields = {
             key: msg[key]
             for key in ("tool_use_id", "tool_name", "is_error")
@@ -169,7 +174,7 @@ class SessionRepository:
         if isinstance(msg_data, dict):
             for key, value in tool_fields.items():
                 msg_data.setdefault(key, value)
-        return SessionRepository._convert_decimal_to_float(msg_data)
+        return SessionRepository._normalize_json_value(msg_data)
 
     @staticmethod
     def _message_attachments(metadata: Any) -> List[Dict[str, Any]]:

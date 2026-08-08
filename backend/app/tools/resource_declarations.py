@@ -20,6 +20,31 @@ def _media_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
+def _inferred_preview_contract(path: Path) -> tuple[str, tuple[str, ...]]:
+    suffix = path.suffix.lower()
+    renderer_by_suffix = {
+        ".pdf": "pdf",
+        ".html": "html",
+        ".htm": "html",
+        ".md": "markdown",
+        ".markdown": "markdown",
+        ".xlsx": "spreadsheet",
+        ".xls": "spreadsheet",
+        ".csv": "spreadsheet",
+        ".pptx": "presentation",
+        ".ppt": "presentation",
+        ".png": "image",
+        ".jpg": "image",
+        ".jpeg": "image",
+        ".gif": "image",
+        ".webp": "image",
+        ".svg": "image",
+    }
+    renderer = renderer_by_suffix.get(suffix, "file")
+    capabilities = ("preview", "download") if renderer != "file" else ("download",)
+    return renderer, capabilities
+
+
 def _path_group_key(path: Path, tool_name: str) -> str:
     digest = hashlib.sha256(str(path).encode()).hexdigest()[:16]
     return f"{tool_name}:file:{digest}"
@@ -507,11 +532,14 @@ def single_file_product(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved = Path(path).expanduser().resolve()
+    renderer, capabilities = _inferred_preview_contract(resolved)
     return primary_file(
         resolved,
         group_key=logical_key or _path_group_key(resolved, tool_name),
         tool_name=tool_name,
         role=role,
+        renderer=renderer,
+        capabilities=capabilities,
         label=label,
         metadata=metadata,
     )

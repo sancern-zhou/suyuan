@@ -56,6 +56,10 @@ async def start_knowledge_base_services() -> None:
     else:
         logger.info("knowledge_index_outbox_worker_skipped", reason="disabled_on_startup")
 
+    await warmup_knowledge_base_models_if_enabled()
+
+
+async def warmup_knowledge_base_models_if_enabled() -> None:
     if not _env_flag("KNOWLEDGE_BASE_WARMUP_ON_STARTUP"):
         logger.info("knowledge_base_warmup_skipped", reason="disabled_on_startup")
         return
@@ -67,7 +71,7 @@ async def start_knowledge_base_services() -> None:
 
 
 async def warmup_knowledge_base_models() -> None:
-    """Warm up embedding and reranker models to avoid first-query latency."""
+    """Warm up shared retrieval models without enabling reranking by default."""
     start = time.time()
     logger.info("knowledge_base_models_warmup_starting")
 
@@ -80,17 +84,20 @@ async def warmup_knowledge_base_models() -> None:
     except Exception as e:
         logger.warning("embedding_warmup_failed", error=str(e))
 
-    try:
-        from app.knowledge_base.service import get_reranker
+    if _env_flag("KNOWLEDGE_BASE_RERANKER_WARMUP_ON_STARTUP", default=False):
+        try:
+            from app.knowledge_base.service import get_reranker
 
-        reranker = get_reranker()
-        if reranker:
-            _ = reranker.predict([("预热", "测试")])
-            logger.info("reranker_model_warmed_up")
-        else:
-            logger.info("reranker_warmup_skipped", reason="reranker_not_available")
-    except Exception as e:
-        logger.warning("reranker_warmup_failed", error=str(e))
+            reranker = get_reranker()
+            if reranker:
+                await asyncio.to_thread(reranker.predict, [("预热", "测试")])
+                logger.info("reranker_model_warmed_up")
+            else:
+                logger.info("reranker_warmup_skipped", reason="reranker_not_available")
+        except Exception as e:
+            logger.warning("reranker_warmup_failed", error=str(e))
+    else:
+        logger.info("reranker_warmup_skipped", reason="disabled_on_startup")
 
     elapsed = time.time() - start
     logger.info("knowledge_base_models_warmup_completed", elapsed_seconds=round(elapsed, 2))

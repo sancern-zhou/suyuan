@@ -157,7 +157,7 @@ async def test_replace_reuses_unchanged_chunk_and_deletes_changed_chunk(replacem
 
 
 @pytest.mark.asyncio
-async def test_replace_parse_failure_cleans_old_derived_data(replacement_context):
+async def test_replace_parse_failure_restores_previous_document(replacement_context):
     factory, processor, _storage, service, tmp_path = replacement_context
     processor.error = "invalid replacement"
     new_file = tmp_path / "broken.md"
@@ -173,10 +173,11 @@ async def test_replace_parse_failure_cleans_old_derived_data(replacement_context
     async with factory() as session:
         document = await session.get(Document, "doc1")
         chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
-    assert document.content_generation == 2
-    assert document.status == DocumentStatus.FAILED
-    assert document.ingestion_status == "failed"
-    assert chunks == []
+    assert document.content_generation == 1
+    assert document.filename == "old.md"
+    assert document.status == DocumentStatus.COMPLETED
+    assert document.ingestion_status == "completed"
+    assert [chunk.content for chunk in chunks] == ["A", "B"]
 
 
 @pytest.mark.asyncio
