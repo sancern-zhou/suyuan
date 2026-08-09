@@ -22,11 +22,7 @@ from decimal import Decimal
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
-<<<<<<< HEAD
 from sqlalchemy import select, update, delete, func, cast, Text, case
-=======
-from sqlalchemy import select, update, delete, func, cast, Text, case
->>>>>>> 68a94a15... fix: preserve full replies in session history
 
 from .models_session import SessionDB, SessionMessageDB
 from .database import engine
