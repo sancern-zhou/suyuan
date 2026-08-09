@@ -4,26 +4,28 @@ Data Fetching Backend
 定时从外部API爬取数据，存入云数据库的后台程序
 """
 
+from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher
 from app.fetchers.base.scheduler import FetcherScheduler
+from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher
 from app.fetchers.consultation import ConsultationFileFetcher
-from app.fetchers.consultation.monthly import MonthlyConsultationFileFetcher
 from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher
+from app.fetchers.consultation.monthly import MonthlyConsultationFileFetcher
 from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyDistrictPollutantRankingFetcher,
     MonthlyMeteorologySupportFetcher,
     MonthlyPollutionEventsComponentsFetcher,
     MonthlyStationHighValuesFetcher,
 )
-from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher
-from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher
 from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
-from app.fetchers.tenders import TenderInformationFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher
-from app.fetchers.yuncheng_trial import YunchengTrialFetcher
+from app.fetchers.tenders import TenderInformationFetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
+from app.fetchers.yuncheng_trial import YunchengTrialFetcher
+
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -49,6 +51,7 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(JiningQuickTraceFetcher())  # 济宁市快速溯源报告每日生成
     scheduler.register(YunchengTrialFetcher())  # 运城市驻场试用场景小时数据盯守
     scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时气象实况
+    scheduler.register(NMCWeatherChartFetcher())  # 中国地面天气形势图
     scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
 
     return scheduler

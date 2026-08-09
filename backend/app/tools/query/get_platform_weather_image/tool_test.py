@@ -1,7 +1,11 @@
+import base64
 from pathlib import Path
 
 import pytest
 
+from app.services.data_registry import DataRegistryService
+from app.services.image_cache import ImageCache
+from app.tools.query.get_platform_weather_image import tool as weather_image_module
 from app.tools.query.get_platform_weather_image.tool import (
     GetPlatformWeatherImageTool,
     build_weather_image_url,
@@ -409,3 +413,38 @@ async def test_execute_backward_trajectory_uses_city_and_trajectory_date(tmp_pat
     assert result["data"]["local_path"] == str(
         tmp_path / "backward_trajectory" / "20260610" / "101240101_20260608.gif"
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_reads_latest_nmc_surface_weather_chart_from_registry(tmp_path, monkeypatch):
+    registry = DataRegistryService(base_dir=str(tmp_path / "registry"))
+    image_cache = ImageCache(cache_dir=str(tmp_path / "images"))
+    Path(image_cache.cache_dir).mkdir(parents=True, exist_ok=True)
+    source_path = tmp_path / "weather" / "nmc_weather_chart_20260808120000.jpg"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_bytes(b"jpeg-bytes")
+    cached = image_cache.save(base64.b64encode(b"jpeg-bytes").decode(), chart_id="nmc_chart_test")
+    entry = registry.register_payload(
+        schema="nmc_weather_chart",
+        version="v1",
+        payload={
+            "product": "中国地面基本天气分析",
+            "display_time": "08/08 20:00",
+            "image_url": "https://image.nmc.cn/product/chart.JPG",
+            "local_path": str(source_path),
+            "image": cached,
+        },
+    )
+    monkeypatch.setattr(weather_image_module, "data_registry", registry)
+
+    result = await GetPlatformWeatherImageTool(output_root=tmp_path).execute(
+        product="nmc_surface_weather_chart",
+        time="latest",
+    )
+
+    assert result["success"] is True
+    assert result["data"]["product_name"] == "中国地面天气形势图"
+    assert result["data"]["data_id"] == entry.data_id
+    assert result["data"]["image_url"] == "/api/image/nmc_chart_test"
+    assert result["visuals"][0]["type"] == "image"
+    assert result["refs"]["data"][0]["data_id"] == entry.data_id

@@ -5,38 +5,48 @@
 注意：工具注册已迁移到 app.tools.__init__.py 的 global_tool_registry
 此处仅负责初始化和提供访问接口
 """
-from app.fetchers.base.scheduler import FetcherScheduler
-from app.fetchers.weather.era5_fetcher import ERA5Fetcher
-from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
-from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
-from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
-from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
-    OpenMeteoAirQualityForecastFetcher,
+import os
+
+import structlog
+
+from app.fetchers.air_quality_data_quality_monitor import (
+    AirQualityDataQualityFetcher,  # 空气质量数据质量巡检
 )
-from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
-from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
-from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
-from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
-from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
+from app.fetchers.base.scheduler import FetcherScheduler
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
-from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
-from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
-from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
-from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultationFileFetcher  # 会商文件批量更新、月度完整会商文件
-from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
+from app.fetchers.consultation import (  # 会商文件批量更新、月度完整会商文件
+    ConsultationFileFetcher,
+    MonthlyConsultationFileFetcher,
+)
+from app.fetchers.consultation.annual_ytd import (
+    AnnualYtdConsultationFileFetcher,  # 年度累计会商文件
+)
 from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyDistrictPollutantRankingFetcher,
     MonthlyMeteorologySupportFetcher,
     MonthlyPollutionEventsComponentsFetcher,
     MonthlyStationHighValuesFetcher,
 )
+from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
+from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
+from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
+from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
+from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
+from app.fetchers.weather.era5_fetcher import ERA5Fetcher
+from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
+from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
+from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
+from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
+    OpenMeteoAirQualityForecastFetcher,
+)
+from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
+from app.project_config.loader import load_project_context
+
 # 导入单一工具注册源
 from app.tools import global_tool_registry
-from app.project_config.loader import load_project_context
 from config.settings import settings
-
-import structlog
-import os
 
 logger = structlog.get_logger()
 
@@ -65,6 +75,7 @@ def initialize_fetchers() -> bool:
         fetcher_scheduler.register(ObservedWeatherFetcher())
         fetcher_scheduler.register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
         fetcher_scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
+        fetcher_scheduler.register(NMCWeatherChartFetcher())  # 中国地面天气形势图
         fetcher_scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
 
         # 注册Satellite Fetchers
