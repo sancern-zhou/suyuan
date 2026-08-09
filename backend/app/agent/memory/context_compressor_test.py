@@ -288,7 +288,7 @@ def test_session_memory_load_history_messages_rebuilds_tool_blocks_from_display_
     assert "\"summary\": \"查询到1条记录\"" in messages[2]["content"][0]["content"]
 
 
-def test_session_memory_load_history_messages_restores_only_lightweight_tool_result_fields(tmp_path):
+def test_session_memory_load_history_messages_restores_field_compacted_tool_result(tmp_path):
     session = SessionMemory(session_id="restore-light-tool-result-test", base_dir=tmp_path)
     saved_messages = [
         {
@@ -332,26 +332,11 @@ def test_session_memory_load_history_messages_restores_only_lightweight_tool_res
     messages = session.get_messages_for_llm()
     restored = json.loads(messages[1]["content"][0]["content"])
 
-    assert restored == {
-        "tool_name": "render_chart",
-        "tool_use_id": "toolu_chart_1",
-        "status": "success",
-        "is_error": False,
-        "summary_text": "已生成趋势图",
-        "data_id": "chart_data:v1:abc",
-        "data_ids": ["chart_data:v1:abc"],
-        "visual_ids": ["visual_1", "visual_2"],
-        "context_refs": {
-            "data": [
-                {
-                    "data_id": "chart_data:v1:abc",
-                    "usage": "primary",
-                    "tool": "read_data_registry",
-                }
-            ],
-        },
-        "result_truncated": True,
-    }
+    assert restored["status"] == "success"
+    assert restored["summary_text"] == "已生成趋势图"
+    assert restored["data_id"] == "chart_data:v1:abc"
+    assert restored["visuals"][0]["id"] == "visual_1"
+    assert restored["data"] == [{"large": "row"}]
 
 
 def test_session_memory_restore_keeps_high_value_resource_references(tmp_path):
@@ -762,7 +747,7 @@ def test_session_memory_restore_adds_data_references_to_context_refs(tmp_path):
     ]
 
 
-def test_tool_result_history_minimalization_preserves_resume_refs(monkeypatch):
+def test_tool_result_history_minimalization_preserves_refs_and_resume(monkeypatch):
     monkeypatch.setattr(session_memory, "MAX_TOOL_RESULT_JSON_CHARS", 500)
 
     result = session_memory._prepare_tool_result_for_history({
@@ -791,9 +776,9 @@ def test_tool_result_history_minimalization_preserves_resume_refs(monkeypatch):
     assert result["tool_result_truncated"] is True
     assert result["refs"]["files"][0]["path"] == "/tmp/report.md"
     assert result["llm_resume"]["tool_hint"] == "Use read_file(path='/tmp/report.md') to reread this file."
-    assert result["data_id"] == "large:v1:result"
-    assert result["report_data_ids"] == ["report:v1:summary"]
-    assert result["source_data_ids"] == ["raw:v1:source"]
+    assert "data_id" not in result
+    assert "report_data_ids" not in result
+    assert "source_data_ids" not in result
     assert "rows" not in json.dumps(result, ensure_ascii=False)
 
 
@@ -853,17 +838,9 @@ def test_standardized_legacy_tool_result_survives_history_restore_projection(tmp
     )
     restored = json.loads(projected[1]["content"][0]["content"])
 
-    assert restored["context_refs"]["files"][0]["path"] == "/tmp/report.md"
-    assert restored["context_refs"]["data"] == [
-        {
-            "data_id": "raw:v1:source",
-            "usage": "source",
-            "tool": "read_data_registry",
-        }
-    ]
+    assert restored["refs"]["files"][0]["path"] == "/tmp/report.md"
     assert restored["llm_resume"]["tool_hint"] == "Use read_file(path='/tmp/report.md') to reread this file."
-    assert restored["content_preview"] == "关键正文"
-    assert "payload" not in json.dumps(restored, ensure_ascii=False)
+    assert restored["data"]["content"] == "关键正文"
 
 
 def test_document_artifact_tool_result_survives_history_restore_projection(tmp_path):
