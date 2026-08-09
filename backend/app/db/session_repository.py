@@ -21,7 +21,7 @@ from decimal import Decimal
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
-from sqlalchemy import select, update, delete, func, cast, Text
+from sqlalchemy import select, update, delete, func, cast, Text, case
 
 from .models_session import SessionDB, SessionMessageDB
 from .database import engine
@@ -30,6 +30,10 @@ logger = structlog.get_logger()
 
 # 有效的语义类型集合
 VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
+
+# These messages are rendered as conversation turns and must never be reduced
+# to a preview during lightweight history restoration.
+FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final"}
 
 MESSAGE_METADATA_EXCLUDED_KEYS = {
     "type",
@@ -927,16 +931,21 @@ class SessionRepository:
         - 前端从 content_preview 中解析工具名称
         - 性能优化：首屏恢复速度提升 3-5 倍
         """
+        display_content = getattr(row, "display_content", None)
+        content_preview = row.content_preview or ""
+        has_full_display_content = display_content is not None
+
         msg_dict: Dict[str, Any] = {
             "role": row.role,
             "type": row.msg_type,
-            "content": row.content_preview or "",
-            "content_preview": row.content_preview or "",
+            "content": display_content if has_full_display_content else content_preview,
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,
             "is_lightweight": True,
         }
+        if not has_full_display_content:
+            msg_dict["content_preview"] = content_preview
         attachments = self._message_attachments(getattr(row, "msg_metadata", None))
         if attachments:
             msg_dict["attachments"] = attachments
@@ -992,8 +1001,9 @@ class SessionRepository:
             # 查询消息（降序取 limit 条，再升序返回）
             if not include_data:
                 content_text = cast(SessionMessageDB.content, Text)
-                # ✅ 轻量级查询：不查询 data 字段，避免传输大型 result 数据
-                # 前端从 content_preview 中解析工具名称（content 包含工具调用信息）
+                # Keep user/final text complete. Only process messages use a
+                # preview; truncating JSON text can split a \uXXXX escape and
+                # also cuts long final answers shown in restored sessions.
                 stmt = (
                     select(
                         SessionMessageDB.id,
@@ -1002,8 +1012,14 @@ class SessionRepository:
                         SessionMessageDB.msg_metadata,
                         SessionMessageDB.timestamp,
                         SessionMessageDB.sequence_number,
+                        case(
+                            (
+                                SessionMessageDB.msg_type.in_(FULL_DISPLAY_CONTENT_MSG_TYPES),
+                                SessionMessageDB.content,
+                            ),
+                            else_=None,
+                        ).label("display_content"),
                         func.substring(content_text, 1, 2000).label("content_preview"),
-                        # ❌ 不查询 data 字段（避免传输大型 result 数据）
                     )
                     .where(SessionMessageDB.session_id == session_id)
                 )
