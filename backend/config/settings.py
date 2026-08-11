@@ -247,8 +247,21 @@ class Settings(BaseSettings):
 
     # LLM Configuration
     llm_provider: str = Field(
-        default="openai",
-        description="LLM provider: openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian"
+        default="doubao",
+        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet"
+    )
+    doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
+    doubao_base_url: str = Field(
+        default="https://doubao.best/v1",
+        description="Doubao OpenAI-compatible API base URL",
+    )
+    doubao_model: str = Field(
+        default="gpt-5.6-luna",
+        description="Default Doubao model used by Auto mode",
+    )
+    doubao_api_mode: str = Field(
+        default="chat_completions",
+        description="Doubao API protocol mode: chat_completions",
     )
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
     openai_base_url: str = Field(
@@ -387,6 +400,20 @@ class Settings(BaseSettings):
         description="GLM API protocol mode: anthropic_messages or chat_completions"
     )
 
+    scnet_api_key: Optional[str] = Field(default=None, description="Sugon SCNET token-plan API key")
+    scnet_base_url: str = Field(
+        default="https://api.scnet.cn/api/llm/anthropic",
+        description="Sugon SCNET Anthropic-compatible API base URL"
+    )
+    scnet_model: str = Field(
+        default="Qwen3.8-Max",
+        description="Sugon SCNET model name"
+    )
+    scnet_api_mode: str = Field(
+        default="anthropic_messages",
+        description="SCNET API protocol mode: anthropic_messages or chat_completions"
+    )
+
     # 报告模式配置
     report_mode_max_tokens: int = Field(
         default=8000,
@@ -414,20 +441,20 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
+        default="doubao/gpt-5.6-luna,mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
         description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_flash_models: str = Field(
-        default="bailian/qwen3.6-flash,mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
+        default="doubao/gpt-5.6-luna,bailian/qwen3.6-flash,mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
         description="Comma-separated Flash model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
-        default="bailian/deepseek-v4-pro,mimo/mimo-v2.5,deepseek/deepseek-v4-pro",
+        default="doubao/gpt-5.6-luna,bailian/deepseek-v4-pro,mimo/mimo-v2.5,deepseek/deepseek-v4-pro",
         description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
-        default="bailian/qwen3.8-max-preview,mimo/mimo-v2.5,agnes/agnes-2.0-flash",
-        description="Comma-separated multimodal model priority chain used by all Agent modes"
+        default="",
+        description="Deprecated; Agent modes now use the normal Auto/Flash/Pro chains"
     )
     knowledge_base_llm_model_tier: Literal["auto", "flash", "pro"] = Field(
         default="flash",
@@ -577,6 +604,26 @@ class Settings(BaseSettings):
     qianlima_proxy_password: Optional[str] = Field(
         default=None,
         description="Proxy password for Qianlima detail browser requests"
+    )
+    qianlima_ssh_proxy_host: Optional[str] = Field(
+        default=None,
+        description="SSH host used to create a temporary SOCKS5 proxy for Qianlima search"
+    )
+    qianlima_ssh_proxy_port: int = Field(
+        default=22,
+        description="SSH port used to create a temporary SOCKS5 proxy for Qianlima search"
+    )
+    qianlima_ssh_proxy_username: str = Field(
+        default="root",
+        description="SSH username used for the Qianlima search proxy"
+    )
+    qianlima_ssh_proxy_password: Optional[str] = Field(
+        default=None,
+        description="SSH password used for the Qianlima search proxy"
+    )
+    qianlima_ssh_proxy_key_path: Optional[str] = Field(
+        default=None,
+        description="Optional SSH private key path used for the Qianlima search proxy"
     )
     tender_llm_api_key: Optional[str] = Field(
         default=None,
@@ -747,6 +794,14 @@ class Settings(BaseSettings):
                 "model": self.openai_model,
                 "api_mode": self.openai_api_mode,
             }
+        elif self.llm_provider == "doubao":
+            return {
+                "provider": "doubao",
+                "api_key": self.doubao_api_key,
+                "base_url": self.doubao_base_url,
+                "model": self.doubao_model,
+                "api_mode": self.doubao_api_mode,
+            }
         elif self.llm_provider == "deepseek":
             return {
                 "provider": "deepseek",
@@ -801,6 +856,14 @@ class Settings(BaseSettings):
                 "anthropic_base_url": self.glm_anthropic_base_url,
                 "model": self.glm_model,
                 "api_mode": self.glm_api_mode,
+            }
+        elif self.llm_provider == "scnet":
+            return {
+                "provider": "scnet",
+                "api_key": self.scnet_api_key,
+                "base_url": self.scnet_base_url,
+                "model": self.scnet_model,
+                "api_mode": self.scnet_api_mode,
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")

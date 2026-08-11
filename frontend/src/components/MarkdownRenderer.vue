@@ -69,6 +69,10 @@ const defaultImageRender = md.renderer.rules.image || function (tokens, idx, opt
 }
 
 md.renderer.rules.image = function (tokens, idx, options, env, self) {
+  // Streaming content is reparsed on every chunk. Defer images until the final
+  // render so their DOM and authenticated requests are not repeatedly replaced.
+  if (env?.streaming) return ''
+
   const token = tokens[idx]
   const srcIndex = token.attrIndex('src')
 
@@ -290,7 +294,7 @@ const renderedHtml = computed(() => {
 
   // 【保留占位符】让ReActMessageList.vue处理截图注入，不在这里替换占位符
 
-  const rendered = md.render(content)
+  const rendered = md.render(content, { streaming: _streaming })
 
   console.log('[MarkdownRenderer] ===== 渲染完成 =====')
   console.log('[MarkdownRenderer] streaming:', props.streaming)
@@ -345,12 +349,17 @@ const collectImages = () => {
 
 const refreshImages = async () => {
   await nextTick()
+  if (props.streaming) {
+    markdownImageHydrator.clear()
+    lightboxImages.value = []
+    return
+  }
   await markdownImageHydrator.hydrate(markdownRef.value)
   collectImages()
 }
 
 // 监听内容变化，重新收集图片
-watch(renderedHtml, () => {
+watch([renderedHtml, () => props.streaming], () => {
   refreshImages()
 })
 

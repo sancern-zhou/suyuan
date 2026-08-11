@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -9,7 +10,13 @@ from app.tools.visualization.create_report_chart.tool import (
     CreateReportChartTool,
     report_chart_reference_paths,
 )
-from app.tools.visualization.create_report_chart.renderer import select_chinese_font
+from app.tools.visualization.create_report_chart.renderer import (
+    _cache_figure,
+    _create_figure,
+    _draw_line,
+    _position_legends_below_plot,
+    select_chinese_font,
+)
 
 
 def test_schema_stays_compact_and_points_to_progressive_references():
@@ -76,7 +83,10 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "ExecutionContext" in properties["file_path"]["description"]
     assert "无需调用 get_raw_data" in properties["file_path"]["description"]
     assert "来源追踪" in properties["file_path"]["description"]
-    assert "绝对路径" in properties["file_path"]["description"]
+    assert "原样复用" in properties["file_path"]["description"]
+    assert "save_data" in properties["file_path"]["description"]
+    assert "不得自行构造、猜测或改写存储路径" in properties["file_path"]["description"]
+    assert "执行环境内自行写入的中间路径" in properties["file_path"]["description"]
     assert "reference_lines" in properties["options"]["description"]
 
 
@@ -1046,6 +1056,48 @@ async def test_dense_legend_layout_reflows_and_omits_overflow_items_deterministi
         key=lambda item: item["label"],
     )
     assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+def test_report_legend_is_positioned_below_and_does_not_overlap_plot():
+    fig, ax = _create_figure("word", "report")
+    try:
+        _draw_line(
+            ax,
+            "多系列趋势",
+            {
+                "labels": ["一月", "二月", "三月"],
+                "series": [
+                    {"name": "PM2.5", "values": [30, 40, 35]},
+                    {"name": "PM10", "values": [55, 60, 58]},
+                ],
+            },
+            {},
+        )
+
+        layout = _position_legends_below_plot(fig)
+        fig.tight_layout(pad=1.1, rect=(0.0, layout["reserved_bottom_fraction"], 1.0, 1.0))
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        assert layout["position"] == "outside_bottom"
+        assert layout["reserved_bottom_fraction"] > 0
+        assert not ax.get_legend().get_window_extent(renderer=renderer).overlaps(
+            ax.get_window_extent(renderer=renderer)
+        )
+
+        baseline = BytesIO()
+        fig.savefig(baseline, format="png", bbox_inches="tight", dpi=180)
+        baseline.seek(0)
+        with Image.open(baseline) as image:
+            baseline_height = image.height
+
+        exported = _cache_figure(fig, "legend_export_regression", "多系列趋势")
+        with Image.open(exported["local_path"]) as image:
+            exported_height = image.height
+
+        assert exported_height > baseline_height + 20
+    finally:
+        plt.close(fig)
 
 
 @pytest.mark.asyncio

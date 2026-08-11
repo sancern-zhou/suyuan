@@ -17,6 +17,7 @@ from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
 from .custom_prompt import build_custom_prompt
 from .project_prompt import load_project_mode_prompt
+from app.utils.path_config import format_agent_path, resolve_agent_path
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -41,6 +42,17 @@ FILESYSTEM_PATH_CONTRACT = (
 
 def _with_platform_contracts(prompt: str) -> str:
     return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}"
+
+
+def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:
+    if not memory_file_path:
+        return prompt
+    return (
+        f"{prompt.rstrip()}\n\n"
+        "## 长期记忆文件\n"
+        f"- 当前模式长期记忆文件路径：`{memory_file_path}`。\n"
+        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。"
+    )
 
 AgentMode = Literal[
     "assistant",
@@ -97,6 +109,9 @@ def build_react_system_prompt(
     Returns:
         系统提示词字符串
     """
+    if memory_file_path:
+        memory_file_path = format_agent_path(resolve_agent_path(memory_file_path))
+
     # 如果未指定工具，加载该模式的默认工具
     if available_tools is None and mode != "custom":
         tools_dict = get_tools_by_mode(mode)
@@ -126,7 +141,9 @@ def build_react_system_prompt(
 
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
-        return project_prompt
+        return _with_platform_contracts(
+            _with_memory_file_contract(project_prompt, memory_file_path)
+        )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":

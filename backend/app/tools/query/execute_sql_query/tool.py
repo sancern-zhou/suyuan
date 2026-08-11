@@ -53,6 +53,50 @@ MONITORING_SQL_TABLES = [
 ]
 
 
+AIR_QUALITY_SCHEMA_GUIDE = (
+    "\n\n【高频空气质量表字段契约】"
+    "\n以下字段已经确认；查询这些表时直接生成SQL，不要先调用describe_table。"
+    "仅当需要契约未列出的字段，或数据库返回字段错误时，才调用describe_table。"
+    "\n- 地理参数规则：城市名称和行政区代码从当前项目上下文或用户长期记忆获取，"
+    "本工具不内置特定项目的地理信息。SQL中的{city_name}和{city_code}仅表示模板变量，"
+    "执行前必须替换为上下文中的实际值，不得把模板变量原样写入SQL。"
+    "若上下文缺少名称与代码的映射，应补充地理上下文；describe_table只能查询字段，不能提供该映射。"
+    "不同表的城市字段不同，禁止跨表套用字段名。"
+    "\n- CurrentAirQuality（城市当前实况及今明两天预报摘要）："
+    "城市字段为CityID，按行政区代码筛选：CityID = '{city_code}'；"
+    "没有cityname、Area、CityCode，不得把城市名称写入CityID。"
+    "污染物字段：AQI, PM25, PM10, O3, SO2, NO2, CO；"
+    "等级与首要污染物：AQILevel, MaxPollution；"
+    "实况与更新时间：WeatherCondition, Temperature, WindPower, Humidity, RecordTime, UpdateTime；"
+    "今日字段：TodayCondition, TodayMinAqi, TodayMaxAqi, TodayMaxPollution, TodayTemp；"
+    "明日字段：TomorrowCondition, TomorrowMinAqi, TomorrowMaxAqi, TomorrowMaxPollution, TomorrowTemp。"
+    "当前实况示例：SELECT TOP 1 CityID, AQI, PM25, PM10, O3, SO2, NO2, CO, "
+    "AQILevel, MaxPollution, RecordTime, UpdateTime FROM dbo.CurrentAirQuality "
+    "WHERE CityID = '{city_code}' ORDER BY UpdateTime DESC。"
+    "\n- CityAQIPublishHistory（城市小时历史）："
+    "城市字段为Area和CityCode，按城市全称或行政区代码筛选："
+    "Area = N'{city_name}'或CityCode = {city_code}；"
+    "没有cityname、CityID。时间字段为TimePoint；"
+    "污染物字段为PM2_5, PM10, O3, NO2, SO2, CO, AQI；"
+    "其他字段为PrimaryPollutant, Quality。注意PM2.5字段名是PM2_5，不是PM25。"
+    "\n- CityDayAQIPublishHistory（城市日历史）："
+    "城市字段为Area和CityCode，按城市全称或行政区代码筛选："
+    "Area = N'{city_name}'或CityCode = {city_code}；"
+    "时间字段为TimePoint；日均字段为PM2_5_24h, PM10_24h, O3_8h_24h, "
+    "NO2_24h, SO2_24h, CO_24h；其他字段为AQI, PrimaryPollutant, Quality。"
+    "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
+    "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
+    "站点字段为station_id, name, lon, lat；时间字段为data_time；"
+    "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
+    "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
+    "\n- WeatherForecast7Day（7天空气质量预报）："
+    "城市字段为cityname，按城市全称筛选：cityname = N'{city_name}'；时间字段为TimePoint；"
+    "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
+    "Temperature, WindLevel, WindDirection, UpdateDate, UpdateTime。"
+    "cityname仅用于此预报表，不得用于CurrentAirQuality或城市、站点历史表。"
+)
+
+
 OPS_SQL_TABLES = [
     # 系统管理
     'sys_user',
@@ -781,7 +825,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
     def __init__(self):
         schema_description = (
             "监测数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
-            "不确定字段/表结构时先用describe_table动态查询，不要依赖记忆中的表清单。"
+            "高频表优先使用下方已确认的字段契约直接生成SQL；其他表字段不确定时再用describe_table动态查询。"
             "硬约束：只允许SELECT；禁止DROP/DELETE/INSERT/UPDATE；最大返回1000条。"
             "SQL Server语法：中文字符串必须加N前缀，如 N'广东'；分页/限制用TOP，不支持LIMIT。"
             "database默认为XcAiDb；质控/站点基础信息通常用AirPollutionAnalysis。"
@@ -803,7 +847,8 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- quality_control_records：质控例行检查记录"
             "\n- BSD_STATION：站点信息表（含站点ID/名称/代码/区域/经纬度/地址）"
             "\n- analysis_history：分析历史记录"
-            "\n\n提示：使用describe_table可查看白名单表的完整字段结构。运维表单请使用execute_ops_sql_query。"
+            + AIR_QUALITY_SCHEMA_GUIDE
+            + "\n\n提示：使用describe_table可查看白名单表的完整字段结构。运维表单请使用execute_ops_sql_query。"
         )
         super().__init__(
             tool_name="execute_sql_query",

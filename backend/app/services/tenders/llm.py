@@ -87,9 +87,12 @@ class TenderLLMClientPool:
         timeout_seconds: float | None = None,
         **kwargs,
     ):
-        entry = self.entries[self.screening_client_index]
         max_attempts = self._screening_max_attempts()
         for attempt in range(1, max_attempts + 1):
+            entry_index = (self.screening_client_index + attempt - 1) % len(
+                self.entries
+            )
+            entry = self.entries[entry_index]
             try:
                 async with entry.semaphore:
                     method = getattr(entry.client, method_name)
@@ -647,6 +650,8 @@ class OpenAICompatibleTenderLLMClient:
         return provider.strip().split("#", 1)[0].strip().lower()
 
     def _provider_key_names(self, provider: str) -> list[str]:
+        if provider == "doubao":
+            return ["DOUBAO_API_KEY"]
         if provider == "bailian":
             return ["BAILIAN_API_KEY"]
         if provider == "glm":
@@ -654,6 +659,8 @@ class OpenAICompatibleTenderLLMClient:
         return []
 
     def _provider_base_url(self, provider: str) -> str | None:
+        if provider == "doubao":
+            return os.getenv("DOUBAO_BASE_URL")
         if provider == "bailian":
             return os.getenv("BAILIAN_BASE_URL")
         if provider == "glm":
@@ -661,6 +668,8 @@ class OpenAICompatibleTenderLLMClient:
         return None
 
     def _provider_model(self, provider: str) -> str | None:
+        if provider == "doubao":
+            return os.getenv("DOUBAO_MODEL")
         if provider == "bailian":
             return os.getenv("BAILIAN_MODEL")
         if provider == "glm":
@@ -669,6 +678,7 @@ class OpenAICompatibleTenderLLMClient:
 
     def _provider_api_mode(self, provider: str) -> str:
         env_name = {
+            "doubao": "DOUBAO_API_MODE",
             "agnes": "AGNES_API_MODE",
             "bailian": "BAILIAN_API_MODE",
             "glm": "GLM_API_MODE",

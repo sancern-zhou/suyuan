@@ -61,3 +61,13 @@ def test_llm_context_row_can_include_data_while_light_row_omits_it():
         "result": {"summary": "ok"},
     }
     assert "data" not in light_message
+
+
+def test_message_content_unwraps_json_scalar_strings_from_database_drivers():
+    repository = SessionRepository()
+    row = _Row()
+    row.content = '"Agent initialization failed"'
+
+    message = repository._message_row_to_context_dict(row)
+
+    assert message["content"] == "Agent initialization failed"

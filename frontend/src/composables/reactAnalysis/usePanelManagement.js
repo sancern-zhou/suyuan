@@ -8,7 +8,7 @@ import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { resolveMessageAttachmentResource } from '@/services/messageAttachmentPreview.js'
-import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
+import { buildResourceGroups, isPreviewTarget, targetTab } from '@/services/resourceGroups.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 
 export function usePanelManagement(store = null) {
@@ -264,10 +264,9 @@ export function usePanelManagement(store = null) {
   // ========== 监听器 ==========
 
   /**
-   * 监听内容变化，自动显示/隐藏面板
+   * 监听内容变化，只在收到明确预览请求时自动展开面板
    */
   const setupWatchers = () => {
-    let previousArtifactCount = 0
     let previousSessionId = null
     watch(
       () => [
@@ -281,7 +280,6 @@ export function usePanelManagement(store = null) {
         const summary = resourceSummary.value
         if (sessionId !== previousSessionId) {
           previousSessionId = sessionId
-          previousArtifactCount = 0
           activeTabUserSelected.value = false
           rightPanelDismissed.value = false
         }
@@ -292,7 +290,8 @@ export function usePanelManagement(store = null) {
           )
           const group = buildResourceGroups(resourceStore.activeSessionState?.resources || [])
             .find(item => item.group_id === resource?.group_id)
-          const allowed = resource && group ? await confirmResourcePreviewLeave() : false
+          const previewRequested = resource && group && isPreviewTarget(group)
+          const allowed = previewRequested ? await confirmResourcePreviewLeave() : false
           const currentRequest = resourceStore.activeSessionState?.presentationRequest
           if (
             currentRequest?.resourceId !== presentationRequest.resourceId
@@ -308,7 +307,6 @@ export function usePanelManagement(store = null) {
             rightPanelVisible.value = true
             leftSidebarCollapsed.value = true
             vizWidth.value = collapsedVizWidth
-            previousArtifactCount = summary.counts.files
             return
           }
         }
@@ -317,13 +315,7 @@ export function usePanelManagement(store = null) {
           if (restored && !activeTabUserSelected.value) {
             activeRightTab.value = restored.targetTab
           }
-          if (previousArtifactCount === 0 && summary.counts.files > 0 && !rightPanelDismissed.value) {
-            rightPanelVisible.value = true
-            leftSidebarCollapsed.value = true
-            vizWidth.value = collapsedVizWidth
-          }
         }
-        previousArtifactCount = summary.counts.files
       },
       { immediate: true }
     )

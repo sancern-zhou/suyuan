@@ -72,13 +72,11 @@ class ReActAgent:
     def _select_auto_profile(
         manual_mode: Optional[str],
     ) -> Optional[str]:
-        """Choose the Auto capability profile for this run.
+        """Use the normal Auto model chain for every Agent mode.
 
-        Profiles describe required model capabilities; they do not name a
-        concrete provider/model.
+        Native image/attachment handling remains enabled independently; it no
+        longer selects a separate multimodal provider/model chain.
         """
-        if supports_native_multimodal(manual_mode):
-            return "multimodal"
         return None
 
     @staticmethod

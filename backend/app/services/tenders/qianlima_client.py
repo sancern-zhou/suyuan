@@ -5,6 +5,8 @@ import json
 import os
 import random
 import re
+import socket
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, List, Optional
@@ -45,6 +47,89 @@ class _QianlimaPublicSearchError(RuntimeError):
 
 class QianlimaDetailAccessExhaustedError(RuntimeError):
     stop_tender_detail_processing = True
+
+
+class _QianlimaSocksTunnel:
+    """Create a short-lived local SOCKS5 tunnel over SSH."""
+
+    def __init__(self):
+        self.process: asyncio.subprocess.Process | None = None
+        self.local_port: int | None = None
+        self.askpass_path: str | None = None
+
+    async def start(self) -> str:
+        if self.process is not None and self.process.returncode is None and self.local_port:
+            return f"socks5://127.0.0.1:{self.local_port}"
+        host = _qianlima_ssh_proxy_setting("host")
+        username = _qianlima_ssh_proxy_setting("username") or "root"
+        if not host:
+            raise RuntimeError("QIANLIMA_SSH_PROXY_HOST is required when SSH proxy is enabled")
+        port = int(_qianlima_ssh_proxy_setting("port") or "22")
+        password = _qianlima_ssh_proxy_setting("password")
+        key_path = _qianlima_ssh_proxy_setting("key_path")
+        self.local_port = _find_free_local_port()
+        command = [
+            "ssh", "-N", "-D", f"127.0.0.1:{self.local_port}", "-p", str(port),
+            "-o", "ExitOnForwardFailure=yes", "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30",
+        ]
+        environment = os.environ.copy()
+        if password:
+            askpass = tempfile.NamedTemporaryFile(
+                mode="w", prefix="qianlima-ssh-askpass-", delete=False
+            )
+            askpass.write("#!/bin/sh\nprintf '%s\\n' \"$QIANLIMA_SSH_PROXY_PASSWORD\"\n")
+            askpass.close()
+            os.chmod(askpass.name, 0o700)
+            self.askpass_path = askpass.name
+            environment.update({
+                "SSH_ASKPASS": askpass.name,
+                "SSH_ASKPASS_REQUIRE": "force",
+                "DISPLAY": ":99",
+                "QIANLIMA_SSH_PROXY_PASSWORD": password,
+            })
+            command.extend(["-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no"])
+        elif key_path:
+            command.extend(["-i", key_path])
+        command.append(f"{username}@{host}")
+        self.process = await asyncio.create_subprocess_exec(
+            *command, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            env=environment, start_new_session=True,
+        )
+        try:
+            for _ in range(30):
+                if self.process.returncode is not None:
+                    error = (await self.process.stderr.read()).decode(errors="replace").strip()
+                    raise RuntimeError(f"Qianlima SSH proxy failed: {error[-500:]}")
+                try:
+                    _, writer = await asyncio.open_connection("127.0.0.1", self.local_port)
+                    writer.close()
+                    await writer.wait_closed()
+                    return f"socks5://127.0.0.1:{self.local_port}"
+                except OSError:
+                    await asyncio.sleep(0.2)
+            raise RuntimeError("Qianlima SSH proxy did not open its local SOCKS5 port")
+        except Exception:
+            await self.close()
+            raise
+
+    async def close(self) -> None:
+        if self.process is not None and self.process.returncode is None:
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await self.process.wait()
+        if self.askpass_path:
+            try:
+                os.unlink(self.askpass_path)
+            except FileNotFoundError:
+                pass
+        self.process = None
+        self.local_port = None
+        self.askpass_path = None
 
 
 def parse_qianlima_list_html(
@@ -237,6 +322,8 @@ class QianlimaClient:
         self._browser = None
         self._context = None
         self._browser_uses_proxy = False
+        self._search_proxy_server: str | None = None
+        self._ssh_proxy_tunnel: _QianlimaSocksTunnel | None = None
         self._public_search_page = None
         self._public_search_request_count = 0
         self._public_search_lock = asyncio.Lock()
@@ -267,9 +354,15 @@ class QianlimaClient:
                 await self.close()
             from playwright.async_api import async_playwright
 
+            if use_proxy:
+                self._search_proxy_server = await self._ensure_search_proxy()
             self._playwright = await async_playwright().start()
             launch_kwargs = {"headless": self.headless}
-            proxy_config = _qianlima_playwright_proxy() if use_proxy else None
+            proxy_config = (
+                _qianlima_playwright_proxy(self._search_proxy_server)
+                if use_proxy
+                else None
+            )
             if proxy_config:
                 launch_kwargs["proxy"] = proxy_config
             self._browser = await self._playwright.chromium.launch(**launch_kwargs)
@@ -296,6 +389,19 @@ class QianlimaClient:
             await self._playwright.stop()
             self._playwright = None
         self._browser_uses_proxy = False
+        if self._ssh_proxy_tunnel is not None:
+            await self._ssh_proxy_tunnel.close()
+            self._ssh_proxy_tunnel = None
+        self._search_proxy_server = None
+
+    async def _ensure_search_proxy(self) -> str | None:
+        configured_server = _qianlima_proxy_setting("server")
+        ssh_host = _qianlima_ssh_proxy_setting("host")
+        if ssh_host:
+            if self._ssh_proxy_tunnel is None:
+                self._ssh_proxy_tunnel = _QianlimaSocksTunnel()
+            return await self._ssh_proxy_tunnel.start()
+        return configured_server or None
 
     async def login(self, login_url: Optional[str] = None) -> None:
         if not self.username or not self.password:
@@ -791,7 +897,10 @@ class QianlimaClient:
             # Public search is anonymous. Tests can opt into a dedicated SOCKS
             # exit without changing the normal direct-search route.
             await self.start(
-                use_proxy=_env_bool("QIANLIMA_SEARCH_USE_PROXY", False)
+                use_proxy=_env_bool(
+                    "QIANLIMA_SEARCH_USE_PROXY",
+                    bool(_qianlima_ssh_proxy_setting("host") or _qianlima_proxy_setting("server")),
+                )
             )
             if self._public_search_page is None or self._public_search_page.is_closed():
                 # Public search is anonymous. Do not leak a stored member session into it.
@@ -1051,8 +1160,8 @@ def _is_member_limited_page(html: str) -> bool:
     return any(re.search(pattern, value, re.IGNORECASE) for pattern in patterns)
 
 
-def _qianlima_playwright_proxy() -> dict[str, str] | None:
-    server = _qianlima_proxy_setting("server")
+def _qianlima_playwright_proxy(server: str | None = None) -> dict[str, str] | None:
+    server = server or _qianlima_proxy_setting("server")
     if not server:
         return None
     proxy = {"server": server}
@@ -1114,6 +1223,20 @@ def _qianlima_proxy_setting(name: str) -> str:
     if value is not None and value.strip():
         return value.strip()
     return str(getattr(settings, f"qianlima_proxy_{name}", "") or "").strip()
+
+
+def _qianlima_ssh_proxy_setting(name: str) -> str:
+    env_name = f"QIANLIMA_SSH_PROXY_{name.upper()}"
+    value = os.getenv(env_name)
+    if value is not None and value.strip():
+        return value.strip()
+    return str(getattr(settings, f"qianlima_ssh_proxy_{name}", "") or "").strip()
+
+
+def _find_free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 async def _sleep_before_detail_request() -> None:

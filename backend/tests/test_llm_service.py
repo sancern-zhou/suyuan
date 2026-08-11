@@ -15,13 +15,13 @@ def test_mimo_default_base_url_uses_anthropic_endpoint():
     assert settings.mimo_base_url == "https://api.xiaomimimo.com/anthropic"
 
 
-def test_multimodal_defaults_prefer_bailian_qwen_for_social_and_chart_modes():
+def test_agent_modes_use_the_normal_model_chains_without_multimodal_override():
     settings = Settings(_env_file=None)
 
     assert settings.agnes_base_url == "https://apihub.agnes-ai.com/v1"
     assert settings.agnes_model == "agnes-2.0-flash"
     assert settings.agnes_api_mode == "chat_completions"
-    assert settings.llm_multimodal_models.startswith("bailian/qwen3.8-max-preview")
+    assert settings.llm_multimodal_models == ""
 
 
 @pytest.mark.asyncio

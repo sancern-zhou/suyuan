@@ -1065,6 +1065,13 @@ class LLMService:
 
     # Provider配置映射（与 settings 中的 provider 一致）
     PROVIDER_CONFIG = {
+        "doubao": {
+            "url_env": "DOUBAO_BASE_URL",
+            "url_default": "https://doubao.best/v1",
+            "key_env": "DOUBAO_API_KEY",
+            "model_env": "DOUBAO_MODEL",
+            "model_default": "gpt-5.6-luna",
+        },
         "deepseek": {
             "url_env": "DEEPSEEK_BASE_URL",
             "url_default": "https://api.deepseek.com/v1",
@@ -1115,6 +1122,14 @@ class LLMService:
             "key_env": "GLM_API_KEY",
             "model_env": "GLM_MODEL",
             "model_default": "glm-4.7",
+        },
+        # 中科曙光 SCNET Token Plan（Anthropic 兼容协议）
+        "scnet": {
+            "url_env": "SCNET_BASE_URL",
+            "url_default": "https://api.scnet.cn/api/llm/anthropic",
+            "key_env": "SCNET_API_KEY",
+            "model_env": "SCNET_MODEL",
+            "model_default": "Qwen3.8-Max",
         },
     }
 
@@ -1414,6 +1429,18 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_openai_model_fallback_to_env", model=self.model)
 
+        elif self.provider == "doubao":
+            self.api_mode = getattr(settings, "doubao_api_mode", "chat_completions")
+            self.base_url = settings.doubao_base_url
+            self.api_key = settings.doubao_api_key or ""
+            self.model = settings.doubao_model
+            if not self.base_url:
+                self.base_url = os.getenv(config["url_env"], config["url_default"])
+            if not self.api_key:
+                self.api_key = os.getenv(config["key_env"], "")
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+
         elif self.provider == "mimo":
             self.api_mode = getattr(settings, "mimo_api_mode", "anthropic_messages")
             self.base_url = settings.mimo_base_url
@@ -1466,6 +1493,18 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_glm_model_fallback_to_env", model=self.model)
+
+        elif self.provider == "scnet":
+            self.api_mode = getattr(settings, "scnet_api_mode", "anthropic_messages")
+            self.base_url = settings.scnet_base_url
+            self.api_key = settings.scnet_api_key or ""
+            self.model = settings.scnet_model
+            if not self.base_url:
+                self.base_url = os.getenv(config["url_env"], config["url_default"])
+                logger.debug("llm_scnet_base_url_fallback_to_env", base_url=self.base_url)
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_scnet_model_fallback_to_env", model=self.model)
 
         else:
             # 回退到环境变量
@@ -1533,7 +1572,7 @@ class LLMService:
             )
             return
 
-        if self.provider in ["deepseek", "mimo", "glm", "minimax", "bailian"]:  # 支持 Anthropic 格式的提供商
+        if self.provider in ["deepseek", "mimo", "glm", "minimax", "bailian", "scnet"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
@@ -1558,6 +1597,8 @@ class LLMService:
                     )
                 elif self.provider == "bailian":
                     anthropic_base_url = settings.bailian_base_url
+                elif self.provider == "scnet":
+                    anthropic_base_url = settings.scnet_base_url
                 else:
                     logger.error(
                         "llm_anthropic_unsupported_provider",

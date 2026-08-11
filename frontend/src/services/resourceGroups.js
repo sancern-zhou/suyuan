@@ -4,6 +4,7 @@ const SUPPORTED_RENDERERS = new Set([
   'pdf', 'html', 'markdown', 'spreadsheet', 'presentation', 'image', 'chart', 'board'
 ])
 const DOCUMENT_RENDERERS = new Set(['pdf', 'html', 'markdown', 'spreadsheet', 'presentation'])
+const PREVIEW_TABS = new Set(['document', 'visualization', 'board'])
 
 const newestFirst = (left, right) => {
   const version = Number(right.version || 0) - Number(left.version || 0)
@@ -72,4 +73,8 @@ export function targetTab(group) {
   ) return 'visualization'
   if (DOCUMENT_RENDERERS.has(resource.renderer)) return 'document'
   return 'files'
+}
+
+export function isPreviewTarget(group) {
+  return PREVIEW_TABS.has(targetTab(group))
 }

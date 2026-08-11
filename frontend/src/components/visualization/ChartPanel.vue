@@ -43,6 +43,7 @@ import { ref, onMounted, onBeforeUnmount, watch, computed, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import 'echarts-gl'  // 引入echarts-gl扩展库以支持3D图表
 import { cloneEChartsOption, sanitizeCompleteRadarOption } from '../../utils/echartsOptionSanitizer'
+import { applyPreferredChartFont } from '../../services/chartTypography'
 
 const props = defineProps({
   data: {
@@ -687,7 +688,7 @@ const buildOption = () => {
     if (optimized.radiusAxis?.name) {
       console.log('[ChartPanel] radiusAxis名称:', optimized.radiusAxis.name)
     }
-    return optimized
+    return applyPreferredChartFont(optimized)
   } catch (error) {
     console.error('[ChartPanel] buildOption 错误:', error)
     return {}

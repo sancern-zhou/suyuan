@@ -17,6 +17,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+BROWSER_CHART_FONT_FAMILY = (
+    "FZXiaoBiaoSong-B05S, GB_XBS_GB18030, GB_XBS_GBT2312, "
+    "PingFang SC, Hiragino Sans GB, Microsoft YaHei, Noto Sans CJK SC, "
+    "Helvetica Neue, Arial, sans-serif"
+)
+
 
 class FontManager:
     """字体管理器 - 自动配置中文字体"""
@@ -121,6 +127,7 @@ class FontManager:
 
         # 应用字体配置
         try:
+            plt.rcParams['font.family'] = 'sans-serif'
             plt.rcParams['font.sans-serif'] = [font_name] + self.FONT_FALLBACK_CHAIN[1:]
             plt.rcParams['axes.unicode_minus'] = False
             plt.rcParams['mathtext.fontset'] = 'dejavusans'
@@ -227,7 +234,9 @@ def apply_font_to_figure(fig: Any) -> None:
     if prop is None:
         return
     for text in fig.findobj(match=matplotlib.text.Text):
+        current_size = text.get_fontsize()
         text.set_fontproperties(prop)
+        text.set_fontsize(current_size)
 
 
 # 自动配置（模块导入时执行）

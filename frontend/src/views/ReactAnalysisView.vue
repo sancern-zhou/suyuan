@@ -33,6 +33,7 @@
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
       :right-panel-visible="rightPanelVisible"
+      :has-resource-content="hasResourceContent"
       :knowledge-panel-visible="knowledgePanelVisible"
       :active-right-tab="activeRightTab"
       :viz-panel-style="vizPanelStyle"
@@ -203,7 +204,8 @@ const {
   setupWatchers: setupPanelWatchers,
   setupGlobalListeners,
   cleanupGlobalListeners,
-  openMessageAttachmentPreview
+  openMessageAttachmentPreview,
+  hasVizContent: hasResourceContent
 } = usePanelManagement(store)
 
 // 会话管理

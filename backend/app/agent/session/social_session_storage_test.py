@@ -157,11 +157,11 @@ async def test_social_mode_does_not_override_llm_provider_or_model(monkeypatch):
     assert events[-1]["type"] == "complete"
     assert "llm_provider" not in captured_kwargs
     assert "llm_model" not in captured_kwargs
-    assert captured_kwargs["auto_profile"] == "multimodal"
+    assert captured_kwargs["auto_profile"] is None
 
 
 @pytest.mark.asyncio
-async def test_chart_mode_uses_multimodal_auto_profile(monkeypatch):
+async def test_chart_mode_uses_normal_auto_chain(monkeypatch):
     from app.agent import react_agent as react_agent_module
 
     captured_kwargs = {}
@@ -197,12 +197,12 @@ async def test_chart_mode_uses_multimodal_auto_profile(monkeypatch):
     ]
 
     assert events[-1]["type"] == "complete"
-    assert captured_kwargs["auto_profile"] == "multimodal"
+    assert captured_kwargs["auto_profile"] is None
     assert captured_kwargs["attachments"] == [image_attachment]
 
 
 @pytest.mark.asyncio
-async def test_assistant_mode_uses_multimodal_profile_and_forwards_runtime_attachments(monkeypatch):
+async def test_assistant_mode_uses_normal_auto_chain_and_forwards_runtime_attachments(monkeypatch):
     from app.agent import react_agent as react_agent_module
 
     captured_kwargs = {}
@@ -239,5 +239,5 @@ async def test_assistant_mode_uses_multimodal_profile_and_forwards_runtime_attac
     ]
 
     assert events[-1]["type"] == "complete"
-    assert captured_kwargs["auto_profile"] == "multimodal"
+    assert captured_kwargs["auto_profile"] is None
     assert captured_kwargs["attachments"] == [image_attachment]
