@@ -359,7 +359,17 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     if mode not in mode_mapping:
         raise ValueError(f"Unknown mode: {mode}")
 
-    return mode_mapping[mode]
+    from app.project_config.loader import load_project_context
+    from config.settings import settings
+
+    disabled_tools = set(
+        load_project_context(settings.project_id).manifest.backend.disabled_tools
+    )
+    return {
+        name: description
+        for name, description in mode_mapping[mode].items()
+        if name not in disabled_tools
+    }
 
 
 def get_tool_order(mode: str) -> List[str]:

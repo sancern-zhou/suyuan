@@ -19,6 +19,12 @@ backend:
   tools:
     - get_gems_image
     - get_sentinel5p_image
+  disabled_tools:
+    - analyze_city_pollutant_rankings
+    - get_5min_data
+  mode_prompt_files:
+    query: projects/xuchang/prompts/query.md
+    expert: projects/xuchang/prompts/expert.md
 knowledge:
   collections:
   - xuchang

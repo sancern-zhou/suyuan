@@ -55,6 +55,11 @@ def is_project_tool_enabled(
     )
 
 
+def is_project_tool_disabled(context: ProjectContext, tool_name: str) -> bool:
+    """Return whether the active project explicitly disables a shared tool."""
+    return tool_name in context.manifest.backend.disabled_tools
+
+
 def create_global_tool_registry() -> ToolRegistry:
     """
     创建并初始化全局工具注册表
@@ -268,12 +273,13 @@ def create_global_tool_registry() -> ToolRegistry:
     except ImportError as e:
         logger.warning("tool_import_failed", tool="query_station_standard_yoy_report", error=str(e))
 
-    try:
-        from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool
-        registry.register(CityPollutantRankingsTool(), priority=45)
-        logger.info("tool_loaded", tool="analyze_city_pollutant_rankings")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="analyze_city_pollutant_rankings", error=str(e))
+    if not is_project_tool_disabled(context, "analyze_city_pollutant_rankings"):
+        try:
+            from app.tools.query.city_pollutant_rankings.tool import CityPollutantRankingsTool
+            registry.register(CityPollutantRankingsTool(), priority=45)
+            logger.info("tool_loaded", tool="analyze_city_pollutant_rankings")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="analyze_city_pollutant_rankings", error=str(e))
 
     # 全国省份/城市空气质量查询工具（GDQFWS参考项目）
     try:
@@ -403,12 +409,13 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.warning("tool_import_failed", tool="resolve_station_geo", error=str(e))
 
     # 5分钟数据查询工具
-    try:
-        from app.tools.query.get_5min_data.tool import Get5MinDataTool
-        registry.register(Get5MinDataTool(), priority=48)
-        logger.info("tool_loaded", tool="get_5min_data")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_5min_data", error=str(e))
+    if not is_project_tool_disabled(context, "get_5min_data"):
+        try:
+            from app.tools.query.get_5min_data.tool import Get5MinDataTool
+            registry.register(Get5MinDataTool(), priority=48)
+            logger.info("tool_loaded", tool="get_5min_data")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_5min_data", error=str(e))
 
     # ========================================
     # External Data Tools（外部数据工具）
