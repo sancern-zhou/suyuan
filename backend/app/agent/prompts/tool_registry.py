@@ -118,7 +118,6 @@ QUERY_TOOL_NAMES = [
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
-    "query_station_standard_report", "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
     "knowledge_graph_query",
     "resolve_station_geo",
@@ -138,8 +137,6 @@ REPORT_TOOL_NAMES = [
     # 数据查询
     "get_5min_data",
     "execute_sql_query", "execute_postgres_sql_query",
-    "query_station_standard_report",
-    "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
 
     # 文件和执行
@@ -165,7 +162,6 @@ CHART_TOOL_NAMES = [
     # 数据查询工具
     "get_observed_meteorology",
     "get_5min_data",
-    "query_station_standard_report", "query_station_standard_yoy_report",
     "execute_sql_query",
 ]
 
@@ -199,9 +195,6 @@ OPS_TOOL_NAMES = [
 
     # 子 Agent 复核
     "call_sub_agent",
-
-    # 站点日数据核对
-    "query_gd_suncere_station_day_new",
 
     # 代码执行
     "execute_python",
@@ -272,7 +265,6 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
 DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "query_gd_suncere_station_day_new",
     "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
