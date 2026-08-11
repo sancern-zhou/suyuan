@@ -28,6 +28,56 @@ from app.schemas.unified import (
 
 logger = structlog.get_logger()
 
+INLINE_RECORD_LIMIT = 24
+
+
+def _weather_data_structure(
+    *,
+    record_count: int,
+    returned_records: int,
+    externalized: bool,
+) -> Dict[str, Any]:
+    """Describe both the inline preview and persisted weather JSON shape."""
+    return {
+        "root_type": "array",
+        "record_type": "object",
+        "record_count": record_count,
+        "returned_records": returned_records,
+        "data_complete": not externalized,
+        "sample_strategy": "head_tail" if externalized else "complete",
+        "record_schema": {
+            "timestamp": "datetime",
+            "station_name": "string|null",
+            "lat": "number|null",
+            "lon": "number|null",
+            "measurements": {
+                "temperature": "number|null",
+                "humidity": "number|null",
+                "dew_point": "number|null",
+                "wind_speed": "number|null",
+                "wind_direction": "number|null",
+                "wind_gusts": "number|null",
+                "surface_pressure": "number|null",
+                "precipitation": "number|null",
+                "precipitation_probability": "number|null",
+                "weather_code": "integer|null",
+                "cloud_cover": "number|null",
+                "visibility": "number|null",
+                "boundary_layer_height": "number|null",
+            },
+            "metadata": "object|null",
+            "dimensions": "object|null",
+            "original_fields": "object|null",
+        },
+        "file_root_type": "array" if externalized else None,
+    }
+
+
+def _head_tail_sample(records: list[UnifiedDataRecord]) -> list[UnifiedDataRecord]:
+    head_size = INLINE_RECORD_LIMIT // 2
+    tail_size = INLINE_RECORD_LIMIT - head_size
+    return records[:head_size] + records[-tail_size:]
+
 
 class GetWeatherForecastTool(LLMTool):
     """
@@ -45,6 +95,12 @@ class GetWeatherForecastTool(LLMTool):
 支持获取今天和历史数据：
 - 使用 past_days=1 可以获取昨天完整数据 + 今天00:00到当前时刻的数据 + 未来7天预报
 - 适合需要完整当天数据的场景（如污染溯源分析）
+
+返回约定：
+- 不超过24条时，data包含全部记录，不生成外部数据文件
+- 超过24条时，data返回首尾共24条样本，file_path指向完整JSON数组
+- data_structure明确描述JSON根类型和嵌套字段；不要调用Python探测数据结构
+- 需要分析外部化明细时，使用execute_python的load_data(file_path)直接加载
 """,
             "parameters": {
                 "type": "object",
@@ -254,18 +310,22 @@ class GetWeatherForecastTool(LLMTool):
             else:
                 summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。{daily_summary}。包含边界层高度预报数据，可用于污染扩散条件分析。"
 
-            # 【Context-Aware V2】保存数据到 session_memory
+            # Keep small datasets inline. Persist large datasets and return a
+            # bounded preview so the model can inspect the shape immediately.
             saved_file_path = None
+            externalized = len(records) > INLINE_RECORD_LIMIT
+            inline_records = _head_tail_sample(records) if externalized else records
 
             logger.info(
                 "weather_forecast_save_data_attempt",
                 has_context=context is not None,
                 has_records=records is not None,
                 records_count=len(records) if records else 0,
+                externalized=externalized,
                 context_type=type(context).__name__ if context else None
             )
 
-            if context is not None and records:
+            if context is not None and records and externalized:
                 try:
                     # 转换 UnifiedDataRecord 为字典
                     records_dicts = [r.model_dump() if hasattr(r, 'model_dump') else r.dict() for r in records]
@@ -285,7 +345,11 @@ class GetWeatherForecastTool(LLMTool):
                             "location": location_name,
                             "forecast_days": forecast_days,
                             "past_days": past_days,
-                            "source": "Open-Meteo Forecast API"
+                            "source": "Open-Meteo Forecast API",
+                            # Preserve the same nested record shape exposed in
+                            # the inline preview; do not standardize it again.
+                            "field_mapping_applied": True,
+                            "root_type": "array",
                         }
                     )
                     logger.info(
@@ -295,16 +359,22 @@ class GetWeatherForecastTool(LLMTool):
                     )
                     summary = f"{summary} 文件路径: {saved_file_path}。"
                 except Exception as save_error:
+                    externalized = False
+                    inline_records = records
                     logger.error(
                         "weather_forecast_data_save_failed",
                         error=str(save_error),
                         error_type=type(save_error).__name__,
                         exc_info=True
                     )
-            else:
+            elif externalized:
+                # Without durable storage, returning all records is safer than
+                # silently dropping data.
+                externalized = False
+                inline_records = records
                 logger.warning(
                     "weather_forecast_skip_data_save",
-                    reason="context is None or records is empty",
+                    reason="context is None",
                     has_context=context is not None,
                     has_records=records is not None
                 )
@@ -313,12 +383,28 @@ class GetWeatherForecastTool(LLMTool):
             result = UnifiedData(
                 status=DataStatus.SUCCESS,
                 success=True,
-                data=records,
+                data=inline_records,
                 metadata=metadata,
                 summary=summary,
             )
 
-            result_dict = result.dict()
+            result_dict = result.model_dump()
+            result_dict.update({
+                "data_complete": not externalized,
+                "record_count": len(records),
+                "returned_records": len(inline_records),
+                "sample_strategy": "head_tail" if externalized else "complete",
+                "data_structure": _weather_data_structure(
+                    record_count=len(records),
+                    returned_records=len(inline_records),
+                    externalized=externalized,
+                ),
+            })
+            result_dict["metadata"]["context_data"] = {
+                "inline_record_limit": INLINE_RECORD_LIMIT,
+                "externalized": externalized,
+                "data_structure": result_dict["data_structure"],
+            }
             if saved_file_path:
                 result_dict["file_path"] = saved_file_path
                 result_dict["metadata"]["file_path"] = saved_file_path
@@ -329,6 +415,8 @@ class GetWeatherForecastTool(LLMTool):
                 lat=lat,
                 lon=lon,
                 hourly_points=len(records),
+                returned_records=len(inline_records),
+                externalized=externalized,
                 daily_days=forecast_days
             )
 

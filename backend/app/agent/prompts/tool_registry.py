@@ -127,6 +127,9 @@ QUERY_TOOL_NAMES = [
 
     # === 数值计算工具 ===
     "execute_python",
+
+    # === 图表生成工具 ===
+    "create_report_chart", "execute_echarts_python",
 ]
 
 # ===== 报告模式工具 =====
@@ -158,11 +161,6 @@ CHART_TOOL_NAMES = [
 
     # 代码执行和原生多模态视觉参考
     "create_report_chart", "execute_python", "execute_echarts_python",
-
-    # 数据查询工具
-    "get_observed_meteorology",
-    "get_5min_data",
-    "execute_sql_query",
 ]
 
 # ===== 画板模式工具 =====

@@ -69,19 +69,6 @@ class ReActAgent:
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
 
     @staticmethod
-    def _select_auto_profile(
-        manual_mode: Optional[str],
-    ) -> Optional[str]:
-        """Choose the Auto capability profile for this run.
-
-        Profiles describe required model capabilities; they do not name a
-        concrete provider/model.
-        """
-        if supports_native_multimodal(manual_mode):
-            return "multimodal"
-        return None
-
-    @staticmethod
     def _build_attachment_reference_context(
         attachments: List[Dict[str, Any]],
     ) -> str:
@@ -484,10 +471,7 @@ class ReActAgent:
         )
 
         try:
-            auto_profile = self._select_auto_profile(manual_mode)
-            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain(
-                auto_profile=auto_profile,
-            )
+            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain()
             # 使用标准 ReAct 循环（LLM 自主决策调用工具）
             # 工具池包括：
             # - 原子工具（基础能力）
@@ -504,7 +488,6 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
-                auto_profile=auto_profile,
             )
 
             run_executor.configure_resource_tracking(

@@ -439,10 +439,6 @@ class Settings(BaseSettings):
         default="bailian/deepseek-v4-pro,minimax/MiniMax-M3,deepseek/deepseek-v4-pro",
         description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
     )
-    llm_multimodal_models: str = Field(
-        default="bailian/qwen3.8-max-preview,mimo/mimo-v2-pro,agnes/agnes-2.0-flash,minimax/MiniMax-M3",
-        description="Comma-separated multimodal model priority chain used by all Agent modes"
-    )
     llm_failover_cooldown_seconds: int = Field(
         default=60,
         description="Cooldown seconds for transiently failing LLM providers"

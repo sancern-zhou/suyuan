@@ -92,6 +92,16 @@ def test_current_chart_tools_remain_exposed_after_legacy_cleanup():
     assert "create_report_chart" in tool_registry.CHART_TOOL_NAMES
 
 
+def test_query_mode_can_generate_charts_and_chart_mode_cannot_query_business_data():
+    assert "execute_echarts_python" in tool_registry.QUERY_TOOL_NAMES
+    assert "create_report_chart" in tool_registry.QUERY_TOOL_NAMES
+    assert {
+        "get_observed_meteorology",
+        "get_5min_data",
+        "execute_sql_query",
+    }.isdisjoint(tool_registry.CHART_TOOL_NAMES)
+
+
 def test_retired_complex_query_planner_is_fully_removed():
     current_file = Path(__file__).resolve()
     backend_root = current_file.parents[3]

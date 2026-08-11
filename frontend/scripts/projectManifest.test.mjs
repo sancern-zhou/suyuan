@@ -27,7 +27,8 @@ test('xuchang project enables only its declared business modules', () => {
   const config = loadProjectBuildConfig({ projectId: 'xuchang', repoRoot })
 
   assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'xuchang-air-quality', 'xuchang-satellite'])
-  assert.deepEqual(config.frontend.agentModes, ['query', 'expert', 'report', 'chart'])
+  assert.deepEqual(config.frontend.agentModes, ['query', 'expert', 'report'])
+  assert.equal(config.frontend.features.query_agent_as_default, true)
   assert.equal(config.frontend.agentPlatformLayout, 'environment-grid')
 })
 

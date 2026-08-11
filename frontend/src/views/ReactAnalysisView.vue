@@ -148,6 +148,7 @@ import {
 import { PANEL_SIZES } from '@/utils/constants'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import {
   getRunningAgentSessionId,
   isAgentModeRunning,
@@ -425,7 +426,9 @@ const handleSidebarAction = async (actionId) => {
   }
   console.log('[ReactAnalysisView] handleSidebarAction called:', actionId)
   const newTaskMode = actionId === 'restart-session'
-    ? (workspace.value === 'platform' ? 'assistant' : store.currentMode)
+    ? (workspace.value === 'platform'
+        ? (projectConfig.hasFeature('query_agent_as_default') ? 'query' : 'assistant')
+        : store.currentMode)
     : null
 
   if (actionId === 'agent-platform') {

@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any, List, Optional
 import logging
 
+from app.utils.path_config import PROJECT_ROOT
+
 logger = logging.getLogger(__name__)
+
+BROWSER_CHART_FONT_FAMILY = (
+    "FZXiaoBiaoSong-B05S, 方正小标宋简体, PingFang SC, Hiragino Sans GB, "
+    "Microsoft YaHei, Noto Sans CJK SC, Helvetica Neue, Arial, sans-serif"
+)
 
 
 class FontManager:
@@ -46,6 +53,7 @@ class FontManager:
 
     # 字体文件路径（Linux）
     FONT_FILE_PATHS = [
+        PROJECT_ROOT / 'frontend/public/fonts/FZXiaoBiaoSong-B05S.ttf',
         Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
         Path('/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc'),
         Path('/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc'),
@@ -72,7 +80,7 @@ class FontManager:
                 return font_name
         return None
 
-    def _register_font_files(self) -> Optional[str]:
+    def _register_font_files(self) -> None:
         """尝试注册字体文件"""
         for font_path in self.FONT_FILE_PATHS:
             if font_path.exists():
@@ -81,11 +89,15 @@ class FontManager:
                     font_prop = fm.FontProperties(fname=str(font_path))
                     font_name = font_prop.get_name()
                     logger.info(f"成功注册字体文件: {font_path} -> {font_name}")
-                    return font_name
                 except Exception as e:
                     logger.debug(f"注册字体文件失败 {font_path}: {e}")
                     continue
-        return None
+        self._available_fonts = self._get_available_fonts()
+
+    def preferred_font_name(self) -> Optional[str]:
+        """Return the first installed family from the configured priority chain."""
+        self._register_font_files()
+        return self._find_best_chinese_font()
 
     def configure_chinese_font(self) -> bool:
         """
@@ -99,12 +111,7 @@ class FontManager:
 
         logger.info("开始配置中文字体...")
 
-        # 方法1：尝试注册字体文件
-        font_name = self._register_font_files()
-
-        # 方法2：从系统字体中查找
-        if not font_name:
-            font_name = self._find_best_chinese_font()
+        font_name = self.preferred_font_name()
 
         # 方法3：使用默认回退（即使不可用也设置，matplotlib会自动回退）
         if not font_name:
@@ -113,6 +120,7 @@ class FontManager:
 
         # 应用字体配置
         try:
+            plt.rcParams['font.family'] = 'sans-serif'
             plt.rcParams['font.sans-serif'] = [font_name] + self.FONT_FALLBACK_CHAIN[1:]
             plt.rcParams['axes.unicode_minus'] = False
             plt.rcParams['mathtext.fontset'] = 'dejavusans'
@@ -189,16 +197,7 @@ def configure_chinese_font() -> bool:
 
 def chinese_font_prop() -> fm.FontProperties | None:
     """Return the preferred Chinese font, aligned with create_report_chart."""
-    font_manager = get_font_manager()
-    for font_path in font_manager.FONT_FILE_PATHS:
-        if not font_path.exists():
-            continue
-        try:
-            fm.fontManager.addfont(str(font_path))
-            return fm.FontProperties(fname=str(font_path))
-        except Exception as exc:
-            logger.debug(f"注册字体文件失败 {font_path}: {exc}")
-    font_name = font_manager._find_best_chinese_font()
+    font_name = get_font_manager().preferred_font_name()
     if font_name:
         return fm.FontProperties(family=[font_name])
     return None
@@ -210,7 +209,9 @@ def apply_font_to_figure(fig: Any) -> None:
     if prop is None:
         return
     for text in fig.findobj(match=matplotlib.text.Text):
+        current_size = text.get_fontsize()
         text.set_fontproperties(prop)
+        text.set_fontsize(current_size)
 
 
 # 自动配置（模块导入时执行）

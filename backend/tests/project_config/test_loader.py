@@ -47,7 +47,6 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "query",
         "expert",
         "report",
-        "chart",
     ]
     assert context.manifest.frontend.agent_platform_layout == "environment-grid"
     assert context.manifest.backend.tools == [

@@ -13,8 +13,6 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
-
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
 from app.tools.visualization.create_report_chart.text_layout import (
@@ -22,21 +20,18 @@ from app.tools.visualization.create_report_chart.text_layout import (
     govern_text_layout,
 )
 from app.tools.visualization.create_report_chart.validation import ChartDataError
+from app.utils.font_utils import (
+    apply_font_to_figure,
+    chinese_font_prop,
+    configure_chinese_font,
+)
 
 
 WORD_TARGET_WIDTH_IN = 5.8
 WORD_SOURCE_WIDTH_IN = 8.2
 WORD_SOURCE_HEIGHT_IN = 5.2
-CHINESE_FONT_CANDIDATES = [
-    "/home/xckj/.local/share/fonts/方正小标宋简.TTF",
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/truetype/arphic/uming.ttc",
-]
-_CHINESE_FONT_PROP = None
-
+LEGEND_MAX_COLUMNS = 4
+LEGEND_MAX_RESERVED_FRACTION = 0.26
 GENERAL_CHART_TYPES = {
     "bar",
     "horizontal_bar",
@@ -288,8 +283,11 @@ def _render_general_chart_figure(
         metadata.setdefault("normalized_text", {}).update(option_metadata.pop("normalized_text"))
     metadata.update(option_metadata)
 
+    legend_layout = _position_legends_below_plot(fig)
+    metadata["legend_layout"] = legend_layout
+    layout_rect = (0.0, legend_layout["reserved_bottom_fraction"], 1.0, 1.0)
     try:
-        fig.tight_layout(pad=1.1)
+        fig.tight_layout(pad=1.1, rect=layout_rect)
     except Exception:
         warnings.append("tight_layout_failed")
 
@@ -324,49 +322,104 @@ def _create_figure(output_context: str, style_profile: str):
 
 
 def _apply_fonts() -> None:
-    font_prop = _chinese_font_prop()
-    family = font_prop.get_name() if font_prop is not None else "Droid Sans Fallback"
-    plt.rcParams["font.family"] = "sans-serif"
-    plt.rcParams["font.sans-serif"] = [family, "Noto Sans CJK SC", "Droid Sans Fallback", "DejaVu Sans"]
-    plt.rcParams["axes.unicode_minus"] = False
+    configure_chinese_font()
 
 
 def select_chinese_font() -> str | None:
-    for candidate in CHINESE_FONT_CANDIDATES:
-        if Path(candidate).exists():
-            return candidate
-    return None
+    font_prop = chinese_font_prop()
+    if font_prop is None:
+        return None
+    try:
+        from matplotlib import font_manager
+
+        return font_manager.findfont(font_prop, fallback_to_default=False)
+    except Exception:
+        return None
 
 
 def _chinese_font_prop():
-    global _CHINESE_FONT_PROP
-    if _CHINESE_FONT_PROP is not None:
-        return _CHINESE_FONT_PROP
-    font_path = select_chinese_font()
-    if not font_path:
-        return None
-    font_manager.fontManager.addfont(font_path)
-    _CHINESE_FONT_PROP = font_manager.FontProperties(fname=font_path)
-    return _CHINESE_FONT_PROP
+    return chinese_font_prop()
 
 
 def _apply_font_to_figure(fig) -> None:
-    font_prop = _chinese_font_prop()
     for text in fig.findobj(match=lambda obj: hasattr(obj, "set_fontproperties")):
         try:
             if hasattr(text, "get_text") and hasattr(text, "set_text"):
                 text.set_text(str(normalize_matplotlib_label_text(text.get_text())))
-            if font_prop is None:
-                continue
-            current_size = text.get_fontsize()
-            text.set_fontproperties(font_prop)
-            text.set_fontsize(current_size)
         except Exception:
             continue
+    apply_font_to_figure(fig)
 
 
 def _source_font(final_pt: float) -> float:
     return final_pt * WORD_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
+
+
+def _position_legends_below_plot(fig) -> Dict[str, Any]:
+    """Move axes legends into a measured band below the plotting area."""
+    legends = []
+    for axis_index, ax in enumerate(fig.axes):
+        legend = ax.get_legend()
+        if legend is None or not legend.get_visible() or not legend.get_texts():
+            continue
+        legends.append((axis_index, ax, legend))
+
+    if not legends:
+        return {
+            "position": "none",
+            "legend_count": 0,
+            "reserved_bottom_fraction": 0.0,
+            "items": [],
+        }
+
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    next_anchor = 0.015
+    items = []
+    for axis_index, ax, legend in legends:
+        handles = list(legend.legend_handles)
+        labels = [text.get_text() for text in legend.get_texts()]
+        item_count = len(labels)
+        columns = min(LEGEND_MAX_COLUMNS, item_count)
+        legend_options = {
+            "fontsize": min(float(text.get_fontsize()) for text in legend.get_texts()),
+            "frameon": legend.get_frame_on(),
+            "loc": "lower center",
+            "bbox_to_anchor": (0.5, next_anchor),
+            "bbox_transform": fig.transFigure,
+            "borderaxespad": 0.0,
+            "ncol": columns,
+        }
+        title = legend.get_title().get_text()
+        if title:
+            legend_options["title"] = title
+        legend.remove()
+        legend = ax.legend(handles, labels, **legend_options)
+        legend.set_in_layout(False)
+        fig.canvas.draw()
+
+        bbox = legend.get_window_extent(renderer=renderer)
+        height_fraction = bbox.height / max(float(fig.bbox.height), 1.0)
+        next_anchor += height_fraction + 0.012
+        items.append(
+            {
+                "axis_index": axis_index,
+                "item_count": item_count,
+                "columns": columns,
+            }
+        )
+
+    required_fraction = next_anchor + 0.015
+    return {
+        "position": "outside_bottom",
+        "legend_count": len(legends),
+        "reserved_bottom_fraction": min(
+            LEGEND_MAX_RESERVED_FRACTION,
+            required_fraction,
+        ),
+        "required_bottom_fraction": required_fraction,
+        "items": items,
+    }
 
 
 def _apply_x_tick_labels(ax, positions: Sequence[int], labels: Sequence[str], options: Dict[str, Any]) -> Dict[str, Any]:
@@ -863,7 +916,18 @@ def _layout_warnings(fig) -> List[str]:
 def _cache_figure(fig, chart_id: str, title: str) -> Dict[str, Any]:
     buffer = BytesIO()
     _apply_font_to_figure(fig)
-    fig.savefig(buffer, format="png", bbox_inches="tight", dpi=180)
+    visible_legends = [
+        legend
+        for ax in fig.axes
+        if (legend := ax.get_legend()) is not None and legend.get_visible()
+    ]
+    fig.savefig(
+        buffer,
+        format="png",
+        bbox_inches="tight",
+        bbox_extra_artists=visible_legends,
+        dpi=180,
+    )
     encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
     image_id = _safe_chart_id(chart_id)
     cached = get_image_cache().save(encoded, chart_id=image_id)

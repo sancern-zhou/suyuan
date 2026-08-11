@@ -228,6 +228,7 @@ def inspect_text_layout(fig, registry: TextLayoutRegistry) -> LayoutReport:
             issues.append(LayoutIssue("clipped", item.domain, [item]))
 
     issues.extend(_cross_domain_issues(items, renderer))
+    issues.extend(_legend_plot_overlap_issues(fig, items, renderer))
     return LayoutReport(items=items, issues=_dedupe_issues(issues))
 
 
@@ -316,6 +317,32 @@ def _cross_domain_issues(items: Sequence[LayoutTextItem], renderer) -> list[Layo
             right_box = _padded_bbox(_artist_bbox(right.artist, renderer), DEFAULT_SPACING_PX)
             if left_box.overlaps(right_box):
                 issues.append(LayoutIssue("overlap", "cross_domain", [left, right]))
+    return issues
+
+
+def _legend_plot_overlap_issues(fig, items: Sequence[LayoutTextItem], renderer) -> list[LayoutIssue]:
+    """Treat a legend entering any plotting rectangle as a layout conflict."""
+    issues: list[LayoutIssue] = []
+    for axis_index, ax in enumerate(fig.axes):
+        legend = ax.get_legend()
+        if legend is None or not legend.get_visible():
+            continue
+        legend_items = [
+            item
+            for item in items
+            if item.domain == f"legend:{axis_index}" and _is_visible_text(item.artist)
+        ]
+        if not legend_items:
+            continue
+        legend_box = legend.get_window_extent(renderer=renderer)
+        if any(legend_box.overlaps(plot_ax.get_window_extent(renderer=renderer)) for plot_ax in fig.axes):
+            issues.append(
+                LayoutIssue(
+                    "legend_overlaps_plot",
+                    f"legend:{axis_index}",
+                    [legend_items[0]],
+                )
+            )
     return issues
 
 
@@ -614,6 +641,9 @@ def _govern_legends(fig, registry: TextLayoutRegistry, output_context: str) -> d
             "loc": legend._loc,
             "frameon": legend.get_frame_on(),
             "fontsize": min(float(text.get_fontsize()) for text in legend.get_texts()),
+            "bbox_to_anchor": legend.get_bbox_to_anchor().transformed(fig.transFigure.inverted()),
+            "bbox_transform": fig.transFigure,
+            "borderaxespad": legend.borderaxespad,
         }
         title = legend.get_title().get_text()
         if title:

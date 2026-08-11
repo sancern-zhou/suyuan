@@ -1,5 +1,3 @@
-项目的运行环境是conda activate /root/miniconda3/envs/backend_py311
-
 ## Agent 文件系统路径规范
 
 - 所有 Agent、子 Agent、工具和 Skill 接收的文件系统相对路径，统一以项目根目录 `/home/xckj/suyuan` 为解析基准。

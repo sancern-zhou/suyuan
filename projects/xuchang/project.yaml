@@ -8,12 +8,12 @@ modules:
 frontend:
   theme: default
   brand_name: 许昌市AI应用智能体
-  features: {}
+  features:
+    query_agent_as_default: true
   agent_modes:
     - query
     - expert
     - report
-    - chart
   agent_platform_layout: environment-grid
 backend:
   tools:

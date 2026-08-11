@@ -47,6 +47,7 @@ async def test_execute_python_publishes_matplotlib_as_one_visual_group():
             "fig, ax = plt.subplots()\n"
             "ax.plot([1, 2], [3, 4])\n"
             "save_chart(fig, 'unified-resource-test.png')\n"
+            "print('FONT_FAMILY=' + plt.rcParams['font.sans-serif'][0])\n"
         ),
         timeout=10,
     )
@@ -62,7 +63,9 @@ async def test_execute_python_publishes_matplotlib_as_one_visual_group():
     assert resources[0].renderer.value == "chart"
     assert resources[1].renderer.value == "image"
     assert resources[1].parent_key == resources[0].resource_key
+    assert result["visuals"][0]["image_url"].startswith("/api/image/")
     assert "/api/image/" not in result["summary"]
+    assert "FONT_FAMILY=FZXiaoBiaoSong-B05S" in result["data"]["output"]
 
 
 @pytest.mark.asyncio

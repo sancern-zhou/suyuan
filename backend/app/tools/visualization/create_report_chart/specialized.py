@@ -13,6 +13,7 @@ import numpy as np
 from app.services.image_cache import get_image_cache
 from app.tools.visualization.create_report_chart.renderer import ChartDataError, WORD_TARGET_WIDTH_IN
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
+from app.utils.font_utils import apply_font_to_figure
 
 
 def render_specialized_chart(
@@ -558,6 +559,7 @@ def _cache_base64_image(image_base64: str, chart_id: str, title: str) -> Dict[st
 
 def _figure_to_base64(fig) -> str:
     buffer = BytesIO()
+    apply_font_to_figure(fig)
     fig.savefig(buffer, format="png", bbox_inches="tight", dpi=180)
     plt.close(fig)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")

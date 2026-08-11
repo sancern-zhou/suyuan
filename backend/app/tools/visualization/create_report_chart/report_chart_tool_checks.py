@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -8,7 +9,14 @@ from app.tools.visualization.create_report_chart.tool import (
     CreateReportChartTool,
     report_chart_reference_paths,
 )
-from app.tools.visualization.create_report_chart.renderer import select_chinese_font
+from app.tools.visualization.create_report_chart.renderer import (
+    _cache_figure,
+    _create_figure,
+    _draw_line,
+    _position_legends_below_plot,
+    select_chinese_font,
+)
+from app.utils.font_utils import get_font_manager
 
 
 def test_schema_stays_compact_and_points_to_progressive_references():
@@ -75,7 +83,10 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "ExecutionContext" in properties["file_path"]["description"]
     assert "无需调用 get_raw_data" in properties["file_path"]["description"]
     assert "来源追踪" in properties["file_path"]["description"]
-    assert "绝对路径" in properties["file_path"]["description"]
+    assert "原样复用" in properties["file_path"]["description"]
+    assert "save_data" in properties["file_path"]["description"]
+    assert "不得自行构造、猜测或改写存储路径" in properties["file_path"]["description"]
+    assert "执行环境内自行写入的中间路径" in properties["file_path"]["description"]
     assert "reference_lines" in properties["options"]["description"]
 
 
@@ -129,10 +140,12 @@ def test_reference_paths_include_specialized_chart_type_documents():
 
 def test_renderer_selects_existing_chinese_font_file_when_available():
     font_path = select_chinese_font()
+    font_manager = get_font_manager()
 
     assert font_path is not None
     assert Path(font_path).exists()
-    assert font_path == "/home/xckj/.local/share/fonts/方正小标宋简.TTF"
+    assert font_manager.preferred_font_name() == "FZXiaoBiaoSong-B05S"
+    assert Path(font_path).resolve() == font_manager.FONT_FILE_PATHS[0].resolve()
 
 
 def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_mathtext():
@@ -174,6 +187,8 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
 
     assert result["success"] is True
     assert image_path.exists()
+    assert result["visuals"][0]["url"].startswith("/api/image/")
+    assert result["visuals"][0]["image_url"] == result["visuals"][0]["url"]
     assert result["refs"]["data"] == [
         {
             "file_path": "/configured/data/root/sessions/agent_session_test/data/resource-refs.json",
@@ -184,8 +199,10 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
     assert result["refs"]["files"][0]["type"] == "image"
     assert result["refs"]["files"][0]["usage"] == "report_chart"
     assert result["refs"]["visuals"][0]["tool_path"] == str(image_path)
+    assert result["refs"]["visuals"][0]["image_url"] == result["visuals"][0]["image_url"]
     assert result["llm_resume"]["source_file_path"] == "/configured/data/root/sessions/agent_session_test/data/resource-refs.json"
     assert result["llm_resume"]["generated_visuals"][0]["tool_path"] == str(image_path)
+    assert result["llm_resume"]["generated_visuals"][0]["image_url"] == result["visuals"][0]["image_url"]
     assert str(image_path) in result["llm_resume"]["tool_hint"]
 
 
@@ -1032,6 +1049,50 @@ async def test_dense_legend_layout_reflows_and_omits_overflow_items_deterministi
         key=lambda item: item["label"],
     )
     assert "text_overlap_unresolved" not in result["data"]["layout_warnings"]
+
+
+def test_report_legend_is_positioned_below_and_does_not_overlap_plot():
+    fig, ax = _create_figure("word", "report")
+    try:
+        _draw_line(
+            ax,
+            "多系列趋势",
+            {
+                "labels": ["一月", "二月", "三月"],
+                "series": [
+                    {"name": "PM2.5", "values": [30, 40, 35]},
+                    {"name": "PM10", "values": [55, 60, 58]},
+                ],
+            },
+            {},
+        )
+
+        layout = _position_legends_below_plot(fig)
+        fig.tight_layout(pad=1.1, rect=(0.0, layout["reserved_bottom_fraction"], 1.0, 1.0))
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+        assert layout["position"] == "outside_bottom"
+        assert layout["reserved_bottom_fraction"] > 0
+        assert not ax.get_legend().get_window_extent(renderer=renderer).overlaps(
+            ax.get_window_extent(renderer=renderer)
+        )
+
+        baseline = BytesIO()
+        fig.savefig(baseline, format="png", bbox_inches="tight", dpi=180)
+        baseline.seek(0)
+        with Image.open(baseline) as image:
+            baseline_height = image.height
+
+        exported = _cache_figure(fig, "legend_export_regression", "多系列趋势")
+        with Image.open(exported["local_path"]) as image:
+            exported_height = image.height
+
+        assert exported_height > baseline_height + 20
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
 
 
 @pytest.mark.asyncio

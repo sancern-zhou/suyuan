@@ -180,11 +180,12 @@ test('analysis view defaults to the platform and opens chat through explicit flo
   assert.match(source, /queueRouteSessionRestore/)
 })
 
-test('new task defaults to assistant on the platform and preserves the active chat mode', async () => {
+test('new task applies the isolated query-default feature and otherwise preserves assistant behavior', async () => {
   const source = await readSource('../../views/ReactAnalysisView.vue')
 
   assert.doesNotMatch(source, /请先选择一个智能体/)
-  assert.match(source, /const newTaskMode = actionId === 'restart-session'[\s\S]*workspace\.value === 'platform' \? 'assistant' : store\.currentMode/)
+  assert.match(source, /projectConfig\.hasFeature\('query_agent_as_default'\) \? 'query' : 'assistant'/)
+  assert.match(source, /: store\.currentMode/)
   assert.match(source, /if \(newTaskMode !== store\.currentMode\) store\.switchMode\(newTaskMode\)/)
   assert.match(source, /store\.restart\(\)/)
 })

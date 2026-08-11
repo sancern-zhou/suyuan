@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   buildResourceGroups,
+  isPreviewTarget,
   preferredPreview,
   targetTab,
   topLevelProducts
@@ -55,4 +56,11 @@ test('keeps chart image renditions in visualization and treats standalone images
   assert.equal(preferredPreview(chartGroup).renderer, 'image')
   assert.equal(targetTab(chartGroup), 'visualization')
   assert.equal(targetTab({ primary: primary({ renderer: 'image', format: 'png' }) }), 'visualization')
+})
+
+test('only document, visualization, and board targets request an automatic preview', () => {
+  assert.equal(isPreviewTarget({ primary: primary({ renderer: 'file', format: 'json' }) }), false)
+  assert.equal(isPreviewTarget({ primary: primary({ renderer: 'chart', format: 'json' }) }), true)
+  assert.equal(isPreviewTarget({ primary: primary({ renderer: 'pdf', format: 'pdf' }) }), true)
+  assert.equal(isPreviewTarget({ primary: primary({ renderer: 'board', format: 'drawio' }) }), true)
 })

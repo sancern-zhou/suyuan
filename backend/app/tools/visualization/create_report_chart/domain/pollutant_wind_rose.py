@@ -28,6 +28,7 @@ from app.tools.visualization.font_sizing import (
 )
 from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
 from app.utils.path_config import get_datasets_dir
+from app.utils.font_utils import apply_font_to_figure
 
 logger = structlog.get_logger()
 
@@ -721,6 +722,7 @@ def generate_pollution_rose_contour(
     # 保存为base64（6色阶模式下使用固定DPI）
     save_dpi = FIXED_SIX_LEVEL_PARAMS["dpi"] if (use_six_level and SIX_LEVEL_SUPPORT) else dpi
     buf = BytesIO()
+    apply_font_to_figure(fig)
     plt.savefig(buf, format='png', dpi=save_dpi, bbox_inches='tight')
     buf.seek(0)
     img_base64 = base64.b64encode(buf.read()).decode('utf-8')

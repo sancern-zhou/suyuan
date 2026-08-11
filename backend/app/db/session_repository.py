@@ -19,7 +19,7 @@ from datetime import time as datetime_time
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
-from sqlalchemy import select, update, delete, func, cast, Text
+from sqlalchemy import select, update, delete, func
 
 from .models_session import SessionDB, SessionMessageDB
 from .database import engine
@@ -922,14 +922,16 @@ class SessionRepository:
 
         ⚠️ 轻量级策略：
         - 不查询 data 字段（避免传输大型 result 数据）
-        - 前端从 content_preview 中解析工具名称
+        - content 保持完整，content_preview 只用于工具名称识别
         - 性能优化：首屏恢复速度提升 3-5 倍
         """
+        content = row.content
+        content_preview = content[:2000] if isinstance(content, str) else ""
         msg_dict: Dict[str, Any] = {
             "role": row.role,
             "type": row.msg_type,
-            "content": row.content_preview or "",
-            "content_preview": row.content_preview or "",
+            "content": content,
+            "content_preview": content_preview,
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,
@@ -941,8 +943,8 @@ class SessionRepository:
 
         # ✅ 从 content_preview 中提取工具名称（用于前端显示）
         # tool_use 消息的 content 通常包含："调用工具：check_order" 等信息
-        if row.msg_type == "tool_use" and row.content_preview:
-            content = row.content_preview
+        if row.msg_type == "tool_use" and content_preview:
+            content = content_preview
             # 尝试从 content 中提取工具名称（兼容多种格式）
             import re
             # 格式1：调用工具：tool_name
@@ -989,18 +991,17 @@ class SessionRepository:
 
             # 查询消息（降序取 limit 条，再升序返回）
             if not include_data:
-                content_text = cast(SessionMessageDB.content, Text)
                 # ✅ 轻量级查询：不查询 data 字段，避免传输大型 result 数据
-                # 前端从 content_preview 中解析工具名称（content 包含工具调用信息）
+                # content 必须完整返回；只裁剪辅助预览会截断历史最终回复。
                 stmt = (
                     select(
                         SessionMessageDB.id,
                         SessionMessageDB.role,
                         SessionMessageDB.msg_type,
+                        SessionMessageDB.content,
                         SessionMessageDB.msg_metadata,
                         SessionMessageDB.timestamp,
                         SessionMessageDB.sequence_number,
-                        func.substring(content_text, 1, 2000).label("content_preview"),
                         # ❌ 不查询 data 字段（避免传输大型 result 数据）
                     )
                     .where(SessionMessageDB.session_id == session_id)
