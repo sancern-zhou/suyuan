@@ -89,7 +89,7 @@ EXPERT_TOOL_NAMES = [
     "publish_session_file",
     # 气象、空气质量与遥感证据查询工具
     "get_weather_data", "get_observed_meteorology",
-    "get_current_weather", "get_weather_forecast", "get_weather_situation_map",
+    "get_current_weather", "get_weather_forecast",
     "get_platform_weather_image",
     "get_satellite_data", "get_gems_image", "get_sentinel5p_image", "get_fire_hotspots",
     "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
