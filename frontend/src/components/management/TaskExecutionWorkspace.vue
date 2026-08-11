@@ -1,52 +1,145 @@
 <template>
   <section class="task-workspace">
-    <header>
+    <header class="workspace-header">
       <div>
-        <p class="eyebrow">业务任务</p>
-        <h2>{{ task?.name || '任务不可用' }}</h2>
-        <p>{{ task?.description }}</p>
+        <h2>{{ task?.workspace_entry?.title || task?.name || '告警溯源' }}</h2>
+        <p class="workspace-description">按执行日期查看分析记录和文件产物</p>
       </div>
-      <button type="button" @click="$emit('close')">关闭</button>
     </header>
-    <div v-if="loading" class="state">正在加载执行记录...</div>
-    <div v-else-if="error" class="state">{{ error }}</div>
-    <div v-else-if="!executions.length" class="state">暂无执行记录</div>
-    <div v-else class="execution-list">
-      <button v-for="execution in executions" :key="execution.execution_id" type="button" :disabled="!execution.session_id" @click="$emit('restore-execution-session', execution.session_id)">
-        <strong>{{ statusLabel(execution.status) }}</strong>
-        <span>{{ formatTime(execution.started_at) }}</span>
-        <span>{{ execution.completed_steps || 0 }}/{{ execution.total_steps || 0 }} 步骤</span>
-        <small>{{ execution.session_id ? '查看对话' : '未生成会话' }}</small>
-      </button>
+
+    <div v-if="loading" class="state">正在加载分析记录...</div>
+    <div v-else-if="error" class="state error">{{ error }}</div>
+    <div v-else-if="normalizedExecutions.length === 0" class="state">暂无分析记录</div>
+    <div v-else class="record-groups">
+      <section v-for="group in groupedExecutions" :key="group.date" class="record-group">
+        <h3>{{ group.label }}</h3>
+        <div class="record-list">
+          <button
+            v-for="record in group.records"
+            :key="record.execution_id"
+            type="button"
+            class="record-card"
+            :disabled="!record.session_id"
+            :title="record.session_id ? '打开本次分析详情' : '该记录未生成可查看的会话'"
+            @click="restore(record)"
+          >
+            <div class="record-main">
+              <strong>{{ record.task_name || '分析任务' }}</strong>
+              <span class="record-time">{{ formatTime(record.started_at) }}</span>
+              <span :class="['status', `status-${statusMeta(record.status).key}`]">{{ statusMeta(record.status).label }}</span>
+            </div>
+            <div class="record-meta">
+              <span>{{ record.completed_steps || 0 }}/{{ record.total_steps || 0 }} 个步骤</span>
+              <span v-if="record.duration_seconds">耗时 {{ formatDuration(record.duration_seconds) }}</span>
+            </div>
+            <div class="artifacts">
+              <span v-for="artifact in record.artifacts" :key="artifact" class="artifact-chip">📄 {{ artifact }}</span>
+              <span v-if="record.artifacts.length === 0" class="no-artifact">暂无文件产物</span>
+            </div>
+          </button>
+        </div>
+      </section>
     </div>
   </section>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 
 const props = defineProps({ task: { type: Object, default: null } })
-defineEmits(['close', 'restore-execution-session'])
+const emit = defineEmits(['close', 'restore-execution-session'])
 const store = useScheduledTasksStore()
 const executions = ref([])
 const loading = ref(false)
 const error = ref('')
-const statusLabel = status => ({ success: '成功', failed: '失败', running: '执行中', pending: '等待执行', timeout: '超时' }[status] || '未知')
-const formatTime = value => value ? new Date(value).toLocaleString('zh-CN') : '时间未知'
-async function load() {
-  if (!props.task?.task_id) return
+
+const statusMap = {
+  success: { key: 'success', label: '成功' },
+  failed: { key: 'failed', label: '失败' },
+  running: { key: 'running', label: '执行中' },
+  pending: { key: 'pending', label: '等待执行' },
+  timeout: { key: 'failed', label: '超时' },
+  cancelled: { key: 'failed', label: '已取消' }
+}
+
+const basename = (value) => String(value || '').split(/[\\/]/).pop() || ''
+
+const getArtifacts = (execution) => {
+  const values = []
+  for (const step of execution?.steps || []) {
+    for (const visual of step.result_visuals || []) {
+      const value = visual?.title || visual?.name || visual?.file_name
+      if (value) values.push(value)
+    }
+    const response = String(step.agent_response || '')
+    const mediaMatches = response.match(/(?:[A-Za-z]:)?[^\s"'`<>]+\.(?:docx|pdf|xlsx?|csv|qmd|md|png|jpg|jpeg)/gi) || []
+    values.push(...mediaMatches.map(basename))
+  }
+  return [...new Set(values.map(item => basename(item)).filter(Boolean))]
+}
+
+const normalizedExecutions = computed(() => executions.value.map(execution => ({
+  ...execution,
+  artifacts: getArtifacts(execution)
+})))
+const groupedExecutions = computed(() => {
+  const groups = new Map()
+  for (const record of normalizedExecutions.value) {
+    const date = record.started_at ? new Date(record.started_at) : null
+    const key = date && !Number.isNaN(date.getTime())
+      ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      : 'unknown'
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(record)
+  }
+  return [...groups.entries()].map(([date, records]) => ({
+    date,
+    label: date === 'unknown' ? '日期未知' : date,
+    records
+  }))
+})
+const statusMeta = status => statusMap[status] || { key: 'unknown', label: '未知' }
+const formatTime = value => value ? new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '时间未知'
+const formatDuration = seconds => seconds < 60 ? `${Math.round(seconds)}秒` : `${Math.floor(seconds / 60)}分${Math.round(seconds % 60)}秒`
+const restore = record => { if (record.session_id) emit('restore-execution-session', record.session_id) }
+
+const load = async () => {
   loading.value = true
   error.value = ''
-  try { executions.value = await store.fetchTaskExecutions(props.task.task_id, 50) } catch { error.value = '执行记录加载失败' } finally { loading.value = false }
+  try {
+    executions.value = await store.fetchRecentExecutions(50)
+  } catch (err) {
+    console.error('Failed to fetch recent task executions:', err)
+    error.value = '分析记录加载失败，请重试'
+  } finally {
+    loading.value = false
+  }
 }
+
 watch(() => props.task?.task_id, load, { immediate: true })
 </script>
 
 <style scoped>
 .task-workspace { height: 100%; overflow: auto; padding: 28px; background: #f7f9fc; }
-header { display:flex; justify-content:space-between; gap:20px; margin-bottom:24px; }
-h2 { margin:4px 0; font-size:22px; color:#17223b; } p { margin:0; color:#64748b; } .eyebrow { color:#1976d2; font-size:13px; }
-header button { align-self:start; border:1px solid #cbd5e1; background:#fff; border-radius:6px; padding:7px 12px; cursor:pointer; }
-.execution-list { display:grid; gap:8px; }.execution-list button { display:grid; grid-template-columns:70px 1fr 100px 80px; align-items:center; gap:12px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; padding:14px; text-align:left; cursor:pointer; }.execution-list button:hover:not(:disabled) { border-color:#90caf9; background:#f0f7ff; }.execution-list button:disabled { opacity:.55; cursor:not-allowed; }.execution-list strong { color:#1976d2; }.execution-list small { color:#64748b; }.state { padding:40px; color:#64748b; text-align:center; }
+.workspace-header { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.eyebrow { margin: 0; color: #1976d2; font-size: 13px; }
+h2 { margin: 4px 0; font-size: 22px; color: #17223b; }
+.workspace-description { margin: 0; color: #64748b; }
+.record-list { display: grid; gap: 10px; }
+.record-card { display: block; width: 100%; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 15px 17px; text-align: left; cursor: pointer; }
+.record-card:hover:not(:disabled) { border-color: #90caf9; background: #f8fbff; }
+.record-card:disabled { opacity: .65; cursor: not-allowed; }
+.record-main, .record-meta, .artifacts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.record-main strong { min-width: 100px; color: #17223b; font-size: 16px; }
+.record-time, .record-meta, .no-artifact { color: #64748b; font-size: 13px; }
+.status { margin-left: auto; font-size: 13px; font-weight: 600; }
+.status-success { color: #16803c; }.status-failed { color: #c2413b; }.status-running { color: #1976d2; }.status-pending, .status-unknown { color: #64748b; }
+.record-group + .record-group { margin-top: 22px; }
+.record-group h3 { margin: 0 0 9px; color: #334155; font-size: 15px; }
+.record-meta { margin-top: 8px; }
+.artifacts { margin-top: 11px; }
+.artifact-chip { padding: 4px 8px; border-radius: 4px; background: #eef5ff; color: #275a9a; font-size: 12px; }
+.state { padding: 48px; color: #64748b; text-align: center; }.state.error { color: #c2413b; }
+@media (max-width: 700px) { .task-workspace { padding: 18px; }.status { margin-left: 0; } }
 </style>

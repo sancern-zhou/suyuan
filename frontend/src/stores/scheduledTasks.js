@@ -97,6 +97,13 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       return Array.isArray(data?.executions) ? data.executions : [];
     },
 
+    async fetchRecentExecutions(limit = 50) {
+      const response = await authFetch(`${API_BASE}/executions/recent?limit=${limit}`);
+      if (!response.ok) throw new Error('Failed to fetch recent task executions');
+      const data = await response.json();
+      return Array.isArray(data?.executions) ? data.executions : [];
+    },
+
     async createTask(data) {
       const response = await authFetch(API_BASE, {
         method: 'POST',

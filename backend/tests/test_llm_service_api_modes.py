@@ -163,6 +163,59 @@ def test_llm_service_loads_bailian_anthropic_config(monkeypatch):
     assert service.anthropic_client is not None
 
 
+def test_llm_service_loads_doubao_chat_completions_config(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "doubao")
+    monkeypatch.setattr(settings, "doubao_api_key", "doubao-key")
+    monkeypatch.setattr(settings, "doubao_base_url", "https://doubao.best/v1")
+    monkeypatch.setattr(settings, "doubao_model", "gpt-5.6-luna")
+    monkeypatch.setattr(settings, "doubao_api_mode", "chat_completions")
+
+    service = LLMService()
+
+    assert service.provider == "doubao"
+    assert service.api_mode == "chat_completions"
+    assert service.api_key == "doubao-key"
+    assert service.base_url == "https://doubao.best/v1"
+    assert service.model == "gpt-5.6-luna"
+    assert service._get_request_config()[0] == "https://doubao.best/v1/chat/completions"
+
+
+def test_llm_service_loads_scnet_anthropic_config(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "scnet")
+    monkeypatch.setattr(settings, "scnet_api_key", "scnet-key")
+    monkeypatch.setattr(
+        settings,
+        "scnet_base_url",
+        "https://api.scnet.cn/api/llm/anthropic",
+    )
+    monkeypatch.setattr(settings, "scnet_model", "Qwen3.8-Max")
+    monkeypatch.setattr(settings, "scnet_api_mode", "anthropic_messages")
+
+    service = LLMService()
+
+    assert service.provider == "scnet"
+    assert service.api_mode == "anthropic_messages"
+    assert service.api_key == "scnet-key"
+    assert service.base_url == "https://api.scnet.cn/api/llm/anthropic"
+    assert service.model == "Qwen3.8-Max"
+    assert service.anthropic_client is not None
+
+
+def test_settings_exposes_scnet_provider_config():
+    configured = Settings(
+        llm_provider="scnet",
+        scnet_api_key="scnet-key",
+    ).get_llm_config()
+
+    assert configured == {
+        "provider": "scnet",
+        "api_key": "scnet-key",
+        "base_url": "https://api.scnet.cn/api/llm/anthropic",
+        "model": "Qwen3.8-Max",
+        "api_mode": "anthropic_messages",
+    }
+
+
 def test_multimodal_auto_profile_uses_bailian_qwen(monkeypatch):
     monkeypatch.setattr(settings, "llm_provider", "deepseek")
     monkeypatch.setattr(
@@ -196,33 +249,23 @@ def test_multimodal_auto_profile_uses_bailian_qwen(monkeypatch):
         None,
     ],
 )
-def test_every_agent_mode_uses_native_multimodal(mode):
+def test_every_agent_mode_uses_normal_auto_chain(mode):
     assert supports_native_multimodal(mode) is True
-    assert ReActAgent._select_auto_profile(mode) == "multimodal"
+    assert ReActAgent._select_auto_profile(mode) is None
 
 
 @pytest.mark.parametrize("tier", ["flash", "pro"])
-def test_multimodal_profile_takes_priority_over_model_tier(monkeypatch, tier):
+def test_removed_multimodal_profile_does_not_override_model_tier(monkeypatch, tier):
     service = LLMService()
     monkeypatch.setattr(
         settings,
         f"llm_{tier}_models",
         "deepseek/deepseek-v4-flash",
     )
-    monkeypatch.setattr(
-        settings,
-        "llm_multimodal_models",
-        "bailian/qwen3.8-max-preview,mimo/mimo-v2.5",
-    )
 
     with service.use_model_tier(tier):
         assert service.provider == "deepseek"
-        with service.use_auto_profile("multimodal"):
-            assert service.provider == "bailian"
-            assert service.model == "qwen3.8-max-preview"
-            assert service.request_fallbacks == "mimo/mimo-v2.5"
-
-        assert service.provider == "deepseek"
+        assert service.model == "deepseek-v4-flash"
 
 
 def test_inherited_chain_takes_priority_over_multimodal_profile(monkeypatch):
@@ -521,14 +564,11 @@ def test_bailian_multimodal_normalizes_jpg_and_bmp_media_types():
     assert base64.b64decode(bmp["source"]["data"]).startswith(b"\x89PNG")
 
 
-def test_default_multimodal_chain_keeps_existing_fallbacks_after_bailian(monkeypatch):
+def test_removed_multimodal_chain_is_empty_by_default(monkeypatch):
     monkeypatch.delenv("LLM_MULTIMODAL_MODELS", raising=False)
     defaults = Settings(_env_file=None)
 
-    assert defaults.llm_multimodal_models == (
-        "bailian/qwen3.8-max-preview,mimo/mimo-v2.5,"
-        "agnes/agnes-2.0-flash"
-    )
+    assert defaults.llm_multimodal_models == ""
 
 
 @pytest.mark.asyncio
@@ -584,18 +624,21 @@ def test_all_qwen_visual_runtimes_are_migrated_to_bailian():
         assert "BAILIAN_" in source or "bailian" in source.lower(), relative_path
 
 
-def test_env_templates_document_bailian_mode_priorities():
+def test_env_templates_document_doubao_mode_priorities():
     for relative_path in [
         "backend/.env.example",
         "backend/.env.template",
         "backend/.env.production.template",
     ]:
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        assert "LLM_PROVIDER=bailian" in source
+        assert "LLM_PROVIDER=doubao" in source
+        assert "DOUBAO_BASE_URL=https://doubao.best/v1" in source
+        assert "DOUBAO_MODEL=gpt-5.6-luna" in source
+        assert "DOUBAO_API_MODE=chat_completions" in source
         assert "BAILIAN_MODEL=qwen3.8-max-preview" in source
-        assert "LLM_FLASH_MODELS=bailian/qwen3.6-flash" in source
-        assert "LLM_PRO_MODELS=bailian/deepseek-v4-pro" in source
-        assert "LLM_MULTIMODAL_MODELS=bailian/qwen3.8-max-preview" in source
+        assert "LLM_FLASH_MODELS=doubao/gpt-5.6-luna" in source
+        assert "LLM_PRO_MODELS=doubao/gpt-5.6-luna" in source
+        assert "LLM_MULTIMODAL_MODELS=" not in source
         assert "QWEN_VL_API_KEY" not in source
 
 

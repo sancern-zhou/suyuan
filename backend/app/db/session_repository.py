@@ -164,6 +164,24 @@ class SessionRepository:
         return str(content)
 
     @staticmethod
+    def _deserialize_content(content: Any) -> Any:
+        """Read content returned by both JSON and JSONB drivers.
+
+        Some deployments return a JSON scalar string with its JSON quoting
+        still present (for example ``\"hello\"``). Decode that wrapper while
+        leaving ordinary strings and structured content unchanged.
+        """
+        if not isinstance(content, str):
+            return content
+        if not content.startswith('"'):
+            return content
+        try:
+            decoded = json.loads(content)
+        except (TypeError, json.JSONDecodeError):
+            return content
+        return decoded if isinstance(decoded, str) else content
+
+    @staticmethod
     def _message_metadata(msg: Dict[str, Any]) -> Dict[str, Any]:
         """Return only small custom metadata fields for message persistence."""
         metadata = {
@@ -773,7 +791,7 @@ class SessionRepository:
         msg_dict: Dict[str, Any] = {
             "role": msg.role,
             "type": msg.msg_type,
-            "content": msg.content,  # JSONB 直接返回原始类型（str/list）
+            "content": self._deserialize_content(msg.content),
             "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
             "id": f"msg_{msg.id}",  # ✅ 始终使用DB生成的唯一id
             "sequence_number": msg.sequence_number
@@ -791,7 +809,7 @@ class SessionRepository:
         message = {
             "role": row.role,
             "type": row.msg_type,
-            "content": row.content,
+            "content": self._deserialize_content(row.content),
             "timestamp": row.timestamp.isoformat() if row.timestamp else None,
             "id": f"msg_{row.id}",
             "sequence_number": row.sequence_number,

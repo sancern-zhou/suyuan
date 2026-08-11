@@ -956,6 +956,13 @@ class LLMService:
 
     # Provider配置映射（与 settings 中的 provider 一致）
     PROVIDER_CONFIG = {
+        "doubao": {
+            "url_env": "DOUBAO_BASE_URL",
+            "url_default": "https://doubao.best/v1",
+            "key_env": "DOUBAO_API_KEY",
+            "model_env": "DOUBAO_MODEL",
+            "model_default": "gpt-5.6-luna",
+        },
         "deepseek": {
             "url_env": "DEEPSEEK_BASE_URL",
             "url_default": "https://api.deepseek.com/v1",
@@ -1312,6 +1319,18 @@ class LLMService:
             if not self.model:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_openai_model_fallback_to_env", model=self.model)
+
+        elif self.provider == "doubao":
+            self.api_mode = getattr(settings, "doubao_api_mode", "chat_completions")
+            self.base_url = settings.doubao_base_url
+            self.api_key = settings.doubao_api_key or ""
+            self.model = settings.doubao_model
+            if not self.base_url:
+                self.base_url = os.getenv(config["url_env"], config["url_default"])
+            if not self.api_key:
+                self.api_key = os.getenv(config["key_env"], "")
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
 
         elif self.provider == "mimo":
             self.api_mode = getattr(settings, "mimo_api_mode", "anthropic_messages")

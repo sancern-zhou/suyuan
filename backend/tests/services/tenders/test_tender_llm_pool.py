@@ -263,7 +263,7 @@ async def test_llm_pool_uses_configured_screening_client_for_batch_screening():
 
 
 @pytest.mark.asyncio
-async def test_llm_pool_retries_only_configured_screening_client(monkeypatch):
+async def test_llm_pool_fails_over_screening_to_next_client(monkeypatch):
     async def fake_sleep(_seconds):
         return None
 
@@ -284,8 +284,8 @@ async def test_llm_pool_retries_only_configured_screening_client(monkeypatch):
         TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
     )
 
-    assert decisions["https://example.test/retry-glm"].decision_source == "glm"
-    assert glm.review_candidates_calls == 2
+    assert decisions["https://example.test/retry-glm"].decision_source == "agnes"
+    assert glm.review_candidates_calls == 1
 
 
 @pytest.mark.asyncio
@@ -344,7 +344,7 @@ async def test_llm_pool_switches_to_next_client_after_server_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_llm_pool_keeps_batch_screening_on_configured_client_after_rate_limit(
+async def test_llm_pool_fails_over_batch_screening_after_rate_limit(
     monkeypatch,
 ):
     sleep_calls = []
@@ -363,18 +363,18 @@ async def test_llm_pool_keeps_batch_screening_on_configured_client_after_rate_li
         TenderCandidate(title="环境监测服务", url="https://example.test/batch")
     ]
 
-    with pytest.raises(FakeRateLimitError):
-        await pool.review_candidates(
-            candidates,
-            TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
-        )
+    decisions = await pool.review_candidates(
+        candidates,
+        TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
+    )
 
-    assert primary.review_candidates_calls == 3
-    assert sleep_calls == [1.0, 1.0]
+    assert decisions["https://example.test/batch"].decision_source == "secondary"
+    assert primary.review_candidates_calls == 1
+    assert sleep_calls == [1.0]
 
 
 @pytest.mark.asyncio
-async def test_llm_pool_retries_configured_screening_client_after_timeout(monkeypatch):
+async def test_llm_pool_fails_over_batch_screening_after_timeout(monkeypatch):
     monkeypatch.setenv("TENDER_LLM_SCREENING_TIMEOUT_SECONDS", "0.01")
     monkeypatch.setenv("TENDER_LLM_SCREENING_MAX_ATTEMPTS", "2")
     primary = HangingBatchLLM()
@@ -387,10 +387,10 @@ async def test_llm_pool_retries_configured_screening_client_after_timeout(monkey
         TenderCandidate(title="环境监测服务", url="https://example.test/timeout")
     ]
 
-    with pytest.raises(asyncio.TimeoutError):
-        await pool.review_candidates(
-            candidates,
-            TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
-        )
+    decisions = await pool.review_candidates(
+        candidates,
+        TenderFilterDecision(is_relevant=True, reason="pending", confidence=0.0),
+    )
 
-    assert primary.calls == 2
+    assert decisions["https://example.test/timeout"].decision_source == "secondary"
+    assert primary.calls == 1

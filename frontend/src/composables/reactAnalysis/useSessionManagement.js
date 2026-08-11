@@ -194,6 +194,7 @@ export function useSessionManagement(store) {
     if (!sessionState) return false
     return (Array.isArray(sessionState.messages) && sessionState.messages.length > 0) ||
       !!sessionState.isAnalyzing ||
+      !!sessionState.isComplete ||
       !!sessionState.finalAnswer
   }
 

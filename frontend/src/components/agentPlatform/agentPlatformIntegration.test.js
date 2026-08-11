@@ -103,6 +103,17 @@ test('session history applies the shared scheduled-conversation exclusion policy
   assert.match(legacyManager, /reconcileConversationHistoryStats\(data, sessions\.value\)/)
 })
 
+test('session restore does not replace the current chat with an empty persisted transcript', async () => {
+  const source = await readSource('../../composables/reactAnalysis/useSessionManagement.js')
+
+  const guardIndex = source.indexOf("throw new Error('该历史会话没有可恢复的消息")
+  const resetIndex = source.indexOf('store.reset()', guardIndex)
+  assert.ok(guardIndex >= 0)
+  assert.ok(resetIndex > guardIndex)
+  assert.match(source, /if \(hasRestorableLocalState\(store\.sessionStates\?\.\[sessionId\]\)\)/)
+  assert.match(source, /if \(!hasRestorableLocalState\(localSessionState\)\) return false/)
+})
+
 test('primary sidebar actions share one uniform spacing system', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 
