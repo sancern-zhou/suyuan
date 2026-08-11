@@ -88,12 +88,11 @@ EXPERT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 气象、空气质量与遥感证据查询工具
-    "get_weather_data", "get_universal_meteorology", "get_observed_meteorology",
+    "get_weather_data", "get_observed_meteorology",
     "get_current_weather", "get_weather_forecast", "get_weather_situation_map",
     "get_platform_weather_image",
     "get_satellite_data", "get_gems_image", "get_sentinel5p_image", "get_fire_hotspots",
     "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
-    "query_city_standard_report", "query_city_standard_yoy_report",
 
     # 分析工具
     "analyze_upwind_enterprises",
@@ -119,7 +118,6 @@ QUERY_TOOL_NAMES = [
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
-    "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
     "knowledge_graph_query",
@@ -140,8 +138,6 @@ REPORT_TOOL_NAMES = [
     # 数据查询
     "get_5min_data",
     "execute_sql_query", "execute_postgres_sql_query",
-    "query_city_standard_report",
-    "query_city_standard_yoy_report",
     "query_station_standard_report",
     "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
@@ -169,7 +165,6 @@ CHART_TOOL_NAMES = [
     # 数据查询工具
     "get_observed_meteorology",
     "get_5min_data",
-    "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
     "execute_sql_query",
 ]
@@ -278,7 +273,6 @@ DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     "query_gd_suncere_station_day_new",
-    "query_city_standard_report", "query_city_standard_yoy_report",
     "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
