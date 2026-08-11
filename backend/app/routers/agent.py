@@ -1251,7 +1251,9 @@ async def analyze_stream(
                                 display_history=conversation_history,
                                 drawio_board=latest_drawio_board or drawio_board_context,
                             )
-                            await session_manager.append_session_transcript(session)
+                            saved = await session_manager.append_session_transcript(session)
+                            if not saved:
+                                raise RuntimeError("complete_transcript_save_failed")
                             agent._session_store[actual_session_id]["display_history_persisted"] = True
                             await run_ownership_registry.complete(actual_session_id, event_run_id)
                         elif event["type"] in ["incomplete", "fatal_error", "interrupted"]:
@@ -1295,7 +1297,9 @@ async def analyze_stream(
                                 },
                                 drawio_board=latest_drawio_board or drawio_board_context,
                             )
-                            await session_manager.append_session_transcript(session)
+                            saved = await session_manager.append_session_transcript(session)
+                            if not saved:
+                                raise RuntimeError("terminal_transcript_save_failed")
                             agent._session_store[actual_session_id]["display_history_persisted"] = True
                             await run_ownership_registry.complete(actual_session_id, event_run_id)
 
@@ -1385,12 +1389,18 @@ async def analyze_stream(
                         "message": str(e),
                         "timestamp": datetime.now().isoformat()
                     }
-                    await session_manager.append_session_transcript(session)
-                    if actual_session_id:
+                    saved = await session_manager.append_session_transcript(session)
+                    if saved and actual_session_id:
                         if actual_session_id not in agent._session_store:
                             agent._session_store[actual_session_id] = {}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
-                    logger.info("session_saved_on_exception", session_id=actual_session_id)
+                    if saved:
+                        logger.info("session_saved_on_exception", session_id=actual_session_id)
+                    else:
+                        logger.error(
+                            "failed_to_save_session_on_exception",
+                            session_id=actual_session_id,
+                        )
 
                 error_event = {
                     "type": "fatal_error",

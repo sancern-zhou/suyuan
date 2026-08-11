@@ -1100,6 +1100,14 @@ class LLMService:
             "model_env": "GLM_MODEL",
             "model_default": "glm-4.7",
         },
+        # 中科曙光 SCNET Token Plan（Anthropic 兼容协议）
+        "scnet": {
+            "url_env": "SCNET_BASE_URL",
+            "url_default": "https://api.scnet.cn/api/llm/anthropic",
+            "key_env": "SCNET_API_KEY",
+            "model_env": "SCNET_MODEL",
+            "model_default": "Qwen3.8-Max",
+        },
     }
 
     def __init__(self):
@@ -1451,6 +1459,18 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_glm_model_fallback_to_env", model=self.model)
 
+        elif self.provider == "scnet":
+            self.api_mode = getattr(settings, "scnet_api_mode", "anthropic_messages")
+            self.base_url = settings.scnet_base_url
+            self.api_key = settings.scnet_api_key or ""
+            self.model = settings.scnet_model
+            if not self.base_url:
+                self.base_url = os.getenv(config["url_env"], config["url_default"])
+                logger.debug("llm_scnet_base_url_fallback_to_env", base_url=self.base_url)
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_scnet_model_fallback_to_env", model=self.model)
+
         else:
             # 回退到环境变量
             self.api_mode = "chat_completions"
@@ -1517,7 +1537,7 @@ class LLMService:
             )
             return
 
-        if self.provider in ["deepseek", "mimo", "glm", "minimax", "bailian"]:  # 支持 Anthropic 格式的提供商
+        if self.provider in ["deepseek", "mimo", "glm", "minimax", "bailian", "scnet"]:  # 支持 Anthropic 格式的提供商
             try:
                 from anthropic import AsyncAnthropic
 
@@ -1542,6 +1562,8 @@ class LLMService:
                     )
                 elif self.provider == "bailian":
                     anthropic_base_url = settings.bailian_base_url
+                elif self.provider == "scnet":
+                    anthropic_base_url = settings.scnet_base_url
                 else:
                     logger.error(
                         "llm_anthropic_unsupported_provider",

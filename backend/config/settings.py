@@ -387,6 +387,20 @@ class Settings(BaseSettings):
         description="GLM API protocol mode: anthropic_messages or chat_completions"
     )
 
+    scnet_api_key: Optional[str] = Field(default=None, description="Sugon SCNET token-plan API key")
+    scnet_base_url: str = Field(
+        default="https://api.scnet.cn/api/llm/anthropic",
+        description="Sugon SCNET Anthropic-compatible API base URL"
+    )
+    scnet_model: str = Field(
+        default="Qwen3.8-Max",
+        description="Sugon SCNET model name"
+    )
+    scnet_api_mode: str = Field(
+        default="anthropic_messages",
+        description="SCNET API protocol mode: anthropic_messages or chat_completions"
+    )
+
     # 报告模式配置
     report_mode_max_tokens: int = Field(
         default=8000,
@@ -816,6 +830,14 @@ class Settings(BaseSettings):
                 "anthropic_base_url": self.glm_anthropic_base_url,
                 "model": self.glm_model,
                 "api_mode": self.glm_api_mode,
+            }
+        elif self.llm_provider == "scnet":
+            return {
+                "provider": "scnet",
+                "api_key": self.scnet_api_key,
+                "base_url": self.scnet_base_url,
+                "model": self.scnet_model,
+                "api_mode": self.scnet_api_mode,
             }
         else:
             raise ValueError(f"Unsupported LLM provider: {self.llm_provider}")

@@ -54,6 +54,10 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "get_gems_image",
         "get_sentinel5p_image",
     ]
+    assert context.manifest.backend.disabled_tools == [
+        "analyze_city_pollutant_rankings",
+        "get_5min_data",
+    ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 
 
@@ -80,6 +84,10 @@ def test_xuchang_project_enables_only_declared_satellite_tools():
     assert not tools_module.is_project_tool_enabled(
         context, "satellite", "undeclared_satellite_tool"
     )
+    assert tools_module.is_project_tool_disabled(
+        context, "analyze_city_pollutant_rankings"
+    )
+    assert tools_module.is_project_tool_disabled(context, "get_5min_data")
 
 
 def test_unknown_module_fails_closed(tmp_path: Path):

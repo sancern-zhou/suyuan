@@ -14,7 +14,8 @@ import json
 import structlog
 import time
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from datetime import time as datetime_time
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
@@ -75,24 +76,26 @@ class SessionRepository:
         }
 
     @staticmethod
-    def _convert_decimal_to_float(obj: Any) -> Any:
+    def _convert_json_value(obj: Any) -> Any:
         """
-        递归地将 Decimal 对象转换为 float，以便 JSON 序列化
+        递归地将数据库消息字段转换为 JSON 可序列化值。
 
         Args:
             obj: 任意 Python 对象
 
         Returns:
-            转换后的对象（Decimal -> float）
+            转换后的 JSON 兼容对象
         """
         if isinstance(obj, Decimal):
             return float(obj)
+        elif isinstance(obj, (datetime, date, datetime_time)):
+            return obj.isoformat()
         elif isinstance(obj, dict):
-            return {key: SessionRepository._convert_decimal_to_float(value) for key, value in obj.items()}
+            return {key: SessionRepository._convert_json_value(value) for key, value in obj.items()}
         elif isinstance(obj, list):
-            return [SessionRepository._convert_decimal_to_float(item) for item in obj]
+            return [SessionRepository._convert_json_value(item) for item in obj]
         elif isinstance(obj, tuple):
-            return tuple(SessionRepository._convert_decimal_to_float(item) for item in obj)
+            return [SessionRepository._convert_json_value(item) for item in obj]
         else:
             return obj
 
@@ -151,12 +154,12 @@ class SessionRepository:
             for k, v in msg.items()
             if k not in MESSAGE_METADATA_EXCLUDED_KEYS
         }
-        return SessionRepository._convert_decimal_to_float(metadata)
+        return SessionRepository._convert_json_value(metadata)
 
     @staticmethod
     def _message_data(msg: Dict[str, Any]) -> Any:
         """Return message data with tool runtime fields preserved in one place."""
-        msg_data = SessionRepository._convert_decimal_to_float(msg.get("data"))
+        msg_data = SessionRepository._convert_json_value(msg.get("data"))
         tool_fields = {
             key: msg[key]
             for key in ("tool_use_id", "tool_name", "is_error")
@@ -169,7 +172,7 @@ class SessionRepository:
         if isinstance(msg_data, dict):
             for key, value in tool_fields.items():
                 msg_data.setdefault(key, value)
-        return SessionRepository._convert_decimal_to_float(msg_data)
+        return SessionRepository._convert_json_value(msg_data)
 
     @staticmethod
     def _message_attachments(metadata: Any) -> List[Dict[str, Any]]:

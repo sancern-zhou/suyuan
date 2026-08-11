@@ -86,7 +86,7 @@ class ReadFileTool(LLMTool):
         super().__init__(
             name="read_file",
             description=(
-                "读取文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
+                "读取文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit；.json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取，不要用 read_file；不返回base64。"
                 "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
             ),
             category=ToolCategory.QUERY,
@@ -337,6 +337,11 @@ class ReadFileTool(LLMTool):
             # 检查文件是否过大
             is_large_file = file_size > max_size
             if is_large_file and limit is None:
+                structured_hint = (
+                    " 建议 .json/.csv/.parquet 等结构化数据改用 execute_python 的 load_data() 或 json.load 一次性读取，不要分页 read_file。"
+                    if file_path.suffix.lower() in {".json", ".csv", ".parquet"}
+                    else ""
+                )
                 return {
                     "success": False,
                     "data": {
@@ -347,12 +352,12 @@ class ReadFileTool(LLMTool):
                         "max_size": max_size,
                         "error": (
                             f"文件内容 ({file_size} bytes) 超过最大允许大小 ({max_size} bytes)。"
-                            f"请使用 offset 和 limit 分页读取，或先用 grep 搜索定位内容。"
+                            f"请使用 offset 和 limit 分页读取，或先用 grep 搜索定位内容。{structured_hint}"
                         ),
                     },
                     "summary": (
                         f"文件过大: {file_path.name} ({file_size} bytes > {max_size} bytes)。"
-                        f"请使用 offset=0,limit={self.DEFAULT_LIMIT} 分页读取，或先用 grep 搜索定位行号"
+                        f"请使用 offset=0,limit={self.DEFAULT_LIMIT} 分页读取，或先用 grep 搜索定位行号{structured_hint}"
                     )
                 }
 
@@ -1447,7 +1452,7 @@ class ReadFileTool(LLMTool):
         return {
             "name": "read_file",
             "description": (
-                "读取文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit，Excel 用 execute_python；不返回base64。"
+                "读取文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit；.json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取，不要用 read_file；不返回base64。"
                 "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
             ),
             "parameters": {

@@ -188,6 +188,13 @@ export function useSessionManagement(store) {
 
   // ========== 会话恢复 ==========
 
+  const hasRestorableLocalState = sessionState => {
+    if (!sessionState) return false
+    return (Array.isArray(sessionState.messages) && sessionState.messages.length > 0) ||
+      !!sessionState.isAnalyzing ||
+      !!sessionState.finalAnswer
+  }
+
   /**
    * 执行会话恢复的统一逻辑
    * @param {string} sessionId - 会话ID
@@ -218,6 +225,9 @@ export function useSessionManagement(store) {
       // 后端返回格式：{ message: "...", session: {...} }
       const sessionData = restoreResult.session || restoreResult
       let messages = sessionData.conversation_history || []
+      if (messages.length === 0) {
+        throw new Error('该历史会话没有可恢复的消息，消息持久化可能失败')
+      }
 
       // 详细分析 final 消息（只根据type字段判断）
       const finalMessages = messages.filter(m => {
@@ -297,7 +307,7 @@ export function useSessionManagement(store) {
         return { success: false, cancelled: true, error: '会话已切换' }
       }
       console.error('[会话恢复] 恢复会话时出错:', error)
-      if (store.sessionStates?.[sessionId]) {
+      if (hasRestorableLocalState(store.sessionStates?.[sessionId])) {
         store._activateSession(sessionId)
         return {
           success: true,
@@ -316,15 +326,7 @@ export function useSessionManagement(store) {
 
   const activateLocalSessionIfAvailable = async (sessionId) => {
     const localSessionState = store.sessionStates?.[sessionId]
-    if (!localSessionState) return false
-
-    const hasMessages = Array.isArray(localSessionState.messages) && localSessionState.messages.length > 0
-    const hasVisibleState = hasMessages ||
-      !!localSessionState.isAnalyzing ||
-      !!localSessionState.isComplete ||
-      !!localSessionState.finalAnswer
-
-    if (!hasVisibleState) return false
+    if (!hasRestorableLocalState(localSessionState)) return false
 
     restoreRequestToken += 1
     store._activateSession(sessionId, localSessionState.mode)
