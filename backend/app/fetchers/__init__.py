@@ -21,11 +21,15 @@ from app.fetchers.tenders import TenderInformationFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher
 from app.fetchers.yuncheng_trial import YunchengTrialFetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
 from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
+from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
+from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
 
 def create_scheduler() -> FetcherScheduler:
     """
@@ -51,9 +55,13 @@ def create_scheduler() -> FetcherScheduler:
     scheduler.register(JiningQuickTraceFetcher())  # 济宁市快速溯源报告每日生成
     scheduler.register(YunchengTrialFetcher())  # 运城市驻场试用场景小时数据盯守
     scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时气象实况
+    scheduler.register(NMCWeatherChartFetcher())  # 中国地面天气形势图
     scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
     scheduler.register(XuchangDailyAttainmentForecastFetcher())  # 许昌市日达标预测分析
     scheduler.register(XuchangAnnualAttainmentForecastFetcher())  # 许昌市年度达标预测分析
+    scheduler.register(XuchangCnemcStationHourFetcher())  # 许昌国控站点小时数据
+    scheduler.register(XuchangStationDeviationAlertFetcher())  # 许昌场景一站点空间偏差告警
+    scheduler.register(XuchangTransportAnalysisFetcher())  # 许昌场景二轨迹输送诊断
 
     return scheduler
 

@@ -1,0 +1,99 @@
+from datetime import datetime
+
+from app.scenarios.xuchang_station_deviation.service import (
+    StationDeviationConfig,
+    detect_station_deviations,
+)
+
+
+def _row(station_id: str, value: float) -> dict:
+    return {
+        "station_id": station_id,
+        "name": station_id,
+        "lat": 34.0,
+        "lon": 113.0,
+        "pm25": value,
+        "pm10": value,
+        "o3": value,
+        "no2": value,
+        "so2": value,
+        "co": value,
+        "data_time": datetime(2026, 8, 4, 8),
+    }
+
+
+def test_detects_leave_one_out_station_deviation():
+    result = detect_station_deviations(
+        [_row("a", 100), _row("b", 40), _row("c", 40)],
+        expected_station_count=3,
+        config=StationDeviationConfig(pollutants=("PM2.5",)),
+    )
+
+    assert len(result["alerts"]) == 1
+    alert = result["alerts"][0]
+    assert alert["station_id"] == "a"
+    assert alert["peer_mean"] == 40.0
+    assert alert["peer_baseline_method"] == "leave_one_out_median"
+    assert alert["absolute_delta"] == 60.0
+    assert alert["deviation_ratio"] == 1.5
+
+
+def test_does_not_check_when_coverage_is_below_required_rate():
+    result = detect_station_deviations(
+        [_row("a", 100), _row("b", 40), _row("c", 40)],
+        expected_station_count=4,
+        config=StationDeviationConfig(pollutants=("PM2.5",)),
+    )
+
+    assert result["alerts"] == []
+    assert result["checks"][0]["status"] == "insufficient_data_rate"
+
+
+def test_relative_spike_below_absolute_delta_does_not_alert():
+    result = detect_station_deviations(
+        [_row("a", 5), _row("b", 2), _row("c", 2)],
+        expected_station_count=3,
+        config=StationDeviationConfig(pollutants=("PM2.5",)),
+    )
+
+    assert result["alerts"] == []
+
+
+def test_coverage_is_checked_per_pollutant():
+    rows = [_row("a", 100), _row("b", 40), _row("c", 40), _row("d", 40)]
+    rows[-1]["pm25"] = -99
+
+    result = detect_station_deviations(
+        rows,
+        expected_station_count=4,
+        config=StationDeviationConfig(pollutants=("PM2.5",)),
+    )
+
+    assert result["alerts"] == []
+    assert result["checks"][0]["available_station_count"] == 3
+    assert result["checks"][0]["status"] == "insufficient_data_rate"
+
+
+def test_one_pollutant_event_keeps_primary_and_secondary_stations():
+    result = detect_station_deviations(
+        [_row("a", 100), _row("b", 90), _row("c", 10), _row("d", 10)],
+        expected_station_count=4,
+        config=StationDeviationConfig(pollutants=("PM2.5",)),
+    )
+
+    assert len(result["alerts"]) == 1
+    assert result["alerts"][0]["station_id"] == "a"
+    assert [item["station_id"] for item in result["alerts"][0]["secondary_stations"]] == ["b"]
+
+
+def test_nox_uses_no2_as_an_explicit_proxy():
+    result = detect_station_deviations(
+        [_row("a", 100), _row("b", 40), _row("c", 40)],
+        expected_station_count=3,
+        config=StationDeviationConfig(pollutants=("NOX",)),
+    )
+
+    alert = result["alerts"][0]
+    assert alert["target_pollutant"] == "NOX"
+    assert alert["observed_indicator"] == "NO2"
+    assert "代理" in alert["nox_proxy_note"]

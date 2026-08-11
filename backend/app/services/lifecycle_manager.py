@@ -10,11 +10,15 @@ from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
 from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
+from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
+from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
@@ -54,10 +58,15 @@ def initialize_fetchers():
     注册所有Fetchers并启动调度器
     """
     try:
+        project_context = load_project_context(settings.project_id)
+        project_allowlist = set(project_context.manifest.backend.fetchers)
         raw_allowlist = os.getenv("FETCHER_ALLOWLIST", "").strip()
-        allowlist = {
+        environment_allowlist = {
             name.strip() for name in raw_allowlist.split(",") if name.strip()
         }
+        allowlist = project_allowlist or environment_allowlist
+        if project_allowlist and environment_allowlist:
+            allowlist = project_allowlist & environment_allowlist
 
         def register(fetcher):
             if allowlist and fetcher.name not in allowlist:
@@ -73,13 +82,17 @@ def initialize_fetchers():
         register(ObservedWeatherFetcher())
         register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
         register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
+        register(NMCWeatherChartFetcher())  # 中国地面天气形势图
         register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
         register(XuchangDailyAttainmentForecastFetcher())  # 许昌市日达标预测分析
         register(XuchangAnnualAttainmentForecastFetcher())  # 许昌市年度达标预测分析
+        register(XuchangCnemcStationHourFetcher())  # 许昌国控站点小时数据
+        register(XuchangStationDeviationAlertFetcher())  # 许昌场景一站点空间偏差告警
+        register(XuchangTransportAnalysisFetcher())  # 许昌场景二轨迹输送诊断
 
         # 注册Satellite Fetchers
         register(NASAFirmsFetcher())
-        enabled_modules = load_project_context(settings.project_id).enabled_modules
+        enabled_modules = project_context.enabled_modules
         if "xuchang-satellite" in enabled_modules:
             register(GemsImageFetcher())
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":

@@ -446,6 +446,25 @@ def create_global_tool_registry() -> ToolRegistry:
     except (ImportError, KeyError) as e:
         logger.warning("tool_import_failed", tool="analyze_upwind_enterprises", error=str(e))
 
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "analyze_xuchang_upwind_permit_sources",
+    ):
+        try:
+            from app.tools.analysis.xuchang_upwind_permit_sources.tool import (
+                AnalyzeXuchangUpwindPermitSourcesTool,
+            )
+
+            registry.register(AnalyzeXuchangUpwindPermitSourcesTool(), priority=101)
+            logger.info("tool_loaded", tool="analyze_xuchang_upwind_permit_sources")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="analyze_xuchang_upwind_permit_sources",
+                error=str(e),
+            )
+
     try:
         # Import PM2.5/PM10颗粒物PMF工具
         from app.tools.analysis.calculate_pm_pmf.tool import CalculatePMFTool

@@ -35,10 +35,12 @@ class FrontendManifest(StrictModel):
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
     disabled_tools: list[str] = Field(default_factory=list)
+    fetchers: list[str] = Field(default_factory=list)
     mode_prompt_files: dict[str, str] = Field(default_factory=dict)
 
     _unique_tools = field_validator("tools")(unique)
     _unique_disabled_tools = field_validator("disabled_tools")(unique)
+    _unique_fetchers = field_validator("fetchers")(unique)
 
 
 class KnowledgeManifest(StrictModel):

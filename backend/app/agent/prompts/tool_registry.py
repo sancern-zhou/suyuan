@@ -95,7 +95,7 @@ EXPERT_TOOL_NAMES = [
     "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
 
     # 分析工具
-    "analyze_upwind_enterprises",
+    "analyze_upwind_enterprises", "analyze_xuchang_upwind_permit_sources",
     "meteorological_trajectory_analysis",
 
     # 可视化
@@ -256,7 +256,7 @@ DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     "get_weather_forecast", "get_observed_meteorology", "meteorological_trajectory_analysis",
-    "analyze_upwind_enterprises",
+    "analyze_upwind_enterprises", "analyze_xuchang_upwind_permit_sources",
     "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 

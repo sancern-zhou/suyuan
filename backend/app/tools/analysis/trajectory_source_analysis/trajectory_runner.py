@@ -5,7 +5,7 @@ NOAA HYSPLIT 批量轨迹运行器
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import structlog
 
@@ -140,7 +140,8 @@ class TrajectoryRunner:
                     heights=config["heights"],
                     hours=config["hours"],
                     direction=config["direction"],
-                    meteo_source=config["meteo_source"]
+                    meteo_source=config["meteo_source"],
+                    generate_plot=config.get("generate_plot", True),
                 )
                 
                 if result.get("success"):
@@ -247,10 +248,12 @@ class TrajectoryRunner:
             
             retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
             
+            recovered_indices = set()
             for result in retry_results:
                 if isinstance(result, Exception):
                     continue
                 if result["result"].get("success"):
+                    recovered_indices.add(result["config_index"])
                     endpoints = result["result"].get("endpoints_data", [])
                     for ep in endpoints:
                         ep["batch_index"] = result["config_index"]
@@ -261,6 +264,10 @@ class TrajectoryRunner:
                         "endpoints_count": len(endpoints),
                         "retry": True
                     })
+            failed_jobs = [
+                item for item in failed_jobs
+                if item["index"] not in recovered_indices
+            ]
         
         logger.info(
             "batch_trajectories_complete",
@@ -330,4 +337,76 @@ class TrajectoryRunner:
             "time_interval_hours": time_interval_hours
         }
         
+        return result
+
+    def generate_event_trajectory_configs(
+        self,
+        *,
+        lat: float,
+        lon: float,
+        event_times: List[datetime],
+        pollutant: str,
+        meteo_source: str = "gdas1",
+    ) -> List[Dict[str, Any]]:
+        """Build NOAA jobs from exact Scenario 1 event hours."""
+        profiles = {
+            "PM2.5": {"hours": 48, "heights": [100, 500, 1000]},
+            "O3": {"hours": 48, "heights": [100, 500, 1000]},
+            "NOX": {"hours": 24, "heights": [100, 300, 500]},
+        }
+        if pollutant not in profiles:
+            raise ValueError(f"unsupported pollutant: {pollutant}")
+        profile = profiles[pollutant]
+        unique_hours = {}
+        for value in event_times:
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            utc_hour = value.astimezone(timezone.utc).replace(
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+            unique_hours[utc_hour.isoformat()] = utc_hour
+        return [
+            {
+                "lat": lat,
+                "lon": lon,
+                "start_time": event_time,
+                "heights": list(profile["heights"]),
+                "hours": profile["hours"],
+                "direction": "Backward",
+                "meteo_source": meteo_source,
+                "generate_plot": False,
+            }
+            for event_time in sorted(unique_hours.values())
+        ]
+
+    async def run_event_trajectories(
+        self,
+        *,
+        lat: float,
+        lon: float,
+        event_times: List[datetime],
+        pollutant: str,
+        meteo_source: str = "gdas1",
+    ) -> Dict[str, Any]:
+        configs = self.generate_event_trajectory_configs(
+            lat=lat,
+            lon=lon,
+            event_times=event_times,
+            pollutant=pollutant,
+            meteo_source=meteo_source,
+        )
+        result = await self.run_batch_trajectories(configs)
+        result["metadata"] = {
+            "lat": lat,
+            "lon": lon,
+            "pollutant": pollutant,
+            "event_times_utc": [
+                config["start_time"].isoformat() for config in configs
+            ],
+            "backtrack_hours": configs[0]["hours"] if configs else None,
+            "heights_m_agl": configs[0]["heights"] if configs else [],
+            "meteo_source": meteo_source,
+        }
         return result

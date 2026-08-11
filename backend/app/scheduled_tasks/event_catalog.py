@@ -26,6 +26,24 @@ _EVENT_DEFINITIONS = {
             "notification_reason", "has_turnaround_opportunity",
         ],
     ),
+    "xuchang.station_deviation.alert_created": EventDefinition(
+        event_type="xuchang.station_deviation.alert_created",
+        label="许昌站点空间偏差告警",
+        description="许昌市站点小时浓度相对其他站点均值偏差超过阈值，场景一上风向分析上下文已生成",
+        filter_fields=["city", "target_pollutant", "station_id"],
+    ),
+    "xuchang.station_deviation.escalated": EventDefinition(
+        event_type="xuchang.station_deviation.escalated",
+        label="许昌站点异常升级为输送分析",
+        description="同站点同污染物连续两个有效小时触发场景二轨迹分析任务",
+        filter_fields=["city", "target_pollutant", "station_id"],
+    ),
+    "xuchang.transport_analysis.completed": EventDefinition(
+        event_type="xuchang.transport_analysis.completed",
+        label="许昌输送路径分析完成",
+        description="NOAA后向轨迹、本地输送走廊及轨迹覆盖企业筛查已完成",
+        filter_fields=["city", "target_pollutant", "station_id", "diagnosis"],
+    ),
 }
 
 

@@ -52,6 +52,18 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.backend.tools == [
         "get_gems_image",
         "get_sentinel5p_image",
+        "analyze_xuchang_upwind_permit_sources",
+    ]
+    assert context.manifest.backend.fetchers == [
+        "nmc_observed_weather_fetcher",
+        "nmc_weather_chart_fetcher",
+        "open_meteo_air_quality_forecast_fetcher",
+        "xuchang_daily_attainment_forecast_fetcher",
+        "xuchang_annual_attainment_forecast_fetcher",
+        "xuchang_cnemc_station_hour_fetcher",
+        "xuchang_station_deviation_alert_fetcher",
+        "xuchang_transport_analysis_fetcher",
+        "gems_xuchang_image_fetcher",
     ]
     assert context.manifest.backend.disabled_tools == [
         "analyze_city_pollutant_rankings",

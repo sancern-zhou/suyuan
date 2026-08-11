@@ -29,6 +29,8 @@ import re
 import os
 import base64
 
+from app.utils.path_config import get_data_registry
+
 logger = structlog.get_logger()
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -65,7 +67,7 @@ class NOAAHysplitAPI:
         self.api_key = api_key or os.getenv("NOAA_HYSPLIT_API_KEY")
         self.timeout = httpx.Timeout(180.0, connect=60.0)
         
-        self.output_dir = Path("data/noaa_hysplit")
+        self.output_dir = get_data_registry() / "noaa_hysplit"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(
@@ -100,7 +102,8 @@ class NOAAHysplitAPI:
         heights: List[int] = None,
         hours: int = 72,
         direction: str = "Backward",
-        meteo_source: str = "gdas1"
+        meteo_source: str = "gdas1",
+        generate_plot: bool = True,
     ) -> Dict[str, Any]:
         """
         运行HYSPLIT轨迹计算
@@ -317,7 +320,7 @@ class NOAAHysplitAPI:
 
                 # ✅ 修复4: 优先本地绘制 - 只要有端点数据就尝试绘制
                 # 不依赖 model_complete 判断（可能不准确）
-                if endpoints_downsampled:
+                if endpoints_downsampled and generate_plot:
                     logger.info("generating_local_plot", job_id=job_id, endpoints_count=len(endpoints_downsampled))
                     metadata_for_plot = {
                         "lat": lat,
@@ -335,13 +338,13 @@ class NOAAHysplitAPI:
                         logger.info("local_plot_success", job_id=job_id)
                     else:
                         logger.warning("local_plot_failed", job_id=job_id)
-                else:
+                elif not endpoints_downsampled:
                     logger.warning("cannot_generate_local_plot", job_id=job_id,
                                    model_complete=model_complete, endpoints_count=len(endpoints_downsampled))
 
                 # ✅ 修复5: 调整成功条件 - 有端点数据且本地绘制成功就算成功
                 # model_complete 只是一个参考指标
-                success = len(endpoints_downsampled) > 0 and local_plot
+                success = len(endpoints_downsampled) > 0
 
                 logger.info(
                     "noaa_trajectory_result",
@@ -351,7 +354,7 @@ class NOAAHysplitAPI:
                     has_image=bool(image_data),
                     endpoints_count=len(endpoints_downsampled),
                     original_endpoints_count=len(endpoints),
-                    success_criteria="endpoints_data + local_plot"
+                    success_criteria="endpoints_data"
                 )
 
                 # 如果没有端点数据，返回错误

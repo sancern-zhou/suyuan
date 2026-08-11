@@ -3,6 +3,7 @@ SQL Server客户端（XcAiDb数据库）
 
 封装pyodbc连接，提供参数化查询能力
 """
+import os
 from typing import List, Dict, Any
 import pyodbc
 import structlog
@@ -13,6 +14,24 @@ logger = structlog.get_logger()
 
 
 CITY_NAME_SUFFIXES = ("市", "地区", "自治州", "盟")
+
+
+def resolve_sqlserver_driver(
+    configured_driver: str,
+    installed_drivers: List[str] | None = None,
+) -> str:
+    """Resolve the configured SQL Server driver with a Linux FreeTDS fallback."""
+    installed = list(pyodbc.drivers() if installed_drivers is None else installed_drivers)
+    if configured_driver in installed or not installed:
+        return configured_driver
+    for fallback in (
+        "ODBC Driver 18 for SQL Server",
+        "ODBC Driver 17 for SQL Server",
+        "FreeTDS",
+    ):
+        if fallback in installed:
+            return fallback
+    return configured_driver
 
 
 def normalize_city_names(cities: List[str]) -> List[str]:
@@ -41,7 +60,8 @@ class SQLServerClient:
     """SQL Server客户端（XcAiDb数据库）"""
 
     def __init__(self, host: str = "180.184.30.94", port: int = 1433,
-                 database: str = "XcAiDb", user: str = "sa", password: str = None):
+                 database: str = "XcAiDb", user: str = "sa", password: str = None,
+                 driver: str | None = None):
         """
         初始化SQL Server客户端
 
@@ -56,8 +76,15 @@ class SQLServerClient:
         self.port = port
         self.database = database
         self.user = user
-        self.password = password or "#Ph981,6J2bOkWYT7p?5slH$I~g_0itR"
-        self.connection_string = self._build_connection_string()
+        self.password = password or os.getenv("SQLSERVER_PASSWORD", "")
+        configured_driver = driver or os.getenv(
+            "SQLSERVER_DRIVER", "ODBC Driver 17 for SQL Server"
+        )
+        self.driver = resolve_sqlserver_driver(configured_driver)
+
+    @property
+    def connection_string(self) -> str:
+        return self._build_connection_string()
 
     def _build_connection_string(self) -> str:
         """
@@ -65,14 +92,19 @@ class SQLServerClient:
 
         注意：密码用大括号包裹，处理特殊字符（# ? $等）
         """
-        return (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        if not self.password:
+            raise RuntimeError("SQLSERVER_PASSWORD is required")
+
+        connection_string = (
+            f"DRIVER={{{self.driver}}};"
             f"SERVER={self.host},{self.port};"
             f"DATABASE={self.database};"
             f"UID={self.user};"
             f"PWD={{{self.password}}};"
-            f"TrustServerCertificate=yes;"
         )
+        if self.driver == "FreeTDS":
+            return f"{connection_string}TDS_Version=7.4;"
+        return f"{connection_string}TrustServerCertificate=yes;"
 
     def query(self, cities: List[str], start_time: str, end_time: str,
               table: str) -> List[Dict[str, Any]]:
