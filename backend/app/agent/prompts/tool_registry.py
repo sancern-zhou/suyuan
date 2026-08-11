@@ -119,7 +119,6 @@ QUERY_TOOL_NAMES = [
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_weather_forecast", "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
-    "query_gd_suncere_station_day_new",
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
@@ -128,10 +127,6 @@ QUERY_TOOL_NAMES = [
 
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
-
-    # === Agentic GIS 视觉交互工具 ===
-    "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "visual_interaction",
-    "get_map_program_receipt", "wait_map_program_receipt",
 
     # === 数值计算工具 ===
     "execute_python",
