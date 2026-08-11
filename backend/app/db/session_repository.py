@@ -117,6 +117,11 @@ class SessionRepository:
         return SessionRepository._normalize_json_value(obj)
 
     @staticmethod
+    def _convert_decimal_to_float(obj: Any) -> Any:
+        """Backward-compatible alias retained for older persistence callers."""
+        return SessionRepository._normalize_json_value(obj)
+
+    @staticmethod
     def _resolve_role_and_type(msg: Dict[str, Any]) -> tuple:
         """
         从消息中解析 role 和 msg_type
@@ -156,12 +161,7 @@ class SessionRepository:
         JSONB 列原生支持 str, list, dict, None，
         只需处理 Decimal 等不可序列化的类型
         """
-        if content is None:
-            return None
-        if isinstance(content, (str, list, dict, bool, int, float)):
-            return content
-        # 其他类型（Decimal 等）转换为字符串
-        return str(content)
+        return SessionRepository._normalize_json_value(content)
 
     @staticmethod
     def _deserialize_content(content: Any) -> Any:

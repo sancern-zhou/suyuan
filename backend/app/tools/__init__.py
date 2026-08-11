@@ -42,6 +42,17 @@ from config.settings import settings
 
 logger = structlog.get_logger()
 
+GIS_TOOL_NAMES = frozenset({
+    "generate_map",
+    "create_map_point_asset",
+    "visual_interaction",
+    "resolve_map_data_asset",
+    "get_map_program_receipt",
+    "wait_map_program_receipt",
+    "spatial_analysis",
+    "spatial_interpolation",
+})
+
 
 def is_project_tool_enabled(
     context: ProjectContext,
@@ -60,7 +71,63 @@ def is_project_tool_disabled(context: ProjectContext, tool_name: str) -> bool:
     return tool_name in context.manifest.backend.disabled_tools
 
 
-def create_global_tool_registry() -> ToolRegistry:
+def _register_gis_tools(registry: ToolRegistry) -> None:
+    registrations = (
+        (
+            "app.tools.visualization.generate_map.tool",
+            "GenerateMapTool",
+            210,
+            "generate_map",
+        ),
+        (
+            "app.tools.gisctl.create_map_point_asset_tool",
+            "CreateMapPointAssetTool",
+            213,
+            "create_map_point_asset",
+        ),
+        ("app.tools.gisctl.tool", "GisctlTool", 214, "visual_interaction"),
+        (
+            "app.tools.gisctl.asset_resolver_tool",
+            "ResolveMapDataAssetTool",
+            215,
+            "resolve_map_data_asset",
+        ),
+        (
+            "app.tools.spatial.spatial_analysis.tool",
+            "SpatialAnalysisTool",
+            218,
+            "spatial_analysis",
+        ),
+        (
+            "app.tools.spatial.spatial_interpolation.tool",
+            "SpatialInterpolationTool",
+            219,
+            "spatial_interpolation",
+        ),
+    )
+    for module_name, class_name, priority, tool_name in registrations:
+        try:
+            module = __import__(module_name, fromlist=[class_name])
+            registry.register(getattr(module, class_name)(), priority=priority)
+            logger.info("tool_loaded", tool=tool_name)
+        except ImportError as exc:
+            logger.warning("tool_import_failed", tool=tool_name, error=str(exc))
+
+    try:
+        from app.tools.gisctl.map_program_receipt_tool import (
+            MapProgramReceiptTool,
+            WaitMapProgramReceiptTool,
+        )
+
+        registry.register(MapProgramReceiptTool(), priority=216)
+        registry.register(WaitMapProgramReceiptTool(), priority=217)
+        logger.info("tool_loaded", tool="get_map_program_receipt")
+        logger.info("tool_loaded", tool="wait_map_program_receipt")
+    except ImportError as exc:
+        logger.warning("tool_import_failed", tool="get_map_program_receipt", error=str(exc))
+
+
+def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRegistry:
     """
     创建并初始化全局工具注册表
 
@@ -68,7 +135,7 @@ def create_global_tool_registry() -> ToolRegistry:
         ToolRegistry: 已注册所有可用工具的注册表
     """
     registry = ToolRegistry(registry_name="global")
-    context = load_project_context(settings.project_id)
+    context = context or load_project_context(settings.project_id)
 
     # ========================================
     # Query Tools（查询工具）
@@ -564,12 +631,10 @@ def create_global_tool_registry() -> ToolRegistry:
     # Visualization Tools（可视化工具）
     # ========================================
 
-    try:
-        from app.tools.visualization.generate_map.tool import GenerateMapTool
-        registry.register(GenerateMapTool(), priority=210)
-        logger.info("tool_loaded", tool="generate_map")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="generate_map", error=str(e))
+    if context.manifest.backend.gis_tools_enabled:
+        _register_gis_tools(registry)
+    else:
+        logger.info("gis_tools_registration_skipped", project=context.manifest.project)
 
     # ===== create_diagram_artifact 已废弃，使用画板模式替代 =====
     # 画板模式通过 call_sub_agent(target_mode="board") 调用
@@ -602,50 +667,6 @@ def create_global_tool_registry() -> ToolRegistry:
         logger.info("tool_loaded", tool="create_report_chart")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_report_chart", error=str(e))
-
-    try:
-        from app.tools.gisctl.create_map_point_asset_tool import CreateMapPointAssetTool
-        registry.register(CreateMapPointAssetTool(), priority=213)
-        logger.info("tool_loaded", tool="create_map_point_asset")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="create_map_point_asset", error=str(e))
-
-    try:
-        from app.tools.gisctl.tool import GisctlTool
-        registry.register(GisctlTool(), priority=214)
-        logger.info("tool_loaded", tool="visual_interaction")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="visual_interaction", error=str(e))
-
-    try:
-        from app.tools.gisctl.asset_resolver_tool import ResolveMapDataAssetTool
-        registry.register(ResolveMapDataAssetTool(), priority=215)
-        logger.info("tool_loaded", tool="resolve_map_data_asset")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="resolve_map_data_asset", error=str(e))
-
-    try:
-        from app.tools.gisctl.map_program_receipt_tool import MapProgramReceiptTool, WaitMapProgramReceiptTool
-        registry.register(MapProgramReceiptTool(), priority=216)
-        logger.info("tool_loaded", tool="get_map_program_receipt")
-        registry.register(WaitMapProgramReceiptTool(), priority=217)
-        logger.info("tool_loaded", tool="wait_map_program_receipt")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_map_program_receipt", error=str(e))
-
-    try:
-        from app.tools.spatial.spatial_analysis.tool import SpatialAnalysisTool
-        registry.register(SpatialAnalysisTool(), priority=218)
-        logger.info("tool_loaded", tool="spatial_analysis")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="spatial_analysis", error=str(e))
-
-    try:
-        from app.tools.spatial.spatial_interpolation.tool import SpatialInterpolationTool
-        registry.register(SpatialInterpolationTool(), priority=219)
-        logger.info("tool_loaded", tool="spatial_interpolation")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="spatial_interpolation", error=str(e))
 
     # ========================================
     # Utility Tools（实用工具）
@@ -1074,6 +1095,7 @@ global_tool_registry = create_global_tool_registry()
 
 
 __all__ = [
+    "GIS_TOOL_NAMES",
     "global_tool_registry",
     "create_global_tool_registry"
 ]
