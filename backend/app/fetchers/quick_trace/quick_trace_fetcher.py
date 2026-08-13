@@ -28,6 +28,7 @@ from pathlib import Path
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.weather_targets import resolve_weather_city_target
 from app.fetchers.base.fetcher_interface import DataFetcher
 
 # 添加项目根目录到路径
@@ -107,11 +108,6 @@ class SimpleExecutionContext:
 
 class QuickTraceExecutor:
     """快速溯源执行器"""
-
-    # 城市经纬度映射 (目前仅支持济宁)
-    CITY_COORDINATES = {
-        "济宁市": {"lat": 35.4154, "lon": 116.5875}
-    }
 
     # 周边城市列表 (固定顺序，按地理方位)
     NEARBY_CITIES = [
@@ -269,8 +265,7 @@ class QuickTraceExecutor:
                 "historical_weather": self.tools["weather_data"].execute(
                     context=context,  # 简化的context
                     data_type="era5",  # 使用ERA5数据
-                    lat=coords["lat"],
-                    lon=coords["lon"],
+                    city=city,
                     start_time=start_time_hist.strftime("%Y-%m-%d %H:%M:%S"),
                     end_time=end_time_hist.strftime("%Y-%m-%d %H:%M:%S")
                 ),
@@ -350,7 +345,8 @@ class QuickTraceExecutor:
 
     def _parse_coordinates(self, city: str) -> Optional[Dict[str, float]]:
         """解析城市经纬度"""
-        return self.CITY_COORDINATES.get(city)
+        target = resolve_weather_city_target(city)
+        return target.era5_point if target else None
 
     def _safe_float(self, value: Any) -> Optional[float]:
         """安全转换为浮点数。"""

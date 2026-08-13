@@ -1,38 +1,48 @@
 """
-ERA5 Data Fetcher (Guangdong Version)
+ERA5 Data Fetcher (Guangdong + Jiangsu City Centers)
 
-定时获取广东省ERA5历史气象数据并存入数据库
-修改为广东省全境网格点覆盖
+定时获取广东省网格及江苏省各设区市城市中心点的 ERA5 历史气象数据并存入数据库
 """
-from typing import List, Tuple
-from datetime import datetime, timedelta
 import asyncio
+from datetime import datetime, timedelta
+from typing import List, Tuple
+
 import structlog
 
-from app.fetchers.base.fetcher_interface import DataFetcher
-from app.external_apis.openmeteo_client import OpenMeteoClient
+from app.config.weather_targets import ERA5_MAIN_FETCHER, iter_era5_city_targets
 from app.db.repositories.weather_repo import WeatherRepository
+from app.external_apis.openmeteo_client import OpenMeteoClient
+from app.fetchers.base.fetcher_interface import DataFetcher
 
 logger = structlog.get_logger()
 
 
+# Backward-compatible view; definitions live in the shared weather target catalog.
+JIANGSU_CITY_POINTS = {
+    target.city: target.era5_point
+    for target in iter_era5_city_targets(ERA5_MAIN_FETCHER)
+    if target.province == "江苏省"
+}
+
+
 class ERA5Fetcher(DataFetcher):
     """
-    ERA5 历史数据获取后台（广东省版）
+    ERA5 历史数据获取后台（广东网格 + 江苏设区市城市中心点）
 
     功能：
     - 每天凌晨2点运行
     - 获取昨天的 ERA5 数据
-    - 覆盖广东省全境825个网格点
+    - 覆盖广东省全境网格点
+    - 额外覆盖江苏省 13 个设区市城市中心点，以及历史兼容的运城、许昌城市点
     - 存入数据库
     """
 
     def __init__(self):
         super().__init__(
             name="era5_fetcher",
-            description="ERA5 historical weather data fetcher (Guangdong Province)",
+            description="ERA5 historical weather data fetcher (Guangdong grid and Jiangsu city centers)",
             schedule="0 2 * * *",  # 每天2点
-            version="2.1.0"  # 版本更新：添加重试机制和API限流处理
+            version="2.2.0"  # 增加江苏省设区市城市中心点
         )
         self.client = OpenMeteoClient()
         self.repo = WeatherRepository()
@@ -43,9 +53,10 @@ class ERA5Fetcher(DataFetcher):
             'min_lon': 109.0,  # 最西端：廉江（约109°E）
             'max_lon': 117.0   # 最东端：潮州（约117°E）
         }
+        # extra_city_points 是已有属性，外部脚本可能依赖它，因此保留为共享目录的兼容视图。
         self.extra_city_points = {
-            "运城市": {"lat": 35.0264, "lon": 111.0076},
-            "许昌市": {"lat": 34.036, "lon": 113.852},
+            target.city: target.era5_point
+            for target in iter_era5_city_targets(ERA5_MAIN_FETCHER)
         }
 
     @staticmethod
@@ -60,7 +71,7 @@ class ERA5Fetcher(DataFetcher):
         获取并存储 ERA5 数据
 
         工作流程：
-        1. 生成广东省网格点（825个）
+        1. 生成广东省网格点和江苏省 13 个设区市城市中心点
         2. 批次处理网格点
         3. 检查数据是否已存在
         4. 调用 API 获取数据（带重试机制）
@@ -71,14 +82,20 @@ class ERA5Fetcher(DataFetcher):
         logger.info("starting_era5_fetch", date=yesterday)
 
         try:
-            # 1. 获取广东省网格点
+            # 1. 获取广东省网格及配置的城市中心点
             grid_points = await self._get_target_grid_points()
 
             if not grid_points:
                 logger.warning("no_grid_points_found")
                 return
 
-            logger.info("guangdong_grid_points_generated", count=len(grid_points))
+            logger.info(
+                "era5_target_points_generated",
+                guangdong_grid_points=len(grid_points) - len(self.extra_city_points),
+                extra_city_points=len(self.extra_city_points),
+                jiangsu_city_points=len(JIANGSU_CITY_POINTS),
+                total=len(grid_points),
+            )
 
             success_count = 0
             failed_count = 0
@@ -110,7 +127,7 @@ class ERA5Fetcher(DataFetcher):
                         elif result == "skipped":
                             skipped_count += 1
                 except Exception as e:
-                    logger.error(f"batch_processing_failed", batch=i//batch_size+1, error=str(e))
+                    logger.error("batch_processing_failed", batch=i//batch_size+1, error=str(e))
                     failed_count += len(batch)
 
                 # 批次间延迟（增加延迟时间以避免API限流）
@@ -120,7 +137,7 @@ class ERA5Fetcher(DataFetcher):
             logger.info(
                 "era5_fetch_complete",
                 date=yesterday,
-                region="广东省",
+                region="广东省网格及江苏省设区市城市中心点",
                 grid_count=len(grid_points),
                 success=success_count,
                 failed=failed_count,
@@ -134,12 +151,12 @@ class ERA5Fetcher(DataFetcher):
 
     async def _get_target_grid_points(self) -> List[Tuple[float, float]]:
         """
-        获取广东省目标网格点
+        获取广东省目标网格点及配置的城市中心点
 
         策略：生成广东省全境的ERA5网格点
         - 广东省范围：20°N - 26°N, 109°E - 117°E
         - 分辨率：0.25° × 0.25°
-        - 总网格点：约825个
+        - 额外城市点：江苏省 13 个设区市，另含运城、许昌两个历史兼容点
         """
         grid_points = set()
         grid_spacing = 0.25  # ERA5标准分辨率
@@ -179,8 +196,8 @@ class ERA5Fetcher(DataFetcher):
         lon_min, lon_max = min(lons), max(lons)
 
         logger.info(
-            "guangdong_grid_points_generated",
-            province="广东省",
+            "era5_target_points_generated",
+            region="广东省网格及江苏省设区市城市中心点",
             latitude_range=f"{lat_min}°N - {lat_max}°N",
             longitude_range=f"{lon_min}°E - {lon_max}°E",
             grid_spacing=f"{grid_spacing}°",
@@ -282,7 +299,7 @@ class ERA5Fetcher(DataFetcher):
         logger.info("starting_era5_fetch_for_date", date=date_str)
 
         try:
-            # 1. 获取广东省网格点
+            # 1. 获取广东省网格及配置的城市中心点
             grid_points = await self._get_target_grid_points()
 
             if not grid_points:
@@ -296,7 +313,12 @@ class ERA5Fetcher(DataFetcher):
                     "skipped_count": 0
                 }
 
-            logger.info("guangdong_grid_points_generated", count=len(grid_points))
+            logger.info(
+                "era5_target_points_generated",
+                total=len(grid_points),
+                jiangsu_city_points=len(JIANGSU_CITY_POINTS),
+                extra_city_points=len(self.extra_city_points),
+            )
 
             success_count = 0
             failed_count = 0
@@ -338,7 +360,7 @@ class ERA5Fetcher(DataFetcher):
                 "success": failed_count == 0,
                 "message": f"ERA5 data fetch for {date_str} completed",
                 "date": date_str,
-                "region": "Guangdong Province",
+                "region": "Guangdong grid and Jiangsu city centers",
                 "grid_count": len(grid_points),
                 "success_count": success_count,
                 "failed_count": failed_count,

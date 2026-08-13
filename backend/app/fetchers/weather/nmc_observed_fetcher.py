@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import requests
 import structlog
 
+from app.config.weather_targets import (
+    ObservedWeatherStationTarget,
+    get_observed_station_targets,
+)
 from app.db.repositories.weather_repo import WeatherRepository
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.fetchers.weather.observed_fetcher import ObservedDataPoint
@@ -19,37 +22,9 @@ NMC_WEATHER_URL = "https://www.nmc.cn/rest/weather"
 NMC_SENTINEL = 9999.0
 
 
-@dataclass(frozen=True)
-class NMCCityStation:
-    key: str
-    station_id: str
-    station_name: str
-    province: str
-    lat: float
-    lon: float
-    url: str
-
-
-NMC_CITY_STATIONS: dict[str, NMCCityStation] = {
-    "yuncheng": NMCCityStation(
-        key="yuncheng",
-        station_id="AupnI",
-        station_name="运城",
-        province="山西省",
-        lat=35.11,
-        lon=111.06,
-        url="/publish/forecast/ASX/yuncheng.html",
-    ),
-    "xuchang": NMCCityStation(
-        key="xuchang",
-        station_id="ZzMTA",
-        station_name="许昌",
-        province="河南省",
-        lat=34.07,
-        lon=113.92,
-        url="/publish/forecast/AHA/xuchang.html",
-    ),
-}
+# Compatibility aliases. The shared target catalog is the single definition site.
+NMCCityStation = ObservedWeatherStationTarget
+NMC_CITY_STATIONS: dict[str, NMCCityStation] = get_observed_station_targets(provider="NMC")
 
 
 def _normalize_nmc_number(value: Any) -> float | None:
