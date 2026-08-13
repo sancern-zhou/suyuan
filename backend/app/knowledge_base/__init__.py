@@ -9,6 +9,7 @@ from .models import (
     Document,
     KnowledgeBaseStatus,
     KnowledgeBaseType,
+    KnowledgeBaseStorageScope,
     DocumentStatus,
     ChunkingStrategy
 )
@@ -28,11 +29,11 @@ _document_processor = None
 
 
 def get_vector_store():
-    """获取全局VectorStore实例（单例）"""
+    """获取共享/本地 Qdrant 路由器（单例）"""
     global _vector_store
     if _vector_store is None:
-        from .vector_store import KnowledgeVectorStore
-        _vector_store = KnowledgeVectorStore()
+        from .vector_store_router import KnowledgeVectorStoreRouter
+        _vector_store = KnowledgeVectorStoreRouter()
     return _vector_store
 
 
@@ -51,6 +52,7 @@ __all__ = [
     "Document",
     "KnowledgeBaseStatus",
     "KnowledgeBaseType",
+    "KnowledgeBaseStorageScope",
     "DocumentStatus",
     "ChunkingStrategy",
     # Schemas

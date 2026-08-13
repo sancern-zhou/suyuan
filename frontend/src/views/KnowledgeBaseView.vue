@@ -47,7 +47,7 @@
                 <span class="kb-badge public">公共</span>
               </div>
               <div class="kb-card-meta">
-                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块
+                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
           </div>
@@ -67,7 +67,7 @@
                 <span class="kb-badge private">个人</span>
               </div>
               <div class="kb-card-meta">
-                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块
+                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
           </div>
@@ -115,6 +115,10 @@
             <div class="info-item">
               <span class="info-label">总大小</span>
               <span class="info-value">{{ formatFileSize(currentKb.total_size) }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">索引位置</span>
+              <span class="info-value">{{ currentKb.vector_store_scope === 'shared' ? '中心共享 Qdrant' : '当前项目本地 Qdrant' }}</span>
             </div>
             <div class="info-item">
               <span class="info-label">创建时间</span>
@@ -276,6 +280,14 @@
           <p v-if="createForm.kb_type === 'public'" class="form-hint">
             公共知识库仅限管理员创建，权限以公司统一身份为准。
           </p>
+          <div class="form-group">
+            <label>索引位置</label>
+            <select v-model="createForm.vector_store_scope">
+              <option value="local">当前项目本地（默认）</option>
+              <option value="shared">中心共享（管理员发布）</option>
+            </select>
+            <p class="form-hint">本地索引不会写入共享服务；共享索引由中心管理员维护，可被其他项目检索。</p>
+          </div>
           <div class="form-group">
             <label>分块策略</label>
             <select v-model="createForm.chunking_strategy">
@@ -484,6 +496,7 @@ const createForm = ref({
   name: '',
   description: '',
   kb_type: 'private',
+  vector_store_scope: 'local',
   chunking_strategy: 'llm',
   chunk_size: 800,
   chunk_overlap: 100
@@ -599,6 +612,7 @@ const handleCreate = async () => {
       name: '',
       description: '',
       kb_type: 'private',
+      vector_store_scope: 'local',
       chunking_strategy: 'llm',
       chunk_size: 800,
       chunk_overlap: 100

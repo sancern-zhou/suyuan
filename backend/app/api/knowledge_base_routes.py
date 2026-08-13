@@ -96,6 +96,8 @@ async def create_knowledge_base(
     # 个人知识库需要user_id
     if request.kb_type == "private" and not user_id:
         raise HTTPException(status_code=400, detail="User ID required for private knowledge base")
+    if request.vector_store_scope == "shared" and not is_admin:
+        raise HTTPException(status_code=403, detail="Only admin can create shared knowledge base")
 
     service = KnowledgeBaseService(db=db)
 
@@ -104,6 +106,7 @@ async def create_knowledge_base(
             name=request.name,
             description=request.description,
             kb_type=request.kb_type.value,
+            vector_store_scope=request.vector_store_scope.value,
             owner_id=user_id if request.kb_type == "private" else None,
             chunking_strategy=request.chunking_strategy.value,
             chunk_size=request.chunk_size,
@@ -626,6 +629,7 @@ def _kb_to_response(kb, user_id: Optional[str]) -> KnowledgeBaseResponse:
         name=kb.name,
         description=kb.description or "",
         kb_type=kb.kb_type.value,
+        vector_store_scope=kb.vector_store_scope.value,
         status=kb.status.value,
         document_count=kb.document_count,
         chunk_count=kb.chunk_count,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -16,7 +17,15 @@ from app.knowledge_base.graph_models import KnowledgeIndexOutbox
 
 logger = structlog.get_logger()
 
-CollectionResolver = Callable[[str], str | Awaitable[str]]
+CollectionResolver = Callable[[str], "VectorIndexTarget | str | Awaitable[VectorIndexTarget | str]"]
+
+
+@dataclass(frozen=True)
+class VectorIndexTarget:
+    """Resolved physical destination for one logical knowledge-base index."""
+
+    collection_name: str
+    storage_scope: str = "shared"
 
 
 class KnowledgeIndexOutboxRepository:
@@ -273,7 +282,7 @@ class KnowledgeIndexOutboxWorker:
         self.idle_poll_seconds = idle_poll_seconds
         self._stopping = asyncio.Event()
         self._batch_lock = asyncio.Lock()
-        self._ensured_collections: set[str] = set()
+        self._ensured_collections: set[tuple[str, str]] = set()
 
     async def run_once(self) -> int:
         succeeded = 0
@@ -285,25 +294,29 @@ class KnowledgeIndexOutboxWorker:
                         await self.repository.mark_completed(item.id)
                         succeeded += 1
                         continue
-                    collection_name = self.collection_resolver(item.kb_id)
-                    if inspect.isawaitable(collection_name):
-                        collection_name = await collection_name
+                    target = self.collection_resolver(item.kb_id)
+                    if inspect.isawaitable(target):
+                        target = await target
+                    if isinstance(target, str):  # Backward-compatible custom resolvers.
+                        target = VectorIndexTarget(collection_name=target)
+                    collection_name = target.collection_name
+                    vector_store = self._vector_store_for(target)
                     if item.operation == "upsert":
-                        create_collection = getattr(self.vector_store, "create_collection", None)
+                        create_collection = getattr(vector_store, "create_collection", None)
                         if (
-                            collection_name not in self._ensured_collections
+                            (target.storage_scope, collection_name) not in self._ensured_collections
                             and create_collection is not None
                         ):
                             created = create_collection(collection_name)
                             if inspect.isawaitable(created):
                                 await created
-                            self._ensured_collections.add(collection_name)
-                        await self.vector_store.upsert_records(
+                            self._ensured_collections.add((target.storage_scope, collection_name))
+                        await vector_store.upsert_records(
                             collection_name,
                             [dict(item.payload)],
                         )
                     elif item.operation == "delete":
-                        await self.vector_store.delete_records(
+                        await vector_store.delete_records(
                             collection_name,
                             item.record_type,
                             [item.record_id],
@@ -320,6 +333,10 @@ class KnowledgeIndexOutboxWorker:
                         error=str(exc),
                     )
         return succeeded
+
+    def _vector_store_for(self, target: VectorIndexTarget):
+        resolver = getattr(self.vector_store, "for_scope", None)
+        return resolver(target.storage_scope) if resolver is not None else self.vector_store
 
     async def run_forever(self) -> None:
         self._stopping.clear()
@@ -345,17 +362,23 @@ _worker: KnowledgeIndexOutboxWorker | None = None
 _worker_task: asyncio.Task[None] | None = None
 
 
-async def _resolve_collection(kb_id: str) -> str:
+async def _resolve_collection(kb_id: str) -> VectorIndexTarget:
     from app.db.database import async_session
     from app.knowledge_base.models import KnowledgeBase
 
     async with async_session() as session:
-        collection = await session.scalar(
-            select(KnowledgeBase.qdrant_collection).where(KnowledgeBase.id == kb_id)
+        result = await session.execute(
+            select(KnowledgeBase.qdrant_collection, KnowledgeBase.vector_store_scope).where(
+                KnowledgeBase.id == kb_id
+            )
         )
-    if not collection:
+        row = result.one_or_none()
+    if row is None:
         raise LookupError(f"Knowledge base not found: {kb_id}")
-    return str(collection)
+    return VectorIndexTarget(
+        collection_name=str(row.qdrant_collection),
+        storage_scope=row.vector_store_scope.value,
+    )
 
 
 async def start_index_outbox_worker() -> None:

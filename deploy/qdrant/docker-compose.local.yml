@@ -1,0 +1,11 @@
+services:
+  local-qdrant:
+    image: qdrant/qdrant:v1.13.4
+    restart: unless-stopped
+    ports:
+      - "${LOCAL_QDRANT_PORT:-6334}:6333"
+    volumes:
+      - local_qdrant_storage:/qdrant/storage
+
+volumes:
+  local_qdrant_storage:

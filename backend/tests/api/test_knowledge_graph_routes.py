@@ -13,7 +13,12 @@ from app.knowledge_base.graph_models import (
     KnowledgeGraphRelation,
     KnowledgeGraphRelationMention,
 )
-from app.knowledge_base.models import Document, KnowledgeBase, KnowledgeBaseType
+from app.knowledge_base.models import (
+    Document,
+    KnowledgeBase,
+    KnowledgeBaseStorageScope,
+    KnowledgeBaseType,
+)
 
 
 @pytest.fixture
@@ -224,12 +229,29 @@ def test_public_document_management_allows_users_identified_by_request_header():
         id="public",
         name="公共库",
         kb_type=KnowledgeBaseType.PUBLIC,
+        vector_store_scope=KnowledgeBaseStorageScope.LOCAL,
         owner_id=None,
     )
 
     assert KnowledgeBasePermissions.can_manage_documents(public_kb, "user-1") is True
     assert KnowledgeBasePermissions.can_manage_documents(public_kb, "anonymous") is True
     assert KnowledgeBasePermissions.can_manage_documents(public_kb, "") is False
+
+
+def test_shared_knowledge_base_document_management_requires_admin():
+    from app.knowledge_base.permissions import KnowledgeBasePermissions
+
+    shared_kb = KnowledgeBase(
+        id="shared",
+        name="共享库",
+        kb_type=KnowledgeBaseType.PUBLIC,
+        vector_store_scope=KnowledgeBaseStorageScope.SHARED,
+    )
+
+    assert KnowledgeBasePermissions.can_manage_documents(shared_kb, "user-1") is False
+    assert KnowledgeBasePermissions.can_manage_documents(shared_kb, "admin", is_admin=True) is True
+    assert KnowledgeBasePermissions.can_upload(shared_kb, "user-1") is False
+    assert KnowledgeBasePermissions.can_upload(shared_kb, "admin", is_admin=True) is True
 
 
 def test_private_document_management_still_requires_owner_or_admin():

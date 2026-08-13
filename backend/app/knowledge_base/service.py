@@ -19,10 +19,11 @@ import structlog
 
 from .models import (
     KnowledgeBase, Document,
-    KnowledgeBaseStatus, KnowledgeBaseType,
+    KnowledgeBaseStatus, KnowledgeBaseType, KnowledgeBaseStorageScope,
     DocumentStatus, ChunkingStrategy
 )
 from .permissions import KnowledgeBasePermissions
+from .storage_scope import get_local_knowledge_scope
 from . import get_vector_store, get_document_processor
 from .file_storage import SmartFileStorage
 from .retrieval_utils import deduplicate_results_by_content
@@ -102,6 +103,11 @@ class KnowledgeBaseService:
             self._reranker = get_reranker()
         return self._reranker
 
+    def _vector_store_for(self, kb: KnowledgeBase):
+        """Route by storage scope while preserving injected legacy test stores."""
+        resolver = getattr(self.vector_store, "for_knowledge_base", None)
+        return resolver(kb) if resolver is not None else self.vector_store
+
     # ============ 知识库CRUD ============
 
     async def create_knowledge_base(
@@ -109,6 +115,7 @@ class KnowledgeBaseService:
         name: str,
         description: str = "",
         kb_type: str = "private",
+        vector_store_scope: str = "local",
         owner_id: Optional[str] = None,
         chunking_strategy: str = "llm",
         chunk_size: int = 800,
@@ -122,6 +129,7 @@ class KnowledgeBaseService:
             name: 知识库名称
             description: 描述
             kb_type: 类型 (public/private)
+            vector_store_scope: 向量存储范围 (shared/local)
             owner_id: 所有者ID（个人知识库必须）
             chunking_strategy: 分块策略
             chunk_size: 分块大小
@@ -136,6 +144,7 @@ class KnowledgeBaseService:
 
         # 类型转换
         kb_type_enum = KnowledgeBaseType(kb_type)
+        storage_scope_enum = KnowledgeBaseStorageScope(vector_store_scope)
         strategy_enum = ChunkingStrategy(chunking_strategy)
 
         # 公共知识库不需要owner_id
@@ -145,8 +154,13 @@ class KnowledgeBaseService:
             raise ValueError("Private knowledge base requires owner_id")
 
         # 创建Qdrant Collection。新建知识库必须使用 hybrid 结构，避免后续静默降级。
-        await self.vector_store.create_collection(collection_name, enable_hybrid=True)
-        if not self.vector_store._collection_supports_hybrid(collection_name):
+        scoped_store = (
+            self.vector_store.for_scope(storage_scope_enum)
+            if hasattr(self.vector_store, "for_scope")
+            else self.vector_store
+        )
+        await scoped_store.create_collection(collection_name, enable_hybrid=True)
+        if not scoped_store._collection_supports_hybrid(collection_name):
             raise RuntimeError(f"Failed to create hybrid collection: {collection_name}")
 
         # 创建数据库记录
@@ -155,6 +169,8 @@ class KnowledgeBaseService:
             name=name,
             description=description,
             kb_type=kb_type_enum,
+            vector_store_scope=storage_scope_enum,
+            local_scope=(get_local_knowledge_scope() if storage_scope_enum == KnowledgeBaseStorageScope.LOCAL else None),
             owner_id=owner_id,
             chunking_strategy=strategy_enum,
             chunk_size=chunk_size,
@@ -179,8 +195,13 @@ class KnowledgeBaseService:
 
     async def get_knowledge_base(self, kb_id: str) -> Optional[KnowledgeBase]:
         """获取知识库"""
+        from .permissions import local_visibility_filter
+
         result = await self.db.execute(
-            select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+            select(KnowledgeBase).where(
+                KnowledgeBase.id == kb_id,
+                local_visibility_filter(),
+            )
         )
         return result.scalar_one_or_none()
 
@@ -257,7 +278,7 @@ class KnowledgeBaseService:
             raise PermissionError("No permission to delete this knowledge base")
 
         # 删除Qdrant Collection
-        await self.vector_store.delete_collection(kb.qdrant_collection)
+        await self._vector_store_for(kb).delete_collection(kb.qdrant_collection)
 
         # 删除数据库记录（级联删除文档）
         await self.db.delete(kb)
@@ -686,7 +707,7 @@ class KnowledgeBaseService:
         async def search_single_kb(kb: KnowledgeBase):
             if use_hybrid:
                 # 使用混合检索（Dense + Sparse BM25）
-                kb_results = await self.vector_store.hybrid_search(
+                kb_results = await self._vector_store_for(kb).hybrid_search(
                     collection_name=kb.qdrant_collection,
                     query=query,
                     top_k=recall_per_kb,
@@ -696,7 +717,7 @@ class KnowledgeBaseService:
                 )
             else:
                 # 纯向量检索
-                kb_results = await self.vector_store.search(
+                kb_results = await self._vector_store_for(kb).search(
                     collection_name=kb.qdrant_collection,
                     query=query,
                     top_k=recall_per_kb,
@@ -707,7 +728,8 @@ class KnowledgeBaseService:
                 result["knowledge_base"] = {
                     "id": kb.id,
                     "name": kb.name,
-                    "type": kb.kb_type.value
+                    "type": kb.kb_type.value,
+                    "storage_scope": kb.vector_store_scope.value,
                 }
             return kb_results
 

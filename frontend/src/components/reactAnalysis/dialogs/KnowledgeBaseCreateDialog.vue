@@ -41,6 +41,15 @@
         </p>
 
         <div class="form-group">
+          <label>索引位置</label>
+          <select v-model="formData.vector_store_scope">
+            <option value="local">当前项目本地（默认）</option>
+            <option value="shared">中心共享（管理员发布）</option>
+          </select>
+          <p class="form-hint">共享索引由中心管理员维护；本地索引仅写入当前项目的 Qdrant。</p>
+        </div>
+
+        <div class="form-group">
           <label>分块策略</label>
           <select v-model="formData.chunking_strategy">
             <option value="llm">LLM智能分块（推荐）</option>
@@ -122,6 +131,7 @@ const formData = reactive({
   name: '',
   description: '',
   kb_type: 'private',
+  vector_store_scope: 'local',
   chunking_strategy: 'llm',
   chunk_size: KB_DEFAULTS.CHUNK_SIZE,
   chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
@@ -138,6 +148,7 @@ watch(() => props.visible, (visible) => {
       name: '',
       description: '',
       kb_type: 'private',
+      vector_store_scope: 'local',
       chunking_strategy: 'llm',
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
@@ -246,6 +257,7 @@ defineExpose({
       name: '',
       description: '',
       kb_type: 'private',
+      vector_store_scope: 'local',
       chunking_strategy: 'llm',
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP

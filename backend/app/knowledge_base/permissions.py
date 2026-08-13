@@ -7,12 +7,38 @@
 """
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import KnowledgeBase, KnowledgeBaseStatus
+from .models import KnowledgeBase, KnowledgeBaseStatus, KnowledgeBaseStorageScope
+from .storage_scope import get_local_knowledge_scope
 
 logger = structlog.get_logger()
+
+
+def _storage_scope(kb: KnowledgeBase) -> str:
+    """Handle transient ORM objects before SQLAlchemy applies column defaults."""
+    scope = getattr(kb, "vector_store_scope", None)
+    return getattr(scope, "value", scope) or "local"
+
+
+def _is_visible_in_current_scope(kb: KnowledgeBase) -> bool:
+    if _storage_scope(kb) == "shared":
+        return True
+    # New rows always carry a scope. Keeping unsaved legacy ORM objects visible
+    # preserves internal call sites until they are persisted.
+    return not kb.local_scope or kb.local_scope == get_local_knowledge_scope()
+
+
+def local_visibility_filter():
+    """Shared knowledge is global; local knowledge is visible only in its scope."""
+    return or_(
+        KnowledgeBase.vector_store_scope == KnowledgeBaseStorageScope.SHARED,
+        and_(
+            KnowledgeBase.vector_store_scope == KnowledgeBaseStorageScope.LOCAL,
+            KnowledgeBase.local_scope == get_local_knowledge_scope(),
+        ),
+    )
 
 
 class KnowledgeBasePermissions:
@@ -43,7 +69,7 @@ class KnowledgeBasePermissions:
             可访问的知识库列表
         """
         # 构建查询：获取所有知识库
-        query = select(KnowledgeBase)
+        query = select(KnowledgeBase).where(local_visibility_filter())
 
         # 状态过滤
         if status:
@@ -70,7 +96,10 @@ class KnowledgeBasePermissions:
         Returns:
             是否有管理权限
         """
-        return bool(is_admin or (user_id and kb.owner_id == user_id))
+        return bool(
+            _is_visible_in_current_scope(kb)
+            and (is_admin or (user_id and kb.owner_id == user_id))
+        )
 
     @staticmethod
     def can_manage_documents(
@@ -78,10 +107,13 @@ class KnowledgeBasePermissions:
     ) -> bool:
         """Check whether a user may delete or replace documents in a knowledge base.
 
-        Any authenticated user may manage documents in a public knowledge base.
-        Private knowledge bases remain restricted to their owner or an administrator.
+        A shared index is published centrally and must never be changed by an
+        arbitrary project branch. Public local knowledge bases retain the
+        existing authenticated-user behaviour.
         """
         is_authenticated = bool(user_id)
+        if _storage_scope(kb) == "shared":
+            return bool(is_admin)
         if kb.is_public:
             return is_authenticated
         return bool(is_admin or (is_authenticated and kb.owner_id == user_id))
@@ -100,14 +132,14 @@ class KnowledgeBasePermissions:
         Returns:
             是否有检索权限
         """
-        return True  # 所有人可检索
+        return _is_visible_in_current_scope(kb)
 
     @staticmethod
     def can_upload(kb: KnowledgeBase, user_id: str | None = None, is_admin: bool = False) -> bool:
         """
         检查用户是否有上传文档权限
 
-        当前规则（临时措施）: 所有人可上传到所有知识库
+        共享库由中心管理员发布；本地库沿用既有上传规则。
 
         Args:
             kb: 知识库对象
@@ -117,7 +149,9 @@ class KnowledgeBasePermissions:
         Returns:
             是否有上传权限
         """
-        return True  # 所有人可上传
+        if _storage_scope(kb) == "shared":
+            return bool(is_admin)
+        return True
 
     @staticmethod
     async def filter_accessible_ids(
@@ -139,5 +173,10 @@ class KnowledgeBasePermissions:
         if not knowledge_base_ids:
             return []
 
-        # 返回所有传入的ID，不进行过滤
-        return knowledge_base_ids[:]
+        result = await db.execute(
+            select(KnowledgeBase.id).where(
+                KnowledgeBase.id.in_(knowledge_base_ids),
+                local_visibility_filter(),
+            )
+        )
+        return list(result.scalars().all())
