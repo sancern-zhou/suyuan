@@ -10,12 +10,13 @@ from config.settings import settings
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_jiangsu_skill_directory_is_empty_and_does_not_fall_back_to_shared_skills():
+def test_jiangsu_skill_directory_contains_only_project_skill():
     context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
     skills_dir = project_skills_dir(context)
 
-    assert list(skills_dir.glob("*.md")) == []
-    assert list(skills_dir.glob("SKILLS_INDEX.md")) == []
+    selection = load_skill_selection("station-alarm-diagnosis", skills_dir=skills_dir)
+    assert selection.skill_id == "station-alarm-diagnosis"
+    assert "江苏站点告警诊断" in selection.content
     try:
         load_skill_selection("ops_work_order_audit", skills_dir=skills_dir)
     except FileNotFoundError:
@@ -24,7 +25,7 @@ def test_jiangsu_skill_directory_is_empty_and_does_not_fall_back_to_shared_skill
         raise AssertionError("shared skills must not be visible to Jiangsu")
 
 
-def test_runtime_skill_resolution_uses_the_empty_jiangsu_directory(monkeypatch):
+def test_runtime_skill_resolution_uses_the_jiangsu_directory(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "jiangsu-ops")
 
     tool = ListSkillsTool()
@@ -33,4 +34,7 @@ def test_runtime_skill_resolution_uses_the_empty_jiangsu_directory(monkeypatch):
     result = __import__("asyncio").run(tool.execute())
 
     assert result["success"] is True
-    assert result["data"]["count"] == 0
+    assert result["data"]["count"] == 1
+    assert result["data"]["skills"][0]["file"].endswith(
+        "station-alarm-diagnosis/SKILL.md"
+    )

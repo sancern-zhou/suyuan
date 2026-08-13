@@ -1,0 +1,4 @@
+interface:
+  display_name: "站点告警诊断"
+  short_description: "依据多源告警证据诊断站点故障并生成待审核工单处置方案"
+  default_prompt: "Use $station-alarm-diagnosis to analyze this station alert evidence package and draft a review-ready work order."

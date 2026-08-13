@@ -8,6 +8,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuQcTaskHistoryTool,
     JiangsuStationAlarmLogsTool,
 )
+from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
 
 
 def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_tools():
@@ -84,6 +85,32 @@ async def test_fault_work_orders_accepts_city_without_station_name(monkeypatch):
     assert result["success"] is True
     assert result["metadata"]["station_count"] == 2
     assert requested == [[("uniqueCode", "U1"), ("take", "2")], [("uniqueCode", "U2"), ("take", "2")]]
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_resolves_province_selector_without_station_codes(monkeypatch):
+    requested = []
+
+    async def fake_directory(self, path, params):
+        assert path.endswith("GetAllEnabledBSDStationAsync")
+        return {"success": True, "result": [
+            {"positionName": "站点甲", "provinceName": "江苏省", "cityName": "南京市",
+             "stationCode": "1001A", "uniqueCode": "U1"},
+            {"positionName": "站点乙", "provinceName": "江苏省", "cityName": "无锡市",
+             "stationCode": "1002A", "uniqueCode": "U2"},
+        ]}
+
+    async def fake_alarm(self, params):
+        requested.append(params)
+        return {"success": True, "result": {"items": [], "totalCount": 0}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_directory)
+    monkeypatch.setattr(JiangsuAlarmRecordsTool, "_request", fake_alarm)
+    tool = JiangsuAlarmRecordsTool(base_url="http://ops", token_url="http://token", username="u", password="p")
+    result = await tool.execute(city_name="江苏省", start_time="2026-08-01 00:00:00", end_time="2026-08-01 01:00:00")
+
+    assert result["success"] is True
+    assert result["metadata"]["station_codes"] == ["1001A", "1002A"]
 
 
 @pytest.mark.asyncio

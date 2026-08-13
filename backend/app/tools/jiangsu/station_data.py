@@ -108,26 +108,17 @@ class JiangsuStationDataTool(LLMTool):
         **_: Any,
     ) -> dict[str, Any]:
         try:
-            station_codes = await self._resolve_station_codes(station_codes, station_names, city_names, district_names)
-            self._validate(data_kind, station_codes, start_time, end_time, data_type, pollutant_codes)
-            payload: dict[str, Any] = {
-                "codes": [item.strip() for item in station_codes or []],
-                "timePoint": [start_time, end_time],
-                "dataType": data_type,
-            }
-            if data_kind == "station_5minute" and pollutant_codes:
-                payload["pollutantCodes"] = [item.strip() for item in pollutant_codes if item.strip()]
-
-            records: list[Any] = []
-            # The upstream endpoint accepts at most 100 codes, while a city can
-            # own more.  It remains one Agent tool call and batches internally.
-            for start in range(0, len(payload["codes"]), 100):
-                request_payload = {**payload, "codes": payload["codes"][start:start + 100]}
-                response = await self._request(data_kind or "", request_payload)
-                batch = response.get("result") or []
-                if not isinstance(batch, list):
-                    raise ValueError("江苏接口返回 result 不是数据列表")
-                records.extend(batch)
+            records, payload = await self.fetch_raw_records(
+                data_kind=data_kind,
+                station_codes=station_codes,
+                station_names=station_names,
+                city_names=city_names,
+                district_names=district_names,
+                start_time=start_time,
+                end_time=end_time,
+                data_type=data_type,
+                pollutant_codes=pollutant_codes,
+            )
             compact_records, filter_metadata = compact_air_quality_records(records)
             raw_file_path = None
             if context is not None and len(records) > 24:
@@ -173,6 +164,55 @@ class JiangsuStationDataTool(LLMTool):
         except Exception:
             logger.exception("jiangsu_station_data_unexpected_error", data_kind=data_kind)
             return {"status": "failed", "success": False, "data": [], "summary": "江苏站点数据查询发生未预期错误。"}
+
+    async def fetch_raw_records(
+        self,
+        *,
+        data_kind: str | None,
+        station_codes: list[str] | None = None,
+        station_names: list[str] | None = None,
+        city_names: list[str] | None = None,
+        district_names: list[str] | None = None,
+        start_time: str | None,
+        end_time: str | None,
+        data_type: int = 0,
+        pollutant_codes: list[str] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Return the unfiltered time series for deterministic background checks.
+
+        The Agent-facing ``execute`` response intentionally compacts station
+        observations.  Background anomaly detection needs the complete bounded
+        series, so it uses this public read-only method instead of depending on
+        private HTTP helpers.
+        """
+        resolved_codes = await self._resolve_station_codes(
+            station_codes, station_names, city_names, district_names
+        )
+        self._validate(
+            data_kind, resolved_codes, start_time, end_time, data_type, pollutant_codes
+        )
+        payload: dict[str, Any] = {
+            "codes": [item.strip() for item in resolved_codes],
+            "timePoint": [start_time, end_time],
+            "dataType": data_type,
+        }
+        if data_kind == "station_5minute" and pollutant_codes:
+            payload["pollutantCodes"] = [
+                item.strip() for item in pollutant_codes if item.strip()
+            ]
+
+        records: list[dict[str, Any]] = []
+        for start in range(0, len(payload["codes"]), 100):
+            request_payload = {
+                **payload,
+                "codes": payload["codes"][start : start + 100],
+            }
+            response = await self._request(data_kind or "", request_payload)
+            batch = response.get("result") or []
+            if not isinstance(batch, list):
+                raise ValueError("江苏接口返回 result 不是数据列表")
+            records.extend(item for item in batch if isinstance(item, dict))
+        return records, payload
 
     def _validate(self, data_kind, station_codes, start_time, end_time, data_type, pollutant_codes) -> None:
         if data_kind not in self._ENDPOINTS:

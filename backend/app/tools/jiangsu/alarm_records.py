@@ -55,7 +55,8 @@ class JiangsuAlarmRecordsTool(LLMTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "station_codes": {"type": "array", "items": {"type": "string"}, "description": "可选平台站点编码；通常使用地理条件替代。"},
+                        "station_name": {"type": "string"}, "city_name": {"type": "string"}, "district_name": {"type": "string"},
                         "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                         "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                         "call_type": {"type": "string", "description": "可选，例如 qb。"},
@@ -65,7 +66,7 @@ class JiangsuAlarmRecordsTool(LLMTool):
                         "max_result_count": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
                         "sorting": {"type": "string", "enum": ["id", "timePoint", "createTime", "modifyTime"], "default": "id"},
                     },
-                    "required": ["station_codes", "start_time", "end_time"],
+                    "required": ["start_time", "end_time"],
                 },
             },
         )
@@ -74,6 +75,7 @@ class JiangsuAlarmRecordsTool(LLMTool):
         self,
         context=None,
         station_codes: list[str] | None = None,
+        station_name: str | None = None, city_name: str | None = None, district_name: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
         call_type: str | None = None,
@@ -85,26 +87,30 @@ class JiangsuAlarmRecordsTool(LLMTool):
         **_: Any,
     ) -> dict[str, Any]:
         try:
-            codes = self._validate(
-                station_codes, start_time, end_time, alarm_state, skip_count, max_result_count, sorting
-            )
-            params: list[tuple[str, str | int]] = [
-                ("skipCount", skip_count),
-                ("sorting", sorting),
-                ("maxResultCount", max_result_count),
-                ("timePoint[0]", start_time or ""),
-                ("timePoint[1]", end_time or ""),
-            ]
-            params.extend((f"code[{index}]", code) for index, code in enumerate(codes))
-            if call_type:
-                params.append(("CallType", call_type.strip()))
-            if alarm_state is not None:
-                params.append(("DDALARMSTATE", alarm_state))
-            if call_level:
-                params.append(("CallLevel", call_level.strip()))
-
-            payload = await self._request(params)
-            records, total_count = self._extract_page(payload)
+            if not station_codes:
+                from app.tools.jiangsu.fault_diagnosis import _resolve_station_rows
+                rows = await _resolve_station_rows(station_name, city_name, district_name)
+                station_codes = [row["station_code"] for row in rows if row.get("station_code")]
+            codes = self._validate(station_codes, start_time, end_time, alarm_state, skip_count, max_result_count, sorting)
+            records: list[dict[str, Any]] = []
+            total_count = 0
+            # The upstream endpoint accepts at most 100 station codes.  Keep
+            # the unified tool call transparent by batching larger geographic
+            # selections internally (for example, the whole province).
+            for offset in range(0, len(codes), 100):
+                batch = codes[offset:offset + 100]
+                params: list[tuple[str, str | int]] = [
+                    ("skipCount", skip_count), ("sorting", sorting),
+                    ("maxResultCount", max_result_count),
+                    ("timePoint[0]", start_time or ""), ("timePoint[1]", end_time or ""),
+                ]
+                params.extend((f"code[{index}]", code) for index, code in enumerate(batch))
+                if call_type: params.append(("CallType", call_type.strip()))
+                if alarm_state is not None: params.append(("DDALARMSTATE", alarm_state))
+                if call_level: params.append(("CallLevel", call_level.strip()))
+                page_records, page_total = self._extract_page(await self._request(params))
+                records.extend(page_records)
+                total_count += page_total
             metadata = {
                 "source": "jiangsu_operations_alarm_api",
                 "endpoint": self._PATH,
@@ -134,10 +140,8 @@ class JiangsuAlarmRecordsTool(LLMTool):
         self, station_codes, start_time, end_time, alarm_state, skip_count, max_result_count, sorting
     ) -> list[str]:
         if not station_codes or not all(isinstance(code, str) and code.strip() for code in station_codes):
-            raise ValueError("station_codes 至少需要一个有效站点编码")
+            raise ValueError("未解析到可查询的江苏站点，请检查站点目录或地理条件")
         codes = [code.strip() for code in station_codes]
-        if len(codes) > 100:
-            raise ValueError("单次最多查询 100 个站点")
         try:
             start = datetime.fromisoformat((start_time or "").replace("Z", "+00:00"))
             end = datetime.fromisoformat((end_time or "").replace("Z", "+00:00"))

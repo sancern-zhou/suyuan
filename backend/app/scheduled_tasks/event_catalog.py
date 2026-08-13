@@ -16,7 +16,13 @@ _EVENT_DEFINITIONS = {
         label="运城市空气质量告警",
         description="运城市小时盯守告警及溯源上下文已准备完成",
         filter_fields=["city", "alert_level", "target_pollutant"],
-    )
+    ),
+    "jiangsu.station_fault.detected": EventDefinition(
+        event_type="jiangsu.station_fault.detected",
+        label="江苏站点故障告警",
+        description="江苏平台告警或监测异常已触发，且诊断证据包已准备完成",
+        filter_fields=["source_type", "station_code", "alarm_type", "severity"],
+    ),
 }
 
 

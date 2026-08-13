@@ -16,10 +16,11 @@ frontend:
   default_agent_mode: ops
   agent_platform_layout: scenes
 backend:
-  # 江苏部署只从项目目录加载 Skill；当前为空，不会泄露共享部署的技能。
+  # 江苏部署只从项目目录加载 Skill，不会泄露共享部署的技能。
   skills_dir: projects/jiangsu-ops/skills
-  # 显式空白名单：江苏服务不启动任何共享数据抓取脚本。
-  fetchers: []
+  # 江苏部署仅启动站点告警/监测异常抓取器，不加载共享抓取脚本。
+  fetchers:
+    - jiangsu_station_fault_event
   tools:
     - jiangsu_fetch_city_data
     - jiangsu_fetch_district_data
@@ -86,6 +87,7 @@ backend:
       - jiangsu_prepare_device_control
       - jiangsu_execute_device_control
     station_fault_diagnosis:
+      - read_file
       - knowledge_qa_workflow
       - knowledge_document_reader
       - jiangsu_fetch_station_data
@@ -106,6 +108,7 @@ backend:
     station_fault_diagnosis: projects/jiangsu-ops/prompts/station_fault_diagnosis.md
 knowledge:
   collections: []
-# 江苏部署不加载、执行或暴露共享定时任务；若后续需要，须先单独启用并配置。
-scheduled_tasks_enabled: false
-scheduled_tasks: []
+# 江苏部署仅加载下列项目自有任务，不加载共享定时任务。
+scheduled_tasks_enabled: true
+scheduled_tasks:
+  - jiangsu_station_fault_diagnosis

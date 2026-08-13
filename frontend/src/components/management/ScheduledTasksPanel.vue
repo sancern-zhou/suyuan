@@ -195,6 +195,7 @@
                 <option value="expert">expert</option>
                 <option value="query">query</option>
                 <option value="social">social</option>
+                <option value="station_fault_diagnosis">station_fault_diagnosis（站点故障诊断）</option>
                 <option value="custom">custom（自选工具）</option>
               </select>
             </label>
@@ -598,6 +599,7 @@ const getExecutionModeLabel = (mode) => {
     expert: '专家模式',
     query: '问数模式',
     social: '社交模式',
+    station_fault_diagnosis: '站点故障诊断',
     custom: '自定义工具模式'
   }
   return labels[mode] || mode || '默认'
