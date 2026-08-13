@@ -66,6 +66,27 @@ async def test_fault_work_orders_resolves_geographic_station_before_request(monk
 
 
 @pytest.mark.asyncio
+async def test_fault_work_orders_accepts_city_without_station_name(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"success": True, "result": [
+                {"positionName": "站点甲", "cityName": "南京市", "districtName": "鼓楼区", "uniqueCode": "U1"},
+                {"positionName": "站点乙", "cityName": "南京市", "districtName": "玄武区", "uniqueCode": "U2"},
+            ]}
+        requested.append(params)
+        return {"success": True, "result": [{"workingOrderCode": params[0][1]}]}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(city_name="南京", take=2)
+
+    assert result["success"] is True
+    assert result["metadata"]["station_count"] == 2
+    assert requested == [[("uniqueCode", "U1"), ("take", "2")], [("uniqueCode", "U2"), ("take", "2")]]
+
+
+@pytest.mark.asyncio
 async def test_qc_history_and_curve_use_repeated_time_range_parameters(monkeypatch):
     seen = []
 

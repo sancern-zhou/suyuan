@@ -109,42 +109,47 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_fault_work_orders",
-            description="按江苏站点唯一编号读取故障工单与历史处置记录；仅用于故障诊断。",
+            description="按城市、区县或站点名称读取故障工单与历史处置记录；仅用于故障诊断。",
             category=ToolCategory.QUERY,
             function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "按城市、区县和站点名称查询最近故障工单；工具内部解析江苏平台站点编码。",
                              "parameters": {"type": "object", "properties": {
-                                 "station_name": {"type": "string", "description": "站点名称。"},
-                                 "city_name": {"type": "string", "description": "可选城市名称；站点重名时必须提供。"},
-                                 "district_name": {"type": "string", "description": "可选区县名称；站点重名时必须提供。"},
+                                 "station_name": {"type": "string", "description": "可选站点名称；不提供时查询区域下辖全部站点。"},
+                                 "city_name": {"type": "string", "description": "可选城市名称；可单独查询该城市下辖站点。"},
+                                 "district_name": {"type": "string", "description": "可选区县名称；可单独查询该区县下辖站点。"},
                                  "take": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
-                             }, "required": ["station_name"]}},
+                             }, "required": []}},
         )
 
     async def execute(self, context=None, station_name: str | None = None, city_name: str | None = None,
                       district_name: str | None = None, take: int = 5, **_: Any) -> dict[str, Any]:
         try:
-            station_name = _identifier(station_name, "station_name")
+            station_name = _optional_identifier(station_name, "station_name")
             city_name = _optional_identifier(city_name, "city_name")
             district_name = _optional_identifier(district_name, "district_name")
+            if not any((station_name, city_name, district_name)):
+                raise ValueError("station_name、city_name、district_name 至少提供一个")
             if not isinstance(take, int) or not 1 <= take <= 20:
                 raise ValueError("take 必须为 1–20 的整数")
-            station_id = await self._resolve_station_unique_code(station_name, city_name, district_name)
-            payload = await _JiangsuAuthenticatedApi(source="ops").get(
-                self._PATH, [("uniqueCode", station_id), ("take", str(take))]
-            )
-            orders = payload.get("result") or []
-            if not isinstance(orders, list):
-                raise ValueError("故障工单接口 result 无效")
+            stations = await self._resolve_stations(station_name, city_name, district_name)
+            api = _JiangsuAuthenticatedApi(source="ops")
+            orders: list[Any] = []
+            for station in stations:
+                payload = await api.get(self._PATH, [("uniqueCode", station["unique_code"]), ("take", str(take))])
+                station_orders = payload.get("result") or []
+                if not isinstance(station_orders, list):
+                    raise ValueError("故障工单接口 result 无效")
+                orders.extend(station_orders)
             return {"status": "success" if orders else "empty", "success": True, "data": orders,
                     "metadata": {"source": "jiangsu_operations_api", "endpoint": self._PATH,
                                  "station": {"station_name": station_name, "city_name": city_name, "district_name": district_name},
+                                 "station_count": len(stations),
                                  "record_count": len(orders), "queried_at": datetime.now().astimezone().isoformat()},
                     "summary": f"故障工单查询完成：返回 {len(orders)} 条记录。"}
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "failed", "success": False, "data": [], "summary": f"故障工单查询失败：{exc}"}
 
-    async def _resolve_station_unique_code(self, station_name: str, city_name: str | None,
-                                           district_name: str | None) -> str:
+    async def _resolve_stations(self, station_name: str | None, city_name: str | None,
+                                district_name: str | None) -> list[dict[str, str]]:
         """Resolve the platform-only uniqueCode without exposing it to the Agent."""
         payload = await _JiangsuAuthenticatedApi(source="air").get(self._STATION_DIRECTORY_PATH, [])
         rows = payload.get("result") or []
@@ -153,19 +158,21 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
         matches = [
             row for row in rows
             if isinstance(row, dict)
-            and _normalise_place_name(row.get("positionName") or row.get("stationName")) == _normalise_place_name(station_name)
+            and (not station_name or _normalise_place_name(row.get("positionName") or row.get("stationName")) == _normalise_place_name(station_name))
             and (not city_name or _normalise_place_name(row.get("cityName")) == _normalise_place_name(city_name))
             and (not district_name or _normalise_place_name(row.get("districtName")) == _normalise_place_name(district_name))
         ]
         if not matches:
             location = "-".join(part for part in (city_name, district_name, station_name) if part)
             raise ValueError(f"未在江苏站点目录中找到“{location}”")
-        if len(matches) > 1:
-            raise ValueError(f"“{station_name}”匹配到多个站点，请补充 city_name 或 district_name")
-        unique_code = matches[0].get("uniqueCode") or matches[0].get("UniqueCode")
-        if not isinstance(unique_code, str) or not unique_code.strip():
-            raise ValueError(f"站点“{station_name}”缺少江苏平台唯一编码")
-        return unique_code.strip()
+        resolved = []
+        for row in matches:
+            unique_code = row.get("uniqueCode") or row.get("UniqueCode")
+            if isinstance(unique_code, str) and unique_code.strip():
+                resolved.append({"unique_code": unique_code.strip()})
+        if not resolved:
+            raise ValueError("匹配站点缺少江苏平台唯一编码")
+        return resolved
 
 
 class JiangsuAutoInspectionTool(LLMTool):
