@@ -242,7 +242,7 @@ class ScheduledTaskService:
         return execution
 
     async def _execute_scheduled_task(self, task: ScheduledTask) -> TaskExecution:
-        """Execute scheduled work and deliver its explicit broadcast result."""
+        """Execute scheduled work; broadcast tasks send through their Agent tool."""
         execution: TaskExecution | None = None
         try:
             recipients: list[dict[str, str]] = []
@@ -251,28 +251,16 @@ class ScheduledTaskService:
                 if not recipients:
                     raise ValueError("no active bound WeChat recipients")
 
-            execution = await self.executor.execute_task(task, update_stats=False)
+            execution = await self.executor.execute_task(
+                task,
+                update_stats=False,
+                broadcast_user_names=[
+                    row.get("name") or row["user_id"] for row in recipients
+                ],
+            )
             if execution.status != ExecutionStatus.SUCCESS:
                 self.task_storage.update_run_stats(task.task_id, success=False)
                 return execution
-
-            if task.broadcast_enabled:
-                response = execution.steps[-1].agent_response if execution.steps else ""
-                output = parse_event_task_output(response or "")
-                if not output.success:
-                    raise ValueError(output.error or "scheduled Agent returned failure")
-                execution.delivery_results = await self.event_delivery.deliver(
-                    task=task,
-                    event=None,
-                    execution=execution,
-                    output=output,
-                    recipients=recipients,
-                )
-                if not execution.delivery_results or not any(
-                    row.get("sent") for row in execution.delivery_results
-                ):
-                    raise ValueError("delivery failed for every recipient")
-                self.execution_storage.update(execution)
 
             self.task_storage.update_run_stats(task.task_id, success=True)
             return execution
@@ -418,6 +406,9 @@ class ScheduledTaskService:
                 task,
                 event=event,
                 update_stats=False,
+                broadcast_user_names=[
+                    row.get("name") or row["user_id"] for row in recipients
+                ],
             )
             self.claim_storage.mark_status(
                 claim_id,
@@ -428,28 +419,6 @@ class ScheduledTaskService:
                 self.task_storage.update_run_stats(task.task_id, success=False)
                 self.claim_storage.mark_status(claim_id, "failed")
                 return execution
-
-            if task.broadcast_enabled:
-                response = execution.steps[-1].agent_response if execution.steps else ""
-                output = parse_event_task_output(response or "")
-                if not output.success:
-                    raise ValueError(output.error or "event Agent returned failure")
-                execution.delivery_results = await self.event_delivery.deliver(
-                    task=task,
-                    event=event,
-                    execution=execution,
-                    output=output,
-                    recipients=recipients,
-                )
-                if not execution.delivery_results:
-                    raise ValueError("delivery returned no recipient results")
-                if execution.delivery_results and not any(
-                    row.get("sent") for row in execution.delivery_results
-                ):
-                    execution.error_message = (
-                        "Agent completed, but delivery failed for every recipient"
-                    )
-                self.execution_storage.update(execution)
 
             self.task_storage.update_run_stats(task.task_id, success=True)
             self.claim_storage.mark_status(claim_id, "succeeded")

@@ -117,7 +117,8 @@ QUERY_TOOL_NAMES = [
 
     # === 参数化查询工具 ===
     "get_5min_data",
-    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
+    "get_weather_data", "get_observed_meteorology", "get_weather_forecast",
+    "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
     "analyze_city_pollutant_rankings",
     "knowledge_graph_query",
     "resolve_station_geo",

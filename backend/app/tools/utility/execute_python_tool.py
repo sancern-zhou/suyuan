@@ -83,6 +83,8 @@ class ExecutePythonTool(LLMTool):
                 "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或跨工具复用结构化结果必须用 save_data(...) 保存，并原样复用其返回的 file_path；"
                 "不得将自行写入或推断得到的中间数据路径传给后续工具。"
+                "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
+                "再保存到该路径；工具会自动归档并返回真实 file_path。"
                 "⚠️ **图表选择策略**："
                 "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
                 "② 复杂/自定义图表（3D图/多子图/任意极坐标/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
@@ -228,6 +230,7 @@ class ExecutePythonTool(LLMTool):
         try:
             # 只在独立子进程中执行，且不修改 Web worker 的全局 cwd。
             original_code = code
+            code = self._inject_artifact_path_helper(code)
             code = self._inject_data_context(code, context)
             code = self._inject_matplotlib_save_support(code)
             code = self._inject_excel_helpers(code)
@@ -268,6 +271,30 @@ class ExecutePythonTool(LLMTool):
 
             # 合并文件列表（移动的临时文件 + 用户保存的文件）
             final_files = moved_temp_files + user_saved_files
+
+            if (
+                result.get("success", False)
+                and not final_files
+                and self._code_intends_deliverable_file(original_code)
+            ):
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "error": "generated artifact was not published",
+                    "error_code": "ARTIFACT_NOT_PUBLISHED",
+                    "data": {
+                        "output": output,
+                        "files": [],
+                        "engine": self.execution_engine,
+                    },
+                    "llm_resume": {
+                        "tool_hint": (
+                            "重新执行代码：先用 output_path = artifact_path('文件名.xlsx') "
+                            "获取路径，再将文件保存到 output_path。不要拼接绝对路径。"
+                        )
+                    },
+                    "summary": "代码已运行，但交付文件未从沙箱发布；请使用 artifact_path(filename) 后重试",
+                }
 
             result["data"]["files"] = final_files
             result["data"]["engine"] = self.execution_engine
@@ -1042,6 +1069,73 @@ class ExecutePythonTool(LLMTool):
                     if os.path.isfile(file_path):
                         generated_files.append(file_path)
         return generated_files
+
+    @staticmethod
+    def _inject_artifact_path_helper(code: str) -> str:
+        """Expose one sandbox-local output API whose files are auto-collected."""
+        helper = '''# ===== 交付文件输出上下文（自动注入） =====
+from pathlib import Path as __ArtifactPath
+
+def artifact_path(filename: str) -> str:
+    """返回会被 execute_python 自动归档的交付文件路径。"""
+    raw = __ArtifactPath(str(filename))
+    if raw.is_absolute() or ".." in raw.parts:
+        raise ValueError("artifact filename must be a safe relative path")
+    output = __ArtifactPath("artifacts") / raw
+    output.parent.mkdir(parents=True, exist_ok=True)
+    return str(output)
+
+# ===== 交付文件输出上下文注入完成 =====
+
+'''
+        return helper + code
+
+    def _code_intends_deliverable_file(self, code: str) -> bool:
+        """Detect document write calls so silent sandbox loss can trigger a retry."""
+        extensions = (".xlsx", ".xls", ".docx", ".pptx", ".pdf", ".csv", ".zip")
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return False
+        assigned_strings: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assigned_strings[target.id] = node.value.value
+
+        def file_argument(call: ast.Call) -> str | None:
+            if not call.args:
+                return None
+            value = call.args[0]
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+            if isinstance(value, ast.Name):
+                return assigned_strings.get(value.id)
+            return None
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = self._call_name(node.func).lower()
+            if call_name == "artifact_path":
+                return True
+            path = file_argument(node)
+            if not path or not path.lower().endswith(extensions):
+                continue
+            if call_name.endswith((".save", ".to_excel", ".to_csv", ".write")):
+                return True
+            if call_name in {"open", "io.open"}:
+                mode = None
+                if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+                    mode = node.args[1].value
+                for keyword in node.keywords:
+                    if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
+                        mode = keyword.value.value
+                if isinstance(mode, str) and any(flag in mode for flag in ("w", "a", "x")):
+                    return True
+        return False
 
     def _attach_resume_context(self, result: Dict[str, Any]) -> None:
         if not isinstance(result, dict) or not result.get("success"):
@@ -2547,6 +2641,7 @@ def merge_excel_with_charts(file_paths, output_path):
                 "跨调用或交给其他工具使用的结构化结果必须调用 save_data(...)，"
                 "并原样复用 save_data 返回的 file_path。"
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
+                "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
                 "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
@@ -2560,6 +2655,8 @@ def merge_excel_with_charts(file_paths, output_path):
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
                             "工具只捕获保存路径，不接管图表字号、画布或布局。"
+                            "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
+                            "再保存到 output_path，禁止自行拼接绝对输出路径。"
                             "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
                             "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
                         )

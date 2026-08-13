@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.db.database import async_session
+from app.db.weather_database import weather_async_session
 from app.db.models import ERA5ReanalysisData, ObservedWeatherData
 from app.fetchers.emission.permit_license_crawler.models import PermitLicense, PermitPollutionDetail
 
@@ -43,7 +44,7 @@ class XuchangUpwindPermitRepository:
         receptor_lat: float,
         receptor_lon: float,
     ) -> tuple[list[ObservedWeatherData], list[ERA5ReanalysisData]]:
-        async with async_session() as session:
+        async with weather_async_session() as session:
             observed = await session.scalars(
                 select(ObservedWeatherData)
                 .where(
@@ -114,7 +115,7 @@ class XuchangUpwindPermitRepository:
     ) -> list[tuple[datetime, float | None]]:
         """Load a small bounded history; same-hour filtering stays timezone-safe in Python."""
         start = event_hour - timedelta(days=365)
-        async with async_session() as session:
+        async with weather_async_session() as session:
             records = await session.scalars(
                 select(ObservedWeatherData).where(
                     ObservedWeatherData.station_id == station_id,

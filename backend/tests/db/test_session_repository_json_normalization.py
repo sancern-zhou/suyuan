@@ -58,3 +58,21 @@ def test_legacy_decimal_helper_uses_complete_json_normalization():
     )
 
     assert value == {"updated_at": "2026-08-09T00:00:00", "amount": 1.25}
+
+
+def test_message_json_fields_replace_non_finite_numbers_with_none():
+    value = SessionRepository._normalize_json_value(
+        {
+            "nan": float("nan"),
+            "positive_inf": float("inf"),
+            "negative_inf": float("-inf"),
+            "nested": [1.5, Decimal("NaN")],
+        }
+    )
+
+    assert value == {
+        "nan": None,
+        "positive_inf": None,
+        "negative_inf": None,
+        "nested": [1.5, None],
+    }

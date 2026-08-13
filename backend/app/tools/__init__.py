@@ -241,12 +241,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_universal_meteorology", error=str(e))
 
-    try:
-        from app.tools.query.get_observed_meteorology.tool import GetObservedMeteorologyTool
-        registry.register(GetObservedMeteorologyTool(), priority=26)
-        logger.info("tool_loaded", tool="get_observed_meteorology")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_observed_meteorology", error=str(e))
+    if not is_project_tool_disabled(context, "get_observed_meteorology"):
+        try:
+            from app.tools.query.get_observed_meteorology.tool import GetObservedMeteorologyTool
+            registry.register(GetObservedMeteorologyTool(), priority=26)
+            logger.info("tool_loaded", tool="get_observed_meteorology")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_observed_meteorology", error=str(e))
 
     try:
         from app.tools.query.get_jining_regular_stations.tool import GetJiningRegularStationsTool

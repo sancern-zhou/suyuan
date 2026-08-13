@@ -31,6 +31,7 @@ class EventTaskDelivery:
             recipients.append({
                 "user_id": user_id,
                 "social_user_id": record.social_user_id,
+                "name": record.name,
             })
         return recipients
 

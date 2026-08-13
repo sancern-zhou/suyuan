@@ -11,6 +11,7 @@
 """
 
 import json
+import math
 import structlog
 import time
 from enum import Enum
@@ -88,7 +89,8 @@ class SessionRepository:
         if isinstance(obj, Enum):
             return SessionRepository._normalize_json_value(obj.value)
         if isinstance(obj, Decimal):
-            return float(obj)
+            value = float(obj)
+            return value if math.isfinite(value) else None
         if isinstance(obj, (datetime, date, datetime_time)):
             return obj.isoformat()
         if isinstance(obj, (UUID, Path)):
@@ -107,7 +109,9 @@ class SessionRepository:
                 SessionRepository._normalize_json_value(item)
                 for item in sorted(obj, key=str)
             ]
-        if obj is None or isinstance(obj, (str, bool, int, float)):
+        if isinstance(obj, float):
+            return obj if math.isfinite(obj) else None
+        if obj is None or isinstance(obj, (str, bool, int)):
             return obj
         return str(obj)
 

@@ -91,6 +91,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.backend.disabled_tools == [
         "analyze_city_pollutant_rankings",
         "get_5min_data",
+        "get_observed_meteorology",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 

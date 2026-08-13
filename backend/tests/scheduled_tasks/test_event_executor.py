@@ -282,6 +282,8 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
         execution_mode="social",
         trigger_type="event",
         event_type="yuncheng.alert.created",
+        broadcast_enabled=True,
+        target_user_ids=["admin-1"],
         steps=[TaskStep(step_id="report", description="report", agent_prompt="处理告警")],
     )
     task_storage.create(task)
@@ -298,14 +300,94 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
         payload={"evidence_dir": "/tmp/evidence"},
     )
 
-    execution = await executor.execute_task(task, event=event)
+    execution = await executor.execute_task(
+        task,
+        event=event,
+        broadcast_user_names=["运城值班员"],
+    )
 
     assert execution.trigger_type == "event"
     assert execution.event_id == "alert-1"
     assert "alert-1" in agent.prompts[0]
     assert "yuncheng.alert.created" in agent.prompts[0]
     assert "/tmp/evidence" in agent.prompts[0]
-    assert "不要直接发送通知" in agent.prompts[0]
+    assert "broadcast_social_users" in agent.prompts[0]
+    assert "运城值班员" in agent.prompts[0]
+    assert "不需要返回 JSON" in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_executor_appends_broadcast_tool_instruction_to_scheduled_task_prompt(tmp_path):
+    report = tmp_path / "report.xlsx"
+    report.write_bytes(b"xlsx")
+    agent = FakeAgent(report)
+    task = ScheduledTask(
+        task_id="scheduled-broadcast-task",
+        name="scheduled broadcast task",
+        description="scheduled broadcast task",
+        execution_mode="social",
+        schedule_type="once",
+        run_at="2026-07-20T12:00:00",
+        broadcast_enabled=True,
+        target_user_ids=["admin-1"],
+        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成日报")],
+    )
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=lambda: agent,
+        conversation_persistence=RecordingConversationPersistence(),
+    )
+
+    execution = await executor.execute_task(
+        task,
+        update_stats=False,
+        broadcast_user_names=["日报接收人"],
+    )
+
+    assert execution.status.value == "success"
+    assert agent.prompts[0].startswith("生成日报\n\n## 输出与投递约束")
+    assert "broadcast_social_users" in agent.prompts[0]
+    assert "日报接收人" in agent.prompts[0]
+    assert "不需要返回 JSON" in agent.prompts[0]
+    assert "## 可信事件上下文" not in agent.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, monkeypatch):
+    requested_tools = []
+
+    monkeypatch.setattr(
+        "app.scheduled_tasks.executor.task_executor.build_runtime_custom_tool_registry",
+        lambda names: requested_tools.extend(names) or {name: name for name in names},
+    )
+    task = ScheduledTask(
+        task_id="custom-broadcast",
+        name="custom broadcast",
+        description="custom broadcast",
+        execution_mode="custom",
+        tool_names=["execute_python"],
+        schedule_type="once",
+        run_at="2026-07-20T12:00:00",
+        broadcast_enabled=True,
+        target_user_ids=["admin-1"],
+        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成日报")],
+    )
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=lambda **kwargs: RecordingAgent(),
+        conversation_persistence=RecordingConversationPersistence(),
+    )
+
+    execution = await executor.execute_task(
+        task,
+        update_stats=False,
+        broadcast_user_names=["日报接收人"],
+    )
+
+    assert execution.status.value == "success"
+    assert requested_tools == ["execute_python", "broadcast_social_users"]
 
 
 @pytest.mark.asyncio
