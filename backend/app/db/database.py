@@ -27,6 +27,11 @@ DATABASE_URL = _normalize_async_database_url(
     or "postgresql+asyncpg://user:password@localhost:5432/weather_db"
 )
 
+# Shared knowledge-base metadata lives in the central database.  Project-local
+# and private metadata may remain in a separate PostgreSQL database so shared
+# projects can use both stores without mixing ownership or local_scope rows.
+LOCAL_DATABASE_URL = _normalize_async_database_url(os.getenv("LOCAL_DATABASE_URL", "")) or None
+
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
@@ -52,6 +57,30 @@ async_session = async_sessionmaker(
     autocommit=False,
     autoflush=False,
 )
+
+local_engine = None
+local_async_session = None
+if LOCAL_DATABASE_URL and LOCAL_DATABASE_URL != DATABASE_URL:
+    local_engine = create_async_engine(
+        LOCAL_DATABASE_URL,
+        echo=False,
+        pool_size=10,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_timeout=30,
+        connect_args={
+            "command_timeout": 60,
+            "server_settings": {"statement_timeout": "60000"},
+        },
+    )
+    local_async_session = async_sessionmaker(
+        local_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
 
 # Base class for all models
 Base = declarative_base()

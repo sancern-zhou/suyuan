@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.database import get_db
+from app.db.database import get_db, local_async_session
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.service import KnowledgeBaseService
@@ -135,7 +135,16 @@ async def list_knowledge_bases(
     service = KnowledgeBaseService(db=db)
 
     try:
+        # Shared metadata is authoritative in the central database; project
+        # local/private metadata is read from the optional local database and
+        # merged for the single frontend contract.
         kbs = await service.list_knowledge_bases(user_id=user_id)
+        if local_async_session is not None:
+            async with local_async_session() as local_db:
+                local_service = KnowledgeBaseService(db=local_db)
+                local_kbs = await local_service.list_knowledge_bases(user_id=user_id)
+            existing_ids = {kb.id for kb in kbs}
+            kbs.extend(kb for kb in local_kbs if kb.id not in existing_ids)
 
         public_kbs = [_kb_to_response(kb, user_id) for kb in kbs if kb.is_public]
         private_kbs = [_kb_to_response(kb, user_id) for kb in kbs if kb.is_private]
