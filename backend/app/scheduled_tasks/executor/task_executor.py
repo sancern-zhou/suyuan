@@ -57,6 +57,7 @@ class ScheduledTaskExecutor:
         task: ScheduledTask,
         event: TaskEvent | None = None,
         update_stats: bool = True,
+        broadcast_user_names: list[str] | None = None,
     ) -> TaskExecution:
         """执行任务"""
         # 为整个任务创建统一的 session_id（保持所有步骤的上下文连续）
@@ -90,7 +91,10 @@ class ScheduledTaskExecutor:
             if task.execution_mode == "custom":
                 if not self.agent_factory:
                     raise RuntimeError("Agent factory not configured")
-                fixed_tools = build_runtime_custom_tool_registry(task.tool_names or [])
+                runtime_tool_names = list(task.tool_names or [])
+                if task.broadcast_enabled and "broadcast_social_users" not in runtime_tool_names:
+                    runtime_tool_names.append("broadcast_social_users")
+                fixed_tools = build_runtime_custom_tool_registry(runtime_tool_names)
                 shared_agent = self.agent_factory(
                     tool_registry=fixed_tools,
                     enable_memory=False,
@@ -109,10 +113,11 @@ class ScheduledTaskExecutor:
                     task.execution_mode,
                     task=task,
                     agent=shared_agent,
-                    prompt=(
-                        self._build_event_prompt(step.agent_prompt, event)
-                        if event
-                        else step.agent_prompt
+                    prompt=self._build_task_prompt(
+                        step.agent_prompt,
+                        task=task,
+                        event=event,
+                        broadcast_user_names=broadcast_user_names,
                     ),
                 )
                 execution.steps.append(step_result)
@@ -411,19 +416,28 @@ class ScheduledTaskExecutor:
         }
 
     @staticmethod
-    def _build_event_prompt(prompt: str, event: TaskEvent) -> str:
-        event_json = event.model_dump_json(indent=2)
-        return f"""{prompt}
-
-## 可信事件上下文
-{event_json}
-
-## 输出与投递约束
-- 完成任务，但不要直接发送通知或调用广播工具。
-- 最终只返回 JSON：
-  {{"success":true,"broadcast":{{"message":"广播正文","media":["绝对附件路径"]}}}}
-- 失败时只返回：{{"success":false,"error":"失败原因"}}
-"""
+    def _build_task_prompt(
+        prompt: str,
+        task: ScheduledTask,
+        event: TaskEvent | None = None,
+        broadcast_user_names: list[str] | None = None,
+    ) -> str:
+        sections = [prompt]
+        if event is not None:
+            sections.append(
+                f"""## 可信事件上下文
+{event.model_dump_json(indent=2)}"""
+            )
+        if task.broadcast_enabled:
+            names = ", ".join(broadcast_user_names or [])
+            sections.append(
+                """## 输出与投递约束
+- 完成任务后调用 `broadcast_social_users` 发送结果。
+- 目标微信用户名称：%s
+- `target_user_names` 使用上述名称；生成的附件使用上游工具实际返回的文件路径，禁止自行拼接路径。
+- 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
+            )
+        return "\n\n".join(sections)
 
     def _generate_execution_id(self, task_id: str) -> str:
         """生成执行ID"""
