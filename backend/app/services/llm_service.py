@@ -2978,8 +2978,13 @@ class LLMService:
         try:
             async def create_message():
                 # Fallback chains may mix Anthropic-compatible and
-                # Chat-Completions providers. Select the protocol after each
-                # candidate switch instead of relying on the first provider.
+                # Chat-Completions providers (for example DeepSeek -> Doubao).
+                # The chain switches provider state between attempts, so select
+                # the protocol for the current candidate here rather than
+                # relying on the protocol of the first candidate.  Otherwise a
+                # Chat-Completions fallback is incorrectly rejected because it
+                # has no Anthropic client, causing knowledge-base chunking to
+                # fall back to SentenceSplitter.
                 if self.api_mode == "chat_completions":
                     return await self._chat_completions_create(
                         messages=messages,
@@ -3014,9 +3019,9 @@ class LLMService:
                 create_message,
             )
 
-            # Chat-Completions adapters already return the normalized
-            # Anthropic-shaped dictionary. Native clients still need the
-            # normalization below.
+            # The Chat-Completions adapter already returns the normalized
+            # Anthropic-shaped dictionary. Native Anthropic clients return an
+            # SDK response object that still needs normalization below.
             if isinstance(response, dict):
                 return response
 

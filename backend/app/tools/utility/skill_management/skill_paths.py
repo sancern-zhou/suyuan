@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 from typing import Any, Iterable
 
+import yaml
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[4]
 SKILLS_DIR = BACKEND_DIR / "docs" / "skills"
@@ -57,6 +59,11 @@ def resolve_skill_file(
     if official_path.exists() and official_path.is_file():
         return official_path
 
+    skill_id = Path(filename).stem
+    package_path = ensure_within_directory(skills_dir / skill_id / "SKILL.md", skills_dir)
+    if package_path.exists() and package_path.is_file():
+        return package_path
+
     if include_drafts:
         draft_path = ensure_within_directory(drafts_dir / filename, drafts_dir)
         if draft_path.exists() and draft_path.is_file():
@@ -69,6 +76,15 @@ def parse_skill_metadata(content: str, fallback_name: str) -> dict[str, str]:
     title = Path(fallback_name).stem
     description = "暂无描述"
     lines = content.splitlines()
+
+    if lines and lines[0].strip() == "---":
+        try:
+            end = lines[1:].index("---") + 1
+            frontmatter = yaml.safe_load("\n".join(lines[1:end])) or {}
+            title = str(frontmatter.get("name") or title).strip()
+            description = str(frontmatter.get("description") or description).strip()
+        except (ValueError, TypeError, yaml.YAMLError):
+            pass
 
     for index, line in enumerate(lines):
         stripped = line.strip()

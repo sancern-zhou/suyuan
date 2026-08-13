@@ -248,7 +248,7 @@
                 <span class="doc-meta">
                   {{ formatFileSize(doc.file_size) }} |
                   {{ doc.chunk_count }} 分块 |
-                  <span :class="'status-' + doc.status">{{ getStatusText(doc.status) }}</span>
+                  <span :class="'status-' + doc.status">{{ getDocumentProgressText(doc) }}</span>
                   <span v-if="doc.status === 'completed'" class="view-hint">点击查看分段</span>
                 </span>
               </div>
@@ -554,6 +554,46 @@ const graphBuildBusy = computed(() => ['queued', 'running'].includes(graphBuildT
 const graphBuildStatusLabel = computed(() => ({ queued: '排队中', running: '构建中', completed: '已完成', failed: '失败', partial: '部分完成', cancelled: '已取消' }[graphBuildTask.value?.status] || graphBuildTask.value?.status || '未知'))
 let graphBuildPoller
 let graphBuildRequest = 0
+let documentPollTimer
+let documentPollInFlight = false
+
+const isDocumentProcessing = (doc) => ['pending', 'processing'].includes(doc?.status)
+const hasProcessingDocuments = () => documents.value.some(isDocumentProcessing)
+
+const getDocumentProgressText = (doc) => {
+  if (doc.status === 'failed') return '处理失败'
+  if (doc.status === 'completed') return doc.graph_status === 'pending' ? '入库完成，等待图谱' : '已完成'
+  const phase = doc.extra_metadata?.processing_phase
+  return ({ queued: '排队中', storing: '保存原文件', parsing: '解析文档', chunking: 'LLM语义分块', indexing: '写入向量索引' }[phase] || '处理中')
+}
+
+const stopDocumentPolling = () => {
+  if (documentPollTimer) clearTimeout(documentPollTimer)
+  documentPollTimer = null
+}
+
+const ensureDocumentPolling = (delay = 2000) => {
+  if (documentPollTimer || !currentKb.value || !hasProcessingDocuments()) return
+
+  documentPollTimer = setTimeout(async () => {
+    documentPollTimer = null
+    const requestedKbId = currentKb.value?.id
+    if (!requestedKbId || documentPollInFlight) {
+      ensureDocumentPolling()
+      return
+    }
+
+    documentPollInFlight = true
+    try {
+      await store.fetchDocuments(requestedKbId, { silent: true })
+    } catch (e) {
+      // 临时网络错误不应让进度轮询永久停止。
+    } finally {
+      documentPollInFlight = false
+      if (currentKb.value?.id === requestedKbId) ensureDocumentPolling()
+    }
+  }, delay)
+}
 
 onMounted(async () => {
   await store.fetchKnowledgeBases()
@@ -565,9 +605,10 @@ onUnmounted(() => {
     clearInterval(graphBuildPoller)
     graphBuildPoller = null
   }
+  stopDocumentPolling()
 })
 
-watch(() => currentKb.value, (kb) => {
+watch(() => currentKb.value, async (kb) => {
   if (kb) {
     editForm.value = {
       name: kb.name,
@@ -577,8 +618,24 @@ watch(() => currentKb.value, (kb) => {
   }
   if (graphBuildPoller) clearInterval(graphBuildPoller)
   graphBuildTask.value = null
-  if (kb) Promise.all([loadGraphBuildTask(), store.loadKnowledgeScene(kb.id)])
+  stopDocumentPolling()
+  if (kb) {
+    const requestedKbId = kb.id
+    await Promise.all([loadGraphBuildTask(), store.loadKnowledgeScene(kb.id), store.fetchDocuments(kb.id)])
+    if (currentKb.value?.id === requestedKbId) ensureDocumentPolling()
+  }
 })
+
+// 上传和重试会在不切换知识库的情况下新增 pending/processing 文档；状态变化时
+// 必须重新启动轮询，而不是依赖进入页面时创建的一次性定时器。
+watch(
+  () => documents.value.map(doc => `${doc.id}:${doc.status}`).join('|'),
+  () => {
+    if (hasProcessingDocuments()) ensureDocumentPolling()
+    else stopDocumentPolling()
+  },
+  { flush: 'post' }
+)
 
 const loadGraphBuildTask = async (requestedKbId = currentKb.value?.id) => {
   if (!requestedKbId) return
@@ -695,6 +752,7 @@ const uploadFiles = async (files) => {
         chunk_overlap: uploadOptions.value.chunk_overlap,
         llm_mode: uploadOptions.value.llm_mode
       })
+      ensureDocumentPolling(0)
     } catch (e) {
       alert(`上传"${file.name}"失败: ${e.message}`)
     }
@@ -719,6 +777,7 @@ const handleRetry = async (docId) => {
   if (!currentKb.value) return
   try {
     await store.retryDocument(currentKb.value.id, docId)
+    ensureDocumentPolling(0)
   } catch (e) {
     alert('重试失败: ' + e.message)
   }

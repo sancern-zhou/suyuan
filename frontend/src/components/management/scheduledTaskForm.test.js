@@ -114,6 +114,45 @@ test('keeps schedule fields for schedule tasks', () => {
 })
 
 
+test('schedule and event payloads both preserve selected skill context', () => {
+  const schedule = buildTaskPayload({
+    name: '定时诊断',
+    description: '执行诊断',
+    execution_mode: 'expert',
+    skill_id: 'sample-skill',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+  const event = buildTaskPayload({
+    name: '事件诊断',
+    description: '执行诊断',
+    execution_mode: 'expert',
+    skill_id: 'sample-skill',
+    trigger_type: 'event',
+    event_type: 'sample.event.created',
+    enabled: true
+  })
+
+  assert.equal(schedule.skill_id, 'sample-skill')
+  assert.equal(event.skill_id, 'sample-skill')
+})
+
+
+test('clearing skill sends null so editing can remove prior injection', () => {
+  const payload = buildTaskPayload({
+    name: '无 Skill 任务',
+    description: '执行',
+    skill_id: '',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.equal(payload.skill_id, null)
+})
+
+
 test('always sends workspace entry state so an existing sidebar entry can be disabled', () => {
   const enabled = buildTaskPayload({
     name: '告警任务',

@@ -270,7 +270,7 @@ async def upload_document(
     file: UploadFile = File(...),
     metadata: str = Form(default="{}"),
     chunking_strategy: str = Form(default="llm"),
-    chunk_size: int = Form(default=800),
+    chunk_size: int = Form(default=1200),
     chunk_overlap: int = Form(default=100),
     llm_mode: str = Form(default="online"),  # 优先使用线上API（更快）
     db: AsyncSession = Depends(get_knowledge_db),

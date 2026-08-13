@@ -146,6 +146,29 @@ def test_skill_loading_and_mode_compatibility(tmp_path):
         load_skill_selection("trend", skills_dir=tmp_path, available_tools={"read_file"})
 
 
+def test_package_skill_descriptor_uses_directory_as_skill_id(tmp_path):
+    package = tmp_path / "station-alarm-diagnosis"
+    package.mkdir()
+    skill_file = package / "SKILL.md"
+    skill_file.write_text(
+        "---\nname: station-alarm-diagnosis\ndescription: Diagnose alarms.\n---\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "skills_metadata.json").write_text(
+        '{"skills":{"station-alarm-diagnosis":{"enabled":true}}}',
+        encoding="utf-8",
+    )
+
+    descriptor = describe_skill_item({
+        "name": "站点告警诊断",
+        "file": str(skill_file),
+        "description": "诊断告警",
+    })
+
+    assert descriptor["id"] == "station-alarm-diagnosis"
+    assert descriptor["enabled"] is True
+
+
 def test_disabled_skill_metadata_prevents_template_selection(tmp_path):
     (tmp_path / "template.md").write_text("# 模板", encoding="utf-8")
     (tmp_path / "skills_metadata.json").write_text(

@@ -27,6 +27,7 @@ from .storage_scope import get_local_knowledge_scope
 from . import get_vector_store, get_document_processor
 from .file_storage import SmartFileStorage
 from .retrieval_utils import deduplicate_results_by_content
+from app.utils.path_config import get_uploads_dir
 
 logger = structlog.get_logger()
 
@@ -118,7 +119,7 @@ class KnowledgeBaseService:
         vector_store_scope: str = "local",
         owner_id: Optional[str] = None,
         chunking_strategy: str = "llm",
-        chunk_size: int = 800,
+        chunk_size: int = 1200,
         chunk_overlap: int = 100,
         is_default: bool = False
     ) -> KnowledgeBase:
@@ -298,7 +299,7 @@ class KnowledgeBaseService:
         is_admin: bool = False,
         metadata: Dict[str, Any] = None,
         chunking_strategy: str = "llm",
-        chunk_size: int = 800,
+        chunk_size: int = 1200,
         chunk_overlap: int = 100,
         llm_mode: str = "online",  # 优先使用线上API（更快）
         defer_processing: bool = False,
@@ -510,7 +511,7 @@ class KnowledgeBaseService:
         if result.scalar_one_or_none() is None:
             raise ValueError(f"Document not found: {doc_id}")
 
-        storage_dir = Path(os.getenv("KNOWLEDGE_BASE_STORAGE_DIR", "data/knowledge_base"))
+        storage_dir = get_uploads_dir() / "knowledge_base_staging"
         storage_dir.mkdir(parents=True, exist_ok=True)
         suffix = Path(upload.filename or "replacement").suffix
         temp_path = storage_dir / f"{kb_id}_{doc_id}_{uuid4().hex}{suffix}"

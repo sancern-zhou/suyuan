@@ -1,5 +1,6 @@
 import json
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -171,6 +172,94 @@ async def test_executor_uses_web_storage_and_persists_completed_runtime(tmp_path
     assert [message["type"] for message in persistence.calls[0]["display_history"]] == [
         "user", "final"
     ]
+
+
+@pytest.mark.asyncio
+async def test_executor_injects_task_skill_context(monkeypatch, tmp_path):
+    agent = RecordingAgent()
+    task = ScheduledTask(
+        task_id="task-with-skill",
+        name="技能任务",
+        description="技能任务",
+        execution_mode="expert",
+        skill_id="sample-skill",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+    )
+    execution = TaskExecution(
+        execution_id="exec-with-skill",
+        task_id=task.task_id,
+        task_name=task.name,
+        session_id="scheduled-with-skill",
+        status="running",
+        total_steps=1,
+    )
+    monkeypatch.setattr(
+        "app.agent.selection_context.load_skill_selection",
+        lambda *args, **kwargs: SimpleNamespace(content="skill-context-marker"),
+    )
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=lambda: agent,
+    )
+
+    await executor._run_agent_step(
+        "执行",
+        execution.session_id,
+        manual_mode=task.execution_mode,
+        task=task,
+        execution=execution,
+    )
+
+    assert agent.analyze_kwargs["selected_skill_context"] == "skill-context-marker"
+
+
+@pytest.mark.asyncio
+async def test_custom_task_injects_skill_without_tool_compatibility_check(monkeypatch, tmp_path):
+    agent = RecordingAgent()
+    task = ScheduledTask(
+        task_id="custom-task-with-skill",
+        name="自定义技能任务",
+        description="自定义技能任务",
+        execution_mode="custom",
+        tool_names=["read_file"],
+        skill_id="sample-skill",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+    )
+    execution = TaskExecution(
+        execution_id="custom-exec-with-skill",
+        task_id=task.task_id,
+        task_name=task.name,
+        session_id="scheduled-custom-with-skill",
+        status="running",
+        total_steps=1,
+    )
+    monkeypatch.setattr(
+        "app.agent.selection_context.load_skill_selection",
+        lambda skill_id: SimpleNamespace(content=f"skill-context:{skill_id}"),
+    )
+    executor = ScheduledTaskExecutor(
+        task_storage=TaskStorage(storage_dir=tmp_path),
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=lambda: agent,
+    )
+
+    await executor._run_agent_step(
+        "执行",
+        execution.session_id,
+        manual_mode=task.execution_mode,
+        task=task,
+        execution=execution,
+    )
+
+    assert agent.analyze_kwargs["manual_mode"] == "custom"
+    assert agent.analyze_kwargs["selected_skill_context"] == (
+        "skill-context:sample-skill"
+    )
 
 
 @pytest.mark.asyncio
