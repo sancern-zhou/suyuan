@@ -33,13 +33,23 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
   let graphAbortController = null
 
   // 计算属性
-  const publicKbs = computed(() =>
-    knowledgeBases.value.filter(kb => kb.kb_type === 'public')
+  const sharedKbs = computed(() =>
+    knowledgeBases.value.filter(kb => kb.vector_store_scope === 'shared')
+  )
+
+  const localKbs = computed(() =>
+    knowledgeBases.value.filter(kb => (
+      kb.vector_store_scope === 'local' && kb.kb_type === 'public'
+    ))
   )
 
   const privateKbs = computed(() =>
-    knowledgeBases.value.filter(kb => kb.kb_type === 'private')
+    knowledgeBases.value.filter(kb => (
+      kb.vector_store_scope === 'local' && kb.kb_type === 'private'
+    ))
   )
+
+  const publicKbs = computed(() => [...sharedKbs.value, ...localKbs.value])
 
   const selectedKbs = computed(() =>
     knowledgeBases.value.filter(kb => selectedIds.value.includes(kb.id))
@@ -358,6 +368,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     sceneLoading,
 
     // Computed
+    sharedKbs,
+    localKbs,
     publicKbs,
     privateKbs,
     selectedKbs,

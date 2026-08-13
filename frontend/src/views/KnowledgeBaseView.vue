@@ -32,11 +32,11 @@
         <div v-if="loading" class="loading-state">加载中...</div>
 
         <div v-else class="kb-sections">
-          <!-- 公共知识库 -->
-          <div class="kb-section" v-if="publicKbs.length > 0">
-            <div class="section-title">公共知识库</div>
+          <!-- 共享知识库 -->
+          <div class="kb-section">
+            <div class="section-title">共享知识库</div>
             <div
-              v-for="kb in publicKbs"
+              v-for="kb in sharedKbs"
               :key="kb.id"
               class="kb-card"
               :class="{ active: currentKb?.id === kb.id }"
@@ -44,16 +44,36 @@
             >
               <div class="kb-card-header">
                 <span class="kb-name">{{ kb.name }}</span>
-                <span class="kb-badge public">公共</span>
+                <span class="kb-badge shared">共享</span>
               </div>
               <div class="kb-card-meta">
                 {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
+            <div v-if="sharedKbs.length === 0" class="section-empty">暂无共享知识库</div>
+          </div>
+
+          <!-- 本地公共知识库 -->
+          <div class="kb-section">
+            <div class="section-title">本地知识库</div>
+            <div
+              v-for="kb in localKbs"
+              :key="kb.id"
+              class="kb-card"
+              :class="{ active: currentKb?.id === kb.id }"
+              @click="selectKb(kb)"
+            >
+              <div class="kb-card-header">
+                <span class="kb-name">{{ kb.name }}</span>
+                <span class="kb-badge local">本地</span>
+              </div>
+              <div class="kb-card-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
+            </div>
+            <div v-if="localKbs.length === 0" class="section-empty">暂无本地公共知识库</div>
           </div>
 
           <!-- 个人知识库 -->
-          <div class="kb-section" v-if="privateKbs.length > 0">
+          <div class="kb-section">
             <div class="section-title">我的知识库</div>
             <div
               v-for="kb in privateKbs"
@@ -70,11 +90,9 @@
                 {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
+            <div v-if="privateKbs.length === 0" class="section-empty">暂无个人知识库</div>
           </div>
 
-          <div v-if="publicKbs.length === 0 && privateKbs.length === 0" class="empty-state">
-            暂无知识库，点击上方按钮创建
-          </div>
         </div>
       </div>
 
@@ -83,8 +101,8 @@
         <div class="panel-header">
           <div class="detail-title">
             <h2>{{ currentKb.name }}</h2>
-            <span class="kb-badge" :class="currentKb.kb_type">
-              {{ currentKb.kb_type === 'public' ? '公共' : '个人' }}
+            <span class="kb-badge" :class="currentKb.vector_store_scope === 'shared' ? 'shared' : currentKb.kb_type">
+              {{ currentKb.vector_store_scope === 'shared' ? '共享' : (currentKb.kb_type === 'public' ? '本地' : '个人') }}
             </span>
           </div>
           <div class="detail-actions">
@@ -519,7 +537,8 @@ const searchElapsed = ref(0)
 const searchPerformed = ref(false)
 
 const loading = computed(() => store.loading)
-const publicKbs = computed(() => store.publicKbs)
+const sharedKbs = computed(() => store.sharedKbs)
+const localKbs = computed(() => store.localKbs)
 const privateKbs = computed(() => store.privateKbs)
 const currentKb = computed(() => store.currentKb)
 const documents = computed(() => store.documents)
@@ -1046,6 +1065,22 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .kb-badge.public {
   background: #e6f7ff;
   color: #1890ff;
+}
+
+.kb-badge.shared {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.kb-badge.local {
+  background: #f0f9eb;
+  color: #389e0d;
+}
+
+.section-empty {
+  padding: 8px 10px;
+  color: #8c8c8c;
+  font-size: 12px;
 }
 
 .kb-badge.private {

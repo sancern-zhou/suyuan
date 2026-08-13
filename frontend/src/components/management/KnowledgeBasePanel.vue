@@ -8,25 +8,44 @@
     </div>
 
     <div v-if="!kbStore.currentKb" class="kb-content">
-      <!-- 公共知识库 -->
-      <div v-if="kbStore.publicKbs.length > 0" class="kb-section">
-        <div class="kb-section-title">公共知识库</div>
+      <!-- 共享知识库 -->
+      <div class="kb-section">
+        <div class="kb-section-title">共享知识库</div>
         <div
-          v-for="kb in kbStore.publicKbs"
+          v-for="kb in kbStore.sharedKbs"
           :key="kb.id"
           class="kb-item"
           @click="selectKb(kb)"
         >
           <div class="kb-item-header">
             <span class="kb-name">{{ kb.name }}</span>
-            <span class="kb-badge public">公共</span>
+            <span class="kb-badge shared">共享</span>
           </div>
           <div class="kb-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
         </div>
+        <div v-if="kbStore.sharedKbs.length === 0" class="kb-empty">暂无共享知识库</div>
+      </div>
+
+      <!-- 本地公共知识库 -->
+      <div class="kb-section">
+        <div class="kb-section-title">本地知识库</div>
+        <div
+          v-for="kb in kbStore.localKbs"
+          :key="kb.id"
+          class="kb-item"
+          @click="selectKb(kb)"
+        >
+          <div class="kb-item-header">
+            <span class="kb-name">{{ kb.name }}</span>
+            <span class="kb-badge local">本地</span>
+          </div>
+          <div class="kb-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
+        </div>
+        <div v-if="kbStore.localKbs.length === 0" class="kb-empty">暂无本地公共知识库</div>
       </div>
 
       <!-- 个人知识库 -->
-      <div v-if="kbStore.privateKbs.length > 0" class="kb-section">
+      <div class="kb-section">
         <div class="kb-section-title">我的知识库</div>
         <div
           v-for="kb in kbStore.privateKbs"
@@ -40,11 +59,9 @@
           </div>
           <div class="kb-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
         </div>
+        <div v-if="kbStore.privateKbs.length === 0" class="kb-empty">暂无个人知识库</div>
       </div>
 
-      <div v-if="kbStore.publicKbs.length === 0 && kbStore.privateKbs.length === 0" class="kb-empty">
-        暂无知识库，点击上方按钮创建
-      </div>
     </div>
 
     <!-- 知识库详情 -->
@@ -52,8 +69,8 @@
       <div class="kb-detail-header">
         <div class="kb-detail-title">
           <h4>{{ kbStore.currentKb.name }}</h4>
-          <span class="kb-badge" :class="kbStore.currentKb.kb_type">
-            {{ kbStore.currentKb.kb_type === 'public' ? '公共' : '个人' }}
+          <span class="kb-badge" :class="kbStore.currentKb.vector_store_scope === 'shared' ? 'shared' : kbStore.currentKb.kb_type">
+            {{ kbStore.currentKb.vector_store_scope === 'shared' ? '共享' : (kbStore.currentKb.kb_type === 'public' ? '本地' : '个人') }}
           </span>
         </div>
         <div class="kb-detail-actions">
@@ -421,6 +438,16 @@ defineEmits(['show-create-dialog', 'show-edit-dialog', 'close', 'view-chunks', '
 .kb-badge.public {
   background: #e3f2fd;
   color: #1976d2;
+}
+
+.kb-badge.shared {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.kb-badge.local {
+  background: #f0f9eb;
+  color: #389e0d;
 }
 
 .kb-badge.private {
