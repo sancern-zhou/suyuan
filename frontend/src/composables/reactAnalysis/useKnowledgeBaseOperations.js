@@ -14,7 +14,7 @@ export function useKnowledgeBaseOperations() {
   const kbCreateForm = ref({
     name: '',
     description: '',
-    kb_type: 'private',
+    knowledge_base_scope: 'personal',
     chunking_strategy: 'llm',
     chunk_size: KB_DEFAULTS.CHUNK_SIZE,
     chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
@@ -318,7 +318,7 @@ export function useKnowledgeBaseOperations() {
     kbCreateForm.value = {
       name: '',
       description: '',
-      kb_type: 'private',
+      knowledge_base_scope: 'personal',
       chunking_strategy: 'llm',
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP

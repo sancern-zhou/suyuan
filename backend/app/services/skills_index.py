@@ -16,7 +16,10 @@ def _single_line(value: str) -> str:
     return " ".join(str(value).split())
 
 
-def generate_skills_index(skills_dir: Path = DEFAULT_SKILLS_DIR) -> dict[str, object]:
+def generate_skills_index(skills_dir: Path | None = None) -> dict[str, object]:
+    if skills_dir is None:
+        from app.agent.selection_context import active_skills_dir
+        skills_dir = active_skills_dir()
     skills_dir = skills_dir.resolve()
     if not skills_dir.is_dir():
         raise FileNotFoundError(format_agent_path(skills_dir))

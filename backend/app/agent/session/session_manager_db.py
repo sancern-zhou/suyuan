@@ -128,14 +128,18 @@ class SessionManagerDB:
                     force_full_history_rewrite=force_full_history_rewrite
                 )
                 if force_full_history_rewrite:
-                    await self.repository.save_conversation_history(
+                    messages_saved = await self.repository.save_conversation_history(
                         session.session_id,
                         session.conversation_history
                     )
                 else:
-                    await self.repository.sync_conversation_history_incremental(
+                    messages_saved = await self.repository.sync_conversation_history_incremental(
                         session.session_id,
                         session.conversation_history
+                    )
+                if not messages_saved:
+                    raise RuntimeError(
+                        f"conversation_history_save_failed:{session.session_id}"
                     )
 
             logger.info(

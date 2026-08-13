@@ -151,7 +151,7 @@ async def test_unmatched_event_does_not_create_agent(service, agent_factory):
 
 
 @pytest.mark.asyncio
-async def test_matching_event_runs_agent_once_and_broadcasts_to_two_users(
+async def test_matching_event_runs_agent_once_without_service_side_delivery(
     service,
     event_task,
     agent_factory,
@@ -165,10 +165,10 @@ async def test_matching_event_runs_agent_once_and_broadcasts_to_two_users(
     assert first.accepted_task_ids == [event_task.task_id]
     assert second.duplicate_task_ids == [event_task.task_id]
     assert agent_factory.call_count == 1
-    assert fake_delivery.target_batches == [["admin-1", "admin-2"]]
+    assert fake_delivery.target_batches == []
     execution = service.execution_storage.get(first.execution_ids[0])
     assert execution.status.value == "success"
-    assert len(execution.delivery_results) == 2
+    assert execution.delivery_results == []
 
 
 @pytest.mark.asyncio
@@ -244,7 +244,7 @@ async def test_no_valid_recipients_fails_before_agent(
 
 
 @pytest.mark.asyncio
-async def test_empty_delivery_result_fails_event_instead_of_false_success(
+async def test_service_does_not_parse_or_redeliver_agent_final_response(
     service,
     event_task,
     fake_delivery,
@@ -256,9 +256,9 @@ async def test_empty_delivery_result_fails_event_instead_of_false_success(
 
     claim = service.claim_storage.get(event_task.task_id, "empty-delivery")
     execution = service.execution_storage.get(result.execution_ids[0])
-    assert claim.status == "failed"
-    assert execution.status.value == "failed"
-    assert "no recipient results" in execution.error_message
+    assert claim.status == "succeeded"
+    assert execution.status.value == "success"
+    assert fake_delivery.target_batches == []
 
 
 @pytest.mark.asyncio
@@ -271,6 +271,12 @@ async def test_retry_delivery_does_not_rerun_agent(
     fake_delivery.fail_user_ids = {"admin-2"}
     service.create_task(event_task)
     dispatched = await service.publish_event(_event("partial-delivery"), wait=True)
+    execution = service.execution_storage.get(dispatched.execution_ids[0])
+    execution.delivery_results = [
+        {"user_id": "admin-1", "sent": True},
+        {"user_id": "admin-2", "sent": False},
+    ]
+    service.execution_storage.update(execution)
     initial_agent_calls = agent_factory.call_count
     fake_delivery.fail_user_ids.clear()
 
@@ -299,6 +305,7 @@ async def test_total_delivery_failure_keeps_agent_claim_succeeded_for_delivery_r
     assert execution.status.value == "success"
     assert claim.status == "succeeded"
     assert agent_factory.call_count == 1
+    assert fake_delivery.target_batches == []
 
 
 @pytest.mark.asyncio
@@ -310,6 +317,12 @@ async def test_retry_delivery_with_no_longer_valid_recipient_reports_failure(
     fake_delivery.fail_user_ids = {"admin-2"}
     service.create_task(event_task)
     dispatched = await service.publish_event(_event("recipient-disabled"), wait=True)
+    execution = service.execution_storage.get(dispatched.execution_ids[0])
+    execution.delivery_results = [
+        {"user_id": "admin-1", "sent": True},
+        {"user_id": "admin-2", "sent": False},
+    ]
+    service.execution_storage.update(execution)
     fake_delivery.valid = False
 
     result = await service.retry_failed_delivery(dispatched.execution_ids[0])

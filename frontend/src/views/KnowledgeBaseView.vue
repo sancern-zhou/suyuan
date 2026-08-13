@@ -47,7 +47,7 @@
                 <span class="kb-badge public">公共</span>
               </div>
               <div class="kb-card-meta">
-                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块
+                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
           </div>
@@ -67,7 +67,7 @@
                 <span class="kb-badge private">个人</span>
               </div>
               <div class="kb-card-meta">
-                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块
+                {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
           </div>
@@ -117,6 +117,10 @@
               <span class="info-value">{{ formatFileSize(currentKb.total_size) }}</span>
             </div>
             <div class="info-item">
+              <span class="info-label">索引位置</span>
+              <span class="info-value">{{ currentKb.vector_store_scope === 'shared' ? '中心共享 Qdrant' : '当前项目本地 Qdrant' }}</span>
+            </div>
+            <div class="info-item">
               <span class="info-label">创建时间</span>
               <span class="info-value">{{ formatDate(currentKb.created_at) }}</span>
             </div>
@@ -125,7 +129,7 @@
 
         <div class="graph-build-section">
           <div class="section-title">知识图谱构建</div>
-          <div class="graph-build-controls">
+          <div v-if="graphSceneReady" class="graph-build-controls">
             <select v-model="graphBuildMode" :disabled="graphBuildBusy">
               <option value="pending">增量构建（仅处理新增/变更分块）</option>
               <option value="reset_and_build">重置并全量构建</option>
@@ -137,6 +141,7 @@
             <button v-if="graphBuildTask && ['failed', 'partial'].includes(graphBuildTask.status)" class="btn-secondary" @click="retryGraphBuildTask">重试失败分块</button>
             <button class="btn-text" @click="recoverGraphBuildTask">恢复过期任务</button>
           </div>
+          <p v-else class="graph-build-prerequisite">请先在知识图谱配置中填写场景目标、分析代表性文档并确认 Schema，之后才能显式启动图谱构建。</p>
           <div v-if="graphBuildTask" class="graph-build-status">
             <span>状态：{{ graphBuildStatusLabel }}</span>
             <span>{{ graphBuildTask.processed_chunks || 0 }}/{{ graphBuildTask.total_chunks || 0 }} 分块</span>
@@ -267,15 +272,14 @@
             <textarea v-model="createForm.description" placeholder="输入知识库描述"></textarea>
           </div>
           <div class="form-group">
-            <label>类型</label>
-            <select v-model="createForm.kb_type">
-              <option value="private">个人知识库</option>
-              <option value="public">公共知识库</option>
+            <label>知识库范围</label>
+            <select v-model="createForm.knowledge_base_scope">
+              <option value="shared">共享知识库</option>
+              <option value="local">本地知识库</option>
+              <option value="personal">个人知识库</option>
             </select>
           </div>
-          <p v-if="createForm.kb_type === 'public'" class="form-hint">
-            公共知识库仅限管理员创建，权限以公司统一身份为准。
-          </p>
+          <p class="form-hint">共享：中心发布、跨项目检索；本地：当前项目可见的公共库；个人：用户自己的项目内知识库。</p>
           <div class="form-group">
             <label>分块策略</label>
             <select v-model="createForm.chunking_strategy">
@@ -483,7 +487,7 @@ const fileInput = ref(null)
 const createForm = ref({
   name: '',
   description: '',
-  kb_type: 'private',
+  knowledge_base_scope: 'personal',
   chunking_strategy: 'llm',
   chunk_size: 800,
   chunk_overlap: 100
@@ -524,6 +528,10 @@ const currentDoc = computed(() => store.currentDoc)
 const documentChunks = computed(() => store.documentChunks)
 const graphBuildMode = ref('pending')
 const graphBuildTask = ref(null)
+const graphSceneReady = computed(() => (
+  store.knowledgeScene?.knowledge_base_id === currentKb.value?.id
+  && store.knowledgeScene?.scene_status === 'ready'
+))
 const graphBuildBusy = computed(() => ['queued', 'running'].includes(graphBuildTask.value?.status))
 const graphBuildStatusLabel = computed(() => ({ queued: '排队中', running: '构建中', completed: '已完成', failed: '失败', partial: '部分完成', cancelled: '已取消' }[graphBuildTask.value?.status] || graphBuildTask.value?.status || '未知'))
 let graphBuildPoller
@@ -551,7 +559,7 @@ watch(() => currentKb.value, (kb) => {
   }
   if (graphBuildPoller) clearInterval(graphBuildPoller)
   graphBuildTask.value = null
-  if (kb) loadGraphBuildTask()
+  if (kb) Promise.all([loadGraphBuildTask(), store.loadKnowledgeScene(kb.id)])
 })
 
 const loadGraphBuildTask = async (requestedKbId = currentKb.value?.id) => {
@@ -598,7 +606,7 @@ const handleCreate = async () => {
     createForm.value = {
       name: '',
       description: '',
-      kb_type: 'private',
+      knowledge_base_scope: 'personal',
       chunking_strategy: 'llm',
       chunk_size: 800,
       chunk_overlap: 100

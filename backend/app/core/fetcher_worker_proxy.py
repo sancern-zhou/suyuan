@@ -12,8 +12,15 @@ FETCHERS_PREFIX = "/api/fetchers"
 PROXIED_FETCHER_SUBPATHS = ("status", "trigger/", "pause/", "resume/")
 
 
-def should_proxy_fetchers_request(path: str, app_role: str | None) -> bool:
+def should_proxy_fetchers_request(
+    path: str,
+    app_role: str | None,
+    *,
+    fetchers_enabled: bool = True,
+) -> bool:
     """Return True when a web process should forward fetcher management requests."""
+    if not fetchers_enabled:
+        return False
     role = (app_role or "web").strip().lower()
     if role != "web":
         return False
@@ -44,12 +51,14 @@ class FetcherWorkerProxyMiddleware:
         worker_base_url: str,
         worker_token: str = "",
         timeout_seconds: float = 30.0,
+        fetchers_enabled: bool = True,
     ):
         self.app = app
         self.app_role = app_role
         self.worker_base_url = worker_base_url
         self.worker_token = worker_token
         self.timeout_seconds = timeout_seconds
+        self.fetchers_enabled = fetchers_enabled
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -57,7 +66,11 @@ class FetcherWorkerProxyMiddleware:
             return
 
         path = scope.get("path", "")
-        if not should_proxy_fetchers_request(path, self.app_role):
+        if not should_proxy_fetchers_request(
+            path,
+            self.app_role,
+            fetchers_enabled=self.fetchers_enabled,
+        ):
             await self.app(scope, receive, send)
             return
 

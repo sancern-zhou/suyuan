@@ -75,7 +75,8 @@ class ScheduleTaskTool(LLMTool):
             description="管理当前社交用户的定时任务：创建、查询、启用、禁用或删除任务（仅支持社交模式）",
             category=ToolCategory.TASK_MANAGEMENT,
             function_schema=function_schema,
-            version="1.2.0"
+            version="1.3.0",
+            requires_context=True,
         )
 
         self.user_heartbeat_manager = user_heartbeat_manager
@@ -92,6 +93,7 @@ class ScheduleTaskTool(LLMTool):
 
     async def execute(
         self,
+        context=None,
         action: str = "create",
         task_name: str = None,
         task_description: str = None,
@@ -226,12 +228,15 @@ class ScheduleTaskTool(LLMTool):
 
                 # ✅ 使用用户专属 HeartbeatService（不允许降级到全局路径）
                 heartbeat = await self.user_heartbeat_manager.get_user_heartbeat(user_id)
-                heartbeat.add_task(
+                add_task_kwargs = dict(
                     name=task_name,
                     schedule=schedule,
                     description=task_description,
-                    channels=channels or ["weixin"]
+                    channels=channels or ["weixin"],
                 )
+                if getattr(context, "runtime_mode", None) == "enforcement_exam":
+                    add_task_kwargs["manual_mode"] = "enforcement_exam"
+                heartbeat.add_task(**add_task_kwargs)
 
             except Exception as e:
                 logger.error("failed_to_schedule_user_task", error=str(e), exc_info=True)

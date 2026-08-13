@@ -71,7 +71,8 @@ def check_rf_calibration_dates(
             if pair.get("prev_must_not_after_reference") and prev_field and prev_time and prev_time > reference_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "prev_after_reference"))
                 continue
-            if next_field and next_time and next_time <= reference_time:
+            # 有效期截止日与本次检查/校准日相同仍属于当日有效；只有已经早于作业时间才异常。
+            if next_field and next_time and next_time < reference_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "not_after_reference"))
         if not violations:
             continue

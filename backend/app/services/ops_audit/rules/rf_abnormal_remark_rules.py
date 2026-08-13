@@ -223,6 +223,7 @@ def _add_if_no_remark(
         if str(field) not in remark_candidates:
             remark_candidates[str(field)] = value
     has_remark = any(str(value or "").strip() for value in remark_candidates.values())
+    remark_content = _remark_content_text(remark_candidates) if has_remark else ""
     evidence = {
         "working_order_code": order.get("WORKINGORDERCODE"),
         "rf_table": table,
@@ -239,9 +240,10 @@ def _add_if_no_remark(
         "高",
         f"rf.{table}.remark",
         (
-            "RF表单存在异常/漏填/错配，需语义判断备注是否解释充分: "
+            "RF表单存在异常/漏填/错配，备注说明不充分，需语义判断；"
+            f"备注内容：{remark_content}。"
             if has_remark
-            else "RF表单存在异常/漏填/错配但无有效说明: "
+            else "RF表单存在异常/漏填/错配且未填写有效备注: "
         )
         + abnormal_message,
         json.dumps(evidence, ensure_ascii=False, default=str),
@@ -282,6 +284,18 @@ def _remark_candidates(form: dict[str, Any]) -> dict[str, Any]:
         if any(pattern in upper for pattern in REMARK_FIELD_PATTERNS):
             candidates[field] = value
     return candidates
+
+
+def _remark_content_text(remark_candidates: dict[str, Any]) -> str:
+    """Render non-empty remark candidates for human-readable issue messages."""
+
+    parts = []
+    for field, value in remark_candidates.items():
+        text = str(value or "").strip()
+        if not text or field.upper() in {"PROCESSTYPE"}:
+            continue
+        parts.append(f"{field}={text}")
+    return "；".join(parts) or "<未识别到有效备注内容>"
 
 
 def _is_abnormal_result_field(field: Any, value: Any) -> bool:

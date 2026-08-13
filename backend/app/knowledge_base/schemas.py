@@ -16,6 +16,12 @@ class KnowledgeBaseTypeEnum(str, Enum):
     PRIVATE = "private"
 
 
+class KnowledgeBaseStorageScopeEnum(str, Enum):
+    """向量索引的存储范围，独立于 public/private 可见性。"""
+    SHARED = "shared"
+    LOCAL = "local"
+
+
 class ChunkingStrategyEnum(str, Enum):
     """分块策略枚举"""
     SEMANTIC = "semantic"
@@ -56,6 +62,10 @@ class KnowledgeBaseCreate(BaseModel):
         default=KnowledgeBaseTypeEnum.PRIVATE,
         description="知识库类型：public(公共) / private(个人)"
     )
+    vector_store_scope: KnowledgeBaseStorageScopeEnum = Field(
+        default=KnowledgeBaseStorageScopeEnum.LOCAL,
+        description="向量存储范围：shared(中心共享，只允许中心发布) / local(当前项目本地)",
+    )
     chunking_strategy: ChunkingStrategyEnum = Field(
         default=ChunkingStrategyEnum.SENTENCE,
         description="分块策略"
@@ -88,6 +98,7 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     description: str
     kb_type: str
+    vector_store_scope: str
     status: str
     document_count: int
     chunk_count: int

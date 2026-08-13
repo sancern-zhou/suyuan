@@ -29,6 +29,13 @@ class KnowledgeBaseType(enum.Enum):
     PRIVATE = "private"  # 个人知识库：仅创建者可见
 
 
+class KnowledgeBaseStorageScope(enum.Enum):
+    """Where the rebuildable vector projection for a knowledge base lives."""
+
+    SHARED = "shared"  # Central, cross-project Qdrant service
+    LOCAL = "local"  # Project/worktree-local Qdrant service
+
+
 class DocumentStatus(enum.Enum):
     """文档处理状态"""
     PENDING = "pending"
@@ -68,6 +75,18 @@ class KnowledgeBase(Base):
     )
     owner_id = Column(String(36), nullable=True, index=True)  # 公共知识库为null
     is_default = Column(Boolean, default=False)  # 是否默认启用
+    vector_store_scope = Column(
+        Enum(
+            KnowledgeBaseStorageScope,
+            native_enum=False,
+            length=16,
+            values_callable=lambda scopes: [scope.value for scope in scopes],
+        ),
+        nullable=False,
+        default=KnowledgeBaseStorageScope.SHARED,
+        index=True,
+    )
+    local_scope = Column(String(128), nullable=True, index=True)
 
     # 配置
     embedding_model = Column(String(64), default="BAAI/bge-m3")

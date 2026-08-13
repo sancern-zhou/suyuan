@@ -99,7 +99,10 @@ async def persist_tool_result_resources(
         return None
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     tool_name = str(data.get("tool_name") or event.get("tool_name") or "")
-    focus_requested = tool_name == "publish_session_file"
+    focus_requested = (
+        tool_name == "publish_session_file"
+        or bool(result.get("visuals"))
+    )
     tracking = result.get("resource_tracking")
     if isinstance(tracking, dict) and tracking.get("durable") is True:
         resource_ids = list(tracking.get("resource_ids") or [])

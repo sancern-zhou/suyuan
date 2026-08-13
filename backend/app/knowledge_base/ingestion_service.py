@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 import time
 from dataclasses import dataclass, replace
@@ -105,49 +104,24 @@ class KnowledgeIngestionService:
         drafts = build_chunk_drafts(chunks)
         persisted = await self._persist_chunks_and_outbox(snapshot, drafts)
 
-        graph_errors: list[str] = []
-        changed_entity_ids: set[str] = set()
-        changed_relation_ids: set[str] = set()
-        if snapshot.graph_enabled:
-            semaphore = asyncio.Semaphore(self.max_graph_concurrency)
-            graph_chunks = [
-                *persisted.added,
-                *(chunk for chunk in persisted.reused if chunk.graph_status != "completed"),
-            ]
-
-            async def process_chunk(chunk):
-                async with semaphore:
-                    extraction = await self._extract_with_provenance(snapshot, chunk)
-                return await self._persist_graph_extraction(snapshot, chunk, extraction)
-
-            results = await asyncio.gather(
-                *(process_chunk(chunk) for chunk in graph_chunks),
-                return_exceptions=True,
+        current_chunks = [*persisted.added, *persisted.reused]
+        graph_status = (
+            "disabled"
+            if not snapshot.graph_enabled
+            else (
+                "completed"
+                if current_chunks
+                and all(chunk.graph_status == "completed" for chunk in current_chunks)
+                else "pending"
             )
-            for chunk, result in zip(
-                graph_chunks,
-                results,
-                strict=True,
-            ):
-                if isinstance(result, BaseException):
-                    error = str(result)
-                    graph_errors.append(error)
-                    await self._mark_chunk_graph_failed(
-                        chunk.id,
-                        error,
-                        expected_generation=snapshot.content_generation,
-                    )
-                    continue
-                changed_entity_ids.update(result.changed_entity_ids)
-                changed_relation_ids.update(result.changed_relation_ids)
-
-        status = "partial" if graph_errors else "completed"
+        )
+        status = "completed"
         await self._finalize_document(
             snapshot=snapshot,
             content=content,
             chunk_count=len(drafts),
             status=status,
-            graph_errors=graph_errors,
+            graph_status=graph_status,
         )
         return IngestionResult(
             document_id=document_id,
@@ -155,8 +129,8 @@ class KnowledgeIngestionService:
             added_chunks=len(persisted.added),
             reused_chunks=len(persisted.reused),
             removed_chunks=len(persisted.removed),
-            changed_entities=len(changed_entity_ids),
-            changed_relations=len(changed_relation_ids),
+            changed_entities=0,
+            changed_relations=0,
             status=status,
         )
 
@@ -242,7 +216,7 @@ class KnowledgeIngestionService:
                 raise ValueError(f"Knowledge base not found: {document.knowledge_base_id}")
             document.status = DocumentStatus.PROCESSING
             document.ingestion_status = "processing"
-            document.graph_status = "processing" if kb.graph_enabled else "disabled"
+            document.graph_status = "pending" if kb.graph_enabled else "disabled"
             document.processing_error = None
             schema = self._schema(kb.graph_schema)
             rules = []
@@ -532,7 +506,7 @@ class KnowledgeIngestionService:
         content: str,
         chunk_count: int,
         status: str,
-        graph_errors: list[str],
+        graph_status: str,
     ) -> None:
         async with self.session_factory() as session, session.begin():
             document = await session.scalar(
@@ -548,8 +522,8 @@ class KnowledgeIngestionService:
                 )
             document.status = DocumentStatus.COMPLETED
             document.ingestion_status = status
-            document.graph_status = "failed" if graph_errors else "completed"
-            document.processing_error = "; ".join(dict.fromkeys(graph_errors))[:2000] or None
+            document.graph_status = graph_status
+            document.processing_error = None
             document.error_message = None
             document.chunk_count = chunk_count
             document.file_preview_text = content[:500] if content else None

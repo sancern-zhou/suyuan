@@ -25,7 +25,16 @@ logger = structlog.get_logger()
 class KnowledgeVectorStore:
     """知识库向量存储封装，支持混合检索"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        env_prefix: str = "QDRANT",
+        fallback_prefix: str | None = None,
+        default_port: int = 6333,
+    ):
+        self.env_prefix = env_prefix
+        self.fallback_prefix = fallback_prefix
+        self.default_port = default_port
         self.qdrant_client = None
         self.embedding_model = None
         self._embedding_dim = 1024  # bge-m3维度
@@ -37,23 +46,34 @@ class KnowledgeVectorStore:
         self._init_embedding()
         self._init_jieba()
 
+    def _setting(self, name: str, default: str | None = None) -> str | None:
+        """Read a store-specific setting, optionally falling back to legacy QDRANT_*.
+
+        A local store deliberately has no fallback so a missing LOCAL_QDRANT_HOST
+        remains local (localhost) instead of silently writing to the shared index.
+        """
+        value = os.getenv(f"{self.env_prefix}_{name}")
+        if value is None and self.fallback_prefix:
+            value = os.getenv(f"{self.fallback_prefix}_{name}")
+        return default if value is None else value
+
     def _init_client(self):
         """初始化Qdrant客户端"""
         try:
             from qdrant_client import QdrantClient
 
-            host = os.getenv("QDRANT_HOST", "localhost")
-            port = int(os.getenv("QDRANT_PORT", 6333))
-            api_key = os.getenv("QDRANT_API_KEY")
+            host = self._setting("HOST", "localhost")
+            port = int(self._setting("PORT", str(self.default_port)))
+            api_key = self._setting("API_KEY")
             # 是否使用HTTPS（默认False，使用HTTP）
-            use_https = os.getenv("QDRANT_HTTPS", "false").lower() == "true"
+            use_https = self._setting("HTTPS", "false").lower() == "true"
 
             # 构建URL
             protocol = "https" if use_https else "http"
             url = f"{protocol}://{host}:{port}"
 
             # 超时设置（秒）
-            timeout = int(os.getenv("QDRANT_TIMEOUT", "300"))  # 默认5分钟
+            timeout = int(self._setting("TIMEOUT", "300"))  # 默认5分钟
             
             # 支持API Key认证
             if api_key:

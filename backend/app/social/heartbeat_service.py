@@ -686,7 +686,8 @@ class HeartbeatService:
         name: str,
         schedule: str,
         description: str,
-        channels: list[str] = None
+        channels: list[str] = None,
+        manual_mode: str | None = None,
     ) -> None:
         """
         添加新任务到HEARTBEAT.md
@@ -696,6 +697,7 @@ class HeartbeatService:
             schedule: cron表达式
             description: 任务描述
             channels: 目标通道列表
+            manual_mode: 到期执行时使用的Agent模式
         """
         channels = channels or ["weixin"]
 
@@ -710,6 +712,7 @@ class HeartbeatService:
   description: {description}
   enabled: true
   channels: {channels}
+  manual_mode: "{manual_mode or 'social'}"
   next_run_at: "{next_run_at_str}"
 """
 

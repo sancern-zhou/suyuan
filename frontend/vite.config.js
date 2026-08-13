@@ -11,6 +11,10 @@ export default defineConfig(({ mode }) => {
   })
   return {
     base: env.VITE_APP_BASE_PATH || '/',
+    build: {
+      // Project deployments must never overwrite another project's static assets.
+      outDir: env.VITE_BUILD_OUT_DIR || 'dist'
+    },
     define: {
       __SUYUAN_PROJECT_CONFIG__: JSON.stringify(projectConfig)
     },

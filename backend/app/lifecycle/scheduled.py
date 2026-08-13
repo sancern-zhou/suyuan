@@ -14,6 +14,14 @@ logger = structlog.get_logger()
 async def start_scheduled_task_service() -> None:
     """Initialize and start scheduled task service."""
     try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        context = load_project_context(settings.project_id)
+        if not context.manifest.scheduled_tasks_enabled:
+            logger.info("scheduled_task_service_disabled_by_project", project=settings.project_id)
+            return
+
         from app.agent.react_agent import create_react_agent
         from app.scheduled_tasks import init_service, start_service
 
@@ -28,6 +36,12 @@ async def start_scheduled_task_service() -> None:
 async def stop_scheduled_task_service() -> None:
     """Stop scheduled task service."""
     try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        if not load_project_context(settings.project_id).manifest.scheduled_tasks_enabled:
+            return
+
         from app.scheduled_tasks import stop_service_async
 
         await stop_service_async()

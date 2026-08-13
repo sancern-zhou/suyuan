@@ -48,6 +48,7 @@ from app.utils.path_config import (
     get_reports_dir,
     resolve_agent_path,
 )
+from app.utils.font_utils import BROWSER_CHART_FONT_FAMILY, select_preferred_chinese_font_path
 
 logger = structlog.get_logger()
 
@@ -80,12 +81,15 @@ class ExecutePythonTool(LLMTool):
                 "执行 Python 代码，用于数据处理、数值计算、Excel/文件处理、"
                 "⭐ **自定义图表生成**：matplotlib/seaborn/plotly/bokeh 绘制复杂/3D/科研图表。"
                 "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
-                "跨调用复用结果请用 save_data(...) 保存并获取 file_path。"
+                "跨调用或跨工具复用结构化结果必须用 save_data(...) 保存，并原样复用其返回的 file_path；"
+                "不得将自行写入或推断得到的中间数据路径传给后续工具。"
+                "生成 Excel、Word、PDF 等交付文件时必须先调用 artifact_path(filename) 获取输出路径，"
+                "再保存到该路径；工具会自动归档并返回真实 file_path。"
                 "⚠️ **图表选择策略**："
                 "① 标准报告图表（bar/line/scatter/pile/histogram等）→ 优先使用 create_report_chart；"
                 "② 复杂/自定义图表（3D图/多子图/任意极坐标/科研图表）→ 使用 execute_python + matplotlib/seaborn/plotly；"
                 "③ 流程图/架构图/步骤图 → 使用 call_sub_agent(target_mode='board') 调用画板Agent生成draw.io图片文件。"
-                f"生成文件保存到统一数据目录：{get_data_registry()}。"
+                "生成文件由工具自动归档并返回可复用路径。"
             ),
             category=ToolCategory.QUERY,
             version="1.0.3",
@@ -226,6 +230,7 @@ class ExecutePythonTool(LLMTool):
         try:
             # 只在独立子进程中执行，且不修改 Web worker 的全局 cwd。
             original_code = code
+            code = self._inject_artifact_path_helper(code)
             code = self._inject_data_context(code, context)
             code = self._inject_matplotlib_save_support(code)
             code = self._inject_excel_helpers(code)
@@ -266,6 +271,30 @@ class ExecutePythonTool(LLMTool):
 
             # 合并文件列表（移动的临时文件 + 用户保存的文件）
             final_files = moved_temp_files + user_saved_files
+
+            if (
+                result.get("success", False)
+                and not final_files
+                and self._code_intends_deliverable_file(original_code)
+            ):
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "error": "generated artifact was not published",
+                    "error_code": "ARTIFACT_NOT_PUBLISHED",
+                    "data": {
+                        "output": output,
+                        "files": [],
+                        "engine": self.execution_engine,
+                    },
+                    "llm_resume": {
+                        "tool_hint": (
+                            "重新执行代码：先用 output_path = artifact_path('文件名.xlsx') "
+                            "获取路径，再将文件保存到 output_path。不要拼接绝对路径。"
+                        )
+                    },
+                    "summary": "代码已运行，但交付文件未从沙箱发布；请使用 artifact_path(filename) 后重试",
+                }
 
             result["data"]["files"] = final_files
             result["data"]["engine"] = self.execution_engine
@@ -467,6 +496,7 @@ class ExecutePythonTool(LLMTool):
                                 "id": chart_id,
                                 "type": "image",
                                 "title": f"图表 {Path(chart_path).stem}",
+                                "image_url": image_info["url"],
                                 "data": {
                                     "image_id": image_info["image_id"],
                                     "local_path": image_info["local_path"],  # 图片缓存真实本地路径
@@ -919,6 +949,18 @@ class ExecutePythonTool(LLMTool):
             mounted_destinations.add(str(images_dir))
             sync_dirs.append((staged_images_dir, images_dir, set()))
 
+            preferred_font_path = select_preferred_chinese_font_path()
+            if preferred_font_path is not None:
+                preferred_font_path = preferred_font_path.resolve()
+            if preferred_font_path is not None and preferred_font_path.is_file():
+                staged_font_path = (
+                    Path(working_dir)
+                    / "_suyuan_assets"
+                    / "preferred_chinese_font.ttf"
+                )
+                staged_font_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(preferred_font_path, staged_font_path)
+
             for index, value in enumerate(candidate_paths):
                 raw_path = Path(value).expanduser()
                 path = resolve_agent_path(value)
@@ -1015,7 +1057,12 @@ class ExecutePythonTool(LLMTool):
                 dirs[:] = [
                     name
                     for name in dirs
-                    if name not in {"inputs", "session_data", "images_output"}
+                    if name not in {
+                        "inputs",
+                        "session_data",
+                        "images_output",
+                        "_suyuan_assets",
+                    }
                 ]
             # 跳过 __pycache__ 目录
             if '__pycache__' in dirs:
@@ -1029,6 +1076,73 @@ class ExecutePythonTool(LLMTool):
                     if os.path.isfile(file_path):
                         generated_files.append(file_path)
         return generated_files
+
+    @staticmethod
+    def _inject_artifact_path_helper(code: str) -> str:
+        """Expose one sandbox-local output API whose files are auto-collected."""
+        helper = '''# ===== 交付文件输出上下文（自动注入） =====
+from pathlib import Path as __ArtifactPath
+
+def artifact_path(filename: str) -> str:
+    """返回会被 execute_python 自动归档的交付文件路径。"""
+    raw = __ArtifactPath(str(filename))
+    if raw.is_absolute() or ".." in raw.parts:
+        raise ValueError("artifact filename must be a safe relative path")
+    output = __ArtifactPath("artifacts") / raw
+    output.parent.mkdir(parents=True, exist_ok=True)
+    return str(output)
+
+# ===== 交付文件输出上下文注入完成 =====
+
+'''
+        return helper + code
+
+    def _code_intends_deliverable_file(self, code: str) -> bool:
+        """Detect document write calls so silent sandbox loss can trigger a retry."""
+        extensions = (".xlsx", ".xls", ".docx", ".pptx", ".pdf", ".csv", ".zip")
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return False
+        assigned_strings: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assigned_strings[target.id] = node.value.value
+
+        def file_argument(call: ast.Call) -> str | None:
+            if not call.args:
+                return None
+            value = call.args[0]
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+            if isinstance(value, ast.Name):
+                return assigned_strings.get(value.id)
+            return None
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = self._call_name(node.func).lower()
+            if call_name == "artifact_path":
+                return True
+            path = file_argument(node)
+            if not path or not path.lower().endswith(extensions):
+                continue
+            if call_name.endswith((".save", ".to_excel", ".to_csv", ".write")):
+                return True
+            if call_name in {"open", "io.open"}:
+                mode = None
+                if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+                    mode = node.args[1].value
+                for keyword in node.keywords:
+                    if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
+                        mode = keyword.value.value
+                if isinstance(mode, str) and any(flag in mode for flag in ("w", "a", "x")):
+                    return True
+        return False
 
     def _attach_resume_context(self, result: Dict[str, Any]) -> None:
         if not isinstance(result, dict) or not result.get("success"):
@@ -1353,6 +1467,10 @@ class ExecutePythonTool(LLMTool):
         visuals: List[Dict[str, Any]] = []
         for index, echarts_data in enumerate(echarts_options):
             try:
+                echarts_data["textStyle"] = {
+                    **(echarts_data.get("textStyle") or {}),
+                    "fontFamily": BROWSER_CHART_FONT_FAMILY,
+                }
                 chart_type = self._detect_echarts_chart_type(echarts_data)
                 display_title = self._detect_echarts_title(echarts_data, chart_type)
                 visuals.append({
@@ -1689,6 +1807,7 @@ def _suyuan_configure_matplotlib_chinese_font(force_default=False):
         from matplotlib.ft2font import FT2Font
         current_fonts = list(_suyuan_plt.rcParams.get('font.sans-serif', []))
         default_font_paths = [
+            '/sandbox/_suyuan_assets/preferred_chinese_font.ttf',
             '/home/xckj/.local/share/fonts/方正小标宋简.TTF',
             '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
             '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
@@ -2536,10 +2655,13 @@ def merge_excel_with_charts(file_paths, output_path):
                 "需要循环、条件分支、解析转换、程序化处理或可靠地产出文件时，优先使用 execute_python。"
                 "复杂用法先阅读 backend/app/tools/utility/execute_python_manual.md。"
                 "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
-                "跨调用复用请用 save_data(...) 保存并获取 file_path。"
+                "跨调用或交给其他工具使用的结构化结果必须调用 save_data(...)，"
+                "并原样复用 save_data 返回的 file_path。"
+                "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
+                "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"
                 "生成文件会自动归档并发布到会话资源目录；必须复用返回的 file_path，"
-                "不要自行拼接 sessions/... 路径，也不要再调用 publish_session_file；默认超时30秒。"
+                "不得自行构造资源路径，也不要再调用 publish_session_file；默认超时30秒。"
             ),
             "parameters": {
                 "type": "object",
@@ -2550,6 +2672,10 @@ def merge_excel_with_charts(file_paths, output_path):
                             "要执行的 Python 代码。matplotlib 图片可用 save_chart(fig, filename) 或 fig.savefig(path) 保存；"
                             "matplotlib 中文字体由系统自动设置，不要显式设置 SimHei、DejaVu Sans 等不支持中文的字体；"
                             "工具只捕获保存路径，不接管图表字号、画布或布局。"
+                            "结构化结果若需被后续调用或其他工具读取，代码必须使用 path = save_data(data, schema=...)；"
+                            "只能向后续工具传递该返回值，不能传递其他文件写入方式产生的中间路径。"
+                            "Excel、Word、PDF 等交付文件必须先使用 output_path = artifact_path(filename)，"
+                            "再保存到 output_path，禁止自行拼接绝对输出路径。"
                         )
                     },
                     "timeout": {

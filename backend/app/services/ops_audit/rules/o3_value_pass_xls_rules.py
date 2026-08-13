@@ -74,11 +74,12 @@ def check_o3_value_pass_xls_values(
         _check_o3_value_pass_form_fields(order, form, issues)
         if not xls_items:
             _add_missing_xls_review_issue(order, form, records, issues)
-        selected_items = [item for item in (_select_item(xls_items), _select_item(pdf_items)) if item]
+        selected_xls = _select_matching_xls_item(form, xls_items)
+        selected_items = [item for item in (selected_xls, _select_item(pdf_items)) if item]
         if not selected_items:
             continue
         for item in selected_items:
-            cell_values = _read_cells(item)
+            cell_values = item.pop("_o3_selected_read_result", None) or _read_cells(item)
             if cell_values.get("status") != "success":
                 if item.get("attachment_kind") == "pdf" or _is_unavailable_attachment_source_error(cell_values.get("error")):
                     continue
@@ -391,6 +392,57 @@ def _select_item(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not items:
         return None
     return sorted(items, key=lambda item: str(item.get("filename") or item.get("source_path") or ""))[0]
+
+
+def _select_matching_xls_item(
+    form: dict[str, Any],
+    items: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Select the XLS whose structure and values best represent the RF form.
+
+    An O3 transfer order can contain both the operator's transfer worksheet and
+    a supplier/authority report.  Filename ordering is not a reliable way to
+    distinguish them (and previously selected the GDEEMC report in some
+    orders).  Parse every candidate and rank by comparison quality first;
+    filename hints are only a deterministic tie-breaker.
+    """
+    if not items:
+        return None
+
+    ranked: list[tuple[tuple[int, int, int, int, str], dict[str, Any]]] = []
+    for item in items:
+        read_result = _read_cells(item)
+        if read_result.get("status") != "success":
+            ranked.append(((0, 0, -1, _xls_filename_priority(item), _item_name(item)), item))
+            continue
+        comparisons = _compare_values(form, read_result.get("cells", {}))
+        comparable = [comparison for comparison in comparisons if comparison.get("field") in {
+            "DEVICEDELIVERMODEL", "DELIVERFC", "DENSITY1VALUE"
+        }]
+        matches = sum(comparison.get("status") == "match" for comparison in comparable)
+        populated = sum(comparison.get("status") != "missing_xls_value" for comparison in comparable)
+        problems = sum(comparison.get("status") not in {"match"} for comparison in comparable)
+        # More complete/matching templates win.  A name hint is only used when
+        # the parsed evidence is otherwise tied.
+        key = (matches, populated, -problems, _xls_filename_priority(item), _item_name(item))
+        item["_o3_selected_read_result"] = read_result
+        ranked.append((key, item))
+    return max(ranked, key=lambda pair: pair[0])[1]
+
+
+def _item_name(item: dict[str, Any]) -> str:
+    return str(item.get("filename") or item.get("source_path") or "")
+
+
+def _xls_filename_priority(item: dict[str, Any]) -> int:
+    """Use naming conventions only as a tie-breaker, never as the selector."""
+    name = _item_name(item).lower()
+    score = 0
+    if "报告" in name or "gdeemc" in name:
+        score -= 2
+    if "标准传递" in name or "valuepass" in name:
+        score += 1
+    return score
 
 
 def _read_cells(item: dict[str, Any]) -> dict[str, Any]:

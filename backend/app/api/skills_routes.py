@@ -8,12 +8,20 @@ from fastapi import APIRouter, HTTPException
 from app.services.skills_index import generate_skills_index
 from app.tools.utility.skill_management.skill_paths import (
     DRAFTS_DIR,
-    SKILLS_DIR,
+    active_skill_paths,
     parse_skill_metadata,
     resolve_skill_file,
 )
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
+_DEFAULT_DRAFTS_DIR = DRAFTS_DIR
+
+
+def _active_skill_paths():
+    """Resolve project paths while retaining the established test seam."""
+    if DRAFTS_DIR != _DEFAULT_DRAFTS_DIR:
+        return DRAFTS_DIR.parent, DRAFTS_DIR
+    return active_skill_paths()
 
 @router.get("")
 async def list_skills(keyword: str = None, mode: str = None):
@@ -67,15 +75,16 @@ async def list_skills(keyword: str = None, mode: str = None):
 async def list_skill_drafts():
     """列出候选技能草稿。"""
     try:
-        if not DRAFTS_DIR.exists():
+        _, drafts_dir = _active_skill_paths()
+        if not drafts_dir.exists():
             return {
                 "success": True,
-                "data": {"drafts": [], "count": 0, "drafts_dir": str(DRAFTS_DIR)},
+                "data": {"drafts": [], "count": 0, "drafts_dir": str(drafts_dir)},
                 "summary": "当前没有候选技能草稿",
             }
 
         drafts = []
-        for draft_file in sorted(DRAFTS_DIR.glob("*.md")):
+        for draft_file in sorted(drafts_dir.glob("*.md")):
             content = draft_file.read_text(encoding="utf-8")
             metadata = parse_skill_metadata(content, draft_file.name)
             drafts.append({
@@ -87,7 +96,7 @@ async def list_skill_drafts():
 
         return {
             "success": True,
-            "data": {"drafts": drafts, "count": len(drafts), "drafts_dir": str(DRAFTS_DIR)},
+            "data": {"drafts": drafts, "count": len(drafts), "drafts_dir": str(drafts_dir)},
             "summary": f"找到 {len(drafts)} 个候选技能草稿",
         }
     except Exception as e:
@@ -98,11 +107,12 @@ async def list_skill_drafts():
 async def get_skill_draft_detail(draft_name: str):
     """读取候选技能草稿详情。"""
     try:
+        _, drafts_dir = _active_skill_paths()
         draft_file = resolve_skill_file(
             draft_name,
             include_drafts=True,
-            skills_dir=DRAFTS_DIR,
-            drafts_dir=DRAFTS_DIR,
+            skills_dir=drafts_dir,
+            drafts_dir=drafts_dir,
         )
         content = draft_file.read_text(encoding="utf-8")
         metadata = parse_skill_metadata(content, draft_file.name)
@@ -128,6 +138,7 @@ async def get_skill_draft_detail(draft_name: str):
 async def update_skill_draft_detail(draft_name: str, content: dict):
     """更新候选技能草稿内容。"""
     try:
+        _, drafts_dir = _active_skill_paths()
         new_content = content.get("content")
         if not new_content:
             raise HTTPException(status_code=400, detail="Content is required")
@@ -135,8 +146,8 @@ async def update_skill_draft_detail(draft_name: str, content: dict):
         draft_file = resolve_skill_file(
             draft_name,
             include_drafts=True,
-            skills_dir=DRAFTS_DIR,
-            drafts_dir=DRAFTS_DIR,
+            skills_dir=drafts_dir,
+            drafts_dir=drafts_dir,
         )
         draft_file.write_text(new_content, encoding="utf-8")
         metadata = parse_skill_metadata(new_content, draft_file.name)
@@ -181,14 +192,17 @@ async def get_skill_detail(skill_name: str):
         }
     """
     try:
-        # 标准化文件名
-        if not skill_name.endswith('.md'):
-            skill_name = f"{skill_name}.md"
-
-        skill_file = SKILLS_DIR / skill_name
-
-        if not skill_file.exists():
+        skills_dir, drafts_dir = _active_skill_paths()
+        try:
+            skill_file = resolve_skill_file(
+                skill_name,
+                skills_dir=skills_dir,
+                drafts_dir=drafts_dir,
+            )
+        except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"Skill not found: {skill_name}")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         # 读取文件内容
         content = skill_file.read_text(encoding='utf-8')
@@ -242,14 +256,17 @@ async def update_skill(skill_name: str, content: dict):
         }
     """
     try:
-        # 标准化文件名
-        if not skill_name.endswith('.md'):
-            skill_name = f"{skill_name}.md"
-
-        skill_file = SKILLS_DIR / skill_name
-
-        if not skill_file.exists():
+        skills_dir, drafts_dir = _active_skill_paths()
+        try:
+            skill_file = resolve_skill_file(
+                skill_name,
+                skills_dir=skills_dir,
+                drafts_dir=drafts_dir,
+            )
+        except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"Skill not found: {skill_name}")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         # 获取新的内容
         new_content = content.get("content")
@@ -282,7 +299,7 @@ async def refresh_skills_index():
         }
     """
     try:
-        result = generate_skills_index(SKILLS_DIR)
+        result = generate_skills_index()
         return {
             "success": True,
             "message": "技能索引刷新成功",

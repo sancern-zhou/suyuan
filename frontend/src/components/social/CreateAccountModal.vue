@@ -54,6 +54,13 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { authAxios } from '@/auth/http.js'
 import { getOnboardingStep, scanOwnerLabel } from './createAccountFlow.js'
 
+const props = defineProps({
+  agentMode: {
+    type: String,
+    default: 'social'
+  }
+})
+
 const emit = defineEmits(['close', 'created'])
 
 const scan = ref(null)
@@ -91,7 +98,9 @@ async function startScan() {
   creating.value = true
   errorMessage.value = ''
   try {
-    const response = await authAxios.post('/api/social/accounts/weixin/auto-create', {})
+    const response = await authAxios.post('/api/social/accounts/weixin/auto-create', {
+      agent_mode: props.agentMode
+    })
     scan.value = response.data
     await fetchQRCode()
   } catch (error) {

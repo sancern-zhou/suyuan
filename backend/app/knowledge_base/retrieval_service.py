@@ -29,6 +29,10 @@ class KnowledgeRetrievalService:
         self.vector_store = vector_store
         self.reranker = reranker
 
+    def _vector_store_for(self, kb: KnowledgeBase):
+        resolver = getattr(self.vector_store, "for_knowledge_base", None)
+        return resolver(kb) if resolver is not None else self.vector_store
+
     async def search(
         self,
         *,
@@ -83,8 +87,9 @@ class KnowledgeRetrievalService:
             kb = await session.get(KnowledgeBase, kb_id)
             if kb is None:
                 return []
+            vector_store = self._vector_store_for(kb)
             recall = min(max(top_k * 3, 8), 30)
-            chunk_results = await self.vector_store.hybrid_search(
+            chunk_results = await vector_store.hybrid_search(
                 collection_name=kb.qdrant_collection,
                 query=query,
                 top_k=recall,
@@ -101,6 +106,7 @@ class KnowledgeRetrievalService:
                     "id": kb.id,
                     "name": kb.name,
                     "type": kb.kb_type.value,
+                    "storage_scope": kb.vector_store_scope.value,
                 }
 
             # Qdrant is a rebuildable projection. Never return a point whose
@@ -126,7 +132,7 @@ class KnowledgeRetrievalService:
             if not use_graph_retrieval or not kb.graph_enabled:
                 return self.reciprocal_rank_fusion(chunk_results, [], graph_weight)
 
-            seed_hits = await self.vector_store.search_records(
+            seed_hits = await vector_store.search_records(
                 kb.qdrant_collection,
                 query,
                 record_types={"entity", "relation"},

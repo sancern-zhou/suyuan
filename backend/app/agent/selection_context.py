@@ -13,6 +13,15 @@ from app.agent.resources.resource_service import StoredResource
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "docs" / "skills"
 
 
+def active_skills_dir() -> Path:
+    """Resolve skills for the selected deployment, not the shared backend."""
+    from app.project_config.loader import load_project_context
+    from app.project_config.paths import project_skills_dir
+    from config.settings import settings
+
+    return project_skills_dir(load_project_context(settings.project_id))
+
+
 class InvalidContextReference(ValueError):
     """Raised when a requested resource is absent, inactive, or not a file."""
 
@@ -97,10 +106,11 @@ def describe_skill_item(
 def load_skill_selection(
     skill_id: str,
     *,
-    skills_dir: Path = SKILLS_DIR,
+    skills_dir: Path | None = None,
     available_tools: set[str] | None = None,
 ) -> SkillSelection:
     """Load one published skill and optionally enforce current-mode dependencies."""
+    skills_dir = skills_dir or active_skills_dir()
     path = _resolve_published_skill(skill_id, skills_dir)
     content = path.read_text(encoding="utf-8")
     name, description = _skill_metadata(content, path.name)

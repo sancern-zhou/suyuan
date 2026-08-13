@@ -108,7 +108,11 @@ class CreateReportChartTool(LLMTool):
                     "file_path": {
                         "type": "string",
                         "description": (
-                            "上游数据文件绝对路径。未提供 data 时，工具通过 ExecutionContext 自动读取，"
+                            "仅接受本轮会话上游工具返回的已授权数据 file_path，必须逐字原样复用返回值；"
+                            "不得自行构造、猜测或改写存储路径。"
+                            "execute_python 产生的结构化数据必须先通过 save_data(...) 保存，"
+                            "此处只能传入 save_data 返回的 file_path，不能传入执行环境内自行写入的中间路径。"
+                            "未提供 data 时，工具通过 ExecutionContext 自动读取，"
                             "Agent 无需调用 get_raw_data；普通图表的数据资产应已整理为目标图型结构。"
                             "与 data 同时提供时仅用于来源追踪。"
                         ),

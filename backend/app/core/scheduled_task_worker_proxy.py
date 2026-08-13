@@ -14,8 +14,15 @@ from app.auth.models import CurrentUser
 SCHEDULED_TASKS_PREFIX = "/api/scheduled-tasks"
 
 
-def should_proxy_scheduled_tasks_request(path: str, app_role: str | None) -> bool:
+def should_proxy_scheduled_tasks_request(
+    path: str,
+    app_role: str | None,
+    *,
+    scheduled_tasks_enabled: bool = True,
+) -> bool:
     """Return whether a Web process must forward this scheduled-task request."""
+    if not scheduled_tasks_enabled:
+        return False
     role = (app_role or "web").strip().lower()
     return role == "web" and (
         path == SCHEDULED_TASKS_PREFIX
@@ -43,17 +50,20 @@ class ScheduledTaskWorkerProxyMiddleware:
         worker_base_url: str,
         worker_token: str = "",
         timeout_seconds: float = 1900.0,
+        scheduled_tasks_enabled: bool = True,
     ):
         self.app = app
         self.app_role = app_role
         self.worker_base_url = worker_base_url
         self.worker_token = worker_token
         self.timeout_seconds = timeout_seconds
+        self.scheduled_tasks_enabled = scheduled_tasks_enabled
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not should_proxy_scheduled_tasks_request(
             scope.get("path", ""),
             self.app_role,
+            scheduled_tasks_enabled=self.scheduled_tasks_enabled,
         ):
             await self.app(scope, receive, send)
             return

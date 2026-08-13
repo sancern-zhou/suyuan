@@ -59,12 +59,17 @@ class FrontendManifest(StrictModel):
 
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
+    # ``None`` preserves the shared legacy directories/registrations.  An
+    # explicitly empty list is meaningful: the project owns an empty surface.
+    skills_dir: str | None = None
+    fetchers: list[str] | None = None
     fetchers_enabled: bool = True
     gis_tools_enabled: bool = True
     mode_prompt_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
 
     _unique_tools = field_validator("tools")(unique)
+    _unique_fetchers = field_validator("fetchers")(unique)
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
 
@@ -82,6 +87,7 @@ class ProjectManifest(StrictModel):
     frontend: FrontendManifest = Field(default_factory=FrontendManifest)
     backend: BackendManifest = Field(default_factory=BackendManifest)
     knowledge: KnowledgeManifest = Field(default_factory=KnowledgeManifest)
+    scheduled_tasks_enabled: bool = True
     scheduled_tasks: list[str] = Field(default_factory=list)
 
     _valid_project = field_validator("project")(validate_identifier)

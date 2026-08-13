@@ -20,6 +20,7 @@ import structlog
 from app.schemas.common import DataQualityReport, FieldStats, ValidationIssue, ValidationSeverity
 from app.agent.context.data_files import resolve_data_path, safe_file_stem, to_data_path
 from app.agent.memory.tool_protocol_repair import repair_tool_result_pairing
+from app.utils.path_config import get_sessions_dir
 
 logger = structlog.get_logger()
 
@@ -30,16 +31,6 @@ MAX_TOOL_RESULT_STRING_CHARS = 8_000
 # Keep individual model-facing tool results bounded. The full runtime event or
 # materialized resource remains persisted separately for display/download.
 MAX_TOOL_RESULT_JSON_CHARS = 20_000
-MAX_RESTORED_CONTENT_PREVIEW_CHARS = 2_000
-
-CONTENT_PREVIEW_TOOL_NAMES = {
-    "read_file",
-    "parse_pdf",
-    "read_docx",
-    "read_pptx",
-    "knowledge_document_reader",
-    "web_fetch",
-}
 
 
 def _todo_status_counts(items: Any) -> Dict[str, int]:
@@ -362,137 +353,6 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
     return minimal
 
 
-def _append_unique(items: List[Dict[str, Any]], item: Dict[str, Any], key: str) -> None:
-    value = item.get(key)
-    if not value:
-        return
-    if any(existing.get(key) == value for existing in items):
-        return
-    items.append({k: v for k, v in item.items() if v is not None})
-
-
-def _as_dict(value: Any) -> Dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _as_list(value: Any) -> List[Any]:
-    if isinstance(value, list):
-        return value
-    if value:
-        return [value]
-    return []
-
-
-def _compact_data_ref(file_path: Any, usage: str) -> Dict[str, Any]:
-    return {
-        "file_path": str(file_path),
-        "usage": usage,
-    }
-
-
-def _explicit_refs(value: Any) -> Dict[str, Any]:
-    """Return only tool-declared refs with list-of-dict buckets."""
-    if not isinstance(value, dict):
-        return {}
-    refs: Dict[str, Any] = {}
-    for key, items in value.items():
-        if not isinstance(items, list):
-            continue
-        compacted = [item for item in items if isinstance(item, dict)]
-        if compacted:
-            refs[key] = compacted
-    return refs
-
-
-def _merge_context_refs(base: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
-    merged: Dict[str, Any] = {}
-    for refs in (base, extra):
-        if not isinstance(refs, dict):
-            continue
-        for key, items in refs.items():
-            if not isinstance(items, list):
-                continue
-            bucket = merged.setdefault(key, [])
-            for item in items:
-                if isinstance(item, dict) and item not in bucket:
-                    bucket.append(item)
-    return merged
-
-
-def _collect_visuals(result_dict: Dict[str, Any], data_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    visuals: List[Dict[str, Any]] = []
-    for candidate in [result_dict.get("visuals"), data_payload.get("visuals")]:
-        if isinstance(candidate, list):
-            for visual in candidate:
-                if isinstance(visual, dict):
-                    _append_unique(visuals, visual, "id")
-    return visuals
-
-
-def _extract_context_refs(result_dict: Dict[str, Any]) -> Dict[str, Any]:
-    data_payload = _as_dict(result_dict.get("data"))
-    refs: Dict[str, Any] = _merge_context_refs(
-        _explicit_refs(result_dict.get("refs")),
-        _explicit_refs(data_payload.get("refs")),
-    )
-
-    data_refs: List[Dict[str, Any]] = []
-    for key, usage in (
-        ("file_path", "primary"),
-        ("report_file_path", "report"),
-    ):
-        value = result_dict.get(key) or data_payload.get(key)
-        if value:
-            _append_unique(data_refs, _compact_data_ref(value, usage), "file_path")
-    for key, usage in (
-        ("file_paths", "primary"),
-        ("report_file_paths", "report"),
-        ("source_file_paths", "source"),
-    ):
-        for value in _as_list(result_dict.get(key) or data_payload.get(key)):
-            if value:
-                _append_unique(data_refs, _compact_data_ref(value, usage), "file_path")
-    if data_refs:
-        refs = _merge_context_refs(refs, {"data": data_refs})
-
-    return refs
-
-
-def _llm_resume_for_restore(result_dict: Dict[str, Any]) -> Dict[str, Any]:
-    resume = result_dict.get("llm_resume")
-    if not isinstance(resume, dict):
-        return {}
-    compacted: Dict[str, Any] = {}
-    for key, value in resume.items():
-        if isinstance(value, str):
-            compacted[key] = _truncate_string(value, MAX_RESTORED_CONTENT_PREVIEW_CHARS)
-        elif isinstance(value, (int, float, bool)) or value is None:
-            compacted[key] = value
-        elif isinstance(value, list):
-            compacted[key] = _compact_tool_result_value(value)
-        elif isinstance(value, dict):
-            compacted[key] = _compact_tool_result_value(value)
-        else:
-            compacted[key] = str(value)
-    return compacted
-
-
-def _content_preview_for_restore(tool_name: str | None, result_dict: Dict[str, Any]) -> str | None:
-    llm_resume = _llm_resume_for_restore(result_dict)
-    resume_preview = llm_resume.get("content_preview")
-    if isinstance(resume_preview, str) and resume_preview:
-        return resume_preview
-
-    if tool_name not in CONTENT_PREVIEW_TOOL_NAMES:
-        return None
-
-    data_payload = _as_dict(result_dict.get("data"))
-    content = data_payload.get("content") or result_dict.get("content")
-    if not isinstance(content, str) or not content:
-        return None
-    return _truncate_string(content, MAX_RESTORED_CONTENT_PREVIEW_CHARS)
-
-
 def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
     if _is_todowrite_result(result):
         compacted_todo = _compact_todowrite_result_for_history(result)
@@ -621,11 +481,11 @@ class SessionMemory:
         use_llm_compression: bool = True,
     ) -> None:
         self.session_id = session_id
-        # 使用项目目录而不是系统临时目录，避免 /tmp 下产生大量空文件夹
+        # Keep session artefacts under the active project's data registry.
+        # This matters for project deployments whose registry is isolated from
+        # the default backend_data_registry (for example jiangsu-ops).
         if base_dir is None:
-            # 使用 backend_data_registry/sessions 作为会话目录
-            project_root = Path(__file__).parent.parent.parent.parent  # backend 目录
-            base_dir = project_root / "backend_data_registry" / "sessions"
+            base_dir = get_sessions_dir()
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = self.session_dir / "data"
@@ -1331,92 +1191,6 @@ class SessionMemory:
             if tool_result_id
         }
         return tool_use_ids & tool_result_ids
-
-    def _lightweight_tool_result_for_restore(
-        self,
-        data: Dict[str, Any],
-        result: Any,
-    ) -> Dict[str, Any]:
-        result_dict = result if isinstance(result, dict) else {}
-        tool_name = data.get("tool_name") or result_dict.get("tool_name")
-        tool_use_id = data.get("tool_use_id")
-        is_error = bool(data.get("is_error", False))
-
-        lightweight: Dict[str, Any] = {
-            "tool_name": tool_name,
-            "tool_use_id": tool_use_id,
-            "status": result_dict.get("status") or ("error" if is_error else "success"),
-            "is_error": is_error,
-        }
-
-        summary_text = (
-            result_dict.get("summary_text")
-            or result_dict.get("summary")
-            or result_dict.get("message")
-            or result_dict.get("error")
-        )
-        if summary_text:
-            summary_key = "summary_text" if result_dict.get("summary_text") else "summary"
-            lightweight[summary_key] = _truncate_string(str(summary_text), 2_000)
-
-        for key in ("file_path", "file_paths", "report_file_path", "report_file_paths"):
-            value = result_dict.get(key) or data.get(key)
-            if value:
-                lightweight[key] = value
-
-        context_refs = _extract_context_refs(result_dict)
-        if context_refs:
-            lightweight["context_refs"] = context_refs
-
-        llm_resume = _llm_resume_for_restore(result_dict)
-        if llm_resume:
-            lightweight["llm_resume"] = llm_resume
-
-        content_preview = _content_preview_for_restore(tool_name, result_dict)
-        if content_preview:
-            lightweight["content_preview"] = content_preview
-
-        visual_ids = []
-        data_payload = _as_dict(result_dict.get("data"))
-        visuals = _collect_visuals(result_dict, data_payload)
-        if visuals:
-            visual_ids = [
-                visual.get("id")
-                for visual in visuals
-                if isinstance(visual, dict) and visual.get("id")
-            ]
-        if visual_ids:
-            lightweight["visual_ids"] = visual_ids
-
-        has_reference = any(
-            lightweight.get(key)
-            for key in ("file_path", "file_paths", "report_file_path", "report_file_paths")
-        )
-        if "summary" not in lightweight and "summary_text" not in lightweight:
-            if lightweight.get("file_path"):
-                lightweight["summary"] = (
-                    f"完整结果已保存为 file_path={lightweight['file_path']}。"
-                )
-            elif lightweight.get("file_paths"):
-                lightweight["summary"] = (
-                    f"完整结果已保存为 file_paths={lightweight['file_paths']}。"
-                )
-            elif result:
-                lightweight["summary"] = _safe_content_preview(result, 800)
-            else:
-                lightweight["summary"] = "工具结果已恢复为轻量摘要；原始结果未包含可提取摘要。"
-
-        keep_keys = {
-            "status", "summary", "summary_text", "message", "error",
-            "file_path", "file_paths", "report_file_path", "report_file_paths",
-            "tool_name", "tool_use_id", "is_error", "visuals",
-            "context_refs", "content_preview", "llm_resume",
-        }
-        result_keys = set(result_dict.keys()) if isinstance(result, dict) else set()
-        if result_keys - keep_keys or visual_ids or not has_reference:
-            lightweight["result_truncated"] = True
-
-        return {key: value for key, value in lightweight.items() if value is not None}
 
     def _display_tool_result_blocks(self, msg: Dict[str, Any]) -> List[Dict[str, Any]]:
         data = msg.get("data")

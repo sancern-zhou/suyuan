@@ -36,6 +36,11 @@ from typing import Dict, Any, List, Optional
 import structlog
 
 from .workflow_tool import WorkflowTool
+from .enforcement_exam_knowledge import (
+    ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME,
+    is_enforcement_exam_context,
+    resolve_enforcement_exam_knowledge_base_ids,
+)
 
 logger = structlog.get_logger()
 
@@ -105,7 +110,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
     )
     version = "1.0.0"
     category = "knowledge_qa"
-    requires_context = False
+    requires_context = True
 
     def __init__(self):
         """初始化知识问答工作流"""
@@ -113,11 +118,13 @@ class KnowledgeQAWorkflow(WorkflowTool):
 
     async def execute(
         self,
+        context=None,
         query: Optional[str] = None,
         question: Optional[str] = None,  # 别名，兼容 LLM 调用
         knowledge_base_ids: Optional[List[str]] = None,  # 知识库ID列表
         top_k: int = 3,
-        reranker: str = "never"
+        reranker: str = "never",
+        **_: Any,
     ) -> Dict[str, Any]:
         """
         执行知识库检索
@@ -150,6 +157,26 @@ class KnowledgeQAWorkflow(WorkflowTool):
             )
 
         try:
+            user_id = getattr(context, "user_identifier", None)
+            if is_enforcement_exam_context(context):
+                knowledge_base_ids = await resolve_enforcement_exam_knowledge_base_ids(user_id)
+                if not knowledge_base_ids:
+                    return self._build_udf_v2_result(
+                        status="empty",
+                        success=True,
+                        data={
+                            "query": actual_query,
+                            "sources": [],
+                            "total_retrieved": 0,
+                            "retrieval_summary": (
+                                f"未找到可访问的“{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
+                            ),
+                        },
+                        summary=(
+                            f"未找到可访问的“{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
+                        ),
+                    )
+
             self._record_step("knowledge_retrieval_start", "running", {
                 "query": actual_query[:100] if actual_query else "",
                 "top_k": top_k,
@@ -163,6 +190,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             self._record_step("knowledge_retrieval", "running")
             search_results = await search_knowledge_bases(
                 query=actual_query,
+                user_id=user_id,
                 knowledge_base_ids=knowledge_base_ids,  # 传递知识库ID列表
                 use_hyde=False,
                 use_reranker=reranker,

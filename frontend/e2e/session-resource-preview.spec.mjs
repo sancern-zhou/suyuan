@@ -157,16 +157,17 @@ async function mockApplication(page, fixture, {
     }
     if (/\/sessions\/e2e\/restore$/.test(url.pathname)) {
       return route.fulfill({ json: { session: {
-        session_id: 'e2e', source: 'web', mode: 'assistant', conversation_history: attachmentType ? [{
-          id: 'message-attachment', role: 'user', type: 'user', content: '查看附件',
-          attachments: [{
+        session_id: 'e2e', source: 'web', mode: 'assistant', conversation_history: [{
+          id: attachmentType ? 'message-attachment' : 'message-resource-test',
+          role: 'user', type: 'user', content: attachmentType ? '查看附件' : '查看会话产物',
+          attachments: attachmentType ? [{
             resource_id: resource.resource_id,
             name: resource.label,
             type: attachmentType,
             mime_type: resource.media_type,
             url: '/api/upload/legacy-not-used-for-preview'
-          }]
-        }] : [],
+          }] : []
+        }],
         resource_version: 1, resource_counts: { total: 1, documents: 0, visualizations: 0, boards: 0, files: 1 }
       } } })
     }
@@ -180,6 +181,13 @@ async function mockApplication(page, fixture, {
   await page.route('**/api/sessions/**', handler)
   await page.route('**/api/upload/**', handler)
   return resource
+}
+
+async function openResourcePanel(page) {
+  const toggle = page.locator('.viz-toggle-btn')
+  await expect(toggle).toBeVisible()
+  await toggle.click()
+  await expect(page.getByRole('tab', { name: /文件产物/ })).toBeVisible()
 }
 
 test('message document attachment opens explicitly without entering file products', async ({ page }) => {
@@ -201,6 +209,7 @@ test('message document attachment opens explicitly without entering file product
 test('document toolbar identifies the file and expands its download menu', async ({ page }) => {
   await mockApplication(page, fixtures[0])
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
 
   await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /DOCX\/PDF\.pdf/ }).click()
@@ -255,6 +264,7 @@ test('explicit document selection does not leak into the visualization tab', asy
 test('file product open and download actions do not overlap', async ({ page }) => {
   await mockApplication(page, fixtures[0])
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
   await page.getByRole('tab', { name: /文件产物/ }).click()
 
   const openBox = await page.locator('.product .open-label').boundingBox()
@@ -269,6 +279,7 @@ test('file product open and download actions do not overlap', async ({ page }) =
 test('preview original download uses an authenticated Blob download', async ({ page }) => {
   await mockApplication(page, fixtures[3])
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
   await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
 
@@ -308,6 +319,7 @@ test('file product actions stay fixed when the product has an HTML rendition', a
   }
   await mockApplication(page, fixtures[6], { extraResources: [primary, html] })
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
   await page.getByRole('tab', { name: /文件产物/ }).click()
 
   const product = page.locator('.product').filter({ hasText: '正式报告.qmd' })
@@ -327,6 +339,7 @@ test('file product actions stay fixed when the product has an HTML rendition', a
 test('spreadsheet preview switches sheets, edits a cell, and refreshes after save', async ({ page }) => {
   await mockApplication(page, fixtures[3])
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
   await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
 
@@ -351,9 +364,10 @@ test('spreadsheet preview switches sheets, edits a cell, and refreshes after sav
   expect((await download).suggestedFilename()).toBe('Spreadsheet.xlsx')
 })
 
-test('visualization gallery automatically shows every chart and image', async ({ page }) => {
+test('visualization gallery shows every chart and image when explicitly opened', async ({ page }) => {
   await mockApplication(page, fixtures[6], { extraFixtures: [fixtures[5]] })
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
 
   await page.getByRole('tab', { name: /可视化/ }).click()
   await expect(page.locator('.visualization-card')).toHaveCount(2)
@@ -370,6 +384,7 @@ test('a failed chart stays isolated and can retry without hiding other visuals',
     await route.fulfill({ status: 503, body: 'chart unavailable' })
   })
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
 
   const chartCard = page.locator('.visualization-card').filter({ hasText: 'Chart.json' })
   await expect(chartCard.locator('.error')).toContainText('HTTP 503')
@@ -382,6 +397,7 @@ test('a failed chart stays isolated and can retry without hiding other visuals',
 test('spreadsheet keeps edited cells visible when post-save catalog refresh fails', async ({ page }) => {
   await mockApplication(page, fixtures[3], { failCatalogRefreshAfterSave: true })
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
   await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
   await page.locator('.cell-input').first().fill('Unsynced preview')
@@ -394,6 +410,7 @@ test('spreadsheet keeps edited cells visible when post-save catalog refresh fail
 test('spreadsheet unsaved edits block tab changes and panel closing', async ({ page }) => {
   await mockApplication(page, fixtures[3], { extraFixtures: [fixtures[6]] })
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
   await page.getByRole('tab', { name: /文件产物/ }).click()
   await page.getByRole('button', { name: /Spreadsheet.xlsx/ }).click()
   await page.locator('.cell-input').first().fill('Keep this edit')
@@ -413,6 +430,7 @@ test('spreadsheet unsaved edits block tab changes and panel closing', async ({ p
 test('empty resource tabs are disabled', async ({ page }) => {
   await mockApplication(page, fixtures[0])
   await page.goto('/session/e2e')
+  await openResourcePanel(page)
 
   await expect(page.getByRole('tab', { name: /可视化/ })).toBeDisabled()
   await expect(page.getByRole('tab', { name: /溯源/ })).toBeDisabled()
@@ -423,6 +441,7 @@ for (const fixture of fixtures) {
   test(`${fixture[0]} resource opens through the catalog and survives restore`, async ({ page }) => {
     const resource = await mockApplication(page, fixture)
     await page.goto('/session/e2e')
+    await openResourcePanel(page)
 
     await expect(page.getByRole('tab', { name: /文件产物/ })).toBeVisible()
     await page.getByRole('tab', { name: /文件产物/ }).click()
@@ -431,6 +450,7 @@ for (const fixture of fixtures) {
     await expect(page.locator(fixture[4])).toBeVisible()
 
     await page.reload()
+    await openResourcePanel(page)
     await expect(page.locator('.tab-btn.active')).toContainText(tabLabel[fixture[3]])
     await expect(page.locator(fixture[4])).toBeVisible()
   })

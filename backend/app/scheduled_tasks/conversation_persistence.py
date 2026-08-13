@@ -58,7 +58,19 @@ class ScheduledTaskConversationPersistence:
                 display_history=display_history,
             )
 
-        saved = await self.session_manager.save_session(session)
+        replace_transcript = getattr(
+            self.session_manager,
+            "replace_session_transcript",
+            None,
+        )
+        if callable(replace_transcript):
+            saved = await replace_transcript(session)
+        else:
+            # Compatibility fallback for lightweight test/custom managers.
+            saved = await self.session_manager.save_session(
+                session,
+                force_full_history_rewrite=True,
+            )
         if not saved:
             raise RuntimeError("scheduled_session_persistence_failed")
 
@@ -157,7 +169,19 @@ class ScheduledTaskConversationPersistence:
                 "scheduled_task_name": task.name,
             },
         )
-        if not await self.session_manager.save_session(session):
+        replace_transcript = getattr(
+            self.session_manager,
+            "replace_session_transcript",
+            None,
+        )
+        if callable(replace_transcript):
+            saved = await replace_transcript(session)
+        else:
+            saved = await self.session_manager.save_session(
+                session,
+                force_full_history_rewrite=True,
+            )
+        if not saved:
             raise RuntimeError("scheduled_terminal_session_persistence_failed")
         persisted = await self.session_manager.load_session(session.session_id)
         if persisted is None or not self._same_transcript(history, persisted.conversation_history):

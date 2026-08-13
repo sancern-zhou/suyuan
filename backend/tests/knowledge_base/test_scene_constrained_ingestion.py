@@ -61,7 +61,7 @@ class Extractor:
 
 
 @pytest.mark.asyncio
-async def test_scene_ingestion_records_versions_exact_evidence_and_run(tmp_path):
+async def test_scene_ready_ingestion_still_defers_graph_build(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'scene-ingest.db'}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -103,12 +103,12 @@ async def test_scene_ingestion_records_versions_exact_evidence_and_run(tmp_path)
     assert result.status == "completed"
     async with factory() as session:
         relation = await session.scalar(select(KnowledgeGraphRelation))
-        entity = await session.scalar(
-            select(KnowledgeGraphEntity).where(KnowledgeGraphEntity.name == "企业A")
-        )
+        entity = await session.scalar(select(KnowledgeGraphEntity))
         run = await session.scalar(select(KnowledgeGraphExtractionRun))
-        assert relation.source_type == "document_fact"
-        assert relation.schema_version == 1
-        assert entity.schema_version == 1
-        assert run.status == "completed"
+        document = await session.get(Document, "doc1")
+        assert relation is None
+        assert entity is None
+        assert run is None
+        assert document.ingestion_status == "completed"
+        assert document.graph_status == "pending"
     await engine.dispose()

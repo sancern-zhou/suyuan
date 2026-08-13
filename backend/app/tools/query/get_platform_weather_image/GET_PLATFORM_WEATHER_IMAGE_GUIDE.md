@@ -2,7 +2,7 @@
 
 ## 概述
 
-使用 `get_platform_weather_image` 获取环境大数据管理云平台的气象图片。工具会根据产品类型、日期和时次生成固定格式 URL，并默认下载 PNG 到 `backend/backend_data_registry/external_images/weather_platform/`。
+使用 `get_platform_weather_image` 获取环境大数据管理云平台的气象图片，也可以查询已由 NMC 抓取器缓存的中国地面天气形势图。
 
 调用工具前必须先阅读本文件。工具 schema 只保留轻量参数说明，产品清单、时间规则、中文名映射、示例和扩展方式均以本文件为准。
 
@@ -39,6 +39,18 @@
 | `grapes_gfs_radar_reflectivity` | GRAPES_GFS(雷达组合反射率)预报图 | `2112` | 从 `003` 到 `240`，每3小时一张 |
 | `national_max_temperature_forecast` | 中央气象台全国气温预报图（最高气温） | `2114` | 从 `024` 到 `240`，每24小时一张 |
 | `national_min_temperature_forecast` | 中央气象台全国气温预报图（最低气温） | `2114` | 从 `024` 到 `240`，每24小时一张 |
+| `nmc_surface_weather_chart` | 中国地面天气形势图 | NMC 抓取缓存 | `time` 填 `latest`、`最新`，或页面显示时间如 `08/08 20:00` |
+
+NMC 天气形势图示例：
+
+```json
+{
+  "product": "nmc_surface_weather_chart",
+  "time": "latest"
+}
+```
+
+该产品读取 `nmc_weather_chart_fetcher` 已缓存的图片，不直接套用环境大数据平台的固定 URL 模板。
 
 ## 调用示例
 

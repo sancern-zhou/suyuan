@@ -417,7 +417,17 @@ def _attachment_descriptor(record: dict[str, Any]) -> str:
 
 
 def _descriptor_file_name(descriptor: str) -> str:
-    return descriptor.replace("\\", "/").split("/")[-1].split()[0] if descriptor else ""
+    if not descriptor:
+        return ""
+    # 保留带空格的完整文件名；扩展名提取由 metadata classifier 统一处理。
+    match = re.search(
+        r"([^\\/\r\n]*\.(?:jpg|jpeg|png|bmp|gif|webp|heic|pdf|doc|docx|xls|xlsx))(?=\s|$|/)",
+        str(descriptor),
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip()
+    return descriptor.replace("\\", "/").split("/")[-1].strip()
 
 
 def _name_fields() -> list[str]:

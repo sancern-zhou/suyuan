@@ -57,9 +57,21 @@ export async function listKnowledgeBases() {
  * 创建知识库
  */
 export async function createKnowledgeBase(params) {
+  // UI 使用单一的 scope 选项；后端暂时保留 kb_type/vector_store_scope
+  // 两个字段，以兼容已有调用方和历史数据。
+  const payload = { ...params }
+  if (payload.knowledge_base_scope) {
+    const mapping = {
+      shared: { kb_type: 'public', vector_store_scope: 'shared' },
+      local: { kb_type: 'public', vector_store_scope: 'local' },
+      personal: { kb_type: 'private', vector_store_scope: 'local' }
+    }
+    Object.assign(payload, mapping[payload.knowledge_base_scope] || mapping.personal)
+    delete payload.knowledge_base_scope
+  }
   return await request(BASE_URL, {
     method: 'POST',
-    body: JSON.stringify(params)
+    body: JSON.stringify(payload)
   })
 }
 

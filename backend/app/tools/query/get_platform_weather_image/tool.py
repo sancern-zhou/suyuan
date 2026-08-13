@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 import httpx
 import structlog
 
+from app.services.data_registry import DataRegistryService, data_registry
+from app.services.image_cache import get_image_cache
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
-from app.tools.resource_refs import build_file_ref, build_url_ref, build_visual_ref
+from app.tools.resource_refs import (
+    build_file_ref,
+    build_registry_data_ref,
+    build_url_ref,
+    build_visual_ref,
+)
 from app.tools.utility.project_root import get_project_root
-from app.services.image_cache import get_image_cache
 
 logger = structlog.get_logger()
 
@@ -38,6 +45,11 @@ class WeatherImageProduct:
 
 
 MAX_WIND_PRODUCT_KEY = "_".join(("max", "10m", "wind", "speed", "24h"))
+NMC_WEATHER_CHART_KEY = "nmc_surface_weather_chart"
+NMC_WEATHER_CHART_ALIASES = {
+    NMC_WEATHER_CHART_KEY, "nmc_weather_chart", "nmc_weather_map", "天气形势图", "天气图",
+    "中国地面天气形势图", "全国地面天气图",
+}
 
 
 PRODUCTS: dict[str, WeatherImageProduct] = {
@@ -473,8 +485,11 @@ class GetPlatformWeatherImageTool(LLMTool):
         time: int | str | None = None,
         download: bool = True,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
+            if str(product).strip().lower() in {item.lower() for item in NMC_WEATHER_CHART_ALIASES}:
+                return self._execute_nmc_weather_chart(time=time, date=date, download=download)
+
             product_spec = resolve_product(product)
             date_key = normalize_date(date)
             values = _validate_product_time(
@@ -602,3 +617,71 @@ class GetPlatformWeatherImageTool(LLMTool):
                 },
                 "summary": f"获取平台气象图片失败：{str(exc)[:80]}",
             }
+
+    @staticmethod
+    def _find_nmc_chart(registry: DataRegistryService, *, date: str | None, time: int | str | None):
+        requested = str(time or "").strip().lower()
+        requested_date = str(date or "").replace("-", "")
+        for entry in registry.list_metadata(schema="nmc_weather_chart"):
+            payload = registry.load_dataset(entry.data_id)
+            if not isinstance(payload, dict):
+                continue
+            display_time = str(payload.get("display_time") or "")
+            image_url = str(payload.get("image_url") or "")
+            if requested and requested not in {"latest", "最新", "current", "当前"}:
+                if requested_date and requested_date[-4:] not in display_time.replace("/", ""):
+                    continue
+                normalized_display = display_time.replace("/", "-").replace(" ", "")
+                if requested not in display_time.lower() and requested.replace("/", "-") not in normalized_display:
+                    if requested not in image_url:
+                        continue
+            local_path = str(payload.get("local_path") or "")
+            if local_path and Path(local_path).is_file():
+                return entry, payload
+        return None
+
+    def _execute_nmc_weather_chart(self, *, date: str | None, time: int | str | None, download: bool):
+        found = self._find_nmc_chart(data_registry, date=date, time=time)
+        if not found:
+            return {
+                "success": False, "status": "not_found",
+                "error": "未找到已抓取的 NMC 中国地面天气形势图", "data": None,
+                "metadata": {"generator": self.name, "product": NMC_WEATHER_CHART_KEY},
+                "summary": "暂无已缓存的 NMC 天气形势图，请先运行 nmc_weather_chart_fetcher。",
+            }
+
+        entry, payload = found
+        local_path = str(payload["local_path"])
+        image = payload.get("image") if isinstance(payload.get("image"), dict) else {}
+        image_id = image.get("image_id")
+        image_url = image.get("url")
+        title = f"{payload.get('display_time') or '最新'} 中国地面天气形势图"
+        visual = {
+            "id": image_id, "type": "image", "title": title, "image_url": image_url,
+            "local_path": local_path,
+            "markdown_image": f"![{title}]({image_url})" if image_url and download else None,
+        }
+        data = {
+            "product": NMC_WEATHER_CHART_KEY, "product_name": "中国地面天气形势图",
+            "date": date, "time_key": payload.get("display_time") or "latest",
+            "source_url": payload.get("image_url"), "image_url": image_url if download else None,
+            "image_id": image_id if download else None, "local_path": local_path,
+            "downloaded": True, "visuals": [visual] if download else [],
+            "source": "国家气象中心（NMC）", "data_id": entry.data_id,
+        }
+        refs = {
+            "data": [build_registry_data_ref(entry.data_id)],
+            "files": [build_file_ref(local_path, type="image", format="jpg", usage="tool_input")],
+            "urls": [build_url_ref(payload.get("image_url"), usage="source", source="source_url")],
+        }
+        if download:
+            refs["urls"].insert(0, build_url_ref(image_url, usage="display", source="image_url"))
+            refs["visuals"] = [build_visual_ref(id=image_id, type="image", title=title, image_url=image_url, local_path=local_path)]
+        return {
+            "success": True, "status": "success", "data": data,
+            "visuals": [visual] if download else [],
+            "resources": [single_file_product(local_path, tool_name=self.name)], "refs": refs,
+            "llm_resume": {"tool_hint": f"Use read_file(path='{local_path}', as_multimodal_attachment=true) to inspect this image."},
+            "metadata": {"generator": self.name, "product": NMC_WEATHER_CHART_KEY},
+            "summary": f"已获取{title}",
+        }

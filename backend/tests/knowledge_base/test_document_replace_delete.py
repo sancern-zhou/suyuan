@@ -216,7 +216,7 @@ async def test_stale_generation_failure_cannot_mark_or_purge_newer_document(
     assert document.content_generation == 2
     assert document.ingestion_status == "processing"
     assert len(remaining) == 2
-    assert all(chunk.graph_status == "completed" for chunk in remaining)
+    assert all(chunk.graph_status == "pending" for chunk in remaining)
 
 
 @pytest.mark.asyncio

@@ -156,6 +156,33 @@ async def test_durably_tracked_publish_session_file_keeps_focus_intent():
     assert result.focus_resource_id == "primary-id"
 
 
+@pytest.mark.asyncio
+async def test_durably_tracked_visual_requests_frontend_focus():
+    result = await persist_tool_result_resources(
+        object(),
+        "session-a",
+        "run-a",
+        {
+            "type": "tool_result",
+            "data": {
+                "tool_name": "execute_python",
+                "result": {
+                    "success": True,
+                    "visuals": [{"id": "chart-id", "type": "image"}],
+                    "resource_tracking": {
+                        "durable": True,
+                        "version": 8,
+                        "resource_ids": ["chart-resource", "image-resource"],
+                    },
+                },
+            },
+        },
+        turn_sequence=1,
+    )
+
+    assert result.focus_resource_id == "chart-resource"
+
+
 def test_malformed_iteration_falls_back_to_zero():
     assert event_turn_sequence({"iteration": "not-a-number"}) == 0
 

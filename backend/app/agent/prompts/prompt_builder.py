@@ -11,12 +11,14 @@ from .expert_prompt import build_expert_prompt
 from .query_prompt import build_query_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
+from .enforcement_exam_prompt import build_enforcement_exam_prompt
 from .chart_prompt import build_chart_prompt
 from .board_prompt import build_board_prompt
 from .ops_prompt import build_ops_prompt
 from .graph_prompt import build_graph_prompt
 from .custom_prompt import build_custom_prompt
 from .project_prompt import load_project_mode_prompt
+from app.utils.path_config import format_agent_path, resolve_agent_path
 from .deliberation_prompt import (
     build_deliberation_chemistry_prompt,
     build_deliberation_meteorology_prompt,
@@ -42,13 +44,28 @@ FILESYSTEM_PATH_CONTRACT = (
 def _with_platform_contracts(prompt: str) -> str:
     return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}"
 
+
+def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:
+    if not memory_file_path:
+        return prompt
+    return (
+        f"{prompt.rstrip()}\n\n"
+        "## 长期记忆文件\n"
+        f"- 当前模式长期记忆文件路径：`{memory_file_path}`。\n"
+        "- 仅可操作此路径，不得读取或修改其他模式的 MEMORY.md。"
+    )
+
 AgentMode = Literal[
     "assistant",
     "ppt",
     "expert",
     "query",
+    "jiangsu_query",
+    "smart_inspection",
+    "operations_analysis",
     "report",
     "social",
+    "enforcement_exam",
     "chart",
     "board",
     "ops",
@@ -97,6 +114,9 @@ def build_react_system_prompt(
     Returns:
         系统提示词字符串
     """
+    if memory_file_path:
+        memory_file_path = format_agent_path(resolve_agent_path(memory_file_path))
+
     # 如果未指定工具，加载该模式的默认工具
     if available_tools is None and mode != "custom":
         tools_dict = get_tools_by_mode(mode)
@@ -126,7 +146,9 @@ def build_react_system_prompt(
 
     project_prompt = load_project_mode_prompt(mode)
     if project_prompt is not None:
-        return project_prompt
+        return _with_platform_contracts(
+            _with_memory_file_contract(project_prompt, memory_file_path)
+        )
 
     # 根据模式构建Prompt（✅ 统一传递所有路径和上下文）
     if mode == "custom":
@@ -138,6 +160,16 @@ def build_react_system_prompt(
     elif mode == "expert":
         return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "jiangsu_query":
+        # The Jiangsu project normally supplies a project-owned prompt above.
+        # Keep this safe fallback for tooling and direct unit tests.
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "smart_inspection":
+        # The Jiangsu project supplies the operational policy. Keep a narrow
+        # read-only fallback should the project prompt be unavailable.
+        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "operations_analysis":
         return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
         return _with_platform_contracts(build_report_prompt(filtered_tools, memory_context, memory_file_path))
@@ -154,6 +186,12 @@ def build_react_system_prompt(
             user_context,
             heartbeat_context,
             backend_host,
+        ))
+    elif mode == "enforcement_exam":
+        return _with_platform_contracts(build_enforcement_exam_prompt(
+            filtered_tools,
+            user_preferences=user_preferences,
+            user_context=user_context,
         ))
     elif mode == "chart":
         return _with_platform_contracts(build_chart_prompt(filtered_tools, memory_context, memory_file_path))
