@@ -121,8 +121,8 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
     }
   }
 
-  async function fetchDocuments(kbId) {
-    loading.value = true
+  async function fetchDocuments(kbId, { silent = false } = {}) {
+    if (!silent) loading.value = true
     try {
       const data = await api.listDocuments(kbId)
       documents.value = data.documents || []
@@ -131,7 +131,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', () => {
       console.error('Failed to fetch documents:', e)
       throw e
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 

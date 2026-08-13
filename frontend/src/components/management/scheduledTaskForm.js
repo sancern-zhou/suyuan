@@ -32,6 +32,7 @@ export const buildTaskPayload = (form) => {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
     execution_mode: form.execution_mode || 'assistant',
+    skill_id: String(form.skill_id || '').trim() || null,
     trigger_type: isEvent ? 'event' : 'schedule',
     schedule_type: isEvent ? null : form.schedule_type,
     event_type: isEvent ? form.event_type : null,

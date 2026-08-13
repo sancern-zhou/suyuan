@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
 from app.api import scheduled_task_routes as routes
 from app.auth.dependencies import require_current_user
@@ -132,6 +133,92 @@ def test_create_event_task_with_multiple_users(monkeypatch):
     assert task["owner_user_id"] == "creator-1"
     assert task["owner_username"] == "creator"
     assert task["owner_display_name"] == "任务创建人"
+
+
+def test_create_task_persists_selected_skill(monkeypatch):
+    client, _ = _client(monkeypatch)
+    loaded = []
+    monkeypatch.setattr(
+        routes,
+        "load_skill_selection",
+        lambda skill_id: loaded.append(skill_id) or SimpleNamespace(skill_id=skill_id),
+    )
+    payload = _event_payload()
+    payload["skill_id"] = "station-alarm-diagnosis"
+
+    response = client.post("/api/scheduled-tasks", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["task"]["skill_id"] == "station-alarm-diagnosis"
+    assert loaded == ["station-alarm-diagnosis"]
+
+
+def test_create_scheduled_task_persists_selected_skill(monkeypatch):
+    client, _ = _client(monkeypatch)
+    monkeypatch.setattr(
+        routes,
+        "load_skill_selection",
+        lambda skill_id: SimpleNamespace(skill_id=skill_id),
+    )
+    payload = _event_payload()
+    payload.update({
+        "name": "定时诊断",
+        "trigger_type": "schedule",
+        "schedule_type": "daily_8am",
+        "event_type": None,
+        "event_filters": {},
+        "broadcast_enabled": False,
+        "target_user_ids": [],
+        "skill_id": "station-alarm-diagnosis",
+    })
+
+    response = client.post("/api/scheduled-tasks", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["task"]["trigger_type"] == "schedule"
+    assert response.json()["task"]["skill_id"] == "station-alarm-diagnosis"
+
+
+def test_update_task_can_clear_selected_skill(monkeypatch):
+    client, service = _client(monkeypatch)
+    monkeypatch.setattr(
+        routes,
+        "load_skill_selection",
+        lambda skill_id: SimpleNamespace(skill_id=skill_id),
+    )
+    payload = _event_payload()
+    payload["skill_id"] = "station-alarm-diagnosis"
+    created = client.post("/api/scheduled-tasks", json=payload)
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.put(
+        f"/api/scheduled-tasks/{task_id}",
+        json={"skill_id": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["skill_id"] is None
+    assert service.get_task(task_id).skill_id is None
+
+
+def test_create_task_rejects_missing_skill(monkeypatch):
+    client, _ = _client(monkeypatch)
+    monkeypatch.setattr(
+        routes,
+        "load_skill_selection",
+        lambda skill_id: (_ for _ in ()).throw(FileNotFoundError(skill_id)),
+    )
+    payload = _event_payload()
+    payload["skill_id"] = "missing-skill"
+
+    response = client.post("/api/scheduled-tasks", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "invalid_task_skill",
+        "skill_id": "missing-skill",
+        "message": "Skill 不存在：missing-skill",
+    }
 
 
 def test_create_rejects_unregistered_event_type(monkeypatch):

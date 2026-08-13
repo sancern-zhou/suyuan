@@ -75,6 +75,7 @@
             <span class="scheduled-meta-item">📋 {{ task.steps?.length || 0 }} 个步骤</span>
             <span class="scheduled-meta-item">✅ {{ task.success_runs || 0 }}/{{ task.total_runs || 0 }}</span>
             <span class="scheduled-meta-item">🧠 {{ getExecutionModeLabel(task.execution_mode) }}</span>
+            <span v-if="task.skill_id" class="scheduled-meta-item">📘 Skill：{{ task.skill_id }}</span>
             <span v-if="task.broadcast_enabled" class="scheduled-meta-item">接收人：{{ task.target_user_ids?.length || 0 }}</span>
           </div>
 
@@ -221,11 +222,32 @@
             </div>
 
             <label class="form-field form-wide">
+              <span>上下文 Skill（可选）</span>
+              <select v-model="createForm.skill_id" :disabled="scheduledTasksStore.skillsLoading">
+                <option value="">不注入 Skill</option>
+                <option
+                  v-if="createForm.skill_id && !selectedSkill"
+                  :value="createForm.skill_id"
+                >
+                  {{ createForm.skill_id }}（当前不可用）
+                </option>
+                <option v-for="skill in availableSkills" :key="skill.id" :value="skill.id">
+                  {{ skill.name || skill.id }}
+                </option>
+              </select>
+              <small v-if="scheduledTasksStore.skillsLoading" class="form-hint">正在加载项目 Skill...</small>
+              <small v-else-if="selectedSkill" class="form-hint">
+                任务执行时会将“{{ selectedSkill.name || selectedSkill.id }}”完整注入 Agent 上下文。工具是否满足 Skill 要求由配置人自行确认。
+              </small>
+              <small v-else class="form-hint">事件任务和定时任务均可选择一个已发布 Skill，用于稳定约束 Agent 的分析流程和输出。</small>
+            </label>
+
+            <label class="form-field form-wide">
               <span>任务描述</span>
               <textarea v-model="createForm.description" rows="4" placeholder="描述广播主题、语气、目标人群"></textarea>
             </label>
 
-            <label v-if="createForm.trigger_type === 'event' || createForm.execution_mode === 'custom'" class="form-field form-wide">
+            <label class="form-field form-wide">
               <span>Agent 执行指令</span>
               <textarea
                 v-model="createForm.agent_prompt"
@@ -417,6 +439,10 @@ const executionHistoryError = ref('')
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const weixinUsers = computed(() => selectableWeixinUsers(scheduledTasksStore.socialUsers))
+const availableSkills = computed(() => scheduledTasksStore.availableSkills)
+const selectedSkill = computed(() => availableSkills.value.find(
+  skill => skill.id === createForm.value.skill_id
+) || null)
 const filteredTools = computed(() => {
   const query = createForm.value.toolSearch.trim().toLowerCase()
   return scheduledTasksStore.availableTools.filter(tool => !query || [
@@ -443,6 +469,7 @@ const defaultForm = () => ({
   description: '',
   agent_prompt: '',
   execution_mode: 'assistant',
+  skill_id: '',
   tool_names: [],
   toolSearch: '',
   trigger_type: 'schedule',
@@ -597,25 +624,11 @@ const formatScheduledNextRun = (time) => {
   }
 }
 
-const buildBroadcastPrompt = () => {
-  const channelsText = createForm.value.channels.length > 0
-    ? createForm.value.channels.join('、')
-    : '所有已知社交用户'
-
-  return [
-    `你正在执行一个广播定时任务。`,
-    `任务名称：${createForm.value.name}`,
-    `任务描述：${createForm.value.description}`,
-    `目标渠道：${channelsText}`,
-    `请先根据任务描述生成一段适合广播给社交用户的内容，然后调用 broadcast_social_users 工具发送。`,
-    `要求内容简洁、明确、避免提及内部实现过程。`
-  ].join('\n')
-}
-
 const loadConfigurationOptions = async () => {
   const results = await Promise.allSettled([
     scheduledTasksStore.fetchEventTypes(),
-    scheduledTasksStore.fetchSocialUsers()
+    scheduledTasksStore.fetchSocialUsers(),
+    scheduledTasksStore.fetchAvailableSkills()
   ])
   if (results.some(result => result.status === 'rejected')) {
     formError.value = '部分配置项加载失败，请关闭后重试'
@@ -655,6 +668,7 @@ const openEditDialog = async (task) => {
     description: task.description || '',
     agent_prompt: task.steps?.[0]?.agent_prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
+    skill_id: task.skill_id || '',
     tool_names: [...(task.tool_names || [])],
     trigger_type: task.trigger_type || 'schedule',
     schedule_type: task.schedule_type || 'daily_custom',
@@ -723,9 +737,7 @@ const saveTask = async () => {
     const payload = buildTaskPayload({
       ...createForm.value,
       event_filters: eventFilters,
-      agent_prompt: createForm.value.trigger_type === 'event' || createForm.value.execution_mode === 'custom'
-        ? (createForm.value.agent_prompt || createForm.value.description)
-        : buildBroadcastPrompt()
+      agent_prompt: createForm.value.agent_prompt || createForm.value.description
     })
 
     if (editingTaskId.value) {

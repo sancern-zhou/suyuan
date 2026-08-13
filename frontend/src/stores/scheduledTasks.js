@@ -9,7 +9,7 @@ const responseErrorMessage = async (response, fallback) => {
   const detail = payload?.detail
   const message = Array.isArray(detail)
     ? detail.map(item => item?.msg || String(item)).join('；')
-    : (typeof detail === 'string' ? detail : payload?.message)
+    : (typeof detail === 'string' ? detail : (detail?.message || payload?.message))
 
   return message || `${fallback}（HTTP ${response.status}）`
 }
@@ -25,6 +25,8 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     eventTypes: [],
     socialUsers: [],
     availableTools: [],
+    availableSkills: [],
+    skillsLoading: false,
     ws: null,
     wsConnected: false,
     wsConnecting: false,
@@ -75,6 +77,23 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       return this.availableTools;
     },
 
+    async fetchAvailableSkills() {
+      this.skillsLoading = true;
+      try {
+        const response = await authFetch(`${API_BASE}/skills`, {
+          clearOnUnauthorized: false
+        });
+        if (!response.ok) {
+          throw new Error(await responseErrorMessage(response, 'Skill 列表加载失败'));
+        }
+        const data = await response.json();
+        this.availableSkills = Array.isArray(data?.skills) ? data.skills : [];
+        return this.availableSkills;
+      } finally {
+        this.skillsLoading = false;
+      }
+    },
+
     async fetchStats() {
       try {
         const response = await authFetch(`${API_BASE}/statistics/summary`);
@@ -117,7 +136,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         const items = body?.detail?.items || [];
         throw new Error(body?.detail?.code === 'invalid_custom_task_tools'
           ? `工具配置无效：${items.map(item => `${item.name}（${item.reason}）`).join('、')}`
-          : (body?.detail || 'Failed to create task'));
+          : (body?.detail?.message || body?.detail || 'Failed to create task'));
       }
       const task = await response.json();
       await this.fetchTasks();
@@ -222,7 +241,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         const items = body?.detail?.items || [];
         throw new Error(body?.detail?.code === 'invalid_custom_task_tools'
           ? `工具配置无效：${items.map(item => `${item.name}（${item.reason}）`).join('、')}`
-          : (body?.detail || 'Failed to update task'));
+          : (body?.detail?.message || body?.detail || 'Failed to update task'));
       }
       await this.fetchTasks();
     },

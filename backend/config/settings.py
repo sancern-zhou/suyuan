@@ -466,8 +466,8 @@ class Settings(BaseSettings):
         description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
     )
     llm_flash_models: str = Field(
-        default="deepseek/deepseek-v4-flash",
-        description="Comma-separated Flash model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
+        default="doubao/gpt-5.6-luna,deepseek/deepseek-v4-flash",
+        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
         default="bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro",

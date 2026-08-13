@@ -199,7 +199,9 @@ class ListSkillsTool(LLMTool):
         skills = []
 
         try:
-            md_files = list(self.skills_dir.glob("*.md"))
+            md_files = list(self.skills_dir.glob("*.md")) + list(
+                self.skills_dir.glob("*/SKILL.md")
+            )
             # 排除索引文件本身
             md_files = [f for f in md_files if f.name != "SKILLS_INDEX.md"]
 

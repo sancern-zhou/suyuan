@@ -2976,25 +2976,23 @@ class LLMService:
                 )
 
         try:
-            if self.api_mode == "chat_completions":
-                return await self._run_anthropic_with_fallback(
-                    "chat_completions_chat",
-                    lambda: self._chat_completions_create(
+            async def create_message():
+                # Fallback chains may mix Anthropic-compatible and
+                # Chat-Completions providers (for example DeepSeek -> Doubao).
+                # The chain switches provider state between attempts, so select
+                # the protocol for the current candidate here rather than
+                # relying on the protocol of the first candidate.  Otherwise a
+                # Chat-Completions fallback is incorrectly rejected because it
+                # has no Anthropic client, causing knowledge-base chunking to
+                # fall back to SentenceSplitter.
+                if self.api_mode == "chat_completions":
+                    return await self._chat_completions_create(
                         messages=messages,
                         tools=tools,
                         max_tokens=max_tokens,
                         temperature=temperature,
                         system=system,
-                    ),
-                )
-
-            if not self.anthropic_client:
-                raise RuntimeError(
-                    "Anthropic client not initialized. "
-                    f"Provider '{self.provider}' requires {self.provider.upper()}_BASE_URL environment variable."
-                )
-
-            async def create_message():
+                    )
                 if not self.anthropic_client:
                     raise RuntimeError(
                         f"Anthropic-compatible client not initialized for provider '{self.provider}'."
@@ -3017,9 +3015,15 @@ class LLMService:
                 return await self.anthropic_client.messages.create(**api_params)
 
             response = await self._run_anthropic_with_fallback(
-                "anthropic_chat",
+                "llm_chat",
                 create_message,
             )
+
+            # The Chat-Completions adapter already returns the normalized
+            # Anthropic-shaped dictionary. Native Anthropic clients return an
+            # SDK response object that still needs normalization below.
+            if isinstance(response, dict):
+                return response
 
             # 提取响应数据
             result = {

@@ -53,12 +53,16 @@ def _declared_skill_metadata(skills_dir: Path, skill_id: str) -> dict:
 def _resolve_published_skill(skill_id: str, skills_dir: Path) -> Path:
     if not skill_id or any(part in skill_id for part in ("/", "\\", "..")):
         raise ValueError("invalid skill id")
-    filename = skill_id if skill_id.endswith(".md") else f"{skill_id}.md"
-    path = (skills_dir / filename).resolve()
     root = skills_dir.resolve()
-    if root not in path.parents or not path.is_file():
-        raise FileNotFoundError(filename)
-    return path
+    normalized_id = skill_id[:-3] if skill_id.endswith(".md") else skill_id
+    candidates = [
+        (skills_dir / f"{normalized_id}.md").resolve(),
+        (skills_dir / normalized_id / "SKILL.md").resolve(),
+    ]
+    for path in candidates:
+        if root in path.parents and path.is_file():
+            return path
+    raise FileNotFoundError(f"{normalized_id}.md or {normalized_id}/SKILL.md")
 
 
 def _skill_metadata(content: str, fallback_name: str) -> tuple[str, str]:
@@ -84,8 +88,12 @@ def describe_skill_item(
 ) -> dict:
     """Add stable selection metadata and current-mode compatibility to a skill item."""
     path = Path(str(item.get("file") or ""))
-    skill_id = path.stem or str(item.get("id") or item.get("name") or "")
-    declared = _declared_skill_metadata(path.parent, skill_id) if path.parent else {}
+    is_package = path.name == "SKILL.md" and path.parent.name
+    skill_id = (
+        path.parent.name if is_package else path.stem
+    ) or str(item.get("id") or item.get("name") or "")
+    metadata_root = path.parent.parent if is_package else path.parent
+    declared = _declared_skill_metadata(metadata_root, skill_id) if metadata_root else {}
     required_tools = list(declared.get("required_tools") or [])
     missing_tools = (
         [name for name in required_tools if name not in available_tools]
@@ -112,18 +120,19 @@ def load_skill_selection(
     """Load one published skill and optionally enforce current-mode dependencies."""
     skills_dir = skills_dir or active_skills_dir()
     path = _resolve_published_skill(skill_id, skills_dir)
+    normalized_id = skill_id[:-3] if skill_id.endswith(".md") else skill_id
     content = path.read_text(encoding="utf-8")
     name, description = _skill_metadata(content, path.name)
-    declared = _declared_skill_metadata(skills_dir, path.stem)
+    declared = _declared_skill_metadata(skills_dir, normalized_id)
     if declared.get("enabled", True) is False:
-        raise ValueError(f"skill is disabled: {path.stem}")
+        raise ValueError(f"skill is disabled: {normalized_id}")
     required_tools = list(declared.get("required_tools") or [])
     if available_tools is not None:
         missing = [name for name in required_tools if name not in available_tools]
         if missing:
             raise ValueError("missing required tools: " + ", ".join(missing))
     return SkillSelection(
-        skill_id=path.stem,
+        skill_id=normalized_id,
         name=name,
         description=description,
         content=content,
