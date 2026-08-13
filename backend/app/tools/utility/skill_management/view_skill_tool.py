@@ -4,8 +4,7 @@ from typing import Any, Dict
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.skill_management.skill_paths import (
-    DRAFTS_DIR,
-    SKILLS_DIR,
+    active_skill_paths,
     parse_skill_metadata,
     resolve_skill_file,
 )
@@ -45,15 +44,16 @@ class ViewSkillTool(LLMTool):
 
     async def execute(self, name: str, include_drafts: bool = False, **kwargs) -> Dict[str, Any]:
         try:
+            skills_dir, drafts_dir = active_skill_paths()
             skill_file = resolve_skill_file(
                 name,
                 include_drafts=include_drafts,
-                skills_dir=SKILLS_DIR,
-                drafts_dir=DRAFTS_DIR,
+                skills_dir=skills_dir,
+                drafts_dir=drafts_dir,
             )
             content = skill_file.read_text(encoding="utf-8")
             metadata = parse_skill_metadata(content, skill_file.name)
-            is_draft = DRAFTS_DIR.resolve() in skill_file.resolve().parents
+            is_draft = drafts_dir.resolve() in skill_file.resolve().parents
 
             return {
                 "success": True,

@@ -36,6 +36,8 @@ from .selection_context import (
 
 logger = structlog.get_logger()
 
+SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+
 
 class ReActAgent:
     """
@@ -67,6 +69,20 @@ class ReActAgent:
     )
 
     REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
+
+    @staticmethod
+    def _select_auto_profile(
+        manual_mode: Optional[str],
+    ) -> Optional[str]:
+        """Select the Auto capability profile for an Agent mode.
+
+        Enforcement-exam conversations are deliberately routed through the
+        configured Flash chain (rather than the default Auto primary model),
+        while native image/attachment handling remains independent.
+        """
+        if manual_mode == "enforcement_exam":
+            return "flash"
+        return None
 
     @staticmethod
     def _build_attachment_reference_context(
@@ -331,7 +347,7 @@ class ReActAgent:
         active_run_id = None
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
-        if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
+        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is not None:
             memory_store = social_memory_store
             try:
                 memory_store.create_snapshot()
@@ -471,7 +487,10 @@ class ReActAgent:
         )
 
         try:
-            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain()
+            auto_profile = self._select_auto_profile(manual_mode)
+            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain(
+                auto_profile=auto_profile,
+            )
             # 使用标准 ReAct 循环（LLM 自主决策调用工具）
             # 工具池包括：
             # - 原子工具（基础能力）
@@ -488,6 +507,7 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
+                auto_profile=auto_profile,
             )
 
             run_executor.configure_resource_tracking(
@@ -577,7 +597,7 @@ class ReActAgent:
 
             # ✅ 设置社交上下文到上下文构建器（仅social模式使用）
             # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
-            if manual_mode == "social":
+            if manual_mode in SOCIAL_MEMORY_MODES:
                 react_loop.context_builder.user_preferences = social_user_preferences
                 react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
                 react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
@@ -803,7 +823,7 @@ class ReActAgent:
             # ✅ 后台记忆整合（新增，与上下文压缩完全分离）
             # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 social_memory_store），
             #    此处只为非社交模式触发整合
-            if unified_user_id and manual_mode and manual_mode != "social":
+            if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
                 try:
                     asyncio.create_task(
                         self._background_memory_consolidation(

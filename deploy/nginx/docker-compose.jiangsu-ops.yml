@@ -1,0 +1,21 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: suyuan-nginx-jiangsu
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      LISTEN_PORT: 5175
+      AUTH_UPSTREAM: ${AUTH_UPSTREAM:-http://10.10.204.80:8025}
+      BUSINESS_UPSTREAM: ${BUSINESS_UPSTREAM:-http://127.0.0.1:8001}
+    volumes:
+      - ../../frontend/dist-jiangsu-ops:/usr/share/nginx/html:ro
+      - ./templates:/etc/nginx/templates:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O - "http://127.0.0.1:5175/api/suyuan/health" >/dev/null || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

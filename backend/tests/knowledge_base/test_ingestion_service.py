@@ -132,7 +132,7 @@ def _service(factory, extractor):
 
 
 @pytest.mark.asyncio
-async def test_ingest_writes_chunks_before_incremental_graph(ingestion_database):
+async def test_ingest_writes_vector_outbox_and_leaves_graph_pending(ingestion_database):
     result = await _service(ingestion_database, _Extractor()).ingest_document("doc1")
 
     assert result.document_id == "doc1"
@@ -140,15 +140,15 @@ async def test_ingest_writes_chunks_before_incremental_graph(ingestion_database)
     assert result.added_chunks == 2
     assert result.reused_chunks == 0
     assert result.removed_chunks == 0
-    assert result.changed_entities == 2
-    assert result.changed_relations == 1
+    assert result.changed_entities == 0
+    assert result.changed_relations == 0
     assert result.status == "completed"
 
     async with ingestion_database() as session:
         document = await session.get(Document, "doc1")
         assert document.status == DocumentStatus.COMPLETED
         assert document.ingestion_status == "completed"
-        assert document.graph_status == "completed"
+        assert document.graph_status == "pending"
         items = list(
             (
                 await session.execute(
@@ -156,26 +156,22 @@ async def test_ingest_writes_chunks_before_incremental_graph(ingestion_database)
                 )
             ).scalars()
         )
-        assert [item.record_type for item in items] == [
-            "chunk",
-            "chunk",
-            "entity",
-            "entity",
-            "relation",
-        ]
+        assert [item.record_type for item in items] == ["chunk", "chunk"]
+        chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
+        assert {chunk.graph_status for chunk in chunks} == {"pending"}
 
 
 @pytest.mark.asyncio
-async def test_graph_failure_keeps_chunk_outbox_and_marks_partial(ingestion_database):
+async def test_ingest_never_calls_graph_extractor(ingestion_database):
     result = await _service(ingestion_database, _FailingExtractor()).ingest_document("doc1")
 
-    assert result.status == "partial"
+    assert result.status == "completed"
     async with ingestion_database() as session:
         document = await session.get(Document, "doc1")
         assert document.status == DocumentStatus.COMPLETED
-        assert document.ingestion_status == "partial"
-        assert document.graph_status == "failed"
-        assert "graph provider unavailable" in document.processing_error
+        assert document.ingestion_status == "completed"
+        assert document.graph_status == "pending"
+        assert document.processing_error is None
         record_types = list(
             (
                 await session.execute(
@@ -187,7 +183,7 @@ async def test_graph_failure_keeps_chunk_outbox_and_marks_partial(ingestion_data
         )
         assert record_types == ["chunk", "chunk"]
         chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
-        assert {chunk.graph_status for chunk in chunks} == {"failed"}
+        assert {chunk.graph_status for chunk in chunks} == {"pending"}
 
 
 @pytest.mark.asyncio

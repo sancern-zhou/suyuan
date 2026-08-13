@@ -7,7 +7,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from .graph_build_models import KnowledgeGraphBuildTask
 from .graph_models import KnowledgeChunk, KnowledgeGraphEntity, KnowledgeGraphRelation, KnowledgeGraphEntityMention, KnowledgeGraphRelationMention, KnowledgeIndexOutbox
-from .models import KnowledgeBase
+from .models import Document, KnowledgeBase
 from .ingestion_service import KnowledgeIngestionService
 from .graph_extractor import KnowledgeGraphExtractor
 from .index_outbox import KnowledgeIndexOutboxRepository
@@ -22,6 +22,30 @@ class GraphBuildService:
 
     async def create_task(self, kb_id, mode="pending", batch_size=None, user_id=None):
         async with self._session() as db:
+            kb = await db.get(KnowledgeBase, kb_id)
+            if kb is None:
+                raise ValueError("knowledge base not found")
+            if kb.scene_status != "ready" or int(kb.schema_version or 0) <= 0:
+                raise ValueError("scene_confirmation_required")
+            if not kb.graph_enabled:
+                raise ValueError("knowledge graph is disabled")
+            if mode != "reset_and_build":
+                stale_entity = await db.scalar(
+                    select(KnowledgeGraphEntity.id).where(
+                        KnowledgeGraphEntity.kb_id == kb_id,
+                        KnowledgeGraphEntity.source_type == "document_fact",
+                        KnowledgeGraphEntity.schema_version != kb.schema_version,
+                    ).limit(1)
+                )
+                stale_relation = await db.scalar(
+                    select(KnowledgeGraphRelation.id).where(
+                        KnowledgeGraphRelation.kb_id == kb_id,
+                        KnowledgeGraphRelation.source_type == "document_fact",
+                        KnowledgeGraphRelation.schema_version != kb.schema_version,
+                    ).limit(1)
+                )
+                if stale_entity is not None or stale_relation is not None:
+                    mode = "reset_and_build"
             active = await db.scalar(select(KnowledgeGraphBuildTask).where(KnowledgeGraphBuildTask.kb_id==kb_id, KnowledgeGraphBuildTask.status.in_(["queued","running"])))
             if active: raise ValueError("knowledge graph build already queued or running")
             chunk_query = select(KnowledgeChunk.id).where(KnowledgeChunk.kb_id == kb_id)
@@ -134,6 +158,9 @@ class GraphBuildService:
             q=select(KnowledgeChunk).where(KnowledgeChunk.kb_id==task.kb_id, KnowledgeChunk.graph_status!="completed")
             if ids: q=q.where(KnowledgeChunk.id.in_(ids))
             chunks=(await db.execute(q)).scalars().all()
+        await self._set_documents_graph_status(
+            {chunk.document_id for chunk in chunks}, "processing"
+        )
         succeeded=[]; failed=[]; errors=[]; cancelled=False
         async def one(c):
             try:
@@ -147,12 +174,20 @@ class GraphBuildService:
                     or current.cancel_requested
                 ):
                     return None, None
-                async with self._session() as db: kb=await db.get(KnowledgeBase, task.kb_id); schema=kb.graph_schema or {}
+                async with self._session() as db:
+                    kb=await db.get(KnowledgeBase, task.kb_id)
+                    schema=KnowledgeIngestionService._schema(kb.graph_schema)
                 extractor=self.extractor or KnowledgeGraphExtractor()
                 extraction=await extractor.extract_chunk(kb_id=task.kb_id, chunk=c, schema=schema)
                 if not await self._owns_task(task_id, owner_token):
                     return None, None
-                snap=SimpleNamespace(kb_id=task.kb_id, document_id=c.document_id, content_generation=c.content_generation)
+                snap=SimpleNamespace(
+                    kb_id=task.kb_id,
+                    document_id=c.document_id,
+                    content_generation=c.content_generation,
+                    schema=schema,
+                    rule_version=int(kb.rule_version or 0),
+                )
                 svc=KnowledgeIngestionService(session_factory=self.session_factory, processor=None, extractor=extractor)
                 await svc._persist_graph_extraction(
                     snap, c, extraction, task_id=task_id, owner_token=owner_token
@@ -190,7 +225,47 @@ class GraphBuildService:
                 break
         status="cancelled" if cancelled else ("partial" if failed else "completed")
         await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=len(succeeded), failed_chunks=len(failed), remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+        await self._sync_document_graph_statuses(task.kb_id)
         return await self.get_status(task_id=task_id)
+
+    async def _set_documents_graph_status(self, document_ids, status):
+        if not document_ids:
+            return
+        async with self._session() as db:
+            await db.execute(
+                update(Document)
+                .where(Document.id.in_(document_ids))
+                .values(graph_status=status)
+            )
+            await db.commit()
+
+    async def _sync_document_graph_statuses(self, kb_id):
+        async with self._session() as db:
+            kb = await db.get(KnowledgeBase, kb_id)
+            documents = list(
+                (await db.execute(select(Document).where(Document.knowledge_base_id == kb_id)))
+                .scalars()
+                .all()
+            )
+            chunks = list(
+                (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id)))
+                .scalars()
+                .all()
+            )
+            statuses_by_document = {}
+            for chunk in chunks:
+                statuses_by_document.setdefault(chunk.document_id, []).append(chunk.graph_status)
+            for document in documents:
+                statuses = statuses_by_document.get(document.id, [])
+                if kb is not None and not kb.graph_enabled:
+                    document.graph_status = "disabled"
+                elif any(status == "failed" for status in statuses):
+                    document.graph_status = "failed"
+                elif statuses and all(status == "completed" for status in statuses):
+                    document.graph_status = "completed"
+                else:
+                    document.graph_status = "pending"
+            await db.commit()
 
     async def recover_expired_tasks(self, kb_id=None):
         now=datetime.utcnow(); out=[]
@@ -274,3 +349,4 @@ class GraphBuildService:
             for c in (await db.execute(select(KnowledgeChunk).where(KnowledgeChunk.kb_id==kb_id))).scalars(): c.graph_status="pending"; c.last_error=None
             await bump_graph_revision(db, kb_id)
             await db.commit()
+        await self._sync_document_graph_statuses(kb_id)

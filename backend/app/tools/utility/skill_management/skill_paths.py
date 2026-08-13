@@ -11,6 +11,14 @@ SKILLS_DIR = BACKEND_DIR / "docs" / "skills"
 DRAFTS_DIR = SKILLS_DIR / ".drafts"
 
 
+def active_skill_paths() -> tuple[Path, Path]:
+    """Return the active project's published skills and draft directory."""
+    from app.agent.selection_context import active_skills_dir
+
+    skills_dir = active_skills_dir()
+    return skills_dir, skills_dir / ".drafts"
+
+
 _UNSAFE_CHARS = re.compile(r'[<>:"|?*\x00-\x1f]')
 
 

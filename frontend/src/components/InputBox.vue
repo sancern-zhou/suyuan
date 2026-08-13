@@ -364,7 +364,7 @@ const selectionRestoreGuard = createSelectionRestoreGuard()
 let restoringSelection = false
 const isComposing = ref(false)
 const useReranker = ref(props.useReranker)  // 精准检索开关状态
-const validAgentModes = ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops', 'graph']
+const validAgentModes = ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'jiangsu_query', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'report', 'chart', 'board', 'ops', 'graph']
 const validModelTiers = ['auto', 'flash', 'pro']
 const legacyModelTier = localStorage.getItem('llm-model-tier') || 'auto'
 const draftModelTierKey = 'llm-model-tier:draft'
@@ -785,12 +785,9 @@ watch(
 
 watch(
   () => reactStore.currentMode,
-  (newMode, oldMode) => {
+  () => {
     persistSelectionDraft()
     void restoreSelectionDraft(props.sessionId)
-    if (newMode === 'knowledge' && oldMode !== 'knowledge') {
-      showKnowledgeBaseSelector.value = true
-    }
   }
 )
 

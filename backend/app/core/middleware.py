@@ -18,17 +18,28 @@ from config.settings import settings
 
 def configure_middleware(app: FastAPI) -> None:
     """Configure FastAPI middleware."""
+    from app.project_config.loader import load_project_context
+
+    project_context = load_project_context(settings.project_id)
     app.add_middleware(
         ScheduledTaskWorkerProxyMiddleware,
         app_role=settings.app_role,
         worker_base_url=settings.social_worker_internal_url,
         worker_token=settings.social_worker_internal_token,
+        scheduled_tasks_enabled=project_context.manifest.scheduled_tasks_enabled,
     )
     app.add_middleware(
         FetcherWorkerProxyMiddleware,
         app_role=settings.app_role,
         worker_base_url=settings.social_worker_internal_url,
         worker_token=settings.social_worker_internal_token,
+        fetchers_enabled=(
+            project_context.manifest.backend.fetchers_enabled
+            and (
+                project_context.manifest.backend.fetchers is None
+                or bool(project_context.manifest.backend.fetchers)
+            )
+        ),
     )
     app.add_middleware(
         SocialAccountWorkerProxyMiddleware,

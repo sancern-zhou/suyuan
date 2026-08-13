@@ -4,6 +4,7 @@ import pytest
 
 import app.tools as tools_module
 from app.project_config.loader import ProjectConfigError, load_project_context
+from app.project_config.paths import project_skills_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -51,6 +52,14 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.backend.gis_tools_enabled is False
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.backend.tools == ["get_jiangxi_noise_data"]
+
+
+def test_jiangsu_project_owns_empty_skills_and_fetcher_surfaces():
+    context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
+
+    assert context.manifest.backend.fetchers == []
+    assert context.manifest.scheduled_tasks_enabled is False
+    assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():

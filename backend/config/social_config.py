@@ -4,7 +4,7 @@
 支持多微信账号配置
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 import yaml
 
@@ -85,6 +85,10 @@ class WeixinAccountConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用")
     allow_from: List[str] = Field(default=["*"], description="允许的用户ID列表")
     auto_start: bool = Field(default=True, description="是否自动启动")
+    agent_mode: Literal["social", "enforcement_exam"] = Field(
+        default="social",
+        description="该微信账号使用的Agent模式",
+    )
 
     # 运行时状态（不保存到配置文件）
     running: bool = Field(default=False, exclude=True)

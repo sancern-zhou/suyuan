@@ -29,9 +29,18 @@ test('xuchang project enables only its declared business modules', () => {
   const config = loadProjectBuildConfig({ projectId: 'xuchang', repoRoot })
 
   assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'xuchang-air-quality', 'xuchang-satellite'])
-  assert.deepEqual(config.frontend.agentModes, ['query', 'expert', 'report'])
+  assert.deepEqual(config.frontend.agentModes, ['query', 'knowledge', 'expert', 'report'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
   assert.equal(config.frontend.agentPlatformLayout, 'environment-grid')
+})
+
+test('jiangsu operations project exposes its dedicated operations modes', () => {
+  const config = loadProjectBuildConfig({ projectId: 'jiangsu-ops', repoRoot })
+  assert.deepEqual(config.frontend.agentModes, [
+    'ops', 'jiangsu_query', 'smart_inspection', 'operations_analysis',
+    'device_control', 'station_fault_diagnosis'
+  ])
+  assert.equal(config.frontend.defaultAgentMode, 'ops')
 })
 
 

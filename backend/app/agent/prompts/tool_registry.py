@@ -15,20 +15,6 @@ from typing import Dict, Iterable, List
 # 工具有序白名单（仅包含工具名称）
 # ========================================
 
-# 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
-AGENT_HIDDEN_TOOL_NAMES = frozenset({
-    "aggregate_data",
-    "calculate_pmf", "calculate_pm_pmf", "calculate_vocs_pmf",
-    "analyze_trajectory_sources",
-    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
-    "calculate_crustal", "calculate_trace", "predict_air_quality",
-    "generate_map",
-    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new",
-})
-
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
@@ -53,7 +39,7 @@ ASSISTANT_TOOL_NAMES = [
     "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 数据查询
-    "qianlima_realtime_tender", "execute_tender_sql_query", "execute_postgres_sql_query",
+    "qianlima_realtime_tender", "execute_tender_sql_query",
 
     # 任务和技能
     "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
@@ -87,19 +73,29 @@ PPT_TOOL_NAMES = [
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    # 气象、空气质量与遥感证据查询工具
-    "get_weather_data", "get_observed_meteorology",
-    "get_current_weather", "get_weather_forecast",
-    "get_platform_weather_image",
-    "get_satellite_data", "get_gems_image", "get_sentinel5p_image", "get_fire_hotspots",
-    "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
+
+    # 知识库检索与命中文档上下文阅读
+    "knowledge_qa_workflow", "knowledge_document_reader",
+
+    # 数据查询工具
+    "get_vocs_data",
+    "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "get_weather_forecast", "get_observed_meteorology", "get_platform_weather_image",
+    "query_xcai_city_history", "execute_sql_query",
+    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
+    "query_gd_suncere_station_hour_new",
+    "query_city_standard_report", "query_city_standard_yoy_report",
 
     # 分析工具
-    "analyze_upwind_enterprises", "analyze_xuchang_upwind_permit_sources",
-    "meteorological_trajectory_analysis",
+    "calculate_pm_pmf", "calculate_vocs_pmf",
+    "analyze_upwind_enterprises",
+    "meteorological_trajectory_analysis", "analyze_trajectory_sources",
+    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
+    "calculate_crustal", "calculate_trace", "predict_air_quality",
 
     # 可视化
-    "create_report_chart",
+    "generate_map", "create_report_chart",
 
     # 代码执行
     "execute_python",
@@ -117,8 +113,14 @@ QUERY_TOOL_NAMES = [
 
     # === 参数化查询工具 ===
     "get_5min_data",
-    "get_weather_data", "get_observed_meteorology", "get_weather_forecast",
-    "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
+    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_station_day_new",
+    "query_gd_suncere_city_day", "query_gd_suncere_district_day",
+    "query_city_standard_report", "query_city_standard_yoy_report",
+    "query_station_standard_report", "query_station_standard_yoy_report",
+    "query_gd_suncere_district_report",
     "analyze_city_pollutant_rankings",
     "knowledge_graph_query",
     "resolve_station_geo",
@@ -126,15 +128,15 @@ QUERY_TOOL_NAMES = [
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality", "query_national_city_air_quality",
 
+    # === Agentic GIS 视觉交互工具 ===
+    "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "visual_interaction",
+    "get_map_program_receipt", "wait_map_program_receipt",
+
     # === 数值计算工具 ===
     "execute_python",
-
-    # === 图表生成工具 ===
-    "create_report_chart", "execute_echarts_python",
 ]
 
-# ===== 知识问答模式工具 =====
-# 保持最小工具面，降低模型选错工具和无关调用的开销。
+# Keep knowledge QA deliberately narrow so retrieval remains deterministic.
 KNOWLEDGE_TOOL_NAMES = [
     "knowledge_qa_workflow",
     "knowledge_document_reader",
@@ -147,7 +149,15 @@ REPORT_TOOL_NAMES = [
 
     # 数据查询
     "get_5min_data",
-    "execute_sql_query", "execute_postgres_sql_query",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day",
+    "execute_sql_query",
+    "query_city_standard_report",
+    "query_city_standard_yoy_report",
+    "query_gd_suncere_district_report",
+    "query_station_standard_report",
+    "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
 
     # 文件和执行
@@ -169,6 +179,14 @@ CHART_TOOL_NAMES = [
 
     # 代码执行和原生多模态视觉参考
     "create_report_chart", "execute_python", "execute_echarts_python",
+
+    # 数据查询工具
+    "get_observed_meteorology",
+    "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
+    "query_city_standard_report", "query_city_standard_yoy_report",
+    "query_station_standard_report", "query_station_standard_yoy_report",
+    "execute_sql_query",
 ]
 
 # ===== 画板模式工具 =====
@@ -201,6 +219,9 @@ OPS_TOOL_NAMES = [
 
     # 子 Agent 复核
     "call_sub_agent",
+
+    # 站点小时/日数据核对
+    "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
 
     # 代码执行
     "execute_python",
@@ -249,6 +270,16 @@ SOCIAL_TOOL_NAMES = [
     "bash",
 ]
 
+# ===== 生态环境执法备考模式（微信专业场景） =====
+ENFORCEMENT_EXAM_TOOL_NAMES = [
+    "exam_practice",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "web_search",
+    "web_fetch",
+    "schedule_task",
+]
+
 # ===== 记忆整合器工具（后台专用） =====
 MEMORY_CONSOLIDATOR_TOOL_NAMES = [
     "list_session_resources",
@@ -263,21 +294,29 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "get_weather_forecast", "get_observed_meteorology", "meteorological_trajectory_analysis",
-    "analyze_upwind_enterprises", "analyze_xuchang_upwind_permit_sources",
+    "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
+    "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
+    "analyze_upwind_enterprises", "analyze_trajectory_sources",
     "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
+    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
+    "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
+    "query_city_standard_report", "query_city_standard_yoy_report",
     "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    # 由会商专家的受限工具白名单提供化学分析能力。
+    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "calculate_vocs_pmf",
+    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
+    "calculate_crustal", "calculate_trace",
     "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
 ]
 
@@ -298,7 +337,7 @@ def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     将工具名称列表转换为字典格式（向后兼容）。
     字典保留插入顺序，因此列表顺序就是模式工具顺序。
     """
-    names = [name for name in tool_names if name not in AGENT_HIDDEN_TOOL_NAMES]
+    names = list(tool_names)
     if "list_session_resources" in names and "read_session_resource" not in names:
         names.insert(names.index("list_session_resources") + 1, "read_session_resource")
     return {name: "" for name in names}
@@ -309,12 +348,49 @@ PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
 KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
+JIANGSU_QUERY_TOOLS = _build_tool_dict([
+    "list_session_resources",
+    "publish_session_file",
+    "jiangsu_fetch_city_data",
+    "jiangsu_fetch_district_data",
+    "jiangsu_fetch_station_data",
+    "jiangsu_query_statistics",
+    "jiangsu_fetch_alarm_records",
+    "create_report_chart",
+])
+SMART_INSPECTION_TOOLS = _build_tool_dict([
+    "jiangsu_fetch_alarm_records",
+])
+OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
+    "jiangsu_fetch_attendance_records",
+    "jiangsu_fetch_station_directory",
+])
+DEVICE_CONTROL_TOOLS = _build_tool_dict([
+    "jiangsu_get_device_control_state",
+    "jiangsu_prepare_device_control",
+    "jiangsu_execute_device_control",
+])
+STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "jiangsu_fetch_station_data",
+    "jiangsu_fetch_alarm_records",
+    "jiangsu_fetch_station_alarm_logs",
+    "jiangsu_fetch_fault_work_orders",
+    "jiangsu_fetch_auto_inspection",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
+    "knowledge_graph_query",
+])
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
+ENFORCEMENT_EXAM_TOOLS = _build_tool_dict(ENFORCEMENT_EXAM_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
 DELIBERATION_MONITORING_TOOLS = _build_tool_dict(DELIBERATION_MONITORING_TOOL_NAMES)
@@ -327,12 +403,15 @@ PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
 KNOWLEDGE_TOOL_ORDER = KNOWLEDGE_TOOL_NAMES
+JIANGSU_QUERY_TOOL_ORDER = list(JIANGSU_QUERY_TOOLS)
+SMART_INSPECTION_TOOL_ORDER = list(SMART_INSPECTION_TOOLS)
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
 SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
+ENFORCEMENT_EXAM_TOOL_ORDER = ENFORCEMENT_EXAM_TOOL_NAMES
 MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 
 
@@ -341,7 +420,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -352,8 +431,14 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
         "knowledge": KNOWLEDGE_TOOLS,
+        "jiangsu_query": JIANGSU_QUERY_TOOLS,
+        "smart_inspection": SMART_INSPECTION_TOOLS,
+        "operations_analysis": OPERATIONS_ANALYSIS_TOOLS,
+        "device_control": DEVICE_CONTROL_TOOLS,
+        "station_fault_diagnosis": STATION_FAULT_DIAGNOSIS_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
+        "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
         "chart": CHART_TOOLS,
         "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
@@ -368,17 +453,23 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     if mode not in mode_mapping:
         raise ValueError(f"Unknown mode: {mode}")
 
-    from app.project_config.loader import load_project_context
-    from config.settings import settings
+    project_tool_names = _get_project_tool_names_by_mode(mode)
+    if project_tool_names is not None:
+        return _build_tool_dict(project_tool_names)
 
-    disabled_tools = set(
-        load_project_context(settings.project_id).manifest.backend.disabled_tools
-    )
-    return {
-        name: description
-        for name, description in mode_mapping[mode].items()
-        if name not in disabled_tools
-    }
+    return mode_mapping[mode]
+
+
+def _get_project_tool_names_by_mode(mode: str) -> list[str] | None:
+    """Return project-specific mode tools when the active manifest declares them."""
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        context = load_project_context(settings.project_id)
+    except Exception:
+        return None
+    return context.manifest.backend.agent_mode_tools.get(mode)
 
 
 def get_tool_order(mode: str) -> List[str]:

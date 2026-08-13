@@ -33,6 +33,11 @@ def test_scheduled_task_proxy_matches_full_namespace_for_web_only():
         "/api/scheduled-tasks",
         "worker",
     )
+    assert not should_proxy_scheduled_tasks_request(
+        "/api/scheduled-tasks",
+        "web",
+        scheduled_tasks_enabled=False,
+    )
     assert not should_proxy_scheduled_tasks_request("/api/social/users", "web")
     assert (
         build_worker_scheduled_tasks_url(

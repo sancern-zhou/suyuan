@@ -5,44 +5,53 @@
 注意：工具注册已迁移到 app.tools.__init__.py 的 global_tool_registry
 此处仅负责初始化和提供访问接口
 """
-from app.fetchers.base.scheduler import FetcherScheduler
-from app.fetchers.weather.era5_fetcher import ERA5Fetcher
-from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
-from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
-from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
-from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
-from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
-    OpenMeteoAirQualityForecastFetcher,
+import os
+
+import structlog
+
+from app.fetchers.air_quality_data_quality_monitor import (
+    AirQualityDataQualityFetcher,  # 空气质量数据质量巡检
 )
-from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
-from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
-from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
-from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
-from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
-from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
-from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
-from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
-from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
-from app.fetchers.air_quality_data_quality_monitor import AirQualityDataQualityFetcher  # 空气质量数据质量巡检
+from app.fetchers.base.scheduler import FetcherScheduler
 from app.fetchers.city_pollution_event_monitor import CityPollutionEventFetcher  # 城市污染过程告警
-from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
-from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
-from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
-from app.fetchers.consultation import ConsultationFileFetcher, MonthlyConsultationFileFetcher  # 会商文件批量更新、月度完整会商文件
-from app.fetchers.consultation.annual_ytd import AnnualYtdConsultationFileFetcher  # 年度累计会商文件
+from app.fetchers.consultation import (  # 会商文件批量更新、月度完整会商文件
+    ConsultationFileFetcher,
+    MonthlyConsultationFileFetcher,
+)
+from app.fetchers.consultation.annual_ytd import (
+    AnnualYtdConsultationFileFetcher,  # 年度累计会商文件
+)
 from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyDistrictPollutantRankingFetcher,
     MonthlyMeteorologySupportFetcher,
     MonthlyPollutionEventsComponentsFetcher,
     MonthlyStationHighValuesFetcher,
 )
+from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
+from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
+from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
+from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
+from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
+from app.fetchers.weather.era5_fetcher import ERA5Fetcher
+from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
+from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
+from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
+from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
+from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
+    OpenMeteoAirQualityForecastFetcher,
+)
+from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
+from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
+from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
+from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
+from app.project_config.loader import load_project_context
+
 # 导入单一工具注册源
 from app.tools import global_tool_registry
-from app.project_config.loader import load_project_context
 from config.settings import settings
-
-import structlog
-import os
 
 logger = structlog.get_logger()
 
@@ -51,7 +60,7 @@ fetcher_scheduler = FetcherScheduler()
 # 注意：不再创建独立的 tool_registry，统一使用 global_tool_registry
 
 
-def initialize_fetchers():
+def initialize_fetchers() -> bool:
     """
     初始化并启动数据获取后台
 
@@ -65,91 +74,77 @@ def initialize_fetchers():
                 project=settings.project_id,
             )
             return False
-        project_allowlist = set(project_context.manifest.backend.fetchers)
-        raw_allowlist = os.getenv("FETCHER_ALLOWLIST", "").strip()
-        environment_allowlist = {
-            name.strip() for name in raw_allowlist.split(",") if name.strip()
-        }
-        allowlist = project_allowlist or environment_allowlist
-        if project_allowlist and environment_allowlist:
-            allowlist = project_allowlist & environment_allowlist
 
-        def register(fetcher):
-            if allowlist and fetcher.name not in allowlist:
-                logger.info(
-                    "fetcher_skipped_by_allowlist",
-                    fetcher=fetcher.name,
-                )
-                return
+        # An omitted list retains the legacy deployment behaviour.  A project
+        # can instead declare an explicit (including empty) fetcher allowlist.
+        fetchers = _configured_fetchers(project_context)
+        for fetcher in fetchers:
             fetcher_scheduler.register(fetcher)
-
-        # 注册Weather Fetchers
-        register(ERA5Fetcher())
-        register(ObservedWeatherFetcher())
-        register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
-        register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
-        register(NMCWeatherChartFetcher())  # 中国地面天气形势图
-        register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
-        register(XuchangDailyAttainmentForecastFetcher())  # 许昌市日达标预测分析
-        register(XuchangAnnualAttainmentForecastFetcher())  # 许昌市年度达标预测分析
-        register(XuchangCnemcStationHourFetcher())  # 许昌国控站点小时数据
-        register(XuchangStationDeviationAlertFetcher())  # 许昌场景一站点空间偏差告警
-        register(XuchangTransportAnalysisFetcher())  # 许昌场景二轨迹输送诊断
-
-        # 注册Satellite Fetchers
-        register(NASAFirmsFetcher())
-        enabled_modules = project_context.enabled_modules
-        if "xuchang-satellite" in enabled_modules:
-            register(GemsImageFetcher())
-            if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
-                register(GemsHchoDataFetcher())
-
-        # 注册Dust Fetchers
-        register(CAMSDustFetcher())
-
-        # 注册空气质量数据质量巡检Fetcher
-        register(AirQualityDataQualityFetcher())
-
-        # 注册城市污染过程告警Fetcher
-        register(CityPollutionEventFetcher())
-
-        # 注册招投标信息每日抓取Fetcher
-        register(TenderInformationFetcher())
-
-        # 注册济宁市快速溯源报告每日生成Fetcher
-        register(JiningQuickTraceFetcher())
-
-        # 注册运城市驻场试用场景小时数据盯守Fetcher
-        register(YunchengTrialFetcher())
-
-        # 注册会商文件批量更新Fetcher
-        register(ConsultationFileFetcher())
-
-        # 注册月度完整会商文件Fetcher（每月4号早上7点10分）
-        register(MonthlyConsultationFileFetcher())
-
-        # 注册年度累计会商文件Fetcher（每月4号早上7点20分）
-        register(AnnualYtdConsultationFileFetcher())
-
-        # 注册月度补充数据Fetcher（每月4号早上7点30-50分）
-        register(MonthlyDistrictPollutantRankingFetcher())
-        register(MonthlyStationHighValuesFetcher())
-        register(MonthlyPollutionEventsComponentsFetcher())
-        register(MonthlyMeteorologySupportFetcher())
 
         logger.info(
             "fetchers_registered",
-            fetchers=fetcher_scheduler.list_fetchers()
+            fetchers=fetcher_scheduler.list_fetchers(),
+            project=settings.project_id,
         )
 
         # 启动调度器
         fetcher_scheduler.start()
 
         logger.info("fetcher_scheduler_started")
+        return True
 
     except Exception as e:
         logger.error("fetchers_initialization_failed", error=str(e), exc_info=True)
         raise
+
+
+def _configured_fetchers(project_context):
+    """Instantiate only fetchers declared by a project manifest."""
+    enabled_modules = project_context.enabled_modules
+    factories = {
+        "era5": ERA5Fetcher,
+        "observed_weather": ObservedWeatherFetcher,
+        "jining_era5": JiningERA5Fetcher,
+        "nmc_observed_weather": NMCObservedWeatherFetcher,
+        "nmc_weather_chart": NMCWeatherChartFetcher,
+        "open_meteo_air_quality_forecast": OpenMeteoAirQualityForecastFetcher,
+        "nasa_firms": NASAFirmsFetcher,
+        "cams_dust": CAMSDustFetcher,
+        "air_quality_data_quality_monitor": AirQualityDataQualityFetcher,
+        "city_pollution_event_monitor": CityPollutionEventFetcher,
+        "tender_information": TenderInformationFetcher,
+        "jining_quick_trace": JiningQuickTraceFetcher,
+        "yuncheng_trial": YunchengTrialFetcher,
+        "consultation": ConsultationFileFetcher,
+        "monthly_consultation": MonthlyConsultationFileFetcher,
+        "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
+        "monthly_district_pollutant_ranking": MonthlyDistrictPollutantRankingFetcher,
+        "monthly_station_high_values": MonthlyStationHighValuesFetcher,
+        "monthly_pollution_events_components": MonthlyPollutionEventsComponentsFetcher,
+        "monthly_meteorology_support": MonthlyMeteorologySupportFetcher,
+        "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
+        "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
+        "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
+        "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
+        "xuchang_transport_analysis_fetcher": XuchangTransportAnalysisFetcher,
+        "gems_xuchang_image_fetcher": GemsImageFetcher,
+    }
+    configured = project_context.manifest.backend.fetchers
+    if configured is None:
+        selected = list(factories)
+        if "xuchang-satellite" in enabled_modules:
+            selected.append("gems_image")
+            if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
+                selected.append("gems_hcho_data")
+            factories["gems_image"] = GemsImageFetcher
+            factories["gems_hcho_data"] = GemsHchoDataFetcher
+    else:
+        selected = configured
+
+    unknown = [name for name in selected if name not in factories]
+    if unknown:
+        raise ValueError("unknown project fetchers: " + ", ".join(unknown))
+    return [factories[name]() for name in selected]
 
 
 def stop_fetchers():
