@@ -271,23 +271,14 @@
             <textarea v-model="createForm.description" placeholder="输入知识库描述"></textarea>
           </div>
           <div class="form-group">
-            <label>类型</label>
-            <select v-model="createForm.kb_type">
-              <option value="private">个人知识库</option>
-              <option value="public">公共知识库</option>
+            <label>知识库范围</label>
+            <select v-model="createForm.knowledge_base_scope">
+              <option value="shared">共享知识库</option>
+              <option value="local">本地知识库</option>
+              <option value="personal">个人知识库</option>
             </select>
           </div>
-          <p v-if="createForm.kb_type === 'public'" class="form-hint">
-            公共知识库仅限管理员创建，权限以公司统一身份为准。
-          </p>
-          <div class="form-group">
-            <label>索引位置</label>
-            <select v-model="createForm.vector_store_scope">
-              <option value="local">当前项目本地（默认）</option>
-              <option value="shared">中心共享（管理员发布）</option>
-            </select>
-            <p class="form-hint">本地索引不会写入共享服务；共享索引由中心管理员维护，可被其他项目检索。</p>
-          </div>
+          <p class="form-hint">共享：中心发布、跨项目检索；本地：当前项目可见的公共库；个人：用户自己的项目内知识库。</p>
           <div class="form-group">
             <label>分块策略</label>
             <select v-model="createForm.chunking_strategy">
@@ -495,8 +486,7 @@ const fileInput = ref(null)
 const createForm = ref({
   name: '',
   description: '',
-  kb_type: 'private',
-  vector_store_scope: 'local',
+  knowledge_base_scope: 'personal',
   chunking_strategy: 'llm',
   chunk_size: 800,
   chunk_overlap: 100
@@ -611,8 +601,7 @@ const handleCreate = async () => {
     createForm.value = {
       name: '',
       description: '',
-      kb_type: 'private',
-      vector_store_scope: 'local',
+      knowledge_base_scope: 'personal',
       chunking_strategy: 'llm',
       chunk_size: 800,
       chunk_overlap: 100

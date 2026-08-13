@@ -29,25 +29,14 @@
         </div>
 
         <div class="form-group">
-          <label>类型</label>
-          <select v-model="formData.kb_type">
-            <option value="private">个人知识库</option>
-            <option value="public">公共知识库</option>
+          <label>知识库范围</label>
+          <select v-model="formData.knowledge_base_scope">
+            <option value="shared">共享知识库</option>
+            <option value="local">本地知识库</option>
+            <option value="personal">个人知识库</option>
           </select>
         </div>
-
-        <p v-if="formData.kb_type === 'public'" class="form-hint">
-          公共知识库仅限管理员创建，权限以公司统一身份为准。
-        </p>
-
-        <div class="form-group">
-          <label>索引位置</label>
-          <select v-model="formData.vector_store_scope">
-            <option value="local">当前项目本地（默认）</option>
-            <option value="shared">中心共享（管理员发布）</option>
-          </select>
-          <p class="form-hint">共享索引由中心管理员维护；本地索引仅写入当前项目的 Qdrant。</p>
-        </div>
+        <p class="form-hint">共享：中心发布、跨项目检索；本地：当前项目可见的公共库；个人：用户自己的项目内知识库。</p>
 
         <div class="form-group">
           <label>分块策略</label>
@@ -130,8 +119,7 @@ const emit = defineEmits([
 const formData = reactive({
   name: '',
   description: '',
-  kb_type: 'private',
-  vector_store_scope: 'local',
+  knowledge_base_scope: 'personal',
   chunking_strategy: 'llm',
   chunk_size: KB_DEFAULTS.CHUNK_SIZE,
   chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
@@ -147,8 +135,7 @@ watch(() => props.visible, (visible) => {
     Object.assign(formData, {
       name: '',
       description: '',
-      kb_type: 'private',
-      vector_store_scope: 'local',
+      knowledge_base_scope: 'personal',
       chunking_strategy: 'llm',
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
@@ -256,8 +243,7 @@ defineExpose({
     Object.assign(formData, {
       name: '',
       description: '',
-      kb_type: 'private',
-      vector_store_scope: 'local',
+      knowledge_base_scope: 'personal',
       chunking_strategy: 'llm',
       chunk_size: KB_DEFAULTS.CHUNK_SIZE,
       chunk_overlap: KB_DEFAULTS.CHUNK_OVERLAP
