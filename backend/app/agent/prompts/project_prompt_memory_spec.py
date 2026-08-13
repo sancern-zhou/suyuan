@@ -6,7 +6,7 @@ from config.settings import settings
 def test_xuchang_query_and_expert_prompts_include_relative_memory_paths(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
 
-    for mode in ("query", "expert"):
+    for mode in ("query", "knowledge", "expert"):
         relative_path = f"backend/backend_data_registry/memory/{mode}/MEMORY.md"
         absolute_path = PROJECT_ROOT / relative_path
         prompt = build_react_system_prompt(

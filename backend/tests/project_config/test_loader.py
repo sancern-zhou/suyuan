@@ -68,6 +68,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.frontend.brand_name == "许昌市AI应用智能体"
     assert context.manifest.frontend.agent_modes == [
         "query",
+        "knowledge",
         "expert",
         "report",
     ]

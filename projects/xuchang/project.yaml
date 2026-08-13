@@ -12,6 +12,7 @@ frontend:
     query_agent_as_default: true
   agent_modes:
     - query
+    - knowledge
     - expert
     - report
   default_agent_mode: query
@@ -27,6 +28,7 @@ backend:
     - get_observed_meteorology
   mode_prompt_files:
     query: projects/xuchang/prompts/query.md
+    knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
   fetchers:
     - nmc_observed_weather_fetcher

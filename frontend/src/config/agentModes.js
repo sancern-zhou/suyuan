@@ -94,6 +94,29 @@ export const AGENT_MODES = Object.freeze([
     ]
   },
   {
+    id: 'knowledge',
+    name: '知识问答智能体',
+    shortName: '知识问答',
+    description: '检索授权知识库，快速提供有依据的专业回答',
+    welcome: {
+      description: '面向制度、标准、业务资料和专业文档进行快速问答，从授权知识库中定位依据并给出可追溯答案。',
+      features: [
+        '检索共享、本地及个人知识库中的相关资料',
+        '回答制度条款、标准规范和业务知识问题',
+        '结合原文上下文核验关键数字与重要结论',
+        '标明知识库和文档来源，识别资料冲突与缺口'
+      ],
+      example: '例如："根据知识库说明，重污染天气应急响应的启动条件是什么？"'
+    },
+    tags: ['知识检索', '来源追溯'],
+    accent: '#237a57',
+    iconPaths: [
+      'M4.5 4.5h6.2A3.3 3.3 0 0 1 14 7.8v11.7H7.8a3.3 3.3 0 0 0-3.3 0v-15Z',
+      'M19.5 4.5h-2.2A3.3 3.3 0 0 0 14 7.8v11.7h2.2a3.3 3.3 0 0 1 3.3 0v-15Z',
+      'M7.5 9h3M7.5 12h3M16.5 9h1'
+    ]
+  },
+  {
     id: 'report',
     name: '报告生成智能体',
     shortName: '报告',
@@ -193,7 +216,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'office',
     name: '办公',
     description: '日常办公与内容创作',
-    modeIds: ['assistant', 'ppt', 'board'],
+    modeIds: ['assistant', 'knowledge', 'ppt', 'board'],
     iconPaths: [
       { tone: 'primary', d: 'M5 3.5h9l4 4V20H5V3.5Z' },
       { tone: 'primary', d: 'M14 3.5v4h4' },
