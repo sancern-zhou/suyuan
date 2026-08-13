@@ -36,7 +36,10 @@ class LLMMode(str, Enum):
 
 
 # LLM分块的最大字符数限制（从.env配置读取）
-LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE"))
+# Keep individual JSON responses below the provider's output-token ceiling.  The
+# previous 60k default routinely produced truncated JSON (max_tokens reached),
+# which then caused the whole document to fall back to sentence chunking.
+LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE", "30000"))
 
 class DocumentProcessor:
     """
@@ -759,17 +762,42 @@ class DocumentProcessor:
                 # 并发处理各segment
                 semaphore = asyncio.Semaphore(self.LLM_CHUNK_MAX_CONCURRENT)
                 
-                async def process_segment(seg_idx: int, segment: str):
-                    async with semaphore:
-                        chunks = await self._llm_chunk_segment_with_context(
-                            segment=segment,
-                            chunk_size=chunk_size,
-                            doc_context=doc_context,
+                async def process_segment(seg_idx: int, segment: str, retry_depth: int = 0):
+                    try:
+                        async with semaphore:
+                            chunks = await self._llm_chunk_segment_with_context(
+                                segment=segment,
+                                chunk_size=chunk_size,
+                                doc_context=doc_context,
+                                segment_index=seg_idx,
+                                total_segments=len(segments),
+                                llm_mode=llm_mode
+                            )
+                    except Exception:
+                        # A response may still hit the provider output limit.
+                        # Retry the same content in smaller semantic windows,
+                        # keeping LLM chunking instead of silently degrading
+                        # the entire document to sentence boundaries.
+                        retry_limit = 2
+                        if retry_depth >= retry_limit or len(segment) <= 8000:
+                            raise
+                        smaller = self._split_into_segments(segment, max(8000, len(segment) // 2))
+                        logger.warning(
+                            "llm_chunk_segment_retry_split",
                             segment_index=seg_idx,
-                            total_segments=len(segments),
-                            llm_mode=llm_mode
+                            retry_depth=retry_depth + 1,
+                            original_length=len(segment),
+                            retry_segments=len(smaller),
                         )
-                        return (seg_idx, chunks)
+                        nested_results = []
+                        for part_idx, part in enumerate(smaller):
+                            nested_results.append(await process_segment(
+                                seg_idx * 100 + part_idx,
+                                part,
+                                retry_depth + 1,
+                            ))
+                        chunks = [chunk for _, result_chunks in nested_results for chunk in result_chunks]
+                    return (seg_idx, chunks)
                 
                 tasks = [process_segment(i, seg) for i, seg in enumerate(segments)]
                 results = await asyncio.gather(*tasks)
@@ -784,12 +812,32 @@ class DocumentProcessor:
                         all_chunks.append(chunk)
             else:
                 # 不需要分段：一次调用完成分块和上下文生成
-                all_chunks = await self._llm_chunk_single_pass(
-                    content=content,
-                    chunk_size=chunk_size,
-                    filename=filename,
-                    llm_mode=llm_mode
-                )
+                try:
+                    all_chunks = await self._llm_chunk_single_pass(
+                        content=content,
+                        chunk_size=chunk_size,
+                        filename=filename,
+                        llm_mode=llm_mode
+                    )
+                except Exception:
+                    # A single-pass response can also be truncated.  Re-enter
+                    # the contextual segment path before considering any
+                    # deterministic fallback.
+                    logger.warning("llm_single_pass_retry_as_segments")
+                    doc_context = await self._generate_doc_context_for_chunking(
+                        content=content, filename=filename, llm_mode=llm_mode
+                    )
+                    retry_segments = self._split_into_segments(content, max(8000, len(content) // 2))
+                    all_chunks = []
+                    for seg_idx, segment in enumerate(retry_segments):
+                        all_chunks.extend(await self._llm_chunk_segment_with_context(
+                            segment=segment,
+                            chunk_size=chunk_size,
+                            doc_context=doc_context,
+                            segment_index=seg_idx,
+                            total_segments=len(retry_segments),
+                            llm_mode=llm_mode,
+                        ))
 
             # LLM偶尔会把标准/附录合成大块，入库前按条款/表格边界做确定性细拆。
             all_chunks = self._split_large_chunks(all_chunks, max_size=max(900, chunk_size))
@@ -1230,9 +1278,14 @@ class DocumentProcessor:
         with llm_service.use_model_tier(tier):
             response = await llm_service.chat_anthropic(
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=8192,
+                max_tokens=16384,
                 temperature=0.1,
                 system="你是文档分析助手。直接返回JSON，不要解释。",
+            )
+        stop_reason = response.get("stop_reason")
+        if stop_reason in {"max_tokens", "length"}:
+            raise RuntimeError(
+                f"LLM document chunking response truncated (stop_reason={stop_reason})"
             )
         content = "\n".join(
             str(getattr(block, "text", ""))
