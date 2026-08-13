@@ -79,8 +79,13 @@ async def warmup_knowledge_base_models() -> None:
         from app.knowledge_base import get_vector_store
 
         vector_store = get_vector_store()
+        # The runtime object is a router. Warm only the shared model because
+        # it is used by every branch; local Qdrant stays lazy until a local
+        # knowledge base is actually queried or indexed.
+        resolver = getattr(vector_store, "for_scope", None)
+        vector_store = resolver("shared") if resolver is not None else vector_store
         _ = vector_store.embedding_model.encode(["预热测试"], show_progress_bar=False)
-        logger.info("embedding_model_warmed_up")
+        logger.info("embedding_model_warmed_up", storage_scope="shared")
     except Exception as e:
         logger.warning("embedding_warmup_failed", error=str(e))
 
