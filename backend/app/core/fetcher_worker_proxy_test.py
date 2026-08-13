@@ -17,6 +17,9 @@ def test_fetcher_proxy_matches_only_fetcher_management_routes():
     assert not should_proxy_fetchers_request("/api/fetchers/era5/historical", "web")
     assert not should_proxy_fetchers_request("/api/system/status", "web")
     assert not should_proxy_fetchers_request("/api/fetchers/status", "worker")
+    assert not should_proxy_fetchers_request(
+        "/api/fetchers/status", "web", fetchers_enabled=False
+    )
 
     assert (
         build_worker_fetchers_url(

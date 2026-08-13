@@ -37,8 +37,24 @@ async def test_run_persists_graph_facts_mentions_outbox_and_chunk_status(tmp_pat
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     async with factory() as session, session.begin():
-        session.add(KnowledgeBase(id="kb1", name="KB1", qdrant_collection="kb1"))
-        session.add(Document(id="doc1", knowledge_base_id="kb1", filename="a.md"))
+        session.add(KnowledgeBase(
+            id="kb1",
+            name="KB1",
+            qdrant_collection="kb1",
+            scene_status="ready",
+            schema_version=1,
+            graph_schema={
+                "allowed_entity_types": ["Topic"],
+                "allowed_relation_types": [],
+                "schema_version": 1,
+            },
+        ))
+        session.add(Document(
+            id="doc1",
+            knowledge_base_id="kb1",
+            filename="a.md",
+            graph_status="pending",
+        ))
         session.add(
             KnowledgeChunk(
                 id="chunk1",
@@ -78,6 +94,7 @@ async def test_run_persists_graph_facts_mentions_outbox_and_chunk_status(tmp_pat
         entity_count = await session.scalar(
             select(func.count()).select_from(KnowledgeGraphEntity)
         )
+        entity = await session.scalar(select(KnowledgeGraphEntity))
         mention_count = await session.scalar(
             select(func.count()).select_from(KnowledgeGraphEntityMention)
         )
@@ -85,10 +102,19 @@ async def test_run_persists_graph_facts_mentions_outbox_and_chunk_status(tmp_pat
             select(func.count()).select_from(KnowledgeIndexOutbox)
         )
         build = await session.get(KnowledgeGraphBuildTask, task.id)
+        document = await session.get(Document, "doc1")
 
     assert chunk.graph_status == "completed"
     assert entity_count == mention_count == outbox_count == 1
+    assert entity.schema_version == 1
     assert build.status == "completed"
+    assert document.graph_status == "completed"
+
+    async with factory() as session, session.begin():
+        entity = await session.scalar(select(KnowledgeGraphEntity))
+        entity.schema_version = 0
+    rebuild = await service.create_task("kb1", mode="pending")
+    assert rebuild.mode == "reset_and_build"
     await engine.dispose()
 
 

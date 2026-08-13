@@ -9,10 +9,15 @@ test('agent mode catalog exposes dedicated ppt, chart and board modes in product
     'ppt',
     'expert',
     'query',
+    'jiangsu_query',
     'report',
     'chart',
     'board',
-    'ops'
+    'ops',
+    'smart_inspection',
+    'operations_analysis',
+    'device_control',
+    'station_fault_diagnosis'
   ])
   assert.deepEqual(AGENT_MODES.map(agent => agent.id), AGENT_MODE_IDS)
 })
@@ -39,7 +44,7 @@ test('agent platform icons use distinct semantic silhouettes', () => {
 })
 
 test('every agent provides complete chat welcome content', () => {
-  assert.equal(AGENT_MODES.length, 8)
+  assert.equal(AGENT_MODES.length, 13)
   for (const agent of AGENT_MODES) {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)

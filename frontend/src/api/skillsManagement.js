@@ -2,7 +2,10 @@ import { authFetch } from '@/auth/http.js'
 /**
  * 技能管理 API
  */
-const API_BASE = '/api'
+// Keep skill-management calls on the active project's API gateway.  A bare
+// `/api` escapes the standalone project prefix (`/api/suyuan`) and can route
+// an isolated frontend to the default backend instead.
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
 /**
  * 获取所有技能列表

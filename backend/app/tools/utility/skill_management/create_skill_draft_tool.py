@@ -5,7 +5,7 @@ from typing import Any, Dict
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import single_file_product
 from app.tools.utility.skill_management.skill_paths import (
-    DRAFTS_DIR,
+    active_skill_paths,
     ensure_within_directory,
     render_skill_draft_markdown,
     sanitize_skill_filename,
@@ -112,8 +112,9 @@ class CreateSkillDraftTool(LLMTool):
                 raise ValueError("workflow_steps 不能为空")
 
             filename = sanitize_skill_filename(title)
-            DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-            draft_file = ensure_within_directory(DRAFTS_DIR / filename, DRAFTS_DIR)
+            _, drafts_dir = active_skill_paths()
+            drafts_dir.mkdir(parents=True, exist_ok=True)
+            draft_file = ensure_within_directory(drafts_dir / filename, drafts_dir)
             if draft_file.exists() and not overwrite:
                 return {
                     "success": False,

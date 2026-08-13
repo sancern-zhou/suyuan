@@ -70,58 +70,16 @@ def initialize_fetchers() -> bool:
             )
             return False
 
-        # 注册Weather Fetchers
-        fetcher_scheduler.register(ERA5Fetcher())
-        fetcher_scheduler.register(ObservedWeatherFetcher())
-        fetcher_scheduler.register(JiningERA5Fetcher())  # 济宁市 ERA5 Fetcher
-        fetcher_scheduler.register(NMCObservedWeatherFetcher())  # 许昌、运城NMC小时实况
-        fetcher_scheduler.register(NMCWeatherChartFetcher())  # 中国地面天气形势图
-        fetcher_scheduler.register(OpenMeteoAirQualityForecastFetcher())  # 运城、许昌未来72小时空气质量预报
-
-        # 注册Satellite Fetchers
-        fetcher_scheduler.register(NASAFirmsFetcher())
-        enabled_modules = project_context.enabled_modules
-        if "xuchang-satellite" in enabled_modules:
-            fetcher_scheduler.register(GemsImageFetcher())
-            if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
-                fetcher_scheduler.register(GemsHchoDataFetcher())
-
-        # 注册Dust Fetchers
-        fetcher_scheduler.register(CAMSDustFetcher())
-
-        # 注册空气质量数据质量巡检Fetcher
-        fetcher_scheduler.register(AirQualityDataQualityFetcher())
-
-        # 注册城市污染过程告警Fetcher
-        fetcher_scheduler.register(CityPollutionEventFetcher())
-
-        # 注册招投标信息每日抓取Fetcher
-        fetcher_scheduler.register(TenderInformationFetcher())
-
-        # 注册济宁市快速溯源报告每日生成Fetcher
-        fetcher_scheduler.register(JiningQuickTraceFetcher())
-
-        # 注册运城市驻场试用场景小时数据盯守Fetcher
-        fetcher_scheduler.register(YunchengTrialFetcher())
-
-        # 注册会商文件批量更新Fetcher
-        fetcher_scheduler.register(ConsultationFileFetcher())
-
-        # 注册月度完整会商文件Fetcher（每月4号早上7点10分）
-        fetcher_scheduler.register(MonthlyConsultationFileFetcher())
-
-        # 注册年度累计会商文件Fetcher（每月4号早上7点20分）
-        fetcher_scheduler.register(AnnualYtdConsultationFileFetcher())
-
-        # 注册月度补充数据Fetcher（每月4号早上7点30-50分）
-        fetcher_scheduler.register(MonthlyDistrictPollutantRankingFetcher())
-        fetcher_scheduler.register(MonthlyStationHighValuesFetcher())
-        fetcher_scheduler.register(MonthlyPollutionEventsComponentsFetcher())
-        fetcher_scheduler.register(MonthlyMeteorologySupportFetcher())
+        # An omitted list retains the legacy deployment behaviour.  A project
+        # can instead declare an explicit (including empty) fetcher allowlist.
+        fetchers = _configured_fetchers(project_context)
+        for fetcher in fetchers:
+            fetcher_scheduler.register(fetcher)
 
         logger.info(
             "fetchers_registered",
-            fetchers=fetcher_scheduler.list_fetchers()
+            fetchers=fetcher_scheduler.list_fetchers(),
+            project=settings.project_id,
         )
 
         # 启动调度器
@@ -133,6 +91,49 @@ def initialize_fetchers() -> bool:
     except Exception as e:
         logger.error("fetchers_initialization_failed", error=str(e), exc_info=True)
         raise
+
+
+def _configured_fetchers(project_context):
+    """Instantiate only fetchers declared by a project manifest."""
+    enabled_modules = project_context.enabled_modules
+    factories = {
+        "era5": ERA5Fetcher,
+        "observed_weather": ObservedWeatherFetcher,
+        "jining_era5": JiningERA5Fetcher,
+        "nmc_observed_weather": NMCObservedWeatherFetcher,
+        "nmc_weather_chart": NMCWeatherChartFetcher,
+        "open_meteo_air_quality_forecast": OpenMeteoAirQualityForecastFetcher,
+        "nasa_firms": NASAFirmsFetcher,
+        "cams_dust": CAMSDustFetcher,
+        "air_quality_data_quality_monitor": AirQualityDataQualityFetcher,
+        "city_pollution_event_monitor": CityPollutionEventFetcher,
+        "tender_information": TenderInformationFetcher,
+        "jining_quick_trace": JiningQuickTraceFetcher,
+        "yuncheng_trial": YunchengTrialFetcher,
+        "consultation": ConsultationFileFetcher,
+        "monthly_consultation": MonthlyConsultationFileFetcher,
+        "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
+        "monthly_district_pollutant_ranking": MonthlyDistrictPollutantRankingFetcher,
+        "monthly_station_high_values": MonthlyStationHighValuesFetcher,
+        "monthly_pollution_events_components": MonthlyPollutionEventsComponentsFetcher,
+        "monthly_meteorology_support": MonthlyMeteorologySupportFetcher,
+    }
+    configured = project_context.manifest.backend.fetchers
+    if configured is None:
+        selected = list(factories)
+        if "xuchang-satellite" in enabled_modules:
+            selected.append("gems_image")
+            if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":
+                selected.append("gems_hcho_data")
+            factories["gems_image"] = GemsImageFetcher
+            factories["gems_hcho_data"] = GemsHchoDataFetcher
+    else:
+        selected = configured
+
+    unknown = [name for name in selected if name not in factories]
+    if unknown:
+        raise ValueError("unknown project fetchers: " + ", ".join(unknown))
+    return [factories[name]() for name in selected]
 
 
 def stop_fetchers():

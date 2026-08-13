@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pathlib import Path
 import structlog
 
@@ -46,6 +46,7 @@ class AccountCreate(BaseModel):
     base_url: str = "https://ilinkai.weixin.qq.com"
     allow_from: List[str] = ["*"]
     auto_start: bool = True
+    agent_mode: Literal["social", "enforcement_exam"] = "social"
 
 
 class AccountResponse(BaseModel):
@@ -58,6 +59,7 @@ class AccountResponse(BaseModel):
     bot_account: Optional[str] = None
     login_status: str  # "logged_out", "waiting_scan", "logged_in"
     qr_code_available: bool = False
+    agent_mode: Literal["social", "enforcement_exam"] = "social"
 
 
 class AccountStatus(BaseModel):
@@ -229,7 +231,8 @@ async def list_accounts(
             "running": channel.is_running,
             "bot_account": getattr(channel, "bot_account", None),
             "login_status": "logged_in" if getattr(channel, "_token", None) else "logged_out",
-            "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
+            "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
+            "agent_mode": getattr(config, "agent_mode", "social"),
         })
 
     logger.info("accounts_listed", count=len(accounts))
@@ -302,7 +305,8 @@ async def create_weixin_account(
                 "running": channel.is_running,
                 "bot_account": getattr(channel, "bot_account", None),
                 "login_status": "logged_out",
-                "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
+                "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
+                "agent_mode": account.agent_mode,
             }
 
         except Exception as e:
@@ -317,7 +321,8 @@ async def create_weixin_account(
         "running": False,
         "bot_account": None,
         "login_status": "logged_out",
-        "qr_code_available": False
+        "qr_code_available": False,
+        "agent_mode": account.agent_mode,
     }
 
 
@@ -582,7 +587,8 @@ async def refresh_weixin_qrcode(
 # ============================================================================
 
 class AutoCreateRequest(BaseModel):
-    """The server derives scan ownership from the authenticated session."""
+    """Request for auto-creating a WeChat account with specified agent mode."""
+    agent_mode: Literal["social", "enforcement_exam"] = "social"
 
 
 class FinalizeRequest(BaseModel):
@@ -595,6 +601,16 @@ async def auto_create_account(
     user: CurrentUser = Depends(require_current_user),
     bindings: SocialBindingService = Depends(get_social_binding_service),
 ):
+    """
+    自动创建临时账号并启动（用于扫码登录流程）
+
+    Args:
+        request: 自动创建请求（包含 agent_mode）
+
+    Returns:
+        创建的账号信息
+    """
+    agent_mode = request.agent_mode if request else "social"
     """
     自动创建临时账号并启动（用于扫码登录流程）
 
@@ -629,7 +645,8 @@ async def auto_create_account(
                 "platform_username": user.username,
                 "platform_display_name": user.display_name,
                 "status": "already_exists",
-                "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
+                "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
+                "agent_mode": getattr(channel.config, "agent_mode", "social")
             }
         else:
             # 配置中存在但渠道未启动，尝试创建并启动
@@ -657,7 +674,8 @@ async def auto_create_account(
                 "platform_username": user.username,
                 "platform_display_name": user.display_name,
                 "status": "restarted",
-                "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
+                "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
+                "agent_mode": account_config.agent_mode
             }
 
     # 3. 创建临时账号配置
@@ -669,7 +687,8 @@ async def auto_create_account(
         token="",
         enabled=True,
         allow_from=["*"],
-        auto_start=True
+        auto_start=True,
+        agent_mode=agent_mode
     )
 
     # 4. 添加到配置（临时）
@@ -750,7 +769,8 @@ async def auto_create_account(
             "platform_username": user.username,
             "platform_display_name": user.display_name,
             "status": "created",
-            "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None
+            "qr_code_available": getattr(channel, "_current_qr_code_path", None) is not None,
+            "agent_mode": agent_mode
         }
 
     except Exception as e:
@@ -816,6 +836,7 @@ async def finalize_account(
             acc.name = user.display_name or user.username
             if token:
                 acc.token = token
+            acc.enabled = True  # ✅ 启用新绑定的账号
         elif previous and acc.id == previous.account_id and previous.account_id != account_id:
             acc.enabled = False
 

@@ -94,6 +94,29 @@ export const AGENT_MODES = Object.freeze([
     ]
   },
   {
+    id: 'jiangsu_query',
+    name: '江苏问数智能体',
+    shortName: '江苏问数',
+    description: '查询江苏省站点监测数据并完成统计分析',
+    welcome: {
+      description: '面向江苏省空气监测站数据，以自然语言完成小时、日均和5分钟数据查询、比较与趋势分析。',
+      features: [
+        '查询江苏省站点小时、日均和5分钟监测数据',
+        '区分原始/审核、工况/标况等数据口径',
+        '完成趋势、对比、统计与异常线索整理',
+        '保留站点编码、时间范围和数据来源等证据'
+      ],
+      example: '例如：“查询1002A站点昨天的小时 PM2.5 与臭氧趋势”'
+    },
+    tags: ['江苏数据', '站点查询'],
+    accent: '#1677b8',
+    iconPaths: [
+      'M4 5.5h16v13H4zM7 15l3-3 2.5 2 4.5-5',
+      'M7 9h.01M12 9h.01M17 9h.01',
+      'M5.5 20h13'
+    ]
+  },
+  {
     id: 'report',
     name: '报告生成智能体',
     shortName: '报告',
@@ -183,6 +206,98 @@ export const AGENT_MODES = Object.freeze([
       'M17.5 14.5v2M17.5 20v.5M14.5 17.5h-2M20.5 17.5h1',
       'M15.4 15.4 14 14M19.6 19.6 21 21M19.6 15.4 21 14M15.4 19.6 14 21'
     ]
+  },
+  {
+    id: 'smart_inspection',
+    name: '智能巡检智能体',
+    shortName: '智能巡检',
+    description: '巡查站点告警线索，辅助形成巡检与工单派发建议',
+    welcome: {
+      description: '面向站点巡检与工单闭环场景，先基于运维告警记录识别需关注站点、梳理巡检重点，并形成待人工确认的工单建议。',
+      features: [
+        '按站点、时间和告警状态查询运维告警/电话记录',
+        '梳理异常线索、影响范围和优先巡检对象',
+        '生成包含巡检项与处置建议的工单草案',
+        '当前仅做查询与建议，不会创建、派发或关闭工单'
+      ],
+      example: '例如：“查询昨天5006A、5005A的未处理告警，并生成巡检工单建议”'
+    },
+    tags: ['站点巡检', '工单建议'],
+    accent: '#1f8f72',
+    iconPaths: [
+      'M5 4.5h14v15H5zM8 8h5M8 11.5h8M8 15h5',
+      'm14.5 17.5 1.7 1.7 3.3-3.7',
+      'M17.5 4.5v-2M20.5 6.5h2M14.5 6.5h-2'
+    ]
+  },
+  {
+    id: 'operations_analysis',
+    name: '运维操作分析智能体',
+    shortName: '操作分析',
+    description: '分析人员到站覆盖与空间分布，发现值得管理核查的运维模式',
+    welcome: {
+      description: '面向运维管理人员，结合人员到站签到和站点空间台账，发现跨市频繁到站、覆盖失衡与疑似不经济的到站顺序，并给出待核查的优化建议。',
+      features: [
+        '按人员、单位、站点和时间查询到站签到记录',
+        '结合站点城市与位置梳理人员覆盖和跨市到站模式',
+        '识别值得管理人员进一步核查的高频远距离或重复折返线索',
+        '当前不判定工单或告警流程合规，也不作自动考核结论'
+      ],
+      example: '例如：“分析本月运维人员的跨市到站情况，找出值得核查的路径模式”'
+    },
+    tags: ['人员覆盖', '路径洞察'],
+    accent: '#b36a28',
+    iconPaths: [
+      'M5 19.5V7.5l7-4 7 4v12M8 10.5h.01M12 8.5h.01M16 10.5h.01M10 19.5v-4h4v4',
+      'M3.5 5.5c3 0 3 4 6 4s3-4 6-4 3 4 5 4',
+      'M18.5 15.5a2.5 2.5 0 1 0 0 .01Z'
+    ]
+  },
+  {
+    id: 'device_control',
+    name: '设备反控智能体',
+    shortName: '设备反控',
+    description: '在人工确认下查询并执行受限的站房设备反控指令',
+    welcome: {
+      description: '面向已授权站点，查询质控设备状态并生成受控的阀门、电源或空调指令；每次执行前都会展示目标与动作，须经人工明确确认。',
+      features: [
+        '读取质控阀、零气机、动态校准仪及子站空调状态',
+        '仅支持审核通过的固定设备动作和空调设定范围',
+        '执行前生成待确认指令，执行后自动复查状态',
+        '记录会话、指令、结果与复查信息，便于追溯'
+      ],
+      example: '例如：“查询站点唯一编号 320100001 的设备状态，并准备将空调设为制冷 24℃”'
+    },
+    tags: ['设备反控', '人工确认'],
+    accent: '#b54738',
+    iconPaths: [
+      'M4.5 8.5h15v10h-15zM8 8.5V5h8v3.5M8 13.5h.01M12 13.5h.01M16 13.5h.01',
+      'M12 18.5v2M9 20.5h6',
+      'm16 5 2 2-3 3-2-2 3-3Z'
+    ]
+  },
+  {
+    id: 'station_fault_diagnosis',
+    name: '站点故障诊断智能体',
+    shortName: '故障诊断',
+    description: '汇集告警、监测、巡检和工单证据，研判站点故障并给出处置方案',
+    welcome: {
+      description: '面向单站故障与数据异常，结合实时告警、监测数据、自动巡检、历史故障工单和知识图谱，输出可追溯的根因研判与现场处置方案。',
+      features: [
+        '关联站房告警、运维告警和小时/5分钟监测数据',
+        '读取自动巡检结果与历史故障工单，识别重复问题',
+        '基于知识图谱形成候选根因并标注支持与反证',
+        '输出处置步骤、验证方法、风险提示和回退建议，不直接控制设备'
+      ],
+      example: '例如：“诊断站点 1002A 今天上午的断数故障，并给出现场排查方案”'
+    },
+    tags: ['站点故障', '根因诊断'],
+    accent: '#8a3ffc',
+    iconPaths: [
+      'M4.5 5.5h15v13h-15zM8 9.5h8M8 13h4',
+      'M17.5 16.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm2.1 5.1 1.9 1.9',
+      'm12 3 1 2.1L15.2 6l-2.2.9L12 9l-.9-2.1L8.8 6l2.3-.9L12 3Z'
+    ]
   }
 ])
 
@@ -205,7 +320,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'monitoring',
     name: '监测分析',
     description: '环境数据研判与成果输出',
-    modeIds: ['query', 'expert', 'report', 'chart'],
+    modeIds: ['query', 'jiangsu_query', 'expert', 'report', 'chart'],
     iconPaths: [
       { tone: 'primary', d: 'M4 5v14h16' },
       { tone: 'primary', d: 'm6.5 14 3-3 3 2 3.5-6 3 2' },
@@ -216,7 +331,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'operations',
     name: '运维管理',
     description: '运维处置与任务管理',
-    modeIds: ['ops'],
+    modeIds: ['ops', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis'],
     iconPaths: [
       { tone: 'primary', d: 'm12 3.5 7.4 4.25v8.5L12 20.5l-7.4-4.25v-8.5L12 3.5Z' },
       { tone: 'primary', d: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z' },

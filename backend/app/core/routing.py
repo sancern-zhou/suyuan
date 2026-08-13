@@ -19,6 +19,7 @@ class RouterSpec:
     optional: bool = False
     description: str = ""
     owner: str = "legacy"
+    requires_scheduled_tasks: bool = False
 
 
 ROUTER_REGISTRY = [
@@ -52,8 +53,16 @@ ROUTER_REGISTRY = [
     ),
     RouterSpec("app.boards.routes", description="Draw.io board versions"),
     RouterSpec("app.routers.knowledge_qa", description="Knowledge QA"),
-    RouterSpec("app.api.scheduled_task_routes", description="Scheduled tasks"),
-    RouterSpec("app.api.scheduled_task_ws", description="Scheduled task WebSocket"),
+    RouterSpec(
+        "app.api.scheduled_task_routes",
+        description="Scheduled tasks",
+        requires_scheduled_tasks=True,
+    ),
+    RouterSpec(
+        "app.api.scheduled_task_ws",
+        description="Scheduled task WebSocket",
+        requires_scheduled_tasks=True,
+    ),
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
@@ -65,6 +74,7 @@ ROUTER_REGISTRY = [
         description="Social account management",
     ),
     RouterSpec("app.api.skills_routes", optional=True, description="Skills management"),
+    RouterSpec("app.api.exam_routes", optional=True, description="Exam question review"),
     RouterSpec(
         "app.api.xuchang_air_quality_routes",
         description="Xuchang hourly air quality forecast",
@@ -78,8 +88,15 @@ ROUTER_REGISTRY = [
 def select_router_specs(
     specs: list[RouterSpec],
     enabled_modules: frozenset[str],
+    *,
+    scheduled_tasks_enabled: bool = True,
 ) -> list[RouterSpec]:
-    return [spec for spec in specs if spec.owner in enabled_modules]
+    return [
+        spec
+        for spec in specs
+        if spec.owner in enabled_modules
+        and (scheduled_tasks_enabled or not spec.requires_scheduled_tasks)
+    ]
 
 
 def include_routers(app: FastAPI) -> None:
@@ -87,7 +104,11 @@ def include_routers(app: FastAPI) -> None:
     from app.api.project_config_routes import get_project_context
 
     context = get_project_context()
-    for spec in select_router_specs(ROUTER_REGISTRY, context.enabled_modules):
+    for spec in select_router_specs(
+        ROUTER_REGISTRY,
+        context.enabled_modules,
+        scheduled_tasks_enabled=context.manifest.scheduled_tasks_enabled,
+    ):
         try:
             module = import_module(spec.module)
             router = getattr(module, spec.attr)

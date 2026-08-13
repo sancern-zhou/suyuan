@@ -12,6 +12,25 @@
       @confirmed="loadScene"
     />
     <template v-else-if="scene.scene_status === 'ready'">
+    <div class="graph-build-panel">
+      <div>
+        <strong>知识图谱构建</strong>
+        <p>Schema 已确认。上传文档不会自动抽取图谱，请在需要时显式构建。</p>
+      </div>
+      <div class="graph-build-actions">
+        <select v-model="buildMode" :disabled="buildBusy">
+          <option value="pending">增量构建</option>
+          <option value="reset_and_build">重置并全量构建</option>
+        </select>
+        <button :disabled="buildBusy" @click="startBuild">{{ buildBusy ? '构建中...' : '开始构建' }}</button>
+        <button v-if="buildBusy" class="secondary" @click="cancelBuild">取消</button>
+        <button v-if="buildTask && ['failed', 'partial'].includes(buildTask.status)" class="secondary" @click="retryBuild">重试失败分块</button>
+      </div>
+      <div v-if="buildTask" class="graph-build-progress">
+        {{ buildStatusLabel }}，{{ buildTask.processed_chunks || 0 }}/{{ buildTask.total_chunks || 0 }} 分块
+        <span v-if="buildTask.failed_chunks">，失败 {{ buildTask.failed_chunks }}</span>
+      </div>
+    </div>
     <KnowledgeBusinessRules :kb-id="kbId" :rule-version="scene.rule_version || 0" @changed="loadScene" />
     <KnowledgeUserFacts :kb-id="kbId" @changed="reload" />
     <KnowledgeSceneSuggestions :kb-id="kbId" @accepted="loadScene" />
@@ -68,7 +87,10 @@ const store = useKnowledgeBaseStore(); const canvas = ref(null); const workbench
 const scene = computed(() => store.knowledgeScene)
 const includeHistory = ref(false); const showRelationLabels = ref(true); const selectedEntityTypes = ref(new Set()); const selectedRelationTypes = ref(new Set())
 const selected = ref(null); const mergeSource = ref(null); const layouting = ref(false); const loadError = ref('')
+const buildMode = ref('pending'); const buildTask = ref(null)
 let buildPoller = null; let lastBuildStatus = null
+const buildBusy = computed(() => ['queued', 'running'].includes(buildTask.value?.status))
+const buildStatusLabel = computed(() => ({ queued: '排队中', running: '构建中', completed: '已完成', failed: '失败', partial: '部分完成', cancelled: '已取消' }[buildTask.value?.status] || buildTask.value?.status || '未知状态'))
 const candidateCount = computed(() => store.graphEntities.filter(item => item.review_status === 'candidate').length)
 const confirmedCount = computed(() => store.graphEntities.filter(item => ['confirmed', 'published'].includes(item.review_status)).length)
 const fullGraph = computed(() => toG6Data(store.graphEntities, store.graphRelations))
@@ -97,19 +119,31 @@ async function mergeEntities(source, target) { await api.mergeKnowledgeGraphEnti
 const retryFailed = async () => { await api.retryFailedKnowledgeGraph(props.kbId); await reload() }; const reindex = async () => { await api.reindexKnowledgeGraph(props.kbId); await reload() }
 const fullscreen = () => workbench.value?.requestFullscreen?.()
 async function pollBuild() {
-  try { const task = await api.getKnowledgeGraphBuild(props.kbId); const status = task?.status; if (lastBuildStatus && ['queued', 'running'].includes(lastBuildStatus) && status && !['queued', 'running'].includes(status)) await reload(); lastBuildStatus = status } catch {}
+  try { const task = await api.getKnowledgeGraphBuild(props.kbId); buildTask.value = task; const status = task?.status; if (lastBuildStatus && ['queued', 'running'].includes(lastBuildStatus) && status && !['queued', 'running'].includes(status)) await reload(); lastBuildStatus = status } catch {}
 }
+async function runBuildAction(action) {
+  loadError.value = ''
+  try { buildTask.value = await action(); await pollBuild() }
+  catch (error) { loadError.value = error.message || '图谱构建操作失败' }
+}
+const startBuild = () => runBuildAction(() => api.createKnowledgeGraphBuild(props.kbId, { mode: buildMode.value }))
+const cancelBuild = () => buildTask.value && runBuildAction(() => api.cancelKnowledgeGraphBuild(props.kbId, buildTask.value.id))
+const retryBuild = () => buildTask.value && runBuildAction(() => api.retryKnowledgeGraphBuild(props.kbId, buildTask.value.id))
 async function loadScene() {
   await store.loadKnowledgeScene(props.kbId)
-  if (scene.value?.scene_status === 'ready') await reload()
+  if (scene.value?.scene_status === 'ready') {
+    await pollBuild()
+    if (buildTask.value) await reload()
+  }
 }
 onMounted(() => { loadScene(); buildPoller = setInterval(pollBuild, 2500) })
 onUnmounted(() => clearInterval(buildPoller))
-watch(() => props.kbId, () => { selected.value = null; mergeSource.value = null; selectedEntityTypes.value = new Set(); selectedRelationTypes.value = new Set(); lastBuildStatus = null; loadScene() })
+watch(() => props.kbId, () => { selected.value = null; mergeSource.value = null; selectedEntityTypes.value = new Set(); selectedRelationTypes.value = new Set(); buildTask.value = null; lastBuildStatus = null; loadScene() })
 </script>
 
 <style scoped>
 .knowledge-graph-tab { display: grid; gap: 12px; }.graph-workbench { display: flex; gap: 12px; align-items: stretch; }.graph-workbench > :first-child { flex: 1; min-width: 0; }.error { color: #b42318; }.merge-notice { padding: 8px; background: #fff6df; border-radius: 6px; }
+.graph-build-panel { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #e5e7eb; }.graph-build-panel p { margin: 4px 0 0; color: #667085; font-size: 13px; }.graph-build-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }.graph-build-actions select, .graph-build-actions button { min-height: 34px; }.graph-build-actions button { border: 1px solid #176b87; background: #176b87; color: white; padding: 0 12px; border-radius: 6px; cursor: pointer; }.graph-build-actions button.secondary { color: #344054; border-color: #d0d5dd; background: white; }.graph-build-actions button:disabled { opacity: .55; cursor: default; }.graph-build-progress { grid-column: 1 / -1; color: #475467; font-size: 13px; }
 .knowledge-graph-tab:fullscreen { background: #f7f9fc; padding: 14px; overflow: auto; }
-@media (max-width: 900px) { .graph-workbench { display: grid; } }
+@media (max-width: 900px) { .graph-workbench, .graph-build-panel { display: grid; grid-template-columns: 1fr; }.graph-build-actions { align-items: stretch; }.graph-build-progress { grid-column: auto; } }
 </style>

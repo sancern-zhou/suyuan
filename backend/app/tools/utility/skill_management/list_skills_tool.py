@@ -77,7 +77,8 @@ class ListSkillsTool(LLMTool):
         )
 
         # 技能目录路径
-        self.skills_dir = Path(__file__).parent.parent.parent.parent.parent / "docs" / "skills"
+        from app.tools.utility.skill_management.skill_paths import active_skill_paths
+        self.skills_dir, _ = active_skill_paths()
         self.index_file = self.skills_dir / "SKILLS_INDEX.md"
 
     async def execute(

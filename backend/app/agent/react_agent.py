@@ -36,6 +36,8 @@ from .selection_context import (
 
 logger = structlog.get_logger()
 
+SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+
 
 class ReActAgent:
     """
@@ -72,11 +74,14 @@ class ReActAgent:
     def _select_auto_profile(
         manual_mode: Optional[str],
     ) -> Optional[str]:
-        """Use the normal Auto model chain for every Agent mode.
+        """Select the Auto capability profile for an Agent mode.
 
-        Native image/attachment handling remains enabled independently; it no
-        longer selects a separate multimodal provider/model chain.
+        Enforcement-exam conversations are deliberately routed through the
+        configured Flash chain (rather than the default Auto primary model),
+        while native image/attachment handling remains independent.
         """
+        if manual_mode == "enforcement_exam":
+            return "flash"
         return None
 
     @staticmethod
@@ -342,7 +347,7 @@ class ReActAgent:
         active_run_id = None
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
-        if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
+        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is not None:
             memory_store = social_memory_store
             try:
                 memory_store.create_snapshot()
@@ -592,7 +597,7 @@ class ReActAgent:
 
             # ✅ 设置社交上下文到上下文构建器（仅social模式使用）
             # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
-            if manual_mode == "social":
+            if manual_mode in SOCIAL_MEMORY_MODES:
                 react_loop.context_builder.user_preferences = social_user_preferences
                 react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
                 react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
@@ -818,7 +823,7 @@ class ReActAgent:
             # ✅ 后台记忆整合（新增，与上下文压缩完全分离）
             # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 social_memory_store），
             #    此处只为非社交模式触发整合
-            if unified_user_id and manual_mode and manual_mode != "social":
+            if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
                 try:
                     asyncio.create_task(
                         self._background_memory_consolidation(

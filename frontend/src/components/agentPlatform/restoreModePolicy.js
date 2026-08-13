@@ -2,7 +2,7 @@ import { AGENT_MODE_IDS } from '../../config/agentModes.js'
 
 const modeFromSessionId = sessionId => {
   if (!sessionId || typeof sessionId !== 'string') return null
-  const match = sessionId.match(/^([a-z]+)_session_/)
+  const match = sessionId.match(/^([a-z_]+)_session_/)
   return match?.[1] || null
 }
 

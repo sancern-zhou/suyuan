@@ -53,7 +53,7 @@ import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops', 'graph']
+const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'jiangsu_query', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'report', 'chart', 'board', 'ops', 'graph']
 const DEFAULT_AGENT_MODE = resolveProjectDefaultAgentMode(projectConfig, VALID_MODES)
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const drawioDraftTimers = new Map()
@@ -409,6 +409,11 @@ export const useReactStore = defineStore('react', {
         ppt: createEmptyModeState(),
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
+        jiangsu_query: createEmptyModeState(),
+        smart_inspection: createEmptyModeState(),
+        operations_analysis: createEmptyModeState(),
+        device_control: createEmptyModeState(),
+        station_fault_diagnosis: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
         board: createEmptyModeState(),

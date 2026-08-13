@@ -17,6 +17,8 @@ from ...utils.token_budget import token_budget_manager
 
 logger = structlog.get_logger()
 
+SOCIAL_CONTEXT_MODES = {"social", "enforcement_exam"}
+
 SYSTEM_CONTEXT_LAYER_ORDER = (
     "platform_policy",
     "mode_policy",
@@ -326,7 +328,7 @@ class SimplifiedContextBuilder:
 
         # 仅social模式需要backend_host（使用公网可访问的网关地址）
         backend_host = None
-        if self.current_mode == "social":
+        if self.current_mode in SOCIAL_CONTEXT_MODES:
             # 优先使用 api_base_url（网关地址，如 http://219.135.180.51:56041）
             # 最后使用 backend_host（本地地址，仅开发环境）
             backend_host = settings.api_base_url or settings.backend_host
@@ -423,7 +425,7 @@ class SimplifiedContextBuilder:
                 + json.dumps(self.board_context, ensure_ascii=False, default=str)
                 + "\n</board_runtime_context>"
             )
-        if self.current_mode == "social" and self.heartbeat_context:
+        if self.current_mode in SOCIAL_CONTEXT_MODES and self.heartbeat_context:
             parts.append(
                 "<heartbeat_runtime_context>\n"
                 + self.heartbeat_context.strip()
@@ -433,7 +435,7 @@ class SimplifiedContextBuilder:
 
     def _build_long_term_memory_layer(self) -> str:
         parts = []
-        if self.current_mode == "social" and self.user_context:
+        if self.current_mode in SOCIAL_CONTEXT_MODES and self.user_context:
             parts.append(
                 "<user_profile>\n"
                 + self.user_context.strip()
@@ -480,7 +482,7 @@ class SimplifiedContextBuilder:
             May inject only the mode memory document. Social profile files are
             explicitly cleared even if an upstream caller accidentally sets them.
         """
-        if mode == "social":
+        if mode in SOCIAL_CONTEXT_MODES:
             self.board_context = None
             self.map_context = None
             return

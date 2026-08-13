@@ -20,6 +20,7 @@ import structlog
 from app.schemas.common import DataQualityReport, FieldStats, ValidationIssue, ValidationSeverity
 from app.agent.context.data_files import resolve_data_path, safe_file_stem, to_data_path
 from app.agent.memory.tool_protocol_repair import repair_tool_result_pairing
+from app.utils.path_config import get_sessions_dir
 
 logger = structlog.get_logger()
 
@@ -480,11 +481,11 @@ class SessionMemory:
         use_llm_compression: bool = True,
     ) -> None:
         self.session_id = session_id
-        # 使用项目目录而不是系统临时目录，避免 /tmp 下产生大量空文件夹
+        # Keep session artefacts under the active project's data registry.
+        # This matters for project deployments whose registry is isolated from
+        # the default backend_data_registry (for example jiangsu-ops).
         if base_dir is None:
-            # 使用 backend_data_registry/sessions 作为会话目录
-            project_root = Path(__file__).parent.parent.parent.parent  # backend 目录
-            base_dir = project_root / "backend_data_registry" / "sessions"
+            base_dir = get_sessions_dir()
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = self.session_dir / "data"

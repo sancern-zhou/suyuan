@@ -3,8 +3,11 @@
     <section>
       <!-- 添加账号按钮 -->
       <div class="add-account-bar">
-        <button @click="showCreateModal = true" class="btn-primary">
-          + 扫码添加微信
+        <button @click="showCreateModalWithMode('social')" class="btn-primary btn-social">
+          + 扫码添加个人助手
+        </button>
+        <button @click="showCreateModalWithMode('enforcement_exam')" class="btn-primary btn-exam">
+          + 扫码添加执法考试
         </button>
       </div>
 
@@ -15,10 +18,15 @@
 
       <div v-else-if="accounts.length === 0" class="empty">
         <p>暂无微信账号</p>
-        <p class="empty-hint">点击"扫码添加微信"按钮，扫描二维码即可快速添加</p>
-        <button @click="showCreateModal = true" class="btn-primary">
-          扫码添加微信
-        </button>
+        <p class="empty-hint">选择一个模式，扫描二维码即可快速添加</p>
+        <div class="empty-buttons">
+          <button @click="showCreateModalWithMode('social')" class="btn-primary btn-social">
+            扫码添加个人助手
+          </button>
+          <button @click="showCreateModalWithMode('enforcement_exam')" class="btn-primary btn-exam">
+            扫码添加执法考试
+          </button>
+        </div>
       </div>
 
       <div v-else class="accounts-grid">
@@ -101,6 +109,7 @@
     <!-- 创建账号弹窗 -->
     <CreateAccountModal
       v-if="showCreateModal"
+      :agent-mode="currentAgentMode"
       @close="showCreateModal = false"
       @created="handleAccountCreated"
     />
@@ -117,6 +126,7 @@ const accounts = ref([])
 const loading = ref(true)
 const showQRModal = ref(false)
 const showCreateModal = ref(false)
+const currentAgentMode = ref('social')
 const selectedAccountId = ref(null)
 const actionLoading = ref({})
 let refreshInterval = null
@@ -200,6 +210,11 @@ const showQRCode = (account) => {
   showQRModal.value = true
 }
 
+const showCreateModalWithMode = (mode) => {
+  currentAgentMode.value = mode
+  showCreateModal.value = true
+}
+
 const handleAccountCreated = () => {
   // 账号创建后手动刷新
   loadAccounts(true)
@@ -235,12 +250,21 @@ onUnmounted(() => {
 
 .add-account-bar {
   margin-bottom: 20px;
+  display: flex;
+  gap: 12px;
 }
 
 .loading, .empty {
   text-align: center;
   padding: 60px 20px;
   color: #999;
+}
+
+.empty-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
 }
 
 .accounts-grid {
@@ -403,5 +427,21 @@ onUnmounted(() => {
 
 .btn-primary:hover {
   background: #0b7dda;
+}
+
+.btn-social {
+  background: #4caf50;
+}
+
+.btn-social:hover {
+  background: #45a049;
+}
+
+.btn-exam {
+  background: #ff9800;
+}
+
+.btn-exam:hover {
+  background: #fb8c00;
 }
 </style>
