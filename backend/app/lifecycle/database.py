@@ -12,6 +12,7 @@ import os
 import structlog
 
 from app.db.database import check_db_connection, close_db, init_db
+from app.db.knowledge_database import close_knowledge_db
 from app.db.weather_database import close_weather_db
 from app.services.lifecycle_manager import initialize_fetchers, stop_fetchers
 
@@ -86,6 +87,7 @@ async def close_database() -> None:
     try:
         if os.getenv("DATABASE_URL"):
             await close_db()
+            await close_knowledge_db()
             await close_weather_db()
             logger.info("database_closed")
     except Exception as e:

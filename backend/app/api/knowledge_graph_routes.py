@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import async_session, get_db
+from app.db.knowledge_database import get_knowledge_db as get_db, knowledge_async_session
 from app.auth.dependencies import current_user_id, current_user_is_admin
 from app.knowledge_base.graph_build_models import KnowledgeGraphBuildTask
 from app.knowledge_base.graph_build_service import GraphBuildService
@@ -77,7 +77,7 @@ def _build_data(task: KnowledgeGraphBuildTask) -> dict:
 
 def _launch_build(task_id: str) -> None:
     async def _run():
-        await GraphBuildService(async_session).run(task_id)
+        await GraphBuildService(knowledge_async_session).run(task_id)
 
     task = asyncio.create_task(_run())
     _graph_build_tasks.add(task)
@@ -275,7 +275,7 @@ async def create_graph_build(
     if kb.scene_status != "ready":
         raise HTTPException(status_code=409, detail="scene_confirmation_required")
     try:
-        task = await GraphBuildService(async_session).create_task(
+        task = await GraphBuildService(knowledge_async_session).create_task(
             kb_id, mode=request.mode, batch_size=request.batch_size, user_id=user_id
         )
     except ValueError as exc:
@@ -292,7 +292,7 @@ async def get_graph_build(
     user_id: str = Depends(current_user_id),
 ):
     await _readable_kb(db, kb_id, user_id)
-    task = await GraphBuildService(async_session).get_status(kb_id=kb_id, task_id=task_id)
+    task = await GraphBuildService(knowledge_async_session).get_status(kb_id=kb_id, task_id=task_id)
     if task is None:
         return None
     if task.kb_id != kb_id:
@@ -309,7 +309,7 @@ async def cancel_graph_build(
     is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
-    service = GraphBuildService(async_session)
+    service = GraphBuildService(knowledge_async_session)
     task = await service.get_status(task_id=task_id)
     if not task or task.kb_id != kb_id:
         raise HTTPException(status_code=404, detail="Build task not found")
@@ -330,7 +330,7 @@ async def retry_graph_build(
     is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
-    service = GraphBuildService(async_session)
+    service = GraphBuildService(knowledge_async_session)
     old = await service.get_status(task_id=task_id)
     if not old or old.kb_id != kb_id:
         raise HTTPException(status_code=404, detail="Build task not found")
@@ -350,7 +350,7 @@ async def recover_expired_graph_builds(
     is_admin: bool = Depends(current_user_is_admin),
 ):
     await _manageable_kb(db, kb_id, user_id, is_admin)
-    service = GraphBuildService(async_session)
+    service = GraphBuildService(knowledge_async_session)
     ids = await service.recover_expired_tasks(kb_id=kb_id)
     recovered = []
     for task_id in ids:

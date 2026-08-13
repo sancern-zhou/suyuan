@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.database import get_db
+from app.db.knowledge_database import get_knowledge_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.service import KnowledgeBaseService
@@ -79,7 +79,7 @@ def get_is_admin(user: CurrentUser = Depends(require_current_user)) -> bool:
 @router.post("", response_model=KnowledgeBaseResponse)
 async def create_knowledge_base(
     request: KnowledgeBaseCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -123,7 +123,7 @@ async def create_knowledge_base(
 
 @router.get("", response_model=KnowledgeBaseListResponse)
 async def list_knowledge_bases(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -153,7 +153,7 @@ async def list_knowledge_bases(
 
 @router.get("/stats", response_model=KnowledgeBaseStats)
 async def get_stats(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """获取知识库统计信息"""
@@ -179,7 +179,7 @@ async def get_chunking_strategies():
 @router.get("/{kb_id}", response_model=KnowledgeBaseResponse)
 async def get_knowledge_base(
     kb_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """获取知识库详情"""
@@ -200,7 +200,7 @@ async def get_knowledge_base(
 async def update_knowledge_base(
     kb_id: str,
     request: KnowledgeBaseUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -235,7 +235,7 @@ async def update_knowledge_base(
 @router.delete("/{kb_id}")
 async def delete_knowledge_base(
     kb_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -273,7 +273,7 @@ async def upload_document(
     chunk_size: int = Form(default=800),
     chunk_overlap: int = Form(default=100),
     llm_mode: str = Form(default="online"),  # 优先使用线上API（更快）
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -372,7 +372,7 @@ async def upload_document(
 @router.get("/{kb_id}/documents", response_model=DocumentListResponse)
 async def list_documents(
     kb_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """列出知识库中的文档"""
@@ -409,7 +409,7 @@ async def replace_document_content(
     kb_id: str,
     doc_id: str,
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin),
 ):
@@ -439,7 +439,7 @@ async def replace_document_content(
 async def delete_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -471,7 +471,7 @@ async def delete_document(
 async def retry_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -503,7 +503,7 @@ async def retry_document(
 async def get_document_chunks(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -553,7 +553,7 @@ async def search_knowledge_base(
 
     注意：检索API使用独立数据库会话，避免长时间Reranker推理导致连接超时
     """
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session
     from sqlalchemy import select
     from app.knowledge_base.models import Document
 
@@ -561,7 +561,7 @@ async def search_knowledge_base(
 
     try:
         # 使用独立会话，检索完成后立即关闭（不需要commit）
-        async with async_session() as db:
+        async with knowledge_async_session() as db:
             service = KnowledgeBaseService(db=db)
             results = await service.search(
                 query=request.query,
@@ -676,7 +676,7 @@ def _doc_to_response(doc) -> DocumentResponse:
 async def download_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -751,7 +751,7 @@ async def download_document(
 async def preview_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_knowledge_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """

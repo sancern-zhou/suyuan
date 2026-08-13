@@ -363,10 +363,10 @@ _worker_task: asyncio.Task[None] | None = None
 
 
 async def _resolve_collection(kb_id: str) -> VectorIndexTarget:
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session
     from app.knowledge_base.models import KnowledgeBase
 
-    async with async_session() as session:
+    async with knowledge_async_session() as session:
         result = await session.execute(
             select(KnowledgeBase.qdrant_collection, KnowledgeBase.vector_store_scope).where(
                 KnowledgeBase.id == kb_id
@@ -386,11 +386,11 @@ async def start_index_outbox_worker() -> None:
     if _worker_task is not None and not _worker_task.done():
         return
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session
     from app.knowledge_base import get_vector_store
 
     _worker = KnowledgeIndexOutboxWorker(
-        repository=KnowledgeIndexOutboxRepository(async_session),
+        repository=KnowledgeIndexOutboxRepository(knowledge_async_session),
         vector_store=get_vector_store(),
         collection_resolver=_resolve_collection,
     )

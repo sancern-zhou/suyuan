@@ -67,8 +67,8 @@ class DocumentProcessingQueue:
 
     async def _get_db_session(self):
         """获取数据库会话（每次任务创建新会话）"""
-        from app.db.database import async_session
-        return async_session()
+        from app.db.knowledge_database import knowledge_async_session
+        return knowledge_async_session()
 
     async def _get_service(self, db):
         """获取知识库服务"""
@@ -137,10 +137,10 @@ class DocumentProcessingQueue:
         """Claim processing documents left behind by a stopped worker."""
         from sqlalchemy import select
 
-        from app.db.database import async_session
+        from app.db.knowledge_database import knowledge_async_session
         from app.knowledge_base.models import Document, DocumentStatus
 
-        async with async_session() as db, db.begin():
+        async with knowledge_async_session() as db, db.begin():
             documents = list(
                 (
                     await db.execute(
@@ -359,10 +359,10 @@ async def normalize_database_original_paths() -> int:
     """Clear legacy staging paths once PostgreSQL is the durable source."""
     from sqlalchemy import update
 
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session
     from app.knowledge_base.models import Document
 
-    async with async_session() as db, db.begin():
+    async with knowledge_async_session() as db, db.begin():
         result = await db.execute(
             update(Document)
             .where(

@@ -66,7 +66,7 @@ class KnowledgeDocumentReader(WorkflowTool):
             )
 
         try:
-            from app.db.database import async_session
+            from app.db.knowledge_database import knowledge_async_session
             from app.knowledge_base.service import KnowledgeBaseService
 
             self._record_step("document_chunks_read_start", "running", {
@@ -79,7 +79,7 @@ class KnowledgeDocumentReader(WorkflowTool):
                 "max_chunks": max_chunks
             })
 
-            async with async_session() as db:
+            async with knowledge_async_session() as db:
                 service = KnowledgeBaseService(db=db)
                 user_id = getattr(context, "user_identifier", None)
                 result = await service.get_document_chunks(

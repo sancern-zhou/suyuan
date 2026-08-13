@@ -269,13 +269,13 @@ async def search_knowledge_bases(
     use_hyde: bool | str = False  # 是否使用HyDE关键词增强；不再双路检索
 ) -> List[dict]:
     """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session
     from sqlalchemy import select
     from app.knowledge_base.models import Document, KnowledgeBase as KBModel, KnowledgeBaseStatus
     from app.knowledge_base.service import KnowledgeBaseService
 
     # 使用独立会话，检索完成后立即关闭
-    async with async_session() as db:
+    async with knowledge_async_session() as db:
         service = KnowledgeBaseService(db=db)
 
         # 如果没有指定知识库，自动使用所有可用的知识库
@@ -305,7 +305,7 @@ async def search_knowledge_bases(
 
         async def run_search_route(route: str, route_query: str) -> tuple[List[dict], float]:
             route_started_at = time.time()
-            async with async_session() as route_db:
+            async with knowledge_async_session() as route_db:
                 route_service = KnowledgeBaseService(db=route_db)
                 route_results = await route_service.search(
                     query=route_query,

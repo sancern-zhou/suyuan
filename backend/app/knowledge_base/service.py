@@ -383,8 +383,8 @@ class KnowledgeBaseService:
         except Exception as e:
             # 使用新session更新失败状态（原有连接可能已超时）
             try:
-                from app.db.database import async_session
-                async with async_session() as fresh_db:
+                from app.db.knowledge_database import knowledge_async_session
+                async with knowledge_async_session() as fresh_db:
                     doc_result = await fresh_db.execute(
                         select(Document).where(Document.id == doc_id)
                     )
@@ -399,8 +399,8 @@ class KnowledgeBaseService:
             raise
 
         # 返回最新状态的文档
-        from app.db.database import async_session
-        async with async_session() as fresh_db:
+        from app.db.knowledge_database import knowledge_async_session
+        async with knowledge_async_session() as fresh_db:
             doc_result = await fresh_db.execute(
                 select(Document).where(Document.id == doc_id)
             )
@@ -419,7 +419,7 @@ class KnowledgeBaseService:
         if self.ingestion_service_factory is not None:
             return self.ingestion_service_factory(processing_options or {})
 
-        from app.db.database import async_session
+        from app.db.knowledge_database import knowledge_async_session
         from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
         from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
         from app.knowledge_base.graph_repository import KnowledgeGraphRepository
@@ -427,7 +427,7 @@ class KnowledgeBaseService:
         from app.knowledge_base.ingestion_service import KnowledgeIngestionService
 
         return KnowledgeIngestionService(
-            session_factory=async_session,
+            session_factory=knowledge_async_session,
             processor=self.processor,
             chunk_repository_factory=KnowledgeChunkRepository,
             graph_repository_factory=KnowledgeGraphRepository,
@@ -535,9 +535,9 @@ class KnowledgeBaseService:
                 temp_path.unlink()
             raise
 
-        from app.db.database import async_session
+        from app.db.knowledge_database import knowledge_async_session
 
-        async with async_session() as session:
+        async with knowledge_async_session() as session:
             document = await session.get(Document, doc_id)
             if document is None:
                 raise ValueError(f"Document not found after replacement: {doc_id}")
@@ -655,12 +655,12 @@ class KnowledgeBaseService:
             return []
 
         if use_graph_retrieval:
-            from app.db.database import async_session
+            from app.db.knowledge_database import knowledge_async_session
             from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 
             rerank_mode = self._normalize_rerank_mode(use_reranker)
             retrieval = KnowledgeRetrievalService(
-                session_factory=async_session,
+                session_factory=knowledge_async_session,
                 vector_store=self.vector_store,
                 reranker=self._rerank if rerank_mode != "never" else None,
             )
