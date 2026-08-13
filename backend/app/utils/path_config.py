@@ -11,6 +11,7 @@
 import os
 from pathlib import Path
 import tempfile
+import re
 from typing import Iterable
 import structlog
 
@@ -39,6 +40,11 @@ def resolve_agent_path(path: str | Path) -> Path:
     raw = str(path or "").strip()
     if not raw:
         raise ValueError("path is required")
+    # Do not interpret a path from another OS as a relative server path.
+    if os.name != "nt" and (
+        re.match(r"^[A-Za-z]:[\\/]", raw) or raw.startswith(("\\\\", "//"))
+    ):
+        raise ValueError("path belongs to a different operating system")
     candidate = Path(raw).expanduser()
     if not candidate.is_absolute():
         candidate = PROJECT_ROOT / candidate

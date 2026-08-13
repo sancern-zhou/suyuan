@@ -33,6 +33,11 @@ class _Processor:
         ]
 
 
+class _EmptyChunkProcessor(_Processor):
+    async def chunk(self, **kwargs):
+        return []
+
+
 class _Extractor:
     async def extract_chunk(self, *, kb_id, chunk, schema):
         if chunk.chunk_index == 1:
@@ -203,4 +208,25 @@ async def test_original_storage_failure_marks_failed_before_chunks(ingestion_dat
         chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
     assert document.status == DocumentStatus.FAILED
     assert document.ingestion_status == "failed"
+    assert chunks == []
+
+
+@pytest.mark.asyncio
+async def test_empty_chunk_result_is_failed_instead_of_completed(ingestion_database):
+    service = KnowledgeIngestionService(
+        session_factory=ingestion_database,
+        processor=_EmptyChunkProcessor(),
+        extractor=_Extractor(),
+        file_storage=None,
+    )
+
+    with pytest.raises(ValueError, match="未生成任何分块"):
+        await service.ingest_document("doc1")
+
+    async with ingestion_database() as session:
+        document = await session.get(Document, "doc1")
+        chunks = list((await session.execute(select(KnowledgeChunk))).scalars())
+    assert document.status == DocumentStatus.FAILED
+    assert document.ingestion_status == "failed"
+    assert "未生成任何分块" in document.processing_error
     assert chunks == []

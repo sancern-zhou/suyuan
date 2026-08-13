@@ -32,11 +32,11 @@
         <div v-if="loading" class="loading-state">加载中...</div>
 
         <div v-else class="kb-sections">
-          <!-- 公共知识库 -->
-          <div class="kb-section" v-if="publicKbs.length > 0">
-            <div class="section-title">公共知识库</div>
+          <!-- 共享知识库 -->
+          <div class="kb-section">
+            <div class="section-title">共享知识库</div>
             <div
-              v-for="kb in publicKbs"
+              v-for="kb in sharedKbs"
               :key="kb.id"
               class="kb-card"
               :class="{ active: currentKb?.id === kb.id }"
@@ -44,16 +44,36 @@
             >
               <div class="kb-card-header">
                 <span class="kb-name">{{ kb.name }}</span>
-                <span class="kb-badge public">公共</span>
+                <span class="kb-badge shared">共享</span>
               </div>
               <div class="kb-card-meta">
                 {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
+            <div v-if="sharedKbs.length === 0" class="section-empty">暂无共享知识库</div>
+          </div>
+
+          <!-- 本地公共知识库 -->
+          <div class="kb-section">
+            <div class="section-title">本地知识库</div>
+            <div
+              v-for="kb in localKbs"
+              :key="kb.id"
+              class="kb-card"
+              :class="{ active: currentKb?.id === kb.id }"
+              @click="selectKb(kb)"
+            >
+              <div class="kb-card-header">
+                <span class="kb-name">{{ kb.name }}</span>
+                <span class="kb-badge local">本地</span>
+              </div>
+              <div class="kb-card-meta">{{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块</div>
+            </div>
+            <div v-if="localKbs.length === 0" class="section-empty">暂无本地公共知识库</div>
           </div>
 
           <!-- 个人知识库 -->
-          <div class="kb-section" v-if="privateKbs.length > 0">
+          <div class="kb-section">
             <div class="section-title">我的知识库</div>
             <div
               v-for="kb in privateKbs"
@@ -70,11 +90,9 @@
                 {{ kb.document_count }} 文档 / {{ kb.chunk_count }} 分块 / {{ kb.vector_store_scope === 'shared' ? '共享索引' : '本地索引' }}
               </div>
             </div>
+            <div v-if="privateKbs.length === 0" class="section-empty">暂无个人知识库</div>
           </div>
 
-          <div v-if="publicKbs.length === 0 && privateKbs.length === 0" class="empty-state">
-            暂无知识库，点击上方按钮创建
-          </div>
         </div>
       </div>
 
@@ -83,8 +101,8 @@
         <div class="panel-header">
           <div class="detail-title">
             <h2>{{ currentKb.name }}</h2>
-            <span class="kb-badge" :class="currentKb.kb_type">
-              {{ currentKb.kb_type === 'public' ? '公共' : '个人' }}
+            <span class="kb-badge" :class="currentKb.vector_store_scope === 'shared' ? 'shared' : currentKb.kb_type">
+              {{ currentKb.vector_store_scope === 'shared' ? '共享' : (currentKb.kb_type === 'public' ? '本地' : '个人') }}
             </span>
           </div>
           <div class="detail-actions">
@@ -231,7 +249,7 @@
                 <span class="doc-meta">
                   {{ formatFileSize(doc.file_size) }} |
                   {{ doc.chunk_count }} 分块 |
-                  <span :class="'status-' + doc.status">{{ getStatusText(doc.status) }}</span>
+                  <span :class="'status-' + doc.status">{{ getDocumentProgressText(doc) }}</span>
                   <span v-if="doc.status === 'completed'" class="view-hint">点击查看分段</span>
                 </span>
               </div>
@@ -519,7 +537,8 @@ const searchElapsed = ref(0)
 const searchPerformed = ref(false)
 
 const loading = computed(() => store.loading)
-const publicKbs = computed(() => store.publicKbs)
+const sharedKbs = computed(() => store.sharedKbs)
+const localKbs = computed(() => store.localKbs)
 const privateKbs = computed(() => store.privateKbs)
 const currentKb = computed(() => store.currentKb)
 const documents = computed(() => store.documents)
@@ -536,6 +555,46 @@ const graphBuildBusy = computed(() => ['queued', 'running'].includes(graphBuildT
 const graphBuildStatusLabel = computed(() => ({ queued: '排队中', running: '构建中', completed: '已完成', failed: '失败', partial: '部分完成', cancelled: '已取消' }[graphBuildTask.value?.status] || graphBuildTask.value?.status || '未知'))
 let graphBuildPoller
 let graphBuildRequest = 0
+let documentPollTimer
+let documentPollInFlight = false
+
+const isDocumentProcessing = (doc) => ['pending', 'processing'].includes(doc?.status)
+const hasProcessingDocuments = () => documents.value.some(isDocumentProcessing)
+
+const getDocumentProgressText = (doc) => {
+  if (doc.status === 'failed') return '处理失败'
+  if (doc.status === 'completed') return doc.graph_status === 'pending' ? '入库完成，等待图谱' : '已完成'
+  const phase = doc.extra_metadata?.processing_phase
+  return ({ queued: '排队中', storing: '保存原文件', parsing: '解析文档', chunking: 'LLM语义分块', indexing: '写入向量索引' }[phase] || '处理中')
+}
+
+const stopDocumentPolling = () => {
+  if (documentPollTimer) clearTimeout(documentPollTimer)
+  documentPollTimer = null
+}
+
+const ensureDocumentPolling = (delay = 2000) => {
+  if (documentPollTimer || !currentKb.value || !hasProcessingDocuments()) return
+
+  documentPollTimer = setTimeout(async () => {
+    documentPollTimer = null
+    const requestedKbId = currentKb.value?.id
+    if (!requestedKbId || documentPollInFlight) {
+      ensureDocumentPolling()
+      return
+    }
+
+    documentPollInFlight = true
+    try {
+      await store.fetchDocuments(requestedKbId, { silent: true })
+    } catch (e) {
+      // 临时网络错误不应让进度轮询永久停止。
+    } finally {
+      documentPollInFlight = false
+      if (currentKb.value?.id === requestedKbId) ensureDocumentPolling()
+    }
+  }, delay)
+}
 
 onMounted(async () => {
   await store.fetchKnowledgeBases()
@@ -547,9 +606,10 @@ onUnmounted(() => {
     clearInterval(graphBuildPoller)
     graphBuildPoller = null
   }
+  stopDocumentPolling()
 })
 
-watch(() => currentKb.value, (kb) => {
+watch(() => currentKb.value, async (kb) => {
   if (kb) {
     editForm.value = {
       name: kb.name,
@@ -559,8 +619,24 @@ watch(() => currentKb.value, (kb) => {
   }
   if (graphBuildPoller) clearInterval(graphBuildPoller)
   graphBuildTask.value = null
-  if (kb) Promise.all([loadGraphBuildTask(), store.loadKnowledgeScene(kb.id)])
+  stopDocumentPolling()
+  if (kb) {
+    const requestedKbId = kb.id
+    await Promise.all([loadGraphBuildTask(), store.loadKnowledgeScene(kb.id), store.fetchDocuments(kb.id)])
+    if (currentKb.value?.id === requestedKbId) ensureDocumentPolling()
+  }
 })
+
+// 上传和重试会在不切换知识库的情况下新增 pending/processing 文档；状态变化时
+// 必须重新启动轮询，而不是依赖进入页面时创建的一次性定时器。
+watch(
+  () => documents.value.map(doc => `${doc.id}:${doc.status}`).join('|'),
+  () => {
+    if (hasProcessingDocuments()) ensureDocumentPolling()
+    else stopDocumentPolling()
+  },
+  { flush: 'post' }
+)
 
 const loadGraphBuildTask = async (requestedKbId = currentKb.value?.id) => {
   if (!requestedKbId) return
@@ -677,6 +753,7 @@ const uploadFiles = async (files) => {
         chunk_overlap: uploadOptions.value.chunk_overlap,
         llm_mode: uploadOptions.value.llm_mode
       })
+      ensureDocumentPolling(0)
     } catch (e) {
       alert(`上传"${file.name}"失败: ${e.message}`)
     }
@@ -701,6 +778,7 @@ const handleRetry = async (docId) => {
   if (!currentKb.value) return
   try {
     await store.retryDocument(currentKb.value.id, docId)
+    ensureDocumentPolling(0)
   } catch (e) {
     alert('重试失败: ' + e.message)
   }
@@ -1046,6 +1124,22 @@ const getChunkingStrategyHint = (strategy, llmMode = 'local') => {
 .kb-badge.public {
   background: #e6f7ff;
   color: #1890ff;
+}
+
+.kb-badge.shared {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.kb-badge.local {
+  background: #f0f9eb;
+  color: #389e0d;
+}
+
+.section-empty {
+  padding: 8px 10px;
+  color: #8c8c8c;
+  font-size: 12px;
 }
 
 .kb-badge.private {

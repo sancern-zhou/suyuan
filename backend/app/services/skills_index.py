@@ -25,7 +25,8 @@ def generate_skills_index(skills_dir: Path | None = None) -> dict[str, object]:
         raise FileNotFoundError(format_agent_path(skills_dir))
 
     entries: list[tuple[str, str, str]] = []
-    for skill_path in sorted(skills_dir.glob("*.md"), key=lambda path: path.name.lower()):
+    skill_paths = list(skills_dir.glob("*.md")) + list(skills_dir.glob("*/SKILL.md"))
+    for skill_path in sorted(skill_paths, key=lambda path: str(path.relative_to(skills_dir)).lower()):
         if skill_path.name == INDEX_FILENAME:
             continue
         metadata = parse_skill_metadata(
@@ -34,7 +35,7 @@ def generate_skills_index(skills_dir: Path | None = None) -> dict[str, object]:
         )
         title = _single_line(metadata["title"]).replace("[", "").replace("]", "")
         description = _single_line(metadata["description"])
-        entries.append((title, skill_path.name, description))
+        entries.append((title, skill_path.relative_to(skills_dir).as_posix(), description))
 
     lines = [
         "# 技能索引",

@@ -80,16 +80,21 @@ class KnowledgeIngestionService:
         staging_path = snapshot.file_path
         stored_now = False
         try:
+            await self._set_processing_phase(document_id, "storing", snapshot.content_generation)
             snapshot, stored_now = await self._store_original_file(snapshot)
+            await self._set_processing_phase(document_id, "parsing", snapshot.content_generation)
             content = await self._parse_original(snapshot)
+            await self._set_processing_phase(document_id, "chunking", snapshot.content_generation)
             chunks = await self.processor.chunk(
                 content=content,
                 strategy=self.processing_options.get("chunking_strategy", "llm"),
-                chunk_size=self.processing_options.get("chunk_size", 800),
+                chunk_size=self.processing_options.get("chunk_size", 1200),
                 chunk_overlap=self.processing_options.get("chunk_overlap", 100),
                 filename=snapshot.filename,
                 llm_mode=self.processing_options.get("llm_mode", "online"),
             )
+            if not chunks:
+                raise ValueError("文档解析后未生成任何分块，不能标记为已完成，请检查目录识别或解析结果")
         except Exception as exc:
             await self._mark_document_failed(
                 document_id,
@@ -102,6 +107,7 @@ class KnowledgeIngestionService:
                 Path(staging_path).unlink(missing_ok=True)
 
         drafts = build_chunk_drafts(chunks)
+        await self._set_processing_phase(document_id, "indexing", snapshot.content_generation)
         persisted = await self._persist_chunks_and_outbox(snapshot, drafts)
 
         current_chunks = [*persisted.added, *persisted.reused]
@@ -133,6 +139,19 @@ class KnowledgeIngestionService:
             changed_relations=0,
             status=status,
         )
+
+    async def _set_processing_phase(self, document_id: str, phase: str, generation: int) -> None:
+        """Expose a lightweight progress phase without requiring a schema migration."""
+        async with self.session_factory() as session, session.begin():
+            document = await session.scalar(
+                select(Document).where(Document.id == document_id).with_for_update()
+            )
+            if document is None or document.content_generation != generation:
+                return
+            metadata = dict(document.extra_metadata or {})
+            metadata["processing_phase"] = phase
+            metadata["processing_phase_updated_at"] = datetime.utcnow().isoformat()
+            document.extra_metadata = metadata
 
     async def replace_document(
         self,
@@ -218,6 +237,9 @@ class KnowledgeIngestionService:
             document.ingestion_status = "processing"
             document.graph_status = "pending" if kb.graph_enabled else "disabled"
             document.processing_error = None
+            metadata = dict(document.extra_metadata or {})
+            metadata["processing_phase"] = "queued"
+            document.extra_metadata = metadata
             schema = self._schema(kb.graph_schema)
             rules = []
             if int(kb.rule_version or 0) > 0:
@@ -525,6 +547,9 @@ class KnowledgeIngestionService:
             document.graph_status = graph_status
             document.processing_error = None
             document.error_message = None
+            metadata = dict(document.extra_metadata or {})
+            metadata["processing_phase"] = "completed"
+            document.extra_metadata = metadata
             document.chunk_count = chunk_count
             document.file_preview_text = content[:500] if content else None
             document.processed_at = datetime.utcnow()

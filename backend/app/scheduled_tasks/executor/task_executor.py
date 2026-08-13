@@ -288,6 +288,13 @@ class ScheduledTaskExecutor:
         # custom 模式由任务执行器创建一个固定工具集的 Agent 并在所有步骤间复用。
         agent = agent or self.agent_factory()
 
+        selected_skill_context = None
+        if task is not None and task.skill_id:
+            from app.agent.selection_context import load_skill_selection
+
+            selection = load_skill_selection(task.skill_id)
+            selected_skill_context = selection.content
+
         logger.info(
             f"Running agent step with session_id: {session_id}, "
             f"prompt: {prompt[:100]}..."
@@ -313,6 +320,7 @@ class ScheduledTaskExecutor:
                 session_id=session_id,
                 manual_mode=manual_mode,
                 session_storage_mode=("custom" if manual_mode == "custom" else "assistant"),
+                selected_skill_context=selected_skill_context,
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

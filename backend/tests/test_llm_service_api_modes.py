@@ -600,7 +600,10 @@ async def test_document_processor_uses_configured_model_tier(monkeypatch):
     assert result == '[{"title":"片段"}]'
     assert captured["tier"] == "flash"
     assert captured["messages"] == [{"role": "user", "content": "请分块"}]
-    assert captured["system"] == "你是文档分析助手。直接返回JSON，不要解释。"
+    assert "内容保真与版式校正分块助手" in captured["system"]
+    assert "禁止总结" in captured["system"]
+    assert "只允许修复确定的错误断行、公式和表格排版" in captured["system"]
+    assert captured["max_tokens"] == 128000
 
 
 def test_all_qwen_visual_runtimes_are_migrated_to_bailian():

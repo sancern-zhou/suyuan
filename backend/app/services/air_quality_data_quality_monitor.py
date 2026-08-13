@@ -65,11 +65,21 @@ class DataQualityMonitorConfig:
 class AirQualityDataQualityMonitorService:
     """Fetch station hourly data, flag suspicious quality issues, and persist issue packages."""
 
-    def __init__(self, config: DataQualityMonitorConfig, context: Optional[ExecutionContext] = None):
+    def __init__(
+        self,
+        config: DataQualityMonitorConfig,
+        context: Optional[ExecutionContext] = None,
+        *,
+        rules_only: bool = False,
+    ):
         self.config = config
-        self.context = context or self._create_context(config.session_id)
         self.backend_dir = Path(__file__).resolve().parents[2]
-        self.output_root = self._resolve_output_root(config.output_root)
+        self.context = context if rules_only else (context or self._create_context(config.session_id))
+        self.output_root = (
+            Path(config.output_root) if rules_only and config.output_root else None
+        )
+        if not rules_only:
+            self.output_root = self._resolve_output_root(config.output_root)
 
     async def run(self) -> Dict[str, Any]:
         started_at = datetime.now(TZ_SHANGHAI)

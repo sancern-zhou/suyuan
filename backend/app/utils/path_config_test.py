@@ -28,6 +28,11 @@ def test_agent_path_contract_rejects_blank_and_detects_escape(tmp_path, monkeypa
     assert not path_config.is_path_within(tmp_path.parent / "outside.txt", [tmp_path])
 
 
+def test_agent_path_contract_rejects_foreign_windows_path_on_posix():
+    with pytest.raises(ValueError, match="different operating system"):
+        path_config.resolve_agent_path(r"D:\\溯源\\data\\document.pdf")
+
+
 def test_core_file_tools_delegate_relative_paths_to_shared_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
     expected = (tmp_path / "outputs/report.txt").resolve()

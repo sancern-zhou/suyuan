@@ -67,6 +67,10 @@ class ScheduledTask(BaseModel):
         default=None,
         description="custom 模式固定使用的工具名称列表",
     )
+    skill_id: Optional[str] = Field(
+        default=None,
+        description="执行时注入的已发布 Skill ID",
+    )
 
     # 触发配置
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
@@ -129,6 +133,11 @@ class ScheduledTask(BaseModel):
             raise ValueError("tool_names is required for custom mode")
         if self.execution_mode != "custom" and self.tool_names is not None:
             raise ValueError("tool_names is only valid for custom mode")
+        if self.skill_id is not None:
+            skill_id = self.skill_id.strip()
+            if not skill_id or any(part in skill_id for part in ("/", "\\", "..")):
+                raise ValueError("skill_id must be a safe published skill id")
+            self.skill_id = skill_id
         if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type is None:
             raise ValueError("schedule_type is required for schedule tasks")
         if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():

@@ -58,3 +58,27 @@ def test_clean_peer_consistent_data_has_no_issue():
     issues = service.evaluate_records("广州", records)
 
     assert issues == []
+
+
+def test_rules_only_evaluator_does_not_create_runtime_context(monkeypatch):
+    monkeypatch.setattr(
+        AirQualityDataQualityMonitorService,
+        "_create_context",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("rules-only evaluation must not create a runtime context")
+        ),
+    )
+
+    service = AirQualityDataQualityMonitorService(
+        DataQualityMonitorConfig(cities=["南京市"]),
+        rules_only=True,
+    )
+
+    assert service.context is None
+    assert service.evaluate_records("南京市", []) == [{
+        "severity": "high",
+        "rule_id": "no_station_hour_data",
+        "city": "南京市",
+        "message": "No station hourly monitoring data was returned.",
+        "recommendation": "Check data acquisition, station mapping, and API availability before judging environmental mechanisms.",
+    }]

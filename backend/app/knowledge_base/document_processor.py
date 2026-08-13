@@ -21,7 +21,6 @@ from pathlib import Path
 from enum import Enum
 import structlog
 from config.settings import settings
-from app.services.bailian_multimodal import call_bailian_vision
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -36,7 +35,15 @@ class LLMMode(str, Enum):
 
 
 # LLM分块的最大字符数限制（从.env配置读取）
-LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE"))
+# Keep individual JSON responses below the provider's output-token ceiling.  The
+# previous 60k default routinely produced truncated JSON (max_tokens reached),
+# which then caused the whole document to fall back to sentence chunking.
+LLM_CHUNK_MAX_CHARS_ONLINE = int(os.getenv("LLM_CHUNK_MAX_CHARS_ONLINE", "30000"))
+# Knowledge-base chunks contain source text plus JSON escaping and metadata.
+# GPT-5.6 Luna officially supports 128K output and both production Flash
+# candidates accept this request value. Keep it configurable so a
+# future provider with a lower output cap can override it without code changes.
+LLM_CHUNK_MAX_OUTPUT_TOKENS = int(os.getenv("LLM_CHUNK_MAX_OUTPUT_TOKENS", "128000"))
 
 class DocumentProcessor:
     """
@@ -65,53 +72,21 @@ class DocumentProcessor:
         ".rtf": "rtf"
     }
 
-    OCR_API_URL = settings.bailian_base_url
-    OCR_API_KEY = settings.bailian_api_key or ""
+    # Scanned-document OCR is handled by the configured multimodal model.  The
+    # production default is the same vision-capable model used by the main LLM
+    # route; it must not depend on a local Tesseract executable or on the
+    # separate Bailian OCR endpoint.
+    OCR_PROVIDER = os.getenv("KNOWLEDGE_BASE_OCR_PROVIDER", "doubao").strip().lower()
+    OCR_MODEL = os.getenv(
+        "KNOWLEDGE_BASE_OCR_MODEL",
+        getattr(settings, "doubao_model", "gpt-5.6-luna"),
+    ).strip()
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
     OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "120"))
     
     def __init__(self):
         self._unstructured = None
         self._embedding_model = None
-
-        # 配置Tesseract OCR路径（Windows本地）
-        self._configure_tesseract()
-
-    def _configure_tesseract(self):
-        """配置Tesseract OCR"""
-        try:
-            import pytesseract
-            
-            # 尝试从环境变量获取路径
-            tesseract_cmd = os.getenv("TESSERACT_CMD")
-            
-            # 如果没有环境变量，尝试常见路径
-            if not tesseract_cmd or not os.path.exists(tesseract_cmd):
-                common_paths = [
-                    r"D:\Tesseract-OCR\tesseract.exe",
-                    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-                ]
-                for path in common_paths:
-                    if os.path.exists(path):
-                        tesseract_cmd = path
-                        break
-            
-            if tesseract_cmd and os.path.exists(tesseract_cmd):
-                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-                logger.info("tesseract_configured", path=tesseract_cmd)
-                
-                # 设置 tessdata 路径
-                tessdata = os.getenv("TESSDATA_PREFIX")
-                if not tessdata:
-                    tessdata = os.path.join(os.path.dirname(tesseract_cmd), "tessdata")
-                if os.path.exists(tessdata):
-                    os.environ["TESSDATA_PREFIX"] = tessdata
-            else:
-                logger.warning("tesseract_not_found")
-                
-        except ImportError:
-            logger.warning("pytesseract_not_installed")
 
     def _html_table_to_text(self, html: str) -> str:
         """将HTML表格转换为文本格式"""
@@ -137,88 +112,8 @@ class DocumentProcessor:
             logger.warning("html_table_parse_failed", error=str(e))
             return html
 
-    def _extract_tables_with_gmft(self, file_path: str) -> List[str]:
-        """使用 gmft (基于 Microsoft Table Transformer) 从 PDF 中提取表格"""
-        try:
-            # 设置环境变量（确保可以加载模型）
-            os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
-            os.environ.setdefault('HF_HUB_OFFLINE', '0')
-            os.environ.setdefault('TRANSFORMERS_OFFLINE', '0')
-            
-            from gmft.auto import TableDetector, AutoTableFormatter
-            from gmft.pdf_bindings import PyPDFium2Document
-            
-            # 延迟初始化检测器和格式化器（只初始化一次）
-            if not hasattr(self, '_gmft_detector'):
-                logger.info("initializing_gmft_models")
-                self._gmft_detector = TableDetector()
-                self._gmft_formatter = AutoTableFormatter()
-                logger.info("gmft_models_initialized")
-            
-            tables_text = []
-            doc = PyPDFium2Document(file_path)
-            
-            try:
-                for page_idx, page in enumerate(doc):
-                    # 检测表格
-                    tables = self._gmft_detector.extract(page)
-                    
-                    for table_idx, table in enumerate(tables):
-                        try:
-                            # 格式化表格为DataFrame
-                            ft = self._gmft_formatter.extract(table)
-                            df = ft.df()
-                            
-                            # 过滤掉列数过多的"表格"（可能是误识别的流程图等）
-                            if len(df.columns) > 10:
-                                logger.debug("skipping_wide_table", page=page_idx+1, cols=len(df.columns))
-                                continue
-                            
-                            # 过滤掉只有1行的表格（可能是误识别）
-                            if len(df) < 2:
-                                logger.debug("skipping_single_row_table", page=page_idx+1)
-                                continue
-                            
-                            # 将DataFrame转换为文本格式
-                            rows = []
-                            # 添加表头
-                            header = ' | '.join(str(col).replace('\n', ' ').strip() for col in df.columns)
-                            rows.append(header)
-                            
-                            # 添加数据行
-                            for _, row in df.iterrows():
-                                cells = []
-                                for val in row:
-                                    if val is None or (isinstance(val, float) and str(val) == 'nan'):
-                                        cells.append("")
-                                    else:
-                                        cells.append(str(val).replace('\n', ' ').strip())
-                                rows.append(' | '.join(cells))
-                            
-                            table_text = '\n'.join(rows)
-                            if table_text.strip():
-                                tables_text.append(f"[表格 - 第{page_idx+1}页]\n{table_text}")
-                                
-                        except Exception as e:
-                            logger.warning("gmft_table_format_error", page=page_idx+1, error=str(e))
-                            continue
-            finally:
-                doc.close()
-            
-            if tables_text:
-                logger.info("gmft_tables_extracted", table_count=len(tables_text))
-            
-            return tables_text
-            
-        except ImportError as e:
-            logger.warning("gmft_not_installed_fallback_to_pdfplumber", error=str(e))
-            return self._extract_tables_with_pdfplumber(file_path)
-        except Exception as e:
-            logger.warning("gmft_extraction_failed_fallback_to_pdfplumber", error=str(e))
-            return self._extract_tables_with_pdfplumber(file_path)
-    
     def _extract_tables_with_pdfplumber(self, file_path: str) -> List[str]:
-        """使用 pdfplumber 从 PDF 中提取表格（备用方案）"""
+        """使用 pdfplumber 从 PDF 中提取表格"""
         try:
             import pdfplumber
             
@@ -289,13 +184,19 @@ class DocumentProcessor:
             logger.error("pdf_to_images_failed", error=str(e), file_path=file_path)
             raise
 
-    # OCR 提示词（百炼多模态模型）
-    OCR_PROMPT_DEFAULT = """识别图片中的所有文字，要求：
-1. 按阅读顺序输出纯文本
-2. 表格用markdown格式（| 列1 | 列2 |）
-3. 不要添加```代码块标记
-4. 不要添加页码或页眉页脚
-5. 公式用LaTeX格式"""
+    # OCR 提示词（共享多模态模型）
+    OCR_PROMPT_DEFAULT = """完整识别当前页面，并按页面视觉布局恢复可阅读的 Markdown 文本。
+
+内容保真要求：
+1. 保留所有正文、标题、条款号、列表项、表名、图名、注释、数值、单位、变量和公式；禁止总结、概括、改写、删减或补充原文信息。
+2. 只依据图片中能够看清的内容校正 OCR 识别错误；无法确认的字符保持原样或标记为〔无法辨认〕，不得猜测。
+
+版式与公式校正要求：
+3. 按正常阅读顺序重建段落。修复因 PDF/OCR 排版造成的错误断行，尤其不得让一个汉字、一个英文字母、一个数字或一个公式符号单独占一行；标题、真实分段、列表和表格换行除外。
+4. 合并被拆开的英文单词、化学式、上下标和单位，例如将分行的“NO2”与“-”恢复为同一个表达式；不得改变字符、数值、正负号、上下标含义或单位。
+5. 数学公式和化学式按图片校正结构，并使用标准 LaTeX：行内公式用 $...$，独立公式用 $$...$$；准确保留分式、根号、上下标、希腊字母、运算符、公式编号及变量大小写。
+6. 表格恢复为 Markdown 表格，保持表名、表头、行列对应关系、每个单元格、单位和注释完整；无法可靠判断合并单元格时，优先保留全部文字，不要臆造对应关系。
+7. 删除重复页眉页脚和独立页码，不要输出 ``` 代码块标记，也不要解释处理过程。"""
     
     async def _call_ocr_api_single(
         self,
@@ -305,7 +206,13 @@ class DocumentProcessor:
         max_retries: int = 3
     ) -> tuple:
         """
-        调用 OCR API 处理单张图片（阿里云百炼 - 通义千问VL）
+        调用多模态模型处理单张图片。
+
+        The image is sent through the shared LLM service so the configured
+        provider/model (by default ``doubao/gpt-5.6-luna``) is used.  This is
+        intentionally separate from the legacy Bailian OCR helper: the
+        knowledge-base scan path must use the same multimodal model as the
+        rest of the application.
 
         Args:
             image_bytes: 图片字节数据
@@ -323,21 +230,50 @@ class DocumentProcessor:
         if prompt is None:
             prompt = self.OCR_PROMPT_DEFAULT
         
-        base64_image = base64.b64encode(image_bytes).decode()
+        base64_image = base64.b64encode(image_bytes).decode("ascii")
         
         for attempt in range(max_retries):
             try:
-                content, _ = await call_bailian_vision(
-                    image_url=f"data:image/png;base64,{base64_image}",
-                    prompt=prompt,
-                    api_key=self.OCR_API_KEY,
-                    base_url=self.OCR_API_URL,
-                    model=settings.bailian_model,
-                    timeout=float(self.OCR_TIMEOUT),
-                    max_tokens=7000,
-                )
+                with llm_service.use_provider_model(self.OCR_PROVIDER, self.OCR_MODEL):
+                    response = await llm_service.chat_anthropic(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": "image/png",
+                                            "data": base64_image,
+                                        },
+                                    },
+                                    {"type": "text", "text": prompt},
+                                ],
+                            }
+                        ],
+                        max_tokens=7000,
+                        temperature=0.1,
+                        system=(
+                            "你是知识库扫描文档 OCR 与版式恢复助手。以页面图像为唯一依据，完整转写并修复明显的错误断行、"
+                            "表格错位和公式排版；保持所有原文信息、数值和符号不变，禁止总结、改写、删减或猜测。直接输出结果，不要解释。"
+                        ),
+                    )
+                content = "\n".join(
+                    str(getattr(block, "text", ""))
+                    for block in response.get("content", [])
+                    if getattr(block, "type", None) == "text"
+                ).strip()
+                if not content:
+                    raise RuntimeError("multimodal OCR returned no text")
                 content = self._clean_repeated_substrings(content)
-                logger.debug("ocr_page_success", page_num=page_num, content_length=len(content))
+                logger.debug(
+                    "ocr_page_success",
+                    page_num=page_num,
+                    content_length=len(content),
+                    provider=self.OCR_PROVIDER,
+                    model=self.OCR_MODEL,
+                )
                 return (page_num, content)
                     
             except Exception as e:
@@ -351,7 +287,7 @@ class DocumentProcessor:
         return (page_num, f"[OCR失败: 重试{max_retries}次后仍失败 - 第{page_num + 1}页]")
 
     def _clean_repeated_substrings(self, text: str) -> str:
-        """清理文本中的重复子串（HunyuanOCR 可能产生）"""
+        """清理视觉模型偶尔产生的重复子串。"""
         n = len(text)
         if n < 8000:
             return text
@@ -372,7 +308,7 @@ class DocumentProcessor:
 
     async def _process_pdf_with_ocr(self, file_path: str) -> str:
         """
-        使用 DeepSeek-OCR 处理扫描件 PDF
+        使用共享多模态模型处理扫描件 PDF
         
         Args:
             file_path: PDF 文件路径
@@ -481,14 +417,18 @@ class DocumentProcessor:
         
         file_ext = Path(file_path).suffix.lower()
         
-        # PDF 文件特殊处理：检测扫描件并使用 HunyuanOCR
+        # PDF 文件特殊处理：检测扫描件并使用逐页多模态 OCR
         if file_ext == ".pdf":
             # 先尝试 fast 策略提取文本
             content, is_scanned = await asyncio.to_thread(self._try_fast_pdf_parse, file_path)
             
             if is_scanned:
-                # 扫描件：使用 DeepSeek-OCR（硅基流动）
-                logger.info("pdf_is_scanned_using_deepseek_ocr", file_path=file_path)
+                logger.info(
+                    "pdf_is_scanned_using_multimodal_ocr",
+                    file_path=file_path,
+                    provider=self.OCR_PROVIDER,
+                    model=self.OCR_MODEL,
+                )
                 content = await self._process_pdf_with_ocr(file_path)
             
             return content
@@ -504,8 +444,8 @@ class DocumentProcessor:
             (content, is_scanned): 内容和是否为扫描件
         """
         try:
-            # 使用 gmft 提取表格
-            tables_text = self._extract_tables_with_gmft(file_path)
+            # 使用 pdfplumber 提取表格
+            tables_text = self._extract_tables_with_pdfplumber(file_path)
 
             # PyMuPDF直接读取文本层，避免fast路径加载Unstructured的高精度推理栈。
             import fitz
@@ -589,7 +529,7 @@ class DocumentProcessor:
             # 表格元素特殊处理
             if el_type == "Table":
                 text = str(el).strip()
-                # 只保留 gmft 提取的表格（以 "[表格 - 第" 开头）
+                # 只保留 pdfplumber 提取的表格（以 "[表格 - 第" 开头）
                 # 过滤掉 unstructured 提取的混乱表格文本
                 if text.startswith("[表格 - 第"):
                     content_parts.append(text)
@@ -605,7 +545,7 @@ class DocumentProcessor:
         self,
         content: str,
         strategy: str = "llm",
-        chunk_size: int = 800,
+        chunk_size: int = 1200,
         chunk_overlap: int = 100,
         filename: str = "",
         llm_mode: str = "online"
@@ -703,7 +643,7 @@ class DocumentProcessor:
     async def chunk_with_llm(
         self,
         content: str,
-        chunk_size: int = 512,
+        chunk_size: int = 1200,
         filename: str = "",
         llm_mode: str = "online"
     ) -> List[Dict[str, Any]]:
@@ -759,17 +699,42 @@ class DocumentProcessor:
                 # 并发处理各segment
                 semaphore = asyncio.Semaphore(self.LLM_CHUNK_MAX_CONCURRENT)
                 
-                async def process_segment(seg_idx: int, segment: str):
-                    async with semaphore:
-                        chunks = await self._llm_chunk_segment_with_context(
-                            segment=segment,
-                            chunk_size=chunk_size,
-                            doc_context=doc_context,
+                async def process_segment(seg_idx: int, segment: str, retry_depth: int = 0):
+                    try:
+                        async with semaphore:
+                            chunks = await self._llm_chunk_segment_with_context(
+                                segment=segment,
+                                chunk_size=chunk_size,
+                                doc_context=doc_context,
+                                segment_index=seg_idx,
+                                total_segments=len(segments),
+                                llm_mode=llm_mode
+                            )
+                    except Exception:
+                        # A response may still hit the provider output limit.
+                        # Retry the same content in smaller semantic windows,
+                        # keeping LLM chunking instead of silently degrading
+                        # the entire document to sentence boundaries.
+                        retry_limit = 2
+                        if retry_depth >= retry_limit or len(segment) <= 8000:
+                            raise
+                        smaller = self._split_into_segments(segment, max(8000, len(segment) // 2))
+                        logger.warning(
+                            "llm_chunk_segment_retry_split",
                             segment_index=seg_idx,
-                            total_segments=len(segments),
-                            llm_mode=llm_mode
+                            retry_depth=retry_depth + 1,
+                            original_length=len(segment),
+                            retry_segments=len(smaller),
                         )
-                        return (seg_idx, chunks)
+                        nested_results = []
+                        for part_idx, part in enumerate(smaller):
+                            nested_results.append(await process_segment(
+                                seg_idx * 100 + part_idx,
+                                part,
+                                retry_depth + 1,
+                            ))
+                        chunks = [chunk for _, result_chunks in nested_results for chunk in result_chunks]
+                    return (seg_idx, chunks)
                 
                 tasks = [process_segment(i, seg) for i, seg in enumerate(segments)]
                 results = await asyncio.gather(*tasks)
@@ -784,15 +749,35 @@ class DocumentProcessor:
                         all_chunks.append(chunk)
             else:
                 # 不需要分段：一次调用完成分块和上下文生成
-                all_chunks = await self._llm_chunk_single_pass(
-                    content=content,
-                    chunk_size=chunk_size,
-                    filename=filename,
-                    llm_mode=llm_mode
-                )
+                try:
+                    all_chunks = await self._llm_chunk_single_pass(
+                        content=content,
+                        chunk_size=chunk_size,
+                        filename=filename,
+                        llm_mode=llm_mode
+                    )
+                except Exception:
+                    # A single-pass response can also be truncated.  Re-enter
+                    # the contextual segment path before considering any
+                    # deterministic fallback.
+                    logger.warning("llm_single_pass_retry_as_segments")
+                    doc_context = await self._generate_doc_context_for_chunking(
+                        content=content, filename=filename, llm_mode=llm_mode
+                    )
+                    retry_segments = self._split_into_segments(content, max(8000, len(content) // 2))
+                    all_chunks = []
+                    for seg_idx, segment in enumerate(retry_segments):
+                        all_chunks.extend(await self._llm_chunk_segment_with_context(
+                            segment=segment,
+                            chunk_size=chunk_size,
+                            doc_context=doc_context,
+                            segment_index=seg_idx,
+                            total_segments=len(retry_segments),
+                            llm_mode=llm_mode,
+                        ))
 
             # LLM偶尔会把标准/附录合成大块，入库前按条款/表格边界做确定性细拆。
-            all_chunks = self._split_large_chunks(all_chunks, max_size=max(900, chunk_size))
+            all_chunks = self._split_large_chunks(all_chunks, max_size=max(1800, chunk_size))
 
             # 添加上下文前缀增强（Contextual Chunking）
             all_chunks = self._enhance_chunks_with_context_prefix(all_chunks, filename)
@@ -843,15 +828,25 @@ class DocumentProcessor:
 ## 文档内容
 {content}
 
+        ## 最高优先级：内容保真与版式校正
+        - chunks.content 必须来自文档原文，完整保留正文信息和原有顺序。
+        - 禁止总结、概括、释义、压缩、补充、推断或把多个条款重写成概要。
+        - 不得省略任何正文段落、条款、定义、公式、数值、单位、注释、列表项或表格单元格。
+        - 除下述明确允许清洗的内容外，所有正文必须且只能在某一个chunk中出现一次。
+        - 允许清洗的内容仅限：纯目录、重复页眉页脚、独立页码，以及能够确定为解析噪声的乱码、重复字符和错误断行。
+        - 无法确定是否属于噪声时必须保留，不要删除。
+        - 允许且必须修复纯排版错误：合并段落内的错误断行、被逐字/逐字母拆行的文本、被拆开的英文单词、化学式、单位和上下标；不得借版式校正改变任何事实、措辞、字符、数值、符号或顺序。
+        - 公式应在含义可由原文确定时恢复为标准 LaTeX（行内 $...$、独立 $$...$$），准确保留分式、根号、上下标、希腊字母、运算符、公式编号及变量大小写；无法确定结构时保留原始字符顺序，不得猜测。
+
         ## 任务
-        1. 首先分析文档，提取标题、类型、主题等信息
-        2. 然后按语义分块，每块300-800字符，最长不要超过1000字符
-        3. 技术标准/规范类文档必须优先按章节号、条款号、表号、公式号切分
-        4. 定义、适用范围、评价项目、分级标准、计算公式、限值表、附录应尽量独立成块
+        1. 分析文档并提取标题、类型、主题等元数据；元数据不得替代正文。
+        2. 在不改变原文内容的前提下校正版式并按语义边界分块，普通正文每块800-1500字符，最长不要超过1800字符；输出不得出现由解析错误造成的一个字/字母/数字/公式符号单独占一行。
+        3. 技术标准/规范类文档优先按章节号、条款号、表号、公式号切分。
+        4. 定义、适用范围、评价项目、分级标准、计算公式、限值表、附录应尽量独立成块；短条款必须保留，不能因长度不足删除。
 
         ## 表格处理规则（重要）
 如果识别到表格内容（即使格式混乱），必须：
-1. 将表格整理成Markdown格式输出，如：
+1. 必须将能够确定行列关系的表格整理成Markdown格式，同时完整保留表名、表头、每一行、每个单元格、单位和注释，不得归纳、合并或删减；无法可靠确定行列关系时保留全部原始文字和顺序，不得臆造，如：
    | 污染物 | 限值(mg/m³) | 监测方法 |
    |--------|------------|---------|
    | SO2 | 50 | HJ/T 57 |
@@ -863,7 +858,7 @@ class DocumentProcessor:
         ## 输出要求（严格约束，务必遵守，否则系统将解析失败）
         你必须严格按照以下要求输出：
         1. 只输出一个完整的JSON对象，不要输出任何其他内容（包括思考过程、解释、Markdown代码块标记等）。
-        2. 直接过滤掉目录和页眉页脚等无意义内容，只输出正文内容，对原文中明显存在错误的字符可以进行修正（可能是pdf文件解析错误导致）。
+        2. 只可过滤纯目录、重复页眉页脚、独立页码和能够确定的解析噪声；禁止过滤、概括或改写正文。无法确定时保留原文。
         3. 不要在JSON前或后添加任何文字说明。
         4. 不要在JSON中加入注释。
         5. 直接输出JSON，不要用```json```包裹。
@@ -881,7 +876,7 @@ class DocumentProcessor:
     }},
     "chunks": [
         {{
-            "content": "分块内容（表格必须整理成Markdown表格格式）",
+            "content": "忠实保留全部原文信息并校正错误断行、公式和表格排版；不得总结、概括或遗漏",
             "topic": "具体主题（要体现文档名称，如：DB44/27-2001工业锅炉排放限值）",
             "type": "paragraph|table|list",
             "section": "所属章节（如：第三章 排放限值）"
@@ -1035,7 +1030,7 @@ class DocumentProcessor:
                     })
             
             chunks = self._merge_small_chunks(chunks, min_size=150)
-            chunks = self._split_large_chunks(chunks, max_size=max(900, chunk_size))
+            chunks = self._split_large_chunks(chunks, max_size=max(1800, chunk_size))
             if not chunks:
                 raise ValueError("LLM分块结果为空，请重试")
             return chunks
@@ -1143,17 +1138,25 @@ class DocumentProcessor:
 ## 任务
 将以下文档片段按语义分块，用于知识库检索。
 
+## 最高优先级：内容保真与版式校正
+- chunks.content 必须完整保留“当前片段”的正文信息和原有顺序，禁止总结、概括、释义、压缩、补充或推断。
+- 不得省略任何正文段落、条款、定义、公式、数值、单位、注释、列表项或表格单元格。
+- 除纯目录、重复页眉页脚、独立页码和能够确定的解析噪声外，当前片段的所有正文必须且只能输出一次。
+- 无法确定是否属于噪声时必须保留。短条款也必须保留，不能因长度不足删除。
+- 允许且必须修复纯排版错误：合并段落内错误断行、被逐字/逐字母拆行的文本、被拆开的英文单词、化学式、单位和上下标；不得改变任何事实、措辞、字符、数值、符号或顺序。
+- 公式应在结构可由当前片段确定时恢复为标准 LaTeX（行内 $...$、独立 $$...$$），准确保留分式、根号、上下标、希腊字母、运算符、公式编号和变量大小写；无法确定时保留原始字符顺序，不得猜测。
+
 ## 规则
-1. 分块大小：300-800字符，最长不要超过1000字符
-2. 跳过：纯目录、页眉页脚、版权声明
+1. 分块大小是次要目标：普通正文尽量800-1500字符，最长不要超过1800字符；不得为了满足长度而删减或语义改写原文。输出不得出现由解析错误造成的一个字、字母、数字或公式符号单独占一行。
+2. 只跳过纯目录、重复页眉页脚、独立页码和能够确定的解析噪声。
 3. topic要具体：结合文档信息，写明"某某法/标准的某某条款"
 4. 列表/步骤保持完整
-5. 避免重复：本段只覆盖“当前片段”内容；不要重复输出前一段/后一段已出现的整段内容（允许少量承接句用于语义完整）。
+5. 避免重复：本段只覆盖“当前片段”内容，不要生成前一段或后一段内容，也不要增加承接句。
 6. 技术标准/规范类文档优先按章节号、条款号、表号、公式号切分；定义、评价项目、分级标准、计算公式、附录独立成块。
 
 ## 表格处理规则（重要）
 如果识别到表格内容（即使OCR后格式混乱），必须：
-1. 整理成Markdown表格格式，如：
+1. 必须将能够确定行列关系的内容整理成Markdown表格，同时完整保留表名、表头、每一行、每个单元格、单位和注释，不得归纳、合并或删减；无法可靠确定行列关系时保留全部原始文字和顺序，不得臆造，如：
    | 污染物 | 限值 | 单位 |
    |--------|------|------|
    | SO2 | 50 | mg/m³ |
@@ -1169,7 +1172,7 @@ class DocumentProcessor:
 5. 必须输出严格JSON：字符串中的英文双引号请使用 \\" 转义；反斜杠请使用 \\\\（尤其是公式/LaTeX：\\\\mu、\\\\mathrm、\\\\text）；不要在引号内部输出真实换行（如有需要用 \\n）。
 
 ## 输出JSON（只需要输出chunks，不要输出doc_context）
-{{"chunks":[{{"content":"完整内容（表格整理成Markdown格式）","topic":"具体主题","type":"paragraph|table|list","section":"章节"}}]}}
+{{"chunks":[{{"content":"完整保留原文信息并校正错误断行、公式和表格排版；不得总结、概括或遗漏","topic":"具体主题","type":"paragraph|table|list","section":"章节"}}]}}
 
 ## 文档片段
 {segment}"""
@@ -1186,7 +1189,7 @@ class DocumentProcessor:
             chunks = []
             for i, item in enumerate(parsed.get("chunks", [])):
                 chunk_content = item.get("content", "").strip()
-                if chunk_content and len(chunk_content) >= 100:
+                if chunk_content:
                     chunks.append({
                         "id": f"chunk_{i}",
                         "content": chunk_content,
@@ -1230,9 +1233,18 @@ class DocumentProcessor:
         with llm_service.use_model_tier(tier):
             response = await llm_service.chat_anthropic(
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=8192,
+                max_tokens=LLM_CHUNK_MAX_OUTPUT_TOKENS,
                 temperature=0.1,
-                system="你是文档分析助手。直接返回JSON，不要解释。",
+                system=(
+                    "你是知识库内容保真与版式校正分块助手。必须完整保留原文信息和顺序，禁止总结、概括、"
+                    "语义改写、压缩或遗漏正文；只允许修复确定的错误断行、公式和表格排版，不得改变字符、"
+                    "数值、符号或含义。只返回严格JSON，不要解释。"
+                ),
+            )
+        stop_reason = response.get("stop_reason")
+        if stop_reason in {"max_tokens", "length"}:
+            raise RuntimeError(
+                f"LLM document chunking response truncated (stop_reason={stop_reason})"
             )
         content = "\n".join(
             str(getattr(block, "text", ""))
@@ -1299,7 +1311,7 @@ class DocumentProcessor:
         return enhanced_chunks
 
     def _preprocess_content(self, content: str) -> str:
-        """预处理文档内容，清理无关格式标记"""
+        """轻量清洗：去掉常见网页噪声、目录块和页码，不判断正文结构。"""
         import re
         
         # 统一换行并移除控制字符
@@ -1307,6 +1319,19 @@ class DocumentProcessor:
         content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', ' ', content)
         # 去掉不间断空格
         content = content.replace("\u00a0", " ")
+
+        # HTML may survive parsing for uploaded web pages. Keep visible text
+        # and discard elements that are never useful for retrieval.
+        if re.search(r"<\s*(html|body|script|style|nav|header|footer)\b", content, re.I):
+            try:
+                from bs4 import BeautifulSoup
+
+                soup = BeautifulSoup(content, "html.parser")
+                for node in soup(["script", "style", "nav", "header", "footer"]):
+                    node.decompose()
+                content = soup.get_text("\n")
+            except Exception as exc:
+                logger.debug("html_cleanup_skipped", error=str(exc))
 
         # 预防LLM直接照抄反斜杠导致JSON非法：先把反斜杠双写
         content = content.replace("\\", "\\\\")
@@ -1321,6 +1346,55 @@ class DocumentProcessor:
         content = re.sub(r'^\s*[-—]\s*\d+\s*[-—]\s*$', '', content, flags=re.MULTILINE)
         content = re.sub(r'^\s*第\s*\d+\s*页\s*$', '', content, flags=re.MULTILINE)
         content = re.sub(r'^\s*Page\s*\d+\s*$', '', content, flags=re.MULTILINE | re.IGNORECASE)
+
+        # 只删除能够高置信度识别的目录行，不再通过“猜测正文起点”删除整段文本。
+        # PDF 经常把章节号和标题拆成两行；旧逻辑会把表格中的“24 h 漂移”
+        # 误认为正文起点，进而连同前言和前六章一起删除。目录残留只会给 LLM
+        # 增加少量噪声，而误删正文无法恢复，因此这里有意采用保守策略。
+        lines = content.split("\n")
+        lines = [
+            "目次" if line.strip() == "目" and i + 1 < len(lines) and lines[i + 1].strip() == "次" else line
+            for i, line in enumerate(lines)
+            if not (line.strip() == "次" and i > 0 and lines[i - 1].strip() == "目")
+        ]
+        toc_start = next(
+            (i for i, line in enumerate(lines)
+             if re.match(r"^\s*(目录|目\s*次|contents?)\s*$", line, re.I)),
+            None,
+        )
+        if toc_start is not None:
+            removable = {toc_start}
+            # 目录通常位于文档前部。即使没有找到结束边界，也只逐行删除同时具备
+            # “点引导符 + 末尾页码”特征的行，绝不删除两点之间的整个区间。
+            scan_end = min(len(lines), toc_start + 250)
+            toc_entry_pattern = re.compile(
+                r"(?:\.{3,}|…{2,}).*(?:\d+|[ivxlcdm]+)\s*$",
+                re.I,
+            )
+            split_entry_prefix_pattern = re.compile(
+                r"^(?:\d+(?:\.\d+)*|前|附录\s*[A-ZＡ-Ｚ0-9一二三四五六七八九十]*)$",
+                re.I,
+            )
+            for i in range(toc_start + 1, scan_end):
+                if not toc_entry_pattern.search(lines[i].strip()):
+                    continue
+                removable.add(i)
+
+                # PyMuPDF 可能把“1 适用范围……1”拆成“1”和
+                # “适用范围……1”两行；只移除紧邻的纯编号/附录/“前”行。
+                previous = i - 1
+                while previous > toc_start and not lines[previous].strip():
+                    previous -= 1
+                if split_entry_prefix_pattern.fullmatch(lines[previous].strip()):
+                    removable.add(previous)
+
+            if len(removable) > 1:
+                logger.debug(
+                    "high_confidence_toc_lines_removed",
+                    removed_line_count=len(removable),
+                )
+            lines = [line for i, line in enumerate(lines) if i not in removable]
+            content = "\n".join(lines)
         
         # 移除连续空行（保留最多一个空行）
         content = re.sub(r'\n{3,}', '\n\n', content)
@@ -1329,21 +1403,35 @@ class DocumentProcessor:
 
     def _is_toc_content(self, content: str) -> bool:
         """检测是否为目录内容"""
-        # 目录特征：大量的 "..." 或页码引用
-        dot_pattern = r'\.{3,}'
-        page_ref_pattern = r'\d+\s*$'
+        # Only dotted leaders plus a trailing page reference are reliable
+        # enough to classify a whole segment as a table of contents.  Counting
+        # every line ending in a digit misclassifies formula- and table-heavy
+        # standards as ToC and can silently produce zero chunks.
+        toc_entry_pattern = re.compile(
+            r"(?:\.{3,}|…{2,}).*(?:\d+|[ivxlcdm]+)\s*$",
+            re.I,
+        )
         
         lines = content.strip().split('\n')
         if len(lines) < 3:
             return False
         
-        toc_line_count = 0
-        for line in lines:
-            if re.search(dot_pattern, line) or re.search(page_ref_pattern, line.strip()):
-                toc_line_count += 1
-        
-        # 超过60%的行符合目录特征
-        return toc_line_count / len(lines) > 0.6
+        meaningful_lines = [line.strip() for line in lines if line.strip()]
+        if len(meaningful_lines) < 3:
+            return False
+
+        toc_line_count = sum(bool(toc_entry_pattern.search(line)) for line in meaningful_lines)
+        has_toc_heading = any(
+            re.fullmatch(r"(?:目录|目\s*次|contents?)", line, re.I)
+            for line in meaningful_lines[:20]
+        )
+
+        # A heading plus several dotted entries, or an overwhelmingly dotted
+        # standalone segment, is required.  Uncertain content is retained.
+        ratio = toc_line_count / len(meaningful_lines)
+        return (has_toc_heading and toc_line_count >= 3 and ratio >= 0.35) or (
+            toc_line_count >= 5 and ratio > 0.75
+        )
 
     def _split_large_chunks(self, chunks: List[Dict[str, Any]], max_size: int = 900) -> List[Dict[str, Any]]:
         """按条款、段落和表格行拆分过大的LLM chunk，避免粗粒度影响召回。"""

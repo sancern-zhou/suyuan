@@ -29,6 +29,19 @@ test('scheduled task panel switches between tasks and execution records', () => 
 })
 
 
+test('scheduled and event task editor loads, selects, and restores one skill', () => {
+  const panelSource = readSource('./ScheduledTasksPanel.vue')
+  const storeSource = readSource('../../stores/scheduledTasks.js')
+
+  assert.match(panelSource, /v-model="createForm\.skill_id"/)
+  assert.match(panelSource, /skill_id: task\.skill_id \|\| ''/)
+  assert.match(panelSource, /fetchAvailableSkills\(\)/)
+  assert.match(panelSource, /事件任务和定时任务均可选择一个已发布 Skill/)
+  assert.match(storeSource, /\$\{API_BASE\}\/skills/)
+  assert.doesNotMatch(panelSource, /compatible|missing_tools|兼容/)
+})
+
+
 test('execution record selection restores the existing session in the chat workspace', () => {
   const layoutSource = readSource('../reactAnalysis/MainLayout.vue')
   const viewSource = readSource('../../views/ReactAnalysisView.vue')

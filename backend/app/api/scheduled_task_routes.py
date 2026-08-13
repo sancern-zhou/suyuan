@@ -29,6 +29,7 @@ from app.scheduled_tasks.custom_agent import (
     authorized_tool_names_for_user,
     validate_custom_tool_names,
 )
+from app.agent.selection_context import describe_skill_item, load_skill_selection
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -41,6 +42,7 @@ class CreateTaskRequest(BaseModel):
     description: str = Field(..., description="任务描述")
     execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social/custom）")
     tool_names: Optional[List[str]] = None
+    skill_id: Optional[str] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
     schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
     run_at: Optional[datetime] = None
@@ -63,6 +65,7 @@ class UpdateTaskRequest(BaseModel):
     description: Optional[str] = None
     execution_mode: Optional[str] = None
     tool_names: Optional[List[str]] = None
+    skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
     schedule_type: Optional[ScheduleType] = None
     run_at: Optional[datetime] = None
@@ -150,6 +153,31 @@ def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
         ) from exc
 
 
+def _validate_task_skill(task: ScheduledTask) -> None:
+    if not task.skill_id:
+        return
+    try:
+        load_skill_selection(task.skill_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_task_skill",
+                "skill_id": task.skill_id,
+                "message": f"Skill 不存在：{task.skill_id}",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_task_skill",
+                "skill_id": task.skill_id,
+                "message": str(exc),
+            },
+        ) from exc
+
+
 @router.get("/event-types", response_model=List[EventDefinition])
 async def list_event_types():
     return get_event_definitions()
@@ -168,6 +196,36 @@ async def list_custom_task_tools(
             tool for tool in tools
             if tool.get("status") == "enabled" and tool.get("name") in authorized
         ]
+    }
+
+
+@router.get("/skills")
+async def list_task_skills(
+    _: CurrentUser = Depends(require_current_user),
+):
+    """List enabled project Skills available for task context injection."""
+    from app.tools.utility.skill_management.list_skills_tool import ListSkillsTool
+
+    result = await ListSkillsTool().execute()
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error") or "Skill 列表加载失败")
+    described_items = [
+        describe_skill_item(item)
+        for item in (result.get("data") or {}).get("skills", [])
+    ]
+    items = [
+        {
+            "id": item["id"],
+            "name": item.get("name") or item["id"],
+            "description": item.get("description") or "",
+            "aliases": item.get("aliases") or [],
+        }
+        for item in described_items
+        if item.get("enabled", True)
+    ]
+    return {
+        "skills": items,
+        "count": len(items),
     }
 
 @router.post("", response_model=TaskResponse)
@@ -190,6 +248,7 @@ async def create_task(
             description=request.description,
             execution_mode=request.execution_mode,
             tool_names=request.tool_names,
+            skill_id=request.skill_id,
             trigger_type=request.trigger_type,
             schedule_type=request.schedule_type,
             run_at=request.run_at,
@@ -210,6 +269,7 @@ async def create_task(
         )
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
+        _validate_task_skill(task)
 
         created_task = service.create_task(task)
 
@@ -316,6 +376,7 @@ async def update_task(
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
+        _validate_task_skill(task)
 
         updated_task = service.update_task(task)
 
