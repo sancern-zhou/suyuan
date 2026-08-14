@@ -22,7 +22,7 @@
 - query: 原问题全文 + 3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
 - top_k: 检索文档数量（默认5）
-- reranker: 精排模式，auto/always/never，默认always
+- reranker: 兼容参数，知识工作流固定启用全局精排
 
 返回：
 标准UDF v2.0格式，包含：
@@ -170,7 +170,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 knowledge_base_ids=knowledge_base_ids,  # 传递知识库ID列表
                 use_hyde=False,
                 use_reranker="always",
-                top_k=5,
+                top_k=min(top_k, 10)  # 限制最大10篇
             )
 
             # search_results 是一个列表，不是字典

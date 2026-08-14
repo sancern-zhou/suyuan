@@ -1,8 +1,8 @@
 import inspect
 import time
 
-import pytest
 import httpx
+import pytest
 
 from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 from app.knowledge_base.remote_reranker import RemoteReranker
@@ -91,6 +91,18 @@ async def test_rerank_timeout_falls_back_to_recall_scores(monkeypatch):
     assert results == [{"content": "first", "score": 0.8}]
 
 
+def test_remote_reranker_does_not_reuse_bailian_token_plan_credentials(monkeypatch):
+    monkeypatch.delenv("KNOWLEDGE_RERANK_API_KEY", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_RERANK_API_URL", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_RERANK_MODEL", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
+    monkeypatch.setenv("BAILIAN_API_KEY", "bailian-key")
+
+    reranker = RemoteReranker.from_env()
+
+    assert reranker is None
+
+
 @pytest.mark.asyncio
 async def test_remote_reranker_maps_ranked_indices_to_scores():
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -143,6 +155,30 @@ async def test_remote_reranker_accepts_dashscope_nested_response():
     result = await reranker.rerank("query", ["document"], top_n=1)
 
     assert result == [(0, 0.87)]
+
+
+@pytest.mark.asyncio
+async def test_remote_reranker_uses_flat_payload_for_compatible_endpoint():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert b'"query"' in request.content
+        assert b'"documents"' in request.content
+        assert b'"input"' not in request.content
+        return httpx.Response(
+            200,
+            json={"results": [{"index": 0, "relevance_score": 0.83}]},
+        )
+
+    reranker = RemoteReranker(
+        api_url="https://workspace.example/compatible-api/v1/reranks",
+        api_key="test-key",
+        model="qwen3-rerank",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await reranker.rerank("query", ["document"], top_n=1)
+
+    assert result == [(0, 0.83)]
 
 
 @pytest.mark.asyncio

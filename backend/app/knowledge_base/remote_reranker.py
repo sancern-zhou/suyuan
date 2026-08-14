@@ -8,6 +8,9 @@ from typing import Any
 import httpx
 
 
+_SILICONFLOW_RERANK_URL = "https://api.siliconflow.cn/v1/rerank"
+
+
 class RemoteReranker:
     def __init__(
         self,
@@ -26,22 +29,24 @@ class RemoteReranker:
 
     @classmethod
     def from_env(cls) -> RemoteReranker | None:
-        api_url = os.getenv(
-            "KNOWLEDGE_RERANK_API_URL",
-            "https://api.siliconflow.cn/v1/rerank",
-        ).strip()
-        api_key = (
-            os.getenv("KNOWLEDGE_RERANK_API_KEY", "").strip()
-            or os.getenv("SILICONFLOW_API_KEY", "").strip()
-        )
-        if not api_url or not api_key:
+        configured_key = os.getenv("KNOWLEDGE_RERANK_API_KEY", "").strip()
+        siliconflow_key = os.getenv("SILICONFLOW_API_KEY", "").strip()
+        api_key = configured_key or siliconflow_key
+        if not api_key:
             return None
+
+        configured_url = os.getenv("KNOWLEDGE_RERANK_API_URL", "").strip()
+        api_url = configured_url or _SILICONFLOW_RERANK_URL
+
+        configured_model = os.getenv("KNOWLEDGE_RERANK_MODEL", "").strip()
+        model = configured_model or (
+            "qwen3-rerank" if "/api/v1/services/rerank/" in api_url
+            else "BAAI/bge-reranker-v2-m3"
+        )
         return cls(
             api_url=api_url,
             api_key=api_key,
-            model=os.getenv(
-                "KNOWLEDGE_RERANK_MODEL", "BAAI/bge-reranker-v2-m3"
-            ).strip(),
+            model=model,
             timeout_seconds=max(
                 0.1,
                 float(os.getenv("KNOWLEDGE_RERANK_TIMEOUT_SECONDS", "8")),
@@ -52,7 +57,10 @@ class RemoteReranker:
         self, query: str, documents: list[str], top_n: int
     ) -> list[tuple[int, float]]:
         top_n = min(top_n, len(documents))
-        if "/api/v1/services/rerank/" in self.api_url:
+        # DashScope's service endpoint uses input/parameters, while the newer
+        # compatible endpoint and SiliconFlow use a flat request body.
+        uses_flat_payload = "/api/v1/services/rerank/" not in self.api_url
+        if not uses_flat_payload:
             payload = {
                 "model": self.model,
                 "input": {"query": query, "documents": documents},
