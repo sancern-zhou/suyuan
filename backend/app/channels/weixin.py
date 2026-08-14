@@ -541,7 +541,6 @@ class WeixinChannel(BaseChannel):
             "id": "",  # 账号ID
             "name": "",  # 显示名称
             "auto_start": True,  # 是否自动启动
-            "agent_mode": "social",  # Agent专业模式
         }
 
     def __init__(self, config: Any, bus: MessageBus, instance_id: str = None):

@@ -59,6 +59,7 @@ SPECIALIZED_CHART_TYPES = {
     "pollutant_wind_rose",
     "pollutant_calendar",
     "generic_pollutant_wind_rose",
+    "wind_timeseries",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 

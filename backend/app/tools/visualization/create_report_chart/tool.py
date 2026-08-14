@@ -33,6 +33,7 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "comparison_charts": str(REFERENCE_DIR / "comparison-charts.md"),
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
         "generic_pollutant_wind_rose": str(REFERENCE_DIR / "generic-pollutant-wind-rose.md"),
+        "wind_timeseries": str(REFERENCE_DIR / "wind-timeseries.md"),
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
     }
@@ -87,6 +88,7 @@ class CreateReportChartTool(LLMTool):
                             "error_bar",
                             "pollutant_calendar",
                             "generic_pollutant_wind_rose",
+                            "wind_timeseries",
                             "aqi_calendar",
                             "pollutant_wind_rose",
                         ],
@@ -136,6 +138,9 @@ class CreateReportChartTool(LLMTool):
                         "description": (
                             "少量图型参数；支持 x_label、y_label、unit、legend、reference_lines；"
                             "组合图支持 left_y_label/right_y_label 和 left_unit/right_unit。"
+                            "wind_timeseries 使用风速/风向角时必须显式提供 "
+                            "wind_direction_convention（meteorological_from 或 mathematical_to）；"
+                            "直接提供 east_u/north_v 时无需该参数。"
                             "reference_lines 示例：[{axis:'y', value:100, label:'参考线'}]。"
                             "复杂视觉规则请先读取引用文档。"
                         ),

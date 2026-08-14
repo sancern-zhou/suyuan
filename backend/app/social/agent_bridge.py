@@ -42,7 +42,6 @@ logger = structlog.get_logger(__name__)
 SOCIAL_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 SOCIAL_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 SOCIAL_STEERING_READY_TIMEOUT_SECONDS = 5.0
-SOCIAL_AGENT_MODES = {"social", "enforcement_exam"}
 
 
 def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -266,23 +265,10 @@ class AgentBridge:
 
     async def _get_bot_account(self, channel_name: str) -> str:
         """根据渠道名称获取机器人账号。"""
-        channel = getattr(self, "_channel_map", {}).get(channel_name)
+        channel = self._channel_map.get(channel_name)
         if channel:
             return channel.bot_account
         return "default"
-
-    def _get_agent_mode(self, channel_name: str) -> str:
-        """Resolve the professional Agent mode while keeping social as transport/storage."""
-        channel = getattr(self, "_channel_map", {}).get(channel_name)
-        configured = str(getattr(getattr(channel, "config", None), "agent_mode", "social") or "social")
-        if configured not in SOCIAL_AGENT_MODES:
-            logger.warning(
-                "unsupported_social_agent_mode",
-                channel=channel_name,
-                configured_mode=configured,
-            )
-            return "social"
-        return configured
 
     def _resolve_heartbeat_user_id(self, user_id: str) -> str:
         """Map persisted heartbeat user ids to currently registered channels."""
@@ -563,10 +549,8 @@ class AgentBridge:
 
     async def _route_message(self, msg: InboundMessage) -> None:
         bot_account = await self._get_bot_account(msg.channel)
-        agent_mode = self._get_agent_mode(msg.channel)
         social_user_id = f"{msg.channel}:{bot_account}:{msg.sender_id}"
         is_weixin = msg.channel == "weixin" or msg.channel.startswith("weixin:")
-        agent_user_identifier = social_user_id
 
         if self.mode == "social" and is_weixin:
             binding = await self.binding_service.resolve_sender(
@@ -582,9 +566,6 @@ class AgentBridge:
                     reply_to=msg.sender_id,
                 ))
                 return
-
-            if agent_mode == "enforcement_exam":
-                agent_user_identifier = binding.platform_user_id
 
             session_id = await self.session_mapper.get_session(social_user_id)
             catalog_user = CurrentUser(
@@ -747,8 +728,6 @@ class AgentBridge:
             session_id=session_id,
             prepared_attachments=prepared_attachments,
             claimed_active_token=claimed_active_token,
-            agent_mode=agent_mode,
-            agent_user_identifier=agent_user_identifier,
         )
 
     async def _process_message(
@@ -759,8 +738,6 @@ class AgentBridge:
         session_id: Optional[str] = None,
         prepared_attachments: Optional[List[Dict[str, Any]]] = None,
         claimed_active_token: object | None = None,
-        agent_mode: Optional[str] = None,
-        agent_user_identifier: Optional[str] = None,
     ) -> None:
         """
         Process an inbound message through the agent.
@@ -778,9 +755,6 @@ class AgentBridge:
             
             bot_account = bot_account or await self._get_bot_account(msg.channel)
             social_user_id = social_user_id or f"{msg.channel}:{bot_account}:{msg.sender_id}"
-            agent_mode = agent_mode or self._get_agent_mode(msg.channel)
-            agent_user_identifier = agent_user_identifier or social_user_id
-
             
             session_id = session_id or await self.session_mapper.get_or_create_session(social_user_id, mode=self.mode)
             if self.mode == "social" and active_token is None:
@@ -862,10 +836,7 @@ class AgentBridge:
                 social_heartbeat_file_path=social_heartbeat_file_path,
                 social_soul_context=social_soul_context,
                 social_user_context=social_user_context,
-                session=session,  # ✅ 传递 session 对象
-                agent_mode=agent_mode,
-                agent_user_identifier=agent_user_identifier,
-                stream_reasoning=agent_mode != "enforcement_exam",
+                session=session  # ✅ 传递 session 对象
             )
 
             logger.info("Agent analysis completed",
@@ -893,9 +864,9 @@ class AgentBridge:
             cleaned_answer = self._clean_media_references(response_text)
 
             # ✅ 检查用户是否启用了思考内容显示（默认开启）
-            show_reasoning = agent_mode != "enforcement_exam"
+            show_reasoning = True  # 默认开启
             if social_user_prefs:
-                show_reasoning = show_reasoning and social_user_prefs.get("show_reasoning", True)
+                show_reasoning = social_user_prefs.get("show_reasoning", True)
 
             # ✅ 如果启用了思考内容显示且有思考内容，则前置到最终回复前
             final_content = cleaned_answer
@@ -961,9 +932,6 @@ class AgentBridge:
         social_user_context: str = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         session: Optional[Session] = None,
-        agent_mode: Optional[str] = None,
-        agent_user_identifier: Optional[str] = None,
-        stream_reasoning: bool = True,
     ) -> tuple[str, str]:
         """聚合 Agent 事件并生成最终回复。
 
@@ -1043,9 +1011,8 @@ class AgentBridge:
             async for event in self.agent.analyze(
                 user_query=content,
                 session_id=session_id,
-                manual_mode=agent_mode or self.mode,
-                session_storage_mode=self.mode,
-                user_identifier=agent_user_identifier or (social_user_id if self.mode == "social" else None),
+                manual_mode=self.mode,
+                user_identifier=social_user_id if self.mode == "social" else None,
                 social_memory_store=social_memory_store if self.mode == "social" else None,
                 social_user_preferences=social_user_preferences if self.mode == "social" else None,
                 social_soul_file_path=social_soul_file_path if self.mode == "social" else None,
@@ -1161,7 +1128,7 @@ class AgentBridge:
 
                         # ✅ 仅工具调用前的 text_content 作为进展发送，避免最终回答重复显示
                         # ✅ 去重：如果还没发送过，才发送
-                        if text_content not in sent_text_contents and self.mode == "social" and stream_reasoning:
+                        if text_content not in sent_text_contents and self.mode == "social":
                             await self._send_thinking_chunk(
                                 channel=channel,
                                 chat_id=chat_id,
@@ -1176,7 +1143,7 @@ class AgentBridge:
 
                     if real_thinking:
                         # ✅ 实时流式发送到微信端（不过滤，这是真实思考）
-                        if self.mode == "social" and stream_reasoning:
+                        if self.mode == "social":
                             await self._send_thinking_chunk(
                                 channel=channel,
                                 chat_id=chat_id,
@@ -1940,7 +1907,7 @@ class AgentBridge:
                 "summary": f"Heartbeat tasks for {user_id} mix manual modes: {', '.join(sorted(manual_modes))}",
             }
         manual_mode = manual_modes.pop()
-        use_social_context = manual_mode in SOCIAL_AGENT_MODES
+        use_social_context = manual_mode == "social"
 
         social_context = await self._load_social_agent_context(user_id) if use_social_context else {
             "social_memory_store": None,
@@ -1961,22 +1928,6 @@ class AgentBridge:
             return {"should_notify": True, "summary": f"Invalid heartbeat user_id: {user_id}"}
 
         channel, bot_account, chat_id = parts
-        heartbeat_user_identifier = user_id
-        if manual_mode == "enforcement_exam":
-            try:
-                binding = await self.binding_service.resolve_sender(
-                    channel=channel,
-                    bot_account=bot_account,
-                    sender_id=chat_id,
-                )
-                if binding is not None:
-                    heartbeat_user_identifier = binding.platform_user_id
-            except Exception as exc:
-                logger.warning(
-                    "heartbeat_exam_binding_resolution_failed",
-                    user_id=user_id,
-                    error=str(exc),
-                )
         context_tokens = set_current_context(
             channel=channel,
             chat_id=chat_id,
@@ -2013,8 +1964,7 @@ Example: If task says "Send a test message", then send the message directly, don
                 user_query=query,
                 session_id=heartbeat_session_id,
                 manual_mode=manual_mode,
-                session_storage_mode="social" if use_social_context else manual_mode,
-                user_identifier=heartbeat_user_identifier,
+                user_identifier=user_id,
                 social_memory_store=social_context["social_memory_store"],
                 social_user_preferences=social_context["social_user_preferences"],
                 social_heartbeat_file_path=social_context["social_heartbeat_file_path"],

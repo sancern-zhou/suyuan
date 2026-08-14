@@ -136,7 +136,6 @@ const sendGraphMessage = async () => {
   await store.analyze(query, {
     agentMode: 'graph',
     mapContext: buildGraphMapContext(),
-    skipAutoFollowup: true,
     preserveCurrentMode: true
   })
   emit('graph-updated')

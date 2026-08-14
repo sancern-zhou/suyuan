@@ -461,12 +461,6 @@ class AgentAnalyzeRequest(BaseModel):
         validation_alias=AliasChoices("model_tier", "modelTier"),
         description="模型档位：flash 使用 LLM_FLASH_MODELS 优先级；pro 使用 LLM_PRO_MODELS 优先级"
     )
-    skip_auto_followup: bool = Field(
-        False,
-        validation_alias=AliasChoices("skip_auto_followup", "skipAutoFollowup"),
-        description="是否跳过报告模式自动复核钩子，用于自动复核轮防止递归触发"
-    )
-
     @model_validator(mode="after")
     def validate_turn_content(self) -> "AgentAnalyzeRequest":
         if not self.query.strip() and not self.skill_ids and not self.context_refs:
@@ -810,7 +804,6 @@ async def analyze_stream(
             "session_storage_mode": "assistant",
             "attachments": None,
             "user_identifier": request.user_id,  # ✅ 直接传递 user_id，允许 None（None 时使用模式内共享记忆）
-            "skip_auto_followup": request.skip_auto_followup
         }
         if request.mode == "board" and request.board_context:
             analyze_kwargs["board_context"] = request.board_context
@@ -1186,23 +1179,6 @@ async def analyze_stream(
                             chunk = event_data.get("chunk")
                             if isinstance(chunk, str) and chunk:
                                 partial_answer_chunks.append(chunk)
-
-                        elif event["type"] == "synthetic_user_message":
-                            event_data = event.get("data") or {}
-                            synthetic_message = {
-                                "type": "user",
-                                "content": event_data.get("content", ""),
-                                "timestamp": event_data.get("timestamp", datetime.now().isoformat()),
-                                "source": event_data.get("source", "auto_hook"),
-                                "hook_name": event_data.get("hook_name")
-                            }
-                            conversation_history.append(synthetic_message)
-                            logger.info(
-                                "synthetic_user_message_added",
-                                session_id=actual_session_id,
-                                hook_name=event_data.get("hook_name"),
-                                content_preview=synthetic_message["content"][:100]
-                            )
 
                         # 地图程序仍由传输层负责即时展示；资源引用由 ReActAgent 统一持久化。
                         if event["type"] == "tool_result" and "data" in event:

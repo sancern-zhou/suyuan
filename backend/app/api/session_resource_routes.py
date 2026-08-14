@@ -23,10 +23,12 @@ from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.models import CurrentUser
 from app.auth.share_access import (
     RESOURCE_PREVIEW_COOKIE,
+    RESOURCE_PREVIEW_PATH_PREFIX,
     RESOURCE_PREVIEW_TICKET,
     external_api_path,
     get_share_access_service,
     resource_preview_identity,
+    split_resource_preview_path,
 )
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
@@ -63,10 +65,17 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "session-resource",
         resource_preview_identity(session_id, item.resource_id),
     )
-    internal_content_url = f"{base}/" if directory else base
-    content_url = external_api_path(internal_content_url)
-    separator = "&" if "?" in content_url else "?"
-    content_url = f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
+    if directory:
+        internal_content_url = (
+            f"{base}/{RESOURCE_PREVIEW_PATH_PREFIX}/{preview_ticket}/"
+        )
+        content_url = external_api_path(internal_content_url)
+    else:
+        content_url = external_api_path(base)
+        separator = "&" if "?" in content_url else "?"
+        content_url = (
+            f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
+        )
     if "preview" in actions:
         actions["preview"] = content_url
     if "render" in actions:
@@ -359,11 +368,12 @@ async def get_session_resource_content(
 ):
     """Serve authorized bytes while keeping the storage locator opaque."""
     preview_service = get_share_access_service()
-    ticket = ""
+    path_ticket, asset_path = split_resource_preview_path(asset_path)
+    ticket = path_ticket
     if request is not None:
-        ticket = request.query_params.get(RESOURCE_PREVIEW_TICKET) or request.cookies.get(
-            RESOURCE_PREVIEW_COOKIE, ""
-        )
+        ticket = ticket or request.query_params.get(
+            RESOURCE_PREVIEW_TICKET
+        ) or request.cookies.get(RESOURCE_PREVIEW_COOKIE, "")
     ticket_valid = preview_service.verify(
         ticket,
         "session-resource",

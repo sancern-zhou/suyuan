@@ -15,7 +15,6 @@ LOCAL_QDRANT_HOST=localhost
 LOCAL_QDRANT_PORT=6334
 ```
 
-例如另一分支可使用 `-p suyuan-jiangsu-ops` 和 `LOCAL_QDRANT_PORT=6335`。Compose 会据此隔离容器、网络和持久化 volume。
 
 不要将 `LOCAL_QDRANT_*` 指向共享服务。共享库使用 `SHARED_QDRANT_*`；在兼容期未设置这些变量时，服务会回退至既有的 `QDRANT_*`。
 

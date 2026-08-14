@@ -13,10 +13,6 @@ from app.tools.resource_declarations import primary_file
 from app.utils.path_config import format_agent_path
 
 from .workflow_tool import WorkflowTool
-from .enforcement_exam_knowledge import (
-    ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME,
-    is_enforcement_exam_context,
-)
 
 logger = structlog.get_logger()
 
@@ -86,22 +82,6 @@ class KnowledgeDocumentReader(WorkflowTool):
             async with knowledge_async_session() as db:
                 service = KnowledgeBaseService(db=db)
                 user_id = getattr(context, "user_identifier", None)
-                if is_enforcement_exam_context(context):
-                    knowledge_base = await service.get_knowledge_base(knowledge_base_id)
-                    if (
-                        knowledge_base is None
-                        or str(knowledge_base.name or "").strip()
-                        != ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME
-                    ):
-                        return self._build_udf_v2_result(
-                            status="failed",
-                            success=False,
-                            data={"error": "enforcement_exam_knowledge_base_required"},
-                            summary=(
-                                "执法备考模式只能读取“"
-                                f"{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
-                            ),
-                        )
                 result = await service.get_document_chunks(
                     kb_id=knowledge_base_id,
                     doc_id=document_id,

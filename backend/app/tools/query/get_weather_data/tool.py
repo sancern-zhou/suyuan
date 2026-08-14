@@ -574,6 +574,18 @@ class GetWeatherDataTool(LLMTool):
         if final_file_path:
             summary = f"{summary}，文件路径: {final_file_path}。"
 
+        # 生成数据样本（第一条记录，用于LLM快速了解数据结构）
+        sample_record = None
+        if standardized_records:
+            first = standardized_records[0]
+            sample_record = {
+                "timestamp": first.get("timestamp"),
+                "station_name": first.get("station_name"),
+                "lat": first.get("lat"),
+                "lon": first.get("lon"),
+                "measurements": first.get("measurements", {})
+            }
+
         # 更新 metadata 中的 file_path
         metadata = DataMetadata(
             file_path=final_file_path,

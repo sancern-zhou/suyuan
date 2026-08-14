@@ -40,7 +40,6 @@ class ReactAgentAPI {
       userIdentifier = null,  // ✅ 用户标识（跨会话持久化）
       isInterruption = false,
       previousPausedRunId = null,
-      skipAutoFollowup = false,
       requestKey = sessionId,
       onAccepted,
       onEvent
@@ -62,8 +61,7 @@ class ReactAgentAPI {
       mapContext,
       userIdentifier,
       isInterruption,
-      previousPausedRunId,
-      skipAutoFollowup
+      previousPausedRunId
     })
 
     return this._streamRequest(

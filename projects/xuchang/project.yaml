@@ -26,6 +26,10 @@ backend:
     - analyze_city_pollutant_rankings
     - get_5min_data
     - get_observed_meteorology
+    - query_city_standard_report
+    - query_city_standard_yoy_report
+    - query_station_standard_report
+    - query_station_standard_yoy_report
   mode_prompt_files:
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md

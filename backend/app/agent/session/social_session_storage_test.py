@@ -157,7 +157,6 @@ async def test_social_mode_does_not_override_llm_provider_or_model(monkeypatch):
     assert events[-1]["type"] == "complete"
     assert "llm_provider" not in captured_kwargs
     assert "llm_model" not in captured_kwargs
-    assert captured_kwargs["auto_profile"] is None
 
 
 @pytest.mark.asyncio
@@ -197,7 +196,6 @@ async def test_chart_mode_uses_normal_auto_chain(monkeypatch):
     ]
 
     assert events[-1]["type"] == "complete"
-    assert captured_kwargs["auto_profile"] is None
     assert captured_kwargs["attachments"] == [image_attachment]
 
 
@@ -239,5 +237,4 @@ async def test_assistant_mode_uses_normal_auto_chain_and_forwards_runtime_attach
     ]
 
     assert events[-1]["type"] == "complete"
-    assert captured_kwargs["auto_profile"] is None
     assert captured_kwargs["attachments"] == [image_attachment]

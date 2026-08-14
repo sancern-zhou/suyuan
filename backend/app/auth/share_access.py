@@ -10,9 +10,23 @@ import time
 
 from config.settings import settings
 
-
 RESOURCE_PREVIEW_TICKET = "preview_ticket"
 RESOURCE_PREVIEW_COOKIE = "suyuan-resource-preview"
+RESOURCE_PREVIEW_PATH_PREFIX = "_preview"
+
+
+def split_resource_preview_path(asset_path: str | None) -> tuple[str, str | None]:
+    """Extract a path-scoped preview ticket and the underlying artifact path."""
+    if not asset_path:
+        return "", asset_path
+    prefix = f"{RESOURCE_PREVIEW_PATH_PREFIX}/"
+    if not asset_path.startswith(prefix):
+        return "", asset_path
+    ticket_and_path = asset_path[len(prefix):]
+    ticket, separator, remaining = ticket_and_path.partition("/")
+    if not ticket:
+        return "", asset_path
+    return ticket, (remaining or None) if separator else None
 
 
 def resource_preview_identity(session_id: str, resource_id: str) -> str:

@@ -54,14 +54,6 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.backend.tools == ["get_jiangxi_noise_data"]
 
 
-def test_jiangsu_project_owns_empty_skills_and_fetcher_surfaces():
-    context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
-
-    assert context.manifest.backend.fetchers == []
-    assert context.manifest.scheduled_tasks_enabled is False
-    assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"
-
-
 def test_xuchang_project_composes_shared_and_customer_modules():
     context = load_project_context("xuchang", repo_root=REPO_ROOT)
 
@@ -102,6 +94,10 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "analyze_city_pollutant_rankings",
         "get_5min_data",
         "get_observed_meteorology",
+        "query_city_standard_report",
+        "query_city_standard_yoy_report",
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 

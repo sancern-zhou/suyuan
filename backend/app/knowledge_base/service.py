@@ -47,11 +47,36 @@ except Exception as e:
 # 全局Reranker单例（避免重复加载）
 _global_reranker = None
 _reranker_initialized = False
+_global_remote_reranker = None
+_remote_reranker_initialized = False
+
+
+def get_remote_reranker():
+    """Return the configured remote reranker without loading local model weights."""
+    global _global_remote_reranker, _remote_reranker_initialized
+
+    if not _remote_reranker_initialized:
+        from .remote_reranker import RemoteReranker
+
+        _global_remote_reranker = RemoteReranker.from_env()
+        _remote_reranker_initialized = True
+        if _global_remote_reranker is None:
+            logger.warning("remote_reranker_not_configured")
+        else:
+            logger.info(
+                "remote_reranker_configured",
+                url=_global_remote_reranker.api_url,
+                model=_global_remote_reranker.model,
+            )
+    return _global_remote_reranker
 
 
 def get_reranker():
     """获取全局Reranker单例"""
     global _global_reranker, _reranker_initialized
+
+    if os.getenv("KNOWLEDGE_RERANK_BACKEND", "remote").strip().lower() != "local":
+        return None
 
     if not _reranker_initialized:
         try:
@@ -754,17 +779,18 @@ class KnowledgeBaseService:
         # 根据是否使用重排序决定后续逻辑
         should_rerank = self._should_rerank(query, results, top_k, rerank_mode)
         if should_rerank and len(results) > top_k:
-            before_limit_count = len(results)
-            results.sort(key=lambda x: x["score"], reverse=True)
-            results = results[:rerank_candidate_limit]
-            if before_limit_count > len(results):
-                logger.info(
-                    "knowledge_search_candidates_limited_before_rerank",
-                    query_preview=query[:100],
-                    before_count=before_limit_count,
-                    after_count=len(results),
-                    limit=rerank_candidate_limit
-                )
+            if os.getenv("KNOWLEDGE_RERANK_BACKEND", "remote").strip().lower() == "local":
+                before_limit_count = len(results)
+                results.sort(key=lambda x: x["score"], reverse=True)
+                results = results[:rerank_candidate_limit]
+                if before_limit_count > len(results):
+                    logger.info(
+                        "knowledge_search_candidates_limited_before_rerank",
+                        query_preview=query[:100],
+                        before_count=before_limit_count,
+                        after_count=len(results),
+                        limit=rerank_candidate_limit
+                    )
             # 开启重排序：从多个候选中精选top_k
             results = await self._rerank(query, results, top_k)
         else:
@@ -890,7 +916,49 @@ class KnowledgeBaseService:
         candidates: List[Dict[str, Any]],
         top_k: int
     ) -> List[Dict[str, Any]]:
-        """使用BGE-Reranker重排序"""
+        """Globally rerank candidates through the configured remote or local backend."""
+        backend = os.getenv("KNOWLEDGE_RERANK_BACKEND", "remote").strip().lower()
+        if backend == "remote":
+            remote_reranker = get_remote_reranker()
+            if remote_reranker is None:
+                logger.warning("remote_reranker_unavailable_fallback_to_recall_score")
+                candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+                return candidates[:top_k]
+            try:
+                rerank_started_at = time.time()
+                documents = [
+                    (
+                        c.get("embedding_text")
+                        or c.get("metadata", {}).get("embedding_text")
+                        or c.get("content", "")
+                    )[:1200]
+                    for c in candidates
+                ]
+                ranked = await remote_reranker.rerank(query, documents, top_k)
+                results = []
+                for index, score in ranked:
+                    candidate = candidates[index]
+                    candidate["original_score"] = candidate.get("score")
+                    candidate["rerank_score"] = score
+                    candidate["score"] = score
+                    results.append(candidate)
+                logger.info(
+                    "remote_rerank_completed",
+                    candidate_count=len(candidates),
+                    result_count=len(results),
+                    top_k=top_k,
+                    elapsed_ms=round((time.time() - rerank_started_at) * 1000, 2),
+                )
+                return results
+            except Exception as e:
+                logger.warning(
+                    "remote_rerank_failed_fallback_to_recall_score",
+                    error=str(e),
+                    candidate_count=len(candidates),
+                )
+                candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+                return candidates[:top_k]
+
         reranker = self._get_reranker()
         
         # 如果reranker不可用，回退到向量相似度排序

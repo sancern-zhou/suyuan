@@ -17,3 +17,9 @@ def test_xuchang_registers_only_the_unified_historical_weather_tool():
 
     assert "get_weather_data" in registry.list_tools()
     assert "get_observed_meteorology" not in registry.list_tools()
+    assert {
+        "query_city_standard_report",
+        "query_city_standard_yoy_report",
+        "query_station_standard_report",
+        "query_station_standard_yoy_report",
+    }.isdisjoint(registry.list_tools())

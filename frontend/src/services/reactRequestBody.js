@@ -14,8 +14,7 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     mapContext = null,
     userIdentifier = null,
     isInterruption = false,
-    previousPausedRunId = null,
-    skipAutoFollowup = false
+    previousPausedRunId = null
   } = options
 
   const body = {
@@ -32,8 +31,7 @@ export function buildAnalyzeRequestBody(query, options = {}) {
     knowledge_base_ids: knowledgeBaseIds,
     model_tier: modelTier,
     is_interruption: isInterruption,
-    previous_paused_run_id: previousPausedRunId,
-    skip_auto_followup: skipAutoFollowup
+    previous_paused_run_id: previousPausedRunId
   }
 
   if (boardContext !== null) body.board_context = boardContext

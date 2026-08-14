@@ -10,7 +10,7 @@
 
 流程：
 1. 检索：基于“原问题全文 + 主Agent补充关键词”的组合检索词从知识库检索相关文档
-2. 可选精排：按 reranker 参数决定是否启用 CrossEncoder
+2. 全局精排：跨知识库汇总候选后通过远端 reranker 统一排序
 3. 返回：将检索结果返回给主Agent
 
 适用场景：
@@ -21,8 +21,8 @@
 参数：
 - query: 原问题全文 + 3-8个补充关键词/同义词/标准号不同写法/文件简称/英文缩写
 - knowledge_base_ids: 知识库ID列表（可选，默认使用所有可用知识库）
-- top_k: 检索文档数量（默认3）
-- reranker: 精排模式，auto/always/never，默认never
+- top_k: 检索文档数量（默认5）
+- reranker: 精排模式，auto/always/never，默认always
 
 返回：
 标准UDF v2.0格式，包含：
@@ -36,11 +36,6 @@ from typing import Dict, Any, List, Optional
 import structlog
 
 from .workflow_tool import WorkflowTool
-from .enforcement_exam_knowledge import (
-    ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME,
-    is_enforcement_exam_context,
-    resolve_enforcement_exam_knowledge_base_ids,
-)
 
 logger = structlog.get_logger()
 
@@ -122,8 +117,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
         query: Optional[str] = None,
         question: Optional[str] = None,  # 别名，兼容 LLM 调用
         knowledge_base_ids: Optional[List[str]] = None,  # 知识库ID列表
-        top_k: int = 3,
-        reranker: str = "never",
+        top_k: int = 5,
+        reranker: str = "always",
         **_: Any,
     ) -> Dict[str, Any]:
         """
@@ -134,7 +129,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             question: 用户问题（别名，兼容 LLM 调用）
             knowledge_base_ids: 知识库ID列表（可选）
             top_k: 检索文档数量
-            reranker: 精排模式，auto/always/never
+            reranker: 兼容参数；知识工作流固定使用跨知识库全局精排
 
         Returns:
             标准UDF v2.0格式，包含检索结果
@@ -158,29 +153,10 @@ class KnowledgeQAWorkflow(WorkflowTool):
 
         try:
             user_id = getattr(context, "user_identifier", None)
-            if is_enforcement_exam_context(context):
-                knowledge_base_ids = await resolve_enforcement_exam_knowledge_base_ids(user_id)
-                if not knowledge_base_ids:
-                    return self._build_udf_v2_result(
-                        status="empty",
-                        success=True,
-                        data={
-                            "query": actual_query,
-                            "sources": [],
-                            "total_retrieved": 0,
-                            "retrieval_summary": (
-                                f"未找到可访问的“{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
-                            ),
-                        },
-                        summary=(
-                            f"未找到可访问的“{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
-                        ),
-                    )
-
             self._record_step("knowledge_retrieval_start", "running", {
                 "query": actual_query[:100] if actual_query else "",
                 "top_k": top_k,
-                "reranker": reranker
+                "reranker": "always"
             })
 
             # 导入检索函数
@@ -193,8 +169,8 @@ class KnowledgeQAWorkflow(WorkflowTool):
                 user_id=user_id,
                 knowledge_base_ids=knowledge_base_ids,  # 传递知识库ID列表
                 use_hyde=False,
-                use_reranker=reranker,
-                top_k=min(top_k, 10)  # 限制最大10篇
+                use_reranker="always",
+                top_k=5,
             )
 
             # search_results 是一个列表，不是字典
@@ -226,7 +202,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             sources = []
             retrieval_metadata = documents[0].get("retrieval_metadata", {}) if documents else {}
             document_read_targets = _build_document_read_targets(documents)
-            for doc in documents[:5]:  # 最多返回5篇参考文档
+            for doc in documents[:5]:
                 # 获取完整内容，不再截断
                 content = doc.get("content", "")
                 sources.append({
@@ -337,15 +313,15 @@ class KnowledgeQAWorkflow(WorkflowTool):
                     "top_k": {
                         "type": "integer",
                         "description": "返回数量。",
-                        "default": 3,
+                        "default": 5,
                         "minimum": 1,
                         "maximum": 10
                     },
                     "reranker": {
                         "type": "string",
-                        "enum": ["auto", "always", "never"],
-                        "description": "精排模式。",
-                        "default": "never"
+                        "enum": ["always"],
+                        "description": "跨知识库全局精排（固定启用）。",
+                        "default": "always"
                     }
                 },
                 "required": []  # query 和 question 都可选，因为有一个即可

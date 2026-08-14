@@ -53,7 +53,7 @@ import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'jiangsu_query', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'report', 'chart', 'board', 'ops', 'graph']
+const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops', 'graph']
 const DEFAULT_AGENT_MODE = resolveProjectDefaultAgentMode(projectConfig, VALID_MODES)
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const drawioDraftTimers = new Map()
@@ -409,11 +409,6 @@ export const useReactStore = defineStore('react', {
         ppt: createEmptyModeState(),
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
-        jiangsu_query: createEmptyModeState(),
-        smart_inspection: createEmptyModeState(),
-        operations_analysis: createEmptyModeState(),
-        device_control: createEmptyModeState(),
-        station_fault_diagnosis: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
         board: createEmptyModeState(),
@@ -1620,30 +1615,6 @@ export const useReactStore = defineStore('react', {
           break
         }
 
-        case 'synthetic_user_message': {
-          const content = data?.content || ''
-          if (targetState.streamingAnswerMessageId) {
-            const msg = targetState.messages.find(m => m.id === targetState.streamingAnswerMessageId)
-            if (msg) {
-              msg.streaming = false
-              msg.renderVersion = (msg.renderVersion || 0) + 1
-            }
-            targetState.streamingAnswerMessageId = null
-          }
-
-          if (content) {
-            targetState.isAnalyzing = true
-            targetState.isComplete = false
-            addMessage('user', content, {
-              timestamp: data?.timestamp,
-              session_id: data?.session_id,
-              source: data?.source || 'auto_hook',
-              hook_name: data?.hook_name || null
-            }, null, { synthetic: true })
-          }
-          break
-        }
-
         case 'answer_delta': {
           // ✅ 知识问答流式输出（兼容独立路由）
           const delta = data?.delta || ''
@@ -1765,10 +1736,6 @@ export const useReactStore = defineStore('react', {
           // 流式最终答案结束，重置状态
           targetState.streamingAnswerMessageId = null
           targetState.activeRunId = null
-          if (data?.auto_followup_pending && data?.auto_followup_prompt) {
-            targetState._pendingAutoFollowupPrompt = data.auto_followup_prompt
-            targetState._pendingAutoFollowupHookName = data.auto_followup_hook_name || 'report_final_review'
-          }
           promoteUnappliedSteeringInputsToQueue(targetState, {
             agentMode: targetMode,
             queuedAlreadyShown: true,
@@ -2506,10 +2473,7 @@ export const useReactStore = defineStore('react', {
         contextRefs = [],
         activeContexts = null,
         messageAttachments = [],
-        skipAutoFollowup = false,
         preserveCurrentMode = false,
-        synthetic = false,
-        syntheticMeta = null,
         queuedAlreadyShown = false,
         dequeuedInput = false,
         onAccepted
@@ -2562,7 +2526,6 @@ export const useReactStore = defineStore('react', {
             activeContexts,
           },
           data: {
-            ...(syntheticMeta || {}),
             skill_ids: skillIds,
             context_refs: contextRefs,
             active_contexts: activeContexts
@@ -2591,7 +2554,6 @@ export const useReactStore = defineStore('react', {
             activeContexts
           },
           data: {
-            ...(syntheticMeta || {}),
             skill_ids: skillIds,
             context_refs: contextRefs,
             active_contexts: activeContexts
@@ -2652,16 +2614,12 @@ export const useReactStore = defineStore('react', {
           'user',
           query,
           {
-            ...(syntheticMeta || {}),
             skill_ids: skillIds,
             context_refs: contextRefs,
             active_contexts: activeContexts
           },
           messageAttachments.length > 0 ? messageAttachments : null,
-          {
-            ...(synthetic ? { synthetic: true } : {}),
-            ...(clientMessageId ? { clientMessageId } : {})
-          }
+          clientMessageId ? { clientMessageId } : {}
         )
       }
       sessionState.currentMessage = ''
@@ -2725,7 +2683,6 @@ export const useReactStore = defineStore('react', {
           activeContexts,
           ...(boardContext !== null ? { boardContext } : {}),
           ...(mapContext !== null ? { mapContext } : {}),
-          skipAutoFollowup,
           onAccepted,
           onEvent: (event) => {
             if (!event.data) event.data = {}
@@ -2733,29 +2690,6 @@ export const useReactStore = defineStore('react', {
             this.handleEvent(event)
           }
         })
-
-        const pendingPrompt = sessionState._pendingAutoFollowupPrompt
-        const pendingHookName = sessionState._pendingAutoFollowupHookName
-        if (pendingPrompt) {
-          sessionState._pendingAutoFollowupPrompt = null
-          sessionState._pendingAutoFollowupHookName = null
-          await this.startAnalysis(pendingPrompt, {
-            assistantMode,
-            useFullChemistry,
-            gridResolution,
-            agentMode: actualMode,
-            knowledgeBaseIds,
-            modelTier,
-            skillIds: [],
-            contextRefs: [],
-            skipAutoFollowup: true,
-            synthetic: true,
-            syntheticMeta: {
-              source: 'auto_hook',
-              hook_name: pendingHookName || 'report_final_review'
-            }
-          })
-        }
 
         await this._runNextQueuedInput(sessionState, actualMode)
       } catch (error) {

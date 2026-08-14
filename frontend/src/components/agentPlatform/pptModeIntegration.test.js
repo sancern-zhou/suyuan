@@ -12,12 +12,6 @@ test('ppt mode has isolated state and is accepted by the composer', () => {
   assert.match(inputSource, /validAgentModes\s*=\s*\[[^\]]*'ppt'/s)
 })
 
-test('station fault diagnosis mode is switchable and accepted by the composer', () => {
-  assert.match(storeSource, /VALID_MODES\s*=\s*\[[^\]]*'station_fault_diagnosis'/s)
-  assert.match(storeSource, /modeStates:\s*\{[\s\S]*station_fault_diagnosis:\s*createEmptyModeState\(\)/)
-  assert.match(inputSource, /validAgentModes\s*=\s*\[[^\]]*'station_fault_diagnosis'/s)
-})
-
 test('legacy mode selector exposes the dedicated ppt entry', () => {
   assert.match(selectorSource, /selectMode\('ppt'\)/)
   assert.match(selectorSource, /<span>幻灯片<\/span>/)

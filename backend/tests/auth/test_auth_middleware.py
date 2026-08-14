@@ -251,11 +251,16 @@ async def test_session_resource_preview_ticket_allows_only_bound_content_subtree
         app,
         f"/api/sessions/session-1/resources/resource-1/content/assets/style.css?preview_ticket={ticket}",
     )
+    inherited = await _get(
+        app,
+        f"/api/sessions/session-1/resources/resource-1/content/_preview/{ticket}/assets/style.css",
+    )
     wrong_resource = await _get(
         app,
-        f"/api/sessions/session-1/resources/resource-2/content?preview_ticket={ticket}",
+        f"/api/sessions/session-1/resources/resource-2/content/_preview/{ticket}/assets/style.css",
     )
 
     assert allowed.status_code == 200
+    assert inherited.status_code == 200
     assert wrong_resource.status_code == 401
     assert service.calls == []

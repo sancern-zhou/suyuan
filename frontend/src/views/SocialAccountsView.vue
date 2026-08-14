@@ -6,9 +6,6 @@
         <button @click="showCreateModalWithMode('social')" class="btn-primary btn-social">
           + 扫码添加个人助手
         </button>
-        <button @click="showCreateModalWithMode('enforcement_exam')" class="btn-primary btn-exam">
-          + 扫码添加执法考试
-        </button>
       </div>
 
       <!-- 账号列表 -->
@@ -22,9 +19,6 @@
         <div class="empty-buttons">
           <button @click="showCreateModalWithMode('social')" class="btn-primary btn-social">
             扫码添加个人助手
-          </button>
-          <button @click="showCreateModalWithMode('enforcement_exam')" class="btn-primary btn-exam">
-            扫码添加执法考试
           </button>
         </div>
       </div>
@@ -437,11 +431,4 @@ onUnmounted(() => {
   background: #45a049;
 }
 
-.btn-exam {
-  background: #ff9800;
-}
-
-.btn-exam:hover {
-  background: #fb8c00;
-}
 </style>

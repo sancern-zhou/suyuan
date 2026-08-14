@@ -118,7 +118,7 @@ def test_catalog_uses_group_renderer_filters_and_has_no_presentation_type():
     assert "presentation_type" not in parameters
 
 
-def test_directory_artifact_content_url_has_trailing_slash():
+def test_directory_artifact_content_url_carries_path_ticket_for_relative_assets():
     item = session_resource_routes.resource_dto(
         "session-1",
         stored_resource(
@@ -129,8 +129,11 @@ def test_directory_artifact_content_url_has_trailing_slash():
         ),
     )
     parsed = urlparse(item["content_url"])
-    assert parsed.path.endswith("/resource-1/content/")
-    assert parse_qs(parsed.query)["preview_ticket"]
+    marker = "/resource-1/content/_preview/"
+    assert marker in parsed.path
+    assert parsed.path.endswith("/")
+    assert parsed.path.split(marker, 1)[1].rstrip("/")
+    assert "preview_ticket" not in parse_qs(parsed.query)
 
 
 def test_action_links_ignore_untrusted_metadata_urls_and_unsupported_capabilities():

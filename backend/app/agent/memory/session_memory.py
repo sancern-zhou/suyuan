@@ -483,7 +483,7 @@ class SessionMemory:
         self.session_id = session_id
         # Keep session artefacts under the active project's data registry.
         # This matters for project deployments whose registry is isolated from
-        # the default backend_data_registry (for example jiangsu-ops).
+        # the default backend_data_registry.
         if base_dir is None:
             base_dir = get_sessions_dir()
         self.session_dir = Path(base_dir) / f"agent_session_{session_id}"

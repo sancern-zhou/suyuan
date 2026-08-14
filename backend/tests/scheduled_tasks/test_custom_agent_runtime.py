@@ -1,4 +1,5 @@
 from app.agent.prompts.prompt_builder import build_react_system_prompt
+from app.agent.prompts.tool_registry import AGENT_HIDDEN_TOOL_NAMES
 from app.agent import tool_adapter
 from app.agent.react_agent import create_react_agent
 from app.agent.runtime.agent_runtime import AgentRuntime, CustomAgentTerminalError
@@ -45,6 +46,20 @@ def test_custom_tool_schemas_are_exact_and_keep_user_order(monkeypatch):
     )
 
     assert [schema["name"] for schema in schemas] == ["gamma", "alpha"]
+
+
+def test_custom_tool_schemas_exclude_agent_hidden_tools(monkeypatch):
+    hidden_tool = next(iter(AGENT_HIDDEN_TOOL_NAMES))
+    registry = FakeRegistry()
+    registry.tools.append(FakeTool(hidden_tool))
+    monkeypatch.setattr(tool_adapter, "global_tool_registry", registry)
+
+    schemas = tool_adapter.get_tool_schemas(
+        mode="custom",
+        allowed_tool_names=[hidden_tool, "alpha"],
+    )
+
+    assert [schema["name"] for schema in schemas] == ["alpha"]
 
 
 def test_react_agent_factory_accepts_an_explicit_registry(monkeypatch):

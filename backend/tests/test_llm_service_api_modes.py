@@ -232,28 +232,6 @@ def test_multimodal_auto_profile_uses_bailian_qwen(monkeypatch):
         assert service.request_fallbacks == "mimo/mimo-v2.5"
 
 
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "assistant",
-        "expert",
-        "query",
-        "report",
-        "ops",
-        "graph",
-        "custom",
-        "memory_consolidator",
-        "deliberation_monitoring",
-        "future_mode",
-        "",
-        None,
-    ],
-)
-def test_every_agent_mode_uses_normal_auto_chain(mode):
-    assert supports_native_multimodal(mode) is True
-    assert ReActAgent._select_auto_profile(mode) is None
-
-
 @pytest.mark.parametrize("tier", ["flash", "pro"])
 def test_removed_multimodal_profile_does_not_override_model_tier(monkeypatch, tier):
     service = LLMService()

@@ -10,6 +10,10 @@ def test_knowledge_mode_exposes_only_retrieval_and_document_reading(monkeypatch)
     assert list(get_tools_by_mode("knowledge")) == [
         "knowledge_qa_workflow",
         "knowledge_document_reader",
+        "knowledge_graph_query",
+        "read_session_resource",
+        "web_search",
+        "web_fetch",
     ]
 
 

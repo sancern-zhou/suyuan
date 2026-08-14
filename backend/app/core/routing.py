@@ -74,7 +74,6 @@ ROUTER_REGISTRY = [
         description="Social account management",
     ),
     RouterSpec("app.api.skills_routes", optional=True, description="Skills management"),
-    RouterSpec("app.api.exam_routes", optional=True, description="Exam question review"),
     RouterSpec(
         "app.api.xuchang_air_quality_routes",
         description="Xuchang hourly air quality forecast",

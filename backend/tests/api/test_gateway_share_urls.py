@@ -1,5 +1,5 @@
-from importlib.util import find_spec
 import time
+from importlib.util import find_spec
 
 import httpx
 import pytest
@@ -71,14 +71,18 @@ async def test_preview_ticket_permits_only_bound_resource_subtree():
         allowed = await client.get(
             f"/api/sessions/session-1/resources/resource-1/content/assets/chart.png?preview_ticket={grant}",
         )
+        inherited = await client.get(
+            f"/api/sessions/session-1/resources/resource-1/content/_preview/{grant}/assets/chart.png",
+        )
         cross_resource = await client.get(
-            f"/api/sessions/session-1/resources/resource-2/content/assets/chart.png?preview_ticket={grant}",
+            f"/api/sessions/session-1/resources/resource-2/content/_preview/{grant}/assets/chart.png",
         )
         altered = await client.get(
             f"/api/sessions/session-1/resources/resource-1/content/assets/chart.png?preview_ticket={grant}x",
         )
 
     assert allowed.status_code == 200
+    assert inherited.status_code == 200
     assert cross_resource.status_code == 401
     assert altered.status_code == 401
 
