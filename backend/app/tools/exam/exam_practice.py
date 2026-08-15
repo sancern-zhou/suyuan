@@ -30,7 +30,7 @@ class ExamPracticeTool(LLMTool):
             function_schema={
                 "name": "exam_practice",
                 "description": (
-                    "管理当前用户的执法备考刷题状态。客观题优先用 submit_and_next 一次完成"
+                    "管理当前用户的执法备考刷题状态，可先用 list_banks 选择题库。客观题优先用 submit_and_next 一次完成"
                     "判分和推进。该动作返回一个组合结果：data.last_result 是刚提交题目的判分解析依据，"
                     "data.question 是下一题；模型必须在同一条最终回复中自主生成‘上一题解析 + 下一题’，"
                     "不得拆成两条消息或只输出下一题。简答题 submit 后返回评分点，再由模型调用 grade_and_next。"
@@ -43,7 +43,7 @@ class ExamPracticeTool(LLMTool):
                             "enum": [
                                 "start", "current", "submit", "submit_and_next",
                                 "grade", "grade_and_next", "next", "skip", "finish",
-                                "progress",
+                                "progress", "list_banks",
                             ],
                             "description": (
                                 "要执行的刷题动作。客观题答题使用 submit_and_next；"
@@ -69,6 +69,10 @@ class ExamPracticeTool(LLMTool):
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "start 时可选知识主题；留空表示不限。",
+                        },
+                        "bank_id": {
+                            "type": "string",
+                            "description": "start 时选择的题库 ID（通常是题库来源文档 ID）；不填则从全部已发布题库抽题。",
                         },
                         "count": {
                             "type": "integer",
@@ -115,6 +119,7 @@ class ExamPracticeTool(LLMTool):
         practice_mode: str | None = None,
         question_types: list[str] | None = None,
         topics: list[str] | None = None,
+        bank_id: str | None = None,
         count: int | None = None,
         answer: Any = None,
         run_id: str | None = None,
@@ -139,6 +144,7 @@ class ExamPracticeTool(LLMTool):
                         practice_mode=practice_mode,
                         question_types=question_types,
                         topics=topics,
+                        bank_id=bank_id,
                         count=count,
                         answer=answer,
                         run_id=run_id,
@@ -174,6 +180,8 @@ class ExamPracticeTool(LLMTool):
             return "本组练习已完成，已返回练习统计"
         if stage == "progress":
             return "已返回当前用户的刷题进度和薄弱主题"
+        if stage == "banks":
+            return f"已返回 {len(data.get('banks') or [])} 个可选择的已发布题库"
         return str(data.get("summary") or f"刷题动作 {action} 已完成")
 
     @staticmethod

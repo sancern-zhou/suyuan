@@ -1,4 +1,5 @@
 from app.tools.query.get_observed_meteorology.tool import (
+    GetObservedMeteorologyTool,
     build_hour_spi_url,
     parse_city_options,
     parse_hour_spi_table,
@@ -78,3 +79,59 @@ def test_build_hour_spi_url_encodes_parameters():
     assert "startTime=2026-06-12+00%3A00" in url
     assert "pageIndex=2" in url
     assert "pageSize=50" in url
+
+
+def test_schema_describes_city_and_district_targets_without_province_requirement():
+    schema = GetObservedMeteorologyTool().function_schema
+    properties = schema["parameters"]["properties"]
+
+    assert "city_name" in properties
+    assert "district_name" in properties
+    assert "location_name" in properties
+    assert "province_name" not in properties
+    assert "province_ajc" not in properties
+    assert schema["parameters"]["required"] == ["start_time", "end_time"]
+
+
+def test_resolve_location_discovers_province_from_city_name():
+    class Client:
+        def fetch_home(self):
+            return '<select id="province"><option value="AJL">吉林省</option></select>'
+
+        def fetch_cities(self, province_ajc):
+            assert province_ajc == "AJL"
+            return parse_city_options(CITY_JSON)
+
+    tool = GetObservedMeteorologyTool()
+    province, city_code, meta = tool._resolve_location(
+        client=Client(),
+        province_ajc=None,
+        province_name=None,
+        city_code=None,
+        city_name="长春市",
+    )
+
+    assert province == "AJL"
+    assert city_code == "101060101"
+    assert meta["city_name"] == "长春"
+
+
+def test_resolve_location_reports_missing_area_in_user_terms():
+    class Client:
+        def fetch_home(self):
+            raise AssertionError("province directory should not be requested without a target")
+
+    tool = GetObservedMeteorologyTool()
+    try:
+        tool._resolve_location(
+            client=Client(),
+            province_ajc=None,
+            province_name=None,
+            city_code=None,
+            city_name=None,
+        )
+    except ValueError as exc:
+        assert "city_name 或 city_code" in str(exc)
+        assert "无需提供省份内部编码" in str(exc)
+    else:
+        raise AssertionError("expected missing-area validation error")

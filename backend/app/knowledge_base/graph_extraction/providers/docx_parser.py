@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.knowledge_base.graph_extraction.models import GraphDocumentChunk, GraphSourceFile
 from app.knowledge_base.graph_extraction.providers.text_parser import TextParserProvider
-from app.routers.utils_docx import convert_docx_to_markdown
+from app.utils.docx_markdown import convert_docx_to_markdown
 
 
 class DocxParserProvider:

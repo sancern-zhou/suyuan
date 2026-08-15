@@ -142,7 +142,7 @@ def test_api_request_model():
     print("=" * 60)
 
     try:
-        from app.routers.agent import AgentAnalyzeRequest
+        from app.api.agent import AgentAnalyzeRequest
 
         # 测试默认值
         request1 = AgentAnalyzeRequest(query="测试查询")

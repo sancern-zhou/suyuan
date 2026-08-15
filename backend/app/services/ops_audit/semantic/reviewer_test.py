@@ -53,6 +53,7 @@ def test_remark_batch_payload_includes_issue_evidence_summary(monkeypatch):
             "results": [
                 {
                     "working_order_code": "WO-NOX-PMT",
+                    "judgment_type": "valid",
                     "is_complete": True,
                     "has_cause": True,
                     "has_action": True,

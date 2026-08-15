@@ -21,7 +21,7 @@ async def initialize_tools_and_agents() -> None:
         logger.info("llm_tools_initialized")
 
         try:
-            from app.routers.agent import (
+            from app.api.agent import (
                 data_viz_agent_instance,
                 meteorology_expert_agent_instance,
                 multi_expert_agent_instance,

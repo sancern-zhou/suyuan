@@ -46,7 +46,7 @@
       class="mode-button"
       :class="{ active: store.currentMode === 'query', running: isModeRunning('query') }"
       @click="selectMode('query')"
-      title="问数"
+      title="问数生图"
     >
       <span v-if="isModeRunning('query')" class="running-indicator">●</span>
       <svg class="mode-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -55,7 +55,7 @@
         <path d="M8 10h5" />
         <path d="M8 13h3" />
       </svg>
-      <span>问数</span>
+      <span>问数生图</span>
     </button>
     <button
       class="mode-button"
@@ -158,7 +158,7 @@ const getModeLabel = (mode) => {
     'assistant': '助手',
     'ppt': '幻灯片',
     'expert': '专家',
-    'query': '问数',
+    'query': '问数生图',
     'report': '报告',
       'chart': '图表',
       'board': '画板',

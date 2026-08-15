@@ -109,6 +109,7 @@ async def test_practice_hides_answer_until_submit_and_records_server_duration(se
             assert started["question"]["question_id"] == "q-single"
             assert "correct_answer" not in started["question"]
             assert "source_refs" not in started["question"]
+            assert started["question"]["bank_id"] == "doc-law"
 
             result = await service.submit(
                 user_id="user-1",
@@ -271,6 +272,25 @@ async def test_wrong_review_selects_answered_but_not_correct_questions(session_f
                 count=10,
             )
             assert retry["question"]["question_id"] == "q-single"
+
+
+@pytest.mark.asyncio
+async def test_start_can_select_a_specific_question_bank(session_factory):
+    await _seed(session_factory)
+    async with session_factory() as session:
+        async with session.begin():
+            service = ExamPracticeService(session)
+            started = await service.start(
+                user_id="user-bank",
+                practice_mode="random",
+                question_types=[],
+                topics=[],
+                bank_id="doc-auto",
+                count=10,
+            )
+
+            assert started["question"]["question_id"] == "q-multiple"
+            assert started["question"]["bank_id"] == "doc-auto"
 
 
 @pytest.mark.parametrize(

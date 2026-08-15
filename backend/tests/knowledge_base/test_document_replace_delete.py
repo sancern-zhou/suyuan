@@ -227,6 +227,9 @@ async def test_delete_removes_document_chunks_and_enqueues_index_deletes(replace
 
     async with factory() as session:
         assert await session.get(Document, "doc1") is None
+        knowledge_base = await session.get(KnowledgeBase, "kb1")
+        assert knowledge_base.document_count == 0
+        assert knowledge_base.chunk_count == 0
         assert list((await session.execute(select(KnowledgeChunk))).scalars()) == []
         operations = list(
             (

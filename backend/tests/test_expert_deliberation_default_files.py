@@ -1,6 +1,6 @@
 import pytest
 
-from app.routers import expert_deliberation
+from app.api import expert_deliberation
 
 
 @pytest.mark.asyncio

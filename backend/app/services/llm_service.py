@@ -8,6 +8,7 @@ import asyncio
 import json
 import html
 import os
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -40,6 +41,24 @@ _llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
     "llm_request_state",
     default=None,
 )
+_model_tier_rotation_lock = threading.Lock()
+_model_tier_rotation_offsets: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], int] = {}
+
+
+def _rotate_model_tier_candidates(tier: str, candidates: list):
+    """Rotate a tier chain so concurrent KB calls do not share one primary."""
+    if len(candidates) < 2:
+        return candidates, 0
+
+    signature = tuple(
+        (candidate.provider, candidate.model or "")
+        for candidate in candidates
+    )
+    key = (tier, signature)
+    with _model_tier_rotation_lock:
+        offset = _model_tier_rotation_offsets.get(key, 0) % len(candidates)
+        _model_tier_rotation_offsets[key] = offset + 1
+    return candidates[offset:] + candidates[:offset], offset
 
 
 class LLMService:
@@ -257,7 +276,12 @@ class LLMService:
         return self.provider, self.model, self.request_fallbacks
 
     @contextmanager
-    def use_model_tier(self, model_tier: Optional[str]):
+    def use_model_tier(
+        self,
+        model_tier: Optional[str],
+        *,
+        load_balance: bool = False,
+    ):
         """Temporarily select the primary model for the current async request."""
         tier = (model_tier or "").strip().lower()
         if not tier or tier == "auto":
@@ -291,6 +315,15 @@ class LLMService:
                         f"No non-GLM candidates configured for model tier: {tier}. "
                         "Flash/Pro tiers must use providers such as mimo or deepseek."
                     )
+                rotation_offset = 0
+                if load_balance:
+                    candidates, rotation_offset = _rotate_model_tier_candidates(
+                        tier,
+                        candidates,
+                    )
+                    if state is not None:
+                        state["load_balanced"] = True
+                        state["rotation_offset"] = rotation_offset
                 primary = candidates[0]
                 self.provider = primary.provider
                 self._load_provider_config()
@@ -308,6 +341,8 @@ class LLMService:
             logger.info(
                 "llm_request_model_tier_selected",
                 tier=tier,
+                load_balanced=load_balance,
+                rotation_offset=(state or {}).get("rotation_offset", 0),
                 provider=self.provider,
                 model=self.model,
                 base_url=self.base_url,
@@ -319,6 +354,24 @@ class LLMService:
             _llm_request_state.reset(token)
             if temporary_client is not None:
                 self._schedule_anthropic_client_close(temporary_client)
+
+    @contextmanager
+    def use_balanced_model_tier(self, model_tier: Optional[str]):
+        """Select a tier with round-robin primary rotation and ordered failover."""
+        tier = (model_tier or "").strip().lower()
+        active_state = _llm_request_state.get()
+        if (
+            active_state is not None
+            and active_state.get("selection_source") == "tier"
+            and active_state.get("model_tier") == tier
+            and active_state.get("load_balanced") is True
+        ):
+            # A document task owns one balanced selection. Nested chunking and
+            # graph calls keep that affinity instead of rotating mid-document.
+            yield
+            return
+        with self.use_model_tier(model_tier, load_balance=True):
+            yield
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
@@ -1086,7 +1139,7 @@ class LLMService:
             "url_default": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
             "key_env": "BAILIAN_API_KEY",
             "model_env": "BAILIAN_MODEL",
-            "model_default": "qwen3.8-max-preview",
+            "model_default": "qwen3.8-max",
         },
         "minimax": {
             "url_env": "MINIMAX_BASE_URL",
@@ -1387,7 +1440,7 @@ class LLMService:
 
         # 优先从 settings 读取，如果没有则从环境变量读取
         if self.provider == "deepseek":
-            self.api_mode = getattr(settings, "deepseek_api_mode", "anthropic_messages")
+            self.api_mode = getattr(settings, "deepseek_api_mode", "chat_completions")
             self.base_url = settings.deepseek_base_url
             self.api_key = settings.deepseek_api_key or ""
             self.model = settings.deepseek_model

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.db.database import get_db
-from app.exam.bank_generation import validate_candidate
+from app.exam.review import publication_errors as _publication_errors
 from app.exam.models import ExamQuestion
 
 router = APIRouter(prefix="/api/exam", tags=["exam-bank"])
@@ -56,31 +56,6 @@ def _dto(question: ExamQuestion) -> dict[str, Any]:
         "created_at": question.created_at,
         "updated_at": question.updated_at,
     }
-
-
-def _publication_errors(question: ExamQuestion) -> list[str]:
-    source_refs = question.source_refs or []
-    try:
-        evidence_indices = {
-            int(index)
-            for ref in source_refs
-            if isinstance(ref, dict)
-            for index in (ref.get("chunk_indices") or [])
-        }
-    except (TypeError, ValueError):
-        evidence_indices = set()
-    candidate = {
-        "question_type": question.question_type,
-        "stem": question.stem,
-        "options": question.options,
-        "correct_answer": question.correct_answer,
-        "scoring_points": question.scoring_points,
-        "evidence_chunk_indices": sorted(evidence_indices),
-    }
-    errors = validate_candidate(candidate, evidence_indices)
-    if not source_refs:
-        errors.append("missing_source_refs")
-    return list(dict.fromkeys(errors))
 
 
 @router.get("/questions")

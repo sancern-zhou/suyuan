@@ -83,6 +83,32 @@ def test_pm_week_sample_tube_temperature_status_yes_is_normal_without_remark():
     assert "RF_ABNORMAL_VALUE_NO_REMARK" not in _issue_ids(issues)
 
 
+def test_unit_or_field_consistency_does_not_cascade_to_abnormal_remark():
+    issues = [
+        Issue(
+            rule_id="RF_UNIT_MISMATCH",
+            category="一致性问题",
+            severity="中",
+            field="rf.RF_W_GASEOUSCHECK_O3.GYCHECKVALUE",
+            message="单位与配置不一致",
+            evidence='{"rf_table":"RF_W_GASEOUSCHECK_O3"}',
+        ),
+        Issue(
+            rule_id="RF_FIELD_POSITION_SUSPECT",
+            category="一致性问题",
+            severity="中",
+            field="rf.RF_W_GASEOUSCHECK_O3.GYCHECKVALUE",
+            message="字段位置疑似错填",
+            evidence='{"rf_table":"RF_W_GASEOUSCHECK_O3"}',
+        ),
+    ]
+    forms = [("RF_W_GASEOUSCHECK_O3", {"REMARK": ""})]
+
+    check_rf_abnormal_remarks(_order("WO-CONSISTENCY"), forms, issues)
+
+    assert "RF_ABNORMAL_VALUE_NO_REMARK" not in _issue_ids(issues)
+
+
 def test_week_o3_signal_b_uses_shared_signal_a_handling_record():
     issues: list[Issue] = []
     form = {
@@ -134,6 +160,26 @@ def test_abnormal_value_remark_message_distinguishes_present_but_insufficient_no
     assert "备注说明不充分" in abnormal_remark_issue.message
     assert "无有效说明" not in abnormal_remark_issue.message
     assert "备注内容：REMARK=目前使用赛默飞备机" in abnormal_remark_issue.message
+
+
+def test_conflicting_brand_and_model_does_not_trigger_range_or_remark_issue():
+    issues: list[Issue] = []
+    form = {
+        "WORKINGORDERCODE": "WO-BRAND-MODEL-CONFLICT",
+        "POLLUTANTTYPE": "O3",
+        "DEVICEBRAND": "ESA",
+        "DEVICEMODEL": "49i",
+        "GYCHECKVALUE": "64000.917",
+        "ZWDCHECKVALUE": "49827",
+        "REMARK": "",
+    }
+    forms = [("RF_W_GASEOUSCHECK_O3", form)]
+
+    check_rf_range_values(_order("WO-BRAND-MODEL-CONFLICT"), forms, issues)
+    check_rf_abnormal_remarks(_order("WO-BRAND-MODEL-CONFLICT"), forms, issues)
+
+    assert "RF_RANGE_OUT_OF_SPEC" not in _issue_ids(issues)
+    assert "RF_ABNORMAL_VALUE_NO_REMARK" not in _issue_ids(issues)
 
 
 def test_multipoint_range_does_not_use_fixed_co_range_without_history():
@@ -335,7 +381,7 @@ def test_monthly_gaseous_flow_error_over_ten_percent_is_flagged():
     assert "RF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE" in _issue_ids(issues)
 
 
-def test_pm_membrane_error_is_recomputed_from_original_minus_check():
+def test_pm_membrane_error_sign_difference_is_not_audited():
     issues: list[Issue] = []
     form = {
         "WORKINGORDERCODE": "CH2605251779692955875",
@@ -346,9 +392,8 @@ def test_pm_membrane_error_is_recomputed_from_original_minus_check():
 
     check_rf_formula_values(_order("CH2605251779692955875"), [("RF_Q_PM25RUNSTATUSCHECK", form)], issues)
 
-    assert "RF_PM_MEMBRANE_ERROR_MISMATCH" in _issue_ids(issues)
-    evidence = json.loads(issues[0].evidence)
-    assert evidence["violations"][0]["expected_error"] == 0.2
+    assert "RF_PM_MEMBRANE_ERROR_MISMATCH" not in _issue_ids(issues)
+    assert "RF_PM_MEMBRANE_ERROR_OUT_OF_RANGE" not in _issue_ids(issues)
 
 
 def test_pm_membrane_error_over_two_percent_is_flagged():

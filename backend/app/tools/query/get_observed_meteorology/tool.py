@@ -106,6 +106,21 @@ def parse_province_options(html: str) -> dict[str, str]:
     return provinces
 
 
+def _area_name_candidates(value: str | None) -> list[str]:
+    """Return normalized names used by the platform's city/county directory."""
+    text = _clean_text(value)
+    if not text:
+        return []
+    candidates = [text]
+    # The directory generally stores bare names (e.g. ``南昌``), while users
+    # naturally provide administrative suffixes (e.g. ``南昌市``/``东湖区``).
+    for suffix in ("自治县", "自治州", "地区", "盟", "市", "区", "县"):
+        if text.endswith(suffix) and len(text) > len(suffix):
+            candidates.append(text[: -len(suffix)])
+            break
+    return list(dict.fromkeys(candidates))
+
+
 HEADER_ALIASES = {
     "城市": "city",
     "时间": "timestamp",
@@ -226,14 +241,31 @@ class GetObservedMeteorologyTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "get_observed_meteorology",
-            "description": "查询逐小时地面气象观测数据，自动解析省份和城市编码，返回风向、风速、气压、气温、降雨量、湿度等字段。",
+            "description": (
+                "查询指定城市或区县下辖气象站的逐小时地面观测数据。"
+                "直接提供城市/区县名称即可，工具会从平台目录解析内部编码；"
+                "返回风向、风速、气压、气温、降雨量、湿度等字段。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "province_ajc": {"type": "string", "description": "省份AJC编码，如AJX=江西、AJL=吉林、AGD=广东"},
-                    "province_name": {"type": "string", "description": "省份名称，如江西、吉林、广东；无province_ajc时自动解析"},
-                    "city_code": {"type": "string", "description": "城市编码，如101240101"},
-                    "city_name": {"type": "string", "description": "城市名称，如南昌、长春、广州；无city_code时自动解析"},
+                    "city_code": {"type": "string", "description": "城市/城市下辖气象站目录编码；通常无需提供，如101240101"},
+                    "city_name": {
+                        "type": "string",
+                        "description": "省辖市名称，如南昌市、长春市、广州市；查询该城市对应的气象站",
+                    },
+                    "district_code": {
+                        "type": "string",
+                        "description": "区县下辖观测站目录编码；通常无需提供，优先使用district_name",
+                    },
+                    "district_name": {
+                        "type": "string",
+                        "description": "区县名称，如东湖区、江宁区；查询该区县下辖观测站",
+                    },
+                    "location_name": {
+                        "type": "string",
+                        "description": "城市或区县名称的通用写法；与city_name/district_name三选一",
+                    },
                     "start_time": {"type": "string", "description": "开始时间，格式YYYY-MM-DD HH:mm"},
                     "end_time": {"type": "string", "description": "结束时间，格式YYYY-MM-DD HH:mm"},
                     "page_size": {"type": "integer", "description": "每页条数，默认50", "default": 50},
@@ -248,7 +280,7 @@ class GetObservedMeteorologyTool(LLMTool):
             description="Query hourly observed meteorology from internal HourSpiData pages",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.0.0",
+            version="1.1.0",
             requires_context=True,
         )
 
@@ -262,6 +294,9 @@ class GetObservedMeteorologyTool(LLMTool):
         province_name: str | None = None,
         city_code: str | None = None,
         city_name: str | None = None,
+        district_code: str | None = None,
+        district_name: str | None = None,
+        location_name: str | None = None,
         page_size: int = 50,
         max_pages: int = 20,
         session_cookie: str | None = None,
@@ -273,8 +308,8 @@ class GetObservedMeteorologyTool(LLMTool):
                 client=client,
                 province_ajc=province_ajc,
                 province_name=province_name,
-                city_code=city_code,
-                city_name=city_name,
+                city_code=city_code or district_code,
+                city_name=location_name or district_name or city_name,
             )
 
             records: list[dict[str, Any]] = []
@@ -318,6 +353,14 @@ class GetObservedMeteorologyTool(LLMTool):
                 if record.get("measurements", {}).get("wind_speed_10m") is not None
                 and record.get("measurements", {}).get("wind_direction_10m") is not None
             )
+            location_label = (
+                city_meta.get("city_name")
+                or city_meta.get("location_name")
+                or city_name
+                or city_code
+                or "指定区域"
+            )
+            location_type = "district" if district_name or district_code else "city"
             return {
                 "status": "success",
                 "success": True,
@@ -329,10 +372,15 @@ class GetObservedMeteorologyTool(LLMTool):
                     "province_ajc": province_ajc,
                     "city_code": city_code,
                     "city": city_meta,
+                    "location": city_meta,
+                    "location_type": location_type,
                     "record_count": len(records),
                     "valid_wind_count": valid_wind_count,
                 },
-                "summary": f"[OK] 查询到{len(records)}条小时气象观测数据，其中{valid_wind_count}条包含有效风向风速。",
+                "summary": (
+                    f"[OK] 已查询{location_label}下辖气象站，获得{len(records)}条小时气象观测数据；"
+                    f"其中{valid_wind_count}条包含有效风向风速。"
+                ),
             }
         except Exception as exc:
             logger.warning("observed_meteorology_query_failed", error=str(exc))
@@ -355,26 +403,83 @@ class GetObservedMeteorologyTool(LLMTool):
         city_name: str | None,
     ) -> tuple[str, str, dict[str, Any]]:
         if province_ajc and city_code:
-            return province_ajc, city_code, {"city_code": city_code, "city_name": city_name}
+            return province_ajc, city_code, {
+                "city_code": city_code,
+                "city_name": city_name,
+                "location_name": city_name,
+            }
 
         if not province_ajc:
-            if not province_name:
-                raise ValueError("缺少 province_ajc 或 province_name，无法解析城市编码。")
+            if not province_name and not city_code and not city_name:
+                raise ValueError(
+                    "缺少 city_name 或 city_code，无法定位城市/区县下辖气象站；"
+                    "请提供城市名称或区县名称，无需提供省份内部编码。"
+                )
             provinces = parse_province_options(client.fetch_home())
-            province_ajc = provinces.get(province_name) or provinces.get(province_name.rstrip("省市"))
-            if not province_ajc:
-                raise ValueError(f"未找到省份编码: {province_name}")
+            if province_name:
+                province_ajc = provinces.get(province_name)
+                if not province_ajc:
+                    for candidate in _area_name_candidates(province_name):
+                        province_ajc = provinces.get(candidate)
+                        if province_ajc:
+                            break
+                if not province_ajc:
+                    raise ValueError(f"未找到省份目录编码: {province_name}")
+            elif city_code or city_name:
+                # Province is only a protocol-level grouping on HourSpiData;
+                # callers should not have to know it. Search the platform's
+                # province -> city/county directory using the requested area.
+                matches: list[tuple[str, str, dict[str, Any]]] = []
+                seen_provinces: set[str] = set()
+                for province_code in provinces.values():
+                    if not province_code or province_code in seen_provinces:
+                        continue
+                    seen_provinces.add(province_code)
+                    for meta in client.fetch_cities(province_code).values():
+                        if city_code and meta.get("city_code") == city_code:
+                            matches.append((province_code, city_code, meta))
+                        elif city_name and any(
+                            candidate == _clean_text(meta.get("city_name"))
+                            for candidate in _area_name_candidates(city_name)
+                        ):
+                            matches.append((province_code, str(meta.get("city_code") or ""), meta))
+                if not matches:
+                    target = city_code or city_name
+                    raise ValueError(
+                        f"未找到城市/区县下辖气象站: {target}；请检查名称，或同时提供省辖市名称"
+                    )
+                if len(matches) > 1 and city_name:
+                    province_codes = ", ".join(sorted({item[0] for item in matches}))
+                    raise ValueError(
+                        f"城市/区县名称存在多个目录匹配（{province_codes}），请补充省份或使用city_code"
+                    )
+                province_ajc, resolved_code, city_meta = matches[0]
+                if not resolved_code:
+                    raise ValueError(f"目录中的城市/区县缺少观测站编码: {city_name or city_code}")
+                return province_ajc, resolved_code, city_meta
 
         cities = client.fetch_cities(province_ajc)
         if city_code:
             for meta in cities.values():
                 if meta.get("city_code") == city_code:
                     return province_ajc, city_code, meta
-            return province_ajc, city_code, {"city_code": city_code, "city_name": city_name}
+            return province_ajc, city_code, {
+                "city_code": city_code,
+                "city_name": city_name,
+                "location_name": city_name,
+            }
 
         if not city_name:
-            raise ValueError("缺少 city_code 或 city_name，无法查询城市小时气象。")
-        city_meta = cities.get(city_name) or cities.get(city_name.rstrip("市"))
+            raise ValueError(
+                "缺少 city_name 或 city_code，无法定位城市/区县下辖气象站；"
+                "请提供城市名称或区县名称。"
+            )
+        city_meta = next(
+            (meta for name, meta in cities.items() if any(
+                candidate == _clean_text(name) for candidate in _area_name_candidates(city_name)
+            )),
+            None,
+        )
         if not city_meta:
-            raise ValueError(f"未在{province_ajc}下找到城市: {city_name}")
+            raise ValueError(f"未在目录({province_ajc})下找到城市/区县下辖气象站: {city_name}")
         return province_ajc, city_meta["city_code"], city_meta

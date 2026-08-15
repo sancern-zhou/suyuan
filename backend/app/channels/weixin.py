@@ -693,7 +693,9 @@ class WeixinChannel(BaseChannel):
                 # 如果有 instance_id，更新配置文件
                 if self.instance_id:
                     from config.social_config import load_social_config, save_social_config
-                    config = load_social_config()
+                    from config.settings import settings
+
+                    config = load_social_config(settings.social_config_path)
 
                     # 找到对应的账号并更新 token
                     for acc in config.weixin.accounts:
@@ -703,7 +705,7 @@ class WeixinChannel(BaseChannel):
                             break
 
                     # 保存配置
-                    save_social_config(config)
+                    save_social_config(config, settings.social_config_path)
                     # logger.info("Token saved to config file", account_id=self.instance_id)  # 已禁用日志
 
             except Exception as e:

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.routers.agent import (
+from app.api.agent import (
     board_agent_instance,
     data_viz_agent_instance,
     ppt_agent_instance,

@@ -6,6 +6,7 @@ Data Fetcher Interface
 from abc import ABC, abstractmethod
 from typing import Optional
 from enum import Enum
+import asyncio
 import structlog
 
 logger = structlog.get_logger()
@@ -39,6 +40,7 @@ class DataFetcher(ABC):
         self.version = version
         self.enabled = True
         self.status = FetcherStatus.IDLE
+        self._run_lock = asyncio.Lock()
 
     @abstractmethod
     async def fetch_and_store(self):
@@ -51,7 +53,7 @@ class DataFetcher(ABC):
 
     def is_available(self) -> bool:
         """检查Fetcher是否可用"""
-        return self.enabled and self.status != FetcherStatus.ERROR
+        return self.enabled and self.status == FetcherStatus.IDLE
 
     def disable(self, reason: str = ""):
         """禁用Fetcher"""
@@ -67,6 +69,22 @@ class DataFetcher(ABC):
 
     async def run(self):
         """运行Fetcher（由调度器调用）"""
+        # A manual trigger and a cron tick may arrive at the same time.  Skip
+        # the later invocation instead of queuing or running the same poll in
+        # parallel; project fetchers persist their cursor only after a full
+        # successful run, so overlap could otherwise duplicate events.
+        if self._run_lock.locked():
+            logger.warning(
+                "fetcher_run_skipped_already_running",
+                fetcher=self.name,
+            )
+            return
+
+        async with self._run_lock:
+            await self._run_once()
+
+    async def _run_once(self):
+        """Run one protected fetch cycle."""
         # 自动恢复机制：如果状态是 ERROR，重置为 IDLE 再执行
         if self.status == FetcherStatus.ERROR and self.enabled:
             logger.info(

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import timedelta
 
@@ -86,6 +87,35 @@ class FakeConversationPersistence:
         return True
 
 
+class BlockingAgentFactory:
+    def __init__(self, expected_concurrency):
+        self.expected_concurrency = expected_concurrency
+        self.active = 0
+        self.max_active = 0
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __call__(self):
+        factory = self
+
+        class BlockingAgent:
+            async def analyze(self, prompt, **kwargs):
+                factory.active += 1
+                factory.max_active = max(factory.max_active, factory.active)
+                if factory.active >= factory.expected_concurrency:
+                    factory.started.set()
+                try:
+                    await factory.release.wait()
+                    yield {
+                        "type": "final_response",
+                        "content": json.dumps({"success": True}),
+                    }
+                finally:
+                    factory.active -= 1
+
+        return BlockingAgent()
+
+
 @pytest.fixture
 def agent_factory(tmp_path):
     report = tmp_path / "report.docx"
@@ -169,6 +199,49 @@ async def test_matching_event_runs_agent_once_without_service_side_delivery(
     execution = service.execution_storage.get(first.execution_ids[0])
     assert execution.status.value == "success"
     assert execution.delivery_results == []
+
+
+@pytest.mark.asyncio
+async def test_background_event_tasks_respect_configured_concurrency(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SCHEDULED_EVENT_MAX_CONCURRENT_TASKS", "2")
+    factory = BlockingAgentFactory(expected_concurrency=2)
+    service = ScheduledTaskService(
+        agent_factory=factory,
+        task_storage=TaskStorage(tmp_path),
+        execution_storage=ExecutionStorage(tmp_path),
+        claim_storage=EventClaimStorage(tmp_path),
+        conversation_persistence=FakeConversationPersistence(),
+    )
+    task = ScheduledTask(
+        task_id="bounded-event-task",
+        name="bounded event task",
+        description="bounded event task",
+        execution_mode="assistant",
+        trigger_type="event",
+        event_type="yuncheng.alert.created",
+        steps=[TaskStep(
+            step_id="report",
+            description="report",
+            agent_prompt="report",
+        )],
+    )
+    service.create_task(task)
+
+    for index in range(3):
+        await service.publish_event(_event(f"bounded-{index}"), wait=False)
+
+    await asyncio.wait_for(factory.started.wait(), timeout=2)
+    await asyncio.sleep(0)
+    assert factory.max_active == 2
+    assert service.claim_storage.get(task.task_id, "bounded-2").status == "claimed"
+
+    factory.release.set()
+    await asyncio.gather(*list(service._event_tasks))
+    assert factory.max_active == 2
+    assert service.claim_storage.get(task.task_id, "bounded-2").status == "succeeded"
 
 
 @pytest.mark.asyncio

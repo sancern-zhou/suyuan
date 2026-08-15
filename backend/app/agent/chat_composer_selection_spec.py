@@ -14,7 +14,7 @@ from app.agent.selection_context import (
     resource_refs_to_message_attachments,
     resource_refs_to_runtime_attachments,
 )
-from app.routers.agent import AgentAnalyzeRequest
+from app.api.agent import AgentAnalyzeRequest
 
 
 def _stored_resource(

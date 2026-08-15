@@ -308,7 +308,7 @@ class Settings(BaseSettings):
         description="DeepSeek model name"
     )
     deepseek_api_mode: str = Field(
-        default="anthropic_messages",
+        default="chat_completions",
         description="DeepSeek API protocol mode: anthropic_messages or chat_completions"
     )
 
@@ -318,7 +318,7 @@ class Settings(BaseSettings):
         description="Alibaba Cloud Bailian Anthropic-compatible API base URL",
     )
     bailian_model: str = Field(
-        default="qwen3.8-max-preview",
+        default="qwen3.8-max",
         description="Default Bailian model used by Auto mode",
     )
     bailian_api_mode: str = Field(
@@ -462,16 +462,16 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="doubao/gpt-5.6-luna,mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
-        description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
+        default="doubao/gpt-5.6-luna,bailian/qwen3.8-max",
+        description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"
     )
     llm_flash_models: str = Field(
-        default="doubao/gpt-5.6-luna,deepseek/deepseek-v4-flash",
-        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,deepseek/deepseek-v4-flash"
+        default="doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash",
+        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
         default="bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro",
-        description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
+        description="Comma-separated Pro model priority chain, e.g. bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
         default="",

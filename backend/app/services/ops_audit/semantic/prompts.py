@@ -9,29 +9,33 @@ ATTACHMENT_REVIEW_PROMPT = (
 )
 
 REMARK_REVIEW_PROMPT = (
-    "你是运维工单语义复核员。请判断备注是否覆盖原因、措施、结果，"
-    "并说明是否足以支持工单闭环结论。输出结论、证据摘要和置信度。"
+    "你是运维工单语义复核员。请优先判断备注是否与当前异常相关且不与证据矛盾，"
+    "原因、措施、结果仅作为完整度参考，不作为有效说明的强制三要素。输出结论、证据摘要和置信度。"
 )
 
 REMARK_SEMANTIC_JSON_PROMPT = (
-    "请判断下列运维工单备注是否完整说明原因、措施、结果。"
+    "请判断下列运维工单备注是否有效说明当前审核点。有效性优先于完整度："
+    "只要备注与当前审核点相关且不与证据矛盾，即使没有完整覆盖原因、措施、结果，也应判为有效。"
     "如果上下文的 semantic_focus 包含 RF_TW_REMARK_LOW_VALUE，表示双周切割头清洗未识别到清洗照片；"
     "此时不要套用故障闭环三要素，也不要因为备注为空或低信息词直接判问题，"
     "只判断备注是否合理说明了未提供清洗照片或证据不足的原因。"
     "problem_description 必须具体描述备注存在或不存在的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"is_complete\":bool,\"has_cause\":bool,\"has_action\":bool,\"has_result\":bool,"
+    "{\"judgment_type\":\"missing|placeholder|unrelated|contradictory|valid\","
+    "\"is_complete\":bool,\"has_cause\":bool,\"has_action\":bool,\"has_result\":bool,"
     "\"problem_description\":string,\"confidence\":number}"
 )
 
 REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
-    "请逐项判断运维工单备注是否完整说明当前异常项的原因、措施、结果。"
+    "请逐项判断运维工单备注是否有效说明当前异常项。先判断相关性和证据一致性，原因、措施、结果仅作为完整度参考，"
+    "不得仅因缺少其中一项或多项就判为问题，简短但相关且不矛盾的说明不可直接判定为问题。"
     "仅对故障、异常、报警、待定、处置闭环类场景使用该标准；不要把计划任务主表描述充分性混入本任务。"
     "如果 semantic_focus 或证据中包含 RF_RANGE_OUT_OF_SPEC，表示表单检查值超出品牌正常范围，"
     "应重点读取备注、异常时处理记录、处理记录或处置说明，判断该异常检查值是否有基本合理的业务说明。"
     "该规则的语义复核采用宽松口径：只要备注非空，且内容与当前检查、异常处理、设备状态、复测、参数或现场情况大致相关，"
     "即使备注较简略、没有完整覆盖原因/措施/结果，也应视为备注有效，不要仅因缺少三要素而判为问题。"
-    "例如‘已处理’、‘正常’、‘复测正常’、‘已调整参数’、‘设备运行正常’等简短但不明显离谱的说明，原则上判为有效备注。"
+    "例如‘已处理’、‘复测恢复正常’、‘已调整参数’、‘设备运行正常’等简短但不明显离谱的说明，原则上判为有效备注。"
+    "单独填写‘正常’时，只有能合理表示处置后的状态才可判为有效；若它直接否认已存在的超限或异常证据，应判为contradictory。"
     "只有在备注为空、仅为占位符（如‘/’）、明显与当前异常无关，或与表单/处理记录明显矛盾时，才判为备注无效。"
     "必须优先读取当前异常项 issue.remark_candidates 中对应字段的CHECKROW或字段级说明。"
     "如果字段级说明明确写明表格范围有误、范围配置有误、系统表格范围错误、厂家备案参数、厂家备案范围、"
@@ -48,7 +52,8 @@ REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
     "每个输入项必须独立判断，不得用同一工单其他RF表或其他字段的备注替代当前异常项说明。"
     "problem_description 必须具体描述当前review_item_id对应备注的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
-    "{\"results\":[{\"review_item_id\":string,\"working_order_code\":string,\"is_complete\":bool,\"has_cause\":bool,"
+    "{\"results\":[{\"review_item_id\":string,\"working_order_code\":string,"
+    "\"judgment_type\":\"missing|placeholder|unrelated|contradictory|valid\",\"is_complete\":bool,\"has_cause\":bool,"
     "\"has_action\":bool,\"has_result\":bool,\"problem_description\":string,\"confidence\":number}]}"
 )
 

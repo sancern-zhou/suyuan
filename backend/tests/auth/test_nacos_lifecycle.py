@@ -88,6 +88,29 @@ async def test_shutdown_deregisters_and_closes_client():
 
 
 @pytest.mark.asyncio
+async def test_shutdown_error_does_not_abort_application_cleanup():
+    app = SimpleNamespace(state=SimpleNamespace())
+    client = FakeNamingClient()
+
+    async def broken_shutdown():
+        client.shutdown_called = True
+        raise TypeError("internal stop returned a non-awaitable value")
+
+    client.shutdown = broken_shutdown
+
+    async def factory(config):
+        return client
+
+    lifecycle = NacosLifecycle(_settings(), naming_factory=factory)
+    await lifecycle.start(app)
+    await lifecycle.stop(app)
+
+    assert client.shutdown_called is True
+    assert lifecycle._client is None
+    assert app.state.nacos_ready is False
+
+
+@pytest.mark.asyncio
 async def test_production_registration_failure_aborts_startup():
     app = SimpleNamespace(state=SimpleNamespace())
 
@@ -124,7 +147,7 @@ async def test_nonproduction_registration_failure_is_reported_without_aborting()
 
 @pytest.mark.asyncio
 async def test_production_readiness_requires_auth_configuration_and_nacos(monkeypatch):
-    from app.routers import system
+    from app.api import system
 
     monkeypatch.setattr(system.settings, "environment", "production")
     monkeypatch.setattr(system.settings, "auth_mode", "company")

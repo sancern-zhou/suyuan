@@ -3,11 +3,12 @@ Weather Data Repository
 
 气象数据仓库层，封装数据库操作
 """
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List
+
+import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-import structlog
 
 from app.db.database import async_session
 from app.db.models import ERA5ReanalysisData, ObservedWeatherData, WeatherStation
@@ -30,6 +31,24 @@ class WeatherRepository:
                 select(WeatherStation).where(WeatherStation.is_active == True)
             )
             return result.scalars().all()
+
+    async def get_active_stations_by_cities(
+        self,
+        cities: List[str],
+    ) -> Dict[str, List[WeatherStation]]:
+        """Return active stations grouped by normalized city name."""
+        from app.config.weather_targets import normalize_city_name
+
+        requested = {normalize_city_name(city) for city in cities if city}
+        grouped: Dict[str, List[WeatherStation]] = {city: [] for city in requested}
+        if not requested:
+            return grouped
+
+        for station in await self.get_active_stations():
+            city = normalize_city_name(station.city or "")
+            if city in grouped:
+                grouped[city].append(station)
+        return grouped
 
     async def save_era5_data(
         self,

@@ -10,6 +10,7 @@ This module provides test examples for the new rule modules:
 The tests demonstrate how to use the rule checkers with sample data.
 """
 
+import json
 from datetime import datetime
 
 from app.services.ops_audit.rules import (
@@ -187,7 +188,7 @@ def test_audit_dataset_accepts_preventive_maintenance_report_without_photo():
         issue
         for issue in record.get("scoring_issues", [])
         if issue["rule_id"] == "ATTACHMENT_REQUIRED_MISSING"
-        and issue["field"] == "attachment.PREVENTIVE_MAINTENANCE_REPORT.missing"
+        and issue["field"].startswith("attachment.PREVENTIVE_MAINTENANCE_REPORT.")
     ]
     assert preventive_attachment_issues == []
 
@@ -227,9 +228,38 @@ def test_audit_dataset_reports_preventive_maintenance_attachment_when_report_and
         issue
         for issue in record.get("scoring_issues", [])
         if issue["rule_id"] == "ATTACHMENT_REQUIRED_MISSING"
-        and issue["field"] == "attachment.PREVENTIVE_MAINTENANCE_REPORT.missing"
+        and issue["field"].startswith("attachment.PREVENTIVE_MAINTENANCE_REPORT.")
     ]
-    assert len(preventive_attachment_issues) == 1
+    assert len(preventive_attachment_issues) == 2
+    assert {
+        json.loads(issue["evidence"])["missing_type"]
+        for issue in preventive_attachment_issues
+    } == {"report", "photo"}
+
+
+def test_rf_calibration_dates_emits_each_instrument_violation_separately():
+    order = {
+        "WORKINGORDERCODE": "WO-CALIBRATION-SPLIT",
+        "CREATETIME": "2026-05-20 10:00:00",
+    }
+    form = {
+        "WORKINGORDERCODE": "WO-CALIBRATION-SPLIT",
+        "SdtTime": "2026-05-20 10:00:00",
+        "P_CalibrateDatePrev": "2026-03-05",
+        "P_CalibrateDateNext": "2026-03-04",
+        "F_CalibrateDatePrev1": "2026-03-05",
+        "F_CalibrateDateNext1": "2026-03-04",
+    }
+    issues = []
+
+    check_rf_calibration_dates(order, [("RF_Q_GaseousFlowCheck", form)], issues)
+
+    assert len(issues) == 2
+    assert {issue.field for issue in issues} == {
+        "rf.RF_Q_GaseousFlowCheck.P_CalibrateDateNext",
+        "rf.RF_Q_GaseousFlowCheck.F_CalibrateDateNext1",
+    }
+    assert all(len(json.loads(issue.evidence)["violations"]) == 1 for issue in issues)
 
 
 def test_audit_dataset_routes_tw_cleaning_without_photo_to_semantic_review():
@@ -462,7 +492,7 @@ def test_rf_calibration_dates_records_next_field_in_violation():
     assert issues[0].field == "rf.RF_Q_GASEOUSMULTIPOINT_CO.PPMCODEDATE"
 
 
-def test_quarter_gaseous_flow_dynamic_calibrator_next_date_must_be_after_reference_time():
+def test_quarter_gaseous_flow_dynamic_calibrator_is_valid_on_expiry_date():
     order = {
         "WORKINGORDERCODE": "CH202605260003",
         "CREATETIME": "2026-05-20 10:00:00",
@@ -482,8 +512,7 @@ def test_quarter_gaseous_flow_dynamic_calibrator_next_date_must_be_after_referen
 
     check_rf_calibration_dates(order, forms, issues)
 
-    assert len(issues) == 1
-    assert issues[0].rule_id == "RF_CALIBRATION_DATE_EXPIRED"
+    assert issues == []
 
 
 def test_workflow_completeness():

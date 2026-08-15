@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from enum import Enum
@@ -58,3 +59,31 @@ def test_legacy_decimal_helper_uses_complete_json_normalization():
     )
 
     assert value == {"updated_at": "2026-08-09T00:00:00", "amount": 1.25}
+
+
+def test_non_finite_floats_become_json_nulls():
+    value = SessionRepository._normalize_json_value({
+        "nan": math.nan,
+        "positive_infinity": math.inf,
+        "negative_infinity": -math.inf,
+        "nested": [1.0, math.nan],
+    })
+
+    assert value == {
+        "nan": None,
+        "positive_infinity": None,
+        "negative_infinity": None,
+        "nested": [1.0, None],
+    }
+    json.dumps(value, allow_nan=False)
+
+
+def test_transcript_terminal_types_keep_their_semantics_when_persisted():
+    assert SessionRepository._resolve_role_and_type({
+        "type": "error",
+        "content": "CancelledError",
+    }) == ("assistant", "error")
+    assert SessionRepository._resolve_role_and_type({
+        "type": "user_pause",
+        "content": "用户主动暂停了上一轮分析",
+    }) == ("user", "user_pause")
