@@ -61,7 +61,7 @@ def test_quarter_gaseous_flow_target_point_allows_correct_selected_points():
     assert [issue for issue in issues if issue.rule_id == "RF_Q_GASEOUS_FLOW_TARGET_POINT_MISMATCH"] == []
 
 
-def test_expired_calibration_evidence_and_message_include_human_readable_dates():
+def test_calibration_expiry_date_is_valid_for_the_entire_same_day():
     order = {
         "WORKINGORDERCODE": "CH2607091783605182246",
         "STATIONID": "1724",
@@ -78,14 +78,34 @@ def test_expired_calibration_evidence_and_message_include_human_readable_dates()
 
     check_rf_calibration_dates(order, [("RF_TW_PmFlowCalibrate", form)], issues)
 
+    assert issues == []
+
+
+def test_expired_calibration_evidence_and_message_include_human_readable_dates():
+    order = {
+        "WORKINGORDERCODE": "CH2607091783605182246",
+        "STATIONID": "1724",
+        "CREATETIME": "2026-07-09 21:53:02",
+    }
+    form = {
+        "WORKINGORDERCODE": "CH2607091783605182246",
+        "STATIONID": "1724",
+        "CHECKDATE": "2026-07-09 15:15:00",
+        "F_PrevDate": "2026-06-25 00:00:00",
+        "F_NextDate": "2026-07-08 00:00:00",
+    }
+    issues = []
+
+    check_rf_calibration_dates(order, [("RF_TW_PmFlowCalibrate", form)], issues)
+
     assert len(issues) == 1
     assert issues[0].message == (
-        "RF表单校准有效期异常: 流量计校准有效期至2026-07-09 00:00:00，"
+        "RF表单校准有效期异常: 流量计校准有效期至2026-07-08 00:00:00，"
         "本次检查时间为2026-07-09 15:15:00"
     )
     violation = json.loads(issues[0].evidence)["violations"][0]
     assert violation["reason"] == "not_after_reference"
     assert violation["description"] == (
-        "流量计校准有效期至2026-07-09 00:00:00，"
+        "流量计校准有效期至2026-07-08 00:00:00，"
         "本次检查时间为2026-07-09 15:15:00"
     )

@@ -22,6 +22,7 @@ def test_rule_catalog_is_loaded_from_modular_config():
         "RF_CHECK_TIME_OUTSIDE_RANGE",
         "RF_ABNORMAL_VALUE_NO_REMARK",
     }
+    assert "RF_PM_MEMBRANE_ERROR_MISMATCH" not in {rule["rule_id"] for rule in catalog}
     assert "RF_REVIEW_EMPTY" not in {rule["rule_id"] for rule in catalog}
 
 
@@ -46,7 +47,46 @@ def test_rule_review_stages_separate_current_semantic_and_future_ocr():
     assert "RF_Q_PENDING_NO_REMARK" in rules_for_review_stage("semantic_remark")
     assert review_stage_for_rule("ATTACHMENT_REPORT_MISSING") == "future_ocr"
     assert review_stage_for_rule("ATTACHMENT_PM_FLOW_CALIBRATION_VALUE_MISMATCH") == "flow_visual"
+    assert review_stage_for_rule("ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC") == "technical_diagnostic"
+    assert review_stage_for_rule("RF_RANGE_UNIT_MISMATCH") == "technical_diagnostic"
     assert review_stage_for_rule("RF_MISSING") == "deterministic"
+
+
+def test_scoring_keeps_technical_diagnostics_out_of_work_order_issues():
+    records = [
+        {
+            "working_order_code": "WO-DIAGNOSTIC",
+            "order_type": "Check",
+            "issues": [
+                {
+                    "rule_id": "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
+                    "category": "附件质量问题",
+                    "severity": "低",
+                    "message": "视觉识别未执行成功",
+                },
+                {
+                    "rule_id": "RF_RANGE_UNIT_MISMATCH",
+                    "category": "一致性问题",
+                    "severity": "中",
+                    "message": "检查值与配置范围单位不一致",
+                },
+            ],
+        }
+    ]
+
+    patterns = classify_rule_patterns(records)
+    apply_rule_pattern_assessment(records, patterns)
+
+    assert records[0]["audit_level"] == ""
+    assert records[0]["scoring_issues"] == []
+    assert records[0]["technical_diagnostic_count"] == 2
+    assert {
+        issue["rule_id"] for issue in records[0]["technical_diagnostics"]
+    } == {"ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC", "RF_RANGE_UNIT_MISMATCH"}
+    assert all(
+        issue["assessment"] == "technical_diagnostic"
+        for issue in records[0]["technical_diagnostics"]
+    )
 
 
 def test_scoring_marks_hard_rules_as_deterministic():
@@ -447,6 +487,47 @@ def test_evidence_builder_creates_layered_bundle():
     assert detail_bundle["structured_detail"]["count"] == 1
     assert "raw_evidence" not in detail_bundle
     assert raw_bundle["raw_evidence"]["count"] == 1
+
+
+def test_evidence_builder_splits_value_and_remark_evidence():
+    dataset = {"orders": [], "details": [], "rf_forms": {}, "attachments": [], "wo_commonfile": []}
+    value_issue = {
+        "rule_id": "RF_RANGE_OUT_OF_SPEC",
+        "field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+        "message": "参考PMT信号值0.002超出正常范围",
+        "evidence": (
+            '{"working_order_code":"WO-SPLIT","rf_table":"RF_W_GASEOUSCHECK_NOX",'
+            '"out_of_spec_values":[{"field":"PMTCHECKVALUE","raw_value":"0.002"}]}'
+        ),
+    }
+    remark_issue = {
+        "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+        "field": "rf.RF_W_GASEOUSCHECK_NOX.remark",
+        "message": "异常值未填写有效备注",
+        "evidence": (
+            '{"working_order_code":"WO-SPLIT","rf_table":"RF_W_GASEOUSCHECK_NOX",'
+            '"reason_rule_id":"RF_RANGE_OUT_OF_SPEC",'
+            '"abnormal_field":"rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",'
+            '"remark_candidates":{"REMARK":""},"needs_semantic_review":true}'
+        ),
+    }
+    audit = {
+        "records": [
+            {"working_order_code": "WO-SPLIT", "scoring_issues": [value_issue, remark_issue]}
+        ]
+    }
+
+    bundle = build_dataset_evidence(dataset, audit=audit)
+
+    issue_evidence = bundle["issue_evidence"]
+    assert issue_evidence["component_counts"] == {
+        "value_abnormal": 1,
+        "abnormal_explanation_issue": 1,
+    }
+    value_item, remark_item = issue_evidence["items"]
+    assert value_item["issue_group_id"] == remark_item["issue_group_id"]
+    assert "value_evidence" in value_item and "remark_evidence" not in value_item
+    assert "remark_evidence" in remark_item and "value_evidence" not in remark_item
 
 
 def test_rule_engine_persists_audit_outputs(tmp_path):

@@ -9,9 +9,21 @@ from typing import Any
 
 
 EXCLUDED_REPORT_RULE_IDS = {
+    "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
     "RF_AUDITOR_EMPTY",
+    "RF_RANGE_UNIT_MISMATCH",
     "RF_REVIEW_EMPTY",
     "RF_REQUIRED_FIELD_LOW_VALUE",
+}
+
+ABNORMAL_FACT_COMPONENTS = {"value_abnormal", "value_missing", "abnormal_fact", "data_suspect"}
+ABNORMAL_EXPLANATION_COMPONENTS = {"abnormal_explanation_issue", "abnormal_without_explanation"}
+LINKED_ABNORMAL_COMPONENTS = ABNORMAL_FACT_COMPONENTS | ABNORMAL_EXPLANATION_COMPONENTS
+ABNORMAL_FACT_LABELS = {
+    "value_abnormal": "值异常",
+    "value_missing": "值缺失",
+    "abnormal_fact": "异常状态",
+    "data_suspect": "数据疑点",
 }
 
 
@@ -166,6 +178,15 @@ def _format_final_issue_list_by_operation_unit(
     lines = ["", "## 问题工单明细", ""]
     lines.append(f"- 问题工单数：{len(affected_orders)} 条")
     lines.append(f"- 问题条目数：{len(items)} 条")
+    linked_group_count = len(
+        {
+            item.get("issue_group_id")
+            for item in items
+            if item.get("issue_component") in LINKED_ABNORMAL_COMPONENTS and item.get("issue_group_id")
+        }
+    )
+    if linked_group_count:
+        lines.append(f"- 异常事实与说明关联组数：{linked_group_count} 组")
     lines.append("")
 
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -176,17 +197,125 @@ def _format_final_issue_list_by_operation_unit(
     for operation_unit in sorted(grouped):
         lines.append(f"### {operation_unit}")
         lines.append("")
-        for index, item in enumerate(_sort_issue_items(grouped[operation_unit]), start=1):
-            lines.append(
-                f"{index}. {_issue_station_label(item)}、"
-                f"{_display_value(item.get('rf_form_name'), '未关联中文表单')}、"
-                f"{_display_value(item.get('working_order_code'), '未关联工单号')}、"
-                f"{_issue_message(item)}、"
-                f"{_display_value(item.get('rule_id'), '未关联规则')}"
-            )
-            lines.extend(_format_evidence_images(item, report_path))
+        operation_items = grouped[operation_unit]
+        linked_items = [
+            item for item in operation_items if item.get("issue_component") in LINKED_ABNORMAL_COMPONENTS
+        ]
+        if linked_items:
+            lines.extend(["#### 异常事实与说明对照", ""])
+            lines.extend(_format_linked_abnormal_groups(linked_items, report_path))
+        other_items = [
+            item for item in operation_items if item.get("issue_component") not in LINKED_ABNORMAL_COMPONENTS
+        ]
+        lines.extend(_format_numbered_issue_items(other_items, report_path))
         lines.append("")
     return lines
+
+
+def _format_linked_abnormal_groups(
+    items: list[dict[str, Any]],
+    report_path: Path,
+) -> list[str]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        group_id = str(item.get("issue_group_id") or _fallback_issue_group_id(item))
+        grouped.setdefault(group_id, []).append(item)
+
+    groups = sorted(grouped.values(), key=_linked_group_sort_key)
+    lines: list[str] = []
+    for index, group in enumerate(groups, start=1):
+        ordered = _sort_issue_items(group)
+        representative = next(
+            (item for item in ordered if item.get("issue_component") in ABNORMAL_FACT_COMPONENTS),
+            ordered[0],
+        )
+        lines.append(
+            f"{index}. {_issue_station_label(representative)}、"
+            f"{_display_value(representative.get('rf_form_name'), '未关联中文表单')}、"
+            f"{_display_value(representative.get('working_order_code'), '未关联工单号')}"
+        )
+        for fact in (item for item in ordered if item.get("issue_component") in ABNORMAL_FACT_COMPONENTS):
+            label = ABNORMAL_FACT_LABELS.get(str(fact.get("issue_component")), "异常事实")
+            lines.append(
+                f"   - 异常事实（{label}）：{_issue_message(fact)}"
+                f"（规则：{_display_value(fact.get('rule_id'), '未关联规则')}）"
+            )
+            lines.extend(_format_evidence_images(fact, report_path))
+        explanations = [
+            item for item in ordered if item.get("issue_component") in ABNORMAL_EXPLANATION_COMPONENTS
+        ]
+        for explanation in explanations:
+            lines.extend(_format_original_remark_lines(explanation))
+            judgment_label = _display_value(
+                explanation.get("remark_judgment_label"),
+                "说明缺失或无效",
+            )
+            lines.append(f"   - 说明判断：{judgment_label}")
+            lines.append(f"   - 语义结论：{_issue_message(explanation)}")
+            lines.extend(_format_evidence_images(explanation, report_path))
+    return lines
+
+
+def _linked_group_sort_key(group: list[dict[str, Any]]) -> tuple[str, str, str]:
+    first = _sort_issue_items(group)[0]
+    return (
+        str(first.get("station_name") or first.get("station_id") or ""),
+        str(first.get("working_order_code") or ""),
+        str(first.get("field") or ""),
+    )
+
+
+def _fallback_issue_group_id(item: dict[str, Any]) -> str:
+    return "::".join(
+        str(item.get(key) or "")
+        for key in ("working_order_code", "rf_table", "field", "rule_id")
+    )
+
+
+def _format_numbered_issue_items(
+    items: list[dict[str, Any]],
+    report_path: Path,
+    *,
+    component_label: str | None = None,
+) -> list[str]:
+    lines: list[str] = []
+    prefix = f"[{component_label}] " if component_label else ""
+    for index, item in enumerate(_sort_issue_items(items), start=1):
+        lines.append(
+            f"{index}. {prefix}{_issue_station_label(item)}、"
+            f"{_display_value(item.get('rf_form_name'), '未关联中文表单')}、"
+            f"{_display_value(item.get('working_order_code'), '未关联工单号')}、"
+            f"{_issue_message(item)}、"
+            f"{_display_value(item.get('rule_id'), '未关联规则')}"
+        )
+        if item.get("issue_component") in {"abnormal_explanation_issue", "abnormal_without_explanation"}:
+            lines.extend(_format_original_remark_lines(item))
+        lines.extend(_format_evidence_images(item, report_path))
+    return lines
+
+
+def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
+    entries = item.get("original_remarks")
+    if isinstance(entries, list):
+        nonempty_entries = [entry for entry in entries if isinstance(entry, dict) and str(entry.get("value") or "").strip()]
+        if nonempty_entries:
+            lines = []
+            for entry in nonempty_entries:
+                raw_field = _display_value(entry.get("field"), "备注")
+                field_label = _display_value(entry.get("field_label"), raw_field)
+                field = field_label if field_label == raw_field else f"{field_label}/{raw_field}"
+                value = _single_line_text(entry.get("value"))
+                lines.append(f"   - 原备注（{field}）：{value}")
+            return lines
+
+    fallback = str(item.get("original_remark_text") or "").strip()
+    if fallback:
+        return [f"   - 原备注：{_single_line_text(fallback)}"]
+    return ["   - 原备注：未填写"]
+
+
+def _single_line_text(value: Any) -> str:
+    return " / ".join(part.strip() for part in str(value or "").splitlines() if part.strip()) or "未填写"
 
 
 def _format_pending_visual_reviews(

@@ -75,6 +75,24 @@ def build_social_prompt(
     prompt_parts.extend([
         f"你是 {assistant_name}，一位 {assistant_personality} 的移动端助理。",
         "",
+    ])
+
+    try:
+        from app.project_config.loader import load_project_context
+        from config.settings import settings
+
+        project_context = load_project_context(settings.project_id)
+        prompt_parts.extend([
+            "## 当前项目边界",
+            "",
+            f"- 当前部署：{project_context.manifest.frontend.brand_name}（{project_context.manifest.project}）。",
+            "- 只能使用当前部署已配置的账号、数据、工具和知识范围；不得引用或推断其他项目的配置与数据。",
+            "",
+        ])
+    except Exception:
+        pass
+
+    prompt_parts.extend([
         "## 陪伴与做事方式",
         "",
         "- 先理解用户此刻真正想完成什么，再选择最省心的做法。",

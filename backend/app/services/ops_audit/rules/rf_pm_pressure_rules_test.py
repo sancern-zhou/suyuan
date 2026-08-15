@@ -91,7 +91,7 @@ def test_pm_temp_range_out_of_range_with_calibration_situation_needs_semantic_re
     }
     assert evidence["violations"][0]["calibration_situation_field"] == "PM25CHECKTEMP4VALUE"
     assert evidence["violations"][0]["calibration_situation"] == "该仪器无校准功能作参考"
-    assert review_stage_for_rule("RF_PM_TEMP_ERROR_OUT_OF_RANGE") == "semantic_remark"
+    assert review_stage_for_rule("RF_PM_TEMP_ERROR_OUT_OF_RANGE") == "deterministic"
 
 
 def test_pm_temp_range_out_of_range_without_calibration_situation_is_deterministic_issue():

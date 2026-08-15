@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
@@ -74,6 +75,15 @@ def check_device_identity_consistency(
         other_order, other_table, other_form, table_station_key = previous
         other_forms = forms_by_code.get(str(other_order.get("WORKINGORDERCODE")), [])
         if _has_replacement_evidence(other_forms):
+            continue
+        if _has_intervening_replacement_evidence(
+            current_order,
+            current_form,
+            other_order,
+            other_form,
+            all_orders,
+            forms_by_code,
+        ):
             continue
 
         current_form_identity = _build_identity(
@@ -238,7 +248,6 @@ def _previous_same_table_station_record(
 
     current_time = _form_reference_time(current_order, current_form)
     current_code = str(current_order.get("WORKINGORDERCODE") or "")
-    history_days = int(DEVICE_PROFILE.get("history_days", 90))
     table_station_key = f"table_station|{current_table}|{station_id}"
     current_discriminator = _form_identity_discriminator(current_table, current_form)
     previous: tuple[datetime, dict[str, Any], str, dict[str, Any]] | None = None
@@ -257,7 +266,7 @@ def _previous_same_table_station_record(
                 continue
             other_time = _form_reference_time(other_order, other_form)
             if current_time and other_time:
-                if other_time >= current_time or (current_time - other_time).days > history_days:
+                if other_time >= current_time:
                     continue
             elif current_time or other_time:
                 continue
@@ -349,9 +358,9 @@ def _build_identity(
 
     normalized = {
         "brand": _normalize_brand(raw.get("brand"), raw.get("model")),
-        "model": _normalize_text(raw.get("model")),
-        "device_code": _normalize_text(raw.get("device_code")),
-        "range": _normalize_text(raw.get("range")),
+        "model": _normalize_model(raw.get("model")),
+        "device_code": _normalize_identity_token(raw.get("device_code")),
+        "range": _normalize_range(raw.get("range")),
     }
 
     station_id = _normalize_text(order.get("STATIONID"))
@@ -431,8 +440,70 @@ def _has_replacement_evidence(forms: list[tuple[str, dict[str, Any]]]) -> bool:
     return False
 
 
+def _has_intervening_replacement_evidence(
+    current_order: dict[str, Any],
+    current_form: dict[str, Any],
+    previous_order: dict[str, Any],
+    previous_form: dict[str, Any],
+    all_orders: list[dict[str, Any]],
+    forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]],
+) -> bool:
+    """Return whether the station has replacement/repair evidence between checks."""
+
+    station_id = _form_station(current_order, current_form)
+    current_time = _form_reference_time(current_order, current_form)
+    previous_time = _form_reference_time(previous_order, previous_form)
+    if not station_id or not current_time or not previous_time:
+        return False
+
+    for order in all_orders:
+        code = str(order.get("WORKINGORDERCODE") or "")
+        if not code:
+            continue
+        forms = forms_by_code.get(code, [])
+        if not forms or not _has_replacement_evidence(forms):
+            continue
+        current_device_id = _normalized_device_id(current_order.get("DEVICEID"))
+        previous_device_id = _normalized_device_id(previous_order.get("DEVICEID"))
+        event_device_id = _normalized_device_id(order.get("DEVICEID"))
+        compared_device_ids = {item for item in (current_device_id, previous_device_id) if item}
+        if event_device_id and compared_device_ids and event_device_id not in compared_device_ids:
+            continue
+        if _normalize_text(order.get("STATIONID")) != station_id and not any(
+            _form_station(order, form) == station_id for _table, form in forms
+        ):
+            continue
+        event_times = [
+            event_time
+            for _table, form in forms
+            if (event_time := _form_reference_time(order, form)) is not None
+        ]
+        event_time = max(event_times, default=_parse_time(order.get("CREATETIME")))
+        if event_time and previous_time < event_time <= current_time:
+            return True
+    return False
+
+
+def _normalized_device_id(value: Any) -> str:
+    normalized = _normalize_text(value)
+    return "" if normalized == ZERO_GUID.upper() else normalized
+
+
 def _has_text(value: Any) -> bool:
-    return value is not None and str(value).strip() not in {"", "/", "-", "无", "None", "NULL"}
+    normalized = str(value or "").strip().upper()
+    return normalized not in {
+        "",
+        "/",
+        "-",
+        "无",
+        "NONE",
+        "NULL",
+        "N/A",
+        "NA",
+        "N.A",
+        "N.A.",
+        ZERO_GUID.upper(),
+    }
 
 
 def _normalize_brand(brand: Any, model: Any = None) -> str:
@@ -449,6 +520,33 @@ def _normalize_brand(brand: Any, model: Any = None) -> str:
 
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip().upper()
+
+
+def _normalize_identity_token(value: Any) -> str:
+    if not _has_text(value):
+        return ""
+    return re.sub(r"[^A-Z0-9]+", "", _normalize_text(value))
+
+
+def _normalize_model(value: Any) -> str:
+    normalized = _normalize_identity_token(value)
+    if not normalized:
+        return ""
+    aliases = DEVICE_PROFILE.get("model_aliases", {})
+    for canonical, values in aliases.items():
+        candidates = {_normalize_identity_token(canonical)}
+        candidates.update(_normalize_identity_token(item) for item in values or [])
+        if normalized in candidates:
+            return _normalize_identity_token(canonical)
+    return normalized
+
+
+def _normalize_range(value: Any) -> str:
+    if not _has_text(value):
+        return ""
+    normalized = _normalize_text(value)
+    normalized = re.sub(r"[～~—–－至到]", "-", normalized)
+    return re.sub(r"\s+", "", normalized)
 
 
 def _parse_time(value: Any) -> datetime | None:

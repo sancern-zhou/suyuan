@@ -251,12 +251,15 @@ class NOAAHysplitAPI:
                     text = resp.text
 
                     # 调试日志：每5次轮询输出一次响应预览
-                    if poll_count == 0:
-                        # 第一次轮询时保存完整响应用于调试
+                    if poll_count == 0 and os.getenv("SUYUAN_DEBUG_NOAA_DUMP", "").lower() in ("1", "true", "yes"):
+                        # 第一次轮询时保存完整响应用于调试（需设置 SUYUAN_DEBUG_NOAA_DUMP=1 开启）
                         try:
-                            with open(f"noaa_response_{job_id}.html", "w", encoding="utf-8") as f:
+                            debug_dir = Path(__file__).resolve().parents[2] / "data" / "noaa_hysplit" / "debug"
+                            debug_dir.mkdir(parents=True, exist_ok=True)
+                            debug_path = debug_dir / f"noaa_response_{job_id}.html"
+                            with open(debug_path, "w", encoding="utf-8") as f:
                                 f.write(text)
-                            logger.info("noaa_response_saved", job_id=job_id, path=f"noaa_response_{job_id}.html")
+                            logger.info("noaa_response_saved", job_id=job_id, path=str(debug_path))
                         except Exception as e:
                             logger.warning("noaa_response_save_failed", error=str(e))
 

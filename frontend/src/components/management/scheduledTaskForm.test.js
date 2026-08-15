@@ -4,9 +4,39 @@ import test from 'node:test'
 import {
   applyExecutionMode,
   applyTriggerDefaults,
+  buildExecutionModeOptions,
   buildTaskPayload,
   selectableWeixinUsers
 } from './scheduledTaskForm.js'
+
+
+test('execution mode options include every project mode plus task-only modes', () => {
+  const options = buildExecutionModeOptions([
+    { id: 'ops', shortName: '运维' },
+    { id: 'jiangsu_query', shortName: '江苏问数' },
+    { id: 'station_fault_diagnosis', shortName: '故障诊断' }
+  ])
+
+  assert.deepEqual(options.map(option => option.value), [
+    'ops',
+    'jiangsu_query',
+    'station_fault_diagnosis',
+    'social',
+    'custom'
+  ])
+  assert.equal(options[1].label, 'jiangsu_query（江苏问数）')
+})
+
+
+test('execution mode options preserve an edited legacy mode without duplicates', () => {
+  const options = buildExecutionModeOptions(
+    [{ id: 'ops', shortName: '运维' }],
+    'expert'
+  )
+
+  assert.equal(options.filter(option => option.value === 'expert').length, 1)
+  assert.match(options.find(option => option.value === 'expert').label, /当前任务模式/)
+})
 
 
 test('custom payload keeps only unique selected tools in user order', () => {

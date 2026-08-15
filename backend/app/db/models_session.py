@@ -9,7 +9,7 @@
 
 设计原则：
 - role 字段：Anthropic API 角色（user/assistant），用于 LLM 对话恢复
-- msg_type 字段：语义类型（user/thought/action/observation/tool_result/final），用于前端展示和查询过滤
+- msg_type 字段：语义类型（user/thought/tool_use/tool_result/final/error/user_pause），用于前端展示和查询过滤
 - content 字段：JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
@@ -121,7 +121,7 @@ class SessionMessageDB(Base):
 
     存储每条消息的详细信息，完整兼容 Anthropic 原生格式：
     - role: Anthropic 角色（user/assistant）
-    - msg_type: 语义类型（user/thought/action/observation/tool_result/final）
+    - msg_type: 语义类型（user/thought/tool_use/tool_result/final/error/user_pause）
     - content: JSONB，支持纯文本字符串和 Anthropic content blocks 列表
     """
     __tablename__ = "session_messages"

@@ -201,6 +201,97 @@ def test_device_identity_no_issue_for_same_identity():
     assert issues == []
 
 
+def test_device_identity_normalizes_model_alias_and_placeholder_device_code():
+    current = _order("WO-CURRENT")
+    history = _order("WO-HISTORY", create_time="2026-05-01 10:00:00")
+    forms_by_code = _forms_by_code(
+        _form("WO-CURRENT", model="TE-49ips", device_code="N.A"),
+        _form("WO-HISTORY", model="49IPS", device_code="/"),
+    )
+    issues = []
+
+    check_device_identity_consistency(
+        current,
+        forms_by_code["WO-CURRENT"],
+        [current, history],
+        forms_by_code,
+        {},
+        {},
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_device_identity_intervening_replacement_exempts_comparison():
+    current = _order("WO-CURRENT", create_time="2026-05-20 10:00:00")
+    history = _order("WO-HISTORY", create_time="2026-05-01 10:00:00")
+    replacement = _order("WO-REPLACE", create_time="2026-05-10 10:00:00")
+    current_form = _form("WO-CURRENT", model="T100")
+    current_form["CHECKTIME"] = "2026-05-20 09:00:00"
+    history_form = _form("WO-HISTORY", model="T200")
+    history_form["CHECKTIME"] = "2026-05-01 09:00:00"
+    replacement_form = {
+        "WORKINGORDERCODE": "WO-REPLACE",
+        "STATIONID": "ST-1",
+        "CHECKTIME": "2026-05-10 09:00:00",
+        "REMARK": "已更换分析仪并更新台账",
+    }
+    forms_by_code = {
+        "WO-CURRENT": [("RF_W_GASEOUSCHECK_CO", current_form)],
+        "WO-HISTORY": [("RF_W_GASEOUSCHECK_CO", history_form)],
+        "WO-REPLACE": [("RF_Y_DEVICECHANGE", replacement_form)],
+    }
+    issues = []
+
+    check_device_identity_consistency(
+        current,
+        forms_by_code["WO-CURRENT"],
+        [current, history, replacement],
+        forms_by_code,
+        {},
+        {},
+        issues,
+    )
+
+    assert issues == []
+
+
+def test_device_identity_other_device_replacement_does_not_exempt_comparison():
+    current = _order("WO-CURRENT", create_time="2026-05-20 10:00:00")
+    history = _order("WO-HISTORY", create_time="2026-05-01 10:00:00")
+    replacement = _order("WO-OTHER-REPLACE", create_time="2026-05-10 10:00:00")
+    replacement["DEVICEID"] = "DEV-OTHER"
+    current_form = _form("WO-CURRENT", model="T100")
+    current_form["CHECKTIME"] = "2026-05-20 09:00:00"
+    history_form = _form("WO-HISTORY", model="T200")
+    history_form["CHECKTIME"] = "2026-05-01 09:00:00"
+    replacement_form = {
+        "WORKINGORDERCODE": "WO-OTHER-REPLACE",
+        "STATIONID": "ST-1",
+        "CHECKTIME": "2026-05-10 09:00:00",
+        "REMARK": "已更换另一台分析仪",
+    }
+    forms_by_code = {
+        "WO-CURRENT": [("RF_W_GASEOUSCHECK_CO", current_form)],
+        "WO-HISTORY": [("RF_W_GASEOUSCHECK_CO", history_form)],
+        "WO-OTHER-REPLACE": [("RF_Y_DEVICECHANGE", replacement_form)],
+    }
+    issues = []
+
+    check_device_identity_consistency(
+        current,
+        forms_by_code["WO-CURRENT"],
+        [current, history, replacement],
+        forms_by_code,
+        {},
+        {},
+        issues,
+    )
+
+    assert any(issue.rule_id == "RF_DEVICE_IDENTITY_INCONSISTENT" for issue in issues)
+
+
 def test_device_identity_replacement_evidence_exempts_current_order():
     current = _order("WO-CURRENT")
     history = _order("WO-HISTORY", create_time="2026-05-01 10:00:00")

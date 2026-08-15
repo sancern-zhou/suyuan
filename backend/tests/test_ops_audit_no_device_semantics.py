@@ -1,3 +1,5 @@
+import json
+
 from app.services.ops_audit.rules import rf_abnormal_remark_rules
 from app.services.ops_audit.semantic import reviewer
 
@@ -42,7 +44,7 @@ def test_other_device_rule_skips_absent_device_fields():
     assert not any("WEATHERDEVICEMODEL" in issue.field for issue in issues)
 
 
-def test_other_device_abnormal_situation_with_handover_context_is_explained():
+def test_other_device_abnormal_situation_keeps_fact_and_routes_context_to_semantic_review():
     issues = []
     rf_abnormal_remark_rules.check_rf_abnormal_remarks(
         {"WORKINGORDERCODE": "WO-WEATHER-HANDOVER"},
@@ -57,7 +59,11 @@ def test_other_device_abnormal_situation_with_handover_context_is_explained():
         issues,
     )
 
-    assert not any(issue.rule_id == "RF_ABNORMAL_VALUE_NO_REMARK" for issue in issues)
+    assert any(issue.rule_id == "RF_ABNORMAL_RESULT_FIELD" for issue in issues)
+    companion = next(issue for issue in issues if issue.rule_id == "RF_ABNORMAL_VALUE_NO_REMARK")
+    evidence = json.loads(companion.evidence)
+    assert evidence["reason_rule_id"] == "RF_ABNORMAL_RESULT_FIELD"
+    assert evidence["remark_candidates"]["WEATHERSITUATION"] == "风速风向通讯失败，交接遗留问题"
 
 
 def test_no_device_semantic_batch_clears_equivalent_explanation(monkeypatch):

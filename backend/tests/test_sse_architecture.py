@@ -3,10 +3,10 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "app"
 SSE_ROUTES = {
-    Path("routers/agent.py"),
-    Path("routers/knowledge_qa.py"),
-    Path("routers/report_generation.py"),
-    Path("routers/expert_deliberation.py"),
+    Path("api/agent.py"),
+    Path("api/knowledge_qa.py"),
+    Path("api/report_generation.py"),
+    Path("api/expert_deliberation.py"),
 }
 
 

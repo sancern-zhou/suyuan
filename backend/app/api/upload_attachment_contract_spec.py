@@ -1,6 +1,6 @@
 from app.api.upload_routes import _uploaded_file_url
 from app.db.session_repository import SessionRepository
-from app.routers.agent import _build_user_message_for_history
+from app.api.agent import _build_user_message_for_history
 
 
 ATTACHMENTS = [

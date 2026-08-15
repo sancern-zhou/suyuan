@@ -191,12 +191,11 @@
             <label class="form-field">
               <span>执行模式</span>
               <select v-model="createForm.execution_mode" @change="handleExecutionModeChange">
-                <option value="assistant">assistant</option>
-                <option value="expert">expert</option>
-                <option value="query">query</option>
-                <option value="social">social</option>
-                <option value="station_fault_diagnosis">station_fault_diagnosis（站点故障诊断）</option>
-                <option value="custom">custom（自选工具）</option>
+                <option
+                  v-for="mode in executionModeOptions"
+                  :key="mode.value"
+                  :value="mode.value"
+                >{{ mode.label }}</option>
               </select>
             </label>
 
@@ -385,9 +384,12 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
+import { getAgentMode, selectAgentModes } from '@/config/agentModes.js'
+import { projectConfig } from '@/config/projectConfig.js'
 import {
   applyExecutionMode,
   applyTriggerDefaults,
+  buildExecutionModeOptions,
   buildTaskPayload,
   selectableWeixinUsers
 } from './scheduledTaskForm.js'
@@ -444,6 +446,14 @@ const availableSkills = computed(() => scheduledTasksStore.availableSkills)
 const selectedSkill = computed(() => availableSkills.value.find(
   skill => skill.id === createForm.value.skill_id
 ) || null)
+const projectExecutionModes = selectAgentModes(
+  projectConfig.agentModeIds,
+  projectConfig.agentModeOverrides
+)
+const executionModeOptions = computed(() => buildExecutionModeOptions(
+  projectExecutionModes,
+  createForm.value.execution_mode
+))
 const filteredTools = computed(() => {
   const query = createForm.value.toolSearch.trim().toLowerCase()
   return scheduledTasksStore.availableTools.filter(tool => !query || [
@@ -469,7 +479,7 @@ const defaultForm = () => ({
   name: '',
   description: '',
   agent_prompt: '',
-  execution_mode: 'assistant',
+  execution_mode: projectConfig.defaultAgentMode || 'assistant',
   skill_id: '',
   tool_names: [],
   toolSearch: '',
@@ -594,15 +604,10 @@ const getEventLabel = (eventType) => eventTypes.value.find(
 )?.label || eventType || '未配置'
 
 const getExecutionModeLabel = (mode) => {
-  const labels = {
-    assistant: '助手模式',
-    expert: '专家模式',
-    query: '问数模式',
-    social: '社交模式',
-    station_fault_diagnosis: '站点故障诊断',
-    custom: '自定义工具模式'
-  }
-  return labels[mode] || mode || '默认'
+  if (mode === 'social') return '社交任务'
+  if (mode === 'custom') return '自定义工具模式'
+  const agentMode = getAgentMode(mode, projectConfig.agentModeOverrides)
+  return agentMode?.shortName || agentMode?.name || mode || '默认'
 }
 
 const formatScheduledNextRun = (time) => {

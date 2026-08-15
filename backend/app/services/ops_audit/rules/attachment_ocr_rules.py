@@ -1721,6 +1721,8 @@ def _add_visual_diagnostic_issue(
         "vision_provider": result.get("provider"),
         "vision_status": result.get("status"),
         "vision_error": result.get("error"),
+        "report_classification": "technical_diagnostic",
+        "counts_as_work_order_issue": False,
     }
     add_issue(
         issues,

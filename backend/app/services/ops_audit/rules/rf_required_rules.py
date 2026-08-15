@@ -241,30 +241,46 @@ def _check_env_temp_humidity(
 
     remark_candidates = _remark_candidates(form)
     has_remark = any(str(value or "").strip() for value in remark_candidates.values())
-    evidence = {
-        "working_order_code": order.get("WORKINGORDERCODE"),
-        "rf_table": table,
-        "missing_temperature": missing_temp,
-        "missing_humidity": missing_humidity,
-        "remark_candidates": remark_candidates,
-        "needs_semantic_review": has_remark,
-    }
-
-    message_parts = []
     if missing_temp:
-        message_parts.append(f"温度字段({', '.join(missing_temp[:2])})未填")
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE"),
+            "rf_table": table,
+            "missing_dimension": "temperature",
+            "missing_fields": missing_temp,
+            "missing_temperature": missing_temp,
+            "missing_humidity": [],
+            "remark_candidates": remark_candidates,
+            "needs_semantic_review": has_remark,
+        }
+        add_issue(
+            issues,
+            "RF_ENV_TEMP_HUMIDITY_EMPTY",
+            "表单完整性",
+            "中",
+            f"rf.{table}.{missing_temp[0]}",
+            f"RF表单温度字段({', '.join(missing_temp[:2])})未填",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
     if missing_humidity:
-        message_parts.append(f"湿度字段({', '.join(missing_humidity[:2])})未填")
-
-    add_issue(
-        issues,
-        "RF_ENV_TEMP_HUMIDITY_EMPTY",
-        "表单完整性",
-        "中",
-        f"rf.{table}.env_temp_humidity",
-        f"RF表单{'; '.join(message_parts)}",
-        json.dumps(evidence, ensure_ascii=False, default=str),
-    )
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE"),
+            "rf_table": table,
+            "missing_dimension": "humidity",
+            "missing_fields": missing_humidity,
+            "missing_temperature": [],
+            "missing_humidity": missing_humidity,
+            "remark_candidates": remark_candidates,
+            "needs_semantic_review": has_remark,
+        }
+        add_issue(
+            issues,
+            "RF_ENV_TEMP_HUMIDITY_EMPTY",
+            "表单完整性",
+            "中",
+            f"rf.{table}.{missing_humidity[0]}",
+            f"RF表单湿度字段({', '.join(missing_humidity[:2])})未填",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
 
 
 def _remark_candidates(form: dict[str, Any]) -> dict[str, Any]:

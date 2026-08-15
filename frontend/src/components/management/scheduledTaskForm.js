@@ -5,6 +5,27 @@ export const selectableWeixinUsers = (users = []) => users.filter(user =>
 )
 
 
+export const buildExecutionModeOptions = (
+  projectModes = [],
+  currentMode = '',
+) => {
+  const options = projectModes.map(mode => ({
+    value: mode.id,
+    label: `${mode.id}（${mode.shortName || mode.name || mode.id}）`
+  }))
+  options.push(
+    { value: 'social', label: 'social（社交任务）' },
+    { value: 'custom', label: 'custom（自选工具）' }
+  )
+  if (currentMode && !options.some(option => option.value === currentMode)) {
+    options.push({ value: currentMode, label: `${currentMode}（当前任务模式）` })
+  }
+  return options.filter((option, index, values) => (
+    values.findIndex(candidate => candidate.value === option.value) === index
+  ))
+}
+
+
 export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
   form.trigger_type = triggerType
   if (triggerType === 'event') {

@@ -53,12 +53,17 @@ async def test_structured_graph_extraction_uses_knowledge_base_model_tier(monkey
 
     class TieredLLMService:
         @contextmanager
-        def use_model_tier(self, tier):
-            calls.append(("enter", tier))
+        def use_balanced_model_tier(self, tier):
+            calls.append(("balanced_enter", tier))
             try:
                 yield
             finally:
-                calls.append(("exit", tier))
+                calls.append(("balanced_exit", tier))
+
+        @contextmanager
+        def use_model_tier(self, tier):
+            raise AssertionError("knowledge-base graph extraction must use balanced tier")
+            yield
 
         async def call_llm_with_json_response(self, prompt, max_retries):
             calls.append(("call", max_retries))
@@ -75,4 +80,8 @@ async def test_structured_graph_extraction_uses_knowledge_base_model_tier(monkey
     )
 
     assert result.triplets == []
-    assert calls == [("enter", "flash"), ("call", 2), ("exit", "flash")]
+    assert calls == [
+        ("balanced_enter", "flash"),
+        ("call", 2),
+        ("balanced_exit", "flash"),
+    ]

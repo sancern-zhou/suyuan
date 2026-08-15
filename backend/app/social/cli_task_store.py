@@ -12,6 +12,8 @@ from uuid import uuid4
 
 import structlog
 
+from app.utils.path_config import get_data_registry
+
 logger = structlog.get_logger(__name__)
 
 
@@ -19,7 +21,11 @@ class CliTaskStore:
     """JSON-backed task store for background cli_session executions."""
 
     def __init__(self, json_path: str | None = None) -> None:
-        self.json_path = json_path or "backend_data_registry/cli_tasks.json"
+        self.json_path = (
+            str(Path(json_path))
+            if json_path
+            else str(get_data_registry() / "cli_tasks.json")
+        )
         self._lock = asyncio.Lock()
         Path(self.json_path).parent.mkdir(parents=True, exist_ok=True)
 

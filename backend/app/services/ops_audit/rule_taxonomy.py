@@ -78,11 +78,12 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_VALUE_FORMULA_MISMATCH",
         "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH",
         "RF_M_GASEOUSFLOWCHECK_ERROR_OUT_OF_RANGE",
-        "RF_PM_MEMBRANE_ERROR_MISMATCH",
         "RF_PM_MEMBRANE_ERROR_OUT_OF_RANGE",
         "RF_PM_PRESSURE_ERROR_MISMATCH",
         "RF_PM_TEMP_ERROR_MISMATCH",
         "RF_PM_TEMP_ERROR_OUT_OF_RANGE",
+        "RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL",
+        "RF_ABNORMAL_RESULT_FIELD",
         "RF_PM_PRESSURE_ERROR_OUT_OF_RANGE",
         "RF_PM_PRESSURE_UNIT_MISMATCH",
         "RF_FIELD_POSITION_SUSPECT",
@@ -102,7 +103,6 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
     if rule in {
         "RF_ABNORMAL_VALUE_NO_REMARK",
         "RF_Q_PENDING_NO_REMARK",
-        "RF_PM_SAMPLE_TUBE_TEMP_NO_REMARK",
         "RF_NO_DEVICE_WITHOUT_REMARK",
     }:
         return "异常说明问题"

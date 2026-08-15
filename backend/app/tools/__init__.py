@@ -518,6 +518,8 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         "jiangsu_fetch_station_alarm_logs",
         "jiangsu_fetch_fault_work_orders",
         "jiangsu_fetch_auto_inspection",
+        "jiangsu_fetch_network_inspection_summary",
+        "jiangsu_fetch_station_environment_history",
         "jiangsu_fetch_qc_task_history",
         "jiangsu_fetch_qc_task_status",
         "jiangsu_fetch_qc_run_logs",
@@ -527,6 +529,8 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             from app.tools.jiangsu.fault_diagnosis import (
                 JiangsuAutoInspectionTool,
                 JiangsuFaultWorkOrdersTool,
+                JiangsuNetworkInspectionSummaryTool,
+                JiangsuStationEnvironmentHistoryTool,
                 JiangsuQcMonitoringCurveTool,
                 JiangsuQcRunLogTool,
                 JiangsuQcTaskHistoryTool,
@@ -535,6 +539,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             )
             for tool in (
                 JiangsuStationAlarmLogsTool(), JiangsuFaultWorkOrdersTool(), JiangsuAutoInspectionTool(),
+                JiangsuNetworkInspectionSummaryTool(), JiangsuStationEnvironmentHistoryTool(),
                 JiangsuQcTaskHistoryTool(), JiangsuQcTaskStatusTool(), JiangsuQcRunLogTool(), JiangsuQcMonitoringCurveTool(),
             ):
                 if is_project_tool_enabled(context, "legacy", tool.name):
@@ -934,6 +939,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="exam_practice")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="exam_practice", error=str(e))
+
+    try:
+        from app.tools.exam.exam_bank import GenerateExamBankTool
+        registry.register(GenerateExamBankTool(), priority=362)
+        logger.info("tool_loaded", tool="generate_exam_bank")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="generate_exam_bank", error=str(e))
 
     try:
         from app.tools.social.send_notification.tool import SendNotificationTool

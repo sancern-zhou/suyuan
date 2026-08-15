@@ -220,7 +220,9 @@ docs/
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py
-backend/scripts/
+# backend/scripts/ holds committed operational scripts (init_db, kb maintenance)
+!backend/scripts/
+!backend/scripts/**
 models--*/
 hub/
 llm_monitor/
@@ -244,3 +246,14 @@ bge-*-model/
 *.docx
 backend/backend/
 backend/html_artifacts/
+
+# Dev requirements referenced by pyproject/CI must be committed
+!backend/requirements-dev.txt
+
+# Project-specific runtime artifacts (never commit)
+backend/.env.*
+!backend/.env.example
+!backend/.env.template
+!backend/.env.production.template
+frontend/dist-*/
+backend/backend_data_registry*/

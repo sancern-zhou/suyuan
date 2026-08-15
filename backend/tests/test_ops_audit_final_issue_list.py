@@ -1,5 +1,7 @@
 from app.services.ops_audit.final_issue_list import build_final_issue_list
 
+import pytest
+
 
 def test_final_issue_list_keeps_deterministic_and_promoted_remark_only():
     audit = {
@@ -70,7 +72,7 @@ def test_final_issue_list_keeps_deterministic_and_promoted_remark_only():
     assert semantic_item["message"] == "备注未说明异常原因、处置措施和处理结果。"
 
 
-def test_final_issue_list_does_not_directly_emit_semantic_review_range_issue():
+def test_final_issue_list_splits_value_abnormal_and_missing_explanation():
     audit = {
         "records": [
             {
@@ -88,7 +90,7 @@ def test_final_issue_list_does_not_directly_emit_semantic_review_range_issue():
                         "evidence": (
                             '{"working_order_code":"WO-RANGE-SEMANTIC","rf_table":"RF_W_GASEOUSCHECK_NOX",'
                             '"needs_semantic_review":true,'
-                            '"handling_record_candidates":{"EXCEPTIONHANDLINGRECORD":"已清洁光室并复测恢复正常。"},'
+                            '"handling_record_candidates":{"EXCEPTIONHANDLINGRECORD":"已处理"},'
                             '"out_of_spec_values":[{"field":"PMTCHECKVALUE","label":"参考PMT信号","raw_value":"0.002"}]}'
                         ),
                     },
@@ -103,7 +105,7 @@ def test_final_issue_list_does_not_directly_emit_semantic_review_range_issue():
                             '"reason_rule_id":"RF_RANGE_OUT_OF_SPEC",'
                             '"abnormal_field":"rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",'
                             '"abnormal_message":"NOx周检参考PMT信号检查值(0.002)超出FPI品牌正常范围(1.5-4.096 V)",'
-                            '"remark_candidates":{"EXCEPTIONHANDLINGRECORD":"已清洁光室并复测恢复正常。"},'
+                            '"remark_candidates":{"EXCEPTIONHANDLINGRECORD":"已处理"},'
                             '"needs_semantic_review":true}'
                         ),
                     },
@@ -132,10 +134,94 @@ def test_final_issue_list_does_not_directly_emit_semantic_review_range_issue():
 
     result = build_final_issue_list(audit, semantic_results)
 
-    rule_ids = [item["rule_id"] for item in result["items"]]
-    assert rule_ids == ["RF_ABNORMAL_VALUE_NO_REMARK"]
-    assert result["items"][0]["rf_table"] == "RF_W_GASEOUSCHECK_NOX"
-    assert result["items"][0]["message"] == "RF表单存在异常/漏填/错配，需语义判断备注是否解释充分: NOx周检参考PMT信号检查值(0.002)超出FPI品牌正常范围(1.5-4.096 V)"
+    assert [item["rule_id"] for item in result["items"]] == [
+        "RF_RANGE_OUT_OF_SPEC",
+        "RF_ABNORMAL_VALUE_NO_REMARK",
+    ]
+    value_item, remark_item = result["items"]
+    assert value_item["issue_component"] == "value_abnormal"
+    assert value_item["review_status"] == "rule_detected"
+    assert remark_item["issue_component"] == "abnormal_explanation_issue"
+    assert remark_item["review_status"] == "semantic_confirmed"
+    assert remark_item["remark_status"] == "provided"
+    assert remark_item["original_remarks"] == [
+        {"field": "EXCEPTIONHANDLINGRECORD", "field_label": "异常时处理记录", "value": "已处理"}
+    ]
+    assert remark_item["original_remark_text"] == "已处理"
+    assert remark_item["remark_judgment"] == "unrelated"
+    assert remark_item["remark_judgment_label"] == "与当前异常无关"
+    assert value_item["issue_group_id"] == remark_item["issue_group_id"]
+    assert value_item["message"].startswith("NOx周检参考PMT信号检查值")
+    assert remark_item["message"] == "异常时处理记录只写已处理，未说明复测值是否恢复到正常范围。"
+    assert result["component_counts"] == {
+        "abnormal_explanation_issue": 1,
+        "value_abnormal": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "component"),
+    [
+        ("RF_RANGE_VALUE_MISSING", "value_missing"),
+        ("RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL", "abnormal_fact"),
+        ("RF_ABNORMAL_RESULT_FIELD", "abnormal_fact"),
+        ("RF_PM_TEMP_ERROR_OUT_OF_RANGE", "value_abnormal"),
+        ("RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT", "data_suspect"),
+    ],
+)
+def test_abnormal_fact_remains_when_explanation_review_is_cleared(rule_id, component):
+    field = "rf.RF_TEST.FIELD"
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-FACT",
+                "station_id": "ST-1",
+                "scoring_issues": [
+                    {
+                        "rule_id": rule_id,
+                        "category": "结果合理性",
+                        "severity": "高",
+                        "field": field,
+                        "message": "具体异常事实",
+                        "evidence": (
+                            '{"working_order_code":"WO-FACT","rf_table":"RF_TEST",'
+                            '"needs_semantic_review":true}'
+                        ),
+                    },
+                    {
+                        "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+                        "category": "异常说明问题",
+                        "severity": "高",
+                        "field": "rf.RF_TEST.remark",
+                        "message": "待审核说明",
+                        "evidence": (
+                            '{"working_order_code":"WO-FACT","rf_table":"RF_TEST",'
+                            f'"reason_rule_id":"{rule_id}","abnormal_field":"{field}",'
+                            '"remark_candidates":{"REMARK":"已处理"},"needs_semantic_review":true}'
+                        ),
+                    },
+                ],
+            }
+        ]
+    }
+    semantic_results = {
+        "results": [
+            {
+                "working_order_code": "WO-FACT",
+                "judgment": "cleared",
+                "can_promote_to_final_issue": False,
+                "supported_rule_ids": [],
+                "remark_judgment": "valid",
+            }
+        ]
+    }
+
+    result = build_final_issue_list(audit, semantic_results)
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["rule_id"] == rule_id
+    assert result["items"][0]["issue_component"] == component
+    assert result["items"][0]["review_status"] == "rule_detected"
 
 
 def test_final_issue_list_excludes_main_order_rules():
@@ -427,7 +513,7 @@ def test_final_issue_list_adds_semantic_rf_form_display_name():
     assert "suggestion" not in item
 
 
-def test_final_issue_list_preserves_rf_abnormal_no_remark_source_issue():
+def test_final_issue_list_keeps_remark_evidence_separate_from_value_message():
     source_evidence = (
         '{"working_order_code":"WO-ABNORMAL","rf_table":"RF_W_PMCHECK",'
         '"reason_rule_id":"RF_RANGE_OUT_OF_SPEC",'
@@ -470,8 +556,12 @@ def test_final_issue_list_preserves_rf_abnormal_no_remark_source_issue():
     assert result["issue_count"] == 1
     item = result["items"][0]
     assert item["rule_id"] == "RF_ABNORMAL_VALUE_NO_REMARK"
-    assert item["message"].startswith("RF表单存在异常/漏填/错配但无有效说明")
-    assert item["message"] != "备注语义不完整，缺少原因、措施或结果。"
+    assert item["message"] == "工单备注无实质性内容，未说明原因、措施及结果。"
+    assert item["value_abnormal_message"].startswith("RF表单存在异常/漏填/错配但无有效说明")
+    assert item["issue_component"] == "abnormal_explanation_issue"
+    assert item["remark_status"] == "missing"
+    assert item["original_remarks"] == []
+    assert item["original_remark_text"] == ""
     assert item["field"] == "rf.RF_W_PMCHECK.remark"
     assert item["rf_table"] == "RF_W_PMCHECK"
     assert item["evidence"] == source_evidence
@@ -493,6 +583,29 @@ def test_final_issue_list_does_not_promote_rf_abnormal_without_source_issue():
     }
 
     result = build_final_issue_list(audit, semantic_results)
+
+    assert result["issue_count"] == 0
+
+
+def test_final_issue_list_excludes_technical_diagnostics():
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-DIAGNOSTIC",
+                "scoring_issues": [
+                    {
+                        "rule_id": "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
+                        "category": "附件质量问题",
+                        "field": "attachment.vision.diagnostic.RF_TW_PmFlowCalibrate",
+                        "message": "视觉识别未执行成功",
+                        "evidence": '{"report_classification":"technical_diagnostic"}',
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = build_final_issue_list(audit)
 
     assert result["issue_count"] == 0
 

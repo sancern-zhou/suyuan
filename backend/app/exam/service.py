@@ -10,6 +10,7 @@ from typing import Any, Iterable
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .catalog import list_exam_question_banks
 from .models import ExamAttempt, ExamPracticeRun, ExamQuestion
 
 
@@ -72,6 +73,7 @@ class ExamPracticeService:
         practice_mode: str | None = None,
         question_types: list[str] | None = None,
         topics: list[str] | None = None,
+        bank_id: str | None = None,
         count: int | None = None,
         answer: Any = None,
         run_id: str | None = None,
@@ -87,8 +89,15 @@ class ExamPracticeService:
                 practice_mode=practice_mode or "unseen",
                 question_types=question_types or [],
                 topics=topics or [],
+                bank_id=bank_id,
                 count=count or 10,
             )
+        if action == "list_banks":
+            return {
+                "stage": "banks",
+                "banks": await list_exam_question_banks(self.session),
+                "summary": "已返回可用于正式练习的已发布题库",
+            }
         if action == "current":
             return await self.current(user_id=user_id, run_id=run_id)
         if action == "submit":
@@ -139,6 +148,7 @@ class ExamPracticeService:
         question_types: list[str],
         topics: list[str],
         count: int,
+        bank_id: str | None = None,
     ) -> dict[str, Any]:
         if practice_mode not in PRACTICE_MODES:
             raise ExamPracticeError(f"不支持的练习模式: {practice_mode}")
@@ -159,6 +169,7 @@ class ExamPracticeService:
             practice_mode=practice_mode,
             question_types=question_types,
             topics=topics,
+            bank_id=bank_id,
             count=count,
         )
         if not question_ids:
@@ -374,9 +385,10 @@ class ExamPracticeService:
         practice_mode: str,
         question_types: list[str],
         topics: list[str],
+        bank_id: str | None,
         count: int,
     ) -> list[str]:
-        stmt = select(ExamQuestion.id).where(
+        stmt = select(ExamQuestion).where(
             ExamQuestion.enabled.is_(True), ExamQuestion.review_status == "published"
         )
         if question_types:
@@ -396,8 +408,26 @@ class ExamPracticeService:
         elif practice_mode == "wrong_review":
             stmt = stmt.where(ExamQuestion.id.in_(answered_ids), ExamQuestion.id.not_in(correct_ids))
 
-        rows = await self.session.scalars(stmt.order_by(func.random()).limit(count))
-        return list(rows)
+        if not bank_id:
+            rows = await self.session.scalars(stmt.order_by(func.random()).limit(count))
+            return [str(question.id) for question in rows]
+
+        bank_id = str(bank_id)
+        questions = list((await self.session.scalars(stmt)).all())
+        questions = [
+            question
+            for question in questions
+            if any(
+                isinstance(ref, dict) and str(ref.get("document_id") or "") == bank_id
+                for ref in (question.source_refs or [])
+            )
+        ]
+        if len(questions) > count:
+            import random
+
+            random.shuffle(questions)
+            questions = questions[:count]
+        return [str(question.id) for question in questions]
 
     async def _get_run(self, user_id: str, run_id: str | None) -> ExamPracticeRun | None:
         stmt = select(ExamPracticeRun).where(ExamPracticeRun.user_id == user_id)
@@ -472,8 +502,24 @@ class ExamPracticeService:
                 "stem": question.stem,
                 "options": question.options or {},
                 "difficulty": question.difficulty,
+                "bank_id": self._question_bank_id(question),
+                "bank_name": self._question_bank_name(question),
             },
         }
+
+    @staticmethod
+    def _question_bank_id(question: ExamQuestion) -> str | None:
+        for ref in question.source_refs or []:
+            if isinstance(ref, dict) and ref.get("document_id"):
+                return str(ref["document_id"])
+        return None
+
+    @staticmethod
+    def _question_bank_name(question: ExamQuestion) -> str | None:
+        for ref in question.source_refs or []:
+            if isinstance(ref, dict) and ref.get("document_title"):
+                return str(ref["document_title"])
+        return None
 
     async def _attempt_result(self, attempt: ExamAttempt, duplicate: bool = False) -> dict[str, Any]:
         question = await self._get_question(attempt.question_id)

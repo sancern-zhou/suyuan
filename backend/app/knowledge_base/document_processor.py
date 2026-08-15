@@ -1230,7 +1230,12 @@ class DocumentProcessor:
     async def _call_online_llm(self, prompt: str) -> str:
         """Call the shared LLM service using the knowledge-base model tier."""
         tier = settings.knowledge_base_llm_model_tier
-        with llm_service.use_model_tier(tier):
+        selector = getattr(
+            llm_service,
+            "use_balanced_model_tier",
+            None,
+        ) or getattr(llm_service, "use_model_tier")
+        with selector(tier):
             response = await llm_service.chat_anthropic(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=LLM_CHUNK_MAX_OUTPUT_TOKENS,
