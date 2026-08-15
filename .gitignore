@@ -257,3 +257,6 @@ backend/.env.*
 !backend/.env.production.template
 frontend/dist-*/
 backend/backend_data_registry*/
+
+# Vendor SDK clones
+suncere*/
