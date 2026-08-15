@@ -451,8 +451,8 @@ async def test_read_file_keeps_runtime_multimodal_attachment_path(tmp_path):
 
 def test_read_file_resolves_current_project_data_registry_from_backend_root():
     tool = ReadFileTool()
-    relative_path = "backend_data_registry/xuchang_attainment_predictions/annual/latest.json"
-    expected_path = (BACKEND_ROOT / relative_path).resolve()
+    relative_path = "backend/backend_data_registry/xuchang_attainment_predictions/annual/latest.json"
+    expected_path = (BACKEND_ROOT / "backend_data_registry/xuchang_attainment_predictions/annual/latest.json").resolve()
 
     assert tool._resolve_path(relative_path) == expected_path
     assert tool._resolve_path(str(expected_path)) == expected_path

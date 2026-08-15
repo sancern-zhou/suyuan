@@ -120,7 +120,10 @@ QUERY_TOOL_NAMES = [
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
+    "get_weather_data", "get_weather_forecast", "query_xcai_city_history",
+    "execute_sql_query", "execute_postgres_sql_query",
+    # === 查询内即时生图工具 ===
+    "execute_echarts_python", "create_report_chart",
     "query_gd_suncere_city_hour",
     "query_gd_suncere_station_day_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day",
@@ -193,12 +196,10 @@ CHART_TOOL_NAMES = [
     "create_report_chart", "execute_python", "execute_echarts_python",
 
     # 数据查询工具
-    "get_observed_meteorology",
-    "get_5min_data", "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
-    "execute_sql_query", "execute_postgres_sql_query",
 ]
 
 # ===== 画板模式工具 =====

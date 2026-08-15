@@ -1223,7 +1223,8 @@ def artifact_path(filename: str) -> str:
             if first_visual_path:
                 llm_resume["tool_hint"] = (
                     f"Use read_file(path='{first_visual_path}', as_multimodal_attachment=true) "
-                    "to inspect this image."
+                    "to inspect this image. Do not place this server path in your reply; "
+                    "reference the published session resource instead."
                 )
         if llm_resume:
             result["llm_resume"] = llm_resume

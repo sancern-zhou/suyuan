@@ -36,6 +36,9 @@ from .selection_context import (
 
 logger = structlog.get_logger()
 
+SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+
+
 class ReActAgent:
     """
     ReAct Agent - 大气环境数据查询与分析智能体
@@ -50,6 +53,36 @@ class ReActAgent:
     - ❌ 无固定工作流
     - ❌ 无硬编码规则
     """
+
+    REPORT_FINAL_REVIEW_PROMPT = (
+        "请再进行一次复核：如果上一轮是报告生成任务，请确认报告内容与数据、用户要求一致；"
+        "如果上一轮是报告审核任务，请确认审核结论与报告内容、数据证据一致。特别检查边界情况，"
+        "例如排名并列、Top N截取规则、时间范围、统计口径、新旧标准、同比环比方向、"
+        "缺失值处理、单位和表文一致性等。新标准需要使用报告视图的 "
+        "pM2_5_Decimal、pM2_5_Decimal_Compare、o3_8h / O3_8h、AQI达标率字段。"
+        "涉及空气质量较好/较差或 PM2.5/PM10/O3 较低/较高城市排名、排名并列、Top N截取规则时，"
+        "必须使用 `analyze_city_pollutant_rankings` 进行排名分析，不要用模型自行排序，也不要用 "
+        "`execute_python` 临时复刻排名规则。"
+        "如发现问题，请指出需要修正的地方；"
+        "如无明显问题，请简要说明复核通过。"
+        "这是自动复核轮，回复中不要输出 `<!-- report_final_complete -->` 标记，不要再次触发自动复核。"
+    )
+
+    REPORT_FINAL_COMPLETE_MARKER = "<!-- report_final_complete -->"
+
+    @staticmethod
+    def _select_auto_profile(
+        manual_mode: Optional[str],
+    ) -> Optional[str]:
+        """Select the Auto capability profile for an Agent mode.
+
+        Enforcement-exam conversations are deliberately routed through the
+        configured Flash chain (rather than the default Auto primary model),
+        while native image/attachment handling remains independent.
+        """
+        if manual_mode == "enforcement_exam":
+            return "flash"
+        return None
 
     @staticmethod
     def _build_attachment_reference_context(
@@ -273,6 +306,7 @@ class ReActAgent:
         social_user_context: Optional[str] = None,  # ✅ 新增：社交模式用户上下文（USER.md内容，仅social模式使用）
         board_context: Optional[Dict[str, Any]] = None,  # 画板模式 draw.io 上下文
         map_context: Optional[Dict[str, Any]] = None,  # 问数模式地图交互上下文
+        skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None,
         session_storage_mode: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -313,7 +347,7 @@ class ReActAgent:
         active_run_id = None
 
         # ✅ 社交模式：使用外部传入的social_memory_store（用户隔离），不走UnifiedMemoryManager
-        if self.enable_memory and manual_mode == "social" and social_memory_store is not None:
+        if self.enable_memory and manual_mode in SOCIAL_MEMORY_MODES and social_memory_store is not None:
             memory_store = social_memory_store
             try:
                 memory_store.create_snapshot()
@@ -453,7 +487,10 @@ class ReActAgent:
         )
 
         try:
-            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain()
+            auto_profile = self._select_auto_profile(manual_mode)
+            run_executor.llm_model_chain = self.planner.llm_service.resolve_model_chain(
+                auto_profile=auto_profile,
+            )
             # 使用标准 ReAct 循环（LLM 自主决策调用工具）
             # 工具池包括：
             # - 原子工具（基础能力）
@@ -470,6 +507,7 @@ class ReActAgent:
                 knowledge_base_ids=knowledge_base_ids,  # ✅ 传递知识库ID列表
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
+                auto_profile=auto_profile,
             )
 
             run_executor.configure_resource_tracking(
@@ -559,7 +597,7 @@ class ReActAgent:
 
             # ✅ 设置社交上下文到上下文构建器（仅social模式使用）
             # 同时设置记忆工具的用户上下文（确保 remember_fact 等工具写入正确的用户隔离路径）
-            if manual_mode == "social":
+            if manual_mode in SOCIAL_MEMORY_MODES:
                 react_loop.context_builder.user_preferences = social_user_preferences
                 react_loop.context_builder.soul_file_path = social_soul_file_path  # ✅ 传递 soul.md 文件路径
                 react_loop.context_builder.user_file_path = social_user_file_path  # ✅ 传递 USER.md 文件路径
@@ -679,6 +717,24 @@ class ReActAgent:
                     elif published_resource_ids:
                         terminal_data["resource_durable"] = True
 
+                if self._should_run_report_auto_followup(
+                    manual_mode,
+                    event,
+                    user_query,
+                    skip_auto_followup=skip_auto_followup,
+                ):
+                    logger.info(
+                        "report_auto_followup_pending",
+                        session_id=actual_session_id,
+                        prompt_preview=self.REPORT_FINAL_REVIEW_PROMPT[:80],
+                    )
+                    event_data = event.setdefault("data", {})
+                    event_data["auto_followup_pending"] = True
+                    event_data["auto_followup_prompt"] = self.REPORT_FINAL_REVIEW_PROMPT
+                    event_data["auto_followup_hook_name"] = "report_final_review"
+                    yield event
+                    return
+
                 yield event
                 if pending_resource_event is not None:
                     yield pending_resource_event
@@ -767,7 +823,7 @@ class ReActAgent:
             # ✅ 后台记忆整合（新增，与上下文压缩完全分离）
             # ⚠️ 社交模式的记忆整合由 agent_bridge.py 负责（使用用户隔离的 social_memory_store），
             #    此处只为非社交模式触发整合
-            if unified_user_id and manual_mode and manual_mode != "social":
+            if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
                 try:
                     asyncio.create_task(
                         self._background_memory_consolidation(
@@ -804,6 +860,37 @@ class ReActAgent:
                     logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
             await self._mark_session_used(actual_session_id)
+
+    def _should_run_report_auto_followup(
+        self,
+        manual_mode: Optional[str],
+        event: Dict[str, Any],
+        user_query: str = "",
+        skip_auto_followup: bool = False,
+    ) -> bool:
+        """Trigger the report-mode auto follow-up only when the final marker is present."""
+        if manual_mode != "report" or event.get("type") != "complete":
+            return False
+        if skip_auto_followup:
+            logger.info("report_auto_followup_skipped_by_request_flag")
+            return False
+        if str(user_query or "").strip() == self.REPORT_FINAL_REVIEW_PROMPT:
+            logger.info("report_auto_followup_skipped_auto_review_round")
+            return False
+
+        data = event.get("data") or {}
+        answer = str(data.get("answer") or data.get("response") or "").strip()
+        if self.REPORT_FINAL_REVIEW_PROMPT in answer:
+            logger.info("report_auto_followup_skipped_self_reference")
+            return False
+
+        should_trigger = self.REPORT_FINAL_COMPLETE_MARKER in answer
+        logger.info(
+            "report_auto_followup_marker_checked",
+            marker=self.REPORT_FINAL_COMPLETE_MARKER,
+            found=should_trigger,
+        )
+        return should_trigger
 
     def register_tool(self, name: str, func):
         """
