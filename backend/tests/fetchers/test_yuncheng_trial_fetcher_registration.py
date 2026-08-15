@@ -1,7 +1,10 @@
 from app.fetchers import create_scheduler
 
 
-def test_yuncheng_trial_fetcher_is_registered_in_scheduler_factory():
+def test_yuncheng_trial_fetcher_is_registered_in_scheduler_factory(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     scheduler = create_scheduler()
 
     fetcher = scheduler.get_fetcher("yuncheng_trial_fetcher")
@@ -11,6 +14,8 @@ def test_yuncheng_trial_fetcher_is_registered_in_scheduler_factory():
 
 
 def test_yuncheng_trial_fetcher_is_registered_in_lifecycle(monkeypatch):
+    from types import SimpleNamespace
+
     from app.services import lifecycle_manager
 
     registered = []
@@ -25,7 +30,18 @@ def test_yuncheng_trial_fetcher_is_registered_in_lifecycle(monkeypatch):
         def start(self):
             return None
 
+    context = SimpleNamespace(
+        enabled_modules=frozenset(),
+        manifest=SimpleNamespace(
+            backend=SimpleNamespace(fetchers_enabled=True, fetchers=None),
+        ),
+    )
     monkeypatch.setattr(lifecycle_manager, "fetcher_scheduler", FakeScheduler())
+    monkeypatch.setattr(
+        lifecycle_manager,
+        "load_project_context",
+        lambda _project_id: context,
+    )
 
     lifecycle_manager.initialize_fetchers()
 
@@ -33,7 +49,8 @@ def test_yuncheng_trial_fetcher_is_registered_in_lifecycle(monkeypatch):
 
 
 def test_lifecycle_honors_explicit_empty_project_fetcher_allowlist(monkeypatch):
-    from app.project_config.loader import load_project_context
+    from types import SimpleNamespace
+
     from app.services import lifecycle_manager
 
     registered = []
@@ -48,11 +65,17 @@ def test_lifecycle_honors_explicit_empty_project_fetcher_allowlist(monkeypatch):
         def start(self):
             return None
 
+    context = SimpleNamespace(
+        enabled_modules=frozenset(),
+        manifest=SimpleNamespace(
+            backend=SimpleNamespace(fetchers_enabled=True, fetchers=[]),
+        ),
+    )
     monkeypatch.setattr(lifecycle_manager, "fetcher_scheduler", FakeScheduler())
     monkeypatch.setattr(
         lifecycle_manager,
         "load_project_context",
-        lambda _project_id: load_project_context("jiangsu-ops"),
+        lambda _project_id: context,
     )
 
     assert lifecycle_manager.initialize_fetchers() is True

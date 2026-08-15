@@ -43,6 +43,9 @@ async def test_init_db_ensures_social_binding_schema(monkeypatch):
     async def fake_social_binding_schema(connection):
         calls.append(("social_binding", connection))
 
+    async def fake_session_resources_schema(connection):
+        calls.append(("session_resources", connection))
+
     monkeypatch.setattr(database, "engine", FakeEngine())
     monkeypatch.setattr(database, "_ensure_uploaded_files_schema", fake_uploaded_files_schema)
     monkeypatch.setattr(
@@ -51,13 +54,21 @@ async def test_init_db_ensures_social_binding_schema(monkeypatch):
         fake_social_binding_schema,
         raising=False,
     )
+    monkeypatch.setattr(
+        database,
+        "_ensure_session_resources_schema",
+        fake_session_resources_schema,
+        raising=False,
+    )
 
     await database.init_db()
 
     assert [name for name, _ in calls] == [
         "create_all",
+        "create_all",
         "uploaded_files",
         "social_binding",
+        "session_resources",
     ]
 
 
