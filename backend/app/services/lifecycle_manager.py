@@ -35,6 +35,9 @@ from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
+from app.fetchers.weather.jiangsu_nmc_observed_fetcher import (
+    JiangsuNMCObservedWeatherFetcher,
+)
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
 from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
@@ -97,6 +100,13 @@ def initialize_fetchers() -> bool:
 def _configured_fetchers(project_context):
     """Instantiate only fetchers declared by a project manifest."""
     enabled_modules = project_context.enabled_modules
+    # Customer-specific fetchers must be explicitly enabled by the owning
+    # project manifest.  They must never enter the legacy/default deployment
+    # through the historical "all fetchers" fallback.
+    explicit_project_fetchers = {
+        "jiangsu_station_fault_event",
+        "jiangsu_nmc_observed_weather",
+    }
     factories = {
         "era5": ERA5Fetcher,
         "observed_weather": ObservedWeatherFetcher,
@@ -112,6 +122,7 @@ def _configured_fetchers(project_context):
         "jining_quick_trace": JiningQuickTraceFetcher,
         "yuncheng_trial": YunchengTrialFetcher,
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
+        "jiangsu_nmc_observed_weather": JiangsuNMCObservedWeatherFetcher,
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
@@ -122,7 +133,10 @@ def _configured_fetchers(project_context):
     }
     configured = project_context.manifest.backend.fetchers
     if configured is None:
-        selected = list(factories)
+        selected = [
+            name for name in factories
+            if name not in explicit_project_fetchers
+        ]
         if "xuchang-satellite" in enabled_modules:
             selected.append("gems_image")
             if os.getenv("GEMS_HCHO_DATA_FETCH_ENABLED", "false").lower() == "true":

@@ -354,10 +354,21 @@ JIANGSU_QUERY_TOOLS = _build_tool_dict([
     "jiangsu_fetch_station_data",
     "jiangsu_query_statistics",
     "jiangsu_fetch_alarm_records",
+    "get_weather_data",
+    "get_weather_forecast",
+    "get_current_weather",
+    "get_observed_meteorology",
+    "execute_sql_query",
     "create_report_chart",
+    "execute_echarts_python",
+    "execute_python",
 ])
 SMART_INSPECTION_TOOLS = _build_tool_dict([
     "jiangsu_fetch_alarm_records",
+    "jiangsu_fetch_auto_inspection",
+    "jiangsu_fetch_station_alarm_logs",
+    "jiangsu_fetch_network_inspection_summary",
+    "jiangsu_fetch_station_environment_history",
 ])
 OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
     "jiangsu_fetch_attendance_records",

@@ -5,7 +5,7 @@ from app.tools.jiangsu.result_filter import (
 )
 
 
-def test_result_filter_removes_empty_fields_deduplicates_and_keeps_latest_entity_row():
+def test_result_filter_removes_empty_fields_and_exact_duplicates_but_keeps_time_series():
     records = [
         {"name": "南京市", "code": "320100", "timePoint": "2026-08-12T01:00:00", "aqi": "20", "humidity": "—", "visibility": "-99.000", "id": 1},
         {"name": "南京市", "code": "320100", "timePoint": "2026-08-12T01:00:00", "aqi": "20", "humidity": "—", "visibility": "-99.000", "id": 2},
@@ -16,12 +16,32 @@ def test_result_filter_removes_empty_fields_deduplicates_and_keeps_latest_entity
     compact, metadata = compact_air_quality_records(records)
 
     assert compact == [
+        {"name": "南京市", "code": "320100", "timePoint": "2026-08-12T01:00:00", "aqi": "20"},
         {"name": "南京市", "code": "320100", "timePoint": "2026-08-12T02:00:00", "aqi": "25", "pM2_5": "8"},
         {"name": "无锡市", "code": "320200", "timePoint": "2026-08-12T02:00:00", "aqi": "16", "qualityType": "优"},
     ]
     assert metadata["raw_record_count"] == 4
     assert metadata["duplicate_record_count"] == 1
     assert metadata["removed_empty_field_count"] >= 3
+
+
+def test_result_filter_does_not_collapse_one_city_hour_series_to_latest_record():
+    records = [
+        {
+            "name": "南京市",
+            "code": "320100",
+            "timePoint": f"2026-08-12T{hour:02d}:00:00",
+            "aqi": str(20 + hour),
+        }
+        for hour in range(24)
+    ]
+
+    compact, metadata = compact_air_quality_records(records)
+
+    assert compact == records
+    assert metadata["raw_record_count"] == 24
+    assert metadata["deduplicated_record_count"] == 24
+    assert metadata["duplicate_record_count"] == 0
 
 
 class _FakeContext:

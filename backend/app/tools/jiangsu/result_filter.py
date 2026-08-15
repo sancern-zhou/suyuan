@@ -1,14 +1,14 @@
-"""Compact Jiangsu air-quality API results for Agent-facing responses.
+"""Shape Jiangsu air-quality API results for Agent-facing responses.
 
 The provincial API carries many permanently empty instrument and audit fields
-in every row.  Preserve the raw response as a session attachment, while giving
-the Agent one current, deduplicated record per queried entity.
+in every row. Preserve the complete time series while removing placeholder
+fields and exact duplicate rows. Oversized results are externalized separately
+so the inline Agent context can stay bounded without losing source records.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
 
 INLINE_RECORD_LIMIT = 24
 
@@ -26,18 +26,8 @@ def _is_missing(value: Any) -> bool:
     return value is None or (isinstance(value, str) and value.strip().lower() in _MISSING_VALUES)
 
 
-def _entity_key(record: dict[str, Any]) -> tuple[str, str]:
-    for field in ("stationCode", "uniqueCode", "code", "cityCode", "districtCode"):
-        if record.get(field) not in (None, ""):
-            return field, str(record[field])
-    for field in ("positionName", "stationName", "name", "cityName", "districtName"):
-        if record.get(field):
-            return field, str(record[field])
-    return "record", repr(sorted(record.items()))
-
-
 def compact_air_quality_records(records: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Remove placeholder fields, deduplicate rows, and keep latest entity state."""
+    """Remove placeholder fields and exact duplicates without collapsing time."""
     cleaned: list[dict[str, Any]] = []
     removed_empty_fields = 0
     for item in records:
@@ -60,23 +50,12 @@ def compact_air_quality_records(records: list[Any]) -> tuple[list[dict[str, Any]
         unique_rows.setdefault(signature, row)
     deduplicated = list(unique_rows.values())
 
-    latest_by_entity: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in deduplicated:
-        entity = _entity_key(row)
-        current = latest_by_entity.get(entity)
-        if current is None or str(row.get("timePoint") or "") >= str(current.get("timePoint") or ""):
-            latest_by_entity[entity] = row
-    latest = sorted(
-        latest_by_entity.values(),
-        key=lambda row: (str(row.get("name") or row.get("cityName") or row.get("positionName") or ""), str(row.get("code") or row.get("stationCode") or "")),
-    )
-    return latest, {
+    return deduplicated, {
         "raw_record_count": len(records),
         "deduplicated_record_count": len(deduplicated),
-        "latest_record_count": len(latest),
         "duplicate_record_count": len(cleaned) - len(deduplicated),
         "removed_empty_field_count": removed_empty_fields,
-        "omitted_field_policy": "已剔除空值、-99、—、审计标记、主键和创建/修改时间等非分析字段；每个城市/区县/站点仅保留查询范围内最新记录。",
+        "omitted_field_policy": "已剔除空值、-99、—、审计标记、主键和创建/修改时间等非分析字段，并删除完全重复记录；保留查询范围内各城市/区县/站点的完整时间序列。",
     }
 
 

@@ -6,21 +6,40 @@ frontend:
   theme: default
   brand_name: 江苏省运维审核管理服务平台
   features: {}
+  # social 由江苏独立微信渠道驱动，不作为 Web 端手动切换的业务场景。
   agent_modes:
     - ops
     - jiangsu_query
+    - expert
     - smart_inspection
     - operations_analysis
     - device_control
     - station_fault_diagnosis
   default_agent_mode: ops
   agent_platform_layout: scenes
+  agent_mode_overrides:
+    jiangsu_query:
+      name: 江苏问数生图智能体
+      short_name: 江苏问数生图
+      description: 查询江苏省监测与气象数据、完成统计分析并生成专业图表
+      welcome:
+        description: 面向江苏省空气监测和气象数据，以自然语言完成查询、统计、趋势分析和可追溯图表生成。
+        features:
+          - 查询江苏省城市、区县和站点监测数据及气象数据
+          - 完成趋势、对比、统计与异常线索整理
+          - 将查询结果或用户提供的数据生成交互式与静态图表
+          - 保留数据来源、查询口径和图表产物的可追溯关系
+        example: 例如：“查询南京本月 PM2.5 日均趋势并生成折线图”
+      tags:
+        - 江苏数据
+        - 问数生图
 backend:
   # 江苏部署只从项目目录加载 Skill，不会泄露共享部署的技能。
   skills_dir: projects/jiangsu-ops/skills
-  # 江苏部署仅启动站点告警/监测异常抓取器，不加载共享抓取脚本。
+  # 江苏部署仅启动项目自有抓取器，不加载共享抓取脚本。
   fetchers:
     - jiangsu_station_fault_event
+    - jiangsu_nmc_observed_weather
   tools:
     - jiangsu_fetch_city_data
     - jiangsu_fetch_district_data
@@ -35,6 +54,8 @@ backend:
     - jiangsu_fetch_station_alarm_logs
     - jiangsu_fetch_fault_work_orders
     - jiangsu_fetch_auto_inspection
+    - jiangsu_fetch_network_inspection_summary
+    - jiangsu_fetch_station_environment_history
     - jiangsu_fetch_qc_task_history
     - jiangsu_fetch_qc_task_status
     - jiangsu_fetch_qc_run_logs
@@ -42,6 +63,42 @@ backend:
   # 江苏项目只向运维审核 Agent 暴露审核、取证和报告闭环所需工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   agent_mode_tools:
+    # 江苏社交模式独立声明工具面，不继承共享“风清气智”的社交工具集合。
+    # 移动端仅开放用户隔离能力、江苏只读业务查询和成果发布能力。
+    social:
+      - list_session_resources
+      - publish_session_file
+      - read_file
+      - list_skills
+      - view_skill
+      - knowledge_qa_workflow
+      - knowledge_document_reader
+      - web_search
+      - web_fetch
+      - schedule_task
+      - send_notification
+      - session_search
+      - jiangsu_fetch_city_data
+      - jiangsu_fetch_district_data
+      - jiangsu_fetch_station_data
+      - jiangsu_query_statistics
+      - jiangsu_fetch_alarm_records
+      - jiangsu_fetch_attendance_records
+      - jiangsu_fetch_station_directory
+      - jiangsu_fetch_station_alarm_logs
+      - jiangsu_fetch_fault_work_orders
+      - jiangsu_fetch_auto_inspection
+      - jiangsu_fetch_network_inspection_summary
+      - jiangsu_fetch_station_environment_history
+      - jiangsu_fetch_qc_task_history
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_qc_monitoring_curve
+      - get_weather_data
+      - get_weather_forecast
+      - get_current_weather
+      - create_report_chart
+      - execute_echarts_python
     jiangsu_query:
       - list_session_resources
       - publish_session_file
@@ -50,7 +107,51 @@ backend:
       - jiangsu_fetch_station_data
       - jiangsu_query_statistics
       - jiangsu_fetch_alarm_records
+      - get_weather_data
+      - get_weather_forecast
+      - get_current_weather
+      - get_observed_meteorology
+      - execute_sql_query
       - create_report_chart
+      - execute_echarts_python
+      - execute_python
+    expert:
+      - list_session_resources
+      - publish_session_file
+      - knowledge_qa_workflow
+      - knowledge_document_reader
+      - jiangsu_fetch_city_data
+      - jiangsu_fetch_district_data
+      - jiangsu_fetch_station_data
+      - jiangsu_query_statistics
+      - get_weather_data
+      - get_weather_forecast
+      - get_current_weather
+      - get_observed_meteorology
+      - get_platform_weather_image
+      - get_vocs_data
+      - get_pm25_ionic
+      - get_pm25_carbon
+      - get_pm25_crustal
+      - calculate_pm_pmf
+      - calculate_vocs_pmf
+      - calculate_reconstruction
+      - calculate_carbon
+      - calculate_soluble
+      - calculate_crustal
+      - calculate_trace
+      - meteorological_trajectory_analysis
+      - analyze_trajectory_sources
+      - analyze_upwind_enterprises
+      - predict_air_quality
+      - knowledge_graph_query
+      - generate_map
+      - create_report_chart
+      - execute_echarts_python
+      - execute_python
+      - read_file
+      - list_directory
+      - search_files
     ops:
       - list_session_resources
       - publish_session_file
@@ -74,9 +175,13 @@ backend:
       - render_report_package
       - validate_report_package
       - call_sub_agent
-    # 当前阶段仅查询告警记录；巡检执行、工单生成与派发工具上线并评审后再加入。
+    # 站房巡检工具均为只读；巡检执行、工单生成与派发仍需后续单独评审。
     smart_inspection:
       - jiangsu_fetch_alarm_records
+      - jiangsu_fetch_auto_inspection
+      - jiangsu_fetch_station_alarm_logs
+      - jiangsu_fetch_network_inspection_summary
+      - jiangsu_fetch_station_environment_history
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
       - jiangsu_fetch_attendance_records
@@ -102,6 +207,7 @@ backend:
       - knowledge_graph_query
   mode_prompt_files:
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md
+    expert: projects/jiangsu-ops/prompts/expert.md
     smart_inspection: projects/jiangsu-ops/prompts/smart_inspection.md
     operations_analysis: projects/jiangsu-ops/prompts/operations_analysis.md
     device_control: projects/jiangsu-ops/prompts/device_control.md

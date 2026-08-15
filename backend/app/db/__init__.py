@@ -7,6 +7,7 @@ from app.db.models import (
     Base,
     ERA5ReanalysisData,
     ObservedWeatherData,
+    JiangsuNMCObservedWeatherData,
     WeatherStation,
     WeatherDataCache,
     FireHotspot,
@@ -23,6 +24,7 @@ __all__ = [
     "Base",
     "ERA5ReanalysisData",
     "ObservedWeatherData",
+    "JiangsuNMCObservedWeatherData",
     "WeatherStation",
     "WeatherDataCache",
     "FireHotspot",
@@ -31,4 +33,3 @@ __all__ = [
     "ReportTemplate",
     "ReportGenerationHistory",
 ]
-

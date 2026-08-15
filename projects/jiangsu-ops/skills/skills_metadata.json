@@ -1,0 +1,20 @@
+{
+  "skills": {
+    "station-alarm-diagnosis": {
+      "enabled": true,
+      "aliases": ["站点告警诊断", "站房故障诊断"],
+      "required_tools": [
+        "read_file",
+        "jiangsu_fetch_station_data",
+        "jiangsu_fetch_alarm_records",
+        "jiangsu_fetch_station_alarm_logs",
+        "jiangsu_fetch_fault_work_orders",
+        "jiangsu_fetch_auto_inspection",
+        "jiangsu_fetch_qc_task_history",
+        "jiangsu_fetch_qc_task_status",
+        "jiangsu_fetch_qc_run_logs",
+        "jiangsu_fetch_qc_monitoring_curve"
+      ]
+    }
+  }
+}

@@ -62,6 +62,12 @@ class FakeEvidenceTool:
         return {"success": True, "status": "success", "data": [], "metadata": kwargs}
 
 
+class FakeStationToolWithNonReportingDirectoryStation(FakeStationTool):
+    async def fetch_raw_records(self, **kwargs):
+        rows, payload = await super().fetch_raw_records(**kwargs)
+        return rows, {"codes": [*payload["codes"], "3999A"]}
+
+
 def test_detect_monitoring_anomalies_finds_flatline():
     rows, _ = __import__("asyncio").run(FakeStationTool().fetch_raw_records())
 
@@ -188,3 +194,70 @@ async def test_fetcher_writes_packages_publishes_events_and_deduplicates(tmp_pat
         assert payload["station"]["station_code"] == "3001A"
         assert "historical_fault_work_orders" in payload
         assert "quality_control_history" in payload
+
+
+@pytest.mark.asyncio
+async def test_first_monitor_poll_baselines_observed_stations_not_directory(tmp_path):
+    events = []
+
+    async def publish(event):
+        events.append(event)
+
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: NOW,
+        alarm_tool=FakeAlarmTool(),
+        station_tool=FakeStationToolWithNonReportingDirectoryStation(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+
+    result = await fetcher.fetch_and_store()
+    state = json.loads(fetcher.state_path.read_text(encoding="utf-8"))
+
+    assert result["published_events"] == 2
+    assert all(event.attributes.get("station_code") != "3999A" for event in events)
+    assert state["monitor_station_codes"] == ["3001A", "3002A", "3003A"]
+
+
+@pytest.mark.asyncio
+async def test_fetcher_checkpoints_each_event_before_a_later_publish_fails(tmp_path):
+    events = []
+    fail_second = True
+
+    async def publish(event):
+        nonlocal fail_second
+        events.append(event)
+        if fail_second and len(events) == 2:
+            raise RuntimeError("publish interrupted")
+
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: NOW,
+        alarm_tool=FakeAlarmTool(),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+
+    with pytest.raises(RuntimeError, match="publish interrupted"):
+        await fetcher.fetch_and_store()
+
+    state = json.loads(fetcher.state_path.read_text(encoding="utf-8"))
+    assert len(state["processed_fingerprints"]) == 1
+    assert state["monitor_station_codes"] == ["3001A", "3002A", "3003A"]
+    assert "last_alarm_poll_at" not in state
+
+    fail_second = False
+    resumed = await fetcher.fetch_and_store()
+
+    assert resumed["published_events"] == 1
+    assert len(events) == 3

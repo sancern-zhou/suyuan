@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from app.config.weather_targets import normalize_city_name, resolve_weather_city_target
+from app.db.repositories.jiangsu_nmc_weather_repo import JiangsuNMCWeatherRepository
 from app.db.repositories.weather_repo import WeatherRepository
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.data_features_extractor import DataFeaturesExtractor  # 数据特征提取
@@ -46,7 +47,8 @@ class GetWeatherDataTool(LLMTool):
    - 无需提供 station_id
 
 2. data_type="observed"：
-   - 城市查询：提供 city 或 cities，工具内部解析该城市的观测站
+   - 城市查询：提供 city 或 cities，工具内部查询该市及下辖区县观测站
+   - 江苏区县查询：提供 district 或 districts，工具内部解析对应观测站
    - 精确查询：提供 station_id
    - 不能用 lat/lon 替代观测站或城市
 
@@ -69,7 +71,10 @@ class GetWeatherDataTool(LLMTool):
                     "data_type": {
                         "type": "string",
                         "enum": ["era5", "observed"],
-                        "description": "数据类型：era5=ERA5再分析数据(城市或lat/lon) | observed=观测站数据(城市或station_id)"
+                        "description": (
+                            "数据类型：era5=ERA5再分析数据(城市或lat/lon) | "
+                            "observed=观测站数据(城市、江苏区县或station_id)"
+                        )
                     },
                     "lat": {
                         "type": "number",
@@ -85,12 +90,24 @@ class GetWeatherDataTool(LLMTool):
                     },
                     "city": {
                         "type": "string",
-                        "description": "单个城市名称。工具内部解析ERA5代表点或观测站，如'南京市'"
+                        "description": (
+                            "单个城市名称。工具内部解析ERA5代表点或观测站，"
+                            "无需提供站点ID，如'南京市'"
+                        )
                     },
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市名称列表，适合多城市批量查询"
+                        "description": "城市名称列表；observed查询时工具内部批量解析各城市站点"
+                    },
+                    "district": {
+                        "type": "string",
+                        "description": "江苏区县名称，仅用于observed观测数据查询，如'江宁区'"
+                    },
+                    "districts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "江苏区县名称列表，仅用于observed观测数据批量查询"
                     },
                     "start_time": {
                         "type": "string",
@@ -110,13 +127,14 @@ class GetWeatherDataTool(LLMTool):
             description="Query historical weather data (ERA5 reanalysis or observed station data)",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.1.0"
+            version="1.2.0"
         )
 
         # Context-Aware V2: 设置需要 context 参数
         self.requires_context = True
 
         self.repo = WeatherRepository()
+        self.jiangsu_nmc_repo = JiangsuNMCWeatherRepository()
 
     async def execute(
         self,
@@ -129,6 +147,8 @@ class GetWeatherDataTool(LLMTool):
         station_id: Optional[str] = None,
         city: Optional[str] = None,
         cities: Optional[List[str]] = None,
+        district: Optional[str] = None,
+        districts: Optional[List[str]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -143,6 +163,8 @@ class GetWeatherDataTool(LLMTool):
             station_id: 气象站ID（observed查询必需）
             city: 单个城市名称，由工具内部解析查询目标
             cities: 城市名称列表，由工具内部批量解析查询目标
+            district: 单个江苏区县名称，由工具内部解析查询目标
+            districts: 江苏区县名称列表，由工具内部批量解析查询目标
 
         Returns:
             Dict: 统一数据格式的查询结果 (UnifiedData.dict())
@@ -162,7 +184,34 @@ class GetWeatherDataTool(LLMTool):
             )
 
             requested_cities = self._clean_cities(city=city, cities=cities)
+            requested_districts = self._clean_districts(
+                district=district,
+                districts=districts,
+            )
+            if requested_districts:
+                if data_type != "observed":
+                    return self._area_query_failure(
+                        data_type=data_type,
+                        cities=requested_cities,
+                        districts=requested_districts,
+                        error="区县名称仅支持 observed 观测站数据查询",
+                    )
+                return await self._query_jiangsu_observed_areas(
+                    context=context,
+                    cities=requested_cities,
+                    districts=requested_districts,
+                    start_time=start_dt,
+                    end_time=end_dt,
+                )
             if requested_cities:
+                if data_type == "observed" and self._is_jiangsu_project():
+                    return await self._query_jiangsu_observed_areas(
+                        context=context,
+                        cities=requested_cities,
+                        districts=[],
+                        start_time=start_dt,
+                        end_time=end_dt,
+                    )
                 return await self._query_by_cities(
                     context=context,
                     data_type=data_type,
@@ -228,6 +277,33 @@ class GetWeatherDataTool(LLMTool):
             if normalized and normalized not in result:
                 result.append(normalized)
         return result
+
+    @staticmethod
+    def _clean_districts(
+        *,
+        district: Optional[str],
+        districts: Optional[List[str]],
+    ) -> List[str]:
+        values: List[str] = []
+        if district:
+            values.append(district)
+        if isinstance(districts, str):
+            values.append(districts)
+        else:
+            values.extend(districts or [])
+
+        result: List[str] = []
+        for value in values:
+            normalized = str(value or "").strip().replace(" ", "")
+            if normalized and normalized not in result:
+                result.append(normalized)
+        return result
+
+    @staticmethod
+    def _is_jiangsu_project() -> bool:
+        from config.settings import settings
+
+        return settings.project_id == "jiangsu-ops"
 
     async def _query_by_cities(
         self,
@@ -380,6 +456,194 @@ class GetWeatherDataTool(LLMTool):
             end_time=end_time,
         )
 
+    @staticmethod
+    def _normalize_admin_name(value: Any) -> str:
+        return str(value or "").strip().replace(" ", "").rstrip("省市区县")
+
+    async def _query_jiangsu_observed_areas(
+        self,
+        *,
+        context,
+        cities: List[str],
+        districts: List[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> Dict[str, Any]:
+        """Query Jiangsu NMC observations using administrative names only."""
+        targets = await self.jiangsu_nmc_repo.get_area_targets(
+            city_names=cities,
+            district_names=districts,
+        )
+        data = await self.jiangsu_nmc_repo.get_area_observed_data(
+            city_names=cities,
+            district_names=districts,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+        resolved_cities: List[str] = []
+        unresolved_cities: List[str] = []
+        for requested in cities:
+            matching_names = [
+                str(target["city_name"])
+                for target in targets
+                if self._normalize_admin_name(target.get("city_name"))
+                == self._normalize_admin_name(requested)
+            ]
+            if matching_names:
+                canonical = matching_names[0]
+                if canonical not in resolved_cities:
+                    resolved_cities.append(canonical)
+            else:
+                unresolved_cities.append(requested)
+
+        resolved_districts: List[str] = []
+        unresolved_districts: List[str] = []
+        for requested in districts:
+            matching_names = [
+                str(target["district_name"])
+                for target in targets
+                if target.get("district_name")
+                and self._normalize_admin_name(target.get("district_name"))
+                == self._normalize_admin_name(requested)
+            ]
+            if matching_names:
+                canonical = matching_names[0]
+                if canonical not in resolved_districts:
+                    resolved_districts.append(canonical)
+            else:
+                unresolved_districts.append(requested)
+
+        raw_records = [
+            {
+                "timestamp": record.time,
+                "station_name": record.nmc_location_name,
+                "station_code": record.station_id,
+                "province": record.province_name,
+                "city": record.city_name,
+                "city_code": record.city_code,
+                "district": record.district_name,
+                "district_code": record.district_code,
+                "location_level": record.location_level,
+                "temperature_2m": record.temperature_2m,
+                "relative_humidity_2m": record.relative_humidity_2m,
+                "wind_speed_10m": record.wind_speed_10m,
+                "wind_direction_10m": record.wind_direction_10m,
+                "surface_pressure": record.surface_pressure,
+                "precipitation": record.precipitation,
+                "data_source": record.data_source,
+                "data_quality": record.data_quality,
+            }
+            for record in data
+        ]
+        standardized_records = get_data_standardizer().standardize(raw_records)
+
+        station_ids = {str(target["station_id"]) for target in targets}
+        city_station_ids = {
+            str(target["station_id"])
+            for target in targets
+            if target.get("location_level") == "city"
+        }
+        district_station_ids = station_ids - city_station_ids
+
+        no_data_cities = [
+            city
+            for city in resolved_cities
+            if not any(
+                self._normalize_admin_name(record.city_name)
+                == self._normalize_admin_name(city)
+                for record in data
+            )
+        ]
+        no_data_districts = [
+            district
+            for district in resolved_districts
+            if not any(
+                self._normalize_admin_name(record.district_name)
+                == self._normalize_admin_name(district)
+                for record in data
+            )
+        ]
+
+        saved_file_path = None
+        if standardized_records and context is not None:
+            try:
+                saved_file_path = context.save_data(
+                    data=standardized_records,
+                    schema="weather",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "jiangsu_observed_weather_data_save_failed",
+                    error=str(exc),
+                )
+
+        record_count = len(standardized_records)
+        inline_records = standardized_records
+        sample_strategy = "all"
+        if saved_file_path and record_count > 24:
+            inline_records = [*standardized_records[:12], *standardized_records[-12:]]
+            sample_strategy = "first_12_last_12"
+
+        unresolved = unresolved_cities or unresolved_districts
+        no_data = no_data_cities or no_data_districts
+        if record_count:
+            status = "partial" if unresolved or no_data else "success"
+            summary = (
+                f"[OK] 按行政区查询到 {len(station_ids)} 个 NMC 气象站的 "
+                f"{record_count} 条观测数据"
+            )
+        elif targets:
+            status = "empty"
+            summary = "[WARN] 已解析行政区及气象站，但指定时段没有观测数据"
+        else:
+            status = "failed"
+            summary = "[ERROR] 未找到所请求城市或区县的 NMC 气象站"
+        if unresolved_cities:
+            summary += f"；未解析城市：{', '.join(unresolved_cities)}"
+        if unresolved_districts:
+            summary += f"；未解析区县：{', '.join(unresolved_districts)}"
+        if no_data_cities:
+            summary += f"；无数据城市：{', '.join(no_data_cities)}"
+        if no_data_districts:
+            summary += f"；无数据区县：{', '.join(no_data_districts)}"
+
+        return {
+            "status": status,
+            "success": bool(record_count),
+            "data": inline_records,
+            "file_path": saved_file_path,
+            "data_complete": len(inline_records) == record_count,
+            "record_count": record_count,
+            "returned_records": len(inline_records),
+            "sample_strategy": sample_strategy,
+            "metadata": {
+                "schema_version": "v2.0",
+                "schema_type": "weather",
+                "generator": "get_weather_data",
+                "scenario": "weather_analysis",
+                "weather_data_type": "observed",
+                "source": "NMC",
+                "requested_cities": cities,
+                "requested_districts": districts,
+                "resolved_cities": resolved_cities,
+                "resolved_districts": resolved_districts,
+                "unresolved_cities": unresolved_cities,
+                "unresolved_districts": unresolved_districts,
+                "no_data_cities": no_data_cities,
+                "no_data_districts": no_data_districts,
+                "station_count": len(station_ids),
+                "city_station_count": len(city_station_ids),
+                "district_station_count": len(district_station_ids),
+                "record_count": record_count,
+                "time_range": {
+                    "start": start_time.isoformat(),
+                    "end": end_time.isoformat(),
+                },
+            },
+            "summary": summary,
+        }
+
     def _combine_city_results(
         self,
         *,
@@ -480,6 +744,31 @@ class GetWeatherDataTool(LLMTool):
             "summary": f"[ERROR] {error}",
         }
 
+    @staticmethod
+    def _area_query_failure(
+        *,
+        data_type: str,
+        cities: List[str],
+        districts: List[str],
+        error: str,
+    ) -> Dict[str, Any]:
+        return {
+            "status": "failed",
+            "success": False,
+            "error": error,
+            "data": [],
+            "file_path": None,
+            "metadata": {
+                "schema_version": "v2.0",
+                "schema_type": "weather",
+                "generator": "get_weather_data",
+                "weather_data_type": data_type,
+                "requested_cities": cities,
+                "requested_districts": districts,
+            },
+            "summary": f"[ERROR] {error}",
+        }
+
     async def _query_era5(
         self,
         context,
@@ -527,23 +816,22 @@ class GetWeatherDataTool(LLMTool):
         # 转换为UnifiedDataRecord格式
         records = []
         for record in data:
-            # 提取气象测量值，处理None值
-            # 对于None值，使用NaN表示缺失数据
-            import math
-
+            # 提取气象测量值，处理None值。
+            # 缺失值必须保留为 None：NaN 不是合法 JSON，无法写入
+            # PostgreSQL 的 json/jsonb transcript 字段。
             measurements = {
-                "temperature_2m": record.temperature_2m if record.temperature_2m is not None else math.nan,
-                "relative_humidity_2m": record.relative_humidity_2m if record.relative_humidity_2m is not None else math.nan,
-                "dew_point_2m": record.dew_point_2m if record.dew_point_2m is not None else math.nan,
-                "wind_speed_10m": record.wind_speed_10m if record.wind_speed_10m is not None else math.nan,
-                "wind_direction_10m": record.wind_direction_10m if record.wind_direction_10m is not None else math.nan,
-                "wind_gusts_10m": record.wind_gusts_10m if record.wind_gusts_10m is not None else math.nan,
-                "surface_pressure": record.surface_pressure if record.surface_pressure is not None else math.nan,
-                "precipitation": record.precipitation if record.precipitation is not None else math.nan,
-                "cloud_cover": record.cloud_cover if record.cloud_cover is not None else math.nan,
-                "shortwave_radiation": record.shortwave_radiation if record.shortwave_radiation is not None else math.nan,
-                "visibility": record.visibility if record.visibility is not None else math.nan,
-                "boundary_layer_height": record.boundary_layer_height if record.boundary_layer_height is not None else math.nan,
+                "temperature_2m": record.temperature_2m,
+                "relative_humidity_2m": record.relative_humidity_2m,
+                "dew_point_2m": record.dew_point_2m,
+                "wind_speed_10m": record.wind_speed_10m,
+                "wind_direction_10m": record.wind_direction_10m,
+                "wind_gusts_10m": record.wind_gusts_10m,
+                "surface_pressure": record.surface_pressure,
+                "precipitation": record.precipitation,
+                "cloud_cover": record.cloud_cover,
+                "shortwave_radiation": record.shortwave_radiation,
+                "visibility": record.visibility,
+                "boundary_layer_height": record.boundary_layer_height,
             }
 
             records.append(UnifiedDataRecord(
@@ -741,20 +1029,18 @@ class GetWeatherDataTool(LLMTool):
         # 转换为UnifiedDataRecord格式
         records = []
         for record in data:
-            # 提取气象测量值，处理None值
-            # 对于None值，使用NaN表示缺失数据
-            import math
-
+            # 提取气象测量值，处理None值。保留 None，确保结果可安全
+            # 序列化为标准 JSON 并写入 transcript。
             measurements = {
-                "temperature_2m": record.temperature_2m if record.temperature_2m is not None else math.nan,
-                "relative_humidity_2m": record.relative_humidity_2m if record.relative_humidity_2m is not None else math.nan,
-                "dew_point_2m": record.dew_point_2m if record.dew_point_2m is not None else math.nan,
-                "wind_speed_10m": record.wind_speed_10m if record.wind_speed_10m is not None else math.nan,
-                "wind_direction_10m": record.wind_direction_10m if record.wind_direction_10m is not None else math.nan,
-                "surface_pressure": record.surface_pressure if record.surface_pressure is not None else math.nan,
-                "precipitation": record.precipitation if record.precipitation is not None else math.nan,
-                "cloud_cover": record.cloud_cover if record.cloud_cover is not None else math.nan,
-                "visibility": record.visibility if record.visibility is not None else math.nan,
+                "temperature_2m": record.temperature_2m,
+                "relative_humidity_2m": record.relative_humidity_2m,
+                "dew_point_2m": record.dew_point_2m,
+                "wind_speed_10m": record.wind_speed_10m,
+                "wind_direction_10m": record.wind_direction_10m,
+                "surface_pressure": record.surface_pressure,
+                "precipitation": record.precipitation,
+                "cloud_cover": record.cloud_cover,
+                "visibility": record.visibility,
             }
 
             records.append(UnifiedDataRecord(

@@ -75,7 +75,11 @@ def test_jiangxi_project_disables_data_fetchers():
 def test_jiangsu_project_owns_station_fault_automation_surfaces():
     context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
 
-    assert context.manifest.backend.fetchers == ["jiangsu_station_fault_event"]
+    assert context.manifest.backend.fetchers == [
+        "jiangsu_station_fault_event",
+        "jiangsu_nmc_observed_weather",
+    ]
+    assert "execute_sql_query" in context.manifest.backend.agent_mode_tools["jiangsu_query"]
     assert context.manifest.scheduled_tasks_enabled is True
     assert context.manifest.scheduled_tasks == ["jiangsu_station_fault_diagnosis"]
     assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"

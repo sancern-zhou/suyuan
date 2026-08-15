@@ -18,6 +18,15 @@ logger = structlog.get_logger(__name__)
 class JiangsuStationDataTool(LLMTool):
     """Fetch station hour, day, or five-minute observations from the Jiangsu API."""
 
+    _PROVINCE_SELECTORS = {
+        "江苏",
+        "江苏省",
+        "全省",
+        "江苏全省",
+        "全江苏",
+        "全江苏省",
+    }
+
     _ENDPOINTS = {
         "station_hour": "airdata/DATStationHour/GetStationHourDataListAsync",
         "station_day": "airdata/DATStationDay/GetStationDayDataListAsync",
@@ -56,7 +65,8 @@ class JiangsuStationDataTool(LLMTool):
             function_schema={
                 "name": "jiangsu_fetch_station_data",
                 "description": (
-                    "从江苏省站点数据接口读取数据。仅用于查询，不能修改源系统。"
+                    "按江苏省辖市从站点数据接口读取该市下辖站点数据；不支持江苏全省、区县或指定站点查询。"
+                    "仅用于查询，不能修改源系统。"
                     "返回数据来源、查询条件、数据类型和记录数，结论必须引用这些信息。超过24条过滤后结果将外部化保存，data仅返回首尾样本，file_path可供按需读取。"
                 ),
                 "parameters": {
@@ -67,20 +77,19 @@ class JiangsuStationDataTool(LLMTool):
                             "enum": ["station_hour", "station_day", "station_5minute"],
                             "description": "站点小时、日均或5分钟数据。",
                         },
-                        "station_codes": {
+                        "city_names": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "江苏平台站点编码，例如 1002A；已知编码时使用。",
+                            "minItems": 1,
+                            "description": "江苏省辖市名称，例如南京市、苏州市；不得传江苏省、江苏或全省。",
                         },
-                        "station_names": {"type": "array", "items": {"type": "string"}, "description": "站点名称；工具内部解析站点编码。"},
-                        "city_names": {"type": "array", "items": {"type": "string"}, "description": "城市或“江苏省”；工具内部展开其下辖全部站点。"},
-                        "district_names": {"type": "array", "items": {"type": "string"}, "description": "区县名称；工具内部展开其下辖全部站点。"},
                         "start_time": {"type": "string", "description": "开始时间，格式 YYYY-MM-DD HH:mm:ss。"},
                         "end_time": {"type": "string", "description": "结束时间，格式 YYYY-MM-DD HH:mm:ss。"},
                         "data_type": {
                             "type": "integer",
                             "enum": [0, 1, 2, 3],
-                            "description": "0原始工况、1审核工况、2原始标况、3审核标况；默认0。",
+                            "default": 1,
+                            "description": "0原始工况、1审核工况、2原始标况、3审核标况；默认1（审核工况）。",
                         },
                         "pollutant_codes": {
                             "type": "array",
@@ -88,7 +97,7 @@ class JiangsuStationDataTool(LLMTool):
                             "description": "仅5分钟数据可选，例如 PM2_5、O3、SO2。",
                         },
                     },
-                    "required": ["data_kind", "start_time", "end_time"],
+                    "required": ["data_kind", "city_names", "start_time", "end_time"],
                 },
             },
         )
@@ -103,11 +112,17 @@ class JiangsuStationDataTool(LLMTool):
         district_names: list[str] | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
-        data_type: int = 0,
+        data_type: int = 1,
         pollutant_codes: list[str] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
         try:
+            self._validate_agent_city_scope(
+                station_codes=station_codes,
+                station_names=station_names,
+                city_names=city_names,
+                district_names=district_names,
+            )
             records, payload = await self.fetch_raw_records(
                 data_kind=data_kind,
                 station_codes=station_codes,
@@ -125,12 +140,12 @@ class JiangsuStationDataTool(LLMTool):
                 raw_file_path = context.save_data(
                     data=records,
                     schema=f"jiangsu_{data_kind}_raw",
-                    metadata={"source_tool": self.name, "record_count": len(records), "filtered": True},
+                    metadata={"source_tool": self.name, "record_count": len(records), "filtered": False},
                 )
             inline_records, filtered_file_path, externalization = externalize_compact_records(
                 compact_records,
                 context=context,
-                schema=f"jiangsu_{data_kind}_latest",
+                schema=f"jiangsu_{data_kind}_filtered",
                 metadata={"source_tool": self.name, "source_record_count": len(records)},
             )
             metadata = {
@@ -154,7 +169,7 @@ class JiangsuStationDataTool(LLMTool):
                 "success": True,
                 "data": inline_records,
                 "metadata": metadata,
-                "summary": f"江苏站点{data_kind}查询完成：原始 {len(records)} 条，去重并保留各站最新 {len(compact_records)} 条（{self._DATA_TYPES[data_type]}）。",
+                "summary": f"江苏站点{data_kind}查询完成：原始 {len(records)} 条，清洗并删除完全重复记录后保留完整时间序列 {len(compact_records)} 条（{self._DATA_TYPES[data_type]}）。",
                 **{key: externalization[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
                 **({"file_path": filtered_file_path} if filtered_file_path else {}),
             }
@@ -164,6 +179,25 @@ class JiangsuStationDataTool(LLMTool):
         except Exception:
             logger.exception("jiangsu_station_data_unexpected_error", data_kind=data_kind)
             return {"status": "failed", "success": False, "data": [], "summary": "江苏站点数据查询发生未预期错误。"}
+
+    def _validate_agent_city_scope(
+        self,
+        *,
+        station_codes: list[str] | None,
+        station_names: list[str] | None,
+        city_names: list[str] | None,
+        district_names: list[str] | None,
+    ) -> None:
+        if station_codes or station_names or district_names:
+            raise ValueError("江苏站点数据只允许通过 city_names 按城市查询，不支持站点编码、站点名称或区县条件")
+        if not city_names or not all(isinstance(item, str) and item.strip() for item in city_names):
+            raise ValueError("江苏站点数据查询必须提供至少一个有效的省辖市名称 city_names")
+        province_names = [
+            item for item in city_names
+            if "".join(item.split()) in self._PROVINCE_SELECTORS
+        ]
+        if province_names:
+            raise ValueError("江苏站点数据不支持全省查询，请在 city_names 中指定省辖市，例如南京市或苏州市")
 
     async def fetch_raw_records(
         self,
@@ -175,7 +209,7 @@ class JiangsuStationDataTool(LLMTool):
         district_names: list[str] | None = None,
         start_time: str | None,
         end_time: str | None,
-        data_type: int = 0,
+        data_type: int = 1,
         pollutant_codes: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return the unfiltered time series for deterministic background checks.
@@ -267,7 +301,7 @@ class JiangsuStationDataTool(LLMTool):
                 raise ValueError(f"未在江苏站点目录中找到“{name}”")
             codes.extend(matches)
         for city in city_names or []:
-            matches = [str(row["stationCode"]) for row in rows if normalise(city) == normalise(row.get("provinceName")) or normalise(city) == normalise(row.get("cityName"))]
+            matches = [str(row["stationCode"]) for row in rows if normalise(city) == normalise(row.get("cityName"))]
             if not matches:
                 raise ValueError(f"未在江苏站点目录中找到“{city}”下辖站点")
             codes.extend(matches)

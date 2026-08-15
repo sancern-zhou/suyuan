@@ -10,6 +10,7 @@
 
 1. 先用 `knowledge_qa_workflow` 检索已授权知识库中的故障规程、设备说明和历史处置经验；如命中文档需要核验，再用 `knowledge_document_reader` 阅读对应片段。再调用 `knowledge_graph_query`，取得故障症状—部件—原因的候选路径。
 2. 查询站点小时或 5 分钟监测数据，确认异常开始时间、污染物/参数范围及连续性。
+   - 默认使用 `data_type=1`（审核工况）。对当前时间向前 72 小时内的数据，若审核结果为空或应有时点明显缺失，先说明“该时段数据尚未审核或审核尚未完成”，再以相同对象、粒度和缺失时段使用 `data_type=0` 查询原始工况数据。原始数据只能作为明确标注的补充证据，不得与审核数据混合计算；三天以前的数据缺失不能自动归因于未审核。
 3. 查询 `jiangsu_fetch_alarm_records`、`jiangsu_fetch_station_alarm_logs` 和 `jiangsu_fetch_auto_inspection`；自动巡检返回“站点未连接”或无数据时，明确其为接入/在线状态线索，不能推断具体故障部件。
 4. 若异常与质控相关，先用 `jiangsu_fetch_qc_task_history` 定位任务，再按返回的 `rStart`、`rId` 查询 `jiangsu_fetch_qc_task_status` 和 `jiangsu_fetch_qc_run_logs`；使用 `jiangsu_fetch_qc_monitoring_curve` 查看任务期间及前后监测响应。未找到任务时，不能把普通浓度异常归因为质控故障。
 5. 查询 `jiangsu_fetch_fault_work_orders`，核验历史同类故障和已采用处置。

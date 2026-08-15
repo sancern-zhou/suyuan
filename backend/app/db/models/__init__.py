@@ -7,6 +7,7 @@ from .weather_models import (
     Base,
     ERA5ReanalysisData,
     ObservedWeatherData,
+    JiangsuNMCObservedWeatherData,
     WeatherStation,
     WeatherDataCache,
     FireHotspot,
@@ -26,6 +27,7 @@ __all__ = [
     "Base",
     "ERA5ReanalysisData",
     "ObservedWeatherData",
+    "JiangsuNMCObservedWeatherData",
     "WeatherStation",
     "WeatherDataCache",
     "FireHotspot",
@@ -37,5 +39,4 @@ __all__ = [
     "ReportGenerationHistory",
     # "QuickTraceAnalysis",  # 暂时注释，文件不存在
 ]
-
 

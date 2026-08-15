@@ -2,10 +2,10 @@
 SQLAlchemy models for meteorological data storage.
 Designed for PostgreSQL + TimescaleDB.
 """
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Date, Index, JSON
+from sqlalchemy import JSON, Boolean, Column, Date, DateTime, Float, Index, Integer, String
 from sqlalchemy.sql import func
+
 from app.db.database import Base
-from datetime import datetime
 
 
 class ERA5ReanalysisData(Base):
@@ -89,6 +89,52 @@ class ObservedWeatherData(Base):
     __table_args__ = (
         Index("idx_observed_station", "station_id", "time"),
         Index("idx_observed_time_desc", "time"),
+    )
+
+
+class JiangsuNMCObservedWeatherData(Base):
+    """NMC observations discovered from the Jiangsu province station catalog.
+
+    NMC's province and weather endpoints identify stations by administrative
+    name but do not publish station coordinates.  Keep these records in an
+    administrative-area table instead of inventing coordinates for the shared
+    ``observed_weather_data`` schema.
+    """
+
+    __tablename__ = "jiangsu_nmc_observed_weather_data"
+
+    time = Column(DateTime(timezone=True), primary_key=True, nullable=False, index=True)
+    station_id = Column(String(50), primary_key=True, nullable=False, index=True)
+
+    province_name = Column(String(50), nullable=False, default="江苏省")
+    city_code = Column(String(20), index=True)
+    city_name = Column(String(50), nullable=False, index=True)
+    district_code = Column(String(20), index=True)
+    district_name = Column(String(50), index=True)
+    location_level = Column(String(20), nullable=False, comment="city/district")
+    nmc_location_name = Column(String(100), nullable=False)
+    forecast_url = Column(String(255))
+
+    temperature_2m = Column(Float, comment="2m temperature (°C)")
+    relative_humidity_2m = Column(Float, comment="2m relative humidity (%)")
+    wind_speed_10m = Column(Float, comment="10m wind speed (m/s, NMC source unit)")
+    wind_direction_10m = Column(Float, comment="10m wind direction (°)")
+    surface_pressure = Column(Float, comment="Surface pressure (hPa)")
+    precipitation = Column(Float, comment="1-hour precipitation (mm)")
+
+    data_source = Column(String(50), nullable=False, default="NMC")
+    data_quality = Column(String(20), nullable=False, default="good")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_jiangsu_nmc_city_time", "city_name", "time"),
+        Index("idx_jiangsu_nmc_district_time", "district_name", "time"),
+        Index("idx_jiangsu_nmc_time_desc", "time"),
     )
 
 

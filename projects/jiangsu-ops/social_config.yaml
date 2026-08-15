@@ -1,0 +1,18 @@
+channels:
+  send_progress: true
+  send_tool_hints: false
+  send_max_retries: 3
+qq:
+  enabled: false
+  allow_from:
+    - "*"
+weixin:
+  # 保持渠道服务可管理，但不继承共享“风清气智”的任何账号或登录令牌。
+  # 江苏账号必须从江苏平台的“社交管理”页面单独扫码绑定。
+  enabled: true
+  recover_orphan_accounts: false
+  accounts: []
+dingtalk:
+  enabled: false
+  allow_from:
+    - "*"

@@ -88,6 +88,7 @@ const dynamicHeight = computed(() => {
     'weather_timeseries': '450px',  // 带风向指针的气象时序图
     'pressure_pbl_timeseries': '400px',  // 气压+边界层高度双Y轴图
     'facet_timeseries': '600px',  // 分面时序图（多污染物×多站点）
+    'stationhouse': '540px',  // 横向站房巡检驾驶舱
     'heatmap': '480px',
     'radar': '420px',
     'wind_rose': '480px',  // 增加高度，为标题、轴名称、图例预留空间
@@ -568,6 +569,36 @@ const optimizeChartLayout = (option) => {
   return optimized
 }
 
+// 站房图由后端按 960px 设计宽度输出。宽屏时扩展深色背景并把内容居中，
+// 窄屏时保留设计宽度交给外层横向滚动，避免文字和设备图形被非等比拉伸。
+const fitStationhouseOption = (sourceOption) => {
+  if (!sourceOption || !Array.isArray(sourceOption.graphic)) return sourceOption
+
+  const designWidth = Number(sourceOption.xAxis?.max) || 960
+  const availableWidth = Math.max(designWidth, chartContainer.value?.clientWidth || 0)
+  const offsetX = Math.floor((availableWidth - designWidth) / 2)
+  const option = cloneEChartsOption(sourceOption)
+
+  option.graphic = option.graphic.map((item, index) => {
+    const graphic = { ...item, shape: item.shape ? { ...item.shape } : item.shape }
+    const isFullBackground = index < 2 && graphic.type === 'rect' && graphic.shape?.width === designWidth
+    if (isFullBackground) {
+      graphic.left = 0
+      graphic.shape.width = availableWidth
+      return graphic
+    }
+    if (typeof graphic.left === 'number') graphic.left += offsetX
+    if (graphic.shape && typeof graphic.left !== 'number') {
+      if (typeof graphic.shape.x === 'number') graphic.shape.x += offsetX
+      if (typeof graphic.shape.x1 === 'number') graphic.shape.x1 += offsetX
+      if (typeof graphic.shape.x2 === 'number') graphic.shape.x2 += offsetX
+    }
+    return graphic
+  })
+  option.xAxis = { ...(option.xAxis || {}), max: availableWidth }
+  return option
+}
+
 // 构建ECharts配置（v3.0格式）
 const buildOption = () => {
   try {
@@ -587,6 +618,9 @@ const buildOption = () => {
 
     let option = {}
     switch (chartType) {
+      case 'stationhouse':
+        option = fitStationhouseOption(buildGenericOption(actualData, title, meta))
+        break
       case 'pie':
         option = buildPieOption(actualData, title, meta)
         break
@@ -1283,6 +1317,11 @@ const buildHeatmapOption = (chartData, title, meta) => {
 const buildGenericOption = (chartData, title, meta) => {
   // 检测完整ECharts配置（包括3D图表和极坐标图表）
   if (chartData && typeof chartData === 'object') {
+    // 站房巡检示意图使用 ECharts graphic 组件绘制，不依赖坐标轴数据。
+    if ('graphic' in chartData) {
+      console.log('[ChartPanel] buildGenericOption 检测到 graphic 配置，直接返回')
+      return chartData
+    }
     // 3D图表检测：包含 grid3D 或 xAxis3D/yAxis3D/zAxis3D
     if ('grid3D' in chartData ||
         ('xAxis3D' in chartData && 'yAxis3D' in chartData && 'zAxis3D' in chartData) ||
@@ -2625,10 +2664,13 @@ onBeforeUnmount(() => {
 })
 
 const updateChartWidth = () => {
-  chartWidth.value = '100%'
+  chartWidth.value = props.data?.type === 'stationhouse' ? 'max(100%, 960px)' : '100%'
   requestAnimationFrame(() => {
     if (chartInstance) {
       chartInstance.resize()
+      if (props.data?.type === 'stationhouse') {
+        chartInstance.setOption(buildOption(), { notMerge: true })
+      }
     }
   })
 }

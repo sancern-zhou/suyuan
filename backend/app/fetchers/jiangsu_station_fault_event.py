@@ -362,16 +362,39 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             monitor_due = now - previous_monitor >= timedelta(minutes=MONITOR_INTERVAL_MINUTES)
         monitoring_records: list[dict[str, Any]] = []
         active_monitor_keys = list(state.get("active_monitor_keys") or [])
+        monitor_station_codes = list(state.get("monitor_station_codes") or [])
         if monitor_due:
-            monitoring_records, expected_station_codes = await self._fetch_monitoring(now)
+            monitoring_records, _directory_station_codes = await self._fetch_monitoring(now)
+            if not monitoring_records:
+                raise RuntimeError("江苏小时数据为空，本轮不生成站点断数事件")
+            observed_station_codes = sorted({
+                str(row.get("code") or row.get("stationCode") or "").strip()
+                for row in monitoring_records
+                if str(row.get("code") or row.get("stationCode") or "").strip()
+            })
             monitor_candidates = [
                 self._monitor_candidate(item)
                 for item in detect_monitoring_anomalies(
                     monitoring_records,
                     now=now,
-                    expected_station_codes=expected_station_codes,
+                    # The station directory contains enabled stations that do
+                    # not necessarily publish station-hour data.  Establish a
+                    # baseline from stations actually observed on the first
+                    # successful poll, then detect later disappearances from
+                    # that baseline.  This avoids a first-run false-alarm
+                    # storm while retaining durable missing-data detection.
+                    expected_station_codes=monitor_station_codes or None,
                 )
             ]
+            monitor_station_codes = sorted({
+                *monitor_station_codes,
+                *observed_station_codes,
+            })
+            # Persist the trustworthy observed-station baseline together with
+            # every per-event checkpoint below.  Keep active_monitor_keys for
+            # the final commit so an interrupted run still republishes any
+            # anomaly whose evidence package was not completed.
+            state["monitor_station_codes"] = monitor_station_codes
             previous_active = set(active_monitor_keys)
             current_active: list[str] = []
             for candidate in monitor_candidates:
@@ -400,12 +423,19 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             processed.add(fingerprint)
             processed_order.append(fingerprint)
             published += 1
+            # Checkpoint each published fingerprint.  Do not advance poll
+            # cursors until the complete cycle succeeds, but make a worker
+            # restart resume after the last durable event instead of
+            # recollecting and republishing the whole window.
+            state["processed_fingerprints"] = processed_order[-10000:]
+            self._write_json(self.state_path, state)
 
         state.update({
             "last_alarm_poll_at": now.isoformat(),
             "last_monitor_poll_at": now.isoformat() if monitor_due else state.get("last_monitor_poll_at"),
             "processed_fingerprints": processed_order[-10000:],
             "active_monitor_keys": active_monitor_keys,
+            "monitor_station_codes": monitor_station_codes,
         })
         self._write_json(self.state_path, state)
         result = {

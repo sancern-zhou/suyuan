@@ -159,7 +159,7 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
                         "area_names": {"type": "array", "items": {"type": "string"}, "description": f"{scope_cn}、区县或江苏省名称；工具内部自动解析编码并展开下级区域。"},
                         "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                         "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
-                        "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "description": "0原始工况、1审核工况、2原始标况、3审核标况。"},
+                        "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1, "description": "0原始工况、1审核工况、2原始标况、3审核标况；默认1（审核工况）。"},
                         "max_results": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "返回上限，默认200。"},
                     },
                     "required": ["data_kind", "start_time", "end_time"],
@@ -168,7 +168,7 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
         )
 
     async def execute(self, context=None, data_kind: str | None = None, codes: list[str] | None = None, area_names: list[str] | None = None,
-                      start_time: str | None = None, end_time: str | None = None, data_type: int = 0,
+                      start_time: str | None = None, end_time: str | None = None, data_type: int = 1,
                       max_results: int = 200, **_: Any) -> dict[str, Any]:
         try:
             if data_kind not in self._ENDPOINTS:
@@ -193,12 +193,12 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
                 raw_file_path = context.save_data(
                     data=items,
                     schema=f"jiangsu_{self._SCOPE}_{data_kind}_raw",
-                    metadata={"source_tool": self.name, "record_count": len(items), "filtered": True},
+                    metadata={"source_tool": self.name, "record_count": len(items), "filtered": False},
                 )
             inline_items, filtered_file_path, externalization = externalize_compact_records(
                 compact_items,
                 context=context,
-                schema=f"jiangsu_{self._SCOPE}_{data_kind}_latest",
+                schema=f"jiangsu_{self._SCOPE}_{data_kind}_filtered",
                 metadata={"source_tool": self.name, "source_record_count": len(items)},
             )
             metadata = {"source": "jiangsu_air_province_api", "endpoint": self._ENDPOINTS[data_kind],
@@ -212,7 +212,7 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
             return {
                 "status": "success" if compact_items else "empty", "success": True, "data": inline_items,
                 "metadata": metadata,
-                "summary": f"江苏{self._SCOPE}数据查询完成：原始 {len(items)} 条，去重并保留各区域最新 {len(compact_items)} 条。",
+                "summary": f"江苏{self._SCOPE}数据查询完成：原始 {len(items)} 条，清洗并删除完全重复记录后保留完整时间序列 {len(compact_items)} 条。",
                 **{key: externalization[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
                 **({"file_path": filtered_file_path} if filtered_file_path else {}),
             }
@@ -383,7 +383,8 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                     "codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "城市、区县或站点编码。"},
                     "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
-                    "data_type": {"type": "integer", "enum": [0, 1, 2, 3]},
+                    "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1,
+                                  "description": "0原始工况、1审核工况、2原始标况、3审核标况；默认1（审核工况）。"},
                     "pollutant_code": {"type": "string", "description": "仅 station_overday 必填，如 PM2_5 或 O3_8h。"},
                     "cal_area_type": {"type": "integer", "description": "城市/区县排名的计算区域类型，可选。"},
                     "ascending": {"type": "boolean", "description": "排名升序，默认 true。"},
@@ -393,7 +394,7 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
         )
 
     async def execute(self, context=None, statistic_kind: str | None = None, codes: list[str] | None = None,
-                      start_time: str | None = None, end_time: str | None = None, data_type: int = 0,
+                      start_time: str | None = None, end_time: str | None = None, data_type: int = 1,
                       pollutant_code: str | None = None, cal_area_type: int | None = None,
                       ascending: bool = True, max_results: int = 200, **_: Any) -> dict[str, Any]:
         try:
