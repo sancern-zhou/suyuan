@@ -409,6 +409,7 @@ export const useReactStore = defineStore('react', {
         ppt: createEmptyModeState(),
         expert: createEmptyModeState(),
         query: createEmptyModeState(),
+        knowledge: createEmptyModeState(),
         report: createEmptyModeState(),
         chart: createEmptyModeState(),
         board: createEmptyModeState(),
