@@ -159,7 +159,7 @@ def test_non_graph_non_query_modes_strip_map_context():
 
 
 def test_router_forwards_map_context_for_graph_mode():
-    source = Path("backend/app/routers/agent.py").read_text(encoding="utf-8")
+    source = Path("backend/app/api/agent.py").read_text(encoding="utf-8")
 
     assert 'if request.mode in {"query", "graph"} and request.map_context:' in source
     assert 'analyze_kwargs["map_context"] = request.map_context' in source

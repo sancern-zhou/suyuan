@@ -37,10 +37,12 @@ test('xuchang project enables only its declared business modules', () => {
 test('jiangsu operations project exposes its dedicated operations modes', () => {
   const config = loadProjectBuildConfig({ projectId: 'jiangsu-ops', repoRoot })
   assert.deepEqual(config.frontend.agentModes, [
-    'ops', 'jiangsu_query', 'smart_inspection', 'operations_analysis',
+    'ops', 'jiangsu_query', 'expert', 'smart_inspection', 'operations_analysis',
     'device_control', 'station_fault_diagnosis'
   ])
   assert.equal(config.frontend.defaultAgentMode, 'ops')
+  assert.equal(config.frontend.agentModeOverrides.jiangsu_query.name, '江苏问数生图智能体')
+  assert.equal(config.frontend.agentModeOverrides.jiangsu_query.tags.includes('问数生图'), true)
 })
 
 
@@ -49,10 +51,8 @@ test('jiangxi project uses the reduced noise interface', () => {
 
   assert.equal(config.project, 'jiangxi')
   assert.equal(config.frontend.brandName, '江西省噪声智能分析平台')
-  assert.deepEqual(config.frontend.agentModes, ['query', 'expert', 'report'])
+  assert.deepEqual(config.frontend.agentModes, ['query', 'expert', 'report', 'chart'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
-  assert.equal(config.frontend.agentModeOverrides.query.name, '智能问数生图智能体')
-  assert.equal(config.frontend.agentModeOverrides.query.tags.includes('图表生成'), true)
   assert.equal(config.frontend.agentPlatformLayout, 'environment-grid')
 })
 

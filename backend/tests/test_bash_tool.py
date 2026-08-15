@@ -13,10 +13,6 @@
 import asyncio
 import sys
 from pathlib import Path
-import io
-
-# 设置标准输出为 UTF-8 编码（Windows 兼容）
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))

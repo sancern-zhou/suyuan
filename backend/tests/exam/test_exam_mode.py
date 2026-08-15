@@ -58,7 +58,7 @@ async def test_enforcement_exam_search_forces_designated_knowledge_base(monkeypa
         "app.tools.workflow.knowledge_qa_workflow.resolve_enforcement_exam_knowledge_base_ids",
         resolve,
     )
-    monkeypatch.setattr("app.routers.knowledge_qa.search_knowledge_bases", search)
+    monkeypatch.setattr("app.api.knowledge_qa.search_knowledge_bases", search)
 
     result = await KnowledgeQAWorkflow().execute(
         context=SimpleNamespace(

@@ -14,7 +14,7 @@ import io
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.routers.utils_docx import (
+from app.utils.docx_markdown import (
     convert_docx_to_markdown,
     _convert_table_to_markdown,
     _paragraph_to_markdown

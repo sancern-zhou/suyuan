@@ -1,5 +1,7 @@
 """Main FastAPI application for Atmospheric Environment Intelligent Analysis and Decision Support Platform."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.core.exception_handlers import register_exception_handlers
@@ -14,11 +16,21 @@ from config.settings import settings
 
 configure_logging()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup and shutdown lifecycle."""
+    await run_startup(app)
+    yield
+    await run_shutdown(app)
+
+
 # Create FastAPI app
 app = FastAPI(
     title="Atmospheric Environment Intelligent Analysis and Decision Support API",
     description="Backend API for atmospheric environment analysis, source tracing, reporting, and decision support with LLM-powered insights",
     version="1.0.0",
+    lifespan=lifespan,
     debug=settings.debug,
 )
 
@@ -26,18 +38,6 @@ configure_middleware(app)
 include_routers(app)
 register_exception_handlers(app)
 mount_static_files(app)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Startup event handler."""
-    await run_startup(app)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown event handler."""
-    await run_shutdown(app)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from app.agent.runtime.assistant_stream_buffer import AssistantStreamBuffer
 from app.agent.runtime.event_bus import RuntimeEventBus
 from app.agent.runtime.finalizer import Finalizer
 from app.agent.runtime.types import PlannerResult, RunState
-from app.routers.agent import _build_final_message
+from app.api.agent import _build_final_message
 
 
 def test_query_mode_exposes_station_day_tool():

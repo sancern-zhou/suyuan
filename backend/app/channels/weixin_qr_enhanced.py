@@ -71,7 +71,7 @@ async def _qr_login(self) -> bool:
 3. 添加API端点获取QR码：
 
 ```python
-# 在 app/routers/social_routes.py 添加
+# 在 app/api/social_routes.py 添加
 
 @router.get("/weixin/qrcode")
 async def get_weixin_qrcode():
