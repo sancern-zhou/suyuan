@@ -50,7 +50,7 @@ class DocumentProcessingQueue:
     使用asyncio.Queue实现简单的任务队列
     """
 
-    def __init__(self, max_workers: int = 2, max_queue_size: int = 100):
+    def __init__(self, max_workers: int = 3, max_queue_size: int = 100):
         """
         初始化处理队列
 

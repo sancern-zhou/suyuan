@@ -53,7 +53,7 @@ ASSISTANT_TOOL_NAMES = [
     "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 数据查询
-    "qianlima_realtime_tender", "execute_tender_sql_query",
+    "qianlima_realtime_tender", "execute_tender_sql_query", "execute_postgres_sql_query",
 
     # 任务和技能
     "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
@@ -120,7 +120,7 @@ QUERY_TOOL_NAMES = [
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
+    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
     "query_gd_suncere_city_hour",
     "query_gd_suncere_station_day_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day",
@@ -164,7 +164,7 @@ REPORT_TOOL_NAMES = [
     "query_gd_suncere_city_hour",
     "query_gd_suncere_city_day",
     "query_gd_suncere_district_day",
-    "execute_sql_query",
+    "execute_sql_query", "execute_postgres_sql_query",
     "query_city_standard_report",
     "query_city_standard_yoy_report",
     "query_gd_suncere_district_report",
@@ -198,7 +198,7 @@ CHART_TOOL_NAMES = [
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
-    "execute_sql_query",
+    "execute_sql_query", "execute_postgres_sql_query",
 ]
 
 # ===== 画板模式工具 =====
