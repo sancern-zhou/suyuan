@@ -267,12 +267,17 @@ async def init_db():
     # Import optional model modules so their tables are registered on Base.metadata
     # before create_all runs.
     import app.social.models  # noqa: F401
-    import app.conversations.models  # noqa: F401
-    from app.db.models_session import Base as SessionBase
+    # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
+    # Import it before create_all so isolated project databases receive the
+    # required `sessions` tables on their first startup as well.
+    # Session persistence historically owns a separate SQLAlchemy Base, so it
+    # must be initialized explicitly in addition to the application Base.
+    import app.db.models_session as session_models
     import app.knowledge_base.models  # noqa: F401
     import app.knowledge_base.graph_models  # noqa: F401
     import app.knowledge_base.graph_build_models  # noqa: F401
     import app.boards.models  # noqa: F401
+    import app.exam.models  # noqa: F401
 
     async with engine.begin() as conn:
         dialect_name = getattr(getattr(conn, "dialect", None), "name", "")
@@ -280,7 +285,7 @@ async def init_db():
         if lock_sql:
             await conn.execute(text(lock_sql))
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(SessionBase.metadata.create_all)
+        await conn.run_sync(session_models.Base.metadata.create_all)
         await _ensure_uploaded_files_schema(conn)
         await _ensure_social_binding_schema(conn)
         await _ensure_session_resources_schema(conn)

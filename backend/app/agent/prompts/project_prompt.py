@@ -15,7 +15,9 @@ def load_project_mode_prompt(
     if not configured_path:
         return None
 
-    project_root = resolve_agent_path(f"projects/{project_context.manifest.project}")
+    project_root = resolve_agent_path(
+        f"projects/{project_context.manifest.project}"
+    )
     prompt_path = resolve_agent_path(configured_path)
     if not is_path_within(prompt_path, [project_root]):
         raise ProjectConfigError(
@@ -23,9 +25,13 @@ def load_project_mode_prompt(
             f"{format_agent_path(prompt_path)}"
         )
     if not prompt_path.is_file():
-        raise ProjectConfigError(f"mode prompt not found: {format_agent_path(prompt_path)}")
+        raise ProjectConfigError(
+            f"mode prompt not found: {format_agent_path(prompt_path)}"
+        )
 
     prompt = prompt_path.read_text(encoding="utf-8").strip()
     if not prompt:
-        raise ProjectConfigError(f"mode prompt is empty: {format_agent_path(prompt_path)}")
+        raise ProjectConfigError(
+            f"mode prompt is empty: {format_agent_path(prompt_path)}"
+        )
     return prompt

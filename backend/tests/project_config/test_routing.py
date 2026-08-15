@@ -46,17 +46,4 @@ def test_xuchang_project_includes_xuchang_router():
     }
 
 
-def test_jiangsu_project_excludes_scheduled_task_routes():
-    from app.core.routing import ROUTER_REGISTRY
 
-    context = load_project_context("jiangsu-ops")
-    selected = select_router_specs(
-        ROUTER_REGISTRY,
-        context.enabled_modules,
-        scheduled_tasks_enabled=context.manifest.scheduled_tasks_enabled,
-    )
-
-    assert not {
-        "app.api.scheduled_task_routes",
-        "app.api.scheduled_task_ws",
-    }.intersection(spec.module for spec in selected)

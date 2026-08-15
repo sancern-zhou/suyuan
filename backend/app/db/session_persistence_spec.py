@@ -14,7 +14,7 @@ from app.db.session_repository import SessionRepository
 def test_message_json_values_normalize_nested_dates_and_decimals():
     timestamp = datetime(2026, 8, 11, 14, 53, 37, tzinfo=timezone.utc)
 
-    assert SessionRepository._convert_json_value({
+    assert SessionRepository._normalize_json_value({
         "observed_at": timestamp,
         "window": [date(2026, 8, 11), time(14, 53, 37)],
         "value": Decimal("25.4"),

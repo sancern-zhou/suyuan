@@ -234,6 +234,8 @@ class ScheduleTaskTool(LLMTool):
                     description=task_description,
                     channels=channels or ["weixin"],
                 )
+                if getattr(context, "runtime_mode", None) == "enforcement_exam":
+                    add_task_kwargs["manual_mode"] = "enforcement_exam"
                 heartbeat.add_task(**add_task_kwargs)
 
             except Exception as e:

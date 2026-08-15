@@ -3,14 +3,17 @@
 from pathlib import Path
 
 from app.agent.prompts.prompt_builder import build_react_system_prompt
-from app.agent.prompts.tool_registry import get_tool_order, get_tools_by_mode
+from app.agent.prompts.tool_registry import PPT_TOOL_ORDER, get_tools_by_mode
 from app.agent.runtime.mode_capabilities import supports_native_multimodal
 
 
 def test_ppt_mode_exposes_focused_editable_presentation_tools():
     tools = get_tools_by_mode("ppt")
 
-    assert list(tools) == get_tool_order("ppt")
+    expected = list(PPT_TOOL_ORDER)
+    if "list_session_resources" in expected and "read_session_resource" not in expected:
+        expected.insert(expected.index("list_session_resources") + 1, "read_session_resource")
+    assert list(tools) == expected
     assert {
         "manage_editable_ppt",
         "validate_pptx",

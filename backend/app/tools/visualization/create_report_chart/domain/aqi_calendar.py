@@ -136,10 +136,121 @@ def get_text_color(background_color: str) -> str:
 
 
 def setup_chinese_font():
-    """Use the same configured priority chain as all report chart renderers."""
-    from app.utils.font_utils import configure_chinese_font
+    """配置中文字体
 
-    configure_chinese_font()
+    字体优先级（从高到低）：
+    1. 方正小标宋简体 - 用户安装字体（对"门"等字符显示更好）
+    2. 国标小标宋 - Linux部署常见小标宋字体
+    3. Microsoft YaHei - Windows系统字体
+    4. Noto Sans CJK SC (Regular) - Google开源字体，系统自带
+    5. Noto Sans CJK SC (Bold/Light/Medium) - Noto系列变体
+    6. PingFang SC - macOS系统字体
+    """
+    import os
+    from pathlib import Path
+
+    # 构建字体路径列表（按优先级排序）
+    font_configs = [
+        # 用户安装的方正字体（最高优先级，避免Noto Sans的"门"字显示问题）
+        # 使用绝对路径，因为服务可能以root用户运行
+        {
+            'path': Path('/home/xckj/.local/share/fonts/方正小标宋简.TTF'),
+            'name': 'FZXiaoBiaoSong-B05S',
+            'fonts': ['FZXiaoBiaoSong-B05S', 'Microsoft YaHei', 'SimHei']
+        },
+        {
+            'path': '/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF',
+            'name': 'GB_XBS_GB18030',
+            'fonts': ['GB_XBS_GB18030', 'GB_XBS_GBT2312', 'SimSun']
+        },
+        {
+            'path': '/usr/share/fonts/gb-cjk/GB_XBS_GBT2312.TTF',
+            'name': 'GB_XBS_GBT2312',
+            'fonts': ['GB_XBS_GBT2312', 'GB_XBS_GB18030', 'SimSun']
+        },
+        # Windows Microsoft YaHei
+        {
+            'path': 'C:\\Windows\\Fonts\\msyh.ttc',
+            'name': 'Microsoft YaHei',
+            'fonts': ['Microsoft YaHei', 'SimHei']
+        },
+        # Linux Noto Sans CJK（系统字体）
+        {
+            'path': '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
+            'name': 'Noto Sans CJK SC',
+            'fonts': ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC', 'SimHei']
+        },
+        {
+            'path': '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc',
+            'name': 'Noto Sans CJK SC',
+            'fonts': ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC', 'SimHei']
+        },
+        {
+            'path': '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Medium.ttc',
+            'name': 'Noto Sans CJK SC',
+            'fonts': ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC', 'SimHei']
+        },
+        {
+            'path': '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Light.ttc',
+            'name': 'Noto Sans CJK SC',
+            'fonts': ['Noto Sans CJK SC Light', 'Noto Sans CJK SC', 'Noto Sans CJK JP', 'SimHei']
+        },
+        # macOS PingFang
+        {
+            'path': '/System/Library/Fonts/PingFang.ttc',
+            'name': 'PingFang SC',
+            'fonts': ['PingFang SC', 'Heiti SC', 'STHeiti']
+        }
+    ]
+
+    logger.info("setting_up_chinese_font", total_configs=len(font_configs))
+
+    # 调试：输出当前用户和home目录
+    import getpass
+    current_user = getpass.getuser()
+    home_dir = Path.home()
+    logger.info("user_info", user=current_user, home_dir=str(home_dir))
+
+    for config in font_configs:
+        font_path = config['path']
+        font_name = config['name']
+        font_list = config['fonts']
+
+        # 调试：输出字体检查信息
+        path_exists = os.path.exists(font_path)
+        logger.info("checking_font",
+                   config_index=font_configs.index(config),
+                   font_name=font_name,
+                   font_path=str(font_path),
+                   exists=path_exists)
+
+        try:
+            if os.path.exists(font_path):
+                logger.info("found_font_file", path=str(font_path), name=font_name)
+
+                # 添加字体到matplotlib
+                fm.fontManager.addfont(str(font_path))
+
+                # 设置字体列表
+                plt.rcParams['font.sans-serif'] = font_list + ['DejaVu Sans']
+                plt.rcParams['axes.unicode_minus'] = False
+
+                logger.info("chinese_font_configured",
+                           font_path=str(font_path),
+                           primary_font=font_list[0],
+                           font_list=font_list)
+                return
+        except Exception as e:
+            logger.warning("font_load_failed",
+                          font_path=str(font_path),
+                          font_name=font_name,
+                          error=str(e))
+            continue
+
+    # 回退到系统默认字体
+    logger.warning("chinese_font_setup_failed", error="No suitable font found, using fallback")
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
+    plt.rcParams['axes.unicode_minus'] = False
 
 
 class AQICalendarRenderer:

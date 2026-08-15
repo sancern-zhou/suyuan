@@ -346,8 +346,6 @@ class GetWeatherForecastTool(LLMTool):
                             "forecast_days": forecast_days,
                             "past_days": past_days,
                             "source": "Open-Meteo Forecast API",
-                            # Preserve the same nested record shape exposed in
-                            # the inline preview; do not standardize it again.
                             "field_mapping_applied": True,
                             "root_type": "array",
                         }
@@ -368,8 +366,6 @@ class GetWeatherForecastTool(LLMTool):
                         exc_info=True
                     )
             elif externalized:
-                # Without durable storage, returning all records is safer than
-                # silently dropping data.
                 externalized = False
                 inline_records = records
                 logger.warning(

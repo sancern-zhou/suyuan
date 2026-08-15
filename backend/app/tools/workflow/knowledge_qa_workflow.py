@@ -36,6 +36,11 @@ from typing import Dict, Any, List, Optional
 import structlog
 
 from .workflow_tool import WorkflowTool
+from .enforcement_exam_knowledge import (
+    ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME,
+    is_enforcement_exam_context,
+    resolve_enforcement_exam_knowledge_base_ids,
+)
 
 logger = structlog.get_logger()
 
@@ -153,6 +158,25 @@ class KnowledgeQAWorkflow(WorkflowTool):
 
         try:
             user_id = getattr(context, "user_identifier", None)
+            if is_enforcement_exam_context(context):
+                knowledge_base_ids = await resolve_enforcement_exam_knowledge_base_ids(user_id)
+                if not knowledge_base_ids:
+                    return self._build_udf_v2_result(
+                        status="empty",
+                        success=True,
+                        data={
+                            "query": actual_query,
+                            "sources": [],
+                            "total_retrieved": 0,
+                            "retrieval_summary": (
+                                f"未找到可访问的“{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
+                            ),
+                        },
+                        summary=(
+                            f"未找到可访问的“{ENFORCEMENT_EXAM_KNOWLEDGE_BASE_NAME}”知识库"
+                        ),
+                    )
+
             self._record_step("knowledge_retrieval_start", "running", {
                 "query": actual_query[:100] if actual_query else "",
                 "top_k": top_k,
@@ -160,7 +184,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             })
 
             # 导入检索函数
-            from app.routers.knowledge_qa import search_knowledge_bases
+            from app.api.knowledge_qa import search_knowledge_bases
 
             # 1. 检索相关文档。HyDE不再由workflow双路触发；需要扩展词时由主Agent拼入query。
             self._record_step("knowledge_retrieval", "running")
@@ -202,7 +226,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             sources = []
             retrieval_metadata = documents[0].get("retrieval_metadata", {}) if documents else {}
             document_read_targets = _build_document_read_targets(documents)
-            for doc in documents[:5]:
+            for doc in documents[:5]:  # 最多返回5篇参考文档
                 # 获取完整内容，不再截断
                 content = doc.get("content", "")
                 sources.append({

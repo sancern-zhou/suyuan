@@ -80,9 +80,9 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "analyze_xuchang_upwind_permit_sources",
     ]
     assert context.manifest.backend.fetchers == [
-        "nmc_observed_weather_fetcher",
-        "nmc_weather_chart_fetcher",
-        "open_meteo_air_quality_forecast_fetcher",
+        "nmc_observed_weather",
+        "nmc_weather_chart",
+        "open_meteo_air_quality_forecast",
         "xuchang_daily_attainment_forecast_fetcher",
         "xuchang_annual_attainment_forecast_fetcher",
         "xuchang_cnemc_station_hour_fetcher",

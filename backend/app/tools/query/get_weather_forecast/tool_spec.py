@@ -61,7 +61,7 @@ def _run_tool(point_count: int):
             context,
             lat=34.04,
             lon=113.85,
-            location_name="许昌",
+            location_name="测试城市",
             forecast_days=1,
         )
     )

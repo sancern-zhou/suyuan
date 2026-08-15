@@ -551,7 +551,7 @@ class MonthlyPollutionEventsComponents:
         for product, times, usage in (
             ("national_max_temperature_forecast", ("024", "072"), "下月气温高值风险研判"),
             ("national_precip_forecast", ("024", "072"), "下月降水清除条件研判"),
-            ("max_10m_wind_speed_24h", ("024", "072"), "下月风场扩散条件研判"),
+            ("***REMOVED***", ("024", "072"), "下月风场扩散条件研判"),
         ):
             for forecast_hour in times:
                 outlook_items.append(self._fetch_weather_image_item(

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.api import knowledge_base_routes
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
-from app.db.knowledge_database import get_knowledge_db
+from app.db.database import get_db
 from app.knowledge_base.models import DocumentStatus
 
 
@@ -44,7 +44,7 @@ def test_replace_document_content_route(monkeypatch, tmp_path):
     monkeypatch.setenv("KNOWLEDGE_BASE_STORAGE_DIR", str(tmp_path))
     app = FastAPI()
     app.include_router(knowledge_base_routes.router, prefix="/api")
-    app.dependency_overrides[get_knowledge_db] = lambda: object()
+    app.dependency_overrides[get_db] = lambda: object()
     app.dependency_overrides[require_current_user] = lambda: CurrentUser(
         id="owner", username="owner", display_name="Owner"
     )

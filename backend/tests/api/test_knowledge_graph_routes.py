@@ -3,8 +3,7 @@ from fastapi import FastAPI, Header
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.database import Base
-from app.db.knowledge_database import get_knowledge_db
+from app.db.database import Base, get_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.graph_models import (
@@ -108,7 +107,7 @@ def graph_api(tmp_path, monkeypatch):
     )
     app = FastAPI()
     app.include_router(knowledge_graph_routes.router, prefix="/api")
-    app.dependency_overrides[get_knowledge_db] = override_db
+    app.dependency_overrides[get_db] = override_db
 
     def authenticated_user(x_test_user: str = Header(default="owner")):
         return CurrentUser(

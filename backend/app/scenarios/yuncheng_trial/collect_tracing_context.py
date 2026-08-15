@@ -166,7 +166,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "precipitation_forecast_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "precip_forecast_24h",
+            "product": "***REMOVED***",
             "date": precip_date,
             "time": precip_forecast_hour,
             "download": True,
@@ -174,7 +174,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "wind_forecast_24h_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "max_10m_wind_speed_24h",
+            "product": "***REMOVED***",
             "date": forecast_image_date,
             "time": "024",
             "download": True,
@@ -182,7 +182,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "wind_forecast_48h_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "max_10m_wind_speed_24h",
+            "product": "***REMOVED***",
             "date": forecast_image_date,
             "time": "048",
             "download": True,
@@ -190,7 +190,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "wind_forecast_72h_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "max_10m_wind_speed_24h",
+            "product": "***REMOVED***",
             "date": forecast_image_date,
             "time": "072",
             "download": True,
@@ -198,7 +198,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "precipitation_forecast_24h_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "precip_forecast_24h",
+            "product": "***REMOVED***",
             "date": forecast_image_date,
             "time": "024",
             "download": True,
@@ -206,7 +206,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "precipitation_forecast_48h_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "precip_forecast_24h",
+            "product": "***REMOVED***",
             "date": forecast_image_date,
             "time": "048",
             "download": True,
@@ -214,7 +214,7 @@ def _build_asset_requests(start: datetime, end: datetime, alert: dict[str, Any])
         "precipitation_forecast_72h_image": {
             "kind": "image",
             "tool": "get_platform_weather_image",
-            "product": "precip_forecast_24h",
+            "product": "***REMOVED***",
             "date": forecast_image_date,
             "time": "072",
             "download": True,

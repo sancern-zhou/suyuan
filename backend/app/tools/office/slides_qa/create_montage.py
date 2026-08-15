@@ -12,7 +12,7 @@ def _normalize_pil_color(color: str) -> str:
     value = color.strip()
     if value.startswith("#"):
         return value
-    if len(value) in (6, 8) and all(char in "0123456789abcdefABCDEF" for char in value):
+    if len(value) in (6, 8) and all(char in "***REMOVED***ABCDEF" for char in value):
         return f"#{value[:6]}"
     return value
 

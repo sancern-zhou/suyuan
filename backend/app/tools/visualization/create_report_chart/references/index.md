@@ -63,8 +63,6 @@ single-chart specifications selected by the routing table below.
   `generic-pollutant-wind-rose.md`.
 - Guangdong Province pollutant wind rose only: read `pollutant-wind-rose.md`
   and use `chart_type: "pollutant_wind_rose"`.
-- Wind direction, wind speed, and one pollutant changing over time: read
-  `wind-timeseries.md` and use `chart_type: "wind_timeseries"`.
 
 Use `create_report_chart` for formal report images. Use `execute_python` only
 for upstream data preparation or cases that require arbitrary Python beyond the

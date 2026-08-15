@@ -50,6 +50,7 @@ class AgentRuntimeConfig:
     attachments: Optional[List[Dict[str, Any]]] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    auto_profile: Optional[str] = None
     runtime_mode: Optional[str] = None
     user_identifier: Optional[str] = None
     board_context: Optional[Dict[str, Any]] = None
@@ -818,6 +819,7 @@ class AgentRuntime:
             attachments=attachments,
             llm_provider=self.config.llm_provider,
             llm_model=self.config.llm_model,
+            auto_profile=self.config.auto_profile,
         ):
             self._raise_if_cancelled()
             event_type = event["type"]
@@ -1030,6 +1032,7 @@ class AgentRuntime:
             attachments=attachments,
             llm_provider=self.config.llm_provider,
             llm_model=self.config.llm_model,
+            auto_profile=self.config.auto_profile,
         )
         if supports_native_multimodal(state.mode) and attachments:
             self._consume_sent_attachments_after_planner(state, result.get("action"))

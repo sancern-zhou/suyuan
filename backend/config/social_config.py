@@ -85,7 +85,7 @@ class WeixinAccountConfig(BaseModel):
     enabled: bool = Field(default=True, description="是否启用")
     allow_from: List[str] = Field(default=["*"], description="允许的用户ID列表")
     auto_start: bool = Field(default=True, description="是否自动启动")
-    agent_mode: Literal["social"] = Field(
+    agent_mode: Literal["social", "enforcement_exam"] = Field(
         default="social",
         description="该微信账号使用的Agent模式",
     )
@@ -100,6 +100,10 @@ class WeixinConfig(BaseModel):
     """微信渠道配置（支持多账号）"""
     enabled: bool = Field(default=False, description="是否启用微信渠道")
     accounts: List[WeixinAccountConfig] = Field(default_factory=list, description="微信账号列表")
+    recover_orphan_accounts: bool = Field(
+        default=True,
+        description="是否从当前部署的状态目录恢复配置中缺失的账号",
+    )
 
 
 class ChannelGeneralConfig(BaseModel):
@@ -122,6 +126,9 @@ def _merge_orphan_accounts(config: SocialConfig) -> SocialConfig:
     扫描状态目录，将配置文件中没有但状态文件存在的账户合并进来。
     防止进程重启或配置丢失后，状态文件变成孤儿。
     """
+    if not config.weixin.recover_orphan_accounts:
+        return config
+
     import json
     state_dir = get_social_dir() / "weixin"
     if not state_dir.exists():

@@ -34,16 +34,16 @@ ROUTER_REGISTRY = [
         description="Authentication support",
         owner="core",
     ),
-    RouterSpec("app.routers.admin", description="Admin interface"),
-    RouterSpec("app.routers.agent", description="ReAct Agent API"),
+    RouterSpec("app.api.admin", description="Admin interface"),
+    RouterSpec("app.api.agent", description="ReAct Agent API"),
     RouterSpec("app.api.routes", prefix="/api", description="Basic API routes"),
     RouterSpec("app.api.query_dashboard_routes", prefix="/api", description="Query dashboard API"),
     RouterSpec("app.api.knowledge_base_routes", prefix="/api", description="Knowledge Base API"),
     RouterSpec("app.api.knowledge_graph_routes", prefix="/api", description="Knowledge Graph API"),
     RouterSpec("app.api.knowledge_scene_routes", prefix="/api", description="Knowledge Scene API"),
-    RouterSpec("app.routers.report_generation", prefix="/api", description="Report generation"),
-    RouterSpec("app.routers.expert_deliberation", prefix="/api", description="Expert deliberation"),
-    RouterSpec("app.routers.monitoring", description="LLM monitoring"),
+    RouterSpec("app.api.report_generation", prefix="/api", description="Report generation"),
+    RouterSpec("app.api.expert_deliberation", prefix="/api", description="Expert deliberation"),
+    RouterSpec("app.api.monitoring", description="LLM monitoring"),
     RouterSpec("app.api.image_routes", prefix="/api", description="Image cache API"),
     RouterSpec("app.api.session_routes", description="Session management"),
     RouterSpec(
@@ -52,7 +52,7 @@ ROUTER_REGISTRY = [
         owner="core",
     ),
     RouterSpec("app.boards.routes", description="Draw.io board versions"),
-    RouterSpec("app.routers.knowledge_qa", description="Knowledge QA"),
+    RouterSpec("app.api.knowledge_qa", description="Knowledge QA"),
     RouterSpec(
         "app.api.scheduled_task_routes",
         description="Scheduled tasks",
@@ -66,21 +66,22 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.upload_routes", prefix="/api/upload", description="File upload"),
     RouterSpec("app.api.voice_routes", prefix="/api", description="Voice ASR/TTS API"),
     RouterSpec("app.api.file_manager_routes", prefix="/api", description="File manager"),
-    RouterSpec("app.routers.social_routes", description="Social platform management"),
-    RouterSpec("app.routers.fetchers", description="Fetcher management"),
+    RouterSpec("app.api.social_routes", description="Social platform management"),
+    RouterSpec("app.api.fetchers", description="Fetcher management"),
     RouterSpec(
         "app.api.social_account_routes",
         optional=True,
         description="Social account management",
     ),
     RouterSpec("app.api.skills_routes", optional=True, description="Skills management"),
+    RouterSpec("app.api.exam_routes", optional=True, description="Exam question review"),
     RouterSpec(
         "app.api.xuchang_air_quality_routes",
         description="Xuchang hourly air quality forecast",
         owner="xuchang-air-quality",
     ),
     # System routes are registered last to preserve app/main.py route ordering.
-    RouterSpec("app.routers.system", description="System routes", owner="core"),
+    RouterSpec("app.api.system", description="System routes", owner="core"),
 ]
 
 

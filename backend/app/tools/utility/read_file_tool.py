@@ -87,7 +87,7 @@ class ReadFileTool(LLMTool):
             name="read_file",
             description=(
                 "读取已有的文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit；"
-                ".json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取；不返回base64。"
+                ".json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取，不要用 read_file；不返回base64。"
                 "不从知识库导出原文、不注册资源、也不创建统一预览；知识库原文必须调用 knowledge_document_reader。"
                 "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
             ),
@@ -1455,7 +1455,7 @@ class ReadFileTool(LLMTool):
             "name": "read_file",
             "description": (
                 "读取已有的文档、源码、配置、图片或目录；大文本用 grep 或 offset/limit；"
-                ".json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取；不返回base64。"
+                ".json/.csv/.xlsx 等结构化数据文件改用 execute_python（load_data 或 json.load）读取，不要用 read_file；不返回base64。"
                 "不负责从知识库导出原文、注册资源或创建统一预览；知识库原文使用 knowledge_document_reader。"
                 "不要读取查询或分析工具返回的会话数据文件；少量结果已由查询工具完整返回，大量结果使用 execute_python 处理。"
             ),
