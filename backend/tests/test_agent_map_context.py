@@ -1,6 +1,6 @@
 from app.agent.context.context_builder import SimplifiedContextBuilder
-import app.routers.agent as agent_routes
-from app.routers.agent import AgentAnalyzeRequest
+import app.api.agent as agent_routes
+from app.api.agent import AgentAnalyzeRequest
 
 
 def test_agent_analyze_request_accepts_map_context_aliases():

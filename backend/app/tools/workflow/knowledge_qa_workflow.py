@@ -184,7 +184,7 @@ class KnowledgeQAWorkflow(WorkflowTool):
             })
 
             # 导入检索函数
-            from app.routers.knowledge_qa import search_knowledge_bases
+            from app.api.knowledge_qa import search_knowledge_bases
 
             # 1. 检索相关文档。HyDE不再由workflow双路触发；需要扩展词时由主Agent拼入query。
             self._record_step("knowledge_retrieval", "running")

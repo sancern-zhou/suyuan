@@ -35,7 +35,7 @@ def test_knowledge_dependencies_ignore_forged_identity_headers():
 
 @pytest.mark.asyncio
 async def test_qa_stream_stores_authenticated_user_id(monkeypatch):
-    from app.routers import knowledge_qa
+    from app.api import knowledge_qa
 
     seen = {}
 
@@ -73,7 +73,7 @@ async def test_qa_stream_stores_authenticated_user_id(monkeypatch):
 async def test_qa_stream_hides_foreign_session_as_not_found(monkeypatch):
     from fastapi import HTTPException
     from app.knowledge_base.conversation_store import ConversationAccessDenied
-    from app.routers import knowledge_qa
+    from app.api import knowledge_qa
 
     class Store:
         async def get_or_create_session(self, **kwargs):
@@ -97,7 +97,7 @@ async def test_qa_stream_hides_foreign_session_as_not_found(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_stream_qa_search_uses_authenticated_user_id(monkeypatch):
-    from app.routers import knowledge_qa
+    from app.api import knowledge_qa
     from app.services.llm_service import llm_service
 
     seen = {}
@@ -125,7 +125,7 @@ async def test_non_stream_qa_search_uses_authenticated_user_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_knowledge_history_requires_catalog_ownership():
     from fastapi import HTTPException
-    from app.routers import knowledge_qa
+    from app.api import knowledge_qa
 
     class DenyingCatalog:
         async def require_read(self, session_id, user):
@@ -146,7 +146,7 @@ async def test_knowledge_history_requires_catalog_ownership():
 
 @pytest.mark.asyncio
 async def test_knowledge_history_list_ignores_client_user_id(monkeypatch):
-    from app.routers import knowledge_qa
+    from app.api import knowledge_qa
 
     seen = {}
 
@@ -172,7 +172,7 @@ async def test_knowledge_history_list_ignores_client_user_id(monkeypatch):
 
 
 def test_knowledge_history_static_list_route_precedes_dynamic_session_route():
-    from app.routers import knowledge_qa
+    from app.api import knowledge_qa
 
     paths = [route.path for route in knowledge_qa.router.routes]
     assert paths.index("/api/knowledge-qa/history/list") < paths.index(

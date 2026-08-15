@@ -23,7 +23,7 @@ def main():
 
     # 测试2: 导入转换函数
     try:
-        from app.routers.utils_docx import convert_docx_to_markdown
+        from app.utils.docx_markdown import convert_docx_to_markdown
         print("[OK] convert_docx_to_markdown imported")
     except ImportError as e:
         print(f"[ERROR] Cannot import conversion function: {e}")

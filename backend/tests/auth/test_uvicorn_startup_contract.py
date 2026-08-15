@@ -31,7 +31,6 @@ def test_cli_entrypoints_disable_proxy_header_rewrite():
     for relative_path in (
         "start.sh",
         "restart_server.sh",
-        "clean_restart.bat",
         "Dockerfile",
     ):
         path = BACKEND_ROOT / relative_path
@@ -41,5 +40,5 @@ def test_cli_entrypoints_disable_proxy_header_rewrite():
 
 
 def test_python_entrypoints_disable_proxy_header_rewrite():
-    for relative_path in ("app/main.py", "start_windows.py"):
+    for relative_path in ("app/main.py",):
         assert _uvicorn_proxy_headers_value(relative_path) is False, relative_path

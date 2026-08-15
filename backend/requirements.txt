@@ -55,10 +55,7 @@ fastapi-cors==0.0.6
 # Optional: Rate Limiting
 slowapi==0.1.9
 
-# Testing (dev)
-pytest==8.3.3
-pytest-asyncio==0.23.7
-# httpx-mock==0.10.0  # Removed: requires Python 3.11+, only needed for advanced testing
+# Runtime dependencies (single source of truth; dev tools live in requirements-dev.txt)
 
 # SQL Server Database Driver
 pyodbc==5.2.0

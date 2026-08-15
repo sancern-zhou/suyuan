@@ -124,7 +124,7 @@ async def test_nonproduction_registration_failure_is_reported_without_aborting()
 
 @pytest.mark.asyncio
 async def test_production_readiness_requires_auth_configuration_and_nacos(monkeypatch):
-    from app.routers import system
+    from app.api import system
 
     monkeypatch.setattr(system.settings, "environment", "production")
     monkeypatch.setattr(system.settings, "auth_mode", "company")
