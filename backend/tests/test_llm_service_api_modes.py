@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,7 +117,7 @@ def test_mimo_anthropic_client_uses_sdk_api_key_authentication(monkeypatch):
 
 
 def test_deepseek_api_mode_setting_exists():
-    assert settings.deepseek_api_mode in {"anthropic_messages", "chat_completions"}
+    assert settings.deepseek_api_mode == "chat_completions"
 
 
 def test_bailian_settings_replace_all_qwen_settings():
@@ -508,6 +509,70 @@ def test_model_tiers_select_bailian_first(monkeypatch, tier, chain, expected_mod
         assert service.request_fallbacks == "mimo/mimo-v2.5"
 
 
+def test_balanced_model_tier_rotates_primary_and_failover_order(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(
+        settings,
+        "llm_flash_models",
+        "alpha/model-a,beta/model-b,gamma/model-c",
+    )
+    monkeypatch.setattr(service, "_load_provider_config", lambda: None)
+
+    selections = []
+    for _ in range(4):
+        with service.use_balanced_model_tier("flash"):
+            selections.append(
+                (service.provider, service.model, service.request_fallbacks)
+            )
+
+    assert selections == [
+        ("alpha", "model-a", "beta/model-b,gamma/model-c"),
+        ("beta", "model-b", "gamma/model-c,alpha/model-a"),
+        ("gamma", "model-c", "alpha/model-a,beta/model-b"),
+        ("alpha", "model-a", "beta/model-b,gamma/model-c"),
+    ]
+
+
+def test_balanced_model_tier_distributes_concurrent_calls_evenly(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(
+        settings,
+        "llm_flash_models",
+        "concurrent-a/model-a,concurrent-b/model-b,concurrent-c/model-c",
+    )
+    monkeypatch.setattr(service, "_load_provider_config", lambda: None)
+    service.anthropic_client = None
+
+    def select_primary():
+        with service.use_balanced_model_tier("flash"):
+            return service.provider
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        selections = list(executor.map(lambda _: select_primary(), range(30)))
+
+    assert selections.count("concurrent-a") == 10
+    assert selections.count("concurrent-b") == 10
+    assert selections.count("concurrent-c") == 10
+
+
+def test_balanced_model_tier_keeps_nested_document_affinity(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(
+        settings,
+        "llm_flash_models",
+        "affinity-a/model-a,affinity-b/model-b,affinity-c/model-c",
+    )
+    monkeypatch.setattr(service, "_load_provider_config", lambda: None)
+    service.anthropic_client = None
+
+    with service.use_balanced_model_tier("flash"):
+        outer = (service.provider, service.model, service.request_fallbacks)
+        with service.use_balanced_model_tier("flash"):
+            nested = (service.provider, service.model, service.request_fallbacks)
+
+    assert nested == outer
+
+
 def test_bailian_multimodal_uses_native_anthropic_image_blocks(monkeypatch):
     captured = {}
 
@@ -579,9 +644,13 @@ async def test_document_processor_uses_configured_model_tier(monkeypatch):
 
     class FakeLLMService:
         @contextmanager
-        def use_model_tier(self, tier):
+        def use_balanced_model_tier(self, tier):
             captured["tier"] = tier
+            captured["selector"] = "balanced"
             yield
+
+        def use_model_tier(self, tier):
+            raise AssertionError("knowledge-base parsing must use balanced tier routing")
 
         async def chat_anthropic(self, **kwargs):
             captured.update(kwargs)
@@ -599,6 +668,7 @@ async def test_document_processor_uses_configured_model_tier(monkeypatch):
 
     assert result == '[{"title":"片段"}]'
     assert captured["tier"] == "flash"
+    assert captured["selector"] == "balanced"
     assert captured["messages"] == [{"role": "user", "content": "请分块"}]
     assert "内容保真与版式校正分块助手" in captured["system"]
     assert "禁止总结" in captured["system"]
@@ -809,9 +879,8 @@ def test_env_example_documents_deepseek_v4_chat_completions():
     env_example = (REPO_ROOT / "backend/.env.example").read_text(encoding="utf-8")
 
     assert "DEEPSEEK_API_MODE=chat_completions" in env_example
-    assert "DEEPSEEK_BASE_URL=http://ds.local.ai:30080/compatible-mode/v1" in env_example
-    assert "DEEPSEEK_MODEL=DeepSeek-V4-Flash" in env_example
-    assert "MDDEEPSEEK25FF2F3E5E17" in env_example
+    assert "DEEPSEEK_BASE_URL=https://api.deepseek.com/v1" in env_example
+    assert "DEEPSEEK_MODEL=deepseek-chat" in env_example
 
 
 def test_chat_completions_payload_uses_tool_choice_without_prompt_guardrails(monkeypatch):

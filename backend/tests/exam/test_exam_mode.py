@@ -12,6 +12,7 @@ def test_enforcement_exam_has_only_the_minimal_tools():
     tools = get_tools_by_mode("enforcement_exam")
     assert list(tools) == [
         "exam_practice",
+        "generate_exam_bank",
         "knowledge_qa_workflow",
         "knowledge_document_reader",
         "web_search",
@@ -29,6 +30,10 @@ def test_enforcement_exam_prompt_requires_tool_grading_and_grounded_explanations
     assert "正式练习题必须通过 `exam_practice` 获取" in prompt
     assert "客观题必须调用 `exam_practice(action=\"submit_and_next\")` 判分并推进" in prompt
     assert "knowledge_document_reader" in prompt
+    assert "generate_exam_bank" in prompt
+    assert "list_banks" in prompt
+    assert "用户可以只要一种或部分题型" in prompt
+    assert "不要把示例当成固定要求" in prompt
     assert "仅限名称为“执法知识”的知识库" in prompt
     assert "`web_search`" in prompt
     assert "`web_fetch`" in prompt

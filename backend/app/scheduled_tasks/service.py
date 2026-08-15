@@ -4,6 +4,7 @@
 """
 import structlog
 import asyncio
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -50,6 +51,27 @@ class ScheduledTaskService:
         self.execution_storage = execution_storage or ExecutionStorage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
+        self._recover_interrupted_executions()
+
+        configured_event_concurrency = os.getenv(
+            "SCHEDULED_EVENT_MAX_CONCURRENT_TASKS",
+            "3",
+        )
+        try:
+            self._event_max_concurrency = max(
+                1,
+                int(configured_event_concurrency),
+            )
+        except ValueError:
+            logger.warning(
+                "invalid_event_task_concurrency",
+                configured_value=configured_event_concurrency,
+                fallback=3,
+            )
+            self._event_max_concurrency = 3
+        self._event_execution_semaphore = asyncio.Semaphore(
+            self._event_max_concurrency
+        )
 
         # 初始化执行器
         self.executor = ScheduledTaskExecutor(
@@ -68,6 +90,36 @@ class ScheduledTaskService:
 
         self._started = False
         self._event_tasks: set[asyncio.Task] = set()
+
+    def _recover_interrupted_executions(self) -> None:
+        """Close execution records left running by a previous worker process."""
+        recovered = 0
+        for execution in self.execution_storage.get_running_executions():
+            completed_at = datetime.now(tz=execution.started_at.tzinfo)
+            execution.status = ExecutionStatus.FAILED
+            execution.completed_at = completed_at
+            execution.duration_seconds = max(
+                0.0,
+                (completed_at - execution.started_at).total_seconds(),
+            )
+            execution.error_message = "后台 Worker 重启，上一轮执行已中断"
+            self.execution_storage.update(execution)
+
+            if execution.event_id:
+                claim = self.claim_storage.get(execution.task_id, execution.event_id)
+                if claim and claim.status in {"claimed", "running"}:
+                    self.claim_storage.mark_status(
+                        claim.claim_id,
+                        "failed",
+                        execution_id=execution.execution_id,
+                    )
+            recovered += 1
+
+        if recovered:
+            logger.warning(
+                "interrupted_task_executions_recovered",
+                count=recovered,
+            )
 
     def _emit_event_background(self, coro):
         """在后台运行异步事件发送（不阻塞）"""
@@ -98,6 +150,7 @@ class ScheduledTaskService:
         logger.info("Starting ScheduledTaskService...")
         self.scheduler.start()
         self._started = True
+        self._resume_claimed_event_tasks()
         logger.info("ScheduledTaskService started")
 
     def stop(self):
@@ -111,9 +164,11 @@ class ScheduledTaskService:
         logger.info("ScheduledTaskService stopped")
 
     async def stop_async(self):
-        """Stop time scheduling and wait for tracked event executions."""
+        """Stop scheduling and cancel tracked event executions promptly."""
         self.stop()
         if self._event_tasks:
+            for task in list(self._event_tasks):
+                task.cancel()
             await asyncio.gather(*list(self._event_tasks), return_exceptions=True)
 
     def _track_event_task(self, coroutine) -> asyncio.Task:
@@ -121,6 +176,36 @@ class ScheduledTaskService:
         self._event_tasks.add(task)
         task.add_done_callback(self._event_tasks.discard)
         return task
+
+    def _resume_claimed_event_tasks(self) -> None:
+        """Resume events that were queued but not started before a restart."""
+        resumed = 0
+        failed = 0
+        for claim in self.claim_storage.list_by_status("claimed"):
+            task = self.task_storage.get(claim.task_id)
+            event = TaskEvent.model_validate(claim.event_snapshot)
+            if (
+                task is None
+                or not task.enabled
+                or task.trigger_type != TriggerType.EVENT
+                or task.event_type != event.event_type
+                or not event.matches(task.event_filters)
+            ):
+                self.claim_storage.mark_status(claim.claim_id, "failed")
+                failed += 1
+                continue
+            self._track_event_task(
+                self._execute_event_task(task, event, claim.claim_id)
+            )
+            resumed += 1
+
+        if resumed or failed:
+            logger.info(
+                "queued_event_tasks_recovered",
+                resumed=resumed,
+                failed=failed,
+                max_concurrent=self._event_max_concurrency,
+            )
 
     def create_task(self, task: ScheduledTask) -> ScheduledTask:
         """创建任务"""
@@ -375,6 +460,15 @@ class ScheduledTaskService:
         return execution
 
     async def _execute_event_task(
+        self,
+        task: ScheduledTask,
+        event: TaskEvent,
+        claim_id: str,
+    ) -> TaskExecution:
+        async with self._event_execution_semaphore:
+            return await self._execute_event_task_unlocked(task, event, claim_id)
+
+    async def _execute_event_task_unlocked(
         self,
         task: ScheduledTask,
         event: TaskEvent,

@@ -59,6 +59,12 @@ def test_write_report_only_keeps_issue_details(tmp_path: Path) -> None:
                         "assessment": "candidate_issue",
                         "message": "表单复核人为空",
                     },
+                    {
+                        "rule_id": "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
+                        "severity": "低",
+                        "assessment": "technical_diagnostic",
+                        "message": "流量照片视觉识别未执行成功",
+                    },
                 ],
             },
         ],
@@ -89,6 +95,7 @@ def test_write_report_only_keeps_issue_details(tmp_path: Path) -> None:
     assert "RF_MISSING（高）" not in text
     assert "表单审批人为空" not in text
     assert "表单复核人为空" not in text
+    assert "流量照片视觉识别未执行成功" not in text
     assert "整改建议" not in text
     assert "后续优化建议" not in text
 
@@ -193,3 +200,88 @@ def test_write_report_expands_device_identity_evidence_details(tmp_path: Path) -
     assert "当前值FH62C14" in text
     assert "历史值SHARP5030" in text
     assert "字段rf_form.DEVICEMODEL/rf_form.DEVICEMODEL" in text
+
+
+def test_write_report_separates_value_abnormal_from_missing_explanation(tmp_path: Path) -> None:
+    audit = {
+        "audit_info": {
+            "generated_at": "2026-08-15 10:00:00",
+            "order_count": 1,
+            "rule_stage": "deterministic_with_semantic_review",
+        },
+        "summary": {"audit_level_counts": {"有问题": 1}},
+        "records": [{"working_order_code": "WO-SPLIT", "create_time": "2026-08-15 09:00:00"}],
+    }
+    final_issue_list = {
+        "items": [
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "NOx周检表",
+                "working_order_code": "WO-SPLIT",
+                "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                "message": "参考PMT信号值0.002超出正常范围",
+                "issue_component": "value_abnormal",
+                "issue_group_id": "WO-SPLIT::RF_W_GASEOUSCHECK_NOX::PMTCHECKVALUE",
+            },
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "NOx周检表",
+                "working_order_code": "WO-SPLIT",
+                "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+                "message": "原备注仅写已处理，未说明与当前异常的具体关联",
+                "issue_component": "abnormal_explanation_issue",
+                "issue_group_id": "WO-SPLIT::RF_W_GASEOUSCHECK_NOX::PMTCHECKVALUE",
+                "remark_status": "provided",
+                "remark_judgment": "unrelated",
+                "remark_judgment_label": "与当前异常无关",
+                "original_remarks": [
+                    {
+                        "field": "EXCEPTIONHANDLINGRECORD",
+                        "field_label": "异常时处理记录",
+                        "value": "已处理，但未记录复测结果",
+                    }
+                ],
+            },
+        ]
+    }
+
+    out_path = tmp_path / "report.md"
+    write_report(audit, out_path, final_issue_list=final_issue_list)
+    text = out_path.read_text(encoding="utf-8")
+
+    assert "#### 异常事实与说明对照" in text
+    assert "异常事实（值异常）：参考PMT信号值0.002超出正常范围" in text
+    assert "原备注（异常时处理记录/EXCEPTIONHANDLINGRECORD）：已处理，但未记录复测结果" in text
+    assert "说明判断：与当前异常无关" in text
+    assert "语义结论：原备注仅写已处理，未说明与当前异常的具体关联" in text
+
+
+def test_write_report_marks_missing_original_remark(tmp_path: Path) -> None:
+    audit = {
+        "audit_info": {"generated_at": "2026-08-15 10:00:00", "order_count": 1, "rule_stage": "test"},
+        "summary": {"audit_level_counts": {"有问题": 1}},
+        "records": [{"working_order_code": "WO-NO-REMARK"}],
+    }
+    final_issue_list = {
+        "items": [
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "SO2周检表",
+                "working_order_code": "WO-NO-REMARK",
+                "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+                "message": "未提供与当前异常相关的说明",
+                "issue_component": "abnormal_explanation_issue",
+                "remark_status": "missing",
+                "original_remarks": [],
+            }
+        ]
+    }
+
+    out_path = tmp_path / "report.md"
+    write_report(audit, out_path, final_issue_list=final_issue_list)
+    text = out_path.read_text(encoding="utf-8")
+
+    assert "原备注：未填写" in text

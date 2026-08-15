@@ -203,6 +203,28 @@ def test_o3_value_pass_xls_mismatch_adds_issue(tmp_path):
     assert evidence["comparisons"][0]["status"] == "mismatch"
 
 
+def test_o3_value_pass_xls_emits_each_field_mismatch_separately(tmp_path):
+    xls_path = tmp_path / "o3-transfer-multiple-mismatches.xlsx"
+    _xlsx(xls_path, slope="1.001", intercept="0.25")
+    issues = []
+
+    o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+        {"WORKINGORDERCODE": "WO-001"},
+        [("RF_HY_O3VALUEPASS", _form())],
+        [],
+        [_attachment(xls_path)],
+        issues,
+    )
+
+    assert len(issues) == 2
+    assert {json.loads(issue.evidence)["comparison"]["field"] for issue in issues} == {
+        "DEVICEDELIVERMODEL",
+        "DELIVERFC",
+    }
+    assert all(len(json.loads(issue.evidence)["comparisons"]) == 1 for issue in issues)
+    assert all("；" not in issue.message for issue in issues)
+
+
 def test_o3_value_pass_xls_formula_text_mismatch_adds_issue(tmp_path):
     xls_path = tmp_path / "o3-transfer.xlsx"
     _xlsx_with_formula(xls_path, formula="y=1.001x-0.079")
@@ -469,9 +491,12 @@ def test_o3_value_pass_xls_does_not_use_fixed_cells_without_d_column_labels(tmp_
         issues,
     )
 
-    assert len(issues) == 1
-    evidence = json.loads(issues[0].evidence)
-    statuses = {comparison["field"]: comparison["status"] for comparison in evidence["comparisons"]}
+    assert len(issues) == 3
+    statuses = {
+        json.loads(issue.evidence)["comparison"]["field"]:
+        json.loads(issue.evidence)["comparison"]["status"]
+        for issue in issues
+    }
     assert statuses == {
         "DEVICEDELIVERMODEL": "missing_xls_value",
         "DELIVERFC": "missing_xls_value",
@@ -509,6 +534,75 @@ def test_o3_value_pass_xls_matches_using_form_precision_and_percent_scale(tmp_pa
     )
 
     assert issues == []
+
+
+def test_xlsx_scan_uses_one_bounded_sequential_iteration():
+    rows = [[None] * 8 for _ in range(30)]
+    rows[24][3], rows[24][5] = "斜率", "0.999"
+    rows[25][3], rows[25][5] = "截距(ppb)", "-0.079"
+    rows[27][5] = "-0.07"
+
+    class Worksheet:
+        max_row = 421
+
+        def __init__(self):
+            self.calls = []
+
+        def iter_rows(self, **kwargs):
+            self.calls.append(kwargs)
+            return iter(tuple(row) for row in rows)
+
+        def __getitem__(self, key):
+            raise AssertionError(f"unexpected random cell access: {key}")
+
+        def cell(self, **kwargs):
+            raise AssertionError(f"unexpected random cell access: {kwargs}")
+
+    worksheet = Worksheet()
+    cells = o3_value_pass_xls_rules._worksheet_dynamic_cells(worksheet)
+
+    assert worksheet.calls == [
+        {
+            "min_row": 1,
+            "max_row": o3_value_pass_xls_rules.XLSX_SCAN_MAX_ROWS,
+            "min_col": 1,
+            "max_col": o3_value_pass_xls_rules.XLSX_SCAN_MAX_COLUMNS,
+            "values_only": True,
+        }
+    ]
+    assert cells["DEVICEDELIVERMODEL"] == [{"cell": "F25", "value": "0.999"}]
+    assert cells["DELIVERFC"] == [{"cell": "F26", "value": "-0.079"}]
+    assert {item["value"] for item in cells["DENSITY1VALUE"]} == {None, "-0.07"}
+
+
+def test_same_attachment_is_parsed_once_across_forms_and_orders(monkeypatch, tmp_path):
+    xls_path = tmp_path / "shared-o3-transfer.xlsx"
+    _xlsx(xls_path)
+    read_count = 0
+    original_read_cells = o3_value_pass_xls_rules._read_cells
+
+    def counted_read_cells(item):
+        nonlocal read_count
+        read_count += 1
+        return original_read_cells(item)
+
+    monkeypatch.setattr(o3_value_pass_xls_rules, "_read_cells", counted_read_cells)
+    shared_cache = {}
+    for code in ("WO-001", "WO-002"):
+        issues = []
+        form = _form(WORKINGORDERCODE=code)
+        attachment = {**_attachment(xls_path), "REFID": code}
+        o3_value_pass_xls_rules.check_o3_value_pass_xls_values(
+            {"WORKINGORDERCODE": code},
+            [("RF_HY_O3VALUEPASS", form), ("RF_HY_O3VALUEPASS", dict(form))],
+            [],
+            [attachment],
+            issues,
+            attachment_read_cache=shared_cache,
+        )
+        assert issues == []
+
+    assert read_count == 1
 
 
 def test_o3_value_pass_missing_transfer_flow_value_is_reported():

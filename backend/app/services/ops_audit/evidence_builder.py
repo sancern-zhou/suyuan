@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from app.services.ops_audit.issue_linking import issue_link_metadata, parse_issue_evidence
+
 
 def build_summary_evidence(dataset: dict[str, Any]) -> dict[str, Any]:
     """Build the default lightweight evidence layer.
@@ -141,6 +143,7 @@ def build_raw_evidence(
 def build_dataset_evidence(
     dataset: dict[str, Any],
     *,
+    audit: dict[str, Any] | None = None,
     evidence_level: str = "summary",
     working_order_code: str | None = None,
     rule_ids: list[str] | None = None,
@@ -149,6 +152,8 @@ def build_dataset_evidence(
 
     evidence_level = (evidence_level or "summary").strip().lower()
     bundle = {"summary": build_summary_evidence(dataset)}
+    if audit is not None:
+        bundle["issue_evidence"] = _build_split_issue_evidence(audit)
     if evidence_level in {"detail", "raw"}:
         bundle["structured_detail"] = build_structured_detail_evidence(
             dataset,
@@ -158,6 +163,46 @@ def build_dataset_evidence(
     if evidence_level == "raw":
         bundle["raw_evidence"] = build_raw_evidence(dataset, working_order_code=working_order_code)
     return bundle
+
+
+def _build_split_issue_evidence(audit: dict[str, Any]) -> dict[str, Any]:
+    items = []
+    component_counts: dict[str, int] = defaultdict(int)
+    for record in audit.get("records", []):
+        code = record.get("working_order_code")
+        for issue in record.get("scoring_issues", []):
+            metadata = issue_link_metadata(issue, working_order_code=code)
+            if not metadata:
+                continue
+            evidence = parse_issue_evidence(issue.get("evidence"))
+            component = metadata["issue_component"]
+            item = {
+                "working_order_code": code,
+                "rule_id": issue.get("rule_id"),
+                "rf_table": evidence.get("rf_table"),
+                "field": issue.get("field"),
+                "message": issue.get("message"),
+                **metadata,
+            }
+            if component == "abnormal_explanation_issue":
+                item["remark_evidence"] = {
+                    "reason_rule_id": evidence.get("reason_rule_id"),
+                    "abnormal_field": evidence.get("abnormal_field"),
+                    "remark_candidates": evidence.get("remark_candidates") or {},
+                    "needs_semantic_review": evidence.get("needs_semantic_review"),
+                }
+            else:
+                item["fact_evidence"] = evidence
+                if component in {"value_abnormal", "value_missing"}:
+                    item["value_evidence"] = evidence
+            component_counts[component] += 1
+            items.append(item)
+    return {
+        "layer": "split_issue_evidence",
+        "item_count": len(items),
+        "component_counts": dict(component_counts),
+        "items": items,
+    }
 
 
 def build_inspection_item(

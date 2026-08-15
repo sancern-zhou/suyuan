@@ -21,6 +21,8 @@ from app.social.binding_service import (
     SocialBindingService,
     get_social_binding_service,
 )
+from app.utils.path_config import get_social_dir
+from config.settings import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -101,7 +103,7 @@ def get_channel_manager():
         from app.channels.manager import ChannelManager
 
         social_config = SocialConfig.load_from_yaml(
-            getattr(app.state, 'social_config_path', 'backend/config/social_config.yaml')
+            settings.social_config_path
         )
         message_bus = MessageBus()
         manager = ChannelManager(
@@ -126,13 +128,13 @@ def get_channel_manager():
 def load_config():
     """加载社交配置"""
     from config.social_config import load_social_config
-    return load_social_config()
+    return load_social_config(settings.social_config_path)
 
 
 def save_config(config):
     """保存社交配置"""
     from config.social_config import save_social_config
-    return save_social_config(config)
+    return save_social_config(config, settings.social_config_path)
 
 
 async def _owned_account_id(
@@ -163,6 +165,10 @@ async def _cleanup_temporary_account(
         channel_key = f"weixin:{account_id}"
         channel = manager.channels.pop(channel_key, None)
         if channel:
+            login_task = getattr(channel, "_scan_login_task", None)
+            if login_task and not login_task.done() and login_task is not asyncio.current_task():
+                login_task.cancel()
+                await asyncio.gather(login_task, return_exceptions=True)
             try:
                 await channel.stop()
             except Exception as exc:
@@ -175,6 +181,17 @@ async def _cleanup_temporary_account(
         save_config(config)
     await bindings.deactivate_account(account_id)
 
+    # Do not leave account.json behind. The config loader treats such
+    # directories as orphan accounts and recreates them after a restart.
+    state_dir = get_social_dir() / "weixin" / account_id
+    if state_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(state_dir)
+            logger.info("temporary_state_files_cleaned", account_id=account_id)
+        except Exception as exc:
+            logger.warning("temporary_state_cleanup_failed", account_id=account_id, error=str(exc))
+
 
 async def _require_active_scan_task(
     task_id: str,
@@ -182,6 +199,8 @@ async def _require_active_scan_task(
     bindings: SocialBindingService,
 ):
     task = await bindings.require_scan_task(task_id, user)
+    if task.status not in {"created", "waiting", "scanning", "confirmed"}:
+        raise HTTPException(status_code=410, detail="weixin_scan_closed")
     if task.status != "confirmed" and task.expires_at < datetime.utcnow():
         await bindings.mark_scan_status(task_id, user, "expired")
         await _cleanup_temporary_account(task.account_id, bindings)
@@ -494,7 +513,17 @@ async def delete_weixin_account(
     Returns:
         操作结果
     """
-    account_id = await _owned_account_id(account_id, user, bindings)
+    task = None
+    try:
+        task = await bindings.require_scan_task(account_id, user)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+    if task is not None:
+        await bindings.cancel_scan_task(task.id, user)
+        account_id = task.account_id
+    else:
+        account_id = await _owned_account_id(account_id, user, bindings)
     manager = get_channel_manager()
     if not manager:
         raise HTTPException(status_code=404, detail="Channel manager not found")
@@ -525,7 +554,7 @@ async def delete_weixin_account(
     await bindings.deactivate_account(account_id)
 
     # 3. 清理状态文件
-    state_dir = Path(f"backend_data_registry/social/weixin/{account_id}")
+    state_dir = get_social_dir() / "weixin" / account_id
     if state_dir.exists():
         import shutil
         try:
@@ -712,6 +741,9 @@ async def auto_create_account(
         logger.info("channel_created", account_id=account_id, channel_key=channel_key)
 
         # ✅ 异步任务：生成二维码并等待登录
+        login_failed = asyncio.Event()
+        login_error: list[Exception] = []
+
         async def login_and_start():
             try:
                 logger.info("starting_login_async", account_id=account_id)
@@ -728,32 +760,50 @@ async def auto_create_account(
                     qrcode_id = await channel._init_qr_login()
                     logger.info("qrcode_generated", account_id=account_id, qrcode_id=qrcode_id)
                 except Exception as e:
+                    login_error.append(e)
+                    login_failed.set()
                     logger.error("qrcode_generation_failed", account_id=account_id, error=str(e), exc_info=True)
+                    return
 
                 # 启动轮询（start方法会继续等待扫码并完成登录）
                 await channel.start()
 
             except Exception as e:
+                login_error.append(e)
+                login_failed.set()
                 logger.error("login_async_failed", account_id=account_id, error=str(e), exc_info=True)
 
         # 立即创建异步任务，不等待
-        asyncio.create_task(login_and_start())
+        login_task = asyncio.create_task(login_and_start())
+        # Keep a handle so DELETE/cleanup can cancel the long-running login.
+        channel._scan_login_task = login_task
 
-        # 等待二维码就绪（最多5秒）
+        # 等待二维码就绪（最多5秒）；失败或超时都回收临时账号。
         try:
             logger.info("waiting_for_qrcode", account_id=account_id)
-            await asyncio.wait_for(channel._qr_code_ready.wait(), timeout=5.0)
+            qr_wait = asyncio.create_task(channel._qr_code_ready.wait())
+            failed_wait = asyncio.create_task(login_failed.wait())
+            done, pending = await asyncio.wait(
+                {qr_wait, failed_wait}, timeout=5.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for waiter in pending:
+                waiter.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if login_error:
+                raise RuntimeError(f"Failed to initialize QR code: {login_error[0]}")
+            if not done or not channel._qr_code_ready.is_set():
+                raise TimeoutError("QR code initialization timed out")
             logger.info(
                 "qrcode_ready",
                 account_id=account_id,
                 qr_path=str(getattr(channel, "_current_qr_code_path", None))
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "qrcode_ready_timeout",
-                account_id=account_id,
-                timeout_seconds=5.0
-            )
+        except (asyncio.TimeoutError, TimeoutError, RuntimeError) as exc:
+            logger.warning("qrcode_initialization_failed", account_id=account_id, error=str(exc))
+            await bindings.cancel_scan_task(task.id, user)
+            await _cleanup_temporary_account(account_id, bindings)
+            raise HTTPException(status_code=504, detail="微信二维码初始化失败，请稍后重试") from exc
 
         logger.info(
             "temp_account_auto_created",
@@ -773,6 +823,8 @@ async def auto_create_account(
             "agent_mode": agent_mode
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             "failed_to_auto_create_account",
@@ -780,6 +832,7 @@ async def auto_create_account(
             error=str(e),
             exc_info=True
         )
+        await _cleanup_temporary_account(account_id, bindings)
         raise HTTPException(status_code=500, detail=f"Failed to auto-create account: {str(e)}")
 
 
@@ -827,7 +880,14 @@ async def finalize_account(
             bot_account=bot_account,
         )
     except SocialBindingConflict as exc:
+        await bindings.cancel_scan_task(task.id, user)
+        await _cleanup_temporary_account(account_id, bindings)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        await bindings.cancel_scan_task(task.id, user)
+        await _cleanup_temporary_account(account_id, bindings)
+        logger.error("account_finalize_failed", account_id=account_id, error=str(exc), exc_info=True)
+        raise HTTPException(status_code=500, detail="微信账号绑定失败，临时账号已关闭") from exc
 
     token = getattr(channel, "_token", None)
     config = load_config()

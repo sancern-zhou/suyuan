@@ -35,10 +35,22 @@ DEFAULT_BRAND_ALIASES = {
 }
 
 DEFAULT_DEVICE_IDENTITY_PROFILES = {
-    "history_days": 370,
-    "history_limit": 5000,
-    "short_history_days": 30,
-    "previous_same_station_limit": 20,
+    "history_limit": 500,
+    "recent_per_device_limit": 5,
+    "history_rf_tables": [
+        "RF_HY_O3VALUEPASS",
+        "RF_Q_GASEOUSMULTIPOINT_CO",
+        "RF_Q_GASEOUSMULTIPOINT_NO2",
+        "RF_Q_GASEOUSMULTIPOINT_O3",
+        "RF_Q_GASEOUSMULTIPOINT_SO2",
+    ],
+    "history_match_fields": {
+        "RF_HY_O3VALUEPASS": ["AVALUE"],
+        "RF_Q_GASEOUSMULTIPOINT_CO": ["DEVICECODE"],
+        "RF_Q_GASEOUSMULTIPOINT_NO2": ["DEVICECODE"],
+        "RF_Q_GASEOUSMULTIPOINT_O3": ["DEVICECODE"],
+        "RF_Q_GASEOUSMULTIPOINT_SO2": ["DEVICECODE"],
+    },
     "enabled_order_types": ["Check", "SupCheck"],
     "enabled_maintenance_types": ["Week", "TwoWeek", "Month", "Quarter", "HalfYear", "Year"],
     "identity_fields": [
@@ -60,6 +72,9 @@ DEFAULT_DEVICE_IDENTITY_PROFILES = {
     },
     "replacement_tables": ["RF_Y_DEVICECHANGE", "RF_Y_DEVICEREPAIR"],
     "replacement_keywords": ["更换", "替换", "维修", "报废", "停用", "启用"],
+    "model_aliases": {
+        "49IPS": ["49IPS", "TE-49IPS", "THERMO 49IPS", "THERMO SCIENTIFIC 49IPS"],
+    },
 }
 
 DEFAULT_ATTACHMENT_REQUIREMENTS = {
@@ -328,19 +343,35 @@ DEFAULT_RULE_CATALOG = [
     },
     {
         "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
-        "name": "RF 表单异常值备注说明不充分",
+        "name": "RF 表单异常说明缺失或无效",
         "category": "结果合理性",
         "default_severity": "中",
         "scope": "RF_*",
-        "rationale": "检查值超限或关键值漏填时，即使存在备注，也应说明异常原因、处置措施、处理结果或合理免填依据。",
+        "rationale": "检查值超限或关键值漏填时，备注应与当前异常相关且不与证据矛盾；原因、措施、结果仅作为完整度参考。",
+    },
+    {
+        "rule_id": "RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL",
+        "name": "颗粒物采样管温度异常",
+        "category": "表单结果合理性",
+        "default_severity": "高",
+        "scope": "RF_W_PMCHECK",
+        "rationale": "采样管温度缺失、状态异常或超出合理范围属于独立异常事实，不应与说明有效性混为一条问题。",
+    },
+    {
+        "rule_id": "RF_ABNORMAL_RESULT_FIELD",
+        "name": "RF 表单状态字段显示异常",
+        "category": "表单结果合理性",
+        "default_severity": "高",
+        "scope": "RF_*",
+        "rationale": "状态或结果字段明确显示异常时，应独立记录异常事实，再单独审核相关说明是否有效。",
     },
     {
         "rule_id": "REMARK_SEMANTIC_INCOMPLETE",
-        "name": "备注未说明原因/措施/结果",
+        "name": "备注与当前审核点无有效关联",
         "category": "语义复核",
         "default_severity": "高",
         "scope": "working_orders/working_order_details/RF_*",
-        "rationale": "备注需要具备原因、措施和结果，才能支持闭环判断。",
+        "rationale": "备注应与当前审核点相关且不与证据矛盾；原因、措施、结果仅用于评价完整度，不作为有效性的强制三要素。",
     },
     {
         "rule_id": "ATTACHMENT_CERT_INCOMPLETE",
@@ -525,6 +556,10 @@ DEFAULT_RULE_REVIEW_STAGES = {
         "manual_evidence_review": [
             "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW",
             "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW",
+        ],
+        "technical_diagnostic": [
+            "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
+            "RF_RANGE_UNIT_MISMATCH",
         ],
         "future_ocr": [
             "ATTACHMENT_CERT_INCOMPLETE",

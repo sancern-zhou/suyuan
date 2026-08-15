@@ -35,6 +35,15 @@ class SocialBindingService:
         await self.require_scan_task(task_id, user)
         return await self.repository.set_scan_status(task_id, status)
 
+    async def cancel_scan_task(
+        self, task_id: str, user: CurrentUser
+    ) -> WeixinScanTaskRecord:
+        """Close an unfinished QR task so it cannot be reused or revived."""
+        task = await self.require_scan_task(task_id, user)
+        if task.status != "confirmed":
+            return await self.repository.set_scan_status(task_id, "cancelled")
+        return task
+
     async def activate(
         self,
         *,

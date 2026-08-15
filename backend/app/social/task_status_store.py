@@ -13,6 +13,8 @@ from uuid import uuid4
 
 import structlog
 
+from app.utils.path_config import get_data_registry
+
 logger = structlog.get_logger(__name__)
 
 
@@ -36,7 +38,11 @@ class TaskStatusStore:
             json_path: JSON file path for fallback storage
         """
         self.db_manager = db_manager
-        self.json_path = json_path or "backend_data_registry/spawn_tasks.json"
+        self.json_path = (
+            str(Path(json_path))
+            if json_path
+            else str(get_data_registry() / "spawn_tasks.json")
+        )
         self._lock = asyncio.Lock()
         self._use_json = db_manager is None
 

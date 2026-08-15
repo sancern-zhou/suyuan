@@ -221,6 +221,7 @@ class KnowledgeIngestionService:
             document = await session.get(Document, document_id)
             if document is not None:
                 await session.delete(document)
+                await session.flush()
             await self._recalculate_kb_stats(session, kb_id)
 
     async def _load_and_mark_processing(self, document_id: str):

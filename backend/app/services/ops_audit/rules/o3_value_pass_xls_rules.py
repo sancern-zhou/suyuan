@@ -24,6 +24,8 @@ HISTORY_CONFLICT_REVIEW_RULE_ID = "RF_O3_UPPER_STANDARD_HISTORY_CONFLICT_REVIEW"
 FLOW_MISSING_RULE_ID = "RF_O3_VALUE_PASS_FLOW_VALUE_MISSING"
 FIELD_POSITION_RULE_ID = "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT"
 RF_TABLE = "RF_HY_O3VALUEPASS"
+XLSX_SCAN_MAX_ROWS = 200
+XLSX_SCAN_MAX_COLUMNS = 8
 
 COMPARISONS = [
     {"field": "DEVICEDELIVERMODEL", "label": "斜率", "cell": "F"},
@@ -60,6 +62,8 @@ def check_o3_value_pass_xls_values(
     attachments: list[dict[str, Any]],
     wo_commonfiles: list[dict[str, Any]],
     issues: list[Issue],
+    *,
+    attachment_read_cache: dict[tuple[Any, ...], dict[str, Any]] | None = None,
 ) -> None:
     """Compare RF_HY_O3VALUEPASS values with the uploaded XLS first sheet."""
 
@@ -70,16 +74,17 @@ def check_o3_value_pass_xls_values(
     records = attachments + wo_commonfiles
     xls_items = _xls_items(records)
     pdf_items = _pdf_items(records)
+    read_cache = attachment_read_cache if attachment_read_cache is not None else {}
     for form in relevant_forms:
         _check_o3_value_pass_form_fields(order, form, issues)
         if not xls_items:
             _add_missing_xls_review_issue(order, form, records, issues)
-        selected_xls = _select_matching_xls_item(form, xls_items)
+        selected_xls = _select_matching_xls_item(form, xls_items, read_cache=read_cache)
         selected_items = [item for item in (selected_xls, _select_item(pdf_items)) if item]
         if not selected_items:
             continue
         for item in selected_items:
-            cell_values = item.pop("_o3_selected_read_result", None) or _read_cells(item)
+            cell_values = _read_cells_cached(item, read_cache)
             if cell_values.get("status") != "success":
                 if item.get("attachment_kind") == "pdf" or _is_unavailable_attachment_source_error(cell_values.get("error")):
                     continue
@@ -397,6 +402,8 @@ def _select_item(items: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _select_matching_xls_item(
     form: dict[str, Any],
     items: list[dict[str, Any]],
+    *,
+    read_cache: dict[tuple[Any, ...], dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Select the XLS whose structure and values best represent the RF form.
 
@@ -409,9 +416,10 @@ def _select_matching_xls_item(
     if not items:
         return None
 
+    read_cache = read_cache if read_cache is not None else {}
     ranked: list[tuple[tuple[int, int, int, int, str], dict[str, Any]]] = []
     for item in items:
-        read_result = _read_cells(item)
+        read_result = _read_cells_cached(item, read_cache)
         if read_result.get("status") != "success":
             ranked.append(((0, 0, -1, _xls_filename_priority(item), _item_name(item)), item))
             continue
@@ -425,7 +433,6 @@ def _select_matching_xls_item(
         # More complete/matching templates win.  A name hint is only used when
         # the parsed evidence is otherwise tied.
         key = (matches, populated, -problems, _xls_filename_priority(item), _item_name(item))
-        item["_o3_selected_read_result"] = read_result
         ranked.append((key, item))
     return max(ranked, key=lambda pair: pair[0])[1]
 
@@ -461,6 +468,44 @@ def _read_cells(item: dict[str, Any]) -> dict[str, Any]:
             return _read_cells_from_path(Path(str(resolved["path"])))
         errors.append(f"{source}: {resolved.get('error')}")
     return {"status": "error", "error": "；".join(errors) or "附件路径为空"}
+
+
+def _read_cells_cached(
+    item: dict[str, Any],
+    cache: dict[tuple[Any, ...], dict[str, Any]],
+) -> dict[str, Any]:
+    cache_key = _attachment_read_cache_key(item)
+    if cache_key not in cache:
+        cache[cache_key] = _read_cells(item)
+    return cache[cache_key]
+
+
+def _attachment_read_cache_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    sources = item.get("source_paths")
+    if not isinstance(sources, list) or not sources:
+        sources = [item.get("source_path")]
+    source_keys = sorted(
+        {
+            _source_cache_identity(str(source or "").strip())
+            for source in sources
+            if str(source or "").strip()
+        },
+        key=repr,
+    )
+    if not source_keys:
+        source_keys = [("filename", _item_name(item))]
+    return (str(item.get("attachment_kind") or "xls"), *source_keys)
+
+
+def _source_cache_identity(source: str) -> tuple[Any, ...]:
+    parsed = urlparse(source)
+    if parsed.scheme in {"http", "https"}:
+        return "url", source
+    path = Path(source).expanduser()
+    if path.is_file():
+        stat = path.stat()
+        return "file", str(path.resolve()), stat.st_size, stat.st_mtime_ns
+    return "source", source
 
 
 def _read_cells_from_pdf_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -534,9 +579,10 @@ def _read_cells_from_path(path: Path) -> dict[str, Any]:
             from openpyxl import load_workbook
 
             wb = load_workbook(path, data_only=True, read_only=True)
-            ws = wb.worksheets[0]
-            cells = _worksheet_dynamic_cells(ws)
-            wb.close()
+            try:
+                cells = _worksheet_dynamic_cells(wb.worksheets[0])
+            finally:
+                wb.close()
             return {"status": "success", "cells": cells}
         if suffix == ".xls":
             import xlrd
@@ -574,22 +620,48 @@ def _source_candidates(record: dict[str, Any]) -> list[str]:
 
 
 def _worksheet_dynamic_cells(ws: Any) -> dict[str, list[dict[str, Any]]]:
+    row_count = min(int(ws.max_row or 0), XLSX_SCAN_MAX_ROWS)
+    if row_count <= 0:
+        return _tabular_dynamic_cells([])
+    rows = list(
+        ws.iter_rows(
+            min_row=1,
+            max_row=row_count,
+            min_col=1,
+            max_col=XLSX_SCAN_MAX_COLUMNS,
+            values_only=True,
+        )
+    )
+    return _tabular_dynamic_cells(rows)
+
+
+def _tabular_dynamic_cells(rows: list[tuple[Any, ...]]) -> dict[str, list[dict[str, Any]]]:
+    def value_at(row_index: int, column_index: int) -> Any:
+        if row_index < 1 or row_index > len(rows):
+            return None
+        row = rows[row_index - 1]
+        if column_index < 1 or column_index > len(row):
+            return None
+        return row[column_index - 1]
+
     slope_row, intercept_row = _find_o3_value_pass_rows(
-        (row_index, ws[f"D{row_index}"].value) for row_index in range(1, ws.max_row + 1)
+        (row_index, value_at(row_index, 4)) for row_index in range(1, len(rows) + 1)
     )
     cells = _dynamic_value_cells(
         slope_row,
         intercept_row,
-        lambda row_index: ws[f"F{row_index}"].value,
+        lambda row_index: value_at(row_index, 6),
     )
-    formula_row = _find_formula_row((row_index, ws[f"D{row_index}"].value) for row_index in range(1, ws.max_row + 1))
+    formula_row = _find_formula_row(
+        (row_index, value_at(row_index, 4)) for row_index in range(1, len(rows) + 1)
+    )
     if formula_row is not None:
-        cells["TRANSFER_FORMULA"] = [{"cell": f"F{formula_row}", "value": ws[f"F{formula_row}"].value}]
+        cells["TRANSFER_FORMULA"] = [{"cell": f"F{formula_row}", "value": value_at(formula_row, 6)}]
     cells.update(
         _upper_standard_cells(
-            ws.max_row,
-            8,
-            lambda row_index, column_index: ws.cell(row=row_index, column=column_index).value,
+            len(rows),
+            XLSX_SCAN_MAX_COLUMNS,
+            value_at,
         )
     )
     return cells
@@ -828,7 +900,12 @@ def _compare_upper_standard_values(form: dict[str, Any], cells: dict[str, Any]) 
         xls_value = candidate.get("value")
         if _is_blank(form_value):
             status = "missing_form_value"
-        elif _upper_standard_values_match(form_value, xls_value, comparison["comparison_type"]):
+        elif _upper_standard_values_match(
+            form_value,
+            xls_value,
+            comparison["comparison_type"],
+            field=field,
+        ):
             status = "match"
         else:
             status = "mismatch"
@@ -847,7 +924,13 @@ def _compare_upper_standard_values(form: dict[str, Any], cells: dict[str, Any]) 
     return results
 
 
-def _upper_standard_values_match(form_value: Any, xls_value: Any, comparison_type: str) -> bool:
+def _upper_standard_values_match(
+    form_value: Any,
+    xls_value: Any,
+    comparison_type: str,
+    *,
+    field: str = "",
+) -> bool:
     if comparison_type == "formula":
         form_formula = _parse_linear_formula(form_value)
         xls_formula = _parse_linear_formula(xls_value)
@@ -858,11 +941,19 @@ def _upper_standard_values_match(form_value: Any, xls_value: Any, comparison_typ
         form_date = _normalize_date_value(form_value)
         xls_date = _normalize_date_value(xls_value)
         return bool(form_date and xls_date and form_date == xls_date)
+    if field == "DELIVER6VALUE":
+        return _normalize_upper_standard_model(form_value) == _normalize_upper_standard_model(xls_value)
     return _normalize_identity_text(form_value) == _normalize_identity_text(xls_value)
 
 
 def _normalize_identity_text(value: Any) -> str:
     return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
+
+
+def _normalize_upper_standard_model(value: Any) -> str:
+    normalized = _normalize_identity_text(value)
+    match = re.fullmatch(r"(?:TE|THERMO|THERMOSCIENTIFIC)(49IPS)", normalized)
+    return match.group(1) if match else normalized
 
 
 def _normalize_date_value(value: Any) -> tuple[int, ...]:
@@ -871,12 +962,16 @@ def _normalize_date_value(value: Any) -> tuple[int, ...]:
     if isinstance(value, (int, float)) and 20000 <= float(value) <= 80000:
         date_value = datetime(1899, 12, 30) + timedelta(days=float(value))
         return date_value.year, date_value.month, date_value.day
-    numbers = [int(item) for item in re.findall(r"\d+", str(value or ""))]
+    text = str(value or "").strip()
+    numbers = [int(item) for item in re.findall(r"\d+", text)]
     if len(numbers) >= 6 and numbers[0] >= 1900 and numbers[3] >= 1900:
         return tuple(numbers[:6])
     if len(numbers) == 4 and numbers[0] >= 1900:
         year, month, start_day, end_day = numbers
         return year, month, start_day, year, month, end_day
+    if len(numbers) == 5 and numbers[0] >= 1900 and _has_abbreviated_date_range(text):
+        year, month, start_day, end_month, end_day = numbers
+        return year, month, start_day, year, end_month, end_day
     if len(numbers) >= 3 and numbers[0] >= 1900:
         return tuple(numbers[:3])
     if len(numbers) >= 3 and numbers[2] >= 1900:
@@ -885,6 +980,13 @@ def _normalize_date_value(value: Any) -> tuple[int, ...]:
             return year, second, first
         return year, first, second
     return tuple(numbers)
+
+
+def _has_abbreviated_date_range(value: str) -> bool:
+    return bool(
+        re.search(r"(?:~|～|至|\bto\b)", value, flags=re.IGNORECASE)
+        or re.search(r"\d\s*-\s*\d{1,2}[./]\d{1,2}\s*$", value)
+    )
 
 
 def _compare_transfer_formula(form: dict[str, Any], cell_data: Any) -> list[dict[str, Any]]:
@@ -1007,21 +1109,24 @@ def _add_issue(
     comparisons: list[dict[str, Any]],
     issues: list[Issue],
 ) -> None:
-    evidence = {
-        "working_order_code": order.get("WORKINGORDERCODE") or form.get("WORKINGORDERCODE"),
-        "rf_table": RF_TABLE,
-        "attachment": item,
-        "comparisons": comparisons,
-    }
-    add_issue(
-        issues,
-        RULE_ID,
-        "附件读数一致性",
-        "高",
-        f"attachment.{RF_TABLE}.xls",
-        _issue_message(comparisons),
-        json.dumps(evidence, ensure_ascii=False, default=str),
-    )
+    for comparison in comparisons:
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE") or form.get("WORKINGORDERCODE"),
+            "rf_table": RF_TABLE,
+            "attachment": item,
+            "comparison": comparison,
+            "comparisons": [comparison],
+        }
+        comparison_field = str(comparison.get("field") or comparison.get("cell") or "xls")
+        add_issue(
+            issues,
+            RULE_ID,
+            "附件读数一致性",
+            "高",
+            f"attachment.{RF_TABLE}.{comparison_field}",
+            _issue_message([comparison]),
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
 
 
 def _issue_message(comparisons: list[dict[str, Any]]) -> str:

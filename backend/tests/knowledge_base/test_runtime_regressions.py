@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,13 @@ from app.knowledge_base.models import Document, DocumentStatus, KnowledgeBase
 from app.knowledge_base.service import KnowledgeBaseService
 from app.knowledge_base.tasks import DocumentProcessingQueue
 from app.services.llm_failover import get_llm_pool_semaphore
+from config.settings import settings
+
+
+def test_document_queue_defaults_to_three_workers():
+    queue = DocumentProcessingQueue()
+
+    assert queue._max_workers == 3
 
 
 def test_llm_semaphores_are_isolated_by_event_loop():
@@ -31,6 +39,16 @@ def test_llm_semaphores_are_isolated_by_event_loop():
 async def test_document_queue_forwards_processing_options(monkeypatch):
     captured = {}
 
+    class FakeLLMService:
+        @contextmanager
+        def use_balanced_model_tier(self, tier):
+            captured["tier"] = tier
+            captured["model_context_active"] = True
+            try:
+                yield
+            finally:
+                captured["model_context_active"] = False
+
     class FakeDB:
         async def execute(self, statement):
             return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="doc1"))
@@ -43,10 +61,16 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
             return SimpleNamespace(id=kb_id)
 
         async def ingest_document(self, doc_id, **options):
+            assert captured["model_context_active"] is True
             captured["doc_id"] = doc_id
             captured["options"] = options
 
     queue = DocumentProcessingQueue(max_workers=1)
+    monkeypatch.setattr(
+        "app.services.llm_service.llm_service",
+        FakeLLMService(),
+    )
+    monkeypatch.setattr(settings, "knowledge_base_llm_model_tier", "flash")
     monkeypatch.setattr(queue, "_get_db_session", lambda: _async_value(FakeDB()))
     monkeypatch.setattr(queue, "_get_service", lambda db: _async_value(FakeService()))
     task = await queue.enqueue(
@@ -64,6 +88,8 @@ async def test_document_queue_forwards_processing_options(monkeypatch):
         "chunking_strategy": "llm",
         "llm_mode": "online",
     }
+    assert captured["tier"] == "flash"
+    assert captured["model_context_active"] is False
     assert captured["closed"] is True
 
 

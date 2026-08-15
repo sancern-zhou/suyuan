@@ -6,11 +6,12 @@
 
 数据库 schema 设计：
 - role: Anthropic 角色（user/assistant），用于 LLM 对话恢复
-- msg_type: 语义类型（user/thought/action/observation/tool_result/final），用于前端展示
+- msg_type: 语义类型（user/thought/tool_use/tool_result/final/error/user_pause），用于前端展示
 - content: JSONB 类型，原生支持 str 和 list（Anthropic content blocks）
 """
 
 import json
+import math
 import structlog
 import time
 from enum import Enum
@@ -28,12 +29,15 @@ from .database import engine
 
 logger = structlog.get_logger()
 
-# 有效的语义类型集合
-VALID_MSG_TYPES = {"user", "thought", "tool_use", "tool_result", "final"}
+# 展示转录的完整类型集合。error/user_pause 必须保留，否则保存后
+# 重载会被默认规范化为 final，触发转录校验误报。
+VALID_MSG_TYPES = {
+    "user", "thought", "tool_use", "tool_result", "final", "error", "user_pause",
+}
 
 # These messages are rendered as conversation turns and must never be reduced
 # to a preview during lightweight history restoration.
-FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final"}
+FULL_DISPLAY_CONTENT_MSG_TYPES = {"user", "final", "error", "user_pause"}
 
 MESSAGE_METADATA_EXCLUDED_KEYS = {
     "type",
@@ -59,6 +63,8 @@ TYPE_TO_ROLE = {
     "thought": "assistant",
     "tool_use": "assistant",
     "final": "assistant",
+    "error": "assistant",
+    "user_pause": "user",
 }
 
 
@@ -87,7 +93,13 @@ class SessionRepository:
         if isinstance(obj, Enum):
             return SessionRepository._normalize_json_value(obj.value)
         if isinstance(obj, Decimal):
-            return float(obj)
+            numeric = float(obj)
+            return numeric if math.isfinite(numeric) else None
+        # PostgreSQL json/jsonb rejects the non-standard JSON tokens NaN and
+        # Infinity.  Normalize them at the persistence boundary as a final
+        # safeguard for tool results and runtime metadata from any producer.
+        if isinstance(obj, float):
+            return obj if math.isfinite(obj) else None
         if isinstance(obj, (datetime, date, datetime_time)):
             return obj.isoformat()
         if isinstance(obj, (UUID, Path)):
@@ -122,7 +134,7 @@ class SessionRepository:
 
         支持多种输入格式：
         - Anthropic 原生格式：有 role 字段（user/assistant）
-        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final）
+        - 前端简化格式：有 type 字段（user/thought/tool_use/tool_result/final/error/user_pause）
         - 旧格式：type 字段为 assistant
 
         Returns:
