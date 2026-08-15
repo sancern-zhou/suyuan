@@ -114,7 +114,8 @@ QUERY_TOOL_NAMES = [
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "query_xcai_city_history", "execute_sql_query",
+    "get_weather_data", "get_observed_meteorology", "get_weather_forecast", "get_current_weather",
+    "query_xcai_city_history", "execute_sql_query",
     "query_gd_suncere_city_hour",
     "query_gd_suncere_station_day_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day",
@@ -134,6 +135,9 @@ QUERY_TOOL_NAMES = [
 
     # === 数值计算工具 ===
     "execute_python",
+
+    # === 图表生成工具 ===
+    "create_report_chart", "execute_echarts_python",
 ]
 
 # ===== 报告模式工具 =====
@@ -267,6 +271,7 @@ SOCIAL_TOOL_NAMES = [
 # ===== 生态环境执法备考模式（微信专业场景） =====
 ENFORCEMENT_EXAM_TOOL_NAMES = [
     "exam_practice",
+    "generate_exam_bank",
     "knowledge_qa_workflow",
     "knowledge_document_reader",
     "web_search",
