@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.services.ops_audit.final_issue_list import build_final_issue_list
 from app.services.ops_audit.rules import attachment_ocr_rules
 from app.services.ops_audit.semantic import reviewer
@@ -7,6 +9,61 @@ from app.services.ops_audit.semantic import reviewer
 
 def test_manufacturer_filed_range_note_is_a_range_mismatch_explanation():
     assert reviewer._has_range_mismatch_explanation("厂家备案参数0-4.096V") is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "remark", "expected"),
+    [
+        ({"judgment_type": "missing"}, "", "missing"),
+        ({"judgment_type": "placeholder"}, "/", "placeholder"),
+        ({"judgment_type": "unrelated"}, "天气正常", "unrelated"),
+        ({"judgment_type": "contradictory"}, "数值正常", "contradictory"),
+        ({"judgment_type": "valid"}, "已处理", "valid"),
+    ],
+)
+def test_remark_judgment_type_is_standardized(raw, remark, expected):
+    normalized = reviewer._normalize_remark_result(raw, remark)
+
+    assert normalized["judgment_type"] == expected
+    assert normalized["is_complete"] is (expected == "valid")
+
+
+def test_semantic_evidence_summary_splits_value_and_remark_components():
+    value_issue = {
+        "rule_id": "RF_RANGE_OUT_OF_SPEC",
+        "field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+        "message": "参考PMT信号值超出范围",
+        "evidence": json.dumps(
+            {"working_order_code": "WO-SPLIT", "rf_table": "RF_W_GASEOUSCHECK_NOX"}
+        ),
+    }
+    remark_issue = {
+        "rule_id": "RF_ABNORMAL_VALUE_NO_REMARK",
+        "field": "rf.RF_W_GASEOUSCHECK_NOX.remark",
+        "message": "异常说明缺失或无效",
+        "evidence": json.dumps(
+            {
+                "working_order_code": "WO-SPLIT",
+                "rf_table": "RF_W_GASEOUSCHECK_NOX",
+                "reason_rule_id": "RF_RANGE_OUT_OF_SPEC",
+                "abnormal_field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+                "needs_semantic_review": True,
+            }
+        ),
+    }
+    record = {
+        "working_order_code": "WO-SPLIT",
+        "scoring_issues": [value_issue, remark_issue],
+    }
+
+    summary = reviewer._build_evidence_summary(record, [remark_issue])
+
+    assert len(summary["value_abnormal_issues"]) == 1
+    assert len(summary["abnormal_explanation_issues"]) == 1
+    assert (
+        summary["value_abnormal_issues"][0]["issue_group_id"]
+        == summary["abnormal_explanation_issues"][0]["issue_group_id"]
+    )
 
 
 def test_generic_remark_review_is_per_issue_and_final_mapping_is_exact(monkeypatch):
@@ -106,7 +163,8 @@ def test_generic_remark_review_is_per_issue_and_final_mapping_is_exact(monkeypat
     )
     assert final["issue_count"] == 1
     assert final["items"][0]["rf_table"] == "RF_W_GASEOUSCHECK_SO2"
-    assert final["items"][0]["message"] == "SO2参考PMT信号值异常且未说明"
+    assert final["items"][0]["message"] == "SO2字段备注未解释该异常值。"
+    assert final["items"][0]["value_abnormal_message"] == "SO2参考PMT信号值异常且未说明"
 
 
 def test_generic_remark_review_expands_every_issue_beyond_summary_sample_limit():
@@ -230,7 +288,7 @@ def test_field_level_range_note_clears_abnormal_value_remark_review(monkeypatch)
     assert build_final_issue_list(audit, semantic)["issue_count"] == 0
 
 
-def test_final_issue_message_preserves_source_issue_and_adds_semantic_supplement():
+def test_final_issue_message_separates_semantic_remark_from_source_value():
     audit = {
         "records": [
             {
@@ -276,7 +334,8 @@ def test_final_issue_message_preserves_source_issue_and_adds_semantic_supplement
 
     assert final_issues["issue_count"] == 1
     item = final_issues["items"][0]
-    assert item["message"] == "需语义判断备注是否解释充分: 原始规则信息"
+    assert item["message"] == "字段备注未解释采样压力异常原因。"
+    assert item["value_abnormal_message"] == "需语义判断备注是否解释充分: 原始规则信息"
     assert item["semantic_message"] == "字段备注未解释采样压力异常原因。"
     assert item["semantic_conclusion"] is None
     assert item["source"] == "semantic_review"

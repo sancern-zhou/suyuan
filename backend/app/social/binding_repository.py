@@ -39,18 +39,32 @@ class SocialBindingRepository:
 
     async def create_scan_task(self, user) -> WeixinScanTaskRecord:
         now = datetime.utcnow()
-        row = WeixinScanTask(
-            id=str(uuid.uuid4()),
-            account_id=f"auto_{uuid.uuid4().hex}",
-            owner_user_id=user.id,
-            owner_username=user.username,
-            owner_display_name=user.display_name,
-            status="created",
-            created_at=now,
-            updated_at=now,
-            expires_at=now + timedelta(minutes=10),
-        )
         async with async_session() as session:
+            # A browser retry must not create another temporary WeChat account
+            # for the same platform user. Reuse the still-live scan task.
+            existing = await session.scalar(
+                select(WeixinScanTask)
+                .where(
+                    WeixinScanTask.owner_user_id == user.id,
+                    WeixinScanTask.status.in_(["created", "waiting", "scanning"]),
+                    WeixinScanTask.expires_at > now,
+                )
+                .order_by(WeixinScanTask.created_at.desc())
+            )
+            if existing is not None:
+                return self._task_record(existing)
+
+            row = WeixinScanTask(
+                id=str(uuid.uuid4()),
+                account_id=f"auto_{uuid.uuid4().hex}",
+                owner_user_id=user.id,
+                owner_username=user.username,
+                owner_display_name=user.display_name,
+                status="created",
+                created_at=now,
+                updated_at=now,
+                expires_at=now + timedelta(minutes=10),
+            )
             session.add(row)
             await session.commit()
             await session.refresh(row)

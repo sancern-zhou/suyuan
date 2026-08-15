@@ -7,10 +7,25 @@ brand_aliases:
     - 热电
 
 device_identity:
-  history_days: 370
-  short_history_days: 30
-  history_limit: 5000
-  previous_same_station_limit: 20
+  history_limit: 500
+  recent_per_device_limit: 5
+  history_rf_tables:
+    - RF_HY_O3VALUEPASS
+    - RF_Q_GASEOUSMULTIPOINT_CO
+    - RF_Q_GASEOUSMULTIPOINT_NO2
+    - RF_Q_GASEOUSMULTIPOINT_O3
+    - RF_Q_GASEOUSMULTIPOINT_SO2
+  history_match_fields:
+    RF_HY_O3VALUEPASS:
+      - AVALUE
+    RF_Q_GASEOUSMULTIPOINT_CO:
+      - DEVICECODE
+    RF_Q_GASEOUSMULTIPOINT_NO2:
+      - DEVICECODE
+    RF_Q_GASEOUSMULTIPOINT_O3:
+      - DEVICECODE
+    RF_Q_GASEOUSMULTIPOINT_SO2:
+      - DEVICECODE
   enabled_order_types:
     - Check
     - SupCheck
@@ -67,3 +82,9 @@ device_identity:
     - 报废
     - 停用
     - 启用
+  model_aliases:
+    49IPS:
+      - 49IPS
+      - TE-49IPS
+      - THERMO 49IPS
+      - THERMO SCIENTIFIC 49IPS

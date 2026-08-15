@@ -64,8 +64,7 @@ class NacosLifecycle:
             }
             logger.error("nacos_registration_failed", error_type=type(exc).__name__)
             if self._client is not None:
-                await self._client.shutdown()
-                self._client = None
+                await self._shutdown_client()
             if self.config.environment.strip().lower() == "production":
                 raise
 
@@ -79,9 +78,23 @@ class NacosLifecycle:
                 self._registered = False
                 logger.info("nacos_instance_deregistered")
         finally:
-            await self._client.shutdown()
-            self._client = None
+            await self._shutdown_client()
             app.state.nacos_ready = False
+
+    async def _shutdown_client(self) -> None:
+        """Best-effort close for clients whose internal stop may be non-awaitable."""
+        client = self._client
+        if client is None:
+            return
+        try:
+            await client.shutdown()
+        except Exception as exc:
+            logger.warning(
+                "nacos_client_shutdown_failed",
+                error_type=type(exc).__name__,
+            )
+        finally:
+            self._client = None
 
     def _build_client_config(self):
         builder = (

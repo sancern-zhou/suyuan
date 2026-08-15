@@ -72,6 +72,8 @@ const qrCodeUrl = ref('')
 const loginStatus = ref('waiting')
 const errorMessage = ref('')
 let statusTimer = null
+let statusCheckInFlight = false
+let cleanupInFlight = null
 
 const currentStep = computed(() => getOnboardingStep({
   scanCreated: Boolean(scan.value),
@@ -90,11 +92,29 @@ function revokeQrUrl() {
 }
 
 function stopPolling() {
-  if (statusTimer) clearInterval(statusTimer)
+  if (statusTimer) clearTimeout(statusTimer)
   statusTimer = null
 }
 
+async function cleanupUnfinishedScan() {
+  if (cleanupInFlight) return cleanupInFlight
+  const taskId = scan.value?.task_id
+  if (!taskId || scanConfirmed.value) return
+  stopPolling()
+  cleanupInFlight = authAxios.delete(`/api/social/accounts/weixin/${taskId}`)
+    .catch((error) => {
+      console.warn('Failed to clean unfinished WeChat scan:', error)
+    })
+    .finally(() => {
+      cleanupInFlight = null
+      scan.value = null
+      revokeQrUrl()
+    })
+  return cleanupInFlight
+}
+
 async function startScan() {
+  if (creating.value || scan.value) return
   creating.value = true
   errorMessage.value = ''
   try {
@@ -104,6 +124,7 @@ async function startScan() {
     scan.value = response.data
     await fetchQRCode()
   } catch (error) {
+    stopPolling()
     errorMessage.value = error.response?.data?.detail || error.message || '创建失败，请重试'
   } finally {
     creating.value = false
@@ -122,8 +143,9 @@ async function fetchQRCode() {
     revokeQrUrl()
     qrCodeUrl.value = URL.createObjectURL(response.data)
     stopPolling()
-    statusTimer = setInterval(checkLoginStatus, 3000)
+    statusTimer = setTimeout(checkLoginStatus, 3000)
   } catch (error) {
+    await cleanupUnfinishedScan()
     errorMessage.value = error.response?.data?.detail || error.message || '获取二维码失败'
   } finally {
     qrLoading.value = false
@@ -131,12 +153,16 @@ async function fetchQRCode() {
 }
 
 async function checkLoginStatus() {
-  if (!scan.value?.task_id) return
+  if (!scan.value?.task_id || statusCheckInFlight) return
+  statusCheckInFlight = true
   try {
     const response = await authAxios.get(
       `/api/social/accounts/weixin/${scan.value.task_id}/status`
     )
-    if (!response.data.logged_in) return
+    if (!response.data.logged_in) {
+      statusTimer = setTimeout(checkLoginStatus, 3000)
+      return
+    }
 
     loginStatus.value = 'logging_in'
     stopPolling()
@@ -148,7 +174,11 @@ async function checkLoginStatus() {
     scanConfirmed.value = true
     emit('created')
   } catch (error) {
+    stopPolling()
+    await cleanupUnfinishedScan()
     errorMessage.value = error.response?.data?.detail || error.message || '绑定失败'
+  } finally {
+    statusCheckInFlight = false
   }
 }
 
@@ -163,6 +193,7 @@ async function refreshQRCode() {
     )
     await fetchQRCode()
   } catch (error) {
+    await cleanupUnfinishedScan()
     errorMessage.value = error.response?.data?.detail || error.message || '刷新失败'
   } finally {
     refreshing.value = false
@@ -170,15 +201,9 @@ async function refreshQRCode() {
 }
 
 async function close() {
+  await cleanupUnfinishedScan()
   stopPolling()
   revokeQrUrl()
-  if (scan.value?.task_id && !scanConfirmed.value) {
-    try {
-      await authAxios.delete(`/api/social/accounts/weixin/${scan.value.task_id}`)
-    } catch (error) {
-      console.warn('Failed to clean unfinished WeChat scan:', error)
-    }
-  }
   emit('close')
 }
 
@@ -186,6 +211,8 @@ onMounted(startScan)
 onUnmounted(() => {
   stopPolling()
   revokeQrUrl()
+  // Route changes or parent unmounts must not leave a live temporary channel.
+  void cleanupUnfinishedScan()
 })
 </script>
 

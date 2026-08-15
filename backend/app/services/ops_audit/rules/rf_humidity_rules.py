@@ -70,6 +70,7 @@ def check_rf_environment_humidity_values(
                 "cailb_next_read_num": form.get("CailbNextReadNum"),
                 "standard_read_num": form.get("StandardReadNum"),
                 "remark": form.get("REMARK"),
+                "remark_candidates": {"REMARK": form.get("REMARK")},
                 "needs_semantic_review": bool(str(form.get("REMARK") or "").strip()),
             }
             add_issue(
@@ -78,7 +79,7 @@ def check_rf_environment_humidity_values(
                 "规范性问题",
                 "中",
                 f"rf.{table}.CailbPrevReadNum/CailbNextReadNum",
-                "环境湿度校准前后读数完全一致且无说明，疑似未体现校准效果",
+                "环境湿度校准前后读数完全一致，疑似未体现校准效果",
                 json.dumps(evidence, ensure_ascii=False, default=str),
             )
 

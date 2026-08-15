@@ -92,12 +92,20 @@ def _check_weekly_structured_ranges(
     if allowed_pollutants and pollutant and pollutant not in allowed_pollutants:
         return
 
+    raw_brand = form.get(profile.get("brand_field") or "DEVICEBRAND") or form.get("BRAND")
+    model_text = _profile_model_text(form)
     brand = _normalize_profile_brand(
-        form.get(profile.get("brand_field") or "DEVICEBRAND") or form.get("BRAND"),
+        raw_brand,
         profile.get("brand_aliases", {}),
-        _profile_model_text(form),
+        model_text,
     )
     if not brand:
+        return
+    model_brand = _model_brand_hint(model_text)
+    if model_brand and model_brand != brand:
+        # A conflicting model is stronger evidence that the selected brand
+        # range profile is not trustworthy. Do not turn a profile mismatch
+        # into a business abnormal-value issue.
         return
 
     out_of_spec_values = []
@@ -147,6 +155,9 @@ def _check_weekly_structured_ranges(
                 "max": spec.get("max"),
                 "operator": spec.get("operator"),
                 "unit": spec.get("unit", ""),
+                "raw_unit": raw_unit,
+                "unit_status": unit_status,
+                "unit_source": "value" if raw_unit else "profile_default",
             }
         )
 
@@ -206,6 +217,8 @@ def _add_range_unit_mismatch_issue(
                 "unit": spec_unit,
             }
         ),
+        "report_classification": "technical_diagnostic",
+        "counts_as_work_order_issue": False,
     }
     add_issue(
         issues,
@@ -570,6 +583,23 @@ def _profile_model_text(form: dict[str, Any]) -> str:
         "DEVICEMODELCO",
     )
     return " ".join(str(form.get(field) or "") for field in fields).strip()
+
+
+def _model_brand_hint(model: Any) -> str | None:
+    normalized = re.sub(r"[^A-Z0-9]+", "", str(model or "").upper())
+    if not normalized:
+        return None
+    if re.search(r"(?:^|THERMO|TE)(?:42|43|48|49)I(?:PS)?$", normalized) or any(
+        token in normalized for token in ("SHARP5030", "5014I")
+    ):
+        return "THERMO"
+    if re.fullmatch(r"T(?:100|200|300|400|500)(?:U)?", normalized):
+        return "API"
+    if normalized.startswith("AQMS"):
+        return "FPI"
+    if re.fullmatch(r"200[1-4]H", normalized):
+        return "TH"
+    return None
 
 
 def _is_tianhong_200xh_model(model: Any) -> bool:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
-from app.services.ops_audit.config import load_scoring_config
+from app.services.ops_audit.config import load_scoring_config, review_stage_for_rule
 from app.services.ops_audit.models import Issue
 
 _SCORING = load_scoring_config()
@@ -84,8 +84,14 @@ def apply_rule_pattern_assessment(records: list[dict[str, Any]], rule_patterns: 
         candidate_issues = []
         deterministic_rules = []
         candidate_rules = []
+        technical_diagnostics = []
 
         for issue in record.get("issues", []):
+            if review_stage_for_rule(issue.get("rule_id")) == "technical_diagnostic":
+                issue["pattern_type"] = "technical_diagnostic"
+                issue["assessment"] = "technical_diagnostic"
+                technical_diagnostics.append(issue)
+                continue
             pattern = rule_patterns.get(issue.get("rule_id"), {})
             pattern_type = pattern.get("pattern_type", "candidate_issue")
             if _requires_semantic_assessment(issue):
@@ -108,6 +114,8 @@ def apply_rule_pattern_assessment(records: list[dict[str, Any]], rule_patterns: 
         record["candidate_issue_count"] = len(candidate_issues)
         record["deterministic_issues"] = deterministic_issues
         record["candidate_issues"] = candidate_issues
+        record["technical_diagnostics"] = technical_diagnostics
+        record["technical_diagnostic_count"] = len(technical_diagnostics)
         record["common_pattern_rules"] = []
         record["candidate_rules"] = sorted(set(candidate_rules))
         record["deterministic_rules"] = sorted(set(deterministic_rules))

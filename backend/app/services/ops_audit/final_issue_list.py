@@ -7,6 +7,13 @@ from datetime import datetime
 from typing import Any
 
 from app.services.ops_audit.config import review_stage_for_rule, rules_for_review_stage
+from app.services.ops_audit.field_labels import remark_field_display_name
+from app.services.ops_audit.issue_linking import (
+    ABNORMAL_WITHOUT_EXPLANATION_RULE_ID,
+    VALUE_ABNORMAL_RULE_ID,
+    is_abnormal_fact_rule,
+    issue_link_metadata,
+)
 from app.services.ops_audit.rf_form_names import rf_form_display_name
 
 
@@ -31,7 +38,7 @@ def build_final_issue_list(
             if _should_exclude_issue(issue):
                 continue
             stage = review_stage_for_rule(issue.get("rule_id"))
-            if stage in {"future_ocr", "semantic_remark"}:
+            if stage in {"future_ocr", "semantic_remark", "technical_diagnostic"}:
                 continue
             item = _issue_item(record, issue, stage)
             key = _item_key(item)
@@ -60,6 +67,7 @@ def build_final_issue_list(
         "issue_count": len(items),
         "affected_order_count": len({item["working_order_code"] for item in items if item.get("working_order_code")}),
         "stage_counts": _count_by(items, "review_stage"),
+        "component_counts": _count_present_by(items, "issue_component"),
         "rule_counts": _count_by(items, "rule_id"),
         "items": items,
     }
@@ -72,7 +80,7 @@ def _should_exclude_issue(issue: dict[str, Any]) -> bool:
     if _is_flow_visual_rule(rule_id) and not _flow_visual_issue_can_promote(issue):
         return True
     evidence = _parse_evidence(issue.get("evidence"))
-    if evidence.get("needs_semantic_review") is True:
+    if evidence.get("needs_semantic_review") is True and not is_abnormal_fact_rule(rule_id):
         return True
     reason_rule_id = str(evidence.get("reason_rule_id") or "")
     if reason_rule_id in EXCLUDED_RULE_IDS:
@@ -134,6 +142,14 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
     ):
         if key in evidence_data:
             item[key] = evidence_data[key]
+    link_metadata = issue_link_metadata(issue, working_order_code=record.get("working_order_code"))
+    if link_metadata:
+        item.update(link_metadata)
+        item["review_status"] = (
+            "pending_semantic_review"
+            if link_metadata.get("issue_component") == "abnormal_explanation_issue"
+            else "rule_detected"
+        )
     return item
 
 
@@ -145,6 +161,11 @@ def _semantic_item(
     source_item = _semantic_item_from_source_issue(result, rule_id, record_context)
     if source_item is not None:
         return source_item
+    if rule_id == "RF_ABNORMAL_VALUE_NO_REMARK":
+        # An abnormal-remark conclusion must remain attached to the concrete
+        # range/missing/result issue that caused review. Never synthesize a
+        # standalone business issue after that source was excluded or absent.
+        return None
 
     rf_table = result.get("rf_table") or _rf_table_from_field(result.get("field"))
     return {
@@ -196,7 +217,91 @@ def _semantic_item_from_source_issue(
     base["source"] = "semantic_review"
     base["confidence"] = result.get("confidence")
     _attach_semantic_supplement(base, result, source_issue)
+    if rule_id == ABNORMAL_WITHOUT_EXPLANATION_RULE_ID:
+        base["value_abnormal_message"] = base.get("message")
+        base["message"] = _semantic_problem_description(result) or "异常说明缺失或无效。"
+        base["review_status"] = "semantic_confirmed"
+        _attach_original_remarks(base, result, source_issue)
     return base
+
+
+def _attach_original_remarks(
+    item: dict[str, Any],
+    result: dict[str, Any],
+    source_issue: dict[str, Any],
+) -> None:
+    """Keep the exact remark text beside the semantic conclusion for reporting."""
+
+    evidence = _parse_evidence(source_issue.get("evidence"))
+    has_source_candidates = "remark_candidates" in evidence
+    entries = _remark_entries(evidence.get("remark_candidates"))
+    if not has_source_candidates:
+        remark_review = result.get("remark_review")
+        reviewed_remark = remark_review.get("remark") if isinstance(remark_review, dict) else None
+        fallback_entries = _remark_entries(reviewed_remark, default_field="semantic_review_input")
+        if any(entry["value"].strip() for entry in fallback_entries):
+            entries = fallback_entries
+
+    nonempty_entries = [entry for entry in entries if entry["value"].strip()]
+    item["remark_status"] = "provided" if nonempty_entries else "missing"
+    item["original_remarks"] = [
+        {**entry, "field_label": remark_field_display_name(entry["field"])}
+        for entry in nonempty_entries
+    ]
+    item["original_remark_text"] = "\n".join(entry["value"] for entry in nonempty_entries)
+    remark_review = result.get("remark_review")
+    judgment_type = (
+        str(result.get("remark_judgment") or remark_review.get("judgment_type") or "").strip()
+        if isinstance(remark_review, dict)
+        else str(result.get("remark_judgment") or "").strip()
+    )
+    item["remark_judgment"] = _effective_remark_judgment(judgment_type, nonempty_entries)
+    item["remark_judgment_label"] = _remark_judgment_label(item["remark_judgment"])
+
+
+def _remark_entries(value: Any, *, default_field: str = "remark") -> list[dict[str, str]]:
+    if isinstance(value, dict):
+        candidates = value.items()
+    elif isinstance(value, (list, tuple)):
+        candidates = ((default_field, item) for item in value)
+    elif value is None:
+        candidates = []
+    else:
+        candidates = [(default_field, value)]
+
+    entries: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for field, raw_value in candidates:
+        text = str(raw_value or "")
+        key = (str(field or default_field), text)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append({"field": key[0], "value": text})
+    return entries
+
+
+def _effective_remark_judgment(
+    semantic_judgment: str,
+    entries: list[dict[str, str]],
+) -> str:
+    if not entries:
+        return "missing"
+    if all(entry["value"].strip() in {"/", "-", "--", "无", "未填", "不适用", "无备注", "暂无"} for entry in entries):
+        return "placeholder"
+    if semantic_judgment in {"missing", "placeholder", "unrelated", "contradictory", "valid"}:
+        return semantic_judgment
+    return "unrelated"
+
+
+def _remark_judgment_label(value: str) -> str:
+    return {
+        "missing": "未填写",
+        "placeholder": "占位内容",
+        "unrelated": "与当前异常无关",
+        "contradictory": "与异常证据矛盾",
+        "valid": "有效说明",
+    }.get(value, "说明有效性待确认")
 
 
 def _attach_semantic_supplement(
@@ -224,10 +329,20 @@ def _should_exclude_semantic_source_issue(issue: dict[str, Any]) -> bool:
     rule_id = str(issue.get("rule_id") or "")
     if rule_id in EXCLUDED_RULE_IDS:
         return True
+    if review_stage_for_rule(rule_id) == "technical_diagnostic":
+        return True
     if _is_flow_visual_rule(rule_id) and not _flow_visual_issue_can_promote(issue):
         return True
     evidence = _parse_evidence(issue.get("evidence"))
     reason_rule_id = str(evidence.get("reason_rule_id") or "")
+    if rule_id == "RF_ABNORMAL_VALUE_NO_REMARK" and not reason_rule_id:
+        has_concrete_abnormal_source = bool(
+            evidence.get("rf_table")
+            and (evidence.get("field") or evidence.get("abnormal_field"))
+            and evidence.get("needs_semantic_review") is True
+        )
+        if not has_concrete_abnormal_source:
+            return True
     if reason_rule_id in EXCLUDED_RULE_IDS:
         return True
     if rule_id == "RF_REQUIRED_FIELD_LOW_VALUE":
@@ -422,3 +537,7 @@ def _count_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:
         value = str(item.get(key) or "<unknown>")
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items(), key=lambda entry: entry[0]))
+
+
+def _count_present_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:
+    return _count_by([item for item in items if item.get(key)], key)

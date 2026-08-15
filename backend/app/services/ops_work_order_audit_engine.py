@@ -18,7 +18,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -95,6 +95,9 @@ OUTPUT_DIR = BACKEND / "backend_data_registry" / "memory" / "ops" / "audit"
 logger = logging.getLogger(__name__)
 
 RF_TABLES = [
+    # Only include RF tables that are keyed by WORKINGORDERCODE. Standalone
+    # quality-control ledgers (qa_*) and obsolete/missing form tables must be
+    # queried by their own business keys, not as work-order RF evidence.
     "RF_W_GASEOUSCHECK_CO",
     "RF_W_GASEOUSCHECK_NOX",
     "RF_W_GASEOUSCHECK_O3",
@@ -153,17 +156,9 @@ RF_TABLES = [
     "RF_HY_EnvironmentHumidity",
     "RF_HY_GASEOUSCALIDEVICECHECK",
     "RF_HY_STATIONDEVICEMAINTAIN",
-    "RF_HY_StationMaintainCheck",
     "RF_HY_O3VALUEPASS",
     "RF_HY_VISIBILITYCALI",
     "RF_HY_NOXCONVERSIONRATE",
-    "qa_appraisalcalibrationlog",
-    "qa_appraisalcalibrationmanagem",
-    "qa_calibrationpass",
-    "qa_ozonecalibration",
-    "qa_ozonetransfer",
-    "qa_standardmateriallog",
-    "qa_standardmaterialstorage",
 ]
 
 LOW_VALUE_REMARKS = load_low_value_remarks()
@@ -876,7 +871,12 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
                 """,
                 device_params,
             )
-        device_history = _fetch_device_history(cursor, orders, limit=int(DEVICE_IDENTITY_PROFILE.get("history_limit", 5000)))
+        device_history = _fetch_device_history(
+            cursor,
+            orders,
+            rf_forms,
+            limit=int(DEVICE_IDENTITY_PROFILE.get("history_limit", 500)),
+        )
 
     return {
         "query_info": {
@@ -908,99 +908,233 @@ def fetch_dataset(filter_config: WorkOrderDatasetFilter | int) -> dict[str, Any]
     }
 
 
-def _fetch_device_history(cursor: pyodbc.Cursor, orders: list[dict[str, Any]], limit: int = 5000) -> dict[str, Any]:
-    """Fetch recent same-station history for RF table identity checks."""
+def _history_identity(value: Any) -> str:
+    return str(value or "").strip()
 
-    keyed_orders = [
-        order
+
+def _history_target_tables(rf_forms: dict[str, list[dict[str, Any]]]) -> list[str]:
+    match_fields = DEVICE_IDENTITY_PROFILE.get("history_match_fields", {}) or {}
+    configured = {
+        str(table)
+        for table in DEVICE_IDENTITY_PROFILE.get("history_rf_tables", [])
+        if str(table) in RF_TABLES and match_fields.get(str(table))
+    }
+    return sorted(table for table in configured if rf_forms.get(table))
+
+
+def _history_form_seeds(
+    orders: list[dict[str, Any]],
+    rf_forms: dict[str, list[dict[str, Any]]],
+    target_tables: list[str],
+) -> list[dict[str, Any]]:
+    """Build one earliest cutoff per table, station, and form device identity."""
+
+    orders_by_code = {
+        str(order.get("WORKINGORDERCODE")): order
         for order in orders
         if order.get("WORKINGORDERCODE")
-        and order.get("STATIONID")
-        and parse_time(order.get("CREATETIME"))
-    ]
-    if not keyed_orders:
-        return {"orders": [], "rf_forms": {}, "query_info": {"skipped": True, "reason": "missing_station_or_time"}}
-
-    history_days = int(DEVICE_IDENTITY_PROFILE.get("history_days", 90))
-    per_order_limit = int(DEVICE_IDENTITY_PROFILE.get("previous_same_station_limit", 20) or 20)
-    per_order_limit = max(1, min(per_order_limit, 100))
-    total_limit = max(1, min(limit, 10000))
-    history_orders_by_code: dict[str, dict[str, Any]] = {}
-
-    try:
-        for order in keyed_orders:
-            if len(history_orders_by_code) >= total_limit:
-                break
-            create_time = parse_time(order.get("CREATETIME"))
-            if not create_time:
+    }
+    match_fields = DEVICE_IDENTITY_PROFILE.get("history_match_fields", {}) or {}
+    seeds_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for table in target_tables:
+        for form in rf_forms.get(table, []):
+            order = orders_by_code.get(str(form.get("WORKINGORDERCODE") or ""))
+            if not order:
                 continue
-            params: list[Any] = [
-                order.get("STATIONID"),
-                (create_time - timedelta(days=history_days)).strftime("%Y-%m-%d %H:%M:%S"),
-                create_time.strftime("%Y-%m-%d %H:%M:%S"),
-                order.get("WORKINGORDERCODE"),
-            ]
-            history_rows = rows(
-                cursor,
-                f"""
-                SELECT TOP {per_order_limit}
-                    WORKINGORDERID, STATIONID, DEVICEID, WORKINGORDERCODE,
-                    CREATETIME, UPDATETIME, DDORDERCREATETYPE, DDWORKINGORDERTYPE,
-                    DDURGENCYTYPE, DDWORKINGORDERSTATUS, DDISSUEDTYPE, ORDERTITLE,
-                    ORDERCONTENT, CURRENTWORKFLOWSTATUS, CURRENTWORKFLOWPOINT,
-                    FINISHTIME, PLANFINISHTIME, MAINTENANCETYPE, TOTALOVERTIME,
-                    TOTALEXPENSE
-                FROM dbo.working_orders
-                WHERE STATIONID = ?
-                  AND CREATETIME >= ?
-                  AND CREATETIME < ?
-                  AND WORKINGORDERCODE <> ?
-                  AND DDWORKINGORDERSTATUS = 'Finish'
-                ORDER BY CREATETIME DESC
-                """,
-                params,
-            )
-            for history_order in history_rows:
-                code = history_order.get("WORKINGORDERCODE")
-                if code and code not in history_orders_by_code:
-                    history_orders_by_code[str(code)] = history_order
-                    if len(history_orders_by_code) >= total_limit:
-                        break
-    except Exception as exc:
-        cursor.connection.rollback()
-        return {"orders": [], "rf_forms": {}, "query_info": {"error": str(exc)}}
+            cutoff = parse_time(order.get("CREATETIME"))
+            if not cutoff:
+                continue
+            station_id = _history_identity(form.get("STATIONID") or order.get("STATIONID")).upper()
+            if not station_id:
+                continue
+            for field in match_fields.get(table, []):
+                field = str(field)
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field):
+                    continue
+                device_key = _history_identity(form.get(field)).upper()
+                if not device_key or device_key in {"/", "-", "N.A", "N.A."}:
+                    continue
+                key = (table, station_id, device_key)
+                previous = seeds_by_key.get(key)
+                if previous is None or cutoff < previous["cutoff"]:
+                    seeds_by_key[key] = {
+                        "table": table,
+                        "station_id": station_id,
+                        "device_key": device_key,
+                        "match_field": str(field),
+                        "cutoff": cutoff,
+                    }
+                break
 
-    history_orders = list(history_orders_by_code.values())
+    return sorted(
+        seeds_by_key.values(),
+        key=lambda seed: (seed["table"], seed["station_id"], seed["device_key"]),
+    )
 
-    history_codes = [row["WORKINGORDERCODE"] for row in history_orders if row.get("WORKINGORDERCODE")]
-    history_rf_forms: dict[str, list[dict[str, Any]]] = {}
-    if history_codes:
-        code_placeholders = ", ".join("?" for _ in history_codes)
-        for table in RF_TABLES:
-            try:
-                table_rows = rows(
-                    cursor,
-                    f"""
-                    SELECT TOP {max(1, min(limit, 10000))} *
-                    FROM dbo.{table}
-                    WHERE WORKINGORDERCODE IN ({code_placeholders})
-                    """,
-                    history_codes,
-                )
-                history_rf_forms[table], _ = _select_rf_forms_with_filter_stats(table, table_rows)
-            except Exception as exc:
-                history_rf_forms[table], _ = _select_rf_forms_with_filter_stats(table, [{"_query_error": str(exc)}])
-                cursor.connection.rollback()
+
+_HISTORY_ORDER_ALIASES = {
+    "WORKINGORDERID": "HISTORY_WO_WORKINGORDERID",
+    "STATIONID": "HISTORY_WO_STATIONID",
+    "DEVICEID": "HISTORY_WO_DEVICEID",
+    "WORKINGORDERCODE": "HISTORY_WO_WORKINGORDERCODE",
+    "CREATETIME": "HISTORY_WO_CREATETIME",
+    "UPDATETIME": "HISTORY_WO_UPDATETIME",
+    "DDORDERCREATETYPE": "HISTORY_WO_DDORDERCREATETYPE",
+    "DDWORKINGORDERTYPE": "HISTORY_WO_DDWORKINGORDERTYPE",
+    "DDURGENCYTYPE": "HISTORY_WO_DDURGENCYTYPE",
+    "DDWORKINGORDERSTATUS": "HISTORY_WO_DDWORKINGORDERSTATUS",
+    "DDISSUEDTYPE": "HISTORY_WO_DDISSUEDTYPE",
+    "ORDERTITLE": "HISTORY_WO_ORDERTITLE",
+    "ORDERCONTENT": "HISTORY_WO_ORDERCONTENT",
+    "CURRENTWORKFLOWSTATUS": "HISTORY_WO_CURRENTWORKFLOWSTATUS",
+    "CURRENTWORKFLOWPOINT": "HISTORY_WO_CURRENTWORKFLOWPOINT",
+    "FINISHTIME": "HISTORY_WO_FINISHTIME",
+    "PLANFINISHTIME": "HISTORY_WO_PLANFINISHTIME",
+    "MAINTENANCETYPE": "HISTORY_WO_MAINTENANCETYPE",
+    "TOTALOVERTIME": "HISTORY_WO_TOTALOVERTIME",
+    "TOTALEXPENSE": "HISTORY_WO_TOTALEXPENSE",
+}
+
+
+def _history_order_from_form_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: row.get(alias)
+        for field, alias in _HISTORY_ORDER_ALIASES.items()
+    }
+
+
+def _history_form_from_joined_row(row: dict[str, Any]) -> dict[str, Any]:
+    aliases = set(_HISTORY_ORDER_ALIASES.values()) | {"HISTORY_RANK"}
+    return {key: value for key, value in row.items() if key not in aliases}
+
+
+def _fetch_device_history(
+    cursor: pyodbc.Cursor,
+    orders: list[dict[str, Any]],
+    rf_forms: dict[str, list[dict[str, Any]]],
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Fetch a bounded history for the same devices and selected RF tables."""
+
+    target_tables = _history_target_tables(rf_forms)
+    if not target_tables:
+        return {
+            "orders": [],
+            "rf_forms": {},
+            "query_info": {"skipped": True, "reason": "no_configured_history_forms_in_batch"},
+        }
+
+    seeds = _history_form_seeds(orders, rf_forms, target_tables)
+    if not seeds:
+        return {
+            "orders": [],
+            "rf_forms": {},
+            "query_info": {
+                "skipped": True,
+                "reason": "missing_device_identity",
+                "history_rf_tables": target_tables,
+            },
+        }
+
+    total_limit = max(1, min(int(limit or 500), 1000))
+    per_device_limit = max(
+        1,
+        min(int(DEVICE_IDENTITY_PROFILE.get("recent_per_device_limit", 5) or 5), 20),
+    )
+    seed_batch_size = 250
+    history_orders_by_code: dict[str, dict[str, Any]] = {}
+    history_rf_forms: dict[str, list[dict[str, Any]]] = {table: [] for table in target_tables}
+    query_batch_count = 0
+    for table in target_tables:
+        table_seeds = [seed for seed in seeds if seed["table"] == table]
+        for match_field in sorted({str(seed["match_field"]) for seed in table_seeds}):
+            field_seeds = [seed for seed in table_seeds if seed["match_field"] == match_field]
+            for offset in range(0, len(field_seeds), seed_batch_size):
+                batch = field_seeds[offset : offset + seed_batch_size]
+                seed_selects: list[str] = []
+                params: list[Any] = []
+                for seed in batch:
+                    seed_selects.append(
+                        "SELECT CAST(? AS NVARCHAR(128)) AS STATIONID, "
+                        "CAST(? AS NVARCHAR(256)) AS DEVICE_KEY, CAST(? AS DATETIME2) AS CUTOFF"
+                    )
+                    params.extend(
+                        [
+                            seed["station_id"],
+                            seed["device_key"],
+                            seed["cutoff"].strftime("%Y-%m-%d %H:%M:%S"),
+                        ]
+                    )
+                try:
+                    query_batch_count += 1
+                    joined_rows = rows(
+                        cursor,
+                        f"""
+                        WITH form_device_seeds AS (
+                            {" UNION ALL ".join(seed_selects)}
+                        ), ranked_history AS (
+                            SELECT
+                                rf.*,
+                                {", ".join(f"wo.{field} AS {alias}" for field, alias in _HISTORY_ORDER_ALIASES.items())},
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY seed.STATIONID, seed.DEVICE_KEY
+                                    ORDER BY wo.CREATETIME DESC, wo.WORKINGORDERID DESC
+                                ) AS HISTORY_RANK
+                            FROM dbo.{table} rf
+                            JOIN dbo.working_orders wo
+                              ON wo.WORKINGORDERCODE = rf.WORKINGORDERCODE
+                            JOIN form_device_seeds seed
+                              ON UPPER(LTRIM(RTRIM(CAST(rf.STATIONID AS NVARCHAR(128))))) = seed.STATIONID
+                             AND UPPER(LTRIM(RTRIM(CAST(rf.{match_field} AS NVARCHAR(256))))) = seed.DEVICE_KEY
+                            WHERE wo.CREATETIME < seed.CUTOFF
+                              AND wo.DDWORKINGORDERSTATUS = 'Finish'
+                        )
+                        SELECT TOP {total_limit} *
+                        FROM ranked_history
+                        WHERE HISTORY_RANK <= {per_device_limit}
+                        ORDER BY HISTORY_WO_CREATETIME DESC, HISTORY_WO_WORKINGORDERID DESC
+                        """,
+                        params,
+                    )
+                    for joined_row in joined_rows:
+                        history_order = _history_order_from_form_row(joined_row)
+                        code = str(history_order.get("WORKINGORDERCODE") or "")
+                        if code and code not in history_orders_by_code:
+                            history_orders_by_code[code] = history_order
+                        history_rf_forms[table].append(_history_form_from_joined_row(joined_row))
+                except Exception as exc:
+                    history_rf_forms[table].append({"_query_error": str(exc)})
+                    cursor.connection.rollback()
+
+        history_rf_forms[table], _ = _select_rf_forms_with_filter_stats(table, history_rf_forms[table])
+
+    history_orders = sorted(
+        history_orders_by_code.values(),
+        key=lambda order: parse_time(order.get("CREATETIME")) or datetime.min,
+        reverse=True,
+    )[:total_limit]
+    allowed_codes = {
+        str(order.get("WORKINGORDERCODE"))
+        for order in history_orders
+        if order.get("WORKINGORDERCODE")
+    }
+    for table, forms in history_rf_forms.items():
+        history_rf_forms[table] = [
+            form
+            for form in forms
+            if form.get("_query_error") or str(form.get("WORKINGORDERCODE") or "") in allowed_codes
+        ]
 
     return {
         "orders": history_orders,
         "rf_forms": history_rf_forms,
         "query_info": {
-            "strategy": "previous_same_station",
-            "history_days": history_days,
-            "previous_same_station_limit": per_order_limit,
-            "seed_order_count": len(keyed_orders),
-            "station_count": len({str(order.get("STATIONID")) for order in keyed_orders}),
+            "strategy": "previous_same_form_device",
+            "history_rf_tables": target_tables,
+            "recent_per_device_limit": per_device_limit,
+            "history_limit": total_limit,
+            "seed_identity_count": len(seeds),
+            "query_batch_count": query_batch_count,
             "order_count": len(history_orders),
         },
     }
@@ -1674,6 +1808,7 @@ def audit_dataset(
     records = []
     record_issues_by_code: dict[str, list[Issue]] = {}
     flow_visual_tasks: list[dict[str, Any]] = []
+    attachment_read_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
     for order in dataset.get("orders", []):
         code = order.get("WORKINGORDERCODE")
         station_meta = station_meta_by_id.get(str(order.get("STATIONID") or ""), {})
@@ -1743,6 +1878,7 @@ def audit_dataset(
             attachments_by_code.get(str(code), []),
             wo_commonfile_by_code.get(str(code), []),
             issues,
+            attachment_read_cache=attachment_read_cache,
         )
         check_o3_transfer_quality_values(order, forms, issues)
         if enable_visual:
@@ -1820,6 +1956,7 @@ def audit_dataset(
     issue_counter = Counter()
     deterministic_issue_counter = Counter()
     candidate_issue_counter = Counter()
+    technical_diagnostic_counter = Counter()
     severity_counter = Counter()
     category_counter = Counter()
     assessment_counter = Counter()
@@ -1828,13 +1965,19 @@ def audit_dataset(
     attachment_issue_count = 0
     attachment_review_candidate_count = 0
     for record in records:
+        record["raw_issue_count"] = record.get("issue_count", len(record.get("issues", [])))
+        record["issue_count"] = record.get("scoring_issue_count", 0)
         if record.get("attachment_review_required"):
             attachment_review_candidate_count += 1
         for issue in record["issues"]:
+            assessment = issue.get("assessment", "unclassified_issue")
+            assessment_counter[assessment] += 1
+            if assessment == "technical_diagnostic":
+                technical_diagnostic_counter[issue["rule_id"]] += 1
+                continue
             issue_counter[issue["rule_id"]] += 1
             severity_counter[issue["severity"]] += 1
             category_counter[issue["category"]] += 1
-            assessment_counter[issue.get("assessment", "unclassified_issue")] += 1
             if issue["rule_id"] == "RF_DEVICE_IDENTITY_INCONSISTENT":
                 device_consistency_issue_count += 1
             if str(issue["rule_id"]).startswith("ATTACHMENT_"):
@@ -1858,6 +2001,8 @@ def audit_dataset(
             "top_rules": issue_counter.most_common(20),
             "deterministic_top_rules": deterministic_issue_counter.most_common(20),
             "candidate_top_rules": candidate_issue_counter.most_common(20),
+            "technical_diagnostic_top_rules": technical_diagnostic_counter.most_common(20),
+            "technical_diagnostic_count": sum(technical_diagnostic_counter.values()),
             "common_patterns": [],
             "device_consistency_issue_count": device_consistency_issue_count,
             "attachment_issue_count": attachment_issue_count,

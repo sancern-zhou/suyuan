@@ -99,6 +99,18 @@ class EventClaimStorage:
         with self._locked():
             return self._read(path) if path.exists() else None
 
+    def list_by_status(self, status: ClaimStatus) -> list[EventClaim]:
+        """List durable claims in a given state, oldest first."""
+        with self._locked():
+            claims = [
+                self._read(path)
+                for path in self.claims_dir.glob("*.json")
+            ]
+        return sorted(
+            (claim for claim in claims if claim.status == status),
+            key=lambda claim: claim.created_at,
+        )
+
     def mark_status(
         self,
         claim_id: str,

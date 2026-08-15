@@ -9,6 +9,8 @@ from typing import Dict, Optional, Any
 
 import structlog
 
+from app.utils.path_config import get_social_dir
+
 logger = structlog.get_logger(__name__)
 
 
@@ -21,7 +23,7 @@ class SessionMapper:
 
     Persistence:
         - PostgreSQL table: social_session_mappings
-        - Fallback: JSON file backend_data_registry/social/session_mappings.json
+        - Fallback: JSON file in the active project's social data directory
     """
 
     def __init__(self, db_manager=None, data_dir: str | None = None):
@@ -33,7 +35,7 @@ class SessionMapper:
             data_dir: Fallback data directory for JSON persistence
         """
         self.db_manager = db_manager
-        self.data_dir = Path(data_dir or "backend_data_registry/social")
+        self.data_dir = Path(data_dir) if data_dir is not None else get_social_dir()
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.mappings_file = self.data_dir / "session_mappings.json"
 

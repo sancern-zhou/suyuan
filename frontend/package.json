@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vite build --mode standalone",
     "build:standalone": "vite build --mode standalone",
+    "build:jiangsu-ops": "PROJECT=jiangsu-ops VITE_BUILD_OUT_DIR=dist-jiangsu-ops vite build --mode standalone",
     "build:gateway": "vite build --mode production",
     "preview": "vite preview",
     "test:project-config": "node --test scripts/projectManifest.test.mjs src/config/projectConfig.test.js src/router/projectRoutes.test.js src/components/sidebarProjectModules.test.js",

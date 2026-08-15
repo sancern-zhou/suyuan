@@ -77,6 +77,22 @@ def test_upper_standard_fields_match_after_text_date_and_formula_normalization(t
     assert _check(_form(), [_attachment(path)]) == []
 
 
+def test_upper_standard_fields_match_abbreviated_date_range_and_model_alias(tmp_path):
+    path = tmp_path / "o3-abbreviated-date.xlsx"
+    _workbook(
+        path,
+        model="TE-49ips",
+        transfer_date="2025.10.22~10.24",
+    )
+
+    form = _form(
+        DELIVER6VALUE="49IPS",
+        WORKDENSITY6VALUE="2025/10/22-24",
+    )
+
+    assert _check(form, [_attachment(path)]) == []
+
+
 def test_upper_standard_device_number_mismatch_is_deterministic(tmp_path):
     path = tmp_path / "o3.xlsx"
     _workbook(path, serial_number="CM20457343")

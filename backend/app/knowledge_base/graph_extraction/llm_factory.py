@@ -39,7 +39,11 @@ class ProjectLLMAdapter(CustomLLM):
         )
 
     def _knowledge_base_model_tier(self):
-        use_model_tier = getattr(self.llm_service, "use_model_tier", None)
+        use_model_tier = getattr(
+            self.llm_service,
+            "use_balanced_model_tier",
+            None,
+        ) or getattr(self.llm_service, "use_model_tier", None)
         if not callable(use_model_tier):
             return nullcontext()
         from config.settings import settings

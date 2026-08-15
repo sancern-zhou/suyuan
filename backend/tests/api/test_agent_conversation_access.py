@@ -8,7 +8,7 @@ from app.auth.models import CurrentUser
 from app.agent.session.models import Session
 from config.settings import settings
 from app.conversations import ConversationSource
-from app.routers.agent import (
+from app.api.agent import (
     AgentAnalyzeRequest,
     AgentSteerRequest,
     analyze_stream,
@@ -120,7 +120,7 @@ async def test_reusing_session_requires_write_access_before_body_processing():
 async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_absent(monkeypatch):
     catalog = LookupCatalog()
     manager = LookupSessionManager()
-    monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
+    monkeypatch.setattr("app.api.agent.get_session_manager", lambda: manager)
 
     response = await analyze_stream(
         AgentAnalyzeRequest(
@@ -144,7 +144,7 @@ async def test_new_client_session_id_is_allowed_when_catalog_and_source_are_abse
 async def test_uncataloged_existing_source_session_cannot_be_claimed(monkeypatch):
     catalog = LookupCatalog()
     manager = LookupSessionManager(session=object())
-    monkeypatch.setattr("app.routers.agent.get_session_manager", lambda: manager)
+    monkeypatch.setattr("app.api.agent.get_session_manager", lambda: manager)
 
     with pytest.raises(HTTPException) as exc:
         await analyze_stream(

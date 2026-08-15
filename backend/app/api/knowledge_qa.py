@@ -1,0 +1,1045 @@
+"""
+知识问答专家路由（单专家简化版）
+
+专门用于知识库问答场景：
+1. 问题拆解（可选）
+2. 向量检索召回
+3. LLM生成回答
+4. 流式返回结果
+5. 连续对话历史管理
+
+不使用ReAct流程，直接RAG + LLM
+"""
+
+import json
+import re
+import structlog
+import asyncio
+import time
+from typing import Optional, List
+from collections import OrderedDict
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.database import get_db
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+from app.knowledge_base.conversation_store import (
+    ConversationAccessDenied,
+    ConversationStore,
+    get_conversation_store,
+)
+from app.knowledge_base.models import ConversationSessionStatus
+from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.schemas import ConversationSource
+from app.conversations.service import ConversationCatalogService
+from app.core.sse import create_sse_response
+from app.knowledge_base.retrieval_utils import deduplicate_results_by_content
+
+logger = structlog.get_logger()
+router = APIRouter(prefix="/api/knowledge-qa", tags=["Knowledge QA"])
+
+
+# ========================================
+# Request/Response Models
+# ========================================
+
+class KnowledgeQARequest(BaseModel):
+    """知识问答请求"""
+    query: str = Field(..., description="用户问题")
+    session_id: Optional[str] = Field(None, description="会话ID（可选，用于上下文连贯）")
+    knowledge_base_ids: Optional[List[str]] = Field(
+        default=None,
+        description="指定知识库ID列表（可选，默认使用用户所有可访问的知识库）"
+    )
+    top_k: int = Field(default=3, ge=1, le=20, description="检索返回的最大结果数")
+    score_threshold: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="检索结果相似度阈值（可选）"
+    )
+    use_reranker: Optional[bool] = Field(default=None, description="兼容旧参数：是否强制使用Reranker精排")
+    rerank_mode: str = Field(default="never", description="Reranker精排模式：auto/always/never，默认never")
+
+
+class ConversationHistoryResponse(BaseModel):
+    """对话历史响应"""
+    session_id: str
+    title: str
+    status: str
+    total_turns: int
+    turns: List[dict]
+    created_at: str
+    updated_at: str
+
+
+class SessionListResponse(BaseModel):
+    """会话列表响应"""
+    sessions: List[dict]
+    total: int
+
+
+class KnowledgeQAResponse(BaseModel):
+    """知识问答响应（非流式）"""
+    answer: str = Field(..., description="LLM生成的回答")
+    session_id: str = Field(..., description="会话ID")
+    sources: List[dict] = Field(default=[], description="检索到的知识源")
+    elapsed_ms: int = Field(..., description="处理耗时(毫秒)")
+
+
+# ========================================
+# HyDE 假设答案生成函数
+# ========================================
+
+_HYDE_CACHE_TTL_SECONDS = 3600
+_HYDE_CACHE_MAX_SIZE = 256
+_hyde_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+
+
+def _dedupe_search_results(results: List[dict]) -> List[dict]:
+    """合并召回结果，同一分块只保留得分更高的一条，并记录命中路由。"""
+    results = deduplicate_results_by_content(results)
+    deduped: "OrderedDict[tuple, dict]" = OrderedDict()
+    for item in results:
+        kb_info = item.get("knowledge_base", {}) or {}
+        metadata = item.get("metadata", {}) or {}
+        key = (
+            kb_info.get("id"),
+            item.get("document_id"),
+            item.get("chunk_index"),
+            metadata.get("chunk_id"),
+            (item.get("content") or "")[:120]
+        )
+        route = item.get("retrieval_route", "unknown")
+        existing = deduped.get(key)
+        if not existing:
+            item["retrieval_routes"] = [route]
+            deduped[key] = item
+            continue
+
+        existing_routes = existing.setdefault("retrieval_routes", [])
+        if route not in existing_routes:
+            existing_routes.append(route)
+        if float(item.get("score") or 0) > float(existing.get("score") or 0):
+            item["retrieval_routes"] = existing_routes
+            deduped[key] = item
+
+    return list(deduped.values())
+
+
+def _get_cached_hyde_keywords(query: str) -> Optional[str]:
+    cached = _hyde_cache.get(query)
+    if not cached:
+        return None
+
+    cached_at, keywords = cached
+    if time.time() - cached_at > _HYDE_CACHE_TTL_SECONDS:
+        _hyde_cache.pop(query, None)
+        return None
+
+    _hyde_cache.move_to_end(query)
+    return keywords
+
+
+def _set_cached_hyde_keywords(query: str, keywords: str) -> None:
+    _hyde_cache[query] = (time.time(), keywords)
+    _hyde_cache.move_to_end(query)
+    while len(_hyde_cache) > _HYDE_CACHE_MAX_SIZE:
+        _hyde_cache.popitem(last=False)
+
+
+def _normalize_mode(value, default: str, allowed: set[str]) -> str:
+    if isinstance(value, bool):
+        return "always" if value else "never"
+    mode = str(value or default).strip().lower()
+    aliases = {
+        "true": "always",
+        "false": "never",
+        "yes": "always",
+        "no": "never",
+        "on": "always",
+        "off": "never",
+    }
+    mode = aliases.get(mode, mode)
+    return mode if mode in allowed else default
+
+
+def _is_precise_knowledge_query(query: str) -> bool:
+    """标准号、文件号、英文缩写等精确查询优先走原始 hybrid recall。"""
+    patterns = [
+        r"\b(HJ|GB|GB/T|HJ/T|DB\d*|ISO|IEC)\s*[\dA-Z]+(?:[-—]\d{2,4})?\b",
+        r"(环办|环发|环监|国办发|国务院|生态环境部).{0,12}\d{2,4}",
+        r"\b[A-Z]{2,}\d{0,4}\b",
+    ]
+    return any(re.search(pattern, query, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _should_generate_hyde_keywords(query: str, mode: str) -> tuple[bool, Optional[str]]:
+    if mode == "never":
+        return False, "disabled"
+    if mode == "always":
+        return True, None
+    if _is_precise_knowledge_query(query):
+        return False, "precise_query"
+
+    compact_query = re.sub(r"\s+", "", query)
+    has_question_word = any(word in query for word in ("怎么", "如何", "怎么算", "是什么", "哪个", "哪里", "为何", "为什么"))
+    if len(compact_query) <= 18 or has_question_word:
+        return True, None
+    return False, "auto_not_needed"
+
+
+async def generate_hypothetical_keywords(query: str) -> str:
+    """
+    使用LLM生成检索关键词（HyDE优化版）
+
+    原理：提取原始query中的专业术语，并生成同义词、相关概念
+    避免生成描述性summary，减少与原始query的重复
+
+    Args:
+        query: 用户问题
+
+    Returns:
+        关键词字符串（逗号分隔）
+    """
+    from app.services.llm_service import llm_service
+
+    cached_keywords = _get_cached_hyde_keywords(query)
+    if cached_keywords is not None:
+        logger.info("hyde_cache_hit", query=query[:100], keywords=cached_keywords[:200])
+        return cached_keywords
+
+    hyde_prompt = f"""你是一位环境监测领域的专家。请从问题中提取核心检索关键词。
+
+问题：{query}
+
+要求：
+1. 提取5-10个核心关键词/短语
+2. 优先包含标准号、条款名、表名、公式名、指标名、英文缩写
+3. 添加同义词或相关概念（如"点位"→"监测点"、"采样点"；"空气质量指数"→"AQI"、"分指数"、"首要污染物"）
+4. 对环境标准/技术规范问题，补充可能出现的标准写法（如"HJ 633"、"HJ633-2026"、"GB 3095"）
+5. 不要生成完整句子，只要关键词
+
+只返回JSON数组：
+["关键词1", "关键词2", "关键词3", "同义词1", "相关概念"]"""
+
+    try:
+        keywords = await llm_service.call_llm_with_json_response(
+            prompt=hyde_prompt,
+            max_retries=1
+        )
+
+        if not isinstance(keywords, list):
+            logger.warning("hyde_invalid_format", query=query[:50], result=keywords)
+            return ""
+
+        keywords = [str(item).strip() for item in keywords if str(item).strip()]
+
+        if not keywords:
+            logger.warning("hyde_empty_keywords", query=query[:50])
+            return ""
+
+        keywords_text = ", ".join(keywords)
+        logger.info(
+            "hyde_keywords_generated",
+            query=query[:100],
+            keywords=keywords_text[:200]
+        )
+        _set_cached_hyde_keywords(query, keywords_text)
+        return keywords_text
+    except Exception as e:
+        logger.warning("hyde_generation_failed", error=str(e), query=query[:50])
+        return ""
+
+
+# ========================================
+# 知识库检索函数（修复版 - 独立会话 + 超时控制）
+# ========================================
+
+async def search_knowledge_bases(
+    query: str,
+    user_id: Optional[str] = None,
+    knowledge_base_ids: Optional[List[str]] = None,
+    top_k: int = 5,
+    score_threshold: Optional[float] = None,
+    use_reranker: bool | str = "never",
+    use_hyde: bool | str = False  # 是否使用HyDE关键词增强；不再双路检索
+) -> List[dict]:
+    """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
+    from app.db.database import async_session
+    from sqlalchemy import select
+    from app.knowledge_base.models import Document, KnowledgeBase as KBModel, KnowledgeBaseStatus
+    from app.knowledge_base.service import KnowledgeBaseService
+
+    # 使用独立会话，检索完成后立即关闭
+    async with async_session() as db:
+        service = KnowledgeBaseService(db=db)
+
+        # 如果没有指定知识库，自动使用所有可用的知识库
+        kb_ids = knowledge_base_ids or []
+        if not kb_ids:
+            try:
+                all_kbs = await service.list_knowledge_bases(
+                    user_id=user_id,
+                    include_public=True,
+                    status=KnowledgeBaseStatus.ACTIVE
+                )
+                kb_ids = [kb.id for kb in all_kbs]
+                logger.info(
+                    "auto_selected_all_knowledge_bases",
+                    query=query[:50],
+                    kb_count=len(kb_ids),
+                    kb_ids=kb_ids[:5]  # 只记录前5个
+                )
+            except Exception as e:
+                logger.error("failed_to_list_knowledge_bases", error=str(e))
+                return []
+
+            # 如果仍然没有知识库，返回空结果
+            if not kb_ids:
+                logger.info("no_available_knowledge_bases", query=query[:50])
+                return []
+
+        async def run_search_route(route: str, route_query: str) -> tuple[List[dict], float]:
+            route_started_at = time.time()
+            async with async_session() as route_db:
+                route_service = KnowledgeBaseService(db=route_db)
+                route_results = await route_service.search(
+                    query=route_query,
+                    user_id=user_id,
+                    knowledge_base_ids=kb_ids,
+                    top_k=top_k,
+                    score_threshold=score_threshold,
+                    filters=None,
+                    use_reranker=use_reranker,
+                    use_graph_retrieval=False,
+                )
+            route_elapsed = (time.time() - route_started_at) * 1000
+            for item in route_results:
+                item["retrieval_route"] = route
+                item["retrieval_route_query"] = route_query
+                item["retrieval_route_elapsed_ms"] = round(route_elapsed, 2)
+            return route_results, route_elapsed
+
+        # HyDE按需生成补充关键词后拼入同一次检索，不再 original/hyde 双路各检索、各 rerank。
+        hyde_mode = _normalize_mode(use_hyde, "never", {"auto", "always", "never"})
+        should_use_hyde, hyde_skipped_reason = _should_generate_hyde_keywords(query, hyde_mode)
+        hyde_used = False
+        hyde_keywords = ""
+        hyde_elapsed = 0.0
+        retrieval_routes = ["original"]
+
+        try:
+            retrieval_started_at = time.time()
+            route_elapsed_ms = {}
+            effective_query = query
+            route_name = "original"
+
+            if should_use_hyde:
+                hyde_start = time.time()
+                hyde_keywords = await generate_hypothetical_keywords(query)
+                hyde_elapsed = (time.time() - hyde_start) * 1000
+                hyde_used = bool(hyde_keywords)
+                if hyde_keywords:
+                    effective_query = f"{query}\n补充关键词：{hyde_keywords}"
+                    route_name = "hyde_augmented"
+                    retrieval_routes = [route_name]
+                else:
+                    hyde_skipped_reason = "keyword_generation_empty"
+
+                logger.info(
+                    "hyde_single_route_applied",
+                    original_query=query[:100],
+                    hyde_keywords=hyde_keywords.strip()[:200],
+                    routes=retrieval_routes,
+                    hyde_elapsed_ms=round(hyde_elapsed, 2)
+                )
+
+            route_results = [
+                await asyncio.wait_for(
+                    run_search_route(route_name, effective_query),
+                    timeout=30.0
+                )
+            ]
+
+            raw_results = []
+            for route_items, route_elapsed in route_results:
+                raw_results.extend(route_items)
+                if route_items:
+                    route_name = route_items[0].get("retrieval_route", "unknown")
+                    route_elapsed_ms[route_name] = round(route_elapsed, 2)
+
+            results = _dedupe_search_results(raw_results)
+            results.sort(key=lambda x: x.get("score", 0), reverse=True)
+            results = results[:top_k]
+            retrieval_elapsed = (time.time() - retrieval_started_at) * 1000
+
+            # 格式化结果，添加文档信息
+            doc_ids = [r.get("document_id") for r in results if r.get("document_id")]
+            docs_map = {}
+            if doc_ids:
+                doc_result = await db.execute(
+                    select(Document).where(Document.id.in_(doc_ids))
+                )
+                docs_map = {doc.id: doc for doc in doc_result.scalars().all()}
+
+            formatted_results = []
+            for r in results:
+                doc_id = r.get("document_id")
+                kb_info = r.get("knowledge_base", {})
+                doc = docs_map.get(doc_id) if doc_id else None
+                document_info = r.get("document", {}) or {}
+                metadata = r.get("metadata", {}) or {}
+                chunk_metadata = metadata.get("chunk_metadata", {}) or {}
+                if doc and not document_info:
+                    has_original_file = bool(
+                        doc.original_file_oid or
+                        (doc.file_storage_type == "local" and doc.file_path)
+                    )
+                    document_info = {
+                        "id": doc.id,
+                        "filename": doc.filename,
+                        "file_type": doc.file_type,
+                        "file_size": doc.file_size,
+                        "file_storage_type": doc.file_storage_type,
+                        "file_mime_type": doc.file_mime_type,
+                        "has_original_file": has_original_file,
+                    }
+                    kb_id = kb_info.get("id")
+                    if has_original_file and kb_id:
+                        document_info["download_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/download"
+                        document_info["preview_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/preview"
+
+                formatted_results.append({
+                    "content": r.get("original_content") or r.get("content", ""),
+                    "original_content": r.get("original_content") or r.get("content", ""),
+                    "context_prefix": r.get("context_prefix", ""),
+                    "embedding_text": r.get("embedding_text", ""),
+                    "score": r.get("score", 0),
+                    "rerank_score": r.get("rerank_score"),
+                    "original_score": r.get("original_score"),
+                    "document_id": doc_id,
+                    "document_name": document_info.get("filename") or (doc.filename if doc else ""),
+                    "document": document_info,
+                    "has_original_file": document_info.get("has_original_file", False),
+                    "download_url": document_info.get("download_url"),
+                    "preview_url": document_info.get("preview_url"),
+                    "knowledge_base_id": kb_info.get("id"),
+                    "knowledge_base_name": kb_info.get("name", ""),
+                    "chunk_index": r.get("chunk_index"),
+                    "section": chunk_metadata.get("section") or metadata.get("section"),
+                    "topic": chunk_metadata.get("topic") or metadata.get("topic"),
+                    "metadata": metadata,
+                    "hyde_used": hyde_used,  # 标记是否使用HyDE
+                    "retrieval_route": r.get("retrieval_route"),
+                    "retrieval_routes": r.get("retrieval_routes", []),
+                    "retrieval_metadata": {
+                        "route_queries": {
+                            "original": query,
+                            "effective": effective_query,
+                            "hyde_keywords": hyde_keywords or None
+                        },
+                        "hyde_keywords": hyde_keywords,
+                        "hyde_used": hyde_used,
+                        "hyde_skipped_reason": hyde_skipped_reason,
+                        "hyde_elapsed_ms": round(hyde_elapsed, 2),
+                        "retrieval_elapsed_ms": round(retrieval_elapsed, 2),
+                        "retrieval_routes": retrieval_routes,
+                        "route_elapsed_ms": route_elapsed_ms,
+                        "raw_result_count": len(raw_results),
+                        "result_count": len(results),
+                        "top_k": top_k,
+                        "use_reranker": use_reranker
+                    }
+                })
+
+            return formatted_results
+
+        except asyncio.TimeoutError:
+            logger.warning("knowledge_search_timeout", query=query[:50])
+            return []
+        except Exception as e:
+            logger.error("knowledge_search_failed", error=str(e))
+            return []
+
+
+# ========================================
+# 构建RAG Prompt（支持连续对话）
+# ========================================
+
+def build_rag_prompt(
+    query: str,
+    contexts: List[dict],
+    conversation_history: str = ""
+) -> str:
+    """
+    构建RAG增强的Prompt
+
+    Args:
+        query: 当前用户问题
+        contexts: 检索到的参考资料
+        conversation_history: 历史对话文本（可选，LLM 会自动理解指代和上下文）
+    """
+    context_texts = []
+    for i, ctx in enumerate(contexts, 1):
+        source_info = ""
+        if ctx.get("knowledge_base_name"):
+            source_info = f"[来源: {ctx['knowledge_base_name']}"
+            if ctx.get("document_name"):
+                source_info += f" - {ctx['document_name']}"
+            source_info += "]"
+        elif ctx.get("document_name"):
+            source_info = f"[来源: {ctx['document_name']}]"
+
+        context_texts.append(f"""【参考资料 {i}】{source_info}
+{ctx.get('content', '')}""")
+
+    context_str = "\n\n".join(context_texts)
+
+    # 构建Prompt
+    prompt_parts = []
+
+    # 系统提示
+    prompt_parts.append("你是一个专业的知识问答助手，负责回答用户关于大气污染、数据分析等问题。")
+
+    # 连续对话说明
+    if conversation_history:
+        prompt_parts.append(f"""## 重要：当前是连续对话
+
+=== 对话历史 ===
+{conversation_history}
+=== 历史结束 ===
+
+**你必须遵守的规则**：
+1. 这是连续对话，用户当前问题可能是对上文某个话题的追问
+2. 首先根据对话历史理解用户的真实意图，特别是"它/这个/最X/怎么做"等指代
+3. **检索到的参考资料仅作为专业知识参考**，如果历史中已有相关信息，优先使用历史的上下文回答
+4. 不要重复回答与历史问题相同的内容，追问直接给出答案""")
+
+    # 用户问题
+    prompt_parts.append(f"""## 当前问题
+{query}""")
+
+    # 参考资料
+    if contexts:
+        prompt_parts.append(f"""## 参考资料
+以下是检索到的相关参考资料（按相关度排序）：
+
+{context_str}""")
+        prompt_parts.append("""## 回答要求
+1. 优先使用参考资料中的信息进行回答
+2. 如果是追问，直接回答问题，不需要重复背景信息
+3. 保持回答简洁、准确、专业
+4. 如果涉及多个来源的信息，请综合分析后给出答案
+
+## 开始回答""")
+    else:
+        # 无参考资料时，直接让LLM基于自身知识回答
+        prompt_parts.append("""## 回答要求
+请直接基于你自己的知识回答用户的问题。
+如果问题超出你的知识范围，诚实地说明你不知道，但可以给出合理的推测或建议进一步查询。
+
+## 开始回答""")
+
+    return "\n\n".join(prompt_parts)
+
+
+# ========================================
+# 流式生成回答（支持连续对话）- 真正流式版本
+# ========================================
+
+async def generate_streaming_answer(
+    query: str,
+    contexts: List[dict],
+    session_id: str,
+    conversation_store: ConversationStore,
+    user_id: Optional[str] = None
+):
+    """
+    流式生成回答（支持连续对话历史）- 真正流式输出
+
+    Args:
+        query: 用户问题
+        contexts: 检索到的参考资料
+        session_id: 会话ID
+        conversation_store: 对话存储服务
+        user_id: 用户ID
+    """
+    from app.services.llm_service import llm_service
+
+    # 获取对话历史
+    turns = await conversation_store.get_recent_turns(session_id, limit=10)
+    conversation_history = conversation_store.build_history_for_rag(turns)
+
+    # 构建Prompt（LLM 自己会理解历史和指代）
+    prompt = build_rag_prompt(
+        query=query,
+        contexts=contexts,
+        conversation_history=conversation_history
+    )
+
+    try:
+        # 发送开始事件
+        yield f"data: {json.dumps({'type': 'start', 'data': {'session_id': session_id}}, ensure_ascii=False)}\n\n"
+
+        # 使用真正的流式调用，直接yield每个chunk
+        import httpx
+
+        url, headers = llm_service._get_request_config()
+        payload = {
+            "model": llm_service.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        full_answer = ""
+
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+
+                    # 处理SSE格式
+                    if line.startswith("data: "):
+                        data_str = line[len("data: "):].strip()
+                        if data_str == "[DONE]":
+                            break
+
+                        try:
+                            chunk = json.loads(data_str)
+                            choices = chunk.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {}) or choices[0].get("message", {})
+                                content = delta.get("content") or ""
+                                if content:
+                                    full_answer += content
+                                    yield f"data: {json.dumps({'type': 'answer_delta', 'data': {'delta': content, 'session_id': session_id}}, ensure_ascii=False)}\n\n"
+                        except Exception:
+                            continue
+
+        # 发送完成事件（包含sources信息）
+        complete_data = {
+            'type': 'complete',
+            'data': {
+                'session_id': session_id,
+                'answer': full_answer,
+                'sources': contexts,
+                'sources_count': len(contexts),
+                'timestamp': datetime.now().isoformat()
+            }
+        }
+        yield f"data: {json.dumps(complete_data, ensure_ascii=False, default=str)}\n\n"
+
+        # 保存对话轮次（用户问题）
+        await conversation_store.add_turn(
+            session_id=session_id,
+            role="user",
+            content=query,
+            query_metadata={"knowledge_base_ids": None, "top_k": len(contexts) if contexts else 0}
+        )
+
+        # 保存对话轮次（AI回答）
+        await conversation_store.add_turn(
+            session_id=session_id,
+            role="assistant",
+            content=full_answer,
+            sources=contexts,
+            sources_count=len(contexts)
+        )
+
+        logger.info(
+            "conversation_turns_saved",
+            session_id=session_id,
+            user_query_len=len(query),
+            answer_len=len(full_answer),
+            sources_count=len(contexts)
+        )
+
+    except Exception as e:
+        logger.error("streaming_answer_failed", error=str(e))
+        error_event = {
+            'type': 'fatal_error',
+            'data': {
+                'error': str(e),
+                'session_id': session_id
+            }
+        }
+        yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+
+# ========================================
+# API Endpoints（简化版）
+# ========================================
+
+@router.post("/stream")
+async def knowledge_qa_stream(
+    request: KnowledgeQARequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """
+    知识问答流式接口（推荐使用）
+
+    流程：
+    1. 接收用户问题
+    2. 获取或创建会话
+    3. 检索知识库获取相关文档（RAG）
+    4. 将问题+检索结果+历史发送给LLM
+    5. 流式返回LLM回答
+    6. 保存对话轮次
+
+    **事件类型**:
+    - `start`: 问答开始
+    - `answer_delta`: 回答内容增量
+    - `complete`: 问答完成（包含sources）
+    - `fatal_error`: 致命错误
+    """
+    start_time = time.time()
+
+    user_id = user.id
+
+    # 获取或创建会话
+    conversation_store = await get_conversation_store(db)
+    try:
+        session_id, existing_turns, is_new = await conversation_store.get_or_create_session(
+            session_id=request.session_id,
+            user_id=user_id,
+            knowledge_base_ids=request.knowledge_base_ids,
+            first_query=request.query,
+            owner_username=user.username,
+            owner_display_name=user.display_name,
+        )
+    except ConversationAccessDenied as exc:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+
+    logger.info(
+        "knowledge_qa_request",
+        query=request.query[:100],
+        session_id=session_id,
+        is_new_session=is_new,
+        existing_turns=len(existing_turns),
+        knowledge_base_ids=request.knowledge_base_ids,
+        top_k=request.top_k
+    )
+
+    try:
+        # Step 1: 按需HyDE关键词增强 + 检索知识库（使用独立会话，超时控制）
+        search_start = time.time()
+        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
+
+        contexts = await search_knowledge_bases(
+            query=request.query,
+            user_id=user_id,
+            knowledge_base_ids=request.knowledge_base_ids,
+            top_k=request.top_k,
+            score_threshold=request.score_threshold,
+            use_reranker=reranker_setting,
+            use_hyde="auto"
+        )
+
+        search_elapsed = (time.time() - search_start) * 1000
+        logger.info(
+            "knowledge_search_completed",
+            results_count=len(contexts),
+            elapsed_ms=round(search_elapsed, 2)
+        )
+
+        # Step 2: 流式生成回答（传入conversation_store）
+        # 如果没有检索到结果，仍让LLM基于自身知识回答
+        async def event_generator():
+            try:
+                async for event in generate_streaming_answer(
+                    query=request.query,
+                    contexts=contexts,
+                    session_id=session_id,
+                    conversation_store=conversation_store,
+                    user_id=user_id
+                ):
+                    yield event
+            except Exception as e:
+                logger.error("event_generation_failed", error=str(e))
+                error_event = {
+                    'type': 'fatal_error',
+                    'data': {
+                        'error': str(e),
+                        'session_id': session_id
+                    }
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+        return create_sse_response(event_generator())
+
+    except Exception as e:
+        logger.error("knowledge_qa_failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"知识问答失败: {str(e)}"
+        )
+
+
+@router.post("", response_model=KnowledgeQAResponse)
+async def knowledge_qa_non_stream(
+    request: KnowledgeQARequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """
+    知识问答非流式接口（简化版）
+
+    流程：
+    1. 检索知识库
+    2. LLM生成回答
+    3. 返回完整结果
+    """
+    start_time = time.time()
+
+    user_id = user.id
+
+    # 生成会话ID
+    session_id = request.session_id or f"kqa_{int(time.time() * 1000)}"
+
+    try:
+        # 检索知识库（按需HyDE关键词增强，按需Reranker精排）
+        reranker_setting = request.use_reranker if request.use_reranker is not None else request.rerank_mode
+        contexts = await search_knowledge_bases(
+            query=request.query,
+            user_id=user_id,
+            knowledge_base_ids=request.knowledge_base_ids,
+            top_k=request.top_k,
+            score_threshold=request.score_threshold,
+            use_reranker=reranker_setting,
+            use_hyde="auto"
+        )
+
+        # 构建Prompt
+        prompt = build_rag_prompt(request.query, contexts)
+
+        # 调用LLM生成回答
+        from app.services.llm_service import llm_service
+        answer = await llm_service.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=4096
+        )
+
+        elapsed_ms = round((time.time() - start_time) * 1000)
+
+        # 格式化来源
+        sources = []
+        for ctx in contexts:
+            sources.append({
+                "content": ctx.get("content", "")[:200] + "...",
+                "source": ctx.get("knowledge_base_name", "") + "/" + ctx.get("document_name", ""),
+                "score": ctx.get("score", 0)
+            })
+
+        return KnowledgeQAResponse(
+            answer=answer or "抱歉，我没有找到相关的信息来回答您的问题。",
+            session_id=session_id,
+            sources=sources,
+            elapsed_ms=elapsed_ms
+        )
+
+    except Exception as e:
+        logger.error("knowledge_qa_non_stream_failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"知识问答失败: {str(e)}"
+        )
+
+
+@router.get("/health")
+async def knowledge_qa_health():
+    """健康检查"""
+    return {
+        "status": "healthy",
+        "service": "knowledge-qa-expert",
+        "description": "知识问答专家服务 - 基于RAG的智能问答系统"
+    }
+
+
+# ========================================
+# 会话管理 API
+# ========================================
+
+@router.get("/history/list")
+async def list_user_sessions(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    user_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """列出当前用户的会话；管理员可列出全部会话。"""
+    conversation_store = await get_conversation_store(db)
+
+    status_filter = None
+    if status:
+        try:
+            status_filter = ConversationSessionStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="无效的状态值")
+
+    if user.is_admin:
+        sessions = await conversation_store.list_all_sessions(
+            status=status_filter, limit=limit, offset=offset
+        )
+    else:
+        sessions = await conversation_store.list_user_sessions(
+            user_id=user.id,
+            status=status_filter,
+            limit=limit,
+            offset=offset
+        )
+
+    return {
+        "sessions": [
+            {
+                "session_id": s.id,
+                "title": s.title,
+                "status": s.status.value,
+                "total_turns": s.total_turns,
+                "last_query": s.last_query,
+                "created_at": s.created_at.isoformat(),
+                "updated_at": s.updated_at.isoformat()
+            }
+            for s in sessions
+        ],
+        "total": len(sessions)
+    }
+
+
+@router.get("/history/{session_id}")
+async def get_conversation_history(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """
+    获取对话历史
+
+    返回会话的所有对话轮次
+    """
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    conversation_store = await get_conversation_store(db)
+    session = await conversation_store.get_session(session_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    turns = await conversation_store.get_all_turns(session_id)
+
+    return {
+        "session_id": session.id,
+        "title": session.title,
+        "status": session.status.value,
+        "total_turns": session.total_turns,
+        "turns": [
+            {
+                "turn_index": turn.turn_index,
+                "role": turn.role,
+                "content": turn.content,
+                "sources": turn.sources,
+                "sources_count": turn.sources_count,
+                "created_at": turn.created_at.isoformat()
+            }
+            for turn in turns
+        ],
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat()
+    }
+
+
+@router.get("/history/{session_id}/recent")
+async def get_recent_turns(
+    session_id: str,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """
+    获取最近的对话轮次
+
+    Args:
+        session_id: 会话ID
+        limit: 返回数量（默认10）
+    """
+    row = await catalog.require_read(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    conversation_store = await get_conversation_store(db)
+    turns = await conversation_store.get_recent_turns(session_id, limit=limit)
+
+    return {
+        "session_id": session_id,
+        "turns": [
+            {
+                "turn_index": turn.turn_index,
+                "role": turn.role,
+                "content": turn.content,
+                "sources": turn.sources,
+                "sources_count": turn.sources_count,
+                "created_at": turn.created_at.isoformat()
+            }
+            for turn in turns
+        ]
+    }
+
+
+@router.delete("/history/{session_id}")
+async def delete_conversation_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """
+    删除会话
+
+    级联删除所有对话轮次
+    """
+    row = await catalog.require_write(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    conversation_store = await get_conversation_store(db)
+    success = await conversation_store.delete_session(session_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    await catalog.delete(session_id)
+
+    return {"message": "会话已删除", "session_id": session_id}
+
+
+@router.post("/history/{session_id}/archive")
+async def archive_conversation_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """
+    归档会话
+    """
+    row = await catalog.require_write(session_id, user)
+    if row.source != ConversationSource.KNOWLEDGE_QA:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    conversation_store = await get_conversation_store(db)
+    success = await conversation_store.archive_session(session_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="会话不存在")
+
+    return {"message": "会话已归档", "session_id": session_id}

@@ -71,27 +71,30 @@ def check_rf_calibration_dates(
             if pair.get("prev_must_not_after_reference") and prev_field and prev_time and prev_time > reference_time:
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "prev_after_reference"))
                 continue
-            if next_field and next_time and next_time <= reference_time:
+            # 校准有效期字段按自然日记录；截止日当天仍有效，不能因为截止日期
+            # 被解析为 00:00:00 而把当天稍后的检查误判为过期。
+            if next_field and next_time and next_time.date() < reference_time.date():
                 violations.append(_violation(pair, prev_field, next_field, prev_time, next_time, reference_time, "not_after_reference"))
         if not violations:
             continue
 
-        evidence = {
-            "working_order_code": order.get("WORKINGORDERCODE"),
-            "rf_table": table,
-            "reference_time": _format_time(reference_time),
-            "violations": violations[:20],
-        }
-        first = violations[0]
-        add_issue(
-            issues,
-            RULE_ID,
-            "时间合理性",
-            "高",
-            f"rf.{table}.{first.get('next_field') or first.get('prev_field')}",
-            f"RF表单校准有效期异常: {first.get('description') or first.get('label')}",
-            json.dumps(evidence, ensure_ascii=False, default=str),
-        )
+        for violation in violations[:20]:
+            evidence = {
+                "working_order_code": order.get("WORKINGORDERCODE"),
+                "rf_table": table,
+                "reference_time": _format_time(reference_time),
+                "violation": violation,
+                "violations": [violation],
+            }
+            add_issue(
+                issues,
+                RULE_ID,
+                "时间合理性",
+                "高",
+                f"rf.{table}.{violation.get('next_field') or violation.get('prev_field')}",
+                f"RF表单校准有效期异常: {violation.get('description') or violation.get('label')}",
+                json.dumps(evidence, ensure_ascii=False, default=str),
+            )
 
 
 def _is_o3_multipoint_no_cylinder_pair(

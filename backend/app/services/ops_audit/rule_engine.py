@@ -43,7 +43,7 @@ def run_rule_engine(
         enable_visual=enable_visual,
         visual_evidence_dir=output_dir / "visual_evidence" / "multipoint_curves",
     )
-    audit["evidence"] = build_dataset_evidence(dataset, evidence_level=evidence_level)
+    audit["evidence"] = build_dataset_evidence(dataset, audit=audit, evidence_level=evidence_level)
     semantic_candidates = build_semantic_candidates(audit)
     semantic_review_tasks = build_semantic_review_tasks(audit)
     semantic_review_results = build_semantic_review_results(audit, dataset)

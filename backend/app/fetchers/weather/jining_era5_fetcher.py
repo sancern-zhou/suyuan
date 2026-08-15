@@ -4,14 +4,16 @@ ERA5 Data Fetcher (Jining City Version)
 定时获取济宁市ERA5历史气象数据并存入数据库
 支持站点级数据抓取
 """
-from typing import List, Tuple, Dict
-from datetime import datetime, timedelta
 import asyncio
+from datetime import datetime, timedelta
+from typing import Dict, List
+
 import structlog
 
-from app.fetchers.base.fetcher_interface import DataFetcher
-from app.external_apis.openmeteo_client import OpenMeteoClient
+from app.config.weather_targets import resolve_weather_city_target
 from app.db.repositories.weather_repo import WeatherRepository
+from app.external_apis.openmeteo_client import OpenMeteoClient
+from app.fetchers.base.fetcher_interface import DataFetcher
 
 logger = structlog.get_logger()
 
@@ -48,11 +50,13 @@ class JiningERA5Fetcher(DataFetcher):
             "1353A": {"name": "任和路", "lat": 35.4566, "lon": 116.6075},
         }
 
-        # 济宁市中心点（城市预报中心点）
+        # 济宁市中心点来自共享气象目标目录，查询工具使用同一份定义。
+        city_target = resolve_weather_city_target("济宁市")
+        if city_target is None or city_target.era5_point is None:
+            raise RuntimeError("共享气象目标目录缺少济宁市 ERA5 代表点")
         self.city_center = {
             "name": "济宁市中区(城市预报中心点)",
-            "lat": 35.4143,
-            "lon": 116.5871
+            **city_target.era5_point,
         }
 
     async def fetch_and_store(self):

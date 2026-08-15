@@ -206,27 +206,29 @@ def _add_missing_issue(
     issues: list[Issue],
     filename_semantic_review: dict[str, Any] | None = None,
 ) -> None:
-    evidence = {
-        "working_order_code": order.get("WORKINGORDERCODE"),
-        "requirement_id": requirement.get("id"),
-        "requirement_name": requirement.get("name"),
-        "required_types": requirement.get("required_types", []),
-        "missing_types": missing_types,
-        "attachment_count": inventory["attachment_count"],
-        "type_counts": inventory["type_counts"],
-        "sample_attachments": inventory["items"][:8],
-    }
-    if filename_semantic_review:
-        evidence["filename_semantic_review"] = filename_semantic_review
-    add_issue(
-        issues,
-        "ATTACHMENT_REQUIRED_MISSING",
-        "附件清单",
-        str(requirement.get("severity") or "高"),
-        f"attachment.{requirement.get('id')}.missing",
-        f"{requirement.get('name') or '必需附件'}缺失：{', '.join(missing_types)}",
-        json.dumps(evidence, ensure_ascii=False, default=str),
-    )
+    for missing_type in missing_types:
+        evidence = {
+            "working_order_code": order.get("WORKINGORDERCODE"),
+            "requirement_id": requirement.get("id"),
+            "requirement_name": requirement.get("name"),
+            "required_types": requirement.get("required_types", []),
+            "missing_type": missing_type,
+            "missing_types": [missing_type],
+            "attachment_count": inventory["attachment_count"],
+            "type_counts": inventory["type_counts"],
+            "sample_attachments": inventory["items"][:8],
+        }
+        if filename_semantic_review:
+            evidence["filename_semantic_review"] = filename_semantic_review
+        add_issue(
+            issues,
+            "ATTACHMENT_REQUIRED_MISSING",
+            "附件清单",
+            str(requirement.get("severity") or "高"),
+            f"attachment.{requirement.get('id')}.{missing_type}.missing",
+            f"{requirement.get('name') or '必需附件'}缺失：{missing_type}",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
 
 
 def _add_report_only_photo_issue(
@@ -417,7 +419,17 @@ def _attachment_descriptor(record: dict[str, Any]) -> str:
 
 
 def _descriptor_file_name(descriptor: str) -> str:
-    return descriptor.replace("\\", "/").split("/")[-1].split()[0] if descriptor else ""
+    if not descriptor:
+        return ""
+    # 保留带空格的完整文件名；扩展名提取由 metadata classifier 统一处理。
+    match = re.search(
+        r"([^\\/\r\n]*\.(?:jpg|jpeg|png|bmp|gif|webp|heic|pdf|doc|docx|xls|xlsx))(?=\s|$|/)",
+        str(descriptor),
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip()
+    return descriptor.replace("\\", "/").split("/")[-1].strip()
 
 
 def _name_fields() -> list[str]:

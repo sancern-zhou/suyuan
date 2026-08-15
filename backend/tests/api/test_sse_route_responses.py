@@ -6,8 +6,8 @@ from sse_starlette import EventSourceResponse
 from sse_starlette.sse import AppStatus
 
 from app.auth.models import CurrentUser
-from app.routers import agent, knowledge_qa, report_generation
-from app.routers.expert_deliberation import run_deliberation_stream
+from app.api import agent, knowledge_qa, report_generation
+from app.api.expert_deliberation import run_deliberation_stream
 from app.services.expert_deliberation import ExpertDeliberationEngine
 from app.services.expert_deliberation.schemas import (
     DeliberationRequest,

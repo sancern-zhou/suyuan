@@ -456,7 +456,12 @@ class CreateReportPackageTool(LLMTool):
                     },
                     "qmd_content": {
                         "type": "string",
-                        "description": "完整 report.qmd；规则见 references/index.md。",
+                        "description": (
+                            "必填。完整 report.qmd 正文内容（含 frontmatter 与正文）；"
+                            "规则见 references/index.md。必须直接传入完整 QMD 文本，"
+                            "不要只传标题/描述。仅在程序化调用（定时任务）时可用 "
+                            "source_qmd_path 替代。"
+                        ),
                     },
                     "source_qmd_path": {
                         "type": "string",
@@ -519,6 +524,9 @@ class CreateReportPackageTool(LLMTool):
                         "default": True,
                     },
                 },
+                # qmd_content is mandatory for LLM callers; source_qmd_path/qmd_path
+                # are only accepted for backwards compatibility with scheduled jobs
+                # that call execute() programmatically (bypassing this schema).
                 "required": ["report_id", "qmd_content"],
             },
         }
@@ -526,7 +534,7 @@ class CreateReportPackageTool(LLMTool):
     async def execute(
         self,
         report_id: str,
-        qmd_content: str,
+        qmd_content: str | None = None,
         source_qmd_path: str | None = None,
         title: str | None = None,
         report_type: str | None = None,
@@ -539,6 +547,60 @@ class CreateReportPackageTool(LLMTool):
         **kwargs,
     ) -> Dict[str, Any]:
         safe_id = _safe_report_id(report_id)
+
+        # Older callers supplied only the path of the QMD written by
+        # write_file.  Keep that workflow working instead of allowing Python
+        # to raise a bare missing-argument TypeError.  ``qmd_path`` is also
+        # accepted as an alias used by the original report package examples.
+        input_qmd_path = source_qmd_path or kwargs.get("qmd_path")
+        if qmd_content is None:
+            if input_qmd_path:
+                try:
+                    candidate_qmd = resolve_agent_path(input_qmd_path)
+                    if candidate_qmd.exists() and candidate_qmd.is_file():
+                        qmd_content = candidate_qmd.read_text(encoding="utf-8")
+                        # Preserve the source metadata path below.  The
+                        # package still writes its own report.qmd publication.
+                        source_qmd_path = input_qmd_path
+                    else:
+                        return {
+                            "success": False,
+                            "data": {
+                                "error": f"QMD source file not found: {input_qmd_path}",
+                                "report_id": safe_id,
+                            },
+                            "metadata": {
+                                "generator": "create_report_package",
+                                "schema_version": "report_package.v1",
+                            },
+                            "summary": "报告包创建失败：未找到 QMD 源文件。",
+                        }
+                except (OSError, UnicodeDecodeError, ValueError) as exc:
+                    return {
+                        "success": False,
+                        "data": {
+                            "error": f"Unable to read QMD source file {input_qmd_path}: {exc}",
+                            "report_id": safe_id,
+                        },
+                        "metadata": {
+                            "generator": "create_report_package",
+                            "schema_version": "report_package.v1",
+                        },
+                        "summary": "报告包创建失败：无法读取 QMD 源文件。",
+                    }
+            else:
+                return {
+                    "success": False,
+                    "data": {
+                        "error": "Missing required qmd_content (or source_qmd_path/qmd_path)",
+                        "report_id": safe_id,
+                    },
+                    "metadata": {
+                        "generator": "create_report_package",
+                        "schema_version": "report_package.v1",
+                    },
+                    "summary": "报告包创建失败：请提供 qmd_content 或 QMD 源文件路径。",
+                }
         unsupported_r_features = _find_unsupported_r_qmd_features(qmd_content)
         if unsupported_r_features:
             return _unsupported_r_qmd_result(safe_id, unsupported_r_features)

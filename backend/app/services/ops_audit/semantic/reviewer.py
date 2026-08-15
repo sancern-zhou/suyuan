@@ -31,6 +31,7 @@ from app.services.ops_audit.semantic.prompts import (
     REMARK_REVIEW_PROMPT,
     REMARK_SEMANTIC_JSON_PROMPT,
 )
+from app.services.ops_audit.issue_linking import issue_link_metadata
 
 
 REMARK_REVIEW_RULE_IDS = rules_for_review_stage("semantic_remark")
@@ -58,16 +59,17 @@ STATION_MAINTAIN_TYPE_DEFINITIONS = {
 
 
 def review_remark_semantic(remark: str, context: dict | None = None) -> dict[str, Any]:
-    """Judge whether a remark explains cause, action and result."""
+    """Judge whether a remark is relevant to the current review point and evidence-consistent."""
 
     remark_text = str(remark or "").strip()
     if not remark_text:
         return {
+            "judgment_type": "missing",
             "is_complete": False,
             "has_cause": False,
             "has_action": False,
             "has_result": False,
-            "problem_description": "备注为空，未说明原因、处置措施和处理结果。",
+            "problem_description": "未填写与当前审核点相关的说明。",
             "confidence": 0.0,
         }
 
@@ -684,11 +686,13 @@ def _review_remark_tasks_batch(
         return {}
     items = []
     text_by_code = {}
+    remark_text_by_item = {}
     results: dict[str, dict[str, Any]] = {}
     for task in tasks:
         code = str(task.get("working_order_code") or "")
         review_item_id = str(task.get("review_item_id") or code)
         issue_payload = _generic_remark_issue_payload(task)
+        remark_text_by_item[review_item_id] = _remark_candidates_text(issue_payload.get("remark_candidates"))
         relevant_forms = _rf_forms_for_issue(rf_forms_by_code.get(code, []), issue_payload.get("rf_table"))
         text = _compose_review_text(dataset_orders.get(code, {}), details_by_code.get(code, []), relevant_forms)
         text_by_code[review_item_id] = text
@@ -726,7 +730,7 @@ def _review_remark_tasks_batch(
         if review_item_id in results:
             continue
         raw_result = parsed_by_item.get(review_item_id) or parsed_by_code.get(code, {})
-        parsed = _normalize_remark_result(raw_result, text_by_code.get(review_item_id, ""))
+        parsed = _normalize_remark_result(raw_result, remark_text_by_item.get(review_item_id, ""))
         judgment, conclusion, confidence = _judge_semantic_result("remark_semantics", parsed, [], task)
         results[review_item_id] = _build_semantic_task_result(
             task,
@@ -742,6 +746,17 @@ def _review_remark_tasks_batch(
     return results
 
 
+def _remark_candidates_text(value: Any) -> str:
+    if not isinstance(value, dict):
+        return str(value or "").strip()
+    lines = []
+    for _field, raw_value in value.items():
+        text = str(raw_value or "").strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines)
+
+
 def _deterministic_remark_semantic_result(
     task: dict[str, Any],
     audit_record: dict[str, Any],
@@ -752,6 +767,7 @@ def _deterministic_remark_semantic_result(
     if not explanation:
         return None
     remark_review = {
+        "judgment_type": "valid",
         "is_complete": True,
         "has_cause": True,
         "has_action": True,
@@ -1167,6 +1183,7 @@ def _build_semantic_task_result(
         "judgment": judgment,
         "conclusion": conclusion,
         "confidence": confidence,
+        "remark_judgment": remark_review.get("judgment_type") if isinstance(remark_review, dict) else None,
         "remark_review": remark_review,
         "order_description_review": order_description_review,
         "attachment_reviews": attachment_reviews,
@@ -1365,13 +1382,16 @@ def _normalize_remark_result(raw: dict[str, Any], remark: str) -> dict[str, Any]
     has_cause = bool(raw.get("has_cause"))
     has_action = bool(raw.get("has_action"))
     has_result = bool(raw.get("has_result"))
-    is_complete = bool(raw.get("is_complete")) if "is_complete" in raw else all([has_cause, has_action, has_result])
+    reported_complete = bool(raw.get("is_complete")) if "is_complete" in raw else all([has_cause, has_action, has_result])
+    judgment_type = _normalize_remark_judgment_type(raw, remark, reported_complete)
+    is_complete = judgment_type == "valid"
     confidence = _bounded_confidence(raw.get("confidence"), default=0.75 if is_complete else 0.55)
     problem_description = str(
         raw.get("problem_description")
-        or _remark_problem_description(has_cause, has_action, has_result)
+        or _remark_judgment_problem_description(judgment_type)
     ).strip()
     return {
+        "judgment_type": judgment_type,
         "is_complete": is_complete,
         "has_cause": has_cause,
         "has_action": has_action,
@@ -1403,14 +1423,16 @@ def _heuristic_remark_semantic(remark: str) -> dict[str, Any]:
     cause = _contains_any(remark, SEMANTIC_PROFILES["remark_keywords"]["cause"])
     action = _contains_any(remark, SEMANTIC_PROFILES["remark_keywords"]["action"])
     result = _contains_any(remark, SEMANTIC_PROFILES["remark_keywords"]["result"])
-    is_complete = cause and action and result
-    confidence = 0.7 if is_complete else 0.45 if sum([cause, action, result]) >= 2 else 0.25
+    judgment_type = "placeholder" if _is_placeholder_remark(remark) else "valid"
+    is_complete = judgment_type == "valid"
+    confidence = 0.7 if is_complete else 0.8
     return {
+        "judgment_type": judgment_type,
         "is_complete": is_complete,
         "has_cause": cause,
         "has_action": action,
         "has_result": result,
-        "problem_description": _remark_problem_description(cause, action, result),
+        "problem_description": _remark_judgment_problem_description(judgment_type),
         "confidence": confidence,
         "remark": remark,
     }
@@ -1475,6 +1497,32 @@ def _attachment_problem_description(issues: list[str], attachment_type: str) -> 
 
 def _build_evidence_summary(record: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
     sample_issues = _sample_issues_covering_rules(issues, limit=8)
+    target_group_ids = {
+        metadata["issue_group_id"]
+        for issue in issues
+        if (metadata := issue_link_metadata(issue, working_order_code=record.get("working_order_code")))
+    }
+    split_issues = [
+        _issue_with_link_metadata(issue, record.get("working_order_code"))
+        for issue in record.get("scoring_issues", [])
+    ]
+    if target_group_ids:
+        split_issues = [
+            issue for issue in split_issues if issue.get("issue_group_id") in target_group_ids
+        ]
+    value_abnormal_issues = [
+        issue for issue in split_issues if issue.get("issue_component") == "value_abnormal"
+    ]
+    abnormal_fact_issues = [
+        issue
+        for issue in split_issues
+        if issue.get("issue_component") in {"value_abnormal", "value_missing", "abnormal_fact", "data_suspect"}
+    ]
+    abnormal_explanation_issues = [
+        issue
+        for issue in split_issues
+        if issue.get("issue_component") == "abnormal_explanation_issue"
+    ]
     return {
         "audit_level": record.get("audit_level"),
         "issue_count": len(issues),
@@ -1486,7 +1534,15 @@ def _build_evidence_summary(record: dict[str, Any], issues: list[dict[str, Any]]
         "rf_tables": record.get("rf_tables", []),
         "matched_rules": sorted({issue.get("rule_id") for issue in issues}),
         "sample_issues": sample_issues,
+        "abnormal_fact_issues": abnormal_fact_issues,
+        "value_abnormal_issues": value_abnormal_issues,
+        "abnormal_explanation_issues": abnormal_explanation_issues,
     }
+
+
+def _issue_with_link_metadata(issue: dict[str, Any], working_order_code: Any) -> dict[str, Any]:
+    metadata = issue_link_metadata(issue, working_order_code=working_order_code)
+    return {**issue, **metadata} if metadata else dict(issue)
 
 
 def _sample_issues_covering_rules(issues: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
@@ -1725,9 +1781,17 @@ def _judge_semantic_result(
             if remark_complete:
                 return "cleared", "工单主表描述虽较泛化，但结合工单类型、周期或RF表可支持任务识别。", min(0.92, float(remark_review.get("confidence", 0.7)) + 0.1)
             return "confirmed_issue", "工单主表描述不足，缺少作业对象、作业类型或任务目的。", min(0.92, float(remark_review.get("confidence", 0.6)) + 0.15)
-        if remark_complete:
-            return "cleared", "备注语义完整，可支持当前语义复核点。", min(0.92, float(remark_review.get("confidence", 0.7)) + 0.1)
-        return "confirmed_issue", "备注语义不完整，缺少原因、措施或结果。", min(0.92, float(remark_review.get("confidence", 0.6)) + 0.15)
+        judgment_type = str(
+            remark_review.get("judgment_type")
+            or ("valid" if remark_complete else "unrelated")
+        )
+        if judgment_type == "valid":
+            return "cleared", "备注与当前异常相关且不与证据矛盾，可作为有效说明。", min(0.92, float(remark_review.get("confidence", 0.7)) + 0.1)
+        return (
+            "confirmed_issue",
+            _remark_judgment_problem_description(judgment_type),
+            min(0.92, float(remark_review.get("confidence", 0.6)) + 0.15),
+        )
     if review_kind == "attachment_visual":
         if has_attachment_complete:
             return "cleared", "附件内容未见明显缺陷。", 0.8
@@ -1904,6 +1968,45 @@ def _remark_problem_description(has_cause: bool, has_action: bool, has_result: b
     if not missing:
         return "备注已覆盖原因、处置措施和处理结果。"
     return f"备注未说明{ '、'.join(missing) }。"
+
+
+REMARK_JUDGMENT_TYPES = {"missing", "placeholder", "unrelated", "contradictory", "valid"}
+REMARK_PLACEHOLDERS = {"", "/", "-", "--", "无", "未填", "不适用", "无备注", "暂无"}
+
+
+def _normalize_remark_judgment_type(
+    raw: dict[str, Any],
+    remark: str,
+    reported_complete: bool,
+) -> str:
+    value = str(raw.get("judgment_type") or raw.get("remark_judgment") or "").strip().lower()
+    if value in REMARK_JUDGMENT_TYPES:
+        return value
+    if not str(remark or "").strip():
+        return "missing"
+    if _is_placeholder_remark(remark):
+        return "placeholder"
+    if reported_complete:
+        return "valid"
+    problem = str(raw.get("problem_description") or "")
+    if any(token in problem for token in ("矛盾", "冲突", "不一致")):
+        return "contradictory"
+    return "unrelated"
+
+
+def _is_placeholder_remark(value: Any) -> bool:
+    parts = [part.strip().lower() for part in str(value or "").splitlines() if part.strip()]
+    return bool(parts) and all(re.sub(r"\s+", "", part) in REMARK_PLACEHOLDERS for part in parts)
+
+
+def _remark_judgment_problem_description(judgment_type: str) -> str:
+    return {
+        "missing": "未填写与当前异常相关的说明。",
+        "placeholder": "备注仅为占位内容，未提供有效说明。",
+        "unrelated": "备注内容与当前异常无关，不能解释该异常。",
+        "contradictory": "备注内容与当前异常证据矛盾。",
+        "valid": "备注与当前异常相关且不与证据矛盾，可作为有效说明。",
+    }.get(judgment_type, "备注未能有效说明当前异常。")
 
 
 def _bounded_confidence(value: Any, *, default: float) -> float:
