@@ -865,6 +865,20 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.warning("tool_import_failed", tool="schedule_task", error=str(e))
 
     try:
+        from app.tools.exam.exam_practice import ExamPracticeTool
+        registry.register(ExamPracticeTool(), priority=361)
+        logger.info("tool_loaded", tool="exam_practice")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="exam_practice", error=str(e))
+
+    try:
+        from app.tools.exam.exam_bank import GenerateExamBankTool
+        registry.register(GenerateExamBankTool(), priority=362)
+        logger.info("tool_loaded", tool="generate_exam_bank")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="generate_exam_bank", error=str(e))
+
+    try:
         from app.tools.social.send_notification.tool import SendNotificationTool
         registry.register(SendNotificationTool(), priority=362)  # 修复: 702->362
         logger.info("tool_loaded", tool="send_notification")

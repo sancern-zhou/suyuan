@@ -1,7 +1,10 @@
 from app.fetchers import create_scheduler
 
 
-def test_monthly_consultation_supplement_fetchers_are_registered():
+def test_monthly_consultation_supplement_fetchers_are_registered(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     scheduler = create_scheduler()
 
     expected = {
@@ -20,6 +23,9 @@ def test_monthly_consultation_supplement_fetchers_are_registered():
 def test_monthly_consultation_supplement_fetchers_are_registered_in_lifecycle(monkeypatch):
     from app.fetchers.base.scheduler import FetcherScheduler
     from app.services import lifecycle_manager
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
 
     scheduler = FetcherScheduler()
     monkeypatch.setattr(lifecycle_manager, "fetcher_scheduler", scheduler)

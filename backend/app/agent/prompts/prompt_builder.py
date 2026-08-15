@@ -63,6 +63,7 @@ AgentMode = Literal[
     "knowledge",
     "report",
     "social",
+    "enforcement_exam",
     "chart",
     "board",
     "ops",
@@ -175,6 +176,13 @@ def build_react_system_prompt(
             user_context,
             heartbeat_context,
             backend_host,
+        ))
+    elif mode == "enforcement_exam":
+        from .enforcement_exam_prompt import build_enforcement_exam_prompt
+        return _with_platform_contracts(build_enforcement_exam_prompt(
+            filtered_tools,
+            user_preferences=user_preferences,
+            user_context=user_context,
         ))
     elif mode == "chart":
         return _with_platform_contracts(build_chart_prompt(filtered_tools, memory_context, memory_file_path))

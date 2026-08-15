@@ -292,6 +292,17 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
     "remember_fact", "replace_memory", "remove_memory",
 ]
 
+# ===== 生态环境执法备考模式（微信专业场景） =====
+ENFORCEMENT_EXAM_TOOL_NAMES = [
+    "exam_practice",
+    "generate_exam_bank",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "web_search",
+    "web_fetch",
+    "schedule_task",
+]
+
 # ===== 会商专用模式工具 =====
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "list_session_resources",
@@ -357,6 +368,7 @@ OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
 MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
+ENFORCEMENT_EXAM_TOOLS = _build_tool_dict(ENFORCEMENT_EXAM_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
 DELIBERATION_MONITORING_TOOLS = _build_tool_dict(DELIBERATION_MONITORING_TOOL_NAMES)
 DELIBERATION_CHEMISTRY_TOOLS = _build_tool_dict(DELIBERATION_CHEMISTRY_TOOL_NAMES)
@@ -375,6 +387,7 @@ OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
 SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
 MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
+ENFORCEMENT_EXAM_TOOL_ORDER = ENFORCEMENT_EXAM_TOOL_NAMES
 
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
@@ -404,6 +417,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "deliberation_monitoring": DELIBERATION_MONITORING_TOOLS,
         "deliberation_chemistry": DELIBERATION_CHEMISTRY_TOOLS,
         "deliberation_reviewer": DELIBERATION_REVIEWER_TOOLS,
+        "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
     }
 
     if mode not in mode_mapping:

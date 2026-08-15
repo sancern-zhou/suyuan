@@ -14,7 +14,10 @@ from app.fetchers.xuchang_annual_attainment_forecast import (
 from datetime import datetime, timedelta
 
 
-def test_tender_information_fetcher_is_registered_in_scheduler_factory():
+def test_tender_information_fetcher_is_registered_in_scheduler_factory(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     scheduler = create_scheduler()
 
     assert "tender_information_fetcher" in scheduler.fetchers
@@ -22,6 +25,9 @@ def test_tender_information_fetcher_is_registered_in_scheduler_factory():
 
 def test_tender_information_fetcher_is_registered_in_lifecycle(monkeypatch):
     from app.services import lifecycle_manager
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
 
     registered = []
 
@@ -135,7 +141,10 @@ def test_xuchang_daily_attainment_notification_is_suppressed_until_turnaround():
     ]
 
 
-def test_xuchang_daily_attainment_fetcher_is_registered_in_scheduler_factory():
+def test_xuchang_daily_attainment_fetcher_is_registered_in_scheduler_factory(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     scheduler = create_scheduler()
 
     assert XuchangDailyAttainmentForecastFetcher().name in scheduler.fetchers
@@ -175,7 +184,10 @@ def test_xuchang_annual_attainment_prediction_returns_three_metric_ranges():
     assert result["prediction_ranges"]["aqi_attainment_rate"] == {"lower": 50.0, "upper": 50.0}
 
 
-def test_xuchang_annual_attainment_fetcher_is_registered_in_scheduler_factory():
+def test_xuchang_annual_attainment_fetcher_is_registered_in_scheduler_factory(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     scheduler = create_scheduler()
 
     assert XuchangAnnualAttainmentForecastFetcher().name in scheduler.fetchers

@@ -28,6 +28,7 @@ from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyStationHighValuesFetcher,
 )
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.fault_diagnosis import FaultDiagnosisFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
@@ -122,6 +123,7 @@ def _configured_fetchers(project_context):
         "monthly_station_high_values": MonthlyStationHighValuesFetcher,
         "monthly_pollution_events_components": MonthlyPollutionEventsComponentsFetcher,
         "monthly_meteorology_support": MonthlyMeteorologySupportFetcher,
+        "fault_diagnosis": FaultDiagnosisFetcher,
         "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
         "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
         "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
