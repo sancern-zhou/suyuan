@@ -83,6 +83,7 @@ class CoordinatorManifest(StrictModel):
     greeting: str = "今天需要我协助处理什么？"
     description: str = "理解需求、组织专业能力并跟踪任务进展。"
     placeholder: str = "输入问题、业务对象或任务……"
+    station_image_url: str | None = None
     default_mode: str | None = None
     quick_prompts: list[CoordinatorQuickPrompt] = Field(default_factory=list)
     attention_task_ids: list[str] = Field(default_factory=list)
