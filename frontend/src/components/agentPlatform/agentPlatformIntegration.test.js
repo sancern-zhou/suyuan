@@ -52,11 +52,13 @@ test('data, scheduled task and social management settings open their connected p
   assert.match(analysisView, /case 'social-platform':[\s\S]*showManagementPanel\('social-platform'\)/)
 })
 
-test('agent platform supports project-selected scene and environment grid layouts', async () => {
+test('agent platform supports project-selected scene, environment grid and coordinator layouts', async () => {
   const source = await readSource('./AgentPlatform.vue')
 
   assert.match(source, /projectConfig\.agentModeIds/)
   assert.match(source, /projectConfig\.agentPlatformLayout/)
+  assert.match(source, /<CoordinatorHome/)
+  assert.match(source, /isCoordinatorLayout/)
   assert.match(source, /class="scene-stack"/)
   assert.match(source, /class="agent-grid"/)
 })
@@ -156,6 +158,15 @@ test('main layout switches between agent platform and chat workspace', async () 
   assert.doesNotMatch(source, /AgentWorkspaceHeader/)
   assert.match(source, /:agent-mode="agentMode"/)
   assert.match(source, /select-agent/)
+  assert.match(source, /coordinator-submit/)
+})
+
+test('coordinator query opens the routed professional mode and sends the original intent', async () => {
+  const source = await readSource('../../views/ReactAnalysisView.vue')
+
+  assert.match(source, /const handleCoordinatorSubmit = async/)
+  assert.match(source, /await handleAgentSelect\(mode\)/)
+  assert.match(source, /await handleSend\(\{ query, agentMode: mode \}\)/)
 })
 
 test('chat workspace passes the selected agent to the welcome area for every agent mode', async () => {

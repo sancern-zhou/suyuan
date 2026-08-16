@@ -1,5 +1,17 @@
 <template>
-  <main class="agent-platform">
+  <CoordinatorHome
+    v-if="isCoordinatorLayout"
+    :coordinator="coordinator"
+    :agents="agents"
+    :running-modes="runningModes"
+    :selecting-mode="selectingMode"
+    :scheduled-tasks="scheduledTasks"
+    @select="emit('select', $event)"
+    @select-task="emit('select-task', $event)"
+    @restore-session="emit('restore-session', $event)"
+    @submit="emit('submit', $event)"
+  />
+  <main v-else class="agent-platform">
     <svg class="terrain-lines" viewBox="0 0 1400 1000" preserveAspectRatio="none" aria-hidden="true">
       <path d="M-30 145 C 210 88, 410 218, 690 165 S 1170 95, 1430 175" />
       <path d="M-30 205 C 240 145, 445 275, 730 220 S 1210 150, 1430 235" />
@@ -176,18 +188,21 @@
 import { computed } from 'vue'
 import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import CoordinatorHome from '@/components/coordinator/CoordinatorHome.vue'
 
 const props = defineProps({
   agents: { type: Array, default: () => selectAgentModes(projectConfig.agentModeIds, projectConfig.agentModeOverrides) },
   scenes: { type: Array, default: () => AGENT_SCENES },
   layout: { type: String, default: () => projectConfig.agentPlatformLayout },
+  coordinator: { type: Object, default: () => projectConfig.coordinator || {} },
   runningModes: { type: Array, default: () => [] },
   selectingMode: { type: String, default: '' },
   error: { type: String, default: '' },
   scheduledTasks: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['select', 'select-task'])
+const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit'])
+const isCoordinatorLayout = computed(() => props.layout === 'coordinator')
 const isSceneLayout = computed(() => props.layout === 'scenes')
 const sceneGroups = computed(() => props.scenes.map(scene => ({
   ...scene,
