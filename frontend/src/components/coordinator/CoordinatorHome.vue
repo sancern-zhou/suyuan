@@ -20,10 +20,16 @@
             <p>{{ coordinator.description }}</p>
           </div>
         </div>
-        <button class="professional-entry" type="button" @click="catalogOpen = !catalogOpen">
-          专业工作区
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
-        </button>
+        <div class="header-actions">
+          <button class="command-center-entry" type="button" @click="emit('switch-view')">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" /><circle cx="10" cy="10" r="2" /><path d="M10 1.5v2M18.5 10h-2M10 18.5v-2M1.5 10h2" /></svg>
+            智能中枢
+          </button>
+          <button class="professional-entry" type="button" @click="catalogOpen = !catalogOpen">
+            专业工作区
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" /></svg>
+          </button>
+        </div>
       </header>
 
       <section class="command-surface" aria-labelledby="coordinator-greeting">
@@ -173,7 +179,7 @@ const props = defineProps({
   selectingMode: { type: String, default: '' },
   scheduledTasks: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit'])
+const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit', 'switch-view'])
 const scheduledTasksStore = useScheduledTasksStore()
 const query = ref('')
 const catalogOpen = ref(false)
@@ -250,7 +256,8 @@ onMounted(loadExecutions)
 .coordinator-home { --ink: #102a38; --muted: #607987; --line: #d9e8ea; --teal: #0d8994; position: relative; width: 100%; min-width: 0; min-height: 100%; flex: 1 1 0%; overflow: auto; background: linear-gradient(155deg, #eff8f7 0%, #f7faf8 43%, #edf4f5 100%); color: var(--ink); }
 .ambient { position: fixed; width: 420px; height: 420px; border-radius: 50%; pointer-events: none; filter: blur(12px); opacity: .36; }.ambient-one { top: -220px; right: 5%; background: radial-gradient(circle, #7edbd0, transparent 68%); }.ambient-two { bottom: -270px; left: 12%; background: radial-gradient(circle, #f0c985, transparent 68%); }
 .home-content { position: relative; z-index: 1; width: min(1320px, calc(100% - 56px)); margin: 0 auto; padding: 30px 0 52px; }
-.coordinator-header, .identity, .command-box, .attention-topline, .section-header, .card-actions { display: flex; align-items: center; }.coordinator-header { justify-content: space-between; gap: 24px; margin-bottom: 24px; }.identity { gap: 14px; }.avatar { position: relative; display: grid; width: 56px; height: 56px; place-items: center; border-radius: 18px; background: linear-gradient(145deg, #0d5068, #0b8290); box-shadow: 0 9px 24px rgba(13, 80, 104, .2); }.avatar svg { width: 39px; fill: none; stroke: #e9ffff; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }.avatar i { position: absolute; right: -2px; bottom: 3px; width: 11px; height: 11px; border: 3px solid #f5faf8; border-radius: 50%; background: #26c574; }.identity h1 { margin: 1px 0 2px; font-size: 25px; }.identity p { margin: 0; color: var(--muted); font-size: 12px; }.role { color: var(--teal); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.coordinator-header, .identity, .header-actions, .command-box, .attention-topline, .section-header, .card-actions { display: flex; align-items: center; }.coordinator-header { justify-content: space-between; gap: 24px; margin-bottom: 24px; }.identity { gap: 14px; }.header-actions { gap: 8px; }.avatar { position: relative; display: grid; width: 56px; height: 56px; place-items: center; border-radius: 18px; background: linear-gradient(145deg, #0d5068, #0b8290); box-shadow: 0 9px 24px rgba(13, 80, 104, .2); }.avatar svg { width: 39px; fill: none; stroke: #e9ffff; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }.avatar i { position: absolute; right: -2px; bottom: 3px; width: 11px; height: 11px; border: 3px solid #f5faf8; border-radius: 50%; background: #26c574; }.identity h1 { margin: 1px 0 2px; font-size: 25px; }.identity p { margin: 0; color: var(--muted); font-size: 12px; }.role { color: var(--teal); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.command-center-entry { display: flex; align-items: center; gap: 7px; padding: 10px 14px; border: 1px solid #b9d8dc; border-radius: 11px; background: linear-gradient(135deg, #0d536b, #0b8691); box-shadow: 0 7px 18px rgba(13,95,107,.14); color: #fff; cursor: pointer; }.command-center-entry svg { width: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.5; }
 .professional-entry { display: flex; align-items: center; gap: 8px; padding: 10px 15px; border: 1px solid #c9dcdf; border-radius: 11px; background: rgba(255,255,255,.72); color: #496572; cursor: pointer; }.professional-entry svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .command-surface { padding: 28px 34px 24px; border: 1px solid rgba(130, 184, 185, .46); border-radius: 22px; background: linear-gradient(120deg, rgba(8, 65, 83, .97), rgba(10, 117, 123, .94)); box-shadow: 0 18px 38px rgba(11, 81, 91, .15); color: #fff; }.presence { display: flex; align-items: center; gap: 7px; color: #ace9df; font-size: 11px; font-weight: 700; }.presence i { width: 7px; height: 7px; border-radius: 50%; background: #4cf09b; box-shadow: 0 0 0 4px rgba(76,240,155,.13); }.command-copy h2 { margin: 10px 0 5px; font-size: 24px; }.command-copy p { margin: 0 0 18px; color: #bfe0e1; font-size: 13px; }.command-box { gap: 10px; padding: 7px 7px 7px 18px; border: 1px solid rgba(255,255,255,.28); border-radius: 15px; background: rgba(255,255,255,.96); }.command-box textarea { width: 100%; min-height: 45px; resize: none; border: 0; outline: 0; background: transparent; color: #183743; font: inherit; line-height: 22px; }.command-box button { display: grid; width: 46px; height: 46px; flex: none; place-items: center; border: 0; border-radius: 12px; background: #123f54; color: #fff; cursor: pointer; }.command-box button:disabled { cursor: default; opacity: .38; }.command-box svg { width: 22px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }.quick-prompts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }.quick-prompts button { padding: 7px 12px; border: 1px solid rgba(255,255,255,.22); border-radius: 999px; background: rgba(255,255,255,.1); color: #e5f7f6; cursor: pointer; font-size: 12px; }.quick-prompts button:hover { background: rgba(255,255,255,.18); }
 .professional-catalog { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.9); box-shadow: 0 14px 32px rgba(25,65,77,.1); }.professional-catalog button { display: flex; min-width: 0; align-items: center; gap: 9px; padding: 11px; border: 1px solid transparent; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }.professional-catalog button:hover { border-color: #cde2e4; background: #f4f9f8; }.agent-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; }.professional-catalog button > span:nth-child(2) { display: grid; min-width: 0; }.professional-catalog strong { font-size: 13px; }.professional-catalog small { overflow: hidden; color: #718792; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.professional-catalog em { margin-left: auto; color: var(--teal); font-size: 9px; font-style: normal; }
@@ -261,5 +268,5 @@ onMounted(loadExecutions)
 .catalog-enter-active,.catalog-leave-active { transition: .18s ease; }.catalog-enter-from,.catalog-leave-to { transform: translateY(-6px); opacity: 0; }
 button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(76, 202, 198, .35); outline-offset: 2px; }
 @media (max-width: 980px) { .professional-catalog { grid-template-columns: repeat(2, 1fr); }.workspace-grid { grid-template-columns: 1fr; } }
-@media (max-width: 700px) { .home-content { width: calc(100% - 28px); padding-top: 18px; }.identity p { display: none; }.command-surface { padding: 22px 18px 18px; }.status-grid { grid-template-columns: repeat(2, 1fr); }.professional-catalog { grid-template-columns: 1fr; }.professional-entry { padding: 9px; font-size: 11px; } }
+@media (max-width: 700px) { .home-content { width: calc(100% - 28px); padding-top: 18px; }.identity p { display: none; }.header-actions { align-items: stretch; flex-direction: column; }.command-center-entry, .professional-entry { justify-content: center; padding: 7px 9px; font-size: 10px; }.command-surface { padding: 22px 18px 18px; }.status-grid { grid-template-columns: repeat(2, 1fr); }.professional-catalog { grid-template-columns: 1fr; } }
 </style>
