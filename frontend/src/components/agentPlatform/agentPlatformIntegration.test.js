@@ -9,6 +9,9 @@ test('sidebar exposes the agent platform as a primary action', async () => {
 
   assert.match(source, /agent-platform/)
   assert.match(source, /智能体平台/)
+  assert.match(source, /platformEntryLabel/)
+  assert.match(source, /projectConfig\.agentPlatformLayout === 'coordinator'/)
+  assert.match(source, /projectConfig\.coordinator\?\.name/)
   assert.match(source, /<p class="module-title">新建对话<\/p>/)
   assert.match(source, /id: 'restart-session',[\s\S]*name: '新建对话'/)
   assert.doesNotMatch(source, /<span>智能体平台<\/span>/)
