@@ -75,6 +75,17 @@ def test_jiangxi_project_disables_data_fetchers():
 def test_jiangsu_project_owns_station_fault_automation_surfaces():
     context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
 
+    assert context.manifest.frontend.agent_platform_layout == "coordinator"
+    assert context.manifest.frontend.coordinator is not None
+    assert context.manifest.frontend.coordinator.name == "小值"
+    assert context.manifest.frontend.coordinator.default_mode == "ops"
+    assert context.manifest.frontend.coordinator.attention_task_ids == [
+        "jiangsu_station_fault_diagnosis"
+    ]
+    assert {
+        route.mode for route in context.manifest.frontend.coordinator.routes
+    } >= {"ops", "jiangsu_query", "station_fault_diagnosis"}
+    assert len(context.manifest.frontend.coordinator.demo_attention_items) == 3
     assert context.manifest.backend.fetchers == [
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",

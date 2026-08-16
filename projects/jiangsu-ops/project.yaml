@@ -16,7 +16,140 @@ frontend:
     - device_control
     - station_fault_diagnosis
   default_agent_mode: ops
-  agent_platform_layout: scenes
+  # Web 首页由“小值”统筹场景承载；专业智能体保留为按需进入的二级工作区。
+  agent_platform_layout: coordinator
+  coordinator:
+    name: 小值
+    role: 江苏运维智能值班助手
+    greeting: 今天需要我关注什么？
+    description: 持续关注全省运维态势，组织专业能力完成取证、研判与任务闭环。
+    placeholder: 可以问数据、查站点、诊断故障，或让我生成当前运维态势……
+    default_mode: ops
+    attention_task_ids:
+      - jiangsu_station_fault_diagnosis
+    quick_prompts:
+      - label: 今日运维态势
+        prompt: 汇总今天江苏全省的运维态势，重点说明异常站点、待审核事项和需要人工关注的风险。
+        mode: smart_inspection
+      - label: 重点异常站点
+        prompt: 查询当前江苏全网异常概览，列出最值得优先关注的站点并说明依据。
+        mode: smart_inspection
+      - label: 人员覆盖情况
+        prompt: 分析本月运维人员到站覆盖情况，找出值得管理人员核查的覆盖薄弱区域。
+        mode: operations_analysis
+      - label: 查询监测数据
+        prompt: 查询江苏今天的空气质量数据，并先向我确认需要关注的城市或站点。
+        mode: jiangsu_query
+    routes:
+      - mode: device_control
+        keywords: [反控, 空调, 阀门, 零气机, 校准仪, 设备控制]
+      - mode: station_fault_diagnosis
+        keywords: [断数, 恒值, 故障, 离线, 根因, 质控异常]
+      - mode: operations_analysis
+        keywords: [人员, 到站, 签到, 调度, 覆盖, 跨市]
+      - mode: expert
+        keywords: [污染过程, 成因, 来源, 传输, 专家研判]
+      - mode: jiangsu_query
+        keywords: [查询, 数据, 浓度, 趋势, 排名, 图表, 同比]
+      - mode: smart_inspection
+        keywords: [巡检, 告警, 异常站点, 全网态势]
+      - mode: ops
+        keywords: [工单, 审核, 报告, 整改]
+    workspace_blocks:
+      - id: shift-briefing
+        type: briefing
+        title: 小值值班简报（场景演示）
+        items:
+          - label: 当前重点
+            text: 优先关注持续断数、设备离线和证据不完整的站点异常事件。
+          - label: 调度建议
+            text: 将异常站点与人员到站覆盖结合展示，具体调度结论待接入排班和路网信息后完善。
+          - label: 闭环提醒
+            text: AI 诊断和工单草案只作为待审核建议，处置结果需要人工确认和数据恢复复查。
+      - id: demo-metrics
+        type: metric-grid
+        title: 关键指标组件（场景演示）
+        items:
+          - label: 在线监测站点
+            value: --
+            detail: 待接实时全网汇总
+          - label: 今日到站人员
+            value: --
+            detail: 待接人员覆盖统计
+          - label: 未闭环告警
+            value: --
+            detail: 待完善业务口径
+          - label: 工单审核进度
+            value: --
+            detail: 待接审核任务状态
+      - id: loop-status
+        type: activity
+        title: 业务闭环示意
+        items:
+          - label: 异常发现
+            value: 自动触发
+          - label: 小值取证与研判
+            value: 自动执行
+          - label: 工单草案审核
+            value: 人工确认
+          - label: 处置结果复查
+            value: 持续跟踪
+    # 在没有真实事件执行记录的演示环境中显示；所有条目均在界面明确标记“场景演示”。
+    demo_attention_items:
+      - id: demo-station-fault
+        title: 南京示范站 · 颗粒物数据中断
+        summary: 场景模拟：PM2.5、PM10 同时停止更新，小值已组织监测、告警和巡检证据进行初步研判。
+        severity: high
+        status: awaiting_review
+        station: 南京示范站
+        occurred_at: 场景时间 09:12
+        diagnosis: 更可能是采集或传输链路异常，尚不能认定为分析仪故障。
+        confidence: medium
+        evidence:
+          - 颗粒物同步断数
+          - 其他气态污染物仍有数据
+          - 尚缺通信日志
+        actions:
+          - label: 补充取证
+            kind: ask
+            prompt: 针对南京示范站颗粒物数据中断场景，补查最近6小时五分钟数据、站房告警和历史工单，并更新证据时间线。
+            mode: station_fault_diagnosis
+          - label: 深入诊断
+            kind: ask
+            prompt: 进入故障诊断流程，分析南京示范站颗粒物数据中断场景并形成处置方案。
+            mode: station_fault_diagnosis
+      - id: demo-personnel-coverage
+        title: 苏北片区 · 人员覆盖待核查
+        summary: 场景模拟：部分责任站点近期到站记录较少，小值建议结合排班、工单和签到数据进一步核查。
+        severity: medium
+        status: new
+        occurred_at: 场景时间 今天
+        diagnosis: 当前只能识别覆盖线索，不能据此认定人员未履职。
+        confidence: low
+        evidence:
+          - 离散签到记录
+          - 责任站点台账
+          - 尚缺排班信息
+        actions:
+          - label: 分析人员覆盖
+            kind: ask
+            prompt: 分析本月苏北片区运维人员到站覆盖情况，明确数据边界并列出值得管理人员核查的模式。
+            mode: operations_analysis
+      - id: demo-audit-review
+        title: 本周运维工单 · 待审核
+        summary: 场景模拟：小值已准备按运维单位汇总问题线索，可进入专业工作区执行规则审核并生成报告。
+        severity: info
+        status: new
+        occurred_at: 场景时间 本周
+        diagnosis: 建议先确定工单时间范围和审核口径。
+        evidence:
+          - 工单审核流程已接入
+          - 报告生成能力可用
+        actions:
+          - label: 开始工单审核
+            kind: ask
+            prompt: 审核本周江苏运维工单。先确认创建时间或完成时间口径，再执行规则筛查和证据复核。
+            mode: ops
   agent_mode_overrides:
     jiangsu_query:
       name: 江苏问数生图智能体
