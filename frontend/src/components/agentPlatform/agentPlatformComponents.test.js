@@ -42,6 +42,29 @@ test('coordinator layout switches between the existing home and command center p
   assert.match(commandCenter, /现场画面/)
 })
 
+test('command center keeps conversation primary across responsive layouts', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(source, /class="conversation-flow"/)
+  assert.match(source, /class="user-context"/)
+  assert.match(source, /<form class="command-dock"/)
+  assert.match(source, /@media \(max-width: 1599px\)/)
+  assert.match(source, /grid-template-areas: "core left" "core right"/)
+  assert.match(source, /@media \(max-width: 1180px\)/)
+  assert.match(source, /grid-template-areas: "core" "left" "right"/)
+})
+
+test('command center limits persistent context to attention, evidence, and dispatch', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(source, /重点异常/)
+  assert.match(source, /现场证据/)
+  assert.match(source, /处置建议/)
+  assert.match(source, /红圈区域为当前重点观察位置/)
+  assert.doesNotMatch(source, /trend-panel|overview-panel|近 24 小时运行趋势/)
+  assert.doesNotMatch(source, /orbit-middle/)
+})
+
 test('coordinator home fills the available flex workspace', async () => {
   const source = await readComponent('../coordinator/CoordinatorHome.vue')
 
