@@ -24,8 +24,6 @@ const PEER_ALARM_DETAILS = Object.freeze({
   trend_inconsistency: '变化趋势不一致'
 })
 
-const internalIdentifierPattern = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/gi
-
 function describeAlarmType(value, sourceType = '') {
   const tokens = text(value).split(',').map(item => item.trim()).filter(Boolean)
   const peerDetails = [...new Set(tokens.map(item => PEER_ALARM_DETAILS[item]).filter(Boolean))]
@@ -42,17 +40,9 @@ function describeAlarmType(value, sourceType = '') {
   return '业务异常待核查'
 }
 
-function sanitizeBusinessSummary(value, attributes) {
-  let summary = text(value).replace(/[#*`>\n]+/g, ' ')
-  const stationCode = text(attributes.station_code)
-  if (stationCode) {
-    summary = summary.replaceAll(stationCode, text(attributes.station_name) || '该监测站点')
-  }
-  summary = summary.replace(internalIdentifierPattern, identifier => (
-    INTERNAL_ALARM_LABELS[identifier] || PEER_ALARM_DETAILS[identifier] || '异常规则'
-  ))
-  return summary.replaceAll('_', ' ').replace(/\s+/g, ' ').trim().slice(0, 150)
-}
+const isInternalStationCode = value => (
+  /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/i.test(text(value))
+)
 
 export function normalizeWorkspaceBlocks(blocks = []) {
   const ids = new Set()
@@ -82,8 +72,8 @@ export function resolveCoordinatorMode(query, routes = [], fallbackMode = 'assis
 
 export function executionToAttentionItem(execution) {
   const attributes = execution?.event_attributes || {}
-  const response = execution?.steps?.find(step => step?.agent_response)?.agent_response || ''
-  const station = text(attributes.station_name)
+  const candidateStation = text(attributes.station_name)
+  const station = isInternalStationCode(candidateStation) ? '' : candidateStation
   const issue = describeAlarmType(attributes.alarm_type, attributes.source_type)
   const running = ['pending', 'running'].includes(execution?.status)
   const failed = ['failed', 'timeout', 'cancelled'].includes(execution?.status)
@@ -92,7 +82,11 @@ export function executionToAttentionItem(execution) {
     executionId: execution?.execution_id,
     sessionId: execution?.session_id || '',
     title: `${station || '监测站点'} · ${issue}`,
-    summary: sanitizeBusinessSummary(response, attributes) || (running ? '小值正在收集证据并形成初步判断。' : '自动分析已完成，可进入详情查看完整证据。'),
+    summary: failed
+      ? '自动分析未完成，需要人工查看任务状态并决定后续处理。'
+      : (running
+          ? '小值正在收集证据并形成初步判断。'
+          : '小值已完成初步分析，已整理证据、可能原因和处置建议，等待人工审核。'),
     severity: failed ? 'high' : (attributes.severity || 'medium'),
     status: failed ? 'needs_attention' : (running ? 'analyzing' : 'awaiting_review'),
     station,
