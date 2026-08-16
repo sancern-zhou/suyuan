@@ -1233,4 +1233,59 @@ onUnmounted(() => {
     background: #fff6ea;
   }
 }
+
+@media (max-width: 760px) {
+  .assistant-sidebar,
+  .assistant-sidebar.collapsed {
+    width: 60px;
+    padding: 0 8px 14px;
+  }
+
+  .sidebar-header {
+    justify-content: center;
+  }
+
+  .header-title-wrapper,
+  .module-info,
+  .recent-sessions-section,
+  .user-identity {
+    display: none;
+  }
+
+  .collapse-btn {
+    margin: 0;
+  }
+
+  .primary-navigation,
+  .new-session-section,
+  .module-list,
+  .module-group {
+    align-items: center;
+  }
+
+  .module-card {
+    width: 44px;
+    height: 40px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .sidebar-scroll-area {
+    display: none;
+  }
+
+  .user-settings-footer {
+    justify-content: center;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .user-settings-menu {
+    right: auto;
+    bottom: 0;
+    left: 52px;
+    width: 196px;
+  }
+}
 </style>
