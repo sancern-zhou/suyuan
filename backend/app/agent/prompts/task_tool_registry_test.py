@@ -45,6 +45,15 @@ def test_ops_prompt_requires_sub_agent_excluded_items_gate_before_report_package
     assert "剔除这些 excluded_items" in prompt
 
 
+def test_ops_prompt_discovers_active_audit_skill_without_hardcoded_shared_path():
+    prompt = build_ops_prompt(["list_skills", "read_file", "ops_audit_run_rules"])
+
+    assert "list_skills(keyword='工单审核')" in prompt
+    assert "完整读取返回的技能文件" in prompt
+    assert "backend/docs/skills" not in prompt
+    assert "ops_work_order_audit.md" not in prompt
+
+
 def test_assistant_prompt_does_not_describe_task_tools():
     prompt = build_assistant_prompt(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"])
 
