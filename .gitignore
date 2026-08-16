@@ -176,6 +176,7 @@ backend/app/agent/executors/quick_trace_executor.py
 
 # Temporary analysis files
 *_analysis.md
+!projects/jiangsu-ops/prompts/operations_analysis.md
 *_summary.md
 *_report.md
 *_solution.md
