@@ -23,6 +23,21 @@ test('coordinator layout delegates to the controlled coordinator home', async ()
   assert.match(source, /@submit="emit\('submit', \$event\)"/)
 })
 
+test('coordinator layout switches between the existing home and command center prototype', async () => {
+  const platform = await readComponent('AgentPlatform.vue')
+  const home = await readComponent('../coordinator/CoordinatorHome.vue')
+  const commandCenter = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(platform, /coordinatorView === 'home'/)
+  assert.match(platform, /<CoordinatorCommandCenter/)
+  assert.match(platform, /coordinatorView = 'command-center'/)
+  assert.match(platform, /coordinatorView = 'home'/)
+  assert.match(home, /智能中枢/)
+  assert.match(commandCenter, /空气站智能运维中枢/)
+  assert.match(commandCenter, /返回小值首页/)
+  assert.match(commandCenter, /class="command-dock"/)
+})
+
 test('coordinator home fills the available flex workspace', async () => {
   const source = await readComponent('../coordinator/CoordinatorHome.vue')
 
