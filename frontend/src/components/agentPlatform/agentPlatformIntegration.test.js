@@ -192,6 +192,7 @@ test('analysis view defaults to the platform and opens chat through explicit flo
   assert.match(source, /route\.params\.id/)
   assert.match(source, /watch\(\s*\(\) => route\.params\.id/)
   assert.match(source, /queueRouteSessionRestore/)
+  assert.match(source, /router\.replace\(\{ name: 'analysis' \}\)/)
 })
 
 test('new task defaults to the project default agent on the platform and preserves the active chat mode', async () => {
