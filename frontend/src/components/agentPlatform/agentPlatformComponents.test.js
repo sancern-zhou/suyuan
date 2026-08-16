@@ -36,6 +36,8 @@ test('coordinator layout switches between the existing home and command center p
   assert.match(commandCenter, /空气站智能运维中枢/)
   assert.match(commandCenter, /返回小值首页/)
   assert.match(commandCenter, /class="command-dock"/)
+  assert.match(commandCenter, /xiaozhiRobotUrl/)
+  assert.match(commandCenter, /小值智能值班助手形象/)
 })
 
 test('coordinator home fills the available flex workspace', async () => {
