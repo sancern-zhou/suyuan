@@ -12,21 +12,35 @@ class KnowledgeGraphQueryTool(LLMTool):
         self.service = service
         super().__init__(
             name="knowledge_graph_query",
-            description="检索可信文档事实、用户确认事实、业务规则、推理路径和可追溯原文；规则与推理路径不会冒充已观测事实。",
+            description=(
+                "在已选择知识库内做可信实体关系检索，返回可追溯原文分块、业务规则和图路径。"
+                "适用场景：设备原理与操作规程等背景知识、故障症状—部件—原因等候选关系、"
+                "文档中抽取的人员/组织/业务关系。图路径与规则只是候选线索，"
+                "必须用实测数据或接口事实核验后才能作为结论。"
+            ),
             category=ToolCategory.QUERY,
             function_schema={
                 "name": "knowledge_graph_query",
-                "description": "在已选择知识库内进行可信实体关系检索，并返回可追溯原文分块。",
+                "description": (
+                    "在已选择知识库内进行可信实体关系检索，返回可追溯原文分块、业务规则和图路径。"
+                    "适用于检索设备原理、故障处置经验、运维业务关系等背景知识，"
+                    "以及症状—部件—原因等候选关系。图路径不能直接当成事实结论，"
+                    "须再用监测数据、告警、工单等接口事实核验；未选择知识库时先请用户选择。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
+                        "query": {
+                            "type": "string",
+                            "description": "自然语言实体或关系问题，如“CO仪器供电异常的常见原因”“某站点责任运维单位”。",
+                        },
                         "knowledge_base_ids": {
                             "type": "array",
                             "items": {"type": "string"},
+                            "description": "目标知识库 ID 列表；通常由会话已选知识库自动注入。",
                         },
-                        "depth": {"type": "integer", "minimum": 1, "maximum": 2},
-                        "top_k": {"type": "integer", "minimum": 1, "maximum": 50},
+                        "depth": {"type": "integer", "minimum": 1, "maximum": 2, "description": "图关系展开深度。"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 50, "description": "召回分块数量。"},
                     },
                     "required": ["query", "knowledge_base_ids"],
                 },

@@ -41,6 +41,7 @@ from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
 from app.db.database import async_session
 from app.services.llm_service import llm_service
+from app.tools import global_tool_registry
 
 logger = structlog.get_logger()
 
@@ -1585,7 +1586,7 @@ async def list_tools():
     """
     try:
         # 从工具注册表获取详细信息
-        tools_info = multi_expert_agent_instance.executor.tool_registry.get_tools_info()
+        tools_info = global_tool_registry.get_tools_info()
 
         logger.info("agent_tools_listed", count=len(tools_info))
 
@@ -1613,7 +1614,7 @@ async def get_tool_info(tool_name: str):
     """
     try:
         # 从工具注册表获取详细信息
-        info = multi_expert_agent_instance.executor.tool_registry.get_tool_info(tool_name)
+        info = global_tool_registry.get_tool_info(tool_name)
 
         if not info:
             raise HTTPException(
@@ -1650,7 +1651,7 @@ async def update_tool_status(tool_name: str, enabled: bool = Body(..., embed=Tru
         enabled: True=启用, False=禁用
     """
     try:
-        registry = multi_expert_agent_instance.executor.tool_registry
+        registry = global_tool_registry
 
         # 检查工具是否存在
         if not registry.get_tool(tool_name):
@@ -1701,7 +1702,7 @@ async def get_tools_categories():
     获取所有工具类别
     """
     try:
-        registry = multi_expert_agent_instance.executor.tool_registry
+        registry = global_tool_registry
         categories = registry.get_categories()
 
         logger.info("tool_categories_listed", count=len(categories))
