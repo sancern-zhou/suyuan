@@ -83,7 +83,7 @@
           <span>待人工审核</span><strong>{{ reviewCount }}</strong><small>AI 已形成建议</small>
         </article>
         <article>
-          <span>小值处理中</span><strong class="active">{{ analyzingCount }}</strong><small>正在补充证据</small>
+          <span>{{ assistantName }}处理中</span><strong class="active">{{ analyzingCount }}</strong><small>正在补充证据</small>
         </article>
       </section>
 
@@ -106,15 +106,15 @@
               <span class="status-label">{{ statusLabel(item.status) }}</span>
               <em v-if="!item.live">场景演示</em>
             </div>
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.summary }}</p>
+            <h3>{{ displayText(item.title) }}</h3>
+            <p>{{ displayText(item.summary) }}</p>
             <div v-if="item.diagnosis" class="diagnosis">
-              <span>小值初判</span>
-              <strong>{{ item.diagnosis }}</strong>
+              <span>{{ assistantName }}初判</span>
+              <strong>{{ displayText(item.diagnosis) }}</strong>
               <small v-if="item.confidence">{{ confidenceLabel(item.confidence) }}</small>
             </div>
             <div v-if="item.evidence.length" class="evidence-list">
-              <span v-for="evidence in item.evidence" :key="evidence">✓ {{ evidence }}</span>
+              <span v-for="evidence in item.evidence" :key="evidence">✓ {{ displayText(evidence) }}</span>
             </div>
             <div class="card-actions">
               <button v-if="item.sessionId" type="button" class="primary" @click="emit('restore-session', item.sessionId)">查看诊断</button>
@@ -130,26 +130,26 @@
           </article>
           <div v-if="!attentionItems.length" class="empty-state">
             <strong>当前没有待关注事项</strong>
-            <span>小值会持续巡查，发现新情况后显示在这里。</span>
+            <span>{{ assistantName }}会持续巡查，发现新情况后显示在这里。</span>
           </div>
         </div>
 
         <aside class="workspace-column">
           <header class="section-header"><div><span>WORKSPACE</span><h2>动态工作台</h2></div></header>
           <section v-for="block in workspaceBlocks" :key="block.id" class="workspace-block" :class="`block-${block.type}`">
-            <h3>{{ block.title }}</h3>
+            <h3>{{ displayText(block.title) }}</h3>
             <template v-if="block.type === 'briefing'">
               <p v-for="item in block.items" :key="item.label || item.text">
-                <strong v-if="item.label">{{ item.label }}</strong>{{ item.text }}
+                <strong v-if="item.label">{{ displayText(item.label) }}</strong>{{ displayText(item.text) }}
               </p>
             </template>
             <template v-else-if="block.type === 'metric-grid'">
               <div class="block-metrics">
-                <article v-for="item in block.items" :key="item.label"><span>{{ item.label }}</span><strong>{{ item.value }}</strong><small>{{ item.detail }}</small></article>
+                <article v-for="item in block.items" :key="item.label"><span>{{ displayText(item.label) }}</span><strong>{{ displayText(item.value) }}</strong><small>{{ displayText(item.detail) }}</small></article>
               </div>
             </template>
             <template v-else>
-              <ul><li v-for="item in block.items" :key="item.label || item.text"><span>{{ item.label || item.text }}</span><small>{{ item.value || item.detail }}</small></li></ul>
+              <ul><li v-for="item in block.items" :key="item.label || item.text"><span>{{ displayText(item.label || item.text) }}</span><small>{{ displayText(item.value || item.detail) }}</small></li></ul>
             </template>
           </section>
           <section class="workspace-block capability-note">
@@ -188,6 +188,7 @@ const loadError = ref('')
 const liveItems = ref([])
 
 const quickPrompts = computed(() => props.coordinator.quickPrompts || [])
+const assistantName = computed(() => props.coordinator.name || '智能助手')
 const demoItems = computed(() => (props.coordinator.demoAttentionItems || [])
   .map(normalizeAttentionItem)
   .filter(Boolean))
@@ -241,7 +242,8 @@ const loadExecutions = async () => {
   }
 }
 const severityLabel = value => ({ critical: '紧急', high: '高优先级', medium: '需关注', low: '一般', info: '信息' }[value] || '信息')
-const statusLabel = value => ({ new: '新发现', analyzing: '小值分析中', awaiting_review: '待人工审核', processing: '处理中', verifying: '等待复查', closed: '已闭环', needs_attention: '需要处理' }[value] || value)
+const displayText = value => String(value || '').replaceAll('小值', assistantName.value)
+const statusLabel = value => ({ new: '新发现', analyzing: `${assistantName.value}分析中`, awaiting_review: '待人工审核', processing: '处理中', verifying: '等待复查', closed: '已闭环', needs_attention: '需要处理' }[value] || value)
 const confidenceLabel = value => ({ high: '高置信度', medium: '中等置信度', low: '低置信度' }[value] || value)
 const formatTime = value => {
   if (!value) return '刚刚更新'

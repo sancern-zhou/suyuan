@@ -21,7 +21,7 @@
         <span class="system-status"><i></i>系统运行正常</span>
         <button class="view-switch" type="button" @click="emit('switch-view')">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5.5h12M4 10h12M4 14.5h8" /></svg>
-          返回小值首页
+          返回{{ assistantName }}首页
         </button>
       </div>
     </header>
@@ -34,9 +34,9 @@
             <em>{{ primaryAttention.live ? '实时' : '场景演示' }}</em>
           </header>
           <div class="attention-level"><i></i>{{ severityLabel(primaryAttention.severity) }}</div>
-          <h2>{{ primaryAttention.title }}</h2>
-          <p>{{ primaryAttention.summary }}</p>
-          <button type="button" @click="analyzePrimaryAttention">让小值继续研判</button>
+          <h2>{{ displayText(primaryAttention.title) }}</h2>
+          <p>{{ displayText(primaryAttention.summary) }}</p>
+          <button type="button" @click="analyzePrimaryAttention">让{{ assistantName }}继续研判</button>
         </section>
 
         <section class="glass-panel trend-panel">
@@ -71,22 +71,22 @@
         </section>
       </aside>
 
-      <section class="ai-core-column" aria-label="小值智能中枢">
-        <div class="core-status"><i></i>{{ coordinator.name || '小值' }}正在值守</div>
+      <section class="ai-core-column" :aria-label="`${assistantName}智能中枢`">
+        <div class="core-status"><i></i>{{ assistantName }}正在值守</div>
         <div class="orbital-core" aria-hidden="true">
           <span class="orbit orbit-outer"><i></i><i></i><i></i></span>
           <span class="orbit orbit-middle"><i></i><i></i></span>
           <span class="orbit orbit-inner"></span>
           <span class="core-energy">
-            <img :src="xiaozhiRobotUrl" alt="小值智能值班助手形象" />
+            <img :src="xiaozhiRobotUrl" :alt="`${assistantName}智能值班助手形象`" />
           </span>
         </div>
 
         <section class="core-dialogue">
           <div class="dialogue-indicator"><span></span><span></span><span></span></div>
           <div>
-            <span>小值研判</span>
-            <p>{{ primaryAttention.diagnosis || '正在结合监测数据、设备状态和近期任务记录形成初步判断。' }}</p>
+            <span>{{ assistantName }}研判</span>
+            <p>{{ displayText(primaryAttention.diagnosis || '正在结合监测数据、设备状态和近期任务记录形成初步判断。') }}</p>
           </div>
         </section>
 
@@ -127,9 +127,9 @@
             <div><span>智能研判</span><strong>当前判断与证据</strong></div>
             <em>{{ confidenceLabel(primaryAttention.confidence) }}</em>
           </header>
-          <p class="diagnosis-copy">{{ primaryAttention.diagnosis || '暂未形成明确结论，建议继续补充关键证据。' }}</p>
+          <p class="diagnosis-copy">{{ displayText(primaryAttention.diagnosis || '暂未形成明确结论，建议继续补充关键证据。') }}</p>
           <div class="evidence-list">
-            <span v-for="evidence in primaryEvidence" :key="evidence"><i>✓</i>{{ evidence }}</span>
+            <span v-for="evidence in primaryEvidence" :key="evidence"><i>✓</i>{{ displayText(evidence) }}</span>
           </div>
         </section>
 
@@ -157,13 +157,13 @@
         <svg viewBox="0 0 28 28"><path d="M6 9.5 14 5l8 4.5v9L14 23l-8-4.5v-9Z" /><path d="M10 12h8M11 16h6" /></svg>
       </span>
       <div class="dock-input">
-        <span>与{{ coordinator.name || '小值' }}对话</span>
+        <span>与{{ assistantName }}对话</span>
         <input v-model="query" :placeholder="coordinator.placeholder || '描述需要查看或处理的运维事项……'" />
       </div>
       <div class="dock-prompts">
         <button v-for="item in quickPrompts.slice(0, 2)" :key="item.label" type="button" @click="submitQuery(item.prompt, item.mode)">{{ item.label }}</button>
       </div>
-      <button class="dock-send" type="submit" :disabled="!query.trim() || Boolean(selectingMode)" aria-label="发送给小值">
+      <button class="dock-send" type="submit" :disabled="!query.trim() || Boolean(selectingMode)" :aria-label="`发送给${assistantName}`">
         <svg viewBox="0 0 24 24"><path d="m4 12 16-8-5.5 16-3-6.5L4 12Z" /><path d="m11.5 13.5 4-4" /></svg>
       </button>
     </form>
@@ -184,13 +184,14 @@ const emit = defineEmits(['select', 'submit', 'switch-view'])
 const query = ref('')
 
 const quickPrompts = computed(() => props.coordinator.quickPrompts || [])
+const assistantName = computed(() => props.coordinator.name || '智能助手')
 const attentionItems = computed(() => (props.coordinator.demoAttentionItems || [])
   .map(normalizeAttentionItem)
   .filter(Boolean))
 const primaryAttention = computed(() => attentionItems.value[0] || normalizeAttentionItem({
   id: 'command-center-empty',
   title: '当前没有需要优先处置的站点',
-  summary: '小值正在持续巡查全省站点和运维任务，有新情况时会及时提醒。',
+  summary: `${assistantName.value}正在持续巡查全省站点和运维任务，有新情况时会及时提醒。`,
   severity: 'info',
   status: 'new',
   diagnosis: '当前运行态势平稳。',
@@ -200,6 +201,7 @@ const primaryEvidence = computed(() => (primaryAttention.value.evidence || []).s
 const stationName = computed(() => primaryAttention.value.station || String(primaryAttention.value.title || '').split('·')[0].trim() || '重点关注站点')
 const reviewCount = computed(() => attentionItems.value.filter(item => item.status === 'awaiting_review').length)
 const analyzingCount = computed(() => attentionItems.value.filter(item => item.status === 'analyzing').length)
+const displayText = value => String(value || '').replaceAll('小值', assistantName.value)
 
 const submitQuery = (value, explicitMode = '') => {
   const prompt = String(value || '').trim()
