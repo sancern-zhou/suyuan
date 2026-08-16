@@ -78,7 +78,7 @@
           <span class="orbit orbit-middle"><i></i><i></i></span>
           <span class="orbit orbit-inner"></span>
           <span class="core-energy"></span>
-          <span class="core-copy"><small>AI OPERATIONS CORE</small><strong>{{ coordinator.name || '小值' }}</strong><em>感知 · 研判 · 调度</em></span>
+          <span class="core-copy"><small>智能运维核心</small><strong>{{ coordinator.name || '小值' }}</strong><em>感知 · 研判 · 调度</em></span>
         </div>
 
         <section class="core-dialogue">
