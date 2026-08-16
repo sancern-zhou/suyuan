@@ -10,6 +10,7 @@ def test_jiangsu_coordinator_uses_project_station_image():
     context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
 
     assert context.manifest.frontend.coordinator is not None
+    assert context.manifest.frontend.coordinator.name == "苏小环"
     assert (
         context.manifest.frontend.coordinator.station_image_url
         == "/project-assets/jiangsu-ops/nanjing-demo-station.png"

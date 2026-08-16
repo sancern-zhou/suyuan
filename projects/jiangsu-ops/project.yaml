@@ -16,10 +16,10 @@ frontend:
     - device_control
     - station_fault_diagnosis
   default_agent_mode: ops
-  # Web 首页由“小值”统筹场景承载；专业智能体保留为按需进入的二级工作区。
+  # Web 首页由“苏小环”统筹场景承载；专业智能体保留为按需进入的二级工作区。
   agent_platform_layout: coordinator
   coordinator:
-    name: 小值
+    name: 苏小环
     role: 江苏运维智能值班助手
     greeting: 今天需要我关注什么？
     description: 持续关注全省运维态势，组织专业能力完成取证、研判与任务闭环。
@@ -59,7 +59,7 @@ frontend:
     workspace_blocks:
       - id: shift-briefing
         type: briefing
-        title: 小值值班简报（场景演示）
+        title: 苏小环值班简报（场景演示）
         items:
           - label: 当前重点
             text: 优先关注持续断数、设备离线和证据不完整的站点异常事件。
@@ -89,7 +89,7 @@ frontend:
         items:
           - label: 异常发现
             value: 自动触发
-          - label: 小值取证与研判
+          - label: 苏小环取证与研判
             value: 自动执行
           - label: 工单草案审核
             value: 人工确认
@@ -99,7 +99,7 @@ frontend:
     demo_attention_items:
       - id: demo-station-fault
         title: 南京示范站 · 颗粒物数据中断
-        summary: 场景模拟：PM2.5、PM10 同时停止更新，小值已组织监测、告警和巡检证据进行初步研判。
+        summary: 场景模拟：PM2.5、PM10 同时停止更新，苏小环已组织监测、告警和巡检证据进行初步研判。
         severity: high
         status: awaiting_review
         station: 南京示范站
@@ -121,7 +121,7 @@ frontend:
             mode: station_fault_diagnosis
       - id: demo-personnel-coverage
         title: 苏北片区 · 人员覆盖待核查
-        summary: 场景模拟：部分责任站点近期到站记录较少，小值建议结合排班、工单和签到数据进一步核查。
+        summary: 场景模拟：部分责任站点近期到站记录较少，苏小环建议结合排班、工单和签到数据进一步核查。
         severity: medium
         status: new
         occurred_at: 场景时间 今天
@@ -138,7 +138,7 @@ frontend:
             mode: operations_analysis
       - id: demo-audit-review
         title: 本周运维工单 · 待审核
-        summary: 场景模拟：小值已准备按运维单位汇总问题线索，可进入专业工作区执行规则审核并生成报告。
+        summary: 场景模拟：苏小环已准备按运维单位汇总问题线索，可进入专业工作区执行规则审核并生成报告。
         severity: info
         status: new
         occurred_at: 场景时间 本周
