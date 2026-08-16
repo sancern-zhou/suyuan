@@ -23,6 +23,14 @@ test('coordinator layout delegates to the controlled coordinator home', async ()
   assert.match(source, /@submit="emit\('submit', \$event\)"/)
 })
 
+test('coordinator home fills the available flex workspace', async () => {
+  const source = await readComponent('../coordinator/CoordinatorHome.vue')
+
+  assert.match(source, /\.coordinator-home \{[^}]*width: 100%/)
+  assert.match(source, /\.coordinator-home \{[^}]*min-width: 0/)
+  assert.match(source, /\.coordinator-home \{[^}]*flex: 1 1 0%/)
+})
+
 test('agent platform presents the real agent catalog as a portal grid', async () => {
   const source = await readComponent('AgentPlatform.vue')
 
