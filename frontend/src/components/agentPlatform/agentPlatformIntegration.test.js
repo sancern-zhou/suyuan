@@ -134,6 +134,7 @@ test('primary sidebar collapses to an icon rail on small screens', async () => {
 
   assert.match(source, /@media \(max-width: 760px\)/)
   assert.match(source, /\.assistant-sidebar,[\s\S]*\.assistant-sidebar\.collapsed[\s\S]*width: 60px/)
+  assert.match(source, /\.sidebar-header \.header-title-wrapper,[\s\S]*display: none/)
   assert.match(source, /\.recent-sessions-section,[\s\S]*\.user-identity[\s\S]*display: none/)
 })
 

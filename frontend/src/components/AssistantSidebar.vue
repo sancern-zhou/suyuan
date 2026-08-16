@@ -1245,7 +1245,7 @@ onUnmounted(() => {
     justify-content: center;
   }
 
-  .header-title-wrapper,
+  .sidebar-header .header-title-wrapper,
   .module-info,
   .recent-sessions-section,
   .user-identity {
