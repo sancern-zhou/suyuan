@@ -264,5 +264,59 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(88,241,233,.
 @media (max-width: 1250px) { .center-stage { grid-template-columns: minmax(240px, .9fr) minmax(380px, 1.15fr) minmax(250px, .9fr); width: calc(100% - 34px); gap: 12px; }.center-header { padding-inline: 22px; }.panel-heading { padding-inline: 13px; }.attention-panel h2, .attention-panel p, .attention-level { margin-inline: 13px; }.dock-prompts { display: none; } }
 @media (max-width: 980px) { .command-center { overflow: auto; }.center-stage { grid-template-columns: 1fr 1fr; padding-bottom: 110px; }.ai-core-column { min-height: 580px; grid-column: 1 / -1; grid-row: 1; }.intel-rail { align-content: start; }.command-dock { position: fixed; }.orbital-core { width: 410px; }.system-status { display: none; } }
 @media (max-width: 700px) { .center-header { align-items: flex-start; }.center-brand h1 { font-size: 17px; }.brand-mark { width: 42px; height: 42px; }.view-switch { padding: 8px; font-size: 0; }.view-switch svg { width: 19px; }.center-stage { grid-template-columns: 1fr; }.ai-core-column, .intel-rail { grid-column: 1; }.rail-left { grid-row: 2; }.rail-right { grid-row: 3; }.orbital-core { width: min(390px, 92vw); }.command-dock { right: 10px; bottom: 10px; left: 10px; }.dock-mark { display: none; } }
+.center-stage { min-height: 0; }
+.intel-rail { align-content: start; }
+.glass-panel { border-color: rgba(74, 190, 207, .22); box-shadow: inset 0 0 24px rgba(26,134,161,.045), 0 12px 32px rgba(0,0,0,.16); }
+.glass-panel::before, .glass-panel::after { width: 18px; height: 1px; box-shadow: 0 0 6px rgba(66,241,225,.48); }
+.panel-heading span { font-size: 11px; }
+.panel-heading strong { font-size: 15px; }
+.panel-heading em { font-size: 10px; }
+.attention-level { font-size: 11px; }
+.attention-panel p, .diagnosis-copy { font-size: 12px; }
+.attention-panel > button, .dispatch-actions button { font-size: 11px; }
+.trend-legend, .overview-items span, .overview-items small { font-size: 10px; }
+.core-status { font-size: 11px; }
+.core-dialogue span { font-size: 10px; }
+.core-dialogue p { font-size: 12px; }
+.dispatch-person strong { font-size: 11px; }
+.dispatch-person small { font-size: 10px; }
+.dock-input span { font-size: 9px; }
+.dock-prompts button { font-size: 10px; }
+.orbit { border-color: rgba(78,229,230,.24); }
+.orbit-outer::before, .orbit-outer::after, .orbit-middle::before, .orbit-middle::after { opacity: .72; }
+@media (max-width: 1440px) {
+  .center-stage { width: calc(100% - 34px); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding-bottom: 120px; }
+  .ai-core-column { grid-column: 1 / -1; grid-row: 1; min-height: 540px; }
+  .rail-left { grid-column: 1; grid-row: 2; }
+  .rail-right { grid-column: 2; grid-row: 2; }
+  .orbital-core { width: clamp(330px, 39vw, 460px); }
+  .command-dock { right: 28px; left: 28px; }
+}
+@media (max-width: 960px) {
+  .center-stage { grid-template-columns: 1fr; width: calc(100% - 28px); gap: 14px; }
+  .ai-core-column, .intel-rail { grid-column: 1; }
+  .ai-core-column { grid-row: 1; min-height: 500px; }
+  .rail-left { grid-row: 2; }
+  .rail-right { grid-row: 3; }
+  .orbital-core { width: min(410px, 82vw); }
+  .center-header { padding-inline: 18px; }
+  .system-status { display: none; }
+}
+@media (max-width: 700px) {
+  .center-header { min-height: 76px; padding: 12px 14px; }
+  .center-brand { gap: 9px; }
+  .center-brand span:not(.brand-mark) { font-size: 9px; }
+  .center-brand h1 { font-size: 17px; letter-spacing: .03em; }
+  .brand-mark { width: 40px; height: 40px; }
+  .view-switch { padding: 8px; font-size: 0; }
+  .view-switch svg { width: 18px; }
+  .center-stage { padding-top: 16px; padding-bottom: 100px; }
+  .ai-core-column { min-height: 430px; }
+  .orbital-core { width: min(360px, 88vw); }
+  .core-dialogue { width: 100%; }
+  .command-dock { right: 10px; bottom: 10px; left: 10px; min-height: 58px; padding: 7px 8px; }
+  .dock-mark { display: none; }
+  .dock-send { width: 42px; height: 42px; }
+}
 @media (prefers-reduced-motion: reduce) { .orbit, .core-energy, .dialogue-indicator span, .scene-scan { animation: none; } }
 </style>
