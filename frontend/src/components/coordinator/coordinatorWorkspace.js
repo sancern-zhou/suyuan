@@ -44,6 +44,16 @@ const isInternalStationCode = value => (
   /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/i.test(text(value))
 )
 
+const normalizeExecutionSeverity = value => ({
+  critical: 'critical',
+  high: 'high',
+  major: 'high',
+  warning: 'medium',
+  medium: 'medium',
+  low: 'low',
+  info: 'info'
+}[text(value).toLowerCase()] || 'medium')
+
 export function normalizeWorkspaceBlocks(blocks = []) {
   const ids = new Set()
   return blocks.flatMap((block, index) => {
@@ -87,7 +97,7 @@ export function executionToAttentionItem(execution) {
       : (running
           ? '小值正在收集证据并形成初步判断。'
           : '小值已完成初步分析，已整理证据、可能原因和处置建议，等待人工审核。'),
-    severity: failed ? 'high' : (attributes.severity || 'medium'),
+    severity: failed ? 'high' : normalizeExecutionSeverity(attributes.severity),
     status: failed ? 'needs_attention' : (running ? 'analyzing' : 'awaiting_review'),
     station,
     occurredAt: execution?.started_at || '',
