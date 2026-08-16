@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.knowledge_database import get_knowledge_db as get_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.conversation_store import (
@@ -269,7 +269,7 @@ async def search_knowledge_bases(
     use_hyde: bool | str = False  # 是否使用HyDE关键词增强；不再双路检索
 ) -> List[dict]:
     """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
-    from app.db.database import async_session
+    from app.db.knowledge_database import knowledge_async_session as async_session
     from sqlalchemy import select
     from app.knowledge_base.models import Document, KnowledgeBase as KBModel, KnowledgeBaseStatus
     from app.knowledge_base.service import KnowledgeBaseService

@@ -6,7 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.knowledge_database import get_knowledge_db as get_db
 from app.auth.dependencies import current_user_id, current_user_is_admin
 from app.knowledge_base.business_rule_service import BusinessRuleService
 from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
