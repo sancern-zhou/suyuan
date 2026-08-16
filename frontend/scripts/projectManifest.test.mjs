@@ -20,7 +20,8 @@ test('default project enables core and legacy', () => {
     agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
     defaultAgentMode: 'assistant',
     agentModeOverrides: {},
-    agentPlatformLayout: 'scenes'
+    agentPlatformLayout: 'scenes',
+    coordinator: null
   })
 })
 
