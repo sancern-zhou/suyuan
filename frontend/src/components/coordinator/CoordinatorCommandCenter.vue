@@ -2,7 +2,6 @@
   <main class="command-center">
     <div class="grid-field" aria-hidden="true"></div>
     <div class="top-aura" aria-hidden="true"></div>
-    <div class="scan-line" aria-hidden="true"></div>
 
     <header class="center-header">
       <div class="center-brand">
@@ -17,20 +16,25 @@
           <h1>空气站智能运维中枢</h1>
         </div>
       </div>
+
       <div class="header-actions">
+        <div class="shift-summary" aria-label="当前值守摘要">
+          <span><strong>{{ attentionItems.length }}</strong> 项关注</span>
+          <span><strong>{{ reviewCount }}</strong> 项待确认</span>
+        </div>
         <span class="system-status"><i></i>系统运行正常</span>
         <button class="view-switch" type="button" @click="emit('switch-view')">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5.5h12M4 10h12M4 14.5h8" /></svg>
-          返回{{ assistantName }}首页
+          <span>返回{{ assistantName }}首页</span>
         </button>
       </div>
     </header>
 
     <section class="center-stage">
-      <aside class="intel-rail rail-left" aria-label="实时运维信息">
+      <aside class="intel-rail rail-left" aria-label="重点异常">
         <section class="glass-panel attention-panel">
           <header class="panel-heading">
-            <div><span>实时关注</span><strong>需要优先处理的事项</strong></div>
+            <div><span>重点异常</span><strong>当前优先事项</strong></div>
             <em>{{ primaryAttention.live ? '实时' : '场景演示' }}</em>
           </header>
           <div class="attention-level"><i></i>{{ severityLabel(primaryAttention.severity) }}</div>
@@ -38,99 +42,92 @@
           <p>{{ displayText(primaryAttention.summary) }}</p>
           <button type="button" @click="analyzePrimaryAttention">让{{ assistantName }}继续研判</button>
         </section>
-
-        <section class="glass-panel trend-panel">
-          <header class="panel-heading">
-            <div><span>设备状态</span><strong>近 24 小时运行趋势</strong></div>
-            <em class="healthy">总体平稳</em>
-          </header>
-          <svg class="trend-chart" viewBox="0 0 420 150" preserveAspectRatio="none" aria-label="设备运行趋势示意图">
-            <defs>
-              <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#28e5d1" stop-opacity=".42" />
-                <stop offset="1" stop-color="#28e5d1" stop-opacity="0" />
-              </linearGradient>
-            </defs>
-            <g class="chart-grid"><path d="M0 28h420M0 68h420M0 108h420" /><path d="M70 0v140M175 0v140M280 0v140M385 0v140" /></g>
-            <path class="trend-area" d="M0 118 C35 112 51 93 81 98 S135 81 170 85 S223 55 257 68 S312 48 340 53 S386 30 420 38 L420 140H0Z" />
-            <path class="trend-line" d="M0 118 C35 112 51 93 81 98 S135 81 170 85 S223 55 257 68 S312 48 340 53 S386 30 420 38" />
-            <g class="chart-points"><circle cx="81" cy="98" r="4" /><circle cx="257" cy="68" r="4" /><circle cx="420" cy="38" r="4" /></g>
-          </svg>
-          <div class="trend-legend"><span><i></i>在线设备运行率</span><strong>98.7%</strong></div>
-        </section>
-
-        <section class="glass-panel overview-panel">
-          <header class="panel-heading">
-            <div><span>环境态势</span><strong>今日巡查摘要</strong></div>
-          </header>
-          <div class="overview-items">
-            <div><span>重点关注</span><strong>{{ attentionItems.length }}</strong><small>项</small></div>
-            <div><span>待人工确认</span><strong>{{ reviewCount }}</strong><small>项</small></div>
-            <div><span>正在研判</span><strong>{{ analyzingCount }}</strong><small>项</small></div>
-          </div>
-        </section>
       </aside>
 
       <section class="ai-core-column" :aria-label="`${assistantName}智能中枢`">
-        <div class="core-status"><i></i>{{ assistantName }}正在值守</div>
-        <div class="orbital-core" aria-hidden="true">
-          <span class="orbit orbit-outer"><i></i><i></i><i></i></span>
-          <span class="orbit orbit-middle"><i></i><i></i></span>
-          <span class="orbit orbit-inner"></span>
-          <span class="core-energy">
-            <img :src="xiaozhiRobotUrl" :alt="`${assistantName}智能值班助手形象`" />
-          </span>
+        <div class="assistant-presence">
+          <div class="core-status"><i></i>{{ assistantName }}正在值守</div>
+          <div class="orbital-core" aria-hidden="true">
+            <span class="orbit orbit-outer"><i></i><i></i></span>
+            <span class="orbit orbit-inner"></span>
+            <span class="core-energy">
+              <img :src="xiaozhiRobotUrl" :alt="`${assistantName}智能值班助手形象`" />
+            </span>
+          </div>
         </div>
 
-        <section class="core-dialogue">
-          <div class="dialogue-indicator"><span></span><span></span><span></span></div>
-          <div>
-            <span>{{ assistantName }}研判</span>
-            <p>{{ displayText(primaryAttention.diagnosis || '正在结合监测数据、设备状态和近期任务记录形成初步判断。') }}</p>
+        <div class="conversation-flow">
+          <div class="user-context">
+            <span>当前值守问题</span>
+            <p>今天有哪些站点需要优先关注？</p>
           </div>
-        </section>
 
-        <div class="core-actions">
-          <button type="button" @click="analyzePrimaryAttention">补充诊断</button>
-          <button class="primary" type="button" @click="submitQuery('根据当前研判结果生成核查任务草案，并列出需要人工确认的内容。')">生成核查任务</button>
+          <section class="core-dialogue" aria-live="polite">
+            <div class="dialogue-indicator" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div>
+              <span>{{ assistantName }}研判</span>
+              <h2>{{ displayText(primaryAttention.title) }}需优先核查</h2>
+              <p>{{ displayText(primaryAttention.diagnosis || '正在结合监测数据、设备状态和近期任务记录形成初步判断。') }}</p>
+              <div class="core-actions">
+                <button type="button" @click="analyzePrimaryAttention">补充诊断</button>
+                <button class="primary" type="button" @click="submitQuery('根据当前研判结果生成核查任务草案，并列出需要人工确认的内容。')">生成核查任务</button>
+              </div>
+            </div>
+          </section>
+
+          <form class="command-dock" @submit.prevent="submitQuery(query)">
+            <span class="dock-mark" aria-hidden="true">
+              <svg viewBox="0 0 28 28"><path d="M6 9.5 14 5l8 4.5v9L14 23l-8-4.5v-9Z" /><path d="M10 12h8M11 16h6" /></svg>
+            </span>
+            <div class="dock-input">
+              <label for="coordinator-query">继续与{{ assistantName }}对话</label>
+              <input id="coordinator-query" v-model="query" :placeholder="coordinator.placeholder || '描述需要查看或处理的运维事项……'" />
+            </div>
+            <button class="dock-send" type="submit" :disabled="!query.trim() || Boolean(selectingMode)" :aria-label="`发送给${assistantName}`">
+              <svg viewBox="0 0 24 24"><path d="m4 12 16-8-5.5 16-3-6.5L4 12Z" /><path d="m11.5 13.5 4-4" /></svg>
+            </button>
+          </form>
+
+          <div v-if="quickPrompts.length" class="dock-prompts" aria-label="快捷操作">
+            <button v-for="item in quickPrompts.slice(0, 3)" :key="item.label" type="button" @click="submitQuery(item.prompt, item.mode)">{{ item.label }}</button>
+          </div>
         </div>
       </section>
 
-      <aside class="intel-rail rail-right" aria-label="智能研判与处置建议">
-        <section class="glass-panel station-panel">
+      <aside class="intel-rail rail-right" aria-label="现场证据与处置建议">
+        <section class="glass-panel evidence-panel">
           <header class="panel-heading">
-            <div><span>站点感知</span><strong>{{ stationName }}</strong></div>
-            <em class="healthy">连接正常</em>
+            <div><span>现场证据</span><strong>{{ stationName }}</strong></div>
+            <em class="healthy">站房在线</em>
           </header>
-          <div class="station-scene" :class="{ 'has-station-image': coordinator.stationImageUrl }">
-            <img
-              v-if="coordinator.stationImageUrl"
-              class="station-camera-image"
-              :src="coordinator.stationImageUrl"
-              :alt="`${stationName}现场画面`"
-            />
-            <template v-else>
-              <span class="scene-sky"></span>
-              <span class="scene-road"></span>
-              <span class="scene-building building-one"></span>
-              <span class="scene-building building-two"></span>
-              <span class="scene-station"><i></i><i></i><i></i></span>
-            </template>
-            <span v-if="coordinator.stationImageUrl" class="scene-image-overlay" aria-hidden="true"></span>
-            <span class="scene-scan"></span>
-            <span class="scene-tag">站房在线</span>
+          <figure class="station-figure">
+            <div class="station-scene" :class="{ 'has-station-image': coordinator.stationImageUrl }">
+              <img
+                v-if="coordinator.stationImageUrl"
+                class="station-camera-image"
+                :src="coordinator.stationImageUrl"
+                :alt="`${stationName}现场画面`"
+              />
+              <template v-else>
+                <span class="scene-sky"></span>
+                <span class="scene-road"></span>
+                <span class="scene-building building-one"></span>
+                <span class="scene-building building-two"></span>
+                <span class="scene-station"><i></i><i></i><i></i></span>
+              </template>
+              <span v-if="coordinator.stationImageUrl" class="scene-image-overlay" aria-hidden="true"></span>
+              <span class="scene-tag">画面正常</span>
+            </div>
+            <figcaption v-if="coordinator.stationImageUrl">红圈区域为当前重点观察位置</figcaption>
+          </figure>
+          <div class="diagnosis-summary">
+            <span>判断依据</span>
+            <p>{{ displayText(primaryAttention.diagnosis || '暂未形成明确结论，建议继续补充关键证据。') }}</p>
           </div>
-        </section>
-
-        <section class="glass-panel diagnosis-panel">
-          <header class="panel-heading">
-            <div><span>智能研判</span><strong>当前判断与证据</strong></div>
-            <em>{{ confidenceLabel(primaryAttention.confidence) }}</em>
-          </header>
-          <p class="diagnosis-copy">{{ displayText(primaryAttention.diagnosis || '暂未形成明确结论，建议继续补充关键证据。') }}</p>
           <div class="evidence-list">
             <span v-for="evidence in primaryEvidence" :key="evidence"><i>✓</i>{{ displayText(evidence) }}</span>
           </div>
+          <div class="confidence-row"><span>当前置信度</span><strong>{{ confidenceLabel(primaryAttention.confidence) }}</strong></div>
         </section>
 
         <section class="glass-panel dispatch-panel">
@@ -142,7 +139,7 @@
             <span class="person-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20c.8-4.2 3-6.2 6.5-6.2s5.7 2 6.5 6.2" /></svg>
             </span>
-            <div><strong>建议安排当班运维人员</strong><small>派发前需确认人员位置与当前任务</small></div>
+            <div><strong>建议安排当班运维人员</strong><small>派发前确认人员位置与当前任务</small></div>
           </div>
           <div class="dispatch-actions">
             <button type="button" @click="submitQuery('调整当前核查任务的人员安排，请先向我确认调度范围。')">调整方案</button>
@@ -151,22 +148,6 @@
         </section>
       </aside>
     </section>
-
-    <form class="command-dock" @submit.prevent="submitQuery(query)">
-      <span class="dock-mark" aria-hidden="true">
-        <svg viewBox="0 0 28 28"><path d="M6 9.5 14 5l8 4.5v9L14 23l-8-4.5v-9Z" /><path d="M10 12h8M11 16h6" /></svg>
-      </span>
-      <div class="dock-input">
-        <span>与{{ assistantName }}对话</span>
-        <input v-model="query" :placeholder="coordinator.placeholder || '描述需要查看或处理的运维事项……'" />
-      </div>
-      <div class="dock-prompts">
-        <button v-for="item in quickPrompts.slice(0, 2)" :key="item.label" type="button" @click="submitQuery(item.prompt, item.mode)">{{ item.label }}</button>
-      </div>
-      <button class="dock-send" type="submit" :disabled="!query.trim() || Boolean(selectingMode)" :aria-label="`发送给${assistantName}`">
-        <svg viewBox="0 0 24 24"><path d="m4 12 16-8-5.5 16-3-6.5L4 12Z" /><path d="m11.5 13.5 4-4" /></svg>
-      </button>
-    </form>
   </main>
 </template>
 
@@ -200,7 +181,6 @@ const primaryAttention = computed(() => attentionItems.value[0] || normalizeAtte
 const primaryEvidence = computed(() => (primaryAttention.value.evidence || []).slice(0, 3))
 const stationName = computed(() => primaryAttention.value.station || String(primaryAttention.value.title || '').split('·')[0].trim() || '重点关注站点')
 const reviewCount = computed(() => attentionItems.value.filter(item => item.status === 'awaiting_review').length)
-const analyzingCount = computed(() => attentionItems.value.filter(item => item.status === 'analyzing').length)
 const displayText = value => String(value || '').replaceAll('小值', assistantName.value)
 
 const submitQuery = (value, explicitMode = '') => {
@@ -221,102 +201,203 @@ const confidenceLabel = value => ({ high: '判断较明确', medium: '初步判�
 
 <style scoped>
 .command-center {
-  --cyan: #42f1e1;
-  --cyan-soft: #79fff0;
-  --blue: #39aef3;
-  --panel: rgba(5, 31, 53, .76);
-  --line: rgba(74, 220, 230, .28);
+  --cyan: #42e8d9;
+  --cyan-soft: #8af8ed;
+  --ink: #edfdfd;
+  --muted: #9ab9c2;
+  --panel: rgba(7, 29, 46, .9);
+  --line: rgba(82, 192, 204, .22);
   position: relative;
   width: 100%;
   min-width: 0;
   min-height: 100%;
   flex: 1 1 0%;
   overflow: hidden auto;
-  color: #eafcff;
+  color: var(--ink);
   background:
-    radial-gradient(circle at 50% 42%, rgba(21, 129, 166, .3), transparent 31%),
-    radial-gradient(circle at 4% 48%, rgba(24, 109, 141, .22), transparent 29%),
-    linear-gradient(145deg, #020d1b 0%, #04192b 48%, #03111f 100%);
+    radial-gradient(circle at 50% 29%, rgba(19, 119, 143, .22), transparent 34%),
+    radial-gradient(circle at 8% 58%, rgba(16, 84, 108, .18), transparent 28%),
+    linear-gradient(145deg, #050b13 0%, #071827 48%, #050e18 100%);
 }
-.grid-field { position: absolute; inset: 0; opacity: .24; pointer-events: none; background-image: linear-gradient(rgba(79,200,219,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(79,200,219,.08) 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent); }
-.top-aura { position: absolute; top: -220px; left: 50%; width: 780px; height: 400px; transform: translateX(-50%); border-radius: 50%; opacity: .34; background: #1596bc; filter: blur(100px); pointer-events: none; }
-.scan-line { position: absolute; z-index: 0; top: 94px; left: 10%; width: 80%; height: 1px; background: linear-gradient(90deg, transparent, rgba(76,238,235,.55), transparent); box-shadow: 0 0 14px rgba(54,227,226,.6); }
-.center-header { position: relative; z-index: 4; display: flex; min-height: 94px; align-items: center; justify-content: space-between; gap: 24px; padding: 18px clamp(24px, 3.2vw, 58px); border-bottom: 1px solid rgba(72,207,223,.17); background: linear-gradient(180deg, rgba(3,15,29,.92), rgba(3,19,34,.46)); }
-.center-brand, .header-actions, .system-status, .view-switch { display: flex; align-items: center; }.center-brand { gap: 14px; }.brand-mark { display: grid; width: 49px; height: 49px; place-items: center; border: 1px solid rgba(76,239,234,.36); border-radius: 13px; background: rgba(21,118,145,.22); box-shadow: inset 0 0 20px rgba(42,222,224,.12), 0 0 20px rgba(32,189,203,.1); }.brand-mark svg { width: 35px; fill: none; stroke: var(--cyan-soft); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }.center-brand span:not(.brand-mark) { color: #62cbd5; font-size: 10px; font-weight: 700; letter-spacing: .13em; }.center-brand h1 { margin: 3px 0 0; font-size: clamp(20px, 1.55vw, 28px); letter-spacing: .08em; text-shadow: 0 0 18px rgba(105,240,239,.16); }.header-actions { gap: 12px; }.system-status { gap: 8px; color: #82d9dd; font-size: 11px; }.system-status i { width: 7px; height: 7px; border-radius: 50%; background: #4af0a1; box-shadow: 0 0 0 4px rgba(74,240,161,.1), 0 0 14px rgba(74,240,161,.7); }.view-switch { gap: 7px; padding: 9px 13px; border: 1px solid rgba(92,218,226,.33); border-radius: 8px; background: rgba(16,78,101,.26); color: #c9f6f7; cursor: pointer; }.view-switch:hover { border-color: rgba(103,246,240,.65); background: rgba(21,105,127,.4); }.view-switch svg { width: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
-.center-stage { position: relative; z-index: 2; display: grid; width: min(1720px, calc(100% - 54px)); min-height: 720px; margin: 0 auto; padding: 26px 0 122px; grid-template-columns: minmax(260px, .86fr) minmax(410px, 1.18fr) minmax(270px, .9fr); gap: clamp(16px, 1.45vw, 27px); }
-.intel-rail { display: grid; align-content: center; gap: 15px; }.glass-panel { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: linear-gradient(135deg, rgba(7,40,64,.88), rgba(5,24,43,.68)); box-shadow: inset 0 0 30px rgba(26,134,161,.06), 0 16px 45px rgba(0,0,0,.18); backdrop-filter: blur(15px); }.glass-panel::before, .glass-panel::after { position: absolute; width: 26px; height: 2px; background: var(--cyan); box-shadow: 0 0 9px rgba(66,241,225,.65); content: ''; }.glass-panel::before { top: 0; left: 0; }.glass-panel::after { right: 0; bottom: 0; }.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 16px 18px 0; }.panel-heading div { display: grid; gap: 3px; }.panel-heading span { color: #59dce1; font-size: 10px; font-weight: 800; letter-spacing: .12em; }.panel-heading strong { font-size: 13px; }.panel-heading em { padding: 3px 7px; border: 1px solid rgba(244,184,77,.26); border-radius: 999px; background: rgba(244,162,52,.08); color: #ffd481; font-size: 9px; font-style: normal; white-space: nowrap; }.panel-heading em.healthy { border-color: rgba(55,227,170,.22); background: rgba(42,210,159,.07); color: #6ef3c0; }
-.attention-panel { min-height: 208px; padding-bottom: 17px; }.attention-level { display: flex; align-items: center; gap: 7px; margin: 14px 18px 0; color: #ffbd73; font-size: 10px; }.attention-level i { width: 6px; height: 6px; border-radius: 50%; background: #ff9b4d; box-shadow: 0 0 10px #ff9b4d; }.attention-panel h2 { margin: 8px 18px 5px; font-size: 16px; }.attention-panel p { display: -webkit-box; margin: 0 18px; overflow: hidden; color: #8eb5c1; font-size: 11px; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }.attention-panel > button { margin: 13px 18px 0; padding: 7px 10px; border: 1px solid rgba(78,219,224,.32); border-radius: 5px; background: rgba(33,144,162,.12); color: #83e8e7; cursor: pointer; font-size: 10px; }
-.trend-panel { min-height: 232px; }.trend-chart { width: calc(100% - 36px); height: 116px; margin: 10px 18px 0; overflow: visible; }.chart-grid { fill: none; stroke: rgba(112,181,197,.12); stroke-width: 1; }.trend-area { fill: url(#areaFill); }.trend-line { fill: none; stroke: #37e7cf; stroke-linecap: round; stroke-width: 2.6; filter: drop-shadow(0 0 5px rgba(55,231,207,.5)); }.chart-points circle { fill: #e3fffb; stroke: #31d9c9; stroke-width: 2; }.trend-legend { display: flex; align-items: center; justify-content: space-between; padding: 0 18px 15px; color: #769ca8; font-size: 9px; }.trend-legend span { display: flex; align-items: center; gap: 6px; }.trend-legend i { width: 14px; height: 2px; background: #37e7cf; }.trend-legend strong { color: #6ff3de; font-size: 15px; }
-.overview-panel { min-height: 126px; }.overview-items { display: grid; padding: 17px 18px 19px; grid-template-columns: repeat(3, 1fr); }.overview-items div { display: grid; justify-items: center; border-right: 1px solid rgba(86,181,195,.16); }.overview-items div:last-child { border-right: 0; }.overview-items span { color: #759aa5; font-size: 9px; }.overview-items strong { margin-top: 4px; color: #eaffff; font-size: 22px; }.overview-items small { color: #5c8e9b; font-size: 9px; }
-.ai-core-column { position: relative; display: flex; min-height: 650px; align-items: center; flex-direction: column; justify-content: center; }.core-status { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; color: #72dce1; font-size: 10px; letter-spacing: .12em; }.core-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 11px var(--cyan); }.orbital-core { position: relative; width: clamp(330px, 29vw, 500px); aspect-ratio: 1; }.orbit, .core-energy { position: absolute; border-radius: 50%; }.orbit { border: 1px solid rgba(78,229,230,.32); }.orbit::before, .orbit::after { position: absolute; border: solid rgba(91,238,238,.58); border-width: 3px 0; border-radius: 50%; content: ''; }.orbit-outer { inset: 4%; animation: rotate-clockwise 22s linear infinite; box-shadow: inset 0 0 36px rgba(24,168,190,.1), 0 0 26px rgba(27,159,184,.1); }.orbit-outer::before { inset: -8px; transform: rotate(42deg); }.orbit-outer::after { inset: 16px; transform: rotate(-28deg); border-color: rgba(79,165,208,.28); }.orbit-middle { inset: 16%; animation: rotate-counter 13s linear infinite; border-width: 2px; border-style: dashed; }.orbit-middle::before { inset: -5px; transform: rotate(86deg); }.orbit-middle::after { inset: 12px; transform: rotate(-49deg); }.orbit-inner { inset: 29%; border: 2px solid rgba(115,251,241,.52); animation: pulse-core 3.3s ease-in-out infinite; box-shadow: inset 0 0 38px rgba(47,218,220,.18), 0 0 40px rgba(31,199,211,.2); }.orbit > i { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: #9dfff6; box-shadow: 0 0 11px #4ce8e1; }.orbit-outer i:nth-child(1) { top: 11%; left: 24%; }.orbit-outer i:nth-child(2) { right: 3%; bottom: 38%; }.orbit-outer i:nth-child(3) { bottom: 4%; left: 38%; }.orbit-middle i:nth-child(1) { top: 15%; right: 13%; }.orbit-middle i:nth-child(2) { bottom: 12%; left: 18%; }.core-energy { z-index: 2; inset: 25%; overflow: hidden; border: 2px solid rgba(138,255,247,.7); background: #f5fbfd; box-shadow: 0 0 0 8px rgba(45,202,210,.08), 0 0 42px rgba(57,227,231,.42), inset 0 0 24px rgba(39,166,195,.12); animation: breathe 2.7s ease-in-out infinite; }.core-energy::after { position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(circle at 50% 42%, transparent 47%, rgba(30,173,195,.12) 76%, rgba(31,218,218,.25) 100%); pointer-events: none; content: ''; }.core-energy img { width: 116%; height: 116%; transform: translate(-7%, -3%); object-fit: cover; object-position: center; }
-.core-dialogue { position: relative; z-index: 2; display: flex; width: min(500px, 92%); align-items: flex-start; gap: 12px; margin-top: -19px; padding: 13px 15px; border: 1px solid rgba(81,220,225,.27); border-radius: 8px; background: rgba(5,31,50,.8); box-shadow: 0 12px 35px rgba(0,0,0,.2), inset 0 0 28px rgba(38,174,191,.06); backdrop-filter: blur(14px); }.dialogue-indicator { display: flex; width: 34px; height: 34px; flex: none; align-items: center; justify-content: center; gap: 2px; border-radius: 50%; background: rgba(33,151,169,.2); }.dialogue-indicator span { width: 2px; border-radius: 2px; background: #63eee4; animation: voice-wave 1s ease-in-out infinite; }.dialogue-indicator span:nth-child(1) { height: 8px; }.dialogue-indicator span:nth-child(2) { height: 15px; animation-delay: .15s; }.dialogue-indicator span:nth-child(3) { height: 10px; animation-delay: .3s; }.core-dialogue > div:last-child { min-width: 0; }.core-dialogue span { color: #4bdedc; font-size: 9px; font-weight: 800; }.core-dialogue p { margin: 3px 0 0; color: #b5d4d9; font-size: 11px; line-height: 1.6; }.core-actions { display: flex; gap: 8px; margin-top: 10px; }.core-actions button { padding: 8px 14px; border: 1px solid rgba(78,211,218,.29); border-radius: 5px; background: rgba(12,63,82,.6); color: #9bdde0; cursor: pointer; font-size: 10px; }.core-actions button.primary { border-color: rgba(76,239,224,.56); background: linear-gradient(135deg, rgba(17,144,157,.72), rgba(9,88,121,.75)); color: #ecffff; box-shadow: 0 0 18px rgba(38,213,207,.12); }
-.station-panel { min-height: 216px; }.station-scene { position: relative; height: 143px; margin: 12px 18px 18px; overflow: hidden; border: 1px solid rgba(84,206,219,.24); border-radius: 4px; background: linear-gradient(#0c4968 0 47%, #0a3048 47% 100%); }.station-scene.has-station-image { height: auto; aspect-ratio: 526 / 320; background: #071a2b; }.station-camera-image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }.scene-image-overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(4,31,49,.08), transparent 58%, rgba(3,27,43,.18)); box-shadow: inset 0 0 22px rgba(26,171,187,.15); pointer-events: none; }.scene-sky { position: absolute; inset: 0; background: radial-gradient(circle at 75% 18%, rgba(105,238,237,.38), transparent 20%), linear-gradient(170deg, transparent 52%, rgba(76,181,193,.15) 53%); }.scene-road { position: absolute; right: -15%; bottom: -42%; width: 84%; height: 80%; transform: rotate(-8deg); border-left: 2px solid rgba(98,240,235,.28); background: linear-gradient(90deg, rgba(12,42,59,.7), rgba(20,84,101,.6)); }.scene-building { position: absolute; bottom: 31%; background: linear-gradient(135deg, #103d54, #17647a); box-shadow: inset -10px 0 18px rgba(0,0,0,.2); }.building-one { left: 0; width: 34%; height: 43%; }.building-two { right: 9%; width: 28%; height: 56%; }.scene-station { position: absolute; bottom: 27%; left: 48%; width: 46px; height: 54px; border: 1px solid rgba(114,241,235,.54); background: rgba(5,27,43,.85); box-shadow: 0 0 17px rgba(49,216,218,.19); }.scene-station i { position: absolute; top: -24px; left: 21px; width: 2px; height: 24px; background: #7aece7; }.scene-station i:nth-child(2) { top: -13px; left: 10px; width: 23px; height: 1px; }.scene-station i:nth-child(3) { top: 12px; left: 11px; width: 22px; height: 22px; border: 1px solid rgba(78,222,220,.42); background: transparent; }.scene-scan { position: absolute; top: -20%; left: 41%; width: 90px; height: 130%; transform: perspective(100px) rotateX(18deg); border: 1px solid rgba(65,240,228,.18); border-radius: 50%; animation: scene-scan 3.4s ease-in-out infinite; }.scene-tag { position: absolute; top: 9px; right: 9px; padding: 3px 6px; border: 1px solid rgba(83,239,217,.32); background: rgba(4,34,48,.7); color: #70efd3; font-size: 8px; }
-.diagnosis-panel { min-height: 181px; }.diagnosis-copy { margin: 14px 18px 8px; color: #b3d6db; font-size: 11px; line-height: 1.65; }.evidence-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 17px; }.evidence-list span { display: flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid rgba(87,185,198,.18); border-radius: 4px; background: rgba(30,96,113,.12); color: #82b5bf; font-size: 9px; }.evidence-list i { color: #5be8cf; font-style: normal; }
-.dispatch-panel { min-height: 195px; }.dispatch-person { display: flex; align-items: center; gap: 10px; margin: 14px 18px; padding: 10px; border: 1px solid rgba(82,188,200,.16); background: rgba(16,67,86,.26); }.person-icon { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border-radius: 50%; background: rgba(30,148,162,.22); }.person-icon svg { width: 23px; fill: none; stroke: #7fe9e5; stroke-linecap: round; stroke-width: 1.4; }.dispatch-person div { display: grid; gap: 3px; }.dispatch-person strong { font-size: 10px; }.dispatch-person small { color: #7499a4; font-size: 8px; }.dispatch-actions { display: grid; gap: 8px; padding: 0 18px 17px; grid-template-columns: 1fr 1fr; }.dispatch-actions button { padding: 8px; border: 1px solid rgba(80,183,197,.25); border-radius: 4px; background: rgba(11,55,75,.7); color: #8fc8cf; cursor: pointer; font-size: 9px; }.dispatch-actions button.confirm { border-color: rgba(66,239,222,.5); background: linear-gradient(135deg, rgba(18,146,153,.65), rgba(8,90,122,.72)); color: #edffff; }
-.command-dock { position: absolute; z-index: 8; right: clamp(24px, 4vw, 70px); bottom: 24px; left: clamp(24px, 4vw, 70px); display: flex; min-height: 68px; align-items: center; gap: 13px; padding: 9px 10px 9px 15px; border: 1px solid rgba(80,221,225,.31); border-radius: 10px; background: rgba(4,25,42,.92); box-shadow: 0 18px 50px rgba(0,0,0,.4), inset 0 0 30px rgba(38,161,179,.06); backdrop-filter: blur(20px); }.dock-mark { display: grid; width: 41px; height: 41px; flex: none; place-items: center; border: 1px solid rgba(79,232,226,.27); border-radius: 10px; background: rgba(26,129,150,.18); }.dock-mark svg { width: 27px; fill: none; stroke: #72ece6; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.3; }.dock-input { display: grid; min-width: 140px; flex: 1; gap: 2px; }.dock-input span { color: #53d8db; font-size: 8px; font-weight: 800; letter-spacing: .11em; }.dock-input input { width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: #e8ffff; font: inherit; font-size: 12px; }.dock-input input::placeholder { color: #668993; }.dock-prompts { display: flex; gap: 6px; }.dock-prompts button { padding: 6px 8px; border: 1px solid rgba(81,184,198,.17); border-radius: 5px; background: rgba(26,82,99,.17); color: #7cabb5; cursor: pointer; font-size: 9px; }.dock-send { display: grid; width: 47px; height: 47px; flex: none; place-items: center; border: 1px solid rgba(91,240,230,.47); border-radius: 9px; background: linear-gradient(135deg, #138e9b, #0b6689); color: #efffff; cursor: pointer; box-shadow: 0 0 18px rgba(40,218,213,.13); }.dock-send:disabled { cursor: default; opacity: .35; }.dock-send svg { width: 22px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
-button:focus-visible, input:focus-visible { outline: 3px solid rgba(88,241,233,.32); outline-offset: 2px; }
-@keyframes rotate-clockwise { to { transform: rotate(360deg); } }
-@keyframes rotate-counter { to { transform: rotate(-360deg); } }
-@keyframes pulse-core { 50% { transform: scale(1.035); border-color: rgba(131,255,245,.82); } }
-@keyframes breathe { 50% { transform: scale(1.1); opacity: .82; } }
-@keyframes voice-wave { 50% { transform: scaleY(.45); opacity: .55; } }
-@keyframes scene-scan { 50% { transform: perspective(100px) rotateX(18deg) scale(.7); opacity: .25; } }
-@media (max-width: 1250px) { .center-stage { grid-template-columns: minmax(240px, .9fr) minmax(380px, 1.15fr) minmax(250px, .9fr); width: calc(100% - 34px); gap: 12px; }.center-header { padding-inline: 22px; }.panel-heading { padding-inline: 13px; }.attention-panel h2, .attention-panel p, .attention-level { margin-inline: 13px; }.dock-prompts { display: none; } }
-@media (max-width: 980px) { .command-center { overflow: auto; }.center-stage { grid-template-columns: 1fr 1fr; padding-bottom: 110px; }.ai-core-column { min-height: 580px; grid-column: 1 / -1; grid-row: 1; }.intel-rail { align-content: start; }.command-dock { position: fixed; }.orbital-core { width: 410px; }.system-status { display: none; } }
-@media (max-width: 700px) { .center-header { align-items: flex-start; }.center-brand h1 { font-size: 17px; }.brand-mark { width: 42px; height: 42px; }.view-switch { padding: 8px; font-size: 0; }.view-switch svg { width: 19px; }.center-stage { grid-template-columns: 1fr; }.ai-core-column, .intel-rail { grid-column: 1; }.rail-left { grid-row: 2; }.rail-right { grid-row: 3; }.orbital-core { width: min(390px, 92vw); }.command-dock { right: 10px; bottom: 10px; left: 10px; }.dock-mark { display: none; } }
-.center-stage { min-height: 0; }
-.intel-rail { align-content: start; }
-.glass-panel { border-color: rgba(74, 190, 207, .22); box-shadow: inset 0 0 24px rgba(26,134,161,.045), 0 12px 32px rgba(0,0,0,.16); }
-.glass-panel::before, .glass-panel::after { width: 18px; height: 1px; box-shadow: 0 0 6px rgba(66,241,225,.48); }
-.panel-heading span { font-size: 11px; }
+.grid-field { position: absolute; inset: 0; opacity: .16; pointer-events: none; background-image: linear-gradient(rgba(79,200,219,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(79,200,219,.08) 1px, transparent 1px); background-size: 48px 48px; mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent); }
+.top-aura { position: absolute; top: -260px; left: 50%; width: 820px; height: 430px; transform: translateX(-50%); border-radius: 50%; opacity: .25; background: #168aaa; filter: blur(110px); pointer-events: none; }
+.center-header { position: relative; z-index: 4; display: flex; min-height: 88px; align-items: center; justify-content: space-between; gap: 24px; padding: 16px clamp(22px, 3vw, 52px); border-bottom: 1px solid rgba(72,207,223,.14); background: linear-gradient(180deg, rgba(4,12,21,.94), rgba(4,18,30,.58)); }
+.center-brand, .header-actions, .system-status, .view-switch, .shift-summary { display: flex; align-items: center; }
+.center-brand { gap: 13px; }
+.brand-mark { display: grid; width: 48px; height: 48px; flex: none; place-items: center; border: 1px solid rgba(76,239,234,.3); border-radius: 13px; background: rgba(21,118,145,.18); box-shadow: inset 0 0 18px rgba(42,222,224,.1); }
+.brand-mark svg { width: 34px; fill: none; stroke: var(--cyan-soft); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
+.center-brand span:not(.brand-mark) { color: #70cbd3; font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.center-brand h1 { margin: 3px 0 0; font-size: clamp(20px, 1.55vw, 27px); letter-spacing: .06em; }
+.header-actions { gap: 12px; }
+.shift-summary { gap: 15px; padding-right: 4px; color: #7f9fa9; font-size: 12px; }
+.shift-summary strong { color: #dffafa; font-size: 15px; }
+.system-status { gap: 8px; color: #8bc5c8; font-size: 12px; }
+.system-status i, .core-status i { width: 7px; height: 7px; border-radius: 50%; background: #4ae39b; box-shadow: 0 0 0 4px rgba(74,227,155,.08), 0 0 12px rgba(74,227,155,.55); }
+.view-switch { gap: 7px; padding: 9px 13px; border: 1px solid rgba(92,218,226,.28); border-radius: 8px; background: rgba(16,78,101,.22); color: #cdf4f5; cursor: pointer; }
+.view-switch:hover { border-color: rgba(103,246,240,.55); background: rgba(21,105,127,.36); }
+.view-switch svg { width: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
+
+.center-stage { position: relative; z-index: 2; display: grid; width: min(1680px, calc(100% - 52px)); margin: 0 auto; padding: 34px 0 44px; grid-template-columns: minmax(260px, .78fr) minmax(490px, 1.3fr) minmax(300px, .88fr); grid-template-areas: "left core right"; gap: clamp(18px, 1.55vw, 28px); }
+.intel-rail { display: grid; align-content: start; gap: 16px; padding-top: 76px; }
+.rail-left { grid-area: left; }
+.rail-right { grid-area: right; }
+.glass-panel { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(140deg, rgba(8,36,56,.9), rgba(5,22,37,.82)); box-shadow: inset 0 0 26px rgba(26,134,161,.04), 0 16px 38px rgba(0,0,0,.18); backdrop-filter: blur(14px); }
+.glass-panel::before { position: absolute; top: 0; left: 0; width: 34px; height: 2px; background: var(--cyan); box-shadow: 0 0 8px rgba(66,241,225,.52); content: ''; }
+.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px 18px 0; }
+.panel-heading div { display: grid; gap: 4px; }
+.panel-heading span { color: #5cd8dc; font-size: 11px; font-weight: 800; letter-spacing: .11em; }
 .panel-heading strong { font-size: 15px; }
-.panel-heading em { font-size: 10px; }
-.attention-level { font-size: 11px; }
-.attention-panel p, .diagnosis-copy { font-size: 12px; }
-.attention-panel > button, .dispatch-actions button { font-size: 11px; }
-.trend-legend, .overview-items span, .overview-items small { font-size: 10px; }
-.core-status { font-size: 11px; }
-.core-dialogue span { font-size: 10px; }
-.core-dialogue p { font-size: 12px; }
-.dispatch-person strong { font-size: 11px; }
-.dispatch-person small { font-size: 10px; }
-.dock-input span { font-size: 9px; }
-.dock-prompts button { font-size: 10px; }
-.orbit { border-color: rgba(78,229,230,.24); }
-.orbit-outer::before, .orbit-outer::after, .orbit-middle::before, .orbit-middle::after { opacity: .72; }
-@media (max-width: 1440px) {
-  .center-stage { width: calc(100% - 34px); grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding-bottom: 120px; }
-  .ai-core-column { grid-column: 1 / -1; grid-row: 1; min-height: 540px; }
-  .rail-left { grid-column: 1; grid-row: 2; }
-  .rail-right { grid-column: 2; grid-row: 2; }
-  .orbital-core { width: clamp(330px, 39vw, 460px); }
-  .command-dock { right: 28px; left: 28px; }
+.panel-heading em { padding: 3px 8px; border: 1px solid rgba(244,184,77,.25); border-radius: 999px; background: rgba(244,162,52,.08); color: #ffd481; font-size: 11px; font-style: normal; white-space: nowrap; }
+.panel-heading em.healthy { border-color: rgba(55,227,170,.22); background: rgba(42,210,159,.07); color: #6ee9b9; }
+
+.attention-panel { padding-bottom: 19px; }
+.attention-level { display: flex; align-items: center; gap: 7px; margin: 16px 18px 0; color: #ffc07b; font-size: 12px; }
+.attention-level i { width: 7px; height: 7px; border-radius: 50%; background: #ff9b4d; box-shadow: 0 0 9px rgba(255,155,77,.8); }
+.attention-panel h2 { margin: 9px 18px 7px; font-size: 17px; line-height: 1.45; }
+.attention-panel p { margin: 0 18px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.attention-panel > button { margin: 16px 18px 0; padding: 9px 12px; border: 1px solid rgba(78,219,224,.3); border-radius: 6px; background: rgba(33,144,162,.12); color: #8de4e3; cursor: pointer; font-size: 12px; }
+
+.ai-core-column { grid-area: core; min-width: 0; }
+.assistant-presence { display: flex; align-items: center; flex-direction: column; }
+.core-status { display: flex; align-items: center; gap: 9px; color: #8bdde0; font-size: 12px; letter-spacing: .1em; }
+.core-status i { background: var(--cyan); box-shadow: 0 0 10px rgba(66,232,217,.8); }
+.orbital-core { position: relative; width: clamp(300px, 24vw, 390px); aspect-ratio: 1; margin-top: -3px; }
+.orbit, .core-energy { position: absolute; border-radius: 50%; }
+.orbit { border: 1px solid rgba(78,229,230,.26); }
+.orbit-outer { inset: 7%; animation: rotate-clockwise 26s linear infinite; box-shadow: inset 0 0 34px rgba(24,168,190,.08), 0 0 22px rgba(27,159,184,.08); }
+.orbit-outer::before { position: absolute; inset: -6px; transform: rotate(42deg); border: solid rgba(91,238,238,.42); border-width: 2px 0; border-radius: 50%; content: ''; }
+.orbit-inner { inset: 21%; border-color: rgba(112,246,237,.38); animation: pulse-core 3.5s ease-in-out infinite; box-shadow: inset 0 0 30px rgba(47,218,220,.13), 0 0 30px rgba(31,199,211,.14); }
+.orbit > i { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: #a9fff7; box-shadow: 0 0 10px #4ce8e1; }
+.orbit-outer i:nth-child(1) { top: 13%; left: 21%; }
+.orbit-outer i:nth-child(2) { right: 5%; bottom: 34%; }
+.core-energy { z-index: 2; inset: 20%; overflow: hidden; border: 2px solid rgba(138,255,247,.62); background: #f5fbfd; box-shadow: 0 0 0 7px rgba(45,202,210,.07), 0 0 36px rgba(57,227,231,.3), inset 0 0 22px rgba(39,166,195,.1); animation: breathe 3s ease-in-out infinite; }
+.core-energy::after { position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(circle at 50% 42%, transparent 52%, rgba(30,173,195,.1) 78%, rgba(31,218,218,.2) 100%); pointer-events: none; content: ''; }
+.core-energy img { width: 118%; height: 118%; transform: translate(-8%, -4%); object-fit: cover; object-position: center; }
+
+.conversation-flow { position: relative; z-index: 3; width: min(680px, 100%); margin: -28px auto 0; }
+.user-context { width: fit-content; max-width: 88%; margin: 0 0 10px auto; padding: 10px 14px; border: 1px solid rgba(91,139,153,.2); border-radius: 12px 12px 3px 12px; background: rgba(29,58,72,.5); }
+.user-context span { color: #7396a1; font-size: 11px; }
+.user-context p { margin: 3px 0 0; color: #d7e8eb; font-size: 13px; }
+.core-dialogue { display: flex; align-items: flex-start; gap: 13px; padding: 17px 18px; border: 1px solid rgba(81,220,225,.25); border-radius: 3px 12px 12px; background: rgba(6,29,46,.92); box-shadow: 0 14px 36px rgba(0,0,0,.24), inset 0 0 26px rgba(38,174,191,.05); backdrop-filter: blur(14px); }
+.dialogue-indicator { display: flex; width: 38px; height: 38px; flex: none; align-items: center; justify-content: center; gap: 3px; border-radius: 50%; background: rgba(33,151,169,.18); }
+.dialogue-indicator span { width: 2px; border-radius: 2px; background: #63eee4; animation: voice-wave 1s ease-in-out infinite; }
+.dialogue-indicator span:nth-child(1) { height: 8px; }
+.dialogue-indicator span:nth-child(2) { height: 16px; animation-delay: .15s; }
+.dialogue-indicator span:nth-child(3) { height: 10px; animation-delay: .3s; }
+.core-dialogue > div:last-child { min-width: 0; }
+.core-dialogue > div > span { color: #55dddb; font-size: 11px; font-weight: 800; }
+.core-dialogue h2 { margin: 4px 0 6px; color: #f3ffff; font-size: 17px; line-height: 1.45; }
+.core-dialogue p { margin: 0; color: #b5cdd3; font-size: 13px; line-height: 1.7; }
+.core-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+.core-actions button { padding: 9px 13px; border: 1px solid rgba(78,211,218,.27); border-radius: 6px; background: rgba(12,63,82,.6); color: #a6dfe1; cursor: pointer; font-size: 12px; }
+.core-actions button.primary { border-color: rgba(76,239,224,.48); background: linear-gradient(135deg, rgba(17,144,157,.66), rgba(9,88,121,.72)); color: #f1ffff; }
+
+.command-dock { display: flex; min-height: 64px; align-items: center; gap: 12px; margin-top: 13px; padding: 8px 9px 8px 13px; border: 1px solid rgba(80,221,225,.27); border-radius: 10px; background: rgba(4,23,38,.9); box-shadow: 0 14px 36px rgba(0,0,0,.24), inset 0 0 26px rgba(38,161,179,.05); }
+.dock-mark { display: grid; width: 40px; height: 40px; flex: none; place-items: center; border: 1px solid rgba(79,232,226,.24); border-radius: 9px; background: rgba(26,129,150,.16); }
+.dock-mark svg { width: 26px; fill: none; stroke: #7be7e2; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.3; }
+.dock-input { display: grid; min-width: 0; flex: 1; gap: 3px; }
+.dock-input label { color: #56d2d5; font-size: 11px; font-weight: 800; letter-spacing: .06em; }
+.dock-input input { width: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: #efffff; font: inherit; font-size: 13px; }
+.dock-input input::placeholder { color: #718e97; }
+.dock-send { display: grid; width: 46px; height: 46px; flex: none; place-items: center; border: 1px solid rgba(91,240,230,.42); border-radius: 9px; background: linear-gradient(135deg, #138994, #0b6283); color: #efffff; cursor: pointer; }
+.dock-send:disabled { cursor: default; opacity: .35; }
+.dock-send svg { width: 21px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.dock-prompts { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; padding-left: 4px; }
+.dock-prompts button { padding: 7px 10px; border: 1px solid rgba(81,184,198,.17); border-radius: 999px; background: rgba(26,82,99,.16); color: #8eb6be; cursor: pointer; font-size: 11px; }
+
+.evidence-panel { padding-bottom: 17px; }
+.station-figure { margin: 14px 18px 0; }
+.station-scene { position: relative; height: 150px; overflow: hidden; border: 1px solid rgba(84,206,219,.2); border-radius: 6px; background: linear-gradient(#0c4968 0 47%, #0a3048 47% 100%); }
+.station-scene.has-station-image { height: auto; aspect-ratio: 526 / 320; background: #071a2b; }
+.station-camera-image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
+.scene-image-overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(4,31,49,.04), transparent 58%, rgba(3,27,43,.16)); box-shadow: inset 0 0 20px rgba(26,171,187,.12); pointer-events: none; }
+.scene-sky { position: absolute; inset: 0; background: radial-gradient(circle at 75% 18%, rgba(105,238,237,.3), transparent 20%), linear-gradient(170deg, transparent 52%, rgba(76,181,193,.12) 53%); }
+.scene-road { position: absolute; right: -15%; bottom: -42%; width: 84%; height: 80%; transform: rotate(-8deg); border-left: 2px solid rgba(98,240,235,.24); background: linear-gradient(90deg, rgba(12,42,59,.7), rgba(20,84,101,.6)); }
+.scene-building { position: absolute; bottom: 31%; background: linear-gradient(135deg, #103d54, #17647a); }
+.building-one { left: 0; width: 34%; height: 43%; }
+.building-two { right: 9%; width: 28%; height: 56%; }
+.scene-station { position: absolute; bottom: 27%; left: 48%; width: 46px; height: 54px; border: 1px solid rgba(114,241,235,.54); background: rgba(5,27,43,.85); }
+.scene-station i { position: absolute; top: -24px; left: 21px; width: 2px; height: 24px; background: #7aece7; }
+.scene-station i:nth-child(2) { top: -13px; left: 10px; width: 23px; height: 1px; }
+.scene-station i:nth-child(3) { top: 12px; left: 11px; width: 22px; height: 22px; border: 1px solid rgba(78,222,220,.42); background: transparent; }
+.scene-tag { position: absolute; top: 9px; right: 9px; padding: 4px 7px; border: 1px solid rgba(83,239,217,.3); border-radius: 4px; background: rgba(4,34,48,.74); color: #77e5cc; font-size: 11px; }
+.station-figure figcaption { margin-top: 7px; color: #96adb4; font-size: 12px; }
+.diagnosis-summary { margin: 15px 18px 10px; }
+.diagnosis-summary span { color: #5cd8dc; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.diagnosis-summary p { margin: 5px 0 0; color: #b5cdd3; font-size: 13px; line-height: 1.65; }
+.evidence-list { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 18px; }
+.evidence-list span { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid rgba(87,185,198,.16); border-radius: 5px; background: rgba(30,96,113,.12); color: #91b6bf; font-size: 11px; }
+.evidence-list i { color: #5be8cf; font-style: normal; }
+.confidence-row { display: flex; align-items: center; justify-content: space-between; margin: 15px 18px 0; padding-top: 12px; border-top: 1px solid rgba(86,181,195,.13); color: #7898a2; font-size: 12px; }
+.confidence-row strong { color: #ffd17e; font-size: 12px; }
+
+.dispatch-panel { padding-bottom: 17px; }
+.dispatch-person { display: flex; align-items: center; gap: 11px; margin: 15px 18px; padding: 11px; border: 1px solid rgba(82,188,200,.14); border-radius: 6px; background: rgba(16,67,86,.24); }
+.person-icon { display: grid; width: 38px; height: 38px; flex: none; place-items: center; border-radius: 50%; background: rgba(30,148,162,.2); }
+.person-icon svg { width: 24px; fill: none; stroke: #83dedb; stroke-linecap: round; stroke-width: 1.4; }
+.dispatch-person div { display: grid; gap: 4px; }
+.dispatch-person strong { font-size: 13px; }
+.dispatch-person small { color: #829da5; font-size: 11px; }
+.dispatch-actions { display: grid; gap: 9px; padding: 0 18px; grid-template-columns: 1fr 1fr; }
+.dispatch-actions button { padding: 9px; border: 1px solid rgba(80,183,197,.23); border-radius: 6px; background: rgba(11,55,75,.68); color: #9dc7cd; cursor: pointer; font-size: 12px; }
+.dispatch-actions button.confirm { border-color: rgba(66,239,222,.44); background: linear-gradient(135deg, rgba(18,146,153,.6), rgba(8,90,122,.68)); color: #efffff; }
+
+button { font: inherit; }
+button:focus-visible, input:focus-visible { outline: 3px solid rgba(88,241,233,.3); outline-offset: 2px; }
+@keyframes rotate-clockwise { to { transform: rotate(360deg); } }
+@keyframes pulse-core { 50% { transform: scale(1.025); border-color: rgba(131,255,245,.62); } }
+@keyframes breathe { 50% { transform: scale(1.045); } }
+@keyframes voice-wave { 50% { transform: scaleY(.45); opacity: .55; } }
+
+@media (max-width: 1599px) {
+  .center-stage { width: min(1240px, calc(100% - 40px)); grid-template-columns: minmax(0, 1.45fr) minmax(320px, .72fr); grid-template-areas: "core left" "core right"; align-items: start; gap: 17px; }
+  .ai-core-column { position: sticky; top: 20px; }
+  .intel-rail { padding-top: 0; }
+  .orbital-core { width: clamp(310px, 31vw, 400px); }
+  .conversation-flow { width: min(720px, 100%); }
 }
-@media (max-width: 960px) {
-  .center-stage { grid-template-columns: 1fr; width: calc(100% - 28px); gap: 14px; }
-  .ai-core-column, .intel-rail { grid-column: 1; }
-  .ai-core-column { grid-row: 1; min-height: 500px; }
-  .rail-left { grid-row: 2; }
-  .rail-right { grid-row: 3; }
-  .orbital-core { width: min(410px, 82vw); }
-  .center-header { padding-inline: 18px; }
-  .system-status { display: none; }
+@media (max-width: 1180px) {
+  .center-stage { width: min(820px, calc(100% - 32px)); grid-template-columns: 1fr; grid-template-areas: "core" "left" "right"; }
+  .ai-core-column { position: static; }
+  .rail-left { margin-top: 8px; }
+  .orbital-core { width: min(390px, 58vw); }
+  .shift-summary { display: none; }
 }
-@media (max-width: 700px) {
-  .center-header { min-height: 76px; padding: 12px 14px; }
+@media (max-width: 760px) {
+  .center-header { min-height: 72px; padding: 11px 13px; }
   .center-brand { gap: 9px; }
-  .center-brand span:not(.brand-mark) { font-size: 9px; }
-  .center-brand h1 { font-size: 17px; letter-spacing: .03em; }
   .brand-mark { width: 40px; height: 40px; }
-  .view-switch { padding: 8px; font-size: 0; }
-  .view-switch svg { width: 18px; }
-  .center-stage { padding-top: 16px; padding-bottom: 100px; }
-  .ai-core-column { min-height: 430px; }
-  .orbital-core { width: min(360px, 88vw); }
-  .core-dialogue { width: 100%; }
-  .command-dock { right: 10px; bottom: 10px; left: 10px; min-height: 58px; padding: 7px 8px; }
+  .brand-mark svg { width: 29px; }
+  .center-brand span:not(.brand-mark) { font-size: 9px; letter-spacing: .06em; }
+  .center-brand h1 { font-size: 17px; letter-spacing: .02em; }
+  .system-status { display: none; }
+  .view-switch { padding: 8px; }
+  .view-switch span { display: none; }
+  .view-switch svg { width: 19px; }
+  .center-stage { width: calc(100% - 22px); padding: 20px 0 30px; gap: 12px; }
+  .orbital-core { width: min(340px, 86vw); }
+  .conversation-flow { margin-top: -22px; }
+  .core-dialogue { padding: 14px; }
+  .dialogue-indicator { width: 34px; height: 34px; }
+  .command-dock { min-height: 60px; padding-left: 9px; }
   .dock-mark { display: none; }
-  .dock-send { width: 42px; height: 42px; }
+  .dock-input label { font-size: 10px; }
+  .dock-send { width: 43px; height: 43px; }
+  .dock-prompts { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 3px; }
+  .dock-prompts button { flex: none; }
+  .panel-heading, .station-figure { margin-inline: 0; }
+  .panel-heading { padding-inline: 15px; }
+  .attention-level, .attention-panel h2, .attention-panel p, .attention-panel > button, .diagnosis-summary, .confidence-row, .dispatch-person { margin-inline: 15px; }
+  .evidence-list, .dispatch-actions { padding-inline: 15px; }
+  .station-figure { margin-inline: 15px; }
 }
-@media (prefers-reduced-motion: reduce) { .orbit, .core-energy, .dialogue-indicator span, .scene-scan { animation: none; } }
+@media (max-width: 420px) {
+  .center-brand h1 { font-size: 15px; }
+  .center-brand span:not(.brand-mark) { display: none; }
+  .user-context { max-width: 94%; }
+  .core-dialogue { gap: 10px; }
+  .core-dialogue h2 { font-size: 15px; }
+  .dispatch-actions { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .orbit, .core-energy, .dialogue-indicator span { animation: none; } }
 </style>
