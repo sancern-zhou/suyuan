@@ -55,6 +55,7 @@ test('attention item hides internal station codes and rule identifiers', () => {
 
   assert.equal(item.title, '监测站点 · 监测数据与周边站点对比异常（整体水平偏离、持续偏离、变化趋势不一致）')
   assert.equal(item.summary, '小值正在收集证据并形成初步判断。')
+  assert.equal(item.severity, 'medium')
   assert.doesNotMatch(`${item.title}${item.summary}`, /1785A|peer_|trend_/)
 })
 
