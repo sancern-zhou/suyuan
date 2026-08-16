@@ -620,6 +620,7 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             attributes={
                 "source_type": candidate["source_type"],
                 "station_code": candidate["station_code"],
+                "station_name": candidate.get("station_name"),
                 "alarm_type": candidate["alarm_type"],
                 "severity": candidate["severity"],
             },

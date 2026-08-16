@@ -187,6 +187,7 @@ async def test_fetcher_writes_packages_publishes_events_and_deduplicates(tmp_pat
         "platform_alarm",
         "monitoring_anomaly",
     }
+    assert {event.attributes["station_name"] for event in events} == {"江宁九龙湖"}
     for event in events:
         package_path = event.payload["evidence_pack_path"]
         payload = json.loads(__import__("pathlib").Path(package_path).read_text(encoding="utf-8"))
