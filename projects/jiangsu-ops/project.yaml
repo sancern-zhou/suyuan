@@ -24,6 +24,7 @@ frontend:
     greeting: 今天需要我关注什么？
     description: 持续关注全省运维态势，组织专业能力完成取证、研判与任务闭环。
     placeholder: 可以问数据、查站点、诊断故障，或让我生成当前运维态势……
+    station_image_url: /project-assets/jiangsu-ops/nanjing-demo-station.png
     default_mode: ops
     attention_task_ids:
       - jiangsu_station_fault_diagnosis
