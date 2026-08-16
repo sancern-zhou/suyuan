@@ -137,7 +137,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useReactStore } from '@/stores/reactStore'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
@@ -174,6 +174,7 @@ import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/Knowle
 
 // Stores
 const route = useRoute()
+const router = useRouter()
 const store = useReactStore()
 const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
 const kbStore = useKnowledgeBaseStore()
@@ -446,6 +447,7 @@ const handleSidebarAction = async (actionId) => {
 
   if (actionId === 'agent-platform') {
     if (!await confirmResourcePreviewLeave()) return
+    if (route.name !== 'analysis') await router.replace({ name: 'analysis' })
     hideManagementPanel()
     resetPanelState()
     agentPlatformError.value = ''
