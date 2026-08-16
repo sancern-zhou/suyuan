@@ -9,6 +9,51 @@ const blockTypes = new Set(COORDINATOR_BLOCK_TYPES)
 
 const text = value => typeof value === 'string' ? value.trim() : ''
 
+const INTERNAL_ALARM_LABELS = Object.freeze({
+  data_missing: '监测数据缺失',
+  data_stale: '监测数据停止更新',
+  invalid_value: '监测数据出现异常值',
+  quality_flag: '监测数据质量标记异常',
+  flatline: '监测数据长时间无变化',
+  peer_quality_inconsistency: '监测数据与周边站点对比异常'
+})
+
+const PEER_ALARM_DETAILS = Object.freeze({
+  peer_aggregate_deviation: '整体水平偏离',
+  persistent_peer_bias: '持续偏离',
+  trend_inconsistency: '变化趋势不一致'
+})
+
+const internalIdentifierPattern = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/gi
+
+function describeAlarmType(value, sourceType = '') {
+  const tokens = text(value).split(',').map(item => item.trim()).filter(Boolean)
+  const peerDetails = [...new Set(tokens.map(item => PEER_ALARM_DETAILS[item]).filter(Boolean))]
+  const labels = tokens
+    .filter(item => !PEER_ALARM_DETAILS[item])
+    .map(item => INTERNAL_ALARM_LABELS[item] || (/\p{Script=Han}/u.test(item) ? item : ''))
+    .filter(Boolean)
+  if (peerDetails.length) {
+    labels.unshift(`监测数据与周边站点对比异常（${peerDetails.join('、')}）`)
+  }
+  if (labels.length) return [...new Set(labels)].join('、')
+  if (sourceType === 'platform_alarm') return '设备或站房告警'
+  if (sourceType === 'monitoring_anomaly') return '监测数据异常'
+  return '业务异常待核查'
+}
+
+function sanitizeBusinessSummary(value, attributes) {
+  let summary = text(value).replace(/[#*`>\n]+/g, ' ')
+  const stationCode = text(attributes.station_code)
+  if (stationCode) {
+    summary = summary.replaceAll(stationCode, text(attributes.station_name) || '该监测站点')
+  }
+  summary = summary.replace(internalIdentifierPattern, identifier => (
+    INTERNAL_ALARM_LABELS[identifier] || PEER_ALARM_DETAILS[identifier] || '异常规则'
+  ))
+  return summary.replaceAll('_', ' ').replace(/\s+/g, ' ').trim().slice(0, 150)
+}
+
 export function normalizeWorkspaceBlocks(blocks = []) {
   const ids = new Set()
   return blocks.flatMap((block, index) => {
@@ -38,15 +83,16 @@ export function resolveCoordinatorMode(query, routes = [], fallbackMode = 'assis
 export function executionToAttentionItem(execution) {
   const attributes = execution?.event_attributes || {}
   const response = execution?.steps?.find(step => step?.agent_response)?.agent_response || ''
-  const station = attributes.station_name || attributes.station_code || ''
+  const station = text(attributes.station_name)
+  const issue = describeAlarmType(attributes.alarm_type, attributes.source_type)
   const running = ['pending', 'running'].includes(execution?.status)
   const failed = ['failed', 'timeout', 'cancelled'].includes(execution?.status)
   return {
     id: execution?.event_id || execution?.execution_id,
     executionId: execution?.execution_id,
     sessionId: execution?.session_id || '',
-    title: station ? `${station} · ${attributes.alarm_type || '异常事件'}` : (execution?.task_name || '自动分析任务'),
-    summary: text(response).replace(/[#*_`>\n]+/g, ' ').slice(0, 150) || (running ? '小值正在收集证据并形成初步判断。' : '自动分析已完成，可进入详情查看完整证据。'),
+    title: `${station || '监测站点'} · ${issue}`,
+    summary: sanitizeBusinessSummary(response, attributes) || (running ? '小值正在收集证据并形成初步判断。' : '自动分析已完成，可进入详情查看完整证据。'),
     severity: failed ? 'high' : (attributes.severity || 'medium'),
     status: failed ? 'needs_attention' : (running ? 'analyzing' : 'awaiting_review'),
     station,
