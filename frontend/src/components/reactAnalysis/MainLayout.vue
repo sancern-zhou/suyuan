@@ -22,6 +22,8 @@
         :scheduled-tasks="taskWorkspaceEntries"
         @select="$emit('select-agent', $event)"
         @select-task="handleTaskWorkspaceSelect"
+        @restore-session="$emit('load-session', $event)"
+        @submit="$emit('coordinator-submit', $event)"
       />
       <component
         :is="AirQualityForecastView"
@@ -447,6 +449,7 @@ const emit = defineEmits([
   'delete-sessions',
   'new-web-conversation',
   'select-agent',
+  'coordinator-submit',
   'preview-message-attachment'
 ])
 

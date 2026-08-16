@@ -35,6 +35,64 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CoordinatorQuickPrompt(StrictModel):
+    label: str
+    prompt: str
+    mode: str | None = None
+
+
+class CoordinatorRoute(StrictModel):
+    mode: str
+    keywords: list[str] = Field(default_factory=list)
+
+    _unique_keywords = field_validator("keywords")(unique)
+
+
+class CoordinatorAction(StrictModel):
+    label: str
+    kind: Literal["ask", "open-agent", "open-task"] = "ask"
+    prompt: str | None = None
+    mode: str | None = None
+    task_id: str | None = None
+
+
+class CoordinatorAttentionItem(StrictModel):
+    id: str
+    title: str
+    summary: str = ""
+    severity: Literal["critical", "high", "medium", "low", "info"] = "info"
+    status: str = "new"
+    station: str | None = None
+    occurred_at: str | None = None
+    diagnosis: str | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
+    evidence: list[str] = Field(default_factory=list)
+    actions: list[CoordinatorAction] = Field(default_factory=list)
+
+
+class CoordinatorWorkspaceBlock(StrictModel):
+    id: str
+    type: Literal["metric-grid", "briefing", "attention-list", "activity"]
+    title: str = ""
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CoordinatorManifest(StrictModel):
+    name: str = "智能助手"
+    role: str = "统筹助手"
+    greeting: str = "今天需要我协助处理什么？"
+    description: str = "理解需求、组织专业能力并跟踪任务进展。"
+    placeholder: str = "输入问题、业务对象或任务……"
+    default_mode: str | None = None
+    quick_prompts: list[CoordinatorQuickPrompt] = Field(default_factory=list)
+    attention_task_ids: list[str] = Field(default_factory=list)
+    routes: list[CoordinatorRoute] = Field(default_factory=list)
+    workspace_blocks: list[CoordinatorWorkspaceBlock] = Field(default_factory=list)
+    demo_attention_items: list[CoordinatorAttentionItem] = Field(default_factory=list)
+
+    _unique_attention_task_ids = field_validator("attention_task_ids")(unique)
+
+
 class FrontendManifest(StrictModel):
     theme: str = "default"
     brand_name: str = "风清气智"
@@ -42,18 +100,39 @@ class FrontendManifest(StrictModel):
     agent_modes: list[str] = Field(default_factory=list)
     default_agent_mode: str | None = None
     agent_mode_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    agent_platform_layout: Literal["scenes", "environment-grid"] = "scenes"
+    agent_platform_layout: Literal["scenes", "environment-grid", "coordinator"] = "scenes"
+    coordinator: CoordinatorManifest | None = None
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
     _valid_agent_mode_overrides = field_validator("agent_mode_overrides")(valid_identifier_map)
 
     @model_validator(mode="after")
     def validate_default_agent_mode(self):
-        if self.default_agent_mode is None:
-            return self
-        validate_identifier(self.default_agent_mode)
-        if self.agent_modes and self.default_agent_mode not in self.agent_modes:
-            raise ValueError("default_agent_mode must be declared in agent_modes")
+        if self.default_agent_mode is not None:
+            validate_identifier(self.default_agent_mode)
+            if self.agent_modes and self.default_agent_mode not in self.agent_modes:
+                raise ValueError("default_agent_mode must be declared in agent_modes")
+        if self.coordinator is not None:
+            declared_modes = set(self.agent_modes)
+            referenced_modes = {
+                entry.mode
+                for entry in [*self.coordinator.quick_prompts, *self.coordinator.routes]
+                if entry.mode is not None
+            }
+            referenced_modes.update(
+                action.mode
+                for item in self.coordinator.demo_attention_items
+                for action in item.actions
+                if action.mode is not None
+            )
+            if self.coordinator.default_mode is not None:
+                referenced_modes.add(self.coordinator.default_mode)
+            unknown_modes = sorted(referenced_modes - declared_modes)
+            if unknown_modes:
+                raise ValueError(
+                    "coordinator modes must be declared in agent_modes: "
+                    + ", ".join(unknown_modes)
+                )
         return self
 
 

@@ -15,6 +15,14 @@ test('agent platform renders accessible cards and emits mode selection', async (
   assert.match(source, /focus-visible/)
 })
 
+test('coordinator layout delegates to the controlled coordinator home', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /<CoordinatorHome/)
+  assert.match(source, /:coordinator="coordinator"/)
+  assert.match(source, /@submit="emit\('submit', \$event\)"/)
+})
+
 test('agent platform presents the real agent catalog as a portal grid', async () => {
   const source = await readComponent('AgentPlatform.vue')
 

@@ -21,6 +21,16 @@ export function createProjectConfig(value) {
       })
     ])
   ))
+  const coordinator = value.frontend.coordinator
+    ? Object.freeze({
+        ...value.frontend.coordinator,
+        quickPrompts: Object.freeze([...(value.frontend.coordinator.quickPrompts || [])]),
+        attentionTaskIds: Object.freeze([...(value.frontend.coordinator.attentionTaskIds || [])]),
+        routes: Object.freeze([...(value.frontend.coordinator.routes || [])]),
+        workspaceBlocks: Object.freeze([...(value.frontend.coordinator.workspaceBlocks || [])]),
+        demoAttentionItems: Object.freeze([...(value.frontend.coordinator.demoAttentionItems || [])])
+      })
+    : null
   return Object.freeze({
     schemaVersion: value.schemaVersion,
     project: value.project,
@@ -32,6 +42,7 @@ export function createProjectConfig(value) {
     defaultAgentMode,
     agentModeOverrides,
     agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
+    coordinator,
     hasModule: moduleId => modules.has(moduleId),
     hasFeature: featureId => features[featureId] === true,
     isFeatureEnabled: (featureId, defaultValue = false) => (
@@ -53,7 +64,8 @@ const injected = typeof __SUYUAN_PROJECT_CONFIG__ === 'undefined'
         agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
         defaultAgentMode: 'assistant',
         agentModeOverrides: {},
-        agentPlatformLayout: 'scenes'
+        agentPlatformLayout: 'scenes',
+        coordinator: null
       }
     }
   : __SUYUAN_PROJECT_CONFIG__

@@ -6,7 +6,7 @@ import { parse } from 'yaml'
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/
 const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'jiangsu_query', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'report', 'chart', 'board', 'ops'])
-const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid'])
+const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid', 'coordinator'])
 const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'name',
   'short_name',
@@ -79,6 +79,25 @@ function normalizeAgentModeOverrides(value = {}) {
 }
 
 
+function camelizeCoordinatorValue(value) {
+  if (Array.isArray(value)) return value.map(camelizeCoordinatorValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [
+    key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()),
+    camelizeCoordinatorValue(entryValue)
+  ]))
+}
+
+
+function normalizeCoordinator(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('frontend.coordinator must be an object')
+  }
+  return camelizeCoordinatorValue(value)
+}
+
+
 export function loadProjectBuildConfig({ projectId, repoRoot }) {
   if (!IDENTIFIER.test(projectId)) {
     throw new Error(`invalid project identifier: ${projectId}`)
@@ -125,7 +144,8 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
       agentModes,
       defaultAgentMode,
       agentModeOverrides: normalizeAgentModeOverrides(manifest.frontend?.agent_mode_overrides),
-      agentPlatformLayout
+      agentPlatformLayout,
+      coordinator: normalizeCoordinator(manifest.frontend?.coordinator)
     }
   }
 }

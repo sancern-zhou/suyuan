@@ -67,6 +67,7 @@
       @assistant-select="handleAssistantSelect"
       @sidebar-action="handleSidebarAction"
       @select-agent="handleAgentSelect"
+      @coordinator-submit="handleCoordinatorSubmit"
       @load-session="handleLoadSessionAndClosePanel"
       @start-drag="startDragging"
       @stop-drag="stopDragging"
@@ -326,14 +327,14 @@ const handleRerankerChange = (value) => {
 }
 
 const handleAgentSelect = async (mode) => {
-  if (selectingAgentMode.value) return
+  if (selectingAgentMode.value) return false
 
   const decision = resolveAgentSelection(mode, store)
   if (decision.action === 'invalid') {
     agentPlatformError.value = '暂不支持该智能体模式'
-    return
+    return false
   }
-  if (!await confirmResourcePreviewLeave()) return
+  if (!await confirmResourcePreviewLeave()) return false
 
   selectingAgentMode.value = mode
   agentPlatformError.value = ''
@@ -354,11 +355,22 @@ const handleAgentSelect = async (mode) => {
     resetPanelState()
     activeAssistant.value = 'general-agent'
     workspace.value = 'chat'
+    return true
   } catch (error) {
     agentPlatformError.value = error?.message || '智能体初始化失败，请重试'
+    return false
   } finally {
     selectingAgentMode.value = ''
   }
+}
+
+const handleCoordinatorSubmit = async (payload) => {
+  const query = String(payload?.query || '').trim()
+  if (!query) return
+  const mode = payload?.mode || defaultAgentMode
+  const opened = await handleAgentSelect(mode)
+  if (!opened) return
+  await handleSend({ query, agentMode: mode })
 }
 
 const handleLoadSessionAndClosePanel = async (sessionId) => {
