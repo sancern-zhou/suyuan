@@ -1,0 +1,4 @@
+interface:
+  display_name: "运维工单审核"
+  short_description: "按规则、语义与现场证据审核工单并生成完整可追溯正式报告"
+  default_prompt: "Use $ops-work-order-audit to audit these operations work orders and generate a review-ready report."

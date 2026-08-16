@@ -10,13 +10,17 @@ from config.settings import settings
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_jiangsu_skill_directory_contains_only_project_skill():
+def test_jiangsu_skill_directory_contains_only_project_skills():
     context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
     skills_dir = project_skills_dir(context)
 
     selection = load_skill_selection("station-alarm-diagnosis", skills_dir=skills_dir)
     assert selection.skill_id == "station-alarm-diagnosis"
     assert "江苏站点告警诊断" in selection.content
+    audit_selection = load_skill_selection("ops-work-order-audit", skills_dir=skills_dir)
+    assert audit_selection.skill_id == "ops-work-order-audit"
+    assert "运维工单审核" in audit_selection.content
+    assert "references/report-format.md" in audit_selection.content
     try:
         load_skill_selection("ops_work_order_audit", skills_dir=skills_dir)
     except FileNotFoundError:
@@ -34,7 +38,21 @@ def test_runtime_skill_resolution_uses_the_jiangsu_directory(monkeypatch):
     result = __import__("asyncio").run(tool.execute())
 
     assert result["success"] is True
-    assert result["data"]["count"] == 1
-    assert result["data"]["skills"][0]["file"].endswith(
-        "station-alarm-diagnosis/SKILL.md"
-    )
+    assert result["data"]["count"] == 2
+    files = {item["file"] for item in result["data"]["skills"]}
+    assert any(path.endswith("station-alarm-diagnosis/SKILL.md") for path in files)
+    assert any(path.endswith("ops-work-order-audit/SKILL.md") for path in files)
+
+
+def test_ops_audit_report_reference_preserves_output_contract():
+    report_reference = (
+        REPO_ROOT
+        / "projects/jiangsu-ops/skills/ops-work-order-audit/references/report-format.md"
+    ).read_text(encoding="utf-8")
+
+    assert "retained_items" in report_reference
+    assert "按 `operation_unit` 运维单位分组" in report_reference
+    assert "| 站点 | 中文表单 | 工单号 | 问题描述 | 命中规则 |" in report_reference
+    assert "不得向用户展示内部英文表名 `rf_table`" in report_reference
+    assert "必须完整列出所有保留问题" in report_reference
+    assert "RF_DEVICE_IDENTITY_INCONSISTENT" in report_reference
