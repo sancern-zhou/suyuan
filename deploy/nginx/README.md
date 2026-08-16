@@ -88,25 +88,23 @@ npm run build:standalone
 
 每次部署记录 `PROJECT`、Git commit SHA、项目清单校验和及构建产物版本。客户发布标签用于标识部署快照，例如 `jiyuan/v2026.07.1`，不创建永久客户分支。
 
-## 双项目端口与构建产物隔离
+## 项目端口与构建产物
 
-两个项目不得共用构建目录。端口、后端和静态目录固定如下：
+每个部署目录只维护一套正式前端产物 `frontend/dist`。端口和后端固定如下：
 
 | 项目 | 容器 | 端口 | 后端 | 静态目录 | 构建命令 |
 | --- | --- | ---: | ---: | --- | --- |
 | 风清气智 | `suyuan-nginx` | 5174 | 8000 | `frontend/dist` | `PROJECT=default npm run build:standalone` |
-| 江苏运维 | `suyuan-nginx-jiangsu` | 5175 | 8001 | `frontend/dist-jiangsu-ops` | `npm run build:jiangsu-ops` |
+| 江苏运维 | `suyuan-nginx-jiangsu` | 5175 | 8001 | `frontend/dist` | `PROJECT=jiangsu-ops npm run build:standalone` |
 
-发布时必须先构建对应项目，再检查首页标题和容器挂载；两端标题相同或挂载目录相同时，停止发布并修正构建产物：
+发布时必须在对应项目的部署目录中构建，再检查首页标题和容器挂载。需要同时部署多个项目时，使用独立工作树或部署目录；每个目录仍只使用自己的 `frontend/dist`，不创建 `dist-*`：
 
 ```bash
 cd /home/xckj/suyuan/frontend
-PROJECT=default npm run build:standalone
-npm run build:jiangsu-ops
+PROJECT=jiangsu-ops npm run build:standalone
 
-curl -fsS http://127.0.0.1:5174/ | grep -F '<title>风清气智</title>'
 curl -fsS http://127.0.0.1:5175/ | grep -F '<title>江苏省运维审核管理服务平台</title>'
-docker inspect suyuan-nginx suyuan-nginx-jiangsu \
+docker inspect suyuan-nginx-jiangsu \
   --format '{{.Name}} {{range .Mounts}}{{.Source}} {{end}}'
 ```
 

@@ -9,7 +9,7 @@ services:
       AUTH_UPSTREAM: ${AUTH_UPSTREAM:-http://10.10.204.80:8025}
       BUSINESS_UPSTREAM: ${BUSINESS_UPSTREAM:-http://127.0.0.1:8001}
     volumes:
-      - ../../frontend/dist-jiangsu-ops:/usr/share/nginx/html:ro
+      - ../../frontend/dist:/usr/share/nginx/html:ro
       - ./templates:/etc/nginx/templates:ro
     healthcheck:
       test:
