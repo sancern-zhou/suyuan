@@ -37,7 +37,7 @@ test('scheduled execution becomes a business attention item', () => {
   })
   assert.equal(item.title, '玄武湖站 · 断数')
   assert.equal(item.status, 'awaiting_review')
-  assert.match(item.summary, /采集链路异常/)
+  assert.equal(item.summary, '小值已完成初步分析，已整理证据、可能原因和处置建议，等待人工审核。')
 })
 
 test('attention item hides internal station codes and rule identifiers', () => {
@@ -47,13 +47,14 @@ test('attention item hides internal station codes and rule identifiers', () => {
     event_attributes: {
       source_type: 'monitoring_anomaly',
       station_code: '1785A',
+      station_name: '1785A',
       alarm_type: 'peer_aggregate_deviation,persistent_peer_bias,trend_inconsistency'
     },
     steps: [{ agent_response: '1785A 命中 persistent_peer_bias，等待补充证据。' }]
   })
 
   assert.equal(item.title, '监测站点 · 监测数据与周边站点对比异常（整体水平偏离、持续偏离、变化趋势不一致）')
-  assert.equal(item.summary, '该监测站点 命中 持续偏离，等待补充证据。')
+  assert.equal(item.summary, '小值正在收集证据并形成初步判断。')
   assert.doesNotMatch(`${item.title}${item.summary}`, /1785A|peer_|trend_/)
 })
 
