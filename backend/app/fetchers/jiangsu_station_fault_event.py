@@ -574,20 +574,16 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             "district_name": candidate.get("district_name"),
         }
         station_alarm, work_orders, inspection, qc_history = await asyncio.gather(
-            self.station_alarm_tool.execute(station_code=candidate["station_code"]),
+            self.station_alarm_tool.execute(station_codes=[candidate["station_code"]]),
             self.work_order_tool.execute(
-                station_name=candidate.get("station_name"),
-                city_name=candidate.get("city_name"),
-                district_name=candidate.get("district_name"),
+                station_codes=[candidate["station_code"]],
                 take=5,
             ),
             self.inspection_tool.execute(
-                station_name=candidate.get("station_name"),
-                city_name=candidate.get("city_name"),
-                district_name=candidate.get("district_name"),
+                station_codes=[candidate["station_code"]],
             ),
             self.qc_history_tool.execute(
-                station_code=candidate["station_code"],
+                station_codes=[candidate["station_code"]],
                 start_time=(created_at - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=created_at.strftime("%Y-%m-%d %H:%M:%S"),
             ),

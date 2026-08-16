@@ -48,6 +48,7 @@ backend:
     - jiangsu_fetch_alarm_records
     - jiangsu_fetch_attendance_records
     - jiangsu_fetch_station_directory
+    - jiangsu_query_operations_graph
     - jiangsu_get_device_control_state
     - jiangsu_prepare_device_control
     - jiangsu_execute_device_control
@@ -85,6 +86,7 @@ backend:
       - jiangsu_fetch_alarm_records
       - jiangsu_fetch_attendance_records
       - jiangsu_fetch_station_directory
+      - jiangsu_query_operations_graph
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_fault_work_orders
       - jiangsu_fetch_auto_inspection
@@ -166,6 +168,7 @@ backend:
       - jiangsu_fetch_station_data
       - jiangsu_query_statistics
       - jiangsu_fetch_alarm_records
+      - jiangsu_query_operations_graph
       - knowledge_graph_query
       - execute_ops_sql_query
       - query_gd_suncere_station_hour_new
@@ -177,20 +180,26 @@ backend:
       - call_sub_agent
     # 站房巡检工具均为只读；巡检执行、工单生成与派发仍需后续单独评审。
     smart_inspection:
+      - jiangsu_query_operations_graph
+      - jiangsu_fetch_network_inspection_summary
       - jiangsu_fetch_alarm_records
       - jiangsu_fetch_auto_inspection
       - jiangsu_fetch_station_alarm_logs
-      - jiangsu_fetch_network_inspection_summary
       - jiangsu_fetch_station_environment_history
+      - knowledge_graph_query
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
+      - jiangsu_query_operations_graph
       - jiangsu_fetch_attendance_records
       - jiangsu_fetch_station_directory
+      - knowledge_graph_query
     # 设备反控仅允许固定指令集。所有执行动作必须先生成待确认指令，再由用户明确确认。
     device_control:
       - jiangsu_get_device_control_state
       - jiangsu_prepare_device_control
       - jiangsu_execute_device_control
+      - jiangsu_query_operations_graph
+      - knowledge_graph_query
     station_fault_diagnosis:
       - read_file
       - knowledge_qa_workflow
@@ -204,6 +213,7 @@ backend:
       - jiangsu_fetch_qc_task_status
       - jiangsu_fetch_qc_run_logs
       - jiangsu_fetch_qc_monitoring_curve
+      - jiangsu_query_operations_graph
       - knowledge_graph_query
   mode_prompt_files:
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md

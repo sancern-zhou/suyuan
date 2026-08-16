@@ -364,20 +364,26 @@ JIANGSU_QUERY_TOOLS = _build_tool_dict([
     "execute_python",
 ])
 SMART_INSPECTION_TOOLS = _build_tool_dict([
+    "jiangsu_query_operations_graph",
+    "jiangsu_fetch_network_inspection_summary",
     "jiangsu_fetch_alarm_records",
     "jiangsu_fetch_auto_inspection",
     "jiangsu_fetch_station_alarm_logs",
-    "jiangsu_fetch_network_inspection_summary",
     "jiangsu_fetch_station_environment_history",
+    "knowledge_graph_query",
 ])
 OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
+    "jiangsu_query_operations_graph",
     "jiangsu_fetch_attendance_records",
     "jiangsu_fetch_station_directory",
+    "knowledge_graph_query",
 ])
 DEVICE_CONTROL_TOOLS = _build_tool_dict([
     "jiangsu_get_device_control_state",
     "jiangsu_prepare_device_control",
     "jiangsu_execute_device_control",
+    "jiangsu_query_operations_graph",
+    "knowledge_graph_query",
 ])
 STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
     "knowledge_qa_workflow",
@@ -391,6 +397,7 @@ STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
     "jiangsu_fetch_qc_task_status",
     "jiangsu_fetch_qc_run_logs",
     "jiangsu_fetch_qc_monitoring_curve",
+    "jiangsu_query_operations_graph",
     "knowledge_graph_query",
 ])
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)

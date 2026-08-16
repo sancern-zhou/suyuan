@@ -80,6 +80,17 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         "jiangsu_nmc_observed_weather",
     ]
     assert "execute_sql_query" in context.manifest.backend.agent_mode_tools["jiangsu_query"]
+    assert context.manifest.backend.agent_mode_tools["operations_analysis"][0] == "jiangsu_query_operations_graph"
+    for mode in (
+        "ops",
+        "smart_inspection",
+        "operations_analysis",
+        "device_control",
+        "station_fault_diagnosis",
+    ):
+        assert "jiangsu_query_operations_graph" in context.manifest.backend.agent_mode_tools[mode]
+        assert "knowledge_graph_query" in context.manifest.backend.agent_mode_tools[mode]
+    assert "jiangsu_query_operations_graph" in context.manifest.backend.tools
     assert context.manifest.scheduled_tasks_enabled is True
     assert context.manifest.scheduled_tasks == ["jiangsu_station_fault_diagnosis"]
     assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"

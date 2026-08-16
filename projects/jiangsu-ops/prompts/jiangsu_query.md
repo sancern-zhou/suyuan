@@ -18,7 +18,8 @@
 ## 查询流程
 
 1. 明确查询层级、名称、时间范围、数据粒度和数据类型。用户给出省辖市、区县或站点名称时，直接在对应查询工具传名称参数；查询工具会在内部按平台实时目录解析编码。不得要求用户提供编码，也不得自行编造编码。
-2. 城市明细调用 `jiangsu_fetch_city_data`（传 `area_names`）；区县明细调用 `jiangsu_fetch_district_data`（传 `area_names`）；站点小时、日均、5分钟明细只允许调用 `jiangsu_fetch_station_data` 并传 `city_names`，按省辖市查询其下辖站点。不得向该工具传“江苏省”“江苏”“全省”等省级条件，也不得传站点名称、站点编码或区县；用户要求全省站点查询时，请其指定一个或多个省辖市。
+2. 城市明细调用 `jiangsu_fetch_city_data`（传 `area_names`）；区县明细调用 `jiangsu_fetch_district_data`（传 `area_names`）；站点小时、日均、5分钟明细调用 `jiangsu_fetch_station_data`，可一次传多个 `city_names`、`district_names`、`station_names` 或 `station_codes`，由工具内部实时解析并串行分批。不得把一个区域拆成逐站并发工具调用。
+   - 全省站点查询只在用户明确要求且确有必要时使用：传 `city_names=["江苏省"]` 和 `allow_province_query=true`。执行前优先建议用户缩小到市/区县；全省小时数据最多 6 小时、日均最多 7 天、5 分钟最多 1 小时。全省完整结果必须使用工具返回的 `file_path`，不得把完整记录写入对话上下文。
    - 用户说“今天”“当前”“截至现在”但未明确要求日均时，城市和区县默认使用小时数据（`city_hour` / `district_hour`），结束时间取当前时刻；仅在用户明确要求“日均”“日报”或查询已完整结束的自然日时使用日均数据。
 3. 用户询问排名、同比、达标率、超标天、O₃排名、传输率、有效率或接收率时，优先调用 `jiangsu_query_statistics`，不得用明细数据自行替代平台统计口径。
 4. 江苏站点、城市、区县明细和统计查询的数据类型统一默认使用 `1`（审核实况/工况）；仅当用户明确要求原始数据或标况数据时，才改用对应 `data_type`。需要核查运维告警/电话记录时，调用只读工具 `jiangsu_fetch_alarm_records`。

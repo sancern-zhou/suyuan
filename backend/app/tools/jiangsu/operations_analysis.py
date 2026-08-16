@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+import time
 from typing import Any
 
 import httpx
@@ -88,6 +89,353 @@ class _JiangsuOperationsTool(LLMTool):
         if not isinstance(records, list) or not all(isinstance(item, dict) for item in records):
             raise ValueError("江苏运维接口返回记录列表无效")
         return records, int(result.get("totalCount", result.get("total", len(records))))
+
+
+class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
+    """Query a live, minimal personnel-unit-station relationship graph.
+
+    Personnel and station ownership are operational master data and can change
+    independently of a document knowledge base.  Build the graph from the live
+    platform directories, cache it briefly, and expose only identifiers, names
+    and responsibility relationships needed by the Agent.
+    """
+
+    _GROUP_TREE_PATH = "operation/AirOperaBase/GetUserGroupTreeAsync"
+    _STATION_PATH = "operation/AirOperaBase/GetOpaEnabledStationAsync"
+    _CACHE_TTL_SECONDS = 300
+
+    def __init__(self) -> None:
+        self._graph_cache: dict[str, Any] | None = None
+        self._graph_cached_at = 0.0
+        self._graph_lock = asyncio.Lock()
+        super().__init__(
+            name="jiangsu_query_operations_graph",
+            description="查询江苏运维人员、运维单位、责任站点、城市和区县的实时业务关系图，用于解析接口所需的人员/单位/站点标识。",
+            function_schema={
+                "name": "jiangsu_query_operations_graph",
+                "description": (
+                    "从江苏运维平台实时目录检索人员—运维单位—责任站点—区县—城市关系。"
+                    "当后续接口需要人员姓名、运维单位编码或站点编码而用户只给出自然名称时，先调用本工具；"
+                    "不得猜测或编造人员、单位和站点标识。返回的是实时业务目录关系，不依赖用户手动选择知识库。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "queries": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "description": "人员、运维单位、站点、区县、城市名称或平台编码。",
+                        },
+                        "depth": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 2,
+                            "default": 2,
+                            "description": "关系展开深度；0仅返回命中实体，1返回直接关系，2返回两跳关系。",
+                        },
+                        "max_entities": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 300,
+                            "default": 120,
+                            "description": "最多返回实体数，避免把全量人员目录写入上下文。",
+                        },
+                    },
+                    "required": ["queries"],
+                },
+            },
+        )
+
+    async def execute(
+        self,
+        context=None,
+        queries: list[str] | None = None,
+        depth: int = 2,
+        max_entities: int = 120,
+        **_: Any,
+    ) -> dict[str, Any]:
+        try:
+            if (
+                not queries
+                or len(queries) > 20
+                or not all(isinstance(item, str) and item.strip() for item in queries)
+            ):
+                raise ValueError("queries 需要 1 至 20 个人员、单位、站点或区域名称/编码")
+            if not isinstance(depth, int) or not 0 <= depth <= 2:
+                raise ValueError("depth 必须在 0 到 2 之间")
+            if not isinstance(max_entities, int) or not 1 <= max_entities <= 300:
+                raise ValueError("max_entities 必须在 1 到 300 之间")
+
+            graph = await self._load_graph()
+            entities: dict[str, dict[str, Any]] = graph["entities"]
+            relations: list[dict[str, str]] = graph["relations"]
+            seed_ids = self._match_entities(entities, queries)
+            if not seed_ids:
+                return {
+                    "status": "empty",
+                    "success": True,
+                    "data": {"entities": [], "relations": [], "matched_queries": []},
+                    "metadata": {
+                        "source": "jiangsu_operations_live_directory_graph",
+                        "queries": queries,
+                        "graph_counts": graph["counts"],
+                    },
+                    "summary": "江苏运维关系图未找到与查询名称或编码匹配的实体。",
+                }
+
+            selected_ids = self._expand(seed_ids, relations, depth, max_entities, entities)
+            selected_entities = [entities[entity_id] for entity_id in selected_ids]
+            selected_relations = [
+                relation for relation in relations
+                if relation["source_id"] in selected_ids and relation["target_id"] in selected_ids
+            ]
+            return {
+                "status": "success",
+                "success": True,
+                "data": {
+                    "entities": selected_entities,
+                    "relations": selected_relations,
+                    "matched_queries": [
+                        {
+                            "query": query,
+                            "entity_ids": self._match_entities(entities, [query]),
+                        }
+                        for query in queries
+                    ],
+                },
+                "metadata": {
+                    "source": "jiangsu_operations_live_directory_graph",
+                    "endpoints": [self._GROUP_TREE_PATH, self._STATION_PATH],
+                    "queries": queries,
+                    "depth": depth,
+                    "record_count": len(selected_entities),
+                    "relation_count": len(selected_relations),
+                    "graph_counts": graph["counts"],
+                    "cache_ttl_seconds": self._CACHE_TTL_SECONDS,
+                    "queried_at": datetime.now().astimezone().isoformat(),
+                },
+                "summary": (
+                    f"江苏运维关系图查询完成：命中 {len(seed_ids)} 个实体，"
+                    f"展开返回 {len(selected_entities)} 个实体和 {len(selected_relations)} 条关系。"
+                ),
+            }
+        except (ValueError, httpx.HTTPError) as exc:
+            logger.warning("jiangsu_operations_graph_failed", error=str(exc))
+            return {
+                "status": "failed",
+                "success": False,
+                "data": {"entities": [], "relations": []},
+                "summary": f"江苏运维关系图查询失败：{exc}",
+            }
+
+    async def _load_graph(self) -> dict[str, Any]:
+        now = time.monotonic()
+        if self._graph_cache is not None and now - self._graph_cached_at < self._CACHE_TTL_SECONDS:
+            return self._graph_cache
+        async with self._graph_lock:
+            now = time.monotonic()
+            if self._graph_cache is not None and now - self._graph_cached_at < self._CACHE_TTL_SECONDS:
+                return self._graph_cache
+            # Deliberately serial: these are small directories and should not
+            # add avoidable concurrent pressure to the operations platform.
+            group_rows, _ = self._page(await self._request(self._GROUP_TREE_PATH, []))
+            station_rows, _ = self._page(await self._request(self._STATION_PATH, []))
+            self._graph_cache = self._build_graph(group_rows, station_rows)
+            self._graph_cached_at = time.monotonic()
+            return self._graph_cache
+
+    @classmethod
+    def _build_graph(
+        cls,
+        group_rows: list[dict[str, Any]],
+        station_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        entities: dict[str, dict[str, Any]] = {}
+        relation_keys: set[tuple[str, str, str]] = set()
+
+        def add_entity(entity_id: str, entity_type: str, name: str, **properties: Any) -> None:
+            entities.setdefault(
+                entity_id,
+                {
+                    "entity_id": entity_id,
+                    "entity_type": entity_type,
+                    "name": name,
+                    "properties": {key: value for key, value in properties.items() if value not in (None, "")},
+                },
+            )
+
+        def add_relation(source_id: str, relation_type: str, target_id: str) -> None:
+            if source_id in entities and target_id in entities:
+                relation_keys.add((source_id, relation_type, target_id))
+
+        unit_rows = [row for row in group_rows if row.get("level") == 2 and row.get("id")]
+        unit_ids = {str(row["id"]) for row in unit_rows}
+        for row in unit_rows:
+            unit_id = str(row["id"])
+            add_entity(
+                f"operation_unit:{unit_id}",
+                "operation_unit",
+                str(row.get("name") or unit_id),
+                operation_unit_id=unit_id,
+            )
+        for row in group_rows:
+            parent_id = str(row.get("pId") or "")
+            if row.get("level") != 3 or not row.get("id") or parent_id not in unit_ids:
+                continue
+            person_id = str(row["id"])
+            person_entity_id = f"person:{person_id}"
+            unit_entity_id = f"operation_unit:{parent_id}"
+            add_entity(
+                person_entity_id,
+                "person",
+                str(row.get("name") or person_id),
+                person_id=person_id,
+            )
+            add_relation(person_entity_id, "member_of", unit_entity_id)
+
+        for row in station_rows:
+            station_code = str(row.get("stationCode") or row.get("StationCode") or "").strip()
+            if not station_code:
+                continue
+            station_entity_id = f"station:{station_code}"
+            city_code = str(row.get("cityCode") or "").strip()
+            city_name = str(row.get("cityName") or "").strip()
+            district_code = str(row.get("districtCode") or row.get("areaCode") or "").strip()
+            district_name = str(row.get("districtName") or "").strip()
+            unit_id = str(row.get("operationUnitId") or "").strip()
+            add_entity(
+                station_entity_id,
+                "station",
+                str(row.get("positionName") or row.get("stationName") or station_code),
+                station_code=station_code,
+                city_name=city_name,
+                district_name=district_name,
+                operation_unit_id=unit_id,
+            )
+            if city_name:
+                city_entity_id = f"city:{city_code or city_name}"
+                add_entity(city_entity_id, "city", city_name, city_code=city_code)
+                add_relation(station_entity_id, "located_in", city_entity_id)
+            if district_name:
+                district_entity_id = f"district:{district_code or district_name}"
+                add_entity(
+                    district_entity_id,
+                    "district",
+                    district_name,
+                    district_code=district_code,
+                    district_name=district_name,
+                    city_name=city_name,
+                )
+                add_relation(station_entity_id, "located_in", district_entity_id)
+                if city_name:
+                    add_relation(district_entity_id, "part_of", f"city:{city_code or city_name}")
+            if unit_id:
+                unit_entity_id = f"operation_unit:{unit_id}"
+                if unit_entity_id not in entities:
+                    add_entity(
+                        unit_entity_id,
+                        "operation_unit",
+                        str(row.get("operationUnitName") or unit_id),
+                        operation_unit_id=unit_id,
+                    )
+                add_relation(unit_entity_id, "responsible_for", station_entity_id)
+
+        relation_priority = {"member_of": 0, "responsible_for": 1, "located_in": 2, "part_of": 3}
+        relations = [
+            {"source_id": source, "relation_type": relation_type, "target_id": target}
+            for source, relation_type, target in sorted(
+                relation_keys,
+                key=lambda item: (relation_priority.get(item[1], 99), item[0], item[2]),
+            )
+        ]
+        counts: dict[str, int] = {}
+        for entity in entities.values():
+            entity_type = entity["entity_type"]
+            counts[entity_type] = counts.get(entity_type, 0) + 1
+        counts["relations"] = len(relations)
+        return {"entities": entities, "relations": relations, "counts": counts}
+
+    @classmethod
+    def _match_entities(
+        cls, entities: dict[str, dict[str, Any]], queries: list[str]
+    ) -> list[str]:
+        matched: list[str] = []
+        for query in queries:
+            query_normalized = cls._normalize(query)
+            exact: list[str] = []
+            partial: list[str] = []
+            for entity_id, entity in entities.items():
+                properties = entity.get("properties") or {}
+                aliases = {
+                    cls._normalize(entity_id.split(":", 1)[-1]),
+                    cls._normalize(entity.get("name")),
+                    cls._normalize(properties.get("station_code")),
+                }
+                if entity.get("entity_type") == "district":
+                    aliases.add(
+                        cls._normalize(
+                            str(properties.get("city_name") or "")
+                            + str(properties.get("district_name") or entity.get("name") or "")
+                        )
+                    )
+                aliases.discard("")
+                if query_normalized in aliases:
+                    exact.append(entity_id)
+                elif any(query_normalized in alias or alias in query_normalized for alias in aliases):
+                    partial.append(entity_id)
+            for entity_id in exact or partial:
+                if entity_id not in matched:
+                    matched.append(entity_id)
+        return matched
+
+    @staticmethod
+    def _expand(
+        seed_ids: list[str],
+        relations: list[dict[str, str]],
+        depth: int,
+        max_entities: int,
+        entities: dict[str, dict[str, Any]],
+    ) -> list[str]:
+        selected = list(dict.fromkeys(seed_ids))[:max_entities]
+        selected_set = set(selected)
+        seed_types = {
+            str(entities[entity_id].get("entity_type"))
+            for entity_id in selected
+            if entity_id in entities
+        }
+        frontier = list(selected)
+        for _ in range(depth):
+            next_frontier: list[str] = []
+            for relation in relations:
+                source_id, target_id = relation["source_id"], relation["target_id"]
+                candidate = None
+                if source_id in frontier and target_id not in selected_set:
+                    candidate = target_id
+                elif target_id in frontier and source_id not in selected_set:
+                    candidate = source_id
+                if candidate is not None:
+                    # Do not expand through a shared parent into a large list
+                    # of same-type siblings (person -> unit -> all coworkers,
+                    # station -> unit -> all sibling stations). The requested
+                    # entity remains present and cross-type responsibility
+                    # paths stay available.
+                    if str(entities.get(candidate, {}).get("entity_type")) in seed_types:
+                        continue
+                    selected.append(candidate)
+                    selected_set.add(candidate)
+                    next_frontier.append(candidate)
+                    if len(selected) >= max_entities:
+                        return selected
+            frontier = next_frontier
+            if not frontier:
+                break
+        return selected
+
+    @staticmethod
+    def _normalize(value: Any) -> str:
+        return "".join(str(value or "").strip().lower().split())
 
 
 class JiangsuAttendanceRecordsTool(_JiangsuOperationsTool):

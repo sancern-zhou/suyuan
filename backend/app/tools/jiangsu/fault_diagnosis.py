@@ -101,97 +101,146 @@ class _JiangsuAuthenticatedApi:
 
 class JiangsuStationAlarmLogsTool(LLMTool):
     _PATH = "stationintegrate/StationIntegrate/GetAlarmLogsAsync"
+    # A city-wide fan-out (Nanjing: 121 stations) still needs ~90s even at
+    # high concurrency, and the upstream starts timing out beyond ~20
+    # in-flight requests.  Geographic scopes are therefore rejected; only
+    # directly addressed stations are queried concurrently, mirroring the
+    # auto-inspection limit.
+    _MAX_STATIONS = 10
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_station_alarm_logs",
-            description="读取江苏站房设备告警日志、告警统计与设备告警状态；仅用于巡检和故障诊断。",
+            description="读取江苏站房设备告警日志、告警统计与设备告警状态；只支持直接指定站点（名称/平台编码/唯一编码，最多 10 个，并发查询）。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_station_alarm_logs", "description": "按站点名称、平台编码、唯一编码、城市或区县读取站房设备告警。",
+            function_schema={"name": "jiangsu_fetch_station_alarm_logs", "description": "按站点名称、平台站点编码或唯一编码读取站房设备告警，最多 10 个站点并发查询；不支持城市/区县批量。",
                              "parameters": {"type": "object", "properties": {
-                                 "station_name": {"type": "string"}, "station_code": {"type": "string", "description": "平台站点编码，例如 5006A。"},
-                                 "unique_code": {"type": "string", "description": "站点唯一编码。"},
-                                 "city_name": {"type": "string"}, "district_name": {"type": "string"},
+                                 "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "站点名称列表，最多 10 个。"},
+                                 "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "平台站点编码列表，例如 [\"5006A\"]，最多 10 个。"},
+                                 "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                   "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
                              }, "required": []}},
         )
 
-    async def execute(self, context=None, station_name: str | None = None, city_name: str | None = None,
-                      district_name: str | None = None, station_code: str | None = None,
-                      unique_code: str | None = None, **_: Any) -> dict[str, Any]:
+    async def execute(self, context=None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      **_: Any) -> dict[str, Any]:
         try:
-            # A platform station code is already sufficient for this endpoint;
-            # keep the legacy direct path and avoid an unnecessary directory call.
-            # A unique code still needs directory resolution to obtain its station code.
-            stations = ([{"station_code": _identifier(station_code, "station_code"), "unique_code": ""}]
-                        if station_code and not unique_code else await _resolve_station_rows(
-                            station_name, city_name, district_name,
-                            station_code=station_code, unique_code=unique_code,
-                        ))
-            if not stations: raise ValueError("station_name、city_name、district_name 至少提供一个")
-            api = _JiangsuAuthenticatedApi(source="air"); data = []
-            for station in stations:
-                payload = await api.get(self._PATH, [("StationCode", station["station_code"])])
-                result = payload.get("result") or {}
-                if not isinstance(result, dict): raise ValueError("站房告警接口 result 无效")
-                data.append({"station": station, "result": result})
-            count = sum(len((x["result"].get("alarmLogs") or [])) for x in data)
-            return {"status": "success", "success": True, "data": data,
-                    "metadata": {"source": "jiangsu_station_integrate_api", "endpoint": self._PATH, "station_count": len(stations), "record_count": count,
-                                 "queried_at": datetime.now().astimezone().isoformat()}, "summary": f"站房告警查询完成：返回 {count} 条告警记录。"}
+            stations = await self._resolve_stations(station_names, station_codes, unique_codes)
+            api = _JiangsuAuthenticatedApi(source="air")
+            data = list(await asyncio.gather(
+                *(self._fetch_station(api, station) for station in stations)
+            ))
+            count = sum(len((item["result"].get("alarmLogs") or [])) for item in data)
+            failed_count = sum(1 for item in data if not item["success"])
+            success = failed_count < len(stations)
+            summary = f"站房告警查询完成：并发查询 {len(stations)} 个站点，返回 {count} 条告警记录"
+            if failed_count:
+                summary += f"，{failed_count} 个站点查询失败"
+            return {"status": "success" if success else "failed", "success": success, "data": data,
+                    "metadata": {"source": "jiangsu_station_integrate_api", "endpoint": self._PATH,
+                                 "station_count": len(stations), "record_count": count,
+                                 "failed_station_count": failed_count,
+                                 "queried_at": datetime.now().astimezone().isoformat()}, "summary": summary + "。"}
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "failed", "success": False, "data": {}, "summary": f"站房告警查询失败：{exc}"}
+
+    async def _fetch_station(self, api: _JiangsuAuthenticatedApi, station: dict[str, str]) -> dict[str, Any]:
+        try:
+            payload = await api.get(self._PATH, [("StationCode", station["station_code"])])
+            result = payload.get("result") or {}
+            if not isinstance(result, dict):
+                raise ValueError("站房告警接口 result 无效")
+            return {"station": station, "result": result, "success": True}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"station": station, "result": {}, "success": False, "error": str(exc)}
+
+    async def _resolve_stations(
+        self,
+        station_names: list[str] | None,
+        station_codes: list[str] | None,
+        unique_codes: list[str] | None,
+    ) -> list[dict[str, str]]:
+        return await _resolve_direct_station_scope(
+            station_names, station_codes, unique_codes,
+            max_stations=self._MAX_STATIONS,
+            alternative_tool="jiangsu_fetch_alarm_records",
+        )
 
 
 class JiangsuFaultWorkOrdersTool(LLMTool):
     _PATH = "operation/FaultOrder/GetWorkingOrderInfoByUniqueCode"
     _STATION_DIRECTORY_PATH = "AirCityProductBase/GetAllEnabledBSDStationAsync"
+    # Per-station serial calls need ~1.3s each upstream; a city-wide sweep
+    # (Nanjing: 121 stations) would take minutes.  Geographic fan-out is
+    # therefore rejected in favour of directly addressed concurrent queries.
+    _MAX_STATIONS = 10
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_fault_work_orders",
-            description="按城市、区县或站点名称读取故障工单与历史处置记录；仅用于故障诊断。",
+            description="按直接指定的站点（名称/平台编码/唯一编码，最多 10 个，并发查询）读取故障工单与历史处置记录；仅用于故障诊断。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "按城市、区县和站点名称查询最近故障工单；工具内部解析江苏平台站点编码。",
+            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "按站点名称、平台站点编码或唯一编码查询最近故障工单，最多 10 个站点并发；不支持城市/区县批量。",
                              "parameters": {"type": "object", "properties": {
-                                 "station_name": {"type": "string", "description": "可选站点名称；不提供时查询区域下辖全部站点。"},
-                                 "city_name": {"type": "string", "description": "可选城市名称；可单独查询该城市下辖站点。"},
-                                 "district_name": {"type": "string", "description": "可选区县名称；可单独查询该区县下辖站点。"},
+                                 "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "站点名称列表，最多 10 个。"},
+                                 "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "平台站点编码列表，最多 10 个。"},
+                                 "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                   "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
                                  "take": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
                              }, "required": []}},
         )
 
-    async def execute(self, context=None, station_name: str | None = None, city_name: str | None = None,
-                      district_name: str | None = None, take: int = 5, **_: Any) -> dict[str, Any]:
+    async def execute(self, context=None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      take: int = 5, **_: Any) -> dict[str, Any]:
         try:
-            station_name = _optional_identifier(station_name, "station_name")
-            city_name = _optional_identifier(city_name, "city_name")
-            district_name = _optional_identifier(district_name, "district_name")
-            if not any((station_name, city_name, district_name)):
-                raise ValueError("station_name、city_name、district_name 至少提供一个")
             if not isinstance(take, int) or not 1 <= take <= 20:
                 raise ValueError("take 必须为 1–20 的整数")
-            stations = await self._resolve_stations(station_name, city_name, district_name)
+            stations = await _resolve_direct_station_scope(
+                station_names, station_codes, unique_codes,
+                max_stations=self._MAX_STATIONS, require_unique_code=True,
+            )
             api = _JiangsuAuthenticatedApi(source="ops")
-            orders: list[Any] = []
-            for station in stations:
-                payload = await api.get(self._PATH, [("uniqueCode", station["unique_code"]), ("take", str(take))])
-                station_orders = payload.get("result") or []
-                if not isinstance(station_orders, list):
-                    raise ValueError("故障工单接口 result 无效")
-                orders.extend(station_orders)
-            return {"status": "success" if orders else "empty", "success": True, "data": orders,
+            results = list(await asyncio.gather(
+                *(self._fetch_orders(api, station, take) for station in stations)
+            ))
+            orders = [order for item in results for order in item["orders"]]
+            failed_count = sum(1 for item in results if not item["success"])
+            success = failed_count < len(stations)
+            summary = f"故障工单查询完成：并发查询 {len(stations)} 个站点，返回 {len(orders)} 条记录"
+            if failed_count:
+                summary += f"，{failed_count} 个站点查询失败"
+            return {"status": "success" if success and orders else ("empty" if success else "failed"),
+                    "success": success, "data": orders,
                     "metadata": {"source": "jiangsu_operations_api", "endpoint": self._PATH,
-                                 "station": {"station_name": station_name, "city_name": city_name, "district_name": district_name},
-                                 "station_count": len(stations),
+                                 "station_count": len(stations), "failed_station_count": failed_count,
                                  "record_count": len(orders), "queried_at": datetime.now().astimezone().isoformat()},
-                    "summary": f"故障工单查询完成：返回 {len(orders)} 条记录。"}
+                    "summary": summary + "。"}
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "failed", "success": False, "data": [], "summary": f"故障工单查询失败：{exc}"}
 
-    async def _resolve_stations(self, station_name: str | None, city_name: str | None,
-                                district_name: str | None) -> list[dict[str, str]]:
+    async def _fetch_orders(self, api: _JiangsuAuthenticatedApi, station: dict[str, str], take: int) -> dict[str, Any]:
+        try:
+            payload = await api.get(self._PATH, [("uniqueCode", station["unique_code"]), ("take", str(take))])
+            station_orders = payload.get("result") or []
+            if not isinstance(station_orders, list):
+                raise ValueError("故障工单接口 result 无效")
+            return {"orders": station_orders, "success": True, "station": station}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"orders": [], "success": False, "station": station, "error": str(exc)}
+
+    @staticmethod
+    async def _resolve_stations_by_place(station_name: str | None, city_name: str | None,
+                                         district_name: str | None) -> list[dict[str, str]]:
         """Resolve the platform-only uniqueCode without exposing it to the Agent."""
-        payload = await _JiangsuAuthenticatedApi(source="air").get(self._STATION_DIRECTORY_PATH, [])
+        payload = await _JiangsuAuthenticatedApi(source="air").get(
+            JiangsuFaultWorkOrdersTool._STATION_DIRECTORY_PATH, []
+        )
         rows = payload.get("result") or []
         if not isinstance(rows, list):
             raise ValueError("江苏站点目录返回格式异常")
@@ -259,11 +308,58 @@ async def _resolve_station_rows(
             requested = ",".join(station_code_values or unique_code_values)
             raise ValueError(f"未在江苏站点目录中找到“{requested}”")
         return _normalise_station_rows(matches)
-    return await JiangsuFaultWorkOrdersTool()._resolve_stations(
+    return await JiangsuFaultWorkOrdersTool._resolve_stations_by_place(
         _optional_identifier(station_name, "station_name"),
         _optional_identifier(city_name, "city_name"),
         _optional_identifier(district_name, "district_name"),
     )
+
+
+async def _resolve_direct_station_scope(
+    station_names: list[str] | None,
+    station_codes: list[str] | None,
+    unique_codes: list[str] | None,
+    *,
+    max_stations: int,
+    require_unique_code: bool = False,
+    alternative_tool: str | None = None,
+) -> list[dict[str, str]]:
+    """Resolve a directly addressed station list for concurrent per-station APIs.
+
+    Geographic fan-out (province/city/district) is rejected: upstream
+    per-station calls need 1–2s each, a city-wide sweep takes minutes, and
+    the platform starts timing out beyond ~20 concurrent requests.  Callers
+    must address their stations explicitly.
+    """
+    names = _clean_identifier_list(station_names, "station_names")
+    codes = _clean_identifier_list(station_codes, "station_codes")
+    uniques = _clean_identifier_list(unique_codes, "unique_codes")
+    if not names and not codes and not uniques:
+        hint = f"；城市/区县整体情况请改用 {alternative_tool}" if alternative_tool else ""
+        raise ValueError(f"必须直接指定站点：提供 station_names、station_codes 或 unique_codes（不支持城市/区县批量）{hint}")
+    if len(names) + len(codes) + len(uniques) > max_stations:
+        raise ValueError(f"一次最多并发查询 {max_stations} 个站点（不支持城市/区县批量）")
+    if codes and not names and not uniques and not require_unique_code:
+        # These endpoints key on the platform station code alone, so the
+        # provincial directory round-trip is skipped.
+        direct: dict[str, dict[str, str]] = {}
+        for code in codes:
+            direct.setdefault(code, {"station_code": code, "unique_code": "", "station_name": ""})
+        return list(direct.values())
+    resolved: list[dict[str, str]] = []
+    if codes or uniques:
+        resolved.extend(await _resolve_station_rows(None, None, None, station_codes=codes, unique_codes=uniques))
+    for name in names:
+        resolved.extend(await _resolve_station_rows(name, None, None))
+    deduped: dict[str, dict[str, str]] = {}
+    for station in resolved:
+        deduped.setdefault(station["station_code"], station)
+    stations = list(deduped.values())
+    if not stations:
+        raise ValueError("未解析到任何有效站点")
+    if len(stations) > max_stations:
+        raise ValueError(f"解析得到 {len(stations)} 个站点（可能存在重名站点），超出单次查询上限 {max_stations}；请缩小范围后重试")
+    return stations
 
 
 def _normalise_station_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -288,96 +384,133 @@ def _normalise_station_rows(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
 class JiangsuAutoInspectionTool(LLMTool):
     _METHOD = "GetAutoInspection"
     _PROXY_PATH = "stationintegrate/OnlineQC/QcSvcAgent"
+    # Each GetAutoInspection call takes seconds upstream, so the batch is
+    # queried concurrently and hard-capped.  City/district fan-out is
+    # intentionally NOT supported: returning only part of a city's stations
+    # invites misreading, and whole-network overviews have a dedicated
+    # summary tool.
+    _MAX_STATIONS = 10
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_auto_inspection",
-            description="读取江苏站点自动巡检快照并按平台规则计算异常分类、状态统计和评分；单站成功时返回站房可视化资源；支持具体站点、城市/区县下辖站点。",
+            description="读取江苏站点自动巡检快照并按平台规则计算异常分类、状态统计和评分；只支持直接指定站点（名称/平台编码/唯一编码，最多 10 个，并发巡检）；单站成功时返回站房可视化资源。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_auto_inspection", "description": "按城市、区县或站点名称查询自动巡检快照。",
+            function_schema={"name": "jiangsu_fetch_auto_inspection", "description": "按站点名称、平台站点编码或唯一编码查询自动巡检快照，可一次并发巡检至多 10 个指定站点。不支持城市/区县批量；需要城市级整体巡检总览时改用 jiangsu_fetch_network_inspection_summary。",
                              "parameters": {"type": "object", "properties": {
-                                 "station_name": {"type": "string", "description": "站点名称。"},
-                                 "station_code": {"type": "string", "description": "平台站点编码，例如 5006A。"},
-                                 "unique_code": {"type": "string", "description": "平台唯一编码；已知时可直接使用。"},
-                                 "city_name": {"type": "string", "description": "城市名称，查询该城市下辖站点。"},
-                                 "district_name": {"type": "string", "description": "区县名称，查询该区县下辖站点。"},
+                                 "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "站点名称列表，最多 10 个。"},
+                                 "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "平台站点编码列表，例如 [\"5006A\"]，最多 10 个。"},
+                                 "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
                              }, "required": []}},
         )
 
-    async def execute(self, context=None, station_name: str | None = None, city_name: str | None = None,
-                      district_name: str | None = None, station_code: str | None = None,
-                      unique_code: str | None = None, **_: Any) -> dict[str, Any]:
+    async def execute(self, context=None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      **_: Any) -> dict[str, Any]:
         try:
-            stations = await _resolve_station_rows(
-                station_name, city_name, district_name,
-                station_code=station_code, unique_code=unique_code,
-            )
-            if not stations: raise ValueError("station_name、city_name、district_name 至少提供一个")
-            results = []
-            for station in stations:
-                try:
-                    payload = await _JiangsuAuthenticatedApi(source="air").post(
-                        self._PROXY_PATH,
-                        {"url": "/QCAPI/GetAutoInspection", "apiMethod": self._METHOD,
-                         "data": f"StationId={station['unique_code']}&userName=admin&timestamp={int(datetime.now().timestamp() * 1000)}"},
-                    )
-                except (ValueError, httpx.HTTPError):
-                    # Keep compatibility with deployments that expose the
-                    # signed QC endpoint directly instead of the air gateway.
-                    payload = await _DeviceControlClient().post(self._METHOD, {"stationId": station["unique_code"]})
-                raw_data = _auto_inspection_data(payload)
-                has_snapshot = isinstance(raw_data, dict) and any(
-                    key in raw_data for key in ("DevDtls", "devDtls", "OtherAlarmDtls", "otherAlarmDtls")
-                )
-                success = _truthy(payload.get("Result", payload.get("success", False))) or has_snapshot
-                if not raw_data:
-                    raw_data = payload
-                # Some enabled stations return a successful QC envelope with an
-                # empty result.  The platform page still renders its room and
-                # latest动环 values, so enrich the visual input from the same
-                # station-history endpoint without changing the raw QC result.
-                if not has_snapshot and len(stations) == 1:
-                    try:
-                        raw_data = dict(raw_data)
-                        environment_snapshot = await _fetch_environment_snapshot(station["unique_code"])
-                        environment_snapshot.update(
-                            await _fetch_station_air_snapshot(station["station_code"])
-                        )
-                        raw_data["EnvironmentSnapshot"] = environment_snapshot
-                    except (ValueError, httpx.HTTPError) as exc:
-                        logger.info("jiangsu_stationhouse_environment_fallback_unavailable",
-                                    station_code=station.get("station_code"), error=str(exc))
-                issues = _inspection_issues(raw_data)
-                results.append({
-                    "station": station,
-                    "success": success,
-                    "data": raw_data,
-                    "issues": issues,
-                    "issue_count": len(issues),
-                    "message": payload.get("ErrorMessage") or payload.get("message"),
-                })
+            stations = await self._resolve_stations(station_names, station_codes, unique_codes)
+            results = list(await asyncio.gather(
+                *(self._inspect_station(station, single=(len(stations) == 1)) for station in stations)
+            ))
             success = any(item["success"] for item in results)
-            issue_count = sum(item["issue_count"] for item in results)
             for item in results:
+                item["issue_count"] = len(item.get("issues", []))
                 item["inspection_metrics"] = _inspection_metrics(item.get("data", {}), item.get("issues", []))
+            issue_count = sum(item["issue_count"] for item in results)
             visuals = []
             if len(results) == 1 and results[0].get("success"):
-                station = results[0]["station"]
                 visual = _stationhouse_visual(
-                    station,
+                    results[0]["station"],
                     results[0].get("data", {}),
                     results[0].get("issues", []),
                     results[0].get("inspection_metrics", {}),
                 )
                 visuals.append(visual)
-            return {"status": "success" if success else "empty", "success": success, "data": results,
+            return {"status": "success" if success else "empty",
+                    "success": success, "data": results,
                     "metadata": {"source": "jiangsu_qc_api", "method": self._METHOD, "station_count": len(stations),
+                                 "station_limit": self._MAX_STATIONS,
                                  "issue_count": issue_count, "queried_at": datetime.now().astimezone().isoformat(),
                                  "visual_behavior": "stationhouse_effect" if visuals else "none"},
                     **({"visuals": visuals, "resources": resources_for_visuals(visuals, tool_name=self.name)} if visuals else {}),
-                    "summary": f"自动巡检查询完成：查询 {len(stations)} 个站点，识别 {issue_count} 项异常。"}
+                    "summary": f"自动巡检查询完成：并发巡检 {len(stations)} 个站点，识别 {issue_count} 项异常。"}
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "failed", "success": False, "data": {}, "summary": f"自动巡检查询失败：{exc}"}
+
+    async def _resolve_stations(
+        self,
+        station_names: list[str] | None,
+        station_codes: list[str] | None,
+        unique_codes: list[str] | None,
+    ) -> list[dict[str, str]]:
+        names = _clean_identifier_list(station_names, "station_names")
+        codes = _clean_identifier_list(station_codes, "station_codes")
+        uniques = _clean_identifier_list(unique_codes, "unique_codes")
+        if not names and not codes and not uniques:
+            raise ValueError(
+                "必须直接指定站点：提供 station_names、station_codes 或 unique_codes（不支持城市/区县批量）；"
+                "城市/区县整体巡检请改用 jiangsu_fetch_network_inspection_summary"
+            )
+        if len(names) + len(codes) + len(uniques) > self._MAX_STATIONS:
+            raise ValueError(f"一次最多并发巡检 {self._MAX_STATIONS} 个站点；城市/区县整体情况请改用 jiangsu_fetch_network_inspection_summary")
+        resolved: list[dict[str, str]] = []
+        if codes or uniques:
+            resolved.extend(await _resolve_station_rows(None, None, None, station_codes=codes, unique_codes=uniques))
+        for name in names:
+            resolved.extend(await _resolve_station_rows(name, None, None))
+        deduped: dict[str, dict[str, str]] = {}
+        for station in resolved:
+            deduped.setdefault(station["station_code"], station)
+        stations = list(deduped.values())
+        if not stations:
+            raise ValueError("未解析到任何有效站点")
+        if len(stations) > self._MAX_STATIONS:
+            raise ValueError(f"解析得到 {len(stations)} 个站点（可能存在重名站点），超出单次巡检上限 {self._MAX_STATIONS}；请缩小范围后重试")
+        return stations
+
+    async def _inspect_station(self, station: dict[str, str], *, single: bool) -> dict[str, Any]:
+        try:
+            payload = await _JiangsuAuthenticatedApi(source="air").post(
+                self._PROXY_PATH,
+                {"url": "/QCAPI/GetAutoInspection", "apiMethod": self._METHOD,
+                 "data": f"StationId={station['unique_code']}&userName=admin&timestamp={int(datetime.now().timestamp() * 1000)}"},
+            )
+        except (ValueError, httpx.HTTPError):
+            # Keep compatibility with deployments that expose the
+            # signed QC endpoint directly instead of the air gateway.
+            payload = await _DeviceControlClient().post(self._METHOD, {"stationId": station["unique_code"]})
+        raw_data = _auto_inspection_data(payload)
+        has_snapshot = isinstance(raw_data, dict) and any(
+            key in raw_data for key in ("DevDtls", "devDtls", "OtherAlarmDtls", "otherAlarmDtls")
+        )
+        success = _truthy(payload.get("Result", payload.get("success", False))) or has_snapshot
+        if not raw_data:
+            raw_data = payload
+        # Some enabled stations return a successful QC envelope with an
+        # empty result.  The platform page still renders its room and
+        # latest动环 values, so enrich the visual input from the same
+        # station-history endpoint without changing the raw QC result.
+        if not has_snapshot and single:
+            try:
+                raw_data = dict(raw_data)
+                environment_snapshot = await _fetch_environment_snapshot(station["unique_code"])
+                environment_snapshot.update(
+                    await _fetch_station_air_snapshot(station["station_code"])
+                )
+                raw_data["EnvironmentSnapshot"] = environment_snapshot
+            except (ValueError, httpx.HTTPError) as exc:
+                logger.info("jiangsu_stationhouse_environment_fallback_unavailable",
+                            station_code=station.get("station_code"), error=str(exc))
+        return {
+            "station": station,
+            "success": success,
+            "data": raw_data,
+            "issues": _inspection_issues(raw_data),
+            "message": payload.get("ErrorMessage") or payload.get("message"),
+        }
 
 
 class JiangsuNetworkInspectionSummaryTool(LLMTool):
@@ -498,40 +631,63 @@ class JiangsuQcTaskHistoryTool(LLMTool):
     """Read task records first; their ``rId`` and ``rStart`` drive detail tools."""
 
     _PATH = "operation/QualityControl/GetNewQCHisResultListAsync"
+    _MAX_STATIONS = 10
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_qc_task_history",
-            description="读取江苏站点历史质控任务及结果；返回的 rId、rStart 可用于继续查询状态和运行日志。",
+            description="读取江苏站点历史质控任务及结果；返回的 rId、rStart 可用于继续查询状态和运行日志；最多 10 个站点并发查询。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_qc_task_history", "description": "按站点、时间范围和污染物查询历史质控任务。",
+            function_schema={"name": "jiangsu_fetch_qc_task_history", "description": "按站点名称、平台站点编码或唯一编码查询历史质控任务，最多 10 个站点并发；不支持城市/区县批量。",
                              "parameters": {"type": "object", "properties": {
-                                 "station_code": {"type": "string", "description": "兼容旧调用；优先使用 station_name/city_name/district_name。"},
-                                 "station_name": {"type": "string"}, "city_name": {"type": "string"}, "district_name": {"type": "string"},
+                                 "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "站点名称列表，最多 10 个。"},
+                                 "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "平台站点编码列表，最多 10 个。"},
+                                 "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                   "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
                                  "start_time": {"type": "string", "description": "开始时间，YYYY-MM-DD HH:mm:ss。"},
                                  "end_time": {"type": "string", "description": "结束时间，YYYY-MM-DD HH:mm:ss。"},
                                  "pollutant": {"type": "string", "description": "可选，如 SO2、NO、CO、O3。"},
                              }, "required": ["start_time", "end_time"]}},
         )
 
-    async def execute(self, context=None, station_code: str | None = None, station_name: str | None = None,
-                      city_name: str | None = None, district_name: str | None = None, start_time: str | None = None,
-                      end_time: str | None = None, pollutant: str | None = None, **_: Any) -> dict[str, Any]:
+    async def execute(self, context=None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      start_time: str | None = None, end_time: str | None = None,
+                      pollutant: str | None = None, **_: Any) -> dict[str, Any]:
         try:
-            if station_code:
-                codes = [_identifier(station_code, "station_code")]
-            else:
-                rows = await _resolve_station_rows(station_name, city_name, district_name)
-                codes = [row["station_code"] for row in rows if row.get("station_code")]
-            if not codes: raise ValueError("需要提供站点或地理条件")
-            records = []
-            for code in codes:
-                params = [("stationCode", code), *_time_range("sStart", start_time, end_time)]
-                if pollutant: params.append(("poll", _identifier(pollutant, "pollutant")))
-                records.extend(_list_result(await _JiangsuAuthenticatedApi(source="ops").get(self._PATH, params), "质控任务"))
-            return _records_response(records, self._PATH, None, "质控任务查询完成", {"station_count": len(codes)})
+            stations = await _resolve_direct_station_scope(
+                station_names, station_codes, unique_codes, max_stations=self._MAX_STATIONS,
+            )
+            api = _JiangsuAuthenticatedApi(source="ops")
+            results = list(await asyncio.gather(
+                *(self._fetch_history(api, station["station_code"], start_time, end_time, pollutant) for station in stations)
+            ))
+            records = [record for item in results for record in item["records"]]
+            failed_count = sum(1 for item in results if not item["success"])
+            success = failed_count < len(stations)
+            summary = f"质控任务查询完成：并发查询 {len(stations)} 个站点，返回 {len(records)} 条记录"
+            if failed_count:
+                summary += f"，{failed_count} 个站点查询失败"
+            metadata = {"source": "jiangsu_operations_api", "endpoint": self._PATH,
+                        "station_count": len(stations), "failed_station_count": failed_count,
+                        "record_count": len(records), "queried_at": datetime.now().astimezone().isoformat()}
+            return {"status": "success" if records else ("empty" if success else "failed"), "success": success,
+                    "data": records, "metadata": metadata, "summary": summary + "。"}
         except (ValueError, httpx.HTTPError) as exc:
             return _failed("质控任务查询", exc)
+
+    async def _fetch_history(self, api: _JiangsuAuthenticatedApi, code: str,
+                             start_time: str | None, end_time: str | None,
+                             pollutant: str | None) -> dict[str, Any]:
+        try:
+            params = [("stationCode", code), *_time_range("sStart", start_time, end_time)]
+            if pollutant:
+                params.append(("poll", _identifier(pollutant, "pollutant")))
+            return {"records": _list_result(await api.get(self._PATH, params), "质控任务"), "success": True}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"records": [], "success": False, "error": str(exc)}
 
 
 class JiangsuQcTaskStatusTool(LLMTool):
@@ -590,16 +746,21 @@ class JiangsuQcRunLogTool(LLMTool):
 
 class JiangsuQcMonitoringCurveTool(LLMTool):
     _PATH = "operation/QualityControl/GetNewQCAirDataResultListAsync"
+    _MAX_STATIONS = 10
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_qc_monitoring_curve",
-            description="读取质控任务前后及期间的监测项值序列，用于生成响应曲线；只读。",
+            description="读取质控任务前后及期间的监测项值序列，用于生成响应曲线；最多 10 个站点并发查询。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_qc_monitoring_curve", "description": "按站点、污染物、质控类型和时间范围读取质控期间监测序列。",
+            function_schema={"name": "jiangsu_fetch_qc_monitoring_curve", "description": "按站点名称、平台站点编码或唯一编码读取质控期间监测序列，最多 10 个站点并发；不支持城市/区县批量。",
                              "parameters": {"type": "object", "properties": {
-                                 "station_code": {"type": "string", "description": "兼容旧调用；优先使用 station_name/city_name/district_name。"},
-                                 "station_name": {"type": "string"}, "city_name": {"type": "string"}, "district_name": {"type": "string"},
+                                 "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "站点名称列表，最多 10 个。"},
+                                 "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                    "description": "平台站点编码列表，最多 10 个。"},
+                                 "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                                                   "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
                                  "pollutant": {"type": "string", "description": "污染物，如 SO2、NO、CO、O3。"},
                                  "qc_type": {"type": "string", "description": "质控类型，来自任务历史的 qcType。"},
                                  "start_time": {"type": "string", "description": "曲线开始时间，YYYY-MM-DD HH:mm:ss。"},
@@ -607,22 +768,40 @@ class JiangsuQcMonitoringCurveTool(LLMTool):
                              }, "required": ["pollutant", "qc_type", "start_time", "end_time"]}},
         )
 
-    async def execute(self, context=None, station_code: str | None = None, station_name: str | None = None,
-                      city_name: str | None = None, district_name: str | None = None, pollutant: str | None = None,
-                      qc_type: str | None = None, start_time: str | None = None, end_time: str | None = None, **_: Any) -> dict[str, Any]:
+    async def execute(self, context=None, station_names: list[str] | None = None,
+                      station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
+                      pollutant: str | None = None, qc_type: str | None = None,
+                      start_time: str | None = None, end_time: str | None = None, **_: Any) -> dict[str, Any]:
         try:
-            if station_code: codes = [_identifier(station_code, "station_code")]
-            else:
-                rows = await _resolve_station_rows(station_name, city_name, district_name)
-                codes = [row["station_code"] for row in rows if row.get("station_code")]
-            if not codes: raise ValueError("需要提供站点或地理条件")
-            records = []
-            for code in codes:
-                params = [("stationCode", code), ("poll", _identifier(pollutant, "pollutant")), ("qcType", _identifier(qc_type, "qc_type")), *_time_range("timePoint", start_time, end_time)]
-                records.extend(_list_result(await _JiangsuAuthenticatedApi(source="ops").get(self._PATH, params), "质控监测曲线"))
-            return _records_response(records, self._PATH, None, "质控监测曲线查询完成", {"station_count": len(codes)})
+            stations = await _resolve_direct_station_scope(
+                station_names, station_codes, unique_codes, max_stations=self._MAX_STATIONS,
+            )
+            api = _JiangsuAuthenticatedApi(source="ops")
+            results = list(await asyncio.gather(
+                *(self._fetch_curve(api, station["station_code"], pollutant, qc_type, start_time, end_time) for station in stations)
+            ))
+            records = [record for item in results for record in item["records"]]
+            failed_count = sum(1 for item in results if not item["success"])
+            success = failed_count < len(stations)
+            summary = f"质控监测曲线查询完成：并发查询 {len(stations)} 个站点，返回 {len(records)} 条记录"
+            if failed_count:
+                summary += f"，{failed_count} 个站点查询失败"
+            metadata = {"source": "jiangsu_operations_api", "endpoint": self._PATH,
+                        "station_count": len(stations), "failed_station_count": failed_count,
+                        "record_count": len(records), "queried_at": datetime.now().astimezone().isoformat()}
+            return {"status": "success" if records else ("empty" if success else "failed"), "success": success,
+                    "data": records, "metadata": metadata, "summary": summary + "。"}
         except (ValueError, httpx.HTTPError) as exc:
             return _failed("质控监测曲线查询", exc)
+
+    async def _fetch_curve(self, api: _JiangsuAuthenticatedApi, code: str, pollutant: str | None,
+                           qc_type: str | None, start_time: str | None, end_time: str | None) -> dict[str, Any]:
+        try:
+            params = [("stationCode", code), ("poll", _identifier(pollutant, "pollutant")),
+                      ("qcType", _identifier(qc_type, "qc_type")), *_time_range("timePoint", start_time, end_time)]
+            return {"records": _list_result(await api.get(self._PATH, params), "质控监测曲线"), "success": True}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"records": [], "success": False, "error": str(exc)}
 
 
 def _inspection_metrics(data: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1102,6 +1281,18 @@ def _optional_identifier(value: str | None, name: str) -> str | None:
     if value is None:
         return None
     return _identifier(value, name)
+
+
+def _clean_identifier_list(values: list[str] | None, name: str) -> list[str]:
+    """Validate an explicit station identifier list without silent drops."""
+    if values is None:
+        return []
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"{name} 必须是非空字符串数组")
+    cleaned: list[str] = []
+    for value in values:
+        cleaned.append(_identifier(value if isinstance(value, str) else None, name))
+    return cleaned
 
 
 def _normalise_place_name(value: Any) -> str:
