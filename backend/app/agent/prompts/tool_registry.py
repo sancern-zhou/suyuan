@@ -140,6 +140,17 @@ QUERY_TOOL_NAMES = [
     "create_report_chart", "execute_echarts_python",
 ]
 
+# ===== 知识问答模式工具 =====
+# 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
+KNOWLEDGE_TOOL_NAMES = [
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "knowledge_graph_query",
+    "read_session_resource",
+    "web_search",
+    "web_fetch",
+]
+
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
@@ -346,6 +357,7 @@ ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
+KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
@@ -364,6 +376,7 @@ ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
+KNOWLEDGE_TOOL_ORDER = KNOWLEDGE_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
@@ -389,6 +402,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
+        "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,

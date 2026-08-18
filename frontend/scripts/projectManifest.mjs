@@ -5,7 +5,7 @@ import { parse } from 'yaml'
 
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/
-const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'])
+const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'])
 const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid'])
 const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'name',
