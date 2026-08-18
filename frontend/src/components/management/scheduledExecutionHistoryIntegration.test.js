@@ -26,6 +26,17 @@ test('task workspace only requests executions for the selected task', () => {
 })
 
 
+test('task workspace titles each record with its execution date and time', () => {
+  const source = readSource('./TaskExecutionWorkspace.vue')
+
+  assert.match(source, /<strong>\{\{ formatExecutionTitle\(record\.started_at\) \}\}<\/strong>/)
+  assert.match(source, /date\.getFullYear\(\).*date\.getMonth\(\).*date\.getDate\(\)/s)
+  assert.match(source, /date\.getHours\(\).*date\.getMinutes\(\).*date\.getSeconds\(\)/s)
+  assert.match(source, /return `\$\{executionTime\} 分析记录`/)
+  assert.doesNotMatch(source, /<strong>\{\{ record\.task_name/)
+})
+
+
 test('scheduled task panel switches between tasks and execution records', () => {
   const source = readSource('./ScheduledTasksPanel.vue')
 
