@@ -28,6 +28,7 @@
   ```
 
 - 禁止在项目根目录直接执行 `npm run build`，禁止维护第二套前端 bundle。
+- 所有部署环境的 `DATA_REGISTRY_DIR` 必须在对应后端环境文件中显式配置为绝对路径；同一项目的 web 与 worker 必须使用同一个值。禁止依赖工作树位置推导持久化目录，切换工作树前须先运行 `python -m app.utils.deployment_preflight --env-file <env-file>` 校验。
 - 前端部署后必须确认构建产物包含统一资源接口，并且不再包含旧接口：
 
   ```bash

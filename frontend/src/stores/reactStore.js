@@ -180,6 +180,9 @@ const createEmptyDrawioBoardState = () => ({
   readOnly: false,
   qualityStatus: null,
   qualityReport: {},
+  designSpec: {},
+  themeTokens: {},
+  structuralDigest: {},
   version: 0,
   dirty: false,
   updatedAt: null
@@ -273,6 +276,9 @@ const createDrawioBoardVersionRecord = ({
     lifecycleStatus: payload.lifecycle_status || payload.lifecycleStatus || 'accepted',
     qualityStatus: payload.quality_status || payload.qualityStatus || 'pending',
     qualityReport: payload.quality_report || payload.qualityReport || {},
+    designSpec: payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || {},
+    themeTokens: payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || {},
+    structuralDigest: payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || {},
     screenshotUrl: payload.screenshot_ref?.read_url || payload.screenshot_ref?.url || null,
     visibleInHistory: (payload.lifecycle_status || payload.lifecycleStatus || 'accepted') === 'accepted',
     downloadLabel: fileName,
@@ -2087,6 +2093,15 @@ export const useReactStore = defineStore('react', {
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'qualityReport')) {
         targetState.board.qualityReport = {}
       }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'designSpec')) {
+        targetState.board.designSpec = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'themeTokens')) {
+        targetState.board.themeTokens = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'structuralDigest')) {
+        targetState.board.structuralDigest = {}
+      }
       return targetState.board
     },
 
@@ -2169,6 +2184,9 @@ export const useReactStore = defineStore('react', {
           board.version = versionRecord?.versionNumber || board.version
           board.qualityStatus = payload.quality_status || 'pending'
           board.qualityReport = payload.quality_report || {}
+          board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
+          board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
+          board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
           board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
         }
         targetState.hasResults = true
@@ -2190,6 +2208,9 @@ export const useReactStore = defineStore('react', {
       board.currentVersionSha256 = payload.xml_sha256 || payload.xml_ref?.sha256 || board.currentVersionSha256
       board.qualityStatus = payload.quality_status || board.qualityStatus || null
       board.qualityReport = payload.quality_report || board.qualityReport || {}
+      board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
+      board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
+      board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
       board.dirty = Boolean(payload.dirty ?? false)
       board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
       targetState.hasResults = true
@@ -2458,7 +2479,9 @@ export const useReactStore = defineStore('react', {
           version_id: board.currentVersionId,
           revision: Number(board.revision),
           selected_cells: board.selectedCells || [],
-          title: board.title
+          title: board.title,
+          design_spec: board.designSpec || {},
+          theme_tokens: board.themeTokens || {}
         }
       }
 
@@ -2469,6 +2492,8 @@ export const useReactStore = defineStore('react', {
         title: board.title,
         current_xml: board.currentXml,
         selected_cells: board.selectedCells || [],
+        design_spec: board.designSpec || {},
+        theme_tokens: board.themeTokens || {},
         version: board.version,
         current_version_id: board.currentVersionId || null,
         base_version_id: board.baseVersionId || board.currentVersionId || null,

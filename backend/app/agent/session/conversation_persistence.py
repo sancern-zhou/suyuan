@@ -280,6 +280,12 @@ class ConversationPersistenceService:
         selected_cells = board_context.get("selected_cells") or board_context.get("selectedCells") or []
         if not isinstance(selected_cells, list):
             selected_cells = []
+        design_spec = board_context.get("design_spec") or board_context.get("board_design_spec")
+        theme_tokens = board_context.get("theme_tokens") or board_context.get("board_theme_tokens")
+        design_metadata = {
+            **({"design_spec": design_spec} if isinstance(design_spec, dict) else {}),
+            **({"theme_tokens": theme_tokens} if isinstance(theme_tokens, dict) else {}),
+        }
         if board_id and current_version_id and board_context.get("revision") is not None:
             return {
                 "artifact_kind": "drawio_board",
@@ -290,6 +296,7 @@ class ConversationPersistenceService:
                 "revision": int(board_context.get("revision") or 0),
                 "selected_cells": selected_cells,
                 "updated_at": board_context.get("updated_at") or board_context.get("updatedAt"),
+                **design_metadata,
             }
 
         current_xml = (
@@ -311,6 +318,7 @@ class ConversationPersistenceService:
             "version": board_context.get("version"),
             "dirty": bool(board_context.get("dirty", False)),
             "updated_at": board_context.get("updated_at") or board_context.get("updatedAt"),
+            **design_metadata,
         }
 
     def apply_metadata(

@@ -39,6 +39,15 @@ def test_cli_entrypoints_disable_proxy_header_rewrite():
         assert "--no-proxy-headers" in source, relative_path
 
 
+def test_shell_entrypoints_validate_stable_data_registry_path():
+    for relative_path in ("start.sh", "restart_server.sh"):
+        source = (BACKEND_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "app.utils.deployment_preflight --env-file .env" in source
+
+    worker_source = (BACKEND_ROOT / "app/worker.py").read_text(encoding="utf-8")
+    assert "_validate_data_registry_config(sys.argv[1:])" in worker_source
+
+
 def test_python_entrypoints_disable_proxy_header_rewrite():
     for relative_path in ("app/main.py",):
         assert _uvicorn_proxy_headers_value(relative_path) is False, relative_path

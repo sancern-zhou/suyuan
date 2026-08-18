@@ -19,19 +19,21 @@ def _merge_quality_reports(
         **(existing.get("metrics") or {}),
         **(refreshed.get("metrics") or {}),
     }
-    for key in ("routing_status", "routing_issues"):
+    for key in (
+        "routing_status",
+        "routing_issues",
+        "design_spec",
+        "theme_tokens",
+        "structural_digest",
+    ):
         if key in existing:
             report[key] = existing[key]
-    routing_warnings = [
-        warning
-        for warning in existing.get("warnings") or []
-        if warning.get("code") == "edge_routing_degraded"
-    ]
+    existing_warnings = list(existing.get("warnings") or [])
     refreshed_warnings = list(refreshed.get("warnings") or [])
-    report["warnings"] = routing_warnings + [
-        warning for warning in refreshed_warnings if warning not in routing_warnings
+    report["warnings"] = existing_warnings + [
+        warning for warning in refreshed_warnings if warning not in existing_warnings
     ]
-    if routing_warnings and report.get("status") == "passed":
+    if report["warnings"] and report.get("status") == "passed":
         report["status"] = "warning"
     return report
 
@@ -172,6 +174,9 @@ class RenderDrawioBoardCandidateTool(LLMTool):
             "lifecycle_status": source.get("lifecycle_status") or "candidate",
             "quality_status": report.get("status") or source.get("quality_status") or "pending",
             "quality_report": report,
+            "design_spec": report.get("design_spec"),
+            "theme_tokens": report.get("theme_tokens"),
+            "structural_digest": report.get("structural_digest"),
             "render_status": "completed",
             "screenshot_ref": screenshot_ref,
             "xml_ref": source.get("xml_ref"),

@@ -97,6 +97,20 @@ npm run build:standalone
 | 风清气智 | `suyuan-nginx` | 5174 | 8000 | `frontend/dist` | `PROJECT=default npm run build:standalone` |
 | 江苏运维 | `suyuan-nginx-jiangsu` | 5175 | 8001 | `frontend/dist` | `PROJECT=jiangsu-ops npm run build:standalone` |
 
+### 固定后端数据目录
+
+数据库中的会话资源 locator 会持久化文件路径。每个部署使用的后端环境文件都必须显式配置绝对路径形式的 `DATA_REGISTRY_DIR`，同一项目的 web 与 worker 必须使用完全相同的值。不得使用 `backend_data_registry` 这类相对值，否则从另一 Git worktree 启动时会解析到新的空目录，历史资源会因路径安全校验返回 `resource_path_forbidden`。
+
+启动或切换工作树前先校验配置：
+
+```bash
+cd backend
+/root/miniconda3/envs/backend_py311/bin/python \
+  -m app.utils.deployment_preflight --env-file .env
+```
+
+`start.sh`、`restart_server.sh` 与 `python -m app.worker` 都会自动执行该校验；校验失败时禁止绕过这些入口直接启动服务。迁移数据目录时，必须同时迁移文件并事务性更新数据库 locator，不能只修改环境变量。
+
 发布时必须在对应项目的部署目录中构建，再检查首页标题和容器挂载。需要同时部署多个项目时，使用独立工作树或部署目录；每个目录仍只使用自己的 `frontend/dist`，不创建 `dist-*`：
 
 ```bash
