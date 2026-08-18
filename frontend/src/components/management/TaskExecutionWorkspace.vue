@@ -24,7 +24,7 @@
             @click="restore(record)"
           >
             <div class="record-main">
-              <strong>{{ formatExecutionTitle(record.started_at) }}</strong>
+              <strong>{{ formatExecutionTitle(record) }}</strong>
               <span :class="['status', `status-${statusMeta(record.status).key}`]">{{ statusMeta(record.status).label }}</span>
             </div>
             <div class="record-meta">
@@ -99,16 +99,17 @@ const groupedExecutions = computed(() => {
   }))
 })
 const statusMeta = status => statusMap[status] || { key: 'unknown', label: '未知' }
-const formatExecutionTitle = (value) => {
-  const date = value ? new Date(value) : null
-  if (!date || Number.isNaN(date.getTime())) return '时间未知的分析记录'
+const formatExecutionTitle = (record) => {
+  const taskName = record?.task_name || props.task?.name || '分析任务'
+  const date = record?.started_at ? new Date(record.started_at) : null
+  if (!date || Number.isNaN(date.getTime())) return taskName
 
   const pad = part => String(part).padStart(2, '0')
   const executionTime = [
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
     `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
   ].join(' ')
-  return `${executionTime} 分析记录`
+  return `${executionTime} ${taskName}`
 }
 const formatDuration = seconds => seconds < 60 ? `${Math.round(seconds)}秒` : `${Math.floor(seconds / 60)}分${Math.round(seconds % 60)}秒`
 const restore = record => { if (record.session_id) emit('restore-execution-session', record.session_id) }

@@ -29,11 +29,13 @@ test('task workspace only requests executions for the selected task', () => {
 test('task workspace titles each record with its execution date and time', () => {
   const source = readSource('./TaskExecutionWorkspace.vue')
 
-  assert.match(source, /<strong>\{\{ formatExecutionTitle\(record\.started_at\) \}\}<\/strong>/)
+  assert.match(source, /<strong>\{\{ formatExecutionTitle\(record\) \}\}<\/strong>/)
+  assert.match(source, /const taskName = record\?\.task_name \|\| props\.task\?\.name/)
   assert.match(source, /date\.getFullYear\(\).*date\.getMonth\(\).*date\.getDate\(\)/s)
   assert.match(source, /date\.getHours\(\).*date\.getMinutes\(\).*date\.getSeconds\(\)/s)
-  assert.match(source, /return `\$\{executionTime\} 分析记录`/)
-  assert.doesNotMatch(source, /<strong>\{\{ record\.task_name/)
+  assert.match(source, /return `\$\{executionTime\} \$\{taskName\}`/)
+  assert.match(source, /Number\.isNaN\(date\.getTime\(\)\)\) return taskName/)
+  assert.doesNotMatch(source, /时间未知的分析记录/)
 })
 
 
