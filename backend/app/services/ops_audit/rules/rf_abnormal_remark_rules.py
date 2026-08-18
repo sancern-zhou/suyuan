@@ -10,7 +10,6 @@ from app.services.ops_audit.config import load_low_value_remarks
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
 
-
 RULE_ID = "RF_ABNORMAL_VALUE_NO_REMARK"
 LOW_VALUE_REMARKS = load_low_value_remarks()
 TRIGGER_RULE_IDS = {
@@ -282,6 +281,8 @@ def _add_if_no_remark(
     emitted.add(key)
     remark_candidates = _remark_candidates(form)
     for field, value in (extra_remark_candidates or {}).items():
+        if str(field).upper() == "PROCESSTYPE":
+            continue
         if str(field) not in remark_candidates:
             remark_candidates[str(field)] = value
     has_remark = any(str(value or "").strip() for value in remark_candidates.values())
@@ -343,6 +344,8 @@ def _remark_candidates(form: dict[str, Any]) -> dict[str, Any]:
     candidates = {}
     for field, value in form.items():
         upper = str(field).upper()
+        if upper == "PROCESSTYPE":
+            continue
         if any(pattern in upper for pattern in REMARK_FIELD_PATTERNS):
             candidates[field] = value
     return candidates

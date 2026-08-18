@@ -168,6 +168,22 @@ def _check_weekly_structured_ranges(
             "rf_table": table,
             "brand": brand,
             "pollutant_type": form.get(pollutant_field),
+            "field": item["field"],
+            "field_label": item["label"],
+            "observed_value": {
+                "raw_value": item["raw_value"],
+                "normalized_value": item["value"],
+                "raw_unit": item["raw_unit"],
+                "normalized_unit": item["unit"],
+                "unit_conversion_applied": _unit_conversion_applied(item),
+            },
+            "expected_range": {
+                "min": item["min"],
+                "max": item["max"],
+                "operator": item["operator"],
+                "unit": item["unit"],
+                "text": _range_spec_text(item),
+            },
             "out_of_spec_values": [item],
             "handling_record_candidates": handling_record_candidates,
             "needs_semantic_review": True,
@@ -179,7 +195,8 @@ def _check_weekly_structured_ranges(
             "高",
             f"rf.{table}.{item['field']}",
             (
-                f"{profile.get('display_name') or table}周检{item['label']}检查值({item['raw_value']})"
+                f"{profile.get('display_name') or table}周检{item['label']}检查值"
+                f"({_out_of_spec_value_text(item)})"
                 f"超出{brand}品牌正常范围({_range_spec_text(item)})"
             ),
             json.dumps(evidence, ensure_ascii=False, default=str),
@@ -917,6 +934,26 @@ def _range_spec_text(spec: dict[str, Any]) -> str:
     return str(unit or "未配置")
 
 
+def _unit_conversion_applied(item: dict[str, Any]) -> bool:
+    raw_unit = _canonical_unit(item.get("raw_unit"))
+    normalized_unit = _canonical_unit(item.get("unit"))
+    return bool(raw_unit and normalized_unit and raw_unit != normalized_unit)
+
+
+def _out_of_spec_value_text(item: dict[str, Any]) -> str:
+    raw_value = item.get("raw_value")
+    if not _unit_conversion_applied(item):
+        return str(raw_value)
+    normalized_value = item.get("value")
+    if isinstance(normalized_value, float):
+        normalized_text = f"{normalized_value:g}"
+    else:
+        normalized_text = str(normalized_value)
+    normalized_unit = str(item.get("unit") or "").strip()
+    converted = f"{normalized_text} {normalized_unit}".strip()
+    return f"{raw_value}，换算为{converted}"
+
+
 def _parse_flow_range_text(value: Any) -> tuple[float, float, str] | None:
     if value is None:
         return None
@@ -965,6 +1002,8 @@ def _parse_flow_range_text(value: Any) -> tuple[float, float, str] | None:
 def _handling_record_candidates(form: dict[str, Any], value_field: Any = None) -> dict[str, Any]:
     candidates: dict[str, Any] = {}
     for field, value in form.items():
+        if str(field).upper() == "PROCESSTYPE":
+            continue
         if _is_handling_record_field(field):
             candidates[str(field)] = value
     for field in _field_specific_remark_fields(value_field):

@@ -1,5 +1,5 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 from app.services.ops_audit.report_writer import write_report
 
@@ -285,3 +285,72 @@ def test_write_report_marks_missing_original_remark(tmp_path: Path) -> None:
     text = out_path.read_text(encoding="utf-8")
 
     assert "原备注：未填写" in text
+
+
+def test_write_report_shows_range_decision_and_remark_status_without_semantic_result(
+    tmp_path: Path,
+) -> None:
+    audit = {
+        "audit_info": {"generated_at": "2026-08-17 10:00:00", "order_count": 1, "rule_stage": "test"},
+        "summary": {"audit_level_counts": {"有问题": 1}},
+        "records": [{"working_order_code": "CH2608031785736302900"}],
+    }
+    final_issue_list = {
+        "items": [
+            {
+                "operation_unit": "罗定兴华",
+                "station_name": "测试站",
+                "rf_form_name": "氮氧化物（NOx）分析仪运行状况检查记录表（每周）",
+                "working_order_code": "CH2608031785736302900",
+                "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                "message": "NOx周检高压电源检查值(670mv，换算为0.67 V)超出ESA品牌正常范围(500-950 V)",
+                "issue_component": "value_abnormal",
+                "issue_group_id": "CH2608031785736302900::RF_W_GASEOUSCHECK_NOX::GYCHECKVALUE",
+                "decision_evidence": {
+                    "brand": "ESA",
+                    "raw_value": "670mv",
+                    "normalized_value": 0.67,
+                    "normalized_unit": "V",
+                    "unit_conversion_applied": True,
+                    "expected_range": "500-950 V",
+                    "comparison_result": "out_of_spec",
+                },
+                "remark_status": "provided",
+                "remark_status_label": "已填写",
+                "remark_review_status": "pending_semantic_review",
+                "remark_review_status_label": "内容有效性待语义复核",
+                "original_remarks": [
+                    {
+                        "field": "EXCEPTIONHANDLINGRECORD",
+                        "field_label": "异常时处理记录",
+                        "value": "已检查高压电源接线，待复测。",
+                    }
+                ],
+            }
+        ]
+    }
+
+    out_path = tmp_path / "report.md"
+    write_report(audit, out_path, final_issue_list=final_issue_list)
+    text = out_path.read_text(encoding="utf-8")
+
+    assert "判定依据：原始值 670mv；换算值 0.67 V；ESA 品牌正常范围 500-950 V" in text
+    assert "原备注（异常时处理记录/EXCEPTIONHANDLINGRECORD）：已检查高压电源接线，待复测。" in text
+    assert "备注状态：已填写；内容有效性待语义复核" in text
+
+    item = final_issue_list["items"][0]
+    item.update(
+        {
+            "remark_status": "missing",
+            "remark_status_label": "未填写",
+            "remark_review_status": "missing",
+            "remark_review_status_label": "未填写备注",
+            "original_remarks": [],
+            "original_remark_text": "",
+        }
+    )
+    missing_path = tmp_path / "report-missing.md"
+    write_report(audit, missing_path, final_issue_list=final_issue_list)
+    missing_text = missing_path.read_text(encoding="utf-8")
+    assert "原备注：未填写" in missing_text
+    assert "备注状态：未填写" in missing_text

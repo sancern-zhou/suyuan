@@ -10,12 +10,10 @@ from app.services.ops_audit.config import review_stage_for_rule, rules_for_revie
 from app.services.ops_audit.field_labels import remark_field_display_name
 from app.services.ops_audit.issue_linking import (
     ABNORMAL_WITHOUT_EXPLANATION_RULE_ID,
-    VALUE_ABNORMAL_RULE_ID,
     is_abnormal_fact_rule,
     issue_link_metadata,
 )
 from app.services.ops_audit.rf_form_names import rf_form_display_name
-
 
 EXCLUDED_RULE_IDS = rules_for_review_stage("excluded")
 
@@ -142,6 +140,8 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
     ):
         if key in evidence_data:
             item[key] = evidence_data[key]
+    _attach_range_decision_evidence(item, evidence_data)
+    _attach_evidence_remarks(item, evidence_data)
     link_metadata = issue_link_metadata(issue, working_order_code=record.get("working_order_code"))
     if link_metadata:
         item.update(link_metadata)
@@ -151,6 +151,115 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
             else "rule_detected"
         )
     return item
+
+
+def _attach_range_decision_evidence(
+    item: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    """Expose the range comparison without requiring consumers to parse evidence JSON."""
+
+    values = evidence.get("out_of_spec_values")
+    range_value = values[0] if isinstance(values, list) and values and isinstance(values[0], dict) else {}
+    observed = evidence.get("observed_value")
+    expected = evidence.get("expected_range")
+    if not isinstance(observed, dict) or not isinstance(expected, dict):
+        if not range_value:
+            return
+        observed = {
+            "raw_value": range_value.get("raw_value"),
+            "normalized_value": range_value.get("value"),
+            "raw_unit": range_value.get("raw_unit"),
+            "normalized_unit": range_value.get("unit"),
+            "unit_conversion_applied": _units_differ(range_value.get("raw_unit"), range_value.get("unit")),
+        }
+        expected = {
+            "min": range_value.get("min"),
+            "max": range_value.get("max"),
+            "operator": range_value.get("operator"),
+            "unit": range_value.get("unit"),
+            "text": _range_text(range_value),
+        }
+
+    item["decision_evidence"] = {
+        "brand": evidence.get("brand"),
+        "field": evidence.get("field") or range_value.get("field") or item.get("rf_field"),
+        "field_label": evidence.get("field_label") or range_value.get("label") or item.get("field_label"),
+        "raw_value": observed.get("raw_value"),
+        "normalized_value": observed.get("normalized_value"),
+        "raw_unit": observed.get("raw_unit"),
+        "normalized_unit": observed.get("normalized_unit"),
+        "unit_conversion_applied": bool(observed.get("unit_conversion_applied")),
+        "expected_range": expected.get("text") or _range_text(expected),
+        "expected_min": expected.get("min"),
+        "expected_max": expected.get("max"),
+        "expected_operator": expected.get("operator"),
+        "expected_unit": expected.get("unit"),
+        "comparison_result": "out_of_spec",
+    }
+
+
+def _attach_evidence_remarks(
+    item: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    candidates = None
+    for key in ("handling_record_candidates", "remark_candidates"):
+        if key in evidence:
+            candidates = evidence.get(key)
+            break
+    if candidates is None:
+        return
+
+    entries = _remark_entries(candidates)
+    nonempty_entries = [entry for entry in entries if entry["value"].strip()]
+    item["remark_status"] = "provided" if nonempty_entries else "missing"
+    item["remark_status_label"] = "已填写" if nonempty_entries else "未填写"
+    item["original_remarks"] = [
+        {**entry, "field_label": remark_field_display_name(entry["field"])}
+        for entry in nonempty_entries
+    ]
+    item["original_remark_text"] = "\n".join(entry["value"] for entry in nonempty_entries)
+    if nonempty_entries:
+        item["remark_review_status"] = (
+            "pending_semantic_review"
+            if evidence.get("needs_semantic_review") is True
+            else "not_requested"
+        )
+        item["remark_review_status_label"] = (
+            "内容有效性待语义复核"
+            if evidence.get("needs_semantic_review") is True
+            else "已记录，未要求语义复核"
+        )
+    else:
+        item["remark_review_status"] = "missing"
+        item["remark_review_status_label"] = "未填写备注"
+
+
+def _units_differ(source: Any, target: Any) -> bool:
+    source_text = str(source or "").strip().lower()
+    target_text = str(target or "").strip().lower()
+    return bool(source_text and target_text and source_text != target_text)
+
+
+def _range_text(spec: dict[str, Any]) -> str:
+    operator = str(spec.get("operator") or "").strip()
+    minimum = spec.get("min")
+    maximum = spec.get("max")
+    unit = str(spec.get("unit") or "").strip()
+    if operator in {">", ">="} and minimum is not None and maximum is None:
+        value = f"{operator}{minimum}"
+    elif operator in {"<", "<="} and maximum is not None and minimum is None:
+        value = f"{operator}{maximum}"
+    elif minimum is not None and maximum is not None:
+        value = f"{minimum}-{maximum}"
+    elif minimum is not None:
+        value = f">={minimum}"
+    elif maximum is not None:
+        value = f"<={maximum}"
+    else:
+        value = "未配置"
+    return f"{value} {unit}".strip()
 
 
 def _semantic_item(
@@ -257,6 +366,9 @@ def _attach_original_remarks(
     )
     item["remark_judgment"] = _effective_remark_judgment(judgment_type, nonempty_entries)
     item["remark_judgment_label"] = _remark_judgment_label(item["remark_judgment"])
+    item["remark_status_label"] = "已填写" if nonempty_entries else "未填写"
+    item["remark_review_status"] = "semantic_confirmed"
+    item["remark_review_status_label"] = item["remark_judgment_label"]
 
 
 def _remark_entries(value: Any, *, default_field: str = "remark") -> list[dict[str, str]]:
@@ -272,6 +384,8 @@ def _remark_entries(value: Any, *, default_field: str = "remark") -> list[dict[s
     entries: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for field, raw_value in candidates:
+        if str(field or "").upper() == "PROCESSTYPE":
+            continue
         text = str(raw_value or "")
         key = (str(field or default_field), text)
         if key in seen:

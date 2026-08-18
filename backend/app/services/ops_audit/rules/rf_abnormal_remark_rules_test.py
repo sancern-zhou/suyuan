@@ -76,6 +76,34 @@ def test_existing_abnormal_fact_rules_get_linked_explanation_review(
     assert companion_link["linked_rule_id"] == rule_id
 
 
+def test_process_type_metadata_does_not_count_as_an_abnormal_remark():
+    base = _base_issue(
+        "RF_RANGE_OUT_OF_SPEC",
+        "RF_W_GASEOUSCHECK_NOX",
+        "GYCHECKVALUE",
+        "高压电源超出范围",
+        {"handling_record_candidates": {"GYCHECKROW": "", "PROCESSTYPE": 1.0}},
+    )
+    issues = [base]
+
+    check_rf_abnormal_remarks(
+        {"WORKINGORDERCODE": "WO-SPLIT"},
+        [
+            (
+                "RF_W_GASEOUSCHECK_NOX",
+                {"WORKINGORDERCODE": "WO-SPLIT", "REMARK": "", "GYCHECKROW": "", "PROCESSTYPE": 1.0},
+            )
+        ],
+        issues,
+    )
+
+    companion = next(issue for issue in issues if issue.rule_id == "RF_ABNORMAL_VALUE_NO_REMARK")
+    evidence = json.loads(companion.evidence)
+    assert evidence["remark_candidates"] == {"REMARK": "", "GYCHECKROW": ""}
+    assert evidence["needs_semantic_review"] is False
+    assert "未填写有效备注" in companion.message
+
+
 def test_pm_sample_tube_temperature_emits_fact_and_explanation_review():
     issues = []
     check_rf_abnormal_remarks(
