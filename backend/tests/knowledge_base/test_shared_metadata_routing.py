@@ -51,3 +51,33 @@ async def test_list_knowledge_bases_merges_central_shared_metadata(monkeypatch):
     )
 
     assert [kb.id for kb in result] == ["local-kb", "shared-kb"]
+
+
+@pytest.mark.asyncio
+async def test_document_enrichment_replaces_null_vector_filename():
+    document = SimpleNamespace(
+        id="doc-1",
+        filename="真实文档.pdf",
+        original_file_oid=None,
+        file_storage_type=None,
+        file_path=None,
+        file_type="pdf",
+        file_size=123,
+        file_mime_type="application/pdf",
+        created_at=None,
+        processed_at=None,
+    )
+
+    class FakeDB:
+        async def execute(self, _statement):
+            return SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [document])
+            )
+
+    service = KnowledgeBaseService.__new__(KnowledgeBaseService)
+    service.db = FakeDB()
+    results = [{"document_id": "doc-1", "filename": None, "knowledge_base": {}}]
+
+    await service._enrich_results_with_document_info(results)
+
+    assert results[0]["filename"] == "真实文档.pdf"
