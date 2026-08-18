@@ -271,8 +271,12 @@ async def search_knowledge_bases(
     """检索知识库并返回相关文档片段（使用独立数据库会话，避免超时）"""
     from app.db.database import async_session
     from sqlalchemy import select
-    from app.knowledge_base.models import Document, KnowledgeBase as KBModel, KnowledgeBaseStatus
+    from app.knowledge_base.models import Document, KnowledgeBaseStatus
     from app.knowledge_base.service import KnowledgeBaseService
+    from app.knowledge_base.shared_metadata import (
+        get_central_shared_knowledge_base_ids,
+        get_shared_knowledge_session_factory,
+    )
 
     # 使用独立会话，检索完成后立即关闭
     async with async_session() as db:
@@ -303,20 +307,44 @@ async def search_knowledge_bases(
                 logger.info("no_available_knowledge_bases", query=query[:50])
                 return []
 
+        central_kb_ids = await get_central_shared_knowledge_base_ids(kb_ids)
+        local_kb_ids = [kb_id for kb_id in kb_ids if kb_id not in central_kb_ids]
+        shared_session = get_shared_knowledge_session_factory()
+
+        search_targets = []
+        if local_kb_ids:
+            search_targets.append(("local", async_session, local_kb_ids))
+        if central_kb_ids and shared_session is not None:
+            search_targets.append(("shared", shared_session, list(central_kb_ids)))
+
+        if not search_targets:
+            logger.info("no_routable_knowledge_bases", query=query[:50])
+            return []
+
         async def run_search_route(route: str, route_query: str) -> tuple[List[dict], float]:
             route_started_at = time.time()
-            async with async_session() as route_db:
-                route_service = KnowledgeBaseService(db=route_db)
-                route_results = await route_service.search(
-                    query=route_query,
-                    user_id=user_id,
-                    knowledge_base_ids=kb_ids,
-                    top_k=top_k,
-                    score_threshold=score_threshold,
-                    filters=None,
-                    use_reranker=use_reranker,
-                    use_graph_retrieval=False,
-                )
+            async def search_target(session_factory, target_ids):
+                async with session_factory() as route_db:
+                    route_service = KnowledgeBaseService(
+                        db=route_db,
+                        session_factory=session_factory,
+                    )
+                    return await route_service.search(
+                        query=route_query,
+                        user_id=user_id,
+                        knowledge_base_ids=target_ids,
+                        top_k=top_k,
+                        score_threshold=score_threshold,
+                        filters=None,
+                        use_reranker=use_reranker,
+                        use_graph_retrieval=False,
+                    )
+
+            target_results = await asyncio.gather(*(
+                search_target(session_factory, target_ids)
+                for _, session_factory, target_ids in search_targets
+            ))
+            route_results = [item for group in target_results for item in group]
             route_elapsed = (time.time() - route_started_at) * 1000
             for item in route_results:
                 item["retrieval_route"] = route
@@ -381,10 +409,27 @@ async def search_knowledge_bases(
             doc_ids = [r.get("document_id") for r in results if r.get("document_id")]
             docs_map = {}
             if doc_ids:
-                doc_result = await db.execute(
-                    select(Document).where(Document.id.in_(doc_ids))
-                )
-                docs_map = {doc.id: doc for doc in doc_result.scalars().all()}
+                local_doc_ids = [
+                    r.get("document_id") for r in results
+                    if r.get("document_id")
+                    and (r.get("knowledge_base", {}) or {}).get("id") not in central_kb_ids
+                ]
+                central_doc_ids = [
+                    r.get("document_id") for r in results
+                    if r.get("document_id")
+                    and (r.get("knowledge_base", {}) or {}).get("id") in central_kb_ids
+                ]
+                if local_doc_ids:
+                    doc_result = await db.execute(
+                        select(Document).where(Document.id.in_(local_doc_ids))
+                    )
+                    docs_map.update({doc.id: doc for doc in doc_result.scalars().all()})
+                if central_doc_ids and shared_session is not None:
+                    async with shared_session() as central_db:
+                        doc_result = await central_db.execute(
+                            select(Document).where(Document.id.in_(central_doc_ids))
+                        )
+                        docs_map.update({doc.id: doc for doc in doc_result.scalars().all()})
 
             formatted_results = []
             for r in results:
