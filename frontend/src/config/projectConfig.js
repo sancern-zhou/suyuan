@@ -61,7 +61,7 @@ const injected = typeof __SUYUAN_PROJECT_CONFIG__ === 'undefined'
         theme: 'default',
         brandName: '风清气智',
         features: {},
-        agentModes: ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'],
+        agentModes: ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'],
         defaultAgentMode: 'assistant',
         agentModeOverrides: {},
         agentPlatformLayout: 'scenes',

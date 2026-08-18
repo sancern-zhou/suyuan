@@ -88,7 +88,7 @@ def test_analyze_request_rejects_empty_turn_and_multiple_skills():
         AgentAnalyzeRequest(query="分析", skill_ids=["trend", "report"], context_refs=[])
 
 
-@pytest.mark.parametrize("mode", ["assistant", "ppt", "expert", "query", "report", "chart", "board", "ops"])
+@pytest.mark.parametrize("mode", ["assistant", "ppt", "expert", "query", "knowledge", "report", "chart", "board", "ops"])
 def test_selected_skill_context_is_injected_once_for_every_mode(mode):
     builder = SimplifiedContextBuilder(Mock(), Mock(), {})
     builder.current_mode = mode

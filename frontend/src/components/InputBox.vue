@@ -787,9 +787,12 @@ watch(
 
 watch(
   () => reactStore.currentMode,
-  () => {
+  (newMode, oldMode) => {
     persistSelectionDraft()
     void restoreSelectionDraft(props.sessionId)
+    if (newMode === 'knowledge' && oldMode !== 'knowledge') {
+      showKnowledgeBaseSelector.value = true
+    }
   }
 )
 

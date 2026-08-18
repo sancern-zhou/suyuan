@@ -9,6 +9,7 @@ from .assistant_prompt import build_assistant_prompt
 from .ppt_prompt import build_ppt_prompt
 from .expert_prompt import build_expert_prompt
 from .query_prompt import build_query_prompt
+from .knowledge_prompt import build_knowledge_prompt
 from .report_prompt import build_report_prompt
 from .social_prompt import build_social_prompt
 from .enforcement_exam_prompt import build_enforcement_exam_prompt
@@ -60,6 +61,7 @@ AgentMode = Literal[
     "ppt",
     "expert",
     "query",
+    "knowledge",
     "jiangsu_query",
     "smart_inspection",
     "operations_analysis",
@@ -161,6 +163,8 @@ def build_react_system_prompt(
         return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
         return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
+    elif mode == "knowledge":
+        return _with_platform_contracts(build_knowledge_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "jiangsu_query":
         # The Jiangsu project normally supplies a project-owned prompt above.
         # Keep this safe fallback for tooling and direct unit tests.
