@@ -160,10 +160,10 @@ async def test_auto_generation_enforces_one_question_per_anchor_chunk():
 
         assert result["created"] == 1
         assert result["rejected"] == 1
+        assert result["rejections"][0]["errors"] == ["anchor_chunk_already_used"]
         assert llm.selected_tiers == ["auto", "auto"]
         outline = result["questions"][0]["source_refs"][0]["exam_outline"]
         assert outline["model_tier"] == "auto"
         assert outline["generation_job_id"] == "job-1"
     finally:
         await engine.dispose()
-

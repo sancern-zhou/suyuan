@@ -405,6 +405,7 @@ class ExamBankGenerationService:
             candidates = []
         locally_valid: list[dict[str, Any]] = []
         rejected = 0
+        rejections: list[dict[str, Any]] = []
         accepted_by_type: dict[str, int] = {}
         accepted_knowledge_points = set(excluded_knowledge_points or set())
         accepted_anchor_chunks: set[int] = set()
@@ -414,6 +415,7 @@ class ExamBankGenerationService:
         for index, candidate in enumerate(candidates):
             if not isinstance(candidate, dict):
                 rejected += 1
+                rejections.append({"candidate_id": None, "errors": ["candidate_not_an_object"]})
                 continue
             candidate.setdefault("candidate_id", f"candidate-{index + 1}")
             errors = validate_candidate(candidate, set(batch.chunk_indices))
@@ -464,6 +466,11 @@ class ExamBankGenerationService:
             if errors:
                 rejected += 1
                 logger.warning("exam_question_candidate_rejected", errors=errors)
+                rejections.append({
+                    "candidate_id": str(candidate.get("candidate_id") or ""),
+                    "evidence_chunk_indices": evidence_indices,
+                    "errors": list(dict.fromkeys(errors)),
+                })
                 continue
             locally_valid.append(candidate)
             accepted_by_type[question_type] = accepted_by_type.get(question_type, 0) + 1
@@ -477,6 +484,8 @@ class ExamBankGenerationService:
                 "questions": [],
                 "created_by_type": {},
                 "created_knowledge_points": [],
+                "candidate_count": len(candidates),
+                "rejections": rejections,
             }
 
         verification, verification_model = await self._call_tier_json(
@@ -515,6 +524,28 @@ class ExamBankGenerationService:
             ) and not list(verdict.get("risk_flags") or [])
             if not approved or str(candidate["stem"]).strip() in existing_stems:
                 rejected += 1
+                review_errors = [
+                    key
+                    for key in (
+                        "answer_supported",
+                        "unambiguous",
+                        "source_match",
+                        "worth_testing",
+                    )
+                    if verdict.get(key) is not True
+                ]
+                review_errors.extend(str(item) for item in (verdict.get("risk_flags") or []))
+                if str(candidate["stem"]).strip() in existing_stems:
+                    review_errors.append("duplicate_exact_stem")
+                if not verdict:
+                    review_errors.append("missing_verification_verdict")
+                rejections.append({
+                    "candidate_id": str(candidate.get("candidate_id") or ""),
+                    "evidence_chunk_indices": [
+                        int(item) for item in candidate.get("evidence_chunk_indices") or []
+                    ],
+                    "errors": list(dict.fromkeys(review_errors or ["verification_rejected"])),
+                })
                 continue
             evidence_indices = [int(item) for item in candidate["evidence_chunk_indices"]]
             knowledge_point = str(candidate.get("knowledge_point") or "").strip()
@@ -588,6 +619,8 @@ class ExamBankGenerationService:
             "questions": created_questions,
             "created_by_type": created_by_type,
             "created_knowledge_points": created_knowledge_points,
+            "candidate_count": len(candidates),
+            "rejections": rejections,
         }
 
     @staticmethod
@@ -618,7 +651,7 @@ class ExamBankGenerationService:
 {anchor_instruction}
 2. 题型可为 single_choice、multiple_choice、judgment、short_answer。
 3. 选择题固定 A-D；多选至少两个正确项；简答题必须提供参考答案和 scoring_points，所有评分点分值合计 100 分。
-4. 每题提供 evidence_chunk_indices、evidence_quote、topic、knowledge_point、article、explanation_hint、difficulty。
+4. 每题提供 evidence_chunk_indices、evidence_quote、topic、knowledge_point、article、explanation_hint、difficulty。evidence_quote 必须从所引用 chunk 的原文中逐字、连续复制，不得概括、改写、拼接，不得增删或替换任何文字与标点；提交前必须逐字符核对。
 5. evidence_chunk_indices 必须来自本批次标签。
 6. 将知识点归入 outline_category：思想政治素质、环境执法队伍建设管理、生态环境专业知识、法学基础和法律法规、生态环境执法实践。
 7. importance_level 只使用 core 或 normal。core 表示考试大纲明确覆盖，且属于核心程序、违法认定、法律责任、现场检查或应当掌握的内容；normal 表示大纲相关、原文明确且有实际学习价值。背景介绍、宽泛原则、答案不唯一、依赖常识或重复知识点属于 skip，不要为其生成题目。

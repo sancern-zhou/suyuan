@@ -401,6 +401,7 @@ async def create_generation_job(
                         "attempts": 0,
                         "question_id": None,
                         "last_error": None,
+                        "rejection_reasons": [],
                     }
                 )
         group_summary.append(
@@ -457,6 +458,11 @@ def generation_job_summary(job: dict[str, Any]) -> dict[str, Any]:
         for item in job.get("chunks") or []
         if item.get("pool") == "primary"
     )
+    rejection_reasons = Counter(
+        str(reason)
+        for item in job.get("chunks") or []
+        for reason in (item.get("rejection_reasons") or [])
+    )
     return {
         "job_id": job.get("job_id"),
         "status": job.get("status"),
@@ -465,6 +471,7 @@ def generation_job_summary(job: dict[str, Any]) -> dict[str, Any]:
         "statuses": dict(statuses),
         "primary_question_type_plan": dict(types),
         "batches_completed": int(job.get("batches_completed") or 0),
+        "rejection_reasons": dict(rejection_reasons),
         "filters": job.get("filters") or {},
         "source_groups": job.get("source_groups") or [],
         "created_at": job.get("created_at"),
@@ -624,6 +631,18 @@ async def run_generation_job(
                 if question.get("source_refs")
                 and len(question["source_refs"][0].get("chunk_indices") or []) == 1
             }
+            rejection_by_chunk: dict[int, list[str]] = defaultdict(list)
+            for rejection in result.get("rejections") or []:
+                indices = rejection.get("evidence_chunk_indices") or []
+                if len(indices) != 1:
+                    continue
+                try:
+                    chunk_index = int(indices[0])
+                except (TypeError, ValueError):
+                    continue
+                rejection_by_chunk[chunk_index].extend(
+                    str(error) for error in (rejection.get("errors") or [])
+                )
             for item in batch_items:
                 item["attempts"] = int(item.get("attempts") or 0) + 1
                 index = int(item["chunk_index"])
@@ -632,6 +651,12 @@ async def run_generation_job(
                     item["question_id"] = accepted_by_chunk[index]
                 else:
                     item["status"] = "rejected"
+                    item["rejection_reasons"] = list(
+                        dict.fromkeys(
+                            rejection_by_chunk.get(index)
+                            or ["model_skipped_or_unattributed"]
+                        )
+                    )
             job["batches_completed"] = int(job.get("batches_completed") or 0) + 1
             completed_this_run += 1
         except Exception as exc:
