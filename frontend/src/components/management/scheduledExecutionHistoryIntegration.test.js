@@ -17,6 +17,15 @@ test('scheduled task store requests execution history with the selected limit', 
 })
 
 
+test('task workspace only requests executions for the selected task', () => {
+  const source = readSource('./TaskExecutionWorkspace.vue')
+
+  assert.match(source, /const taskId = props\.task\?\.task_id/)
+  assert.match(source, /fetchTaskExecutions\(taskId, 50\)/)
+  assert.doesNotMatch(source, /fetchRecentExecutions\(/)
+})
+
+
 test('scheduled task panel switches between tasks and execution records', () => {
   const source = readSource('./ScheduledTasksPanel.vue')
 

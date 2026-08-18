@@ -105,12 +105,19 @@ const formatDuration = seconds => seconds < 60 ? `${Math.round(seconds)}秒` : `
 const restore = record => { if (record.session_id) emit('restore-execution-session', record.session_id) }
 
 const load = async () => {
+  const taskId = props.task?.task_id
+  if (!taskId) {
+    executions.value = []
+    error.value = ''
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
-    executions.value = await store.fetchRecentExecutions(50)
+    executions.value = await store.fetchTaskExecutions(taskId, 50)
   } catch (err) {
-    console.error('Failed to fetch recent task executions:', err)
+    console.error(`Failed to fetch executions for scheduled task ${taskId}:`, err)
     error.value = '分析记录加载失败，请重试'
   } finally {
     loading.value = false
