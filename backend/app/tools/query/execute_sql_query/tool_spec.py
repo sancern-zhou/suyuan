@@ -26,6 +26,11 @@ def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
     assert "WeatherForecast7Day" in description
     assert "cityname仅用于此预报表" in description
 
+    assert "HenanCityAccumulateRanking" in description
+    assert "period_type区分monthly（月累计）/yearly（年累计）" in description
+    assert "城市字段为city" in description
+    assert "排名为city_rank" in description
+
 
 def test_execute_sql_query_schema_keeps_describe_table_for_unlisted_fields():
     description = ExecuteSQLQueryTool().get_function_schema()["description"]

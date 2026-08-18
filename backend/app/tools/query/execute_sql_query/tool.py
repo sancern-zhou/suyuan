@@ -37,6 +37,7 @@ MONITORING_SQL_TABLES = [
     'dat_station_day',
     'dat_station_hour',
     'dat_weather_hour',
+    'HenanCityAccumulateRanking',
     'WeatherForecast7Day',
     'city_168_statistics_new_standard',
     'city_168_statistics_old_standard',
@@ -84,11 +85,21 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "Area = N'{city_name}'或CityCode = {city_code}；"
     "时间字段为TimePoint；日均字段为PM2_5_24h, PM10_24h, O3_8h_24h, "
     "NO2_24h, SO2_24h, CO_24h；其他字段为AQI, PrimaryPollutant, Quality。"
-    "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
-    "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
-    "站点字段为station_id, name, lon, lat；时间字段为data_time；"
-    "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
-    "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
+            "\n- dat_station_hour（站点小时）和dat_station_day（站点日）："
+            "城市字段为city_area_code，按行政区代码筛选：city_area_code = '{city_code}'；"
+            "站点字段为station_id, name, lon, lat；时间字段为data_time；"
+            "污染物字段使用小写：aqi, aqi_level, pm25, pm10, o3, no2, so2, co, pollutant；"
+            "dat_station_day另有O38h字段。没有cityname、CityID、Area、CityCode。"
+            "\n- HenanCityAccumulateRanking（河南省城市月/年累计空气质量排名）："
+            "period_type区分monthly（月累计）/yearly（年累计），period为YYYY-MM或YYYY；"
+            "城市字段为city，按全称筛选如city = N'郑州'；排名为city_rank（1最优）；"
+            "is_pro_city=1为省辖市，0为市平均/县平均等汇总行；"
+            "指标字段：zong（综合指数）, pm25, pm10, so2, no2, co, o3；"
+            "同比字段：zong_change_rate（如N'5.6%'文本）, change_rate, ratio；"
+            "天数字段：valid_days（有效天数）, pm_valid_days, o3_exceed_days, heavy_pollution_days；"
+            "统计区间stat_start/stat_end；当期数据每日抓取整体更新，lastyear_json存去年同期行。"
+            "示例：SELECT TOP 30 city, city_rank, zong, pm25, valid_days FROM dbo.HenanCityAccumulateRanking "
+            "WHERE period_type = 'monthly' AND period = '2026-08' ORDER BY city_rank。"
     "\n- WeatherForecast7Day（7天空气质量预报）："
     "城市字段为cityname，按城市全称筛选：cityname = N'{city_name}'；时间字段为TimePoint；"
     "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
@@ -837,6 +848,7 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- CityAQIPublishHistory：城市小时空气质量历史数据"
             "\n- CurrentAirQuality：当前空气质量"
             "\n- dat_station_hour/dat_station_day：站点小时/日数据"
+            "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名（period_type区分月/年累计）"
             "\n【统计预计算表】"
             "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市空气质量统计；"
             "适用于168城市全国排名、排名变化、全国发布统计数据查询"

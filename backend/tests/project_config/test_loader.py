@@ -72,12 +72,18 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "expert",
         "report",
     ]
-    assert context.manifest.frontend.agent_platform_layout == "environment-grid"
+    assert context.manifest.frontend.agent_platform_layout == "scenes"
     assert context.manifest.backend.tools == [
         "get_gems_image",
         "get_sentinel5p_image",
         "analyze_xuchang_upwind_permit_sources",
     ]
+    assert context.manifest.backend.agent_mode_tools["expert"][-1] == (
+        "broadcast_social_users"
+    )
+    assert context.manifest.backend.agent_mode_tools["report"][-1] == (
+        "broadcast_social_users"
+    )
     assert context.manifest.backend.fetchers == [
         "nmc_observed_weather",
         "nmc_weather_chart",
@@ -85,6 +91,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_daily_attainment_forecast_fetcher",
         "xuchang_annual_attainment_forecast_fetcher",
         "xuchang_cnemc_station_hour_fetcher",
+        "xuchang_henan_month_year_accumulate_fetcher",
         "xuchang_station_deviation_alert_fetcher",
         "xuchang_transport_analysis_fetcher",
         "gems_xuchang_image_fetcher",

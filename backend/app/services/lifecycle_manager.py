@@ -46,6 +46,7 @@ from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场�
 from app.fetchers.xuchang_annual_attainment_forecast import XuchangAnnualAttainmentForecastFetcher
 from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetcher
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
+from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
 from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
 from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
 from app.project_config.loader import load_project_context
@@ -127,6 +128,7 @@ def _configured_fetchers(project_context):
         "xuchang_daily_attainment_forecast_fetcher": XuchangDailyAttainmentForecastFetcher,
         "xuchang_annual_attainment_forecast_fetcher": XuchangAnnualAttainmentForecastFetcher,
         "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
+        "xuchang_henan_month_year_accumulate_fetcher": XuchangHenanMonthYearAccumulateFetcher,
         "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
         "xuchang_transport_analysis_fetcher": XuchangTransportAnalysisFetcher,
         "gems_xuchang_image_fetcher": GemsImageFetcher,

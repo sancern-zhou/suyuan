@@ -79,3 +79,17 @@ def test_execute_sql_query_allows_open_meteo_air_quality_forecast_tables():
         is_valid, error = tool.sql_validator.validate(sql)
 
         assert is_valid, error
+
+
+def test_execute_sql_query_allows_henan_city_accumulate_ranking_table():
+    tool = ExecuteSQLQueryTool()
+
+    for sql in (
+        "SELECT TOP 30 city, city_rank, zong FROM HenanCityAccumulateRanking"
+        " WHERE period_type = 'monthly' AND period = '2026-08' ORDER BY city_rank",
+        "SELECT TOP 30 city, city_rank, zong FROM dbo.HenanCityAccumulateRanking"
+        " WHERE period_type = 'yearly' AND period = '2026' ORDER BY city_rank",
+    ):
+        is_valid, error = tool.sql_validator.validate(sql)
+
+        assert is_valid, error

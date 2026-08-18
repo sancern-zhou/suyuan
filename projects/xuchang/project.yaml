@@ -16,12 +16,60 @@ frontend:
     - expert
     - report
   default_agent_mode: query
-  agent_platform_layout: environment-grid
+  agent_platform_layout: scenes
 backend:
   tools:
     - get_gems_image
     - get_sentinel5p_image
     - analyze_xuchang_upwind_permit_sources
+  agent_mode_tools:
+    expert:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - get_weather_data
+      - get_universal_meteorology
+      - get_current_weather
+      - get_weather_forecast
+      - get_weather_situation_map
+      - get_platform_weather_image
+      - get_satellite_data
+      - get_gems_image
+      - get_sentinel5p_image
+      - get_fire_hotspots
+      - query_xcai_city_history
+      - execute_sql_query
+      - execute_postgres_sql_query
+      - analyze_upwind_enterprises
+      - meteorological_trajectory_analysis
+      - create_report_chart
+      - execute_python
+      - read_file
+      - write_file
+      - edit_file
+      - grep
+      - list_directory
+      - search_files
+      - broadcast_social_users
+    report:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - execute_sql_query
+      - execute_postgres_sql_query
+      - read_file
+      - write_file
+      - edit_file
+      - grep
+      - list_directory
+      - search_files
+      - bash
+      - create_report_chart
+      - execute_python
+      - create_report_package
+      - render_report_package
+      - validate_report_package
+      - broadcast_social_users
   disabled_tools:
     - analyze_city_pollutant_rankings
     - get_5min_data
@@ -41,6 +89,7 @@ backend:
     - xuchang_daily_attainment_forecast_fetcher
     - xuchang_annual_attainment_forecast_fetcher
     - xuchang_cnemc_station_hour_fetcher
+    - xuchang_henan_month_year_accumulate_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_transport_analysis_fetcher
     - gems_xuchang_image_fetcher

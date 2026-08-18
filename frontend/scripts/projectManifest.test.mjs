@@ -31,7 +31,7 @@ test('xuchang project enables only its declared business modules', () => {
   assert.deepEqual(config.modules, ['core', 'legacy', 'satellite', 'xuchang-air-quality', 'xuchang-satellite'])
   assert.deepEqual(config.frontend.agentModes, ['query', 'knowledge', 'expert', 'report'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
-  assert.equal(config.frontend.agentPlatformLayout, 'environment-grid')
+  assert.equal(config.frontend.agentPlatformLayout, 'scenes')
 })
 
 test('jiangxi project uses the reduced noise interface', () => {

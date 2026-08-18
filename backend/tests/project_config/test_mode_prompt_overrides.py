@@ -41,6 +41,22 @@ def test_xuchang_disables_guangdong_query_tools_only_for_xuchang(monkeypatch):
     assert standard_report_tools.issubset(get_tools_by_mode("query"))
 
 
+def test_xuchang_expert_and_report_modes_expose_broadcast_tool(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    expert_tools = get_tools_by_mode("expert")
+    report_tools = get_tools_by_mode("report")
+
+    assert "broadcast_social_users" in expert_tools
+    assert "broadcast_social_users" in report_tools
+    assert "execute_python" in expert_tools
+    assert "create_report_package" in report_tools
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    assert "broadcast_social_users" not in get_tools_by_mode("expert")
+    assert "broadcast_social_users" not in get_tools_by_mode("report")
+
+
 def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
     monkeypatch.setattr(settings, "project_id", "xuchang")
 
