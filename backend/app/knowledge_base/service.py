@@ -1053,7 +1053,7 @@ class KnowledgeBaseService:
 
                 doc = docs_map.get(doc_id)
                 if doc:
-                    r.setdefault("filename", doc.filename)
+                    r["filename"] = r.get("filename") or doc.filename
                     r.setdefault("metadata", {})
                     # 检查是否有原文件
                     has_original_file = bool(
