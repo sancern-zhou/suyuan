@@ -23,7 +23,7 @@ test('coordinator layout delegates to the controlled coordinator home', async ()
   assert.match(source, /@submit="emit\('submit', \$event\)"/)
 })
 
-test('coordinator layout switches between the existing home and command center prototype', async () => {
+test('coordinator layout switches between the personal home and voice-driven command center', async () => {
   const platform = await readComponent('AgentPlatform.vue')
   const home = await readComponent('../coordinator/CoordinatorHome.vue')
   const commandCenter = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
@@ -35,34 +35,179 @@ test('coordinator layout switches between the existing home and command center p
   assert.match(home, /智能中枢/)
   assert.match(commandCenter, /空气站智能运维中枢/)
   assert.match(commandCenter, /返回\{\{ assistantName \}\}首页/)
-  assert.match(commandCenter, /class="command-dock"/)
+  assert.match(commandCenter, /class="voice-console"/)
+  assert.match(commandCenter, /toggleListening/)
+  assert.match(commandCenter, /SpeechRecognition/)
   assert.match(commandCenter, /xiaozhiRobotUrl/)
-  assert.match(commandCenter, /assistantName.*智能值班助手形象/)
   assert.match(commandCenter, /coordinator\.stationImageUrl/)
-  assert.match(commandCenter, /现场画面/)
+  assert.match(commandCenter, /关键监控截图/)
+  assert.doesNotMatch(commandCenter, /class="command-dock"/)
+  assert.doesNotMatch(commandCenter, /确认生成/)
 })
 
-test('command center keeps conversation primary across responsive layouts', async () => {
+test('command center is a viewport-filling, non-scrolling large-screen surface', async () => {
   const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
 
-  assert.match(source, /class="conversation-flow"/)
-  assert.match(source, /class="user-context"/)
-  assert.match(source, /<form class="command-dock"/)
-  assert.match(source, /@media \(max-width: 1599px\)/)
-  assert.match(source, /grid-template-areas: "core left" "core right"/)
-  assert.match(source, /@media \(max-width: 1180px\)/)
-  assert.match(source, /grid-template-areas: "core" "left" "right"/)
+  assert.match(source, /position: fixed/)
+  assert.match(source, /width: 100vw/)
+  assert.match(source, /height: 100dvh/)
+  assert.match(source, /overflow: hidden/)
+  assert.match(source, /grid-template-rows: 74px minmax\(0, 1fr\) 96px/)
+  assert.match(source, /class="workspace-canvas ambient-canvas"/)
+  assert.match(source, /class="workspace-canvas investigation-canvas"/)
+  assert.match(source, /class="workspace-canvas mobility-canvas"/)
+  assert.match(source, /class="workspace-canvas investigation-canvas interference-canvas"/)
+  assert.match(source, /@media \(max-height: 820px\)/)
 })
 
-test('command center limits persistent context to attention, evidence, and dispatch', async () => {
+test('command center uses an open workbench instead of a grid of dashboard cards', async () => {
   const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
 
-  assert.match(source, /重点异常/)
-  assert.match(source, /现场证据/)
-  assert.match(source, /处置建议/)
-  assert.match(source, /红圈区域为当前重点观察位置/)
-  assert.doesNotMatch(source, /trend-panel|overview-panel|近 24 小时运行趋势/)
-  assert.doesNotMatch(source, /orbit-middle/)
+  assert.match(source, /class="workbench"/)
+  assert.match(source, /class="goal-workspace"/)
+  assert.match(source, /class="conversation-evidence"/)
+  assert.doesNotMatch(source, /class="context-rail"|持续态势底座|江苏全省 · 今日值守/)
+  assert.doesNotMatch(source, /class="surface-card"/)
+  assert.doesNotMatch(source, /class="status-ribbon"/)
+})
+
+test('duty overview is map-first with three concise scenario summaries and the AI entry', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(source, /class="overview-map-stage"/)
+  assert.match(source, /class="overview-events"/)
+  assert.match(source, /class="overview-event-list"/)
+  assert.match(source, /颗粒物数据中断/)
+  assert.match(source, /智慧运维调度/)
+  assert.match(source, /外部环境干扰识别/)
+  assert.match(source, /跨市运维 · 轨迹洞察 · 高频到站 · 资源优化/)
+  assert.match(source, /\.workspace-ambient \.workbench/)
+  assert.match(source, /class="voice-console"/)
+  assert.doesNotMatch(source, /class="ambient-question"|class="ambient-focus-list"/)
+})
+
+test('command center visible headings and units are consistently Chinese', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const retiredLabels = [
+    'OPERATION SITUATION', 'PRIORITY', 'FIELD EVIDENCE', 'DATA &amp; DIAGNOSIS',
+    'TASK DRAFT', 'PERSONNEL', 'PROGRESS', 'PROVINCE SITUATION',
+    'MOBILITY ANALYSIS', 'MANAGEMENT FOCUS', 'OPTIMIZATION'
+  ]
+
+  for (const label of retiredLabels) assert.doesNotMatch(source, new RegExp(`>${label}<`))
+  assert.doesNotMatch(source, />\s*(?:km|min)\s*</)
+  assert.match(source, /里程减少 1,260 公里/)
+  assert.match(source, /响应时间缩短 18 分钟/)
+})
+
+test('command center separates display-level insight from homepage business execution', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(source, /今日值守总览/)
+  assert.match(source, /源创包装厂房站点异常连续调查工作区/)
+  assert.match(source, /全省智慧运维调度连续分析工作区/)
+  assert.match(source, /调度计划草案/)
+  assert.match(source, /打开详细操作工作台/)
+  assert.match(source, /等待人工确认/)
+  assert.doesNotMatch(source, /调整方案|确认生成|设备反控/)
+  assert.doesNotMatch(source, /emit\('submit'/)
+})
+
+test('particulate interruption enlarges conversation and visual evidence without a duplicate event rail', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const visual = await readComponent('../coordinator/StationInterruptionEvidence.vue')
+
+  assert.match(source, /class="conversation-evidence"/)
+  assert.match(source, /class="conversation-history"/)
+  assert.match(source, /class="dialogue-evidence"/)
+  assert.match(source, /class="evidence-snapshot"/)
+  assert.match(source, /<button class="dispatch-plan"/)
+  assert.match(source, /<StationInterruptionEvidence/)
+  assert.doesNotMatch(source, /class="incident-panel"|class="evidence-chain"|class="investigation-board"|class="evidence-flow"|class="reasoning-thread"|class="hypothesis-list"/)
+  assert.match(visual, /from 'echarts\/core'/)
+  assert.match(visual, /LineChart/)
+  assert.match(visual, /markLine/)
+  assert.match(visual, />数据<\/button>/)
+  assert.match(visual, />视频<\/button>/)
+})
+
+test('smart dispatch uses map evidence and a continuous AI conversation instead of insight cards', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(source, /class="dispatch-evidence"/)
+  assert.match(source, /class="conversation-evidence dispatch-conversation"/)
+  assert.match(source, /数据、截图和结论随追问持续补充/)
+  assert.match(source, /class="dialogue-evidence dispatch-data-lines"/)
+  assert.match(source, /class="dispatch-plan dispatch-optimization-plan"/)
+  assert.match(source, /智慧调度优化方案草案/)
+  assert.doesNotMatch(source, /class="dispatch-dimensions"|class="strategy-lab"|class="dispatch-recommendation"/)
+})
+
+test('external interference grows video, correlation, impact and evidence-package turns in one AI workspace', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+  const evidence = await readComponent('../coordinator/ExternalInterferenceEvidence.vue')
+
+  assert.match(source, /外部环境干扰识别连续分析工作区/)
+  assert.match(source, /视频、数据和判断依据随追问持续补充/)
+  assert.match(source, /告警初筛/)
+  assert.match(source, /时空关联/)
+  assert.match(source, /影响监测数据和代表性/)
+  assert.match(source, /外部环境干扰处置草案/)
+  assert.match(source, /<ExternalInterferenceEvidence/)
+  assert.match(evidence, /喷淋雾炮/)
+  assert.match(evidence, /车辆停靠/)
+  assert.match(evidence, /人员靠近/)
+  assert.match(evidence, /摄像头遮挡/)
+  assert.match(evidence, /视频证据/)
+  assert.match(evidence, /监测数据/)
+  assert.match(evidence, /气象条件/)
+  assert.match(evidence, /设备状态/)
+  assert.match(evidence, /运维记录/)
+  assert.match(evidence, /LineChart/)
+})
+
+test('command center map uses real Jiangsu boundaries and the original platform station directory snapshot', async () => {
+  const mapSource = await readComponent('../coordinator/JiangsuSituationMap.vue')
+  const stationSource = await readComponent('../coordinator/jiangsuOpsStations.js')
+  const geoSource = await readComponent('../coordinator/jiangsu-320000.geo.json')
+
+  assert.match(mapSource, /jiangsu-320000\.geo\.json/)
+  assert.match(mapSource, /JIANGSU_OPS_STATIONS/)
+  assert.match(mapSource, /echarts\.registerMap/)
+  assert.match(mapSource, /JIANGSU_OPS_STATION_TOTAL/)
+  assert.match(mapSource, /name: '跨市运维轨迹'/)
+  assert.match(mapSource, /name: '运维单位轨迹'/)
+  assert.match(mapSource, /name: '轨迹人员'/)
+  assert.match(mapSource, /name: '频繁到站站点'/)
+  assert.match(mapSource, /props\.activeLayer/)
+  assert.match(stationSource, /"code":"1002A"/)
+  assert.match(stationSource, /"name":"源创包装厂房"/)
+  assert.match(stationSource, /"city":"南京市"/)
+  assert.match(stationSource, /"lng":118\.693087/)
+  assert.match(geoSource, /"adcode":320100,"name":"南京市"/)
+  assert.match(geoSource, /"adcode":321300,"name":"宿迁市"/)
+  assert.doesNotMatch(mapSource, /province-shape/)
+})
+
+test('command center grows persistent workspaces while retaining presenter fallbacks', async () => {
+  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
+
+  assert.match(source, /getCommandCenterWorkspace/)
+  assert.match(source, /getCommandCenterRevealLevel/)
+  assert.match(source, /workspaces\.AMBIENT/)
+  assert.match(source, /workspaces\.INVESTIGATION/)
+  assert.match(source, /workspaces\.MOBILITY/)
+  assert.match(source, /workspaces\.INTERFERENCE/)
+  assert.match(source, /证据随追问持续补充/)
+  assert.match(source, /数据、截图和结论随追问持续补充/)
+  assert.match(source, /跨市运维/)
+  assert.match(source, /运维单位轨迹/)
+  assert.match(source, /运维人员轨迹/)
+  assert.match(source, /频繁到站站点/)
+  assert.doesNotMatch(source, /管理简报|本周工单审核|generated-brief/)
+  assert.match(source, /class="voice-suggestions"/)
+  assert.match(source, /event\.key === 'ArrowRight'/)
+  assert.match(source, /event\.key === 'ArrowLeft'/)
 })
 
 test('coordinator home fills the available flex workspace', async () => {

@@ -15,10 +15,6 @@
   <CoordinatorCommandCenter
     v-else-if="isCoordinatorLayout"
     :coordinator="coordinator"
-    :agents="agents"
-    :selecting-mode="selectingMode"
-    @select="emit('select', $event)"
-    @submit="emit('submit', $event)"
     @switch-view="coordinatorView = 'home'"
   />
   <main v-else class="agent-platform">
@@ -195,7 +191,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { AGENT_SCENES, selectAgentModes } from '@/config/agentModes.js'
 import { projectConfig } from '@/config/projectConfig.js'
 import CoordinatorHome from '@/components/coordinator/CoordinatorHome.vue'
@@ -214,6 +210,11 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit'])
 const coordinatorView = ref('home')
+
+onMounted(() => {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('command-center') === '1') coordinatorView.value = 'command-center'
+})
 const isCoordinatorLayout = computed(() => props.layout === 'coordinator')
 const isSceneLayout = computed(() => props.layout === 'scenes')
 const sceneGroups = computed(() => props.scenes.map(scene => ({

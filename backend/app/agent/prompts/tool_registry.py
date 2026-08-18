@@ -364,6 +364,7 @@ JIANGSU_QUERY_TOOLS = _build_tool_dict([
     "jiangsu_fetch_city_data",
     "jiangsu_fetch_district_data",
     "jiangsu_fetch_station_data",
+    "jiangsu_fetch_station_directory",
     "jiangsu_query_statistics",
     "jiangsu_fetch_alarm_records",
     "get_weather_data",
@@ -382,6 +383,7 @@ SMART_INSPECTION_TOOLS = _build_tool_dict([
     "jiangsu_fetch_auto_inspection",
     "jiangsu_fetch_station_alarm_logs",
     "jiangsu_fetch_station_environment_history",
+    "jiangsu_fetch_station_directory",
     "knowledge_graph_query",
 ])
 OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
@@ -394,6 +396,7 @@ DEVICE_CONTROL_TOOLS = _build_tool_dict([
     "jiangsu_get_device_control_state",
     "jiangsu_prepare_device_control",
     "jiangsu_execute_device_control",
+    "jiangsu_fetch_station_directory",
     "jiangsu_query_operations_graph",
     "knowledge_graph_query",
 ])
@@ -401,6 +404,7 @@ STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
     "knowledge_qa_workflow",
     "knowledge_document_reader",
     "jiangsu_fetch_station_data",
+    "jiangsu_fetch_station_directory",
     "jiangsu_fetch_alarm_records",
     "jiangsu_fetch_station_alarm_logs",
     "jiangsu_fetch_fault_work_orders",

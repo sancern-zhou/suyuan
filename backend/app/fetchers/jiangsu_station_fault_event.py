@@ -39,6 +39,29 @@ MONITOR_INTERVAL_MINUTES = int(os.getenv("JIANGSU_STATION_FAULT_MONITOR_INTERVAL
 STALE_HOURS = float(os.getenv("JIANGSU_STATION_FAULT_STALE_HOURS", "2"))
 FLATLINE_POINTS = int(os.getenv("JIANGSU_STATION_FAULT_FLATLINE_POINTS", "6"))
 MIN_STATION_COVERAGE = float(os.getenv("JIANGSU_STATION_FAULT_MIN_STATION_COVERAGE", "0.8"))
+MAX_NEW_MONITOR_INCIDENTS_PER_POLL = int(
+    os.getenv("JIANGSU_STATION_FAULT_MAX_NEW_MONITOR_INCIDENTS_PER_POLL", "20")
+)
+MAX_ALARM_EVENTS_PER_POLL = int(
+    os.getenv("JIANGSU_STATION_FAULT_MAX_ALARM_EVENTS_PER_POLL", "3")
+)
+MONITOR_INCIDENT_KEY_VERSION = 2
+
+JIANGSU_PREFECTURE_CITIES = (
+    "南京市",
+    "无锡市",
+    "徐州市",
+    "常州市",
+    "苏州市",
+    "南通市",
+    "连云港市",
+    "淮安市",
+    "盐城市",
+    "扬州市",
+    "镇江市",
+    "泰州市",
+    "宿迁市",
+)
 
 POLLUTANTS = {
     "sO2": "SO2",
@@ -363,6 +386,7 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         monitoring_records: list[dict[str, Any]] = []
         active_monitor_keys = list(state.get("active_monitor_keys") or [])
         monitor_station_codes = list(state.get("monitor_station_codes") or [])
+        suppressed_monitor_events = 0
         if monitor_due:
             monitoring_records, _directory_station_codes = await self._fetch_monitoring(now)
             if not monitoring_records:
@@ -396,21 +420,50 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             # anomaly whose evidence package was not completed.
             state["monitor_station_codes"] = monitor_station_codes
             previous_active = set(active_monitor_keys)
-            current_active: list[str] = []
+            current_by_key: dict[str, dict[str, Any]] = {}
             for candidate in monitor_candidates:
                 incident_key = self._monitor_incident_key(candidate)
-                current_active.append(incident_key)
-                if incident_key not in previous_active:
+                current_by_key[incident_key] = candidate
+            current_active = sorted(current_by_key)
+            new_incident_keys = sorted(set(current_active) - previous_active)
+            if state.get("monitor_incident_key_version") != MONITOR_INCIDENT_KEY_VERSION:
+                suppressed_monitor_events = len(new_incident_keys)
+                logger.warning(
+                    "jiangsu_station_fault_monitor_baseline_initialized",
+                    incident_key_version=MONITOR_INCIDENT_KEY_VERSION,
+                    active_incidents=len(current_active),
+                    suppressed_events=suppressed_monitor_events,
+                )
+            elif len(new_incident_keys) > MAX_NEW_MONITOR_INCIDENTS_PER_POLL:
+                suppressed_monitor_events = len(new_incident_keys)
+                logger.error(
+                    "jiangsu_station_fault_event_storm_suppressed",
+                    new_incidents=len(new_incident_keys),
+                    max_new_incidents=MAX_NEW_MONITOR_INCIDENTS_PER_POLL,
+                    active_incidents=len(current_active),
+                )
+            else:
+                for incident_key in new_incident_keys:
+                    candidate = current_by_key[incident_key]
                     candidate["incident_started_at"] = now.isoformat()
                     candidates.append(candidate)
             active_monitor_keys = current_active
+            state["monitor_incident_key_version"] = MONITOR_INCIDENT_KEY_VERSION
 
         processed_order = list(dict.fromkeys(state.get("processed_fingerprints") or []))
         processed = set(processed_order)
         published = 0
+        published_alarm_events = 0
+        deferred_alarm_events = 0
         for candidate in candidates:
             fingerprint = self._fingerprint(candidate)
             if fingerprint in processed:
+                continue
+            if (
+                candidate.get("source_type") == "platform_alarm"
+                and published_alarm_events >= MAX_ALARM_EVENTS_PER_POLL
+            ):
+                deferred_alarm_events += 1
                 continue
             station_rows = [
                 row
@@ -423,6 +476,8 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             processed.add(fingerprint)
             processed_order.append(fingerprint)
             published += 1
+            if candidate.get("source_type") == "platform_alarm":
+                published_alarm_events += 1
             # Checkpoint each published fingerprint.  Do not advance poll
             # cursors until the complete cycle succeeds, but make a worker
             # restart resume after the last durable event instead of
@@ -430,8 +485,13 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             state["processed_fingerprints"] = processed_order[-10000:]
             self._write_json(self.state_path, state)
 
+        last_alarm_poll_at = now.isoformat()
+        if deferred_alarm_events:
+            last_alarm_poll_at = state.get("last_alarm_poll_at") or (
+                since + timedelta(minutes=POLL_OVERLAP_MINUTES)
+            ).isoformat()
         state.update({
-            "last_alarm_poll_at": now.isoformat(),
+            "last_alarm_poll_at": last_alarm_poll_at,
             "last_monitor_poll_at": now.isoformat() if monitor_due else state.get("last_monitor_poll_at"),
             "processed_fingerprints": processed_order[-10000:],
             "active_monitor_keys": active_monitor_keys,
@@ -443,6 +503,9 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             "monitoring_records": len(monitoring_records),
             "candidates": len(candidates),
             "published_events": published,
+            "published_alarm_events": published_alarm_events,
+            "deferred_alarm_events": deferred_alarm_events,
+            "suppressed_monitor_events": suppressed_monitor_events,
         }
         logger.info("jiangsu_station_fault_poll_completed", **result)
         return result
@@ -475,14 +538,28 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
 
     async def _fetch_monitoring(self, end: datetime) -> tuple[list[dict[str, Any]], list[str]]:
         start = end - timedelta(hours=MONITOR_LOOKBACK_HOURS)
-        records, payload = await self.station_tool.fetch_raw_records(
-            data_kind="station_hour",
-            city_names=["江苏省"],
-            start_time=start.strftime("%Y-%m-%d %H:%M:%S"),
-            end_time=end.strftime("%Y-%m-%d %H:%M:%S"),
-            data_type=0,
-        )
-        return records, list(payload.get("codes") or [])
+        records_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+        station_codes: set[str] = set()
+        for city_name in JIANGSU_PREFECTURE_CITIES:
+            city_records, payload = await self.station_tool.fetch_raw_records(
+                data_kind="station_hour",
+                city_names=[city_name],
+                start_time=start.strftime("%Y-%m-%d %H:%M:%S"),
+                end_time=end.strftime("%Y-%m-%d %H:%M:%S"),
+                data_type=0,
+            )
+            station_codes.update(
+                str(code).strip()
+                for code in payload.get("codes") or []
+                if str(code).strip()
+            )
+            for row in city_records:
+                code = str(row.get("code") or row.get("stationCode") or "").strip()
+                timestamp = str(row.get("timePoint") or "").strip()
+                if code and timestamp:
+                    records_by_identity[(code, timestamp)] = row
+
+        return list(records_by_identity.values()), sorted(station_codes)
 
     @staticmethod
     def _alarm_candidate(row: dict[str, Any]) -> dict[str, Any]:
@@ -517,16 +594,11 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
 
     @staticmethod
     def _monitor_incident_key(candidate: dict[str, Any]) -> str:
-        findings = (candidate.get("source_record") or {}).get("findings") or []
-        signature = sorted(
-            (finding.get("type"), finding.get("pollutant"))
-            for finding in findings
-        )
-        encoded = json.dumps(
-            [candidate.get("station_code"), signature],
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+        # A station remains one active incident while any deterministic
+        # finding is present.  Hourly changes to the finding combination are
+        # evidence updates, not new incidents; treating them as new flooded
+        # the task queue with thousands of near-duplicate executions.
+        encoded = str(candidate.get("station_code") or "").strip()
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod

@@ -77,7 +77,7 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
 
     assert context.manifest.frontend.agent_platform_layout == "coordinator"
     assert context.manifest.frontend.coordinator is not None
-    assert context.manifest.frontend.coordinator.name == "小值"
+    assert context.manifest.frontend.coordinator.name == "苏小环"
     assert context.manifest.frontend.coordinator.default_mode == "ops"
     assert context.manifest.frontend.coordinator.attention_task_ids == [
         "jiangsu_station_fault_diagnosis"
@@ -85,7 +85,9 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
     assert {
         route.mode for route in context.manifest.frontend.coordinator.routes
     } >= {"ops", "jiangsu_query", "station_fault_diagnosis"}
-    assert len(context.manifest.frontend.coordinator.demo_attention_items) == 3
+    assert [
+        item.id for item in context.manifest.frontend.coordinator.demo_attention_items
+    ] == ["demo-station-fault", "demo-personnel-mobility"]
     assert context.manifest.backend.fetchers == [
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",

@@ -5,6 +5,10 @@ import pytest
 
 from app.fetchers.jiangsu_station_fault_event import (
     EVENT_TYPE,
+    JIANGSU_PREFECTURE_CITIES,
+    MAX_ALARM_EVENTS_PER_POLL,
+    MAX_NEW_MONITOR_INCIDENTS_PER_POLL,
+    MONITOR_INCIDENT_KEY_VERSION,
     JiangsuStationFaultEventFetcher,
     detect_monitoring_anomalies,
 )
@@ -32,8 +36,33 @@ class FakeAlarmTool:
         }
 
 
+class FakeManyAlarmsTool:
+    async def execute(self, **kwargs):
+        return {
+            "success": True,
+            "data": [
+                {
+                    "id": index,
+                    "stacode": f"S{index:04d}",
+                    "positionName": f"站点 {index}",
+                    "areaname": "南京市",
+                    "district": "玄武区",
+                    "content": f"告警 {index}",
+                    "alarmtime": "8/13/2026 3:00:00 PM",
+                    "alarmlevel": "一般",
+                    "ddRuleType": "设备告警",
+                }
+                for index in range(MAX_ALARM_EVENTS_PER_POLL + 2)
+            ],
+        }
+
+
 class FakeStationTool:
+    def __init__(self):
+        self.calls = []
+
     async def fetch_raw_records(self, **kwargs):
+        self.calls.append(kwargs)
         rows = []
         for station_index, (code, name) in enumerate((
             ("3001A", "江宁九龙湖"),
@@ -68,6 +97,25 @@ class FakeStationToolWithNonReportingDirectoryStation(FakeStationTool):
         return rows, {"codes": [*payload["codes"], "3999A"]}
 
 
+@pytest.mark.asyncio
+async def test_fetch_monitoring_splits_province_window_by_prefecture_city(tmp_path):
+    station_tool = FakeStationTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        station_tool=station_tool,
+    )
+
+    records, station_codes = await fetcher._fetch_monitoring(NOW)
+
+    assert [call["city_names"] for call in station_tool.calls] == [
+        [city_name] for city_name in JIANGSU_PREFECTURE_CITIES
+    ]
+    assert all(call["city_names"] != ["江苏省"] for call in station_tool.calls)
+    assert all(call["data_type"] == 0 for call in station_tool.calls)
+    assert len(records) == 18
+    assert station_codes == ["3001A", "3002A", "3003A"]
+
+
 def test_detect_monitoring_anomalies_finds_flatline():
     rows, _ = __import__("asyncio").run(FakeStationTool().fetch_raw_records())
 
@@ -77,6 +125,23 @@ def test_detect_monitoring_anomalies_finds_flatline():
     assert any(
         finding["type"] == "flatline" and finding["pollutant"] == "O3"
         for finding in anomalies[0]["findings"]
+    )
+
+
+def test_monitor_incident_key_is_stable_when_findings_change():
+    first = {
+        "station_code": "3001A",
+        "source_record": {"findings": [{"type": "flatline", "pollutant": "O3"}]},
+    }
+    second = {
+        "station_code": "3001A",
+        "source_record": {
+            "findings": [{"type": "persistent_peer_bias", "pollutant": "PM2.5"}]
+        },
+    }
+
+    assert JiangsuStationFaultEventFetcher._monitor_incident_key(first) == (
+        JiangsuStationFaultEventFetcher._monitor_incident_key(second)
     )
 
 
@@ -173,20 +238,17 @@ async def test_fetcher_writes_packages_publishes_events_and_deduplicates(tmp_pat
         inspection_tool=evidence_tool,
         qc_history_tool=evidence_tool,
     )
-
     first = await fetcher.fetch_and_store()
     second = await fetcher.fetch_and_store()
     current_time[0] = NOW + timedelta(minutes=60)
     third = await fetcher.fetch_and_store()
 
-    assert first["published_events"] == 2
+    assert first["published_events"] == 1
+    assert first["suppressed_monitor_events"] == 1
     assert second["published_events"] == 0
     assert third["published_events"] == 0
     assert {event.event_type for event in events} == {EVENT_TYPE}
-    assert {event.attributes["source_type"] for event in events} == {
-        "platform_alarm",
-        "monitoring_anomaly",
-    }
+    assert {event.attributes["source_type"] for event in events} == {"platform_alarm"}
     assert {event.attributes["station_name"] for event in events} == {"江宁九龙湖"}
     for event in events:
         package_path = event.payload["evidence_pack_path"]
@@ -220,7 +282,8 @@ async def test_first_monitor_poll_baselines_observed_stations_not_directory(tmp_
     result = await fetcher.fetch_and_store()
     state = json.loads(fetcher.state_path.read_text(encoding="utf-8"))
 
-    assert result["published_events"] == 2
+    assert result["published_events"] == 1
+    assert result["suppressed_monitor_events"] == 1
     assert all(event.attributes.get("station_code") != "3999A" for event in events)
     assert state["monitor_station_codes"] == ["3001A", "3002A", "3003A"]
 
@@ -248,6 +311,10 @@ async def test_fetcher_checkpoints_each_event_before_a_later_publish_fails(tmp_p
         inspection_tool=evidence_tool,
         qc_history_tool=evidence_tool,
     )
+    fetcher._write_json(
+        fetcher.state_path,
+        {"monitor_incident_key_version": MONITOR_INCIDENT_KEY_VERSION},
+    )
 
     with pytest.raises(RuntimeError, match="publish interrupted"):
         await fetcher.fetch_and_store()
@@ -262,3 +329,90 @@ async def test_fetcher_checkpoints_each_event_before_a_later_publish_fails(tmp_p
 
     assert resumed["published_events"] == 1
     assert len(events) == 3
+
+
+@pytest.mark.asyncio
+async def test_fetcher_suppresses_monitor_event_storm(monkeypatch, tmp_path):
+    events = []
+
+    async def publish(event):
+        events.append(event)
+
+    def broad_anomalies(*args, **kwargs):
+        return [
+            {
+                "station_code": f"S{index:04d}",
+                "station_name": f"站点 {index}",
+                "city_name": "南京市",
+                "district_name": "玄武区",
+                "latest_time": NOW.isoformat(),
+                "findings": [{"type": "flatline", "severity": "warning"}],
+            }
+            for index in range(MAX_NEW_MONITOR_INCIDENTS_PER_POLL + 1)
+        ]
+
+    monkeypatch.setattr(
+        "app.fetchers.jiangsu_station_fault_event.detect_monitoring_anomalies",
+        broad_anomalies,
+    )
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: NOW,
+        alarm_tool=FakeAlarmTool(),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+    fetcher._write_json(
+        fetcher.state_path,
+        {"monitor_incident_key_version": MONITOR_INCIDENT_KEY_VERSION},
+    )
+
+    result = await fetcher.fetch_and_store()
+
+    assert result["published_events"] == 1
+    assert result["suppressed_monitor_events"] == MAX_NEW_MONITOR_INCIDENTS_PER_POLL + 1
+    assert {event.attributes["source_type"] for event in events} == {"platform_alarm"}
+
+
+@pytest.mark.asyncio
+async def test_fetcher_drains_platform_alarm_backlog_without_advancing_cursor(tmp_path):
+    events = []
+
+    async def publish(event):
+        events.append(event)
+
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: NOW,
+        alarm_tool=FakeManyAlarmsTool(),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+    previous_cursor = (NOW - timedelta(hours=2)).isoformat()
+    fetcher._write_json(
+        fetcher.state_path,
+        {"last_alarm_poll_at": previous_cursor},
+    )
+
+    first = await fetcher.fetch_and_store()
+    first_state = json.loads(fetcher.state_path.read_text(encoding="utf-8"))
+    second = await fetcher.fetch_and_store()
+    second_state = json.loads(fetcher.state_path.read_text(encoding="utf-8"))
+
+    assert first["published_alarm_events"] == MAX_ALARM_EVENTS_PER_POLL
+    assert first["deferred_alarm_events"] == 2
+    assert first_state["last_alarm_poll_at"] == previous_cursor
+    assert second["published_alarm_events"] == 2
+    assert second["deferred_alarm_events"] == 0
+    assert second_state["last_alarm_poll_at"] == NOW.isoformat()
+    assert len(events) == MAX_ALARM_EVENTS_PER_POLL + 2

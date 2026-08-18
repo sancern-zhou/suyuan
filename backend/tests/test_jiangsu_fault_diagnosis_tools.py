@@ -17,6 +17,7 @@ def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_t
         "knowledge_qa_workflow",
         "knowledge_document_reader",
         "jiangsu_fetch_station_data",
+        "jiangsu_fetch_station_directory",
         "jiangsu_fetch_alarm_records",
         "jiangsu_fetch_station_alarm_logs",
         "jiangsu_fetch_fault_work_orders",

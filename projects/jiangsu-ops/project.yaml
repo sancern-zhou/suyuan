@@ -36,8 +36,8 @@ frontend:
       - label: 重点异常站点
         prompt: 查询当前江苏全网异常概览，列出最值得优先关注的站点并说明依据。
         mode: smart_inspection
-      - label: 人员覆盖情况
-        prompt: 分析本月运维人员到站覆盖情况，找出值得管理人员核查的覆盖薄弱区域。
+      - label: 人员轨迹分析
+        prompt: 分析近30日运维人员任务轨迹，识别频繁跨市往返和可由属地人员替代的调度模式。
         mode: operations_analysis
       - label: 查询监测数据
         prompt: 查询江苏今天的空气质量数据，并先向我确认需要关注的城市或站点。
@@ -70,7 +70,7 @@ frontend:
           - label: 当前重点
             text: 优先关注持续断数、设备离线和证据不完整的站点异常事件。
           - label: 调度建议
-            text: 将异常站点与人员到站覆盖结合展示，具体调度结论待接入排班和路网信息后完善。
+            text: 结合任务轨迹、人员技能和属地覆盖识别跨市往返，具体调度结论待接入排班和路网信息后完善。
           - label: 闭环提醒
             text: AI 诊断和工单草案只作为待审核建议，处置结果需要人工确认和数据恢复复查。
       - id: demo-metrics
@@ -104,11 +104,11 @@ frontend:
     # 在没有真实事件执行记录的演示环境中显示；所有条目均在界面明确标记“场景演示”。
     demo_attention_items:
       - id: demo-station-fault
-        title: 南京示范站 · 颗粒物数据中断
+        title: 源创包装厂房（1002A）· 颗粒物数据中断
         summary: 场景模拟：PM2.5、PM10 同时停止更新，苏小环已组织监测、告警和巡检证据进行初步研判。
         severity: high
         status: awaiting_review
-        station: 南京示范站
+        station: 源创包装厂房
         occurred_at: 场景时间 09:12
         diagnosis: 更可能是采集或传输链路异常，尚不能认定为分析仪故障。
         confidence: medium
@@ -119,44 +119,29 @@ frontend:
         actions:
           - label: 补充取证
             kind: ask
-            prompt: 针对南京示范站颗粒物数据中断场景，补查最近6小时五分钟数据、站房告警和历史工单，并更新证据时间线。
+            prompt: 针对源创包装厂房站点（1002A）颗粒物数据中断场景，补查最近6小时五分钟数据、站房告警和历史工单，并更新证据时间线。
             mode: station_fault_diagnosis
           - label: 深入诊断
             kind: ask
-            prompt: 进入故障诊断流程，分析南京示范站颗粒物数据中断场景并形成处置方案。
+            prompt: 进入故障诊断流程，分析源创包装厂房站点（1002A）颗粒物数据中断场景并形成处置方案。
             mode: station_fault_diagnosis
-      - id: demo-personnel-coverage
-        title: 苏北片区 · 人员覆盖待核查
-        summary: 场景模拟：部分责任站点近期到站记录较少，苏小环建议结合排班、工单和签到数据进一步核查。
+      - id: demo-personnel-mobility
+        title: 近30日 · 跨市运维轨迹待优化
+        summary: 场景模拟：部分任务存在频繁跨市往返，苏小环建议结合人员技能、属地覆盖和任务时效优化资源调配。
         severity: medium
         status: new
         occurred_at: 场景时间 今天
-        diagnosis: 当前只能识别覆盖线索，不能据此认定人员未履职。
+        diagnosis: 当前轨迹显示调度半径偏大，重点是优化技能匹配和就近派单，不代表人员规模本身不足。
         confidence: low
         evidence:
-          - 离散签到记录
-          - 责任站点台账
-          - 尚缺排班信息
+          - 模拟任务轨迹
+          - 人员技能标签
+          - 属地站点台账
         actions:
-          - label: 分析人员覆盖
+          - label: 分析跨市轨迹
             kind: ask
-            prompt: 分析本月苏北片区运维人员到站覆盖情况，明确数据边界并列出值得管理人员核查的模式。
+            prompt: 分析近30日运维人员任务轨迹，识别频繁跨市往返、属地替代机会和资源调配优化建议，并明确数据为场景模拟。
             mode: operations_analysis
-      - id: demo-audit-review
-        title: 本周运维工单 · 待审核
-        summary: 场景模拟：苏小环已准备按运维单位汇总问题线索，可进入专业工作区执行规则审核并生成报告。
-        severity: info
-        status: new
-        occurred_at: 场景时间 本周
-        diagnosis: 建议先确定工单时间范围和审核口径。
-        evidence:
-          - 工单审核流程已接入
-          - 报告生成能力可用
-        actions:
-          - label: 开始工单审核
-            kind: ask
-            prompt: 审核本周江苏运维工单。先确认创建时间或完成时间口径，再执行规则筛查和证据复核。
-            mode: ops
   agent_mode_overrides:
     knowledge:
       name: 江苏知识问答智能体
@@ -270,6 +255,7 @@ backend:
       - jiangsu_fetch_city_data
       - jiangsu_fetch_district_data
       - jiangsu_fetch_station_data
+      - jiangsu_fetch_station_directory
       - jiangsu_query_statistics
       - jiangsu_fetch_alarm_records
       - get_weather_data
@@ -349,6 +335,7 @@ backend:
       - jiangsu_fetch_auto_inspection
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_station_environment_history
+      - jiangsu_fetch_station_directory
       - knowledge_graph_query
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
@@ -361,6 +348,7 @@ backend:
       - jiangsu_get_device_control_state
       - jiangsu_prepare_device_control
       - jiangsu_execute_device_control
+      - jiangsu_fetch_station_directory
       - jiangsu_query_operations_graph
       - knowledge_graph_query
     station_fault_diagnosis:
@@ -368,6 +356,7 @@ backend:
       - knowledge_qa_workflow
       - knowledge_document_reader
       - jiangsu_fetch_station_data
+      - jiangsu_fetch_station_directory
       - jiangsu_fetch_alarm_records
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_fault_work_orders
