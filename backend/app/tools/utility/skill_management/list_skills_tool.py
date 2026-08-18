@@ -248,24 +248,11 @@ class ListSkillsTool(LLMTool):
     def _parse_skill_file(self, file_path: Path) -> tuple[str, str]:
         """解析技能文件，提取名称和描述"""
         try:
+            from app.tools.utility.skill_management.skill_paths import parse_skill_metadata
+
             content = file_path.read_text(encoding="utf-8")
-            lines = content.split('\n')
-
-            # 第一行是 # 技能名称
-            name = file_path.stem  # 默认使用文件名
-            description = "暂无描述"
-
-            for i, line in enumerate(lines):
-                line = line.strip()
-                if line.startswith("# ") and i < 5:  # 前5行内的标题
-                    name = line[2:].strip()
-                elif line.startswith("## 概述") or line.startswith("概述："):
-                    # 下一行是描述
-                    if i + 1 < len(lines):
-                        description = lines[i + 1].strip()
-                    break
-
-            return name, description
+            metadata = parse_skill_metadata(content, file_path.name)
+            return metadata["title"], metadata["description"]
 
         except Exception as e:
             logger.warning("parse_skill_file_failed", file=str(file_path), error=str(e))

@@ -6,10 +6,10 @@ const storeSource = readFileSync(new URL('../../stores/reactStore.js', import.me
 const inputSource = readFileSync(new URL('../InputBox.vue', import.meta.url), 'utf8')
 const selectorSource = readFileSync(new URL('../AgentModeSelector.vue', import.meta.url), 'utf8')
 
-test('ppt mode has isolated state and is accepted by the composer', () => {
-  assert.match(storeSource, /VALID_MODES\s*=\s*\[[^\]]*'ppt'/s)
-  assert.match(storeSource, /modeStates:\s*\{[\s\S]*ppt:\s*createEmptyModeState\(\)/)
-  assert.match(inputSource, /validAgentModes\s*=\s*\[[^\]]*'ppt'/s)
+test('shared and project-declared modes receive isolated state and composer support', () => {
+  assert.match(storeSource, /\.\.\.AGENT_MODE_IDS, \.\.\.projectConfig\.agentModeIds/)
+  assert.match(storeSource, /Object\.fromEntries\(VALID_MODES\.map\(mode => \[mode, createEmptyModeState\(\)\]\)\)/)
+  assert.match(inputSource, /\.\.\.AGENT_MODE_IDS, \.\.\.projectConfig\.agentModeIds/)
 })
 
 test('legacy mode selector exposes the dedicated ppt entry', () => {

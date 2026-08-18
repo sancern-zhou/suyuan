@@ -4,7 +4,6 @@ import pytest
 
 import app.tools as tools_module
 from app.project_config.loader import ProjectConfigError, load_project_context
-from app.project_config.paths import project_skills_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

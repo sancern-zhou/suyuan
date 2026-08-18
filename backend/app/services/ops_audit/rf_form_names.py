@@ -49,6 +49,7 @@ RF_FORM_NAMES: dict[str, str] = {
     "RF_Y_DEVICECHANGE": "设备更换记录表（年度）",
     "RF_Y_DEVICEREPAIR": "设备维修记录表（年度）",
     "RF_Y_PreventiveMaintenance": "预防性维护记录表（年度）",
+    "RF_HY_EnvironmentHumidity": "环境湿度校准记录表（半年）",
     "RF_HY_GASEOUSCALIDEVICECHECK": "气态校准设备检查记录表",
     "RF_HY_O3VALUEPASS": "臭氧（O3）校准仪（工作标准）量值传递记录表（每季度）",
 }

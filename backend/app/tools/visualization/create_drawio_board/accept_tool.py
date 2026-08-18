@@ -50,6 +50,7 @@ class AcceptDrawioBoardCandidateTool(LLMTool):
             expected_board_revision=expected_revision,
             agent_run_id=agent_run_id,
         )
+        quality_report = payload.get("quality_report") or {}
         data = {
             "artifact_kind": "drawio_board",
             "board_id": payload["board_id"],
@@ -62,7 +63,10 @@ class AcceptDrawioBoardCandidateTool(LLMTool):
             "xml_ref": payload["xml_ref"],
             "screenshot_ref": payload.get("screenshot_ref"),
             "quality_status": payload["quality_status"],
-            "quality_report": payload.get("quality_report") or {},
+            "quality_report": quality_report,
+            "design_spec": quality_report.get("design_spec"),
+            "theme_tokens": quality_report.get("theme_tokens"),
+            "structural_digest": quality_report.get("structural_digest"),
             "candidate_accepted": True,
             "requires_visual_review": False,
         }

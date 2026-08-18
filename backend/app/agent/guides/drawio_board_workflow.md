@@ -16,7 +16,7 @@
 
 ## 多轮工作流
 
-1. 读取本文件、`drawio_xml_rules.md` 和 `drawio_edit_policy.md`。
+1. 读取本文件、`drawio_xml_rules.md`、`drawio_edit_policy.md` 和 `drawio_design_system.md`。
 2. 判断任务是新建画板还是编辑现有画板。
 3. 按“专项设计文档路由”读取与任务匹配的设计文档；如果任务只做局部文字、颜色、位置调整，可以不读取专项设计文档。
 4. 新建画板时，调用 `create_drawio_board(operation="create")`，传入完整可渲染 XML。
@@ -38,6 +38,11 @@
 5. 平台能力、产品架构、能力地图、治理体系、分层系统：读取 `backend/app/agent/guides/drawio_patterns/layered_system.md`。
 6. 路线图、时间线、里程碑、计划排期：读取 `backend/app/agent/guides/drawio_patterns/timeline.md`。
 7. 方案对比、指标对比、城市对比、工具/策略对比：读取 `backend/app/agent/guides/drawio_patterns/comparison_matrix.md`。
+8. 服务调用、消息交互、鉴权刷新、超时重试：读取 `backend/app/agent/guides/drawio_patterns/sequence.md`。
+9. 跨部门、跨角色、跨系统交接流程：读取 `backend/app/agent/guides/drawio_patterns/swimlane.md`。
+10. 组织层级、岗位归属、责任路由、Agent 升级：读取 `backend/app/agent/guides/drawio_patterns/org_tree.md`。
+11. 告警、工单、任务或对象的状态转换：读取 `backend/app/agent/guides/drawio_patterns/state_machine.md`。
+12. 实体、字段、主外键和数据关系：读取 `backend/app/agent/guides/drawio_patterns/er_model.md`。
 
 如果任务同时命中多个类型，优先选择用户主诉最强的 1 到 2 份专项文档；不要无差别读取全部文档。
 

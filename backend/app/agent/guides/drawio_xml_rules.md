@@ -58,6 +58,8 @@
 
 ## 样式规则
 
+所有新建、结构性编辑和大幅重构还必须遵守 `backend/app/agent/guides/drawio_design_system.md` 中的设计规格、主题语义和复杂度预算。
+
 1. 节点样式应显式包含 `rounded=1;whiteSpace=wrap;html=1;`。
 2. 关键节点可以使用不同填充色，但不要形成单一高饱和配色。
 3. 连线样式应包含 `edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;`。

@@ -10,6 +10,7 @@ import {
   projectConfig,
   resolveProjectDefaultAgentMode
 } from '../config/projectConfig.js'
+import { AGENT_MODE_IDS } from '../config/agentModes.js'
 import {
   commitManualBoardVersion,
   getBoardVersions,
@@ -53,7 +54,7 @@ import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops', 'graph']
+const VALID_MODES = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
 const DEFAULT_AGENT_MODE = resolveProjectDefaultAgentMode(projectConfig, VALID_MODES)
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const drawioDraftTimers = new Map()
@@ -180,6 +181,9 @@ const createEmptyDrawioBoardState = () => ({
   readOnly: false,
   qualityStatus: null,
   qualityReport: {},
+  designSpec: {},
+  themeTokens: {},
+  structuralDigest: {},
   version: 0,
   dirty: false,
   updatedAt: null
@@ -273,6 +277,9 @@ const createDrawioBoardVersionRecord = ({
     lifecycleStatus: payload.lifecycle_status || payload.lifecycleStatus || 'accepted',
     qualityStatus: payload.quality_status || payload.qualityStatus || 'pending',
     qualityReport: payload.quality_report || payload.qualityReport || {},
+    designSpec: payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || {},
+    themeTokens: payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || {},
+    structuralDigest: payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || {},
     screenshotUrl: payload.screenshot_ref?.read_url || payload.screenshot_ref?.url || null,
     visibleInHistory: (payload.lifecycle_status || payload.lifecycleStatus || 'accepted') === 'accepted',
     downloadLabel: fileName,
@@ -404,18 +411,7 @@ export const useReactStore = defineStore('react', {
       userIdentifier: null,
 
       // 所有模式的状态（按模式隔离）
-      modeStates: {
-        assistant: createEmptyModeState(),
-        ppt: createEmptyModeState(),
-        expert: createEmptyModeState(),
-        query: createEmptyModeState(),
-        knowledge: createEmptyModeState(),
-        report: createEmptyModeState(),
-        chart: createEmptyModeState(),
-        board: createEmptyModeState(),
-        ops: createEmptyModeState(),
-        graph: createEmptyModeState()
-      },
+      modeStates: Object.fromEntries(VALID_MODES.map(mode => [mode, createEmptyModeState()])),
 
       // 同一模式下的多会话状态，key 为完整 sessionId
       sessionStates: {},
@@ -2055,6 +2051,15 @@ export const useReactStore = defineStore('react', {
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'qualityReport')) {
         targetState.board.qualityReport = {}
       }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'designSpec')) {
+        targetState.board.designSpec = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'themeTokens')) {
+        targetState.board.themeTokens = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'structuralDigest')) {
+        targetState.board.structuralDigest = {}
+      }
       return targetState.board
     },
 
@@ -2137,6 +2142,9 @@ export const useReactStore = defineStore('react', {
           board.version = versionRecord?.versionNumber || board.version
           board.qualityStatus = payload.quality_status || 'pending'
           board.qualityReport = payload.quality_report || {}
+          board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
+          board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
+          board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
           board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
         }
         targetState.hasResults = true
@@ -2158,6 +2166,9 @@ export const useReactStore = defineStore('react', {
       board.currentVersionSha256 = payload.xml_sha256 || payload.xml_ref?.sha256 || board.currentVersionSha256
       board.qualityStatus = payload.quality_status || board.qualityStatus || null
       board.qualityReport = payload.quality_report || board.qualityReport || {}
+      board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
+      board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
+      board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
       board.dirty = Boolean(payload.dirty ?? false)
       board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
       targetState.hasResults = true
@@ -2426,7 +2437,9 @@ export const useReactStore = defineStore('react', {
           version_id: board.currentVersionId,
           revision: Number(board.revision),
           selected_cells: board.selectedCells || [],
-          title: board.title
+          title: board.title,
+          design_spec: board.designSpec || {},
+          theme_tokens: board.themeTokens || {}
         }
       }
 
@@ -2437,6 +2450,8 @@ export const useReactStore = defineStore('react', {
         title: board.title,
         current_xml: board.currentXml,
         selected_cells: board.selectedCells || [],
+        design_spec: board.designSpec || {},
+        theme_tokens: board.themeTokens || {},
         version: board.version,
         current_version_id: board.currentVersionId || null,
         base_version_id: board.baseVersionId || board.currentVersionId || null,

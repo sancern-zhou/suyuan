@@ -44,6 +44,3 @@ def test_xuchang_project_includes_xuchang_router():
     assert "app.api.xuchang_air_quality_routes" in {
         spec.module for spec in selected
     }
-
-
-

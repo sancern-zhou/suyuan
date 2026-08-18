@@ -14,8 +14,9 @@ if [ ! -x "${PYTHON_BIN}" ]; then
     exit 1
 fi
 
-# 1. 先验证并准备数据库；失败时保留当前服务，避免迁移故障扩大为停机。
+# 1. 先验证持久化目录，再准备数据库；失败时保留当前服务。
 cd "${SCRIPT_DIR}"
+"${PYTHON_BIN}" -m app.utils.deployment_preflight --env-file .env
 echo "准备数据库..."
 "${PYTHON_BIN}" -m app.db.prepare_database
 
