@@ -13,18 +13,18 @@ import {
 test('execution mode options include every project mode plus task-only modes', () => {
   const options = buildExecutionModeOptions([
     { id: 'ops', shortName: '运维' },
-    { id: 'jiangsu_query', shortName: '江苏问数' },
-    { id: 'station_fault_diagnosis', shortName: '故障诊断' }
+    { id: 'query', shortName: '问数' },
+    { id: 'expert', shortName: '专家' }
   ])
 
   assert.deepEqual(options.map(option => option.value), [
     'ops',
-    'jiangsu_query',
-    'station_fault_diagnosis',
+    'query',
+    'expert',
     'social',
     'custom'
   ])
-  assert.equal(options[1].label, 'jiangsu_query（江苏问数）')
+  assert.equal(options[1].label, 'query（问数）')
 })
 
 

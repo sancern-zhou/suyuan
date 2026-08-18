@@ -10,6 +10,7 @@ import {
   projectConfig,
   resolveProjectDefaultAgentMode
 } from '../config/projectConfig.js'
+import { AGENT_MODE_IDS } from '../config/agentModes.js'
 import {
   commitManualBoardVersion,
   getBoardVersions,
@@ -53,7 +54,7 @@ import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'jiangsu_query', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'report', 'chart', 'board', 'ops', 'graph']
+const VALID_MODES = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
 const DEFAULT_AGENT_MODE = resolveProjectDefaultAgentMode(projectConfig, VALID_MODES)
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const drawioDraftTimers = new Map()
@@ -410,22 +411,7 @@ export const useReactStore = defineStore('react', {
       userIdentifier: null,
 
       // 所有模式的状态（按模式隔离）
-      modeStates: {
-        assistant: createEmptyModeState(),
-        ppt: createEmptyModeState(),
-        expert: createEmptyModeState(),
-        query: createEmptyModeState(),
-        jiangsu_query: createEmptyModeState(),
-        smart_inspection: createEmptyModeState(),
-        operations_analysis: createEmptyModeState(),
-        device_control: createEmptyModeState(),
-        station_fault_diagnosis: createEmptyModeState(),
-        report: createEmptyModeState(),
-        chart: createEmptyModeState(),
-        board: createEmptyModeState(),
-        ops: createEmptyModeState(),
-        graph: createEmptyModeState()
-      },
+      modeStates: Object.fromEntries(VALID_MODES.map(mode => [mode, createEmptyModeState()])),
 
       // 同一模式下的多会话状态，key 为完整 sessionId
       sessionStates: {},

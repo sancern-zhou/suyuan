@@ -15,64 +15,6 @@ test('agent platform renders accessible cards and emits mode selection', async (
   assert.match(source, /focus-visible/)
 })
 
-test('coordinator layout delegates to the controlled coordinator home', async () => {
-  const source = await readComponent('AgentPlatform.vue')
-
-  assert.match(source, /<CoordinatorHome/)
-  assert.match(source, /:coordinator="coordinator"/)
-  assert.match(source, /@submit="emit\('submit', \$event\)"/)
-})
-
-test('coordinator layout switches between the existing home and command center prototype', async () => {
-  const platform = await readComponent('AgentPlatform.vue')
-  const home = await readComponent('../coordinator/CoordinatorHome.vue')
-  const commandCenter = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
-
-  assert.match(platform, /coordinatorView === 'home'/)
-  assert.match(platform, /<CoordinatorCommandCenter/)
-  assert.match(platform, /coordinatorView = 'command-center'/)
-  assert.match(platform, /coordinatorView = 'home'/)
-  assert.match(home, /智能中枢/)
-  assert.match(commandCenter, /空气站智能运维中枢/)
-  assert.match(commandCenter, /返回\{\{ assistantName \}\}首页/)
-  assert.match(commandCenter, /class="command-dock"/)
-  assert.match(commandCenter, /xiaozhiRobotUrl/)
-  assert.match(commandCenter, /assistantName.*智能值班助手形象/)
-  assert.match(commandCenter, /coordinator\.stationImageUrl/)
-  assert.match(commandCenter, /现场画面/)
-})
-
-test('command center keeps conversation primary across responsive layouts', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
-
-  assert.match(source, /class="conversation-flow"/)
-  assert.match(source, /class="user-context"/)
-  assert.match(source, /<form class="command-dock"/)
-  assert.match(source, /@media \(max-width: 1599px\)/)
-  assert.match(source, /grid-template-areas: "core left" "core right"/)
-  assert.match(source, /@media \(max-width: 1180px\)/)
-  assert.match(source, /grid-template-areas: "core" "left" "right"/)
-})
-
-test('command center limits persistent context to attention, evidence, and dispatch', async () => {
-  const source = await readComponent('../coordinator/CoordinatorCommandCenter.vue')
-
-  assert.match(source, /重点异常/)
-  assert.match(source, /现场证据/)
-  assert.match(source, /处置建议/)
-  assert.match(source, /红圈区域为当前重点观察位置/)
-  assert.doesNotMatch(source, /trend-panel|overview-panel|近 24 小时运行趋势/)
-  assert.doesNotMatch(source, /orbit-middle/)
-})
-
-test('coordinator home fills the available flex workspace', async () => {
-  const source = await readComponent('../coordinator/CoordinatorHome.vue')
-
-  assert.match(source, /\.coordinator-home \{[^}]*width: 100%/)
-  assert.match(source, /\.coordinator-home \{[^}]*min-width: 0/)
-  assert.match(source, /\.coordinator-home \{[^}]*flex: 1 1 0%/)
-})
-
 test('agent platform presents the real agent catalog as a portal grid', async () => {
   const source = await readComponent('AgentPlatform.vue')
 

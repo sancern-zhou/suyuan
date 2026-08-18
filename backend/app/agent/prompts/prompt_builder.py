@@ -60,9 +60,6 @@ AgentMode = Literal[
     "ppt",
     "expert",
     "query",
-    "jiangsu_query",
-    "smart_inspection",
-    "operations_analysis",
     "report",
     "social",
     "enforcement_exam",
@@ -160,16 +157,6 @@ def build_react_system_prompt(
     elif mode == "expert":
         return _with_platform_contracts(build_expert_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "query":
-        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
-    elif mode == "jiangsu_query":
-        # The Jiangsu project normally supplies a project-owned prompt above.
-        # Keep this safe fallback for tooling and direct unit tests.
-        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
-    elif mode == "smart_inspection":
-        # The Jiangsu project supplies the operational policy. Keep a narrow
-        # read-only fallback should the project prompt be unavailable.
-        return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
-    elif mode == "operations_analysis":
         return _with_platform_contracts(build_query_prompt(filtered_tools, memory_context, memory_file_path))
     elif mode == "report":
         return _with_platform_contracts(build_report_prompt(filtered_tools, memory_context, memory_file_path))

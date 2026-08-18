@@ -346,42 +346,6 @@ ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
-JIANGSU_QUERY_TOOLS = _build_tool_dict([
-    "list_session_resources",
-    "publish_session_file",
-    "jiangsu_fetch_city_data",
-    "jiangsu_fetch_district_data",
-    "jiangsu_fetch_station_data",
-    "jiangsu_query_statistics",
-    "jiangsu_fetch_alarm_records",
-    "create_report_chart",
-])
-SMART_INSPECTION_TOOLS = _build_tool_dict([
-    "jiangsu_fetch_alarm_records",
-])
-OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
-    "jiangsu_fetch_attendance_records",
-    "jiangsu_fetch_station_directory",
-])
-DEVICE_CONTROL_TOOLS = _build_tool_dict([
-    "jiangsu_get_device_control_state",
-    "jiangsu_prepare_device_control",
-    "jiangsu_execute_device_control",
-])
-STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
-    "jiangsu_fetch_station_data",
-    "jiangsu_fetch_alarm_records",
-    "jiangsu_fetch_station_alarm_logs",
-    "jiangsu_fetch_fault_work_orders",
-    "jiangsu_fetch_auto_inspection",
-    "jiangsu_fetch_qc_task_history",
-    "jiangsu_fetch_qc_task_status",
-    "jiangsu_fetch_qc_run_logs",
-    "jiangsu_fetch_qc_monitoring_curve",
-    "knowledge_graph_query",
-])
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
@@ -400,8 +364,6 @@ ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
-JIANGSU_QUERY_TOOL_ORDER = list(JIANGSU_QUERY_TOOLS)
-SMART_INSPECTION_TOOL_ORDER = list(SMART_INSPECTION_TOOLS)
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
@@ -427,11 +389,6 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
-        "jiangsu_query": JIANGSU_QUERY_TOOLS,
-        "smart_inspection": SMART_INSPECTION_TOOLS,
-        "operations_analysis": OPERATIONS_ANALYSIS_TOOLS,
-        "device_control": DEVICE_CONTROL_TOOLS,
-        "station_fault_diagnosis": STATION_FAULT_DIAGNOSIS_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,

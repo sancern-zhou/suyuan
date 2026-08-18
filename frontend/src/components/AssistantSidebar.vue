@@ -21,11 +21,11 @@
           :class="{ active: isActive('agent-platform') }"
           type="button"
           @click="handleModuleSelect('agent-platform')"
-          :title="isCollapsed ? platformEntryLabel : ''"
+          :title="isCollapsed ? '智能体平台' : ''"
         >
           <span class="module-icon" v-html="getModuleIcon('agent-platform')"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">{{ platformEntryLabel }}</p>
+            <p class="module-title">智能体平台</p>
           </div>
         </button>
         <button
@@ -378,12 +378,6 @@ const conversationListEmptyText = computed(() => ({
   [CONVERSATION_LIST_VIEW.CASES]: '暂无案例',
   [CONVERSATION_LIST_VIEW.IM]: '暂无IM对话'
 })[conversationListView.value])
-
-const platformEntryLabel = computed(() => (
-  projectConfig.agentPlatformLayout === 'coordinator'
-    ? `${projectConfig.coordinator?.name || '智能助手'}首页`
-    : '智能体平台'
-))
 
 const allModules = [
   {

@@ -9,9 +9,6 @@ test('sidebar exposes the agent platform as a primary action', async () => {
 
   assert.match(source, /agent-platform/)
   assert.match(source, /智能体平台/)
-  assert.match(source, /platformEntryLabel/)
-  assert.match(source, /projectConfig\.agentPlatformLayout === 'coordinator'/)
-  assert.match(source, /projectConfig\.coordinator\?\.name/)
   assert.match(source, /<p class="module-title">新建对话<\/p>/)
   assert.match(source, /id: 'restart-session',[\s\S]*name: '新建对话'/)
   assert.doesNotMatch(source, /<span>智能体平台<\/span>/)
@@ -55,13 +52,11 @@ test('data, scheduled task and social management settings open their connected p
   assert.match(analysisView, /case 'social-platform':[\s\S]*showManagementPanel\('social-platform'\)/)
 })
 
-test('agent platform supports project-selected scene, environment grid and coordinator layouts', async () => {
+test('agent platform supports project-selected scene and environment grid layouts', async () => {
   const source = await readSource('./AgentPlatform.vue')
 
   assert.match(source, /projectConfig\.agentModeIds/)
   assert.match(source, /projectConfig\.agentPlatformLayout/)
-  assert.match(source, /<CoordinatorHome/)
-  assert.match(source, /isCoordinatorLayout/)
   assert.match(source, /class="scene-stack"/)
   assert.match(source, /class="agent-grid"/)
 })
@@ -170,15 +165,6 @@ test('main layout switches between agent platform and chat workspace', async () 
   assert.doesNotMatch(source, /AgentWorkspaceHeader/)
   assert.match(source, /:agent-mode="agentMode"/)
   assert.match(source, /select-agent/)
-  assert.match(source, /coordinator-submit/)
-})
-
-test('coordinator query opens the routed professional mode and sends the original intent', async () => {
-  const source = await readSource('../../views/ReactAnalysisView.vue')
-
-  assert.match(source, /const handleCoordinatorSubmit = async/)
-  assert.match(source, /await handleAgentSelect\(mode\)/)
-  assert.match(source, /await handleSend\(\{ query, agentMode: mode \}\)/)
 })
 
 test('chat workspace passes the selected agent to the welcome area for every agent mode', async () => {
@@ -201,7 +187,6 @@ test('analysis view defaults to the platform and opens chat through explicit flo
   assert.match(source, /route\.params\.id/)
   assert.match(source, /watch\(\s*\(\) => route\.params\.id/)
   assert.match(source, /queueRouteSessionRestore/)
-  assert.match(source, /router\.replace\(\{ name: 'analysis' \}\)/)
 })
 
 test('new task defaults to the project default agent on the platform and preserves the active chat mode', async () => {
