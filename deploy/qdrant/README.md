@@ -19,6 +19,8 @@ LOCAL_QDRANT_PORT=6334
 
 不要将 `LOCAL_QDRANT_*` 指向共享服务。共享库使用 `SHARED_QDRANT_*`；在兼容期未设置这些变量时，服务会回退至既有的 `QDRANT_*`。
 
+项目使用独立 PostgreSQL 数据库时，还必须配置共享知识库中心元数据：同一数据库服务器和账号可设置 `SHARED_KNOWLEDGE_DATABASE_NAME`，跨服务器则设置完整的 `SHARED_KNOWLEDGE_DATABASE_URL`。列表、检索和原文读取会据此只读访问中心发布的 `shared` 知识库。
+
 共享索引由所有管理员协作发布和维护；管理员可在任意项目分支创建、上传、修改和删除共享库。检索会并发查询共享与本地库后再统一去重、重排。
 
 共享库的 PostgreSQL 元数据（知识库、文档、chunk、图谱）必须与共享 Qdrant 处于同一套中心数据库；否则向量命中无法完成状态校验和来源溯源。多个项目使用独立 PostgreSQL 时，应将共享知识库请求接入同一个中心服务，而不是只复用 Qdrant 地址。

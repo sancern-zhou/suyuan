@@ -116,11 +116,13 @@ class KnowledgeBaseService:
         db: AsyncSession = None,
         vector_store = None,
         ingestion_service_factory=None,
+        session_factory=None,
     ):
         self.db = db
         self.processor = get_document_processor()
         self.vector_store = vector_store or get_vector_store()
         self.ingestion_service_factory = ingestion_service_factory
+        self.session_factory = session_factory
         self._reranker = None
 
     def _get_reranker(self):
@@ -248,12 +250,19 @@ class KnowledgeBaseService:
         Returns:
             知识库列表
         """
-        return await KnowledgeBasePermissions.get_accessible_knowledge_bases(
+        local_knowledge_bases = await KnowledgeBasePermissions.get_accessible_knowledge_bases(
             db=self.db,
             user_id=user_id,
             include_public=include_public,
             status=status
         )
+        from .shared_metadata import list_central_shared_knowledge_bases
+
+        central_shared = await list_central_shared_knowledge_bases(status=status)
+        by_id = {kb.id: kb for kb in local_knowledge_bases}
+        for kb in central_shared:
+            by_id.setdefault(kb.id, kb)
+        return list(by_id.values())
 
     async def update_knowledge_base(
         self,
@@ -686,7 +695,7 @@ class KnowledgeBaseService:
 
             rerank_mode = self._normalize_rerank_mode(use_reranker)
             retrieval = KnowledgeRetrievalService(
-                session_factory=async_session,
+                session_factory=self.session_factory or async_session,
                 vector_store=self.vector_store,
                 reranker=self._rerank if rerank_mode != "never" else None,
             )
