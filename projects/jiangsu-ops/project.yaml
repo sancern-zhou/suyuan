@@ -10,6 +10,7 @@ frontend:
   agent_modes:
     - ops
     - jiangsu_query
+    - knowledge
     - expert
     - smart_inspection
     - operations_analysis
@@ -41,6 +42,9 @@ frontend:
       - label: 查询监测数据
         prompt: 查询江苏今天的空气质量数据，并先向我确认需要关注的城市或站点。
         mode: jiangsu_query
+      - label: 查询知识库
+        prompt: 从我有权访问的知识库中检索江苏运维规程，并说明命中文档和依据。
+        mode: knowledge
     routes:
       - mode: device_control
         keywords: [反控, 空调, 阀门, 零气机, 校准仪, 设备控制]
@@ -48,6 +52,8 @@ frontend:
         keywords: [断数, 恒值, 故障, 离线, 根因, 质控异常]
       - mode: operations_analysis
         keywords: [人员, 到站, 签到, 调度, 覆盖, 跨市]
+      - mode: knowledge
+        keywords: [知识库, 规程, 标准, 制度, 文档, 条款]
       - mode: expert
         keywords: [污染过程, 成因, 来源, 传输, 专家研判]
       - mode: jiangsu_query
@@ -152,6 +158,21 @@ frontend:
             prompt: 审核本周江苏运维工单。先确认创建时间或完成时间口径，再执行规则筛查和证据复核。
             mode: ops
   agent_mode_overrides:
+    knowledge:
+      name: 江苏知识问答智能体
+      short_name: 知识问答
+      description: 检索授权知识库和用户材料，并按需联网补充可追溯答案
+      welcome:
+        description: 面向江苏运维规程、标准制度、设备资料和业务文档，优先从授权知识库检索依据并给出可追溯回答。
+        features:
+          - 检索共享、本地和个人知识库中的授权资料
+          - 阅读命中文档上下文和用户上传材料
+          - 知识库证据不足时按需搜索并抓取公开网页
+          - 区分知识库、用户材料和网络信息来源
+        example: 例如：“根据知识库中的运维规程，颗粒物断数后应按什么顺序排查？”
+      tags:
+        - 江苏知识库
+        - 来源追溯
     jiangsu_query:
       name: 江苏问数生图智能体
       short_name: 江苏问数生图
@@ -198,6 +219,14 @@ backend:
   # 江苏项目只向运维审核 Agent 暴露审核、取证和报告闭环所需工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   agent_mode_tools:
+    # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
+    knowledge:
+      - knowledge_qa_workflow
+      - knowledge_document_reader
+      - knowledge_graph_query
+      - read_session_resource
+      - web_search
+      - web_fetch
     # 江苏社交模式独立声明工具面，不继承共享“风清气智”的社交工具集合。
     # 移动端仅开放用户隔离能力、江苏只读业务查询和成果发布能力。
     social:
@@ -350,6 +379,7 @@ backend:
       - jiangsu_query_operations_graph
       - knowledge_graph_query
   mode_prompt_files:
+    knowledge: projects/jiangsu-ops/prompts/knowledge.md
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md
     expert: projects/jiangsu-ops/prompts/expert.md
     smart_inspection: projects/jiangsu-ops/prompts/smart_inspection.md
