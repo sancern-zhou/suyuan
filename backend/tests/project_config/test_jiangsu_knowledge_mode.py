@@ -12,6 +12,9 @@ EXPECTED_TOOLS = [
     "knowledge_document_reader",
     "knowledge_graph_query",
     "read_session_resource",
+    "read_file",
+    "edit_file",
+    "write_file",
     "web_search",
     "web_fetch",
 ]

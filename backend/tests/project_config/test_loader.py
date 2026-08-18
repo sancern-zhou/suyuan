@@ -93,7 +93,10 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         "jiangsu_nmc_observed_weather",
     ]
     assert "execute_sql_query" in context.manifest.backend.agent_mode_tools["jiangsu_query"]
-    assert context.manifest.backend.agent_mode_tools["operations_analysis"][0] == "jiangsu_query_operations_graph"
+    assert "jiangsu_query_operations_graph" in context.manifest.backend.agent_mode_tools["operations_analysis"]
+    assert {"read_file", "edit_file", "write_file"} <= set(
+        context.manifest.backend.agent_mode_tools["operations_analysis"]
+    )
     for mode in (
         "ops",
         "smart_inspection",

@@ -210,6 +210,9 @@ backend:
       - knowledge_document_reader
       - knowledge_graph_query
       - read_session_resource
+      - read_file
+      - edit_file
+      - write_file
       - web_search
       - web_fetch
     # 江苏社交模式独立声明工具面，不继承共享“风清气智”的社交工具集合。
@@ -218,6 +221,8 @@ backend:
       - list_session_resources
       - publish_session_file
       - read_file
+      - edit_file
+      - write_file
       - list_skills
       - view_skill
       - knowledge_qa_workflow
@@ -252,6 +257,9 @@ backend:
     jiangsu_query:
       - list_session_resources
       - publish_session_file
+      - read_file
+      - edit_file
+      - write_file
       - jiangsu_fetch_city_data
       - jiangsu_fetch_district_data
       - jiangsu_fetch_station_data
@@ -301,6 +309,8 @@ backend:
       - execute_echarts_python
       - execute_python
       - read_file
+      - edit_file
+      - write_file
       - list_directory
       - search_files
     ops:
@@ -309,6 +319,8 @@ backend:
       - list_skills
       - view_skill
       - read_file
+      - edit_file
+      - write_file
       - ops_audit_fetch_dataset
       - ops_audit_run_rules
       - ops_audit_inspect
@@ -327,8 +339,11 @@ backend:
       - render_report_package
       - validate_report_package
       - call_sub_agent
-    # 站房巡检工具均为只读；巡检执行、工单生成与派发仍需后续单独评审。
+    # 站房巡检的业务查询仍为只读；巡检执行、工单生成与派发仍需后续单独评审。
     smart_inspection:
+      - read_file
+      - edit_file
+      - write_file
       - jiangsu_query_operations_graph
       - jiangsu_fetch_network_inspection_summary
       - jiangsu_fetch_alarm_records
@@ -339,12 +354,18 @@ backend:
       - knowledge_graph_query
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
+      - read_file
+      - edit_file
+      - write_file
       - jiangsu_query_operations_graph
       - jiangsu_fetch_attendance_records
       - jiangsu_fetch_station_directory
       - knowledge_graph_query
     # 设备反控仅允许固定指令集。所有执行动作必须先生成待确认指令，再由用户明确确认。
     device_control:
+      - read_file
+      - edit_file
+      - write_file
       - jiangsu_get_device_control_state
       - jiangsu_prepare_device_control
       - jiangsu_execute_device_control
@@ -353,6 +374,8 @@ backend:
       - knowledge_graph_query
     station_fault_diagnosis:
       - read_file
+      - edit_file
+      - write_file
       - knowledge_qa_workflow
       - knowledge_document_reader
       - jiangsu_fetch_station_data
