@@ -10,7 +10,11 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.tools.jiangsu.result_filter import compact_air_quality_records, externalize_compact_records
+from app.tools.jiangsu.result_filter import (
+    compact_air_quality_records,
+    compact_statistics_records,
+    externalize_compact_records,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -143,20 +147,29 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
 
     def __init__(self) -> None:
         scope_cn = "城市" if self._SCOPE == "city" else "区县"
+        province_note = (
+            "不支持传\"江苏省\"查询全省城市数据。"
+            if self._SCOPE == "city"
+            else "不支持传\"江苏省\"查询全省区县数据（全省区县超过单次100个编码上限），必须按省辖市名称（如\"南京市\"）逐市查询。"
+        )
         super().__init__(
             name=f"jiangsu_fetch_{self._SCOPE}_data",
             description=f"查询江苏省{scope_cn}小时或日均空气质量明细数据。",
             category=ToolCategory.QUERY,
-            version="1.0.0",
+            version="1.1.0",
             function_schema={
                 "name": f"jiangsu_fetch_{self._SCOPE}_data",
-                "description": f"只读查询江苏省{scope_cn}小时或日均空气质量数据，返回 AQI、质量等级和主要污染物。超过24条过滤后结果将外部化保存，data仅返回首尾样本，file_path可供按需读取。",
+                "description": (
+                    f"只读查询江苏省{scope_cn}小时或日均空气质量数据，返回 AQI、质量等级和主要污染物。"
+                    f"{province_note}"
+                    "超过24条过滤后结果将外部化保存，data仅返回首尾样本，file_path可供按需读取。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "data_kind": {"type": "string", "enum": [f"{self._SCOPE}_hour", f"{self._SCOPE}_day"]},
                         "codes": {"type": "array", "items": {"type": "string"}, "description": f"{scope_cn}行政区划编码；已知编码时使用。"},
-                        "area_names": {"type": "array", "items": {"type": "string"}, "description": f"{scope_cn}、区县或江苏省名称；工具内部自动解析编码并展开下级区域。"},
+                        "area_names": {"type": "array", "items": {"type": "string"}, "description": f"{scope_cn}、区县或省辖市名称；工具内部自动解析编码并展开下级区域。{province_note}"},
                         "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                         "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                         "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1, "description": "0原始工况、1审核工况、2原始标况、3审核标况；默认1（审核工况）。"},
@@ -175,6 +188,11 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
                 raise ValueError(f"data_kind 必须为 {'、'.join(self._ENDPOINTS)}")
             codes = await self._resolve_area_codes(codes, area_names, self._SCOPE)
             if not codes or len(codes) > 100 or not all(isinstance(code, str) and code.strip() for code in codes):
+                if len(codes) > 100:
+                    raise ValueError(
+                        f"解析出 {len(codes)} 个区县编码，超过单次查询 100 个编码上限；"
+                        "区县数据不支持传\"江苏省\"查询全省，请按省辖市（如\"南京市\"）逐市查询"
+                    )
                 raise ValueError("codes 需要 1 至 100 个有效行政区划编码")
             if data_type not in self._DATA_TYPES:
                 raise ValueError("data_type 必须为 0、1、2 或 3")
@@ -239,7 +257,7 @@ class JiangsuGeographyResolverTool(_JiangsuApiTool):
             version="1.0.0",
             function_schema={
                 "name": "jiangsu_resolve_geography",
-                "description": "只读查询江苏平台行政区划目录。查询江苏省今天的城市数据时，传 area_names=['江苏省']、target_level='city'，再将返回的 area_code 用于城市数据工具。",
+                "description": "只读查询江苏平台行政区划目录。查询江苏省今天的城市数据时，传 area_names=['江苏省']、target_level='city'，再将返回的 area_code 用于城市数据工具。查询全省区县排名时，传 area_names=['江苏省']、target_level='district'，将返回的全部区县编码一次性传给 jiangsu_query_statistics（最多300个）；注意区县明细数据工具不支持全省查询。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -374,13 +392,18 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_query_statistics", description="查询江苏省城市、区县、站点排名及传输率、有效率等统计结果。",
-            category=ToolCategory.QUERY, version="1.0.0",
+            category=ToolCategory.QUERY, version="1.1.0",
             function_schema={
                 "name": "jiangsu_query_statistics",
-                "description": "只读查询江苏平台已计算的排名、同比、达标率、超标天、传输率、有效率和接收率统计。",
+                "description": (
+                    "只读查询江苏平台已计算的排名、同比、达标率、超标天、传输率、有效率和接收率统计。"
+                    "结果已压缩为 time_range、名称字段与 metrics{指标: {value, rank, same_compare, same_compare_rank}}，空值字段已剔除；"
+                    "超过24条时完整结果外部化保存为文件，data 仅返回首尾样本，可用 file_path 读取。"
+                    "district_rank 查询全省所有区县时，codes 可传 jiangsu_resolve_geography 解析出的全部区县编码。"
+                ),
                 "parameters": {"type": "object", "properties": {
                     "statistic_kind": {"type": "string", "enum": list(self._ENDPOINTS), "description": "统计类型。"},
-                    "codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "城市、区县或站点编码。"},
+                    "codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "城市、区县或站点编码，最多300个；可先用 jiangsu_resolve_geography 将名称解析为编码。"},
                     "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1,
@@ -423,14 +446,25 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
             payload = await self._get(endpoint, params)
             result = payload.get("result") or {}
             items = result.get("items", []) if isinstance(result, dict) else []
+            compact_items, filter_metadata = compact_statistics_records(items)
+            inline_items, filtered_file_path, externalization = externalize_compact_records(
+                compact_items,
+                context=context,
+                schema=f"jiangsu_statistics_{statistic_kind}",
+                metadata={"source_tool": self.name, "source_record_count": len(items)},
+            )
+            metadata = {"source": "jiangsu_air_province_api", "endpoint": endpoint,
+                        "statistic_kind": statistic_kind, "codes": codes, "time_range": [start_time, end_time],
+                        "data_type": data_type, "data_type_label": self._DATA_TYPES[data_type],
+                        "total_count": result.get("totalCount", len(items)), "record_count": len(compact_items),
+                        "queried_at": datetime.now().astimezone().isoformat(), **filter_metadata}
+            metadata["context_data"] = externalization
             return {
-                "status": "success" if items else "empty", "success": True, "data": items,
-                "metadata": {"source": "jiangsu_air_province_api", "endpoint": endpoint,
-                             "statistic_kind": statistic_kind, "codes": codes, "time_range": [start_time, end_time],
-                             "data_type": data_type, "data_type_label": self._DATA_TYPES[data_type],
-                             "total_count": result.get("totalCount", len(items)), "record_count": len(items),
-                             "queried_at": datetime.now().astimezone().isoformat()},
-                "summary": f"江苏{statistic_kind}统计查询完成：返回 {len(items)} 条记录。",
+                "status": "success" if compact_items else "empty", "success": True, "data": inline_items,
+                "metadata": metadata,
+                "summary": f"江苏{statistic_kind}统计查询完成：压缩后保留 {len(compact_items)} 条记录（每条含指标值、排名与同比，空值字段已剔除）。",
+                **{key: externalization[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
+                **({"file_path": filtered_file_path} if filtered_file_path else {}),
             }
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning("jiangsu_statistics_failed", statistic_kind=statistic_kind, error=str(exc))

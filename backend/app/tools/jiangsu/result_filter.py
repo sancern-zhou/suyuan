@@ -59,6 +59,83 @@ def compact_air_quality_records(records: list[Any]) -> tuple[list[dict[str, Any]
     }
 
 
+_STAT_SUFFIX_KINDS = [
+    ("_SameCompare_Rank", "same_compare_rank"),
+    ("_SameCompare", "same_compare"),
+    ("_Rank", "rank"),
+    ("_CityName", "city_name"),
+    ("_DistrictName", "district_name"),
+    ("_StationName", "station_name"),
+]
+
+
+def _stat_metric_and_kind(key: str) -> tuple[str, str] | None:
+    """Split pM2_5_SameCompare_Rank style keys into (metric, kind)."""
+    for suffix, kind in _STAT_SUFFIX_KINDS:
+        if key.endswith(suffix):
+            metric = key[: -len(suffix)]
+            if metric:
+                return metric, kind
+    return None
+
+
+def compact_statistics_records(records: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Collapse per-metric rank statistics rows into a compact nested shape.
+
+    Source rows repeat the same city/district name for every metric and pad
+    missing values with "—": a single row easily exceeds 3,000 characters.
+    The compact shape keeps one name triple per row plus
+    ``metrics[metric] = {value, rank, same_compare, same_compare_rank}``
+    with missing entries removed.
+    """
+    cleaned: list[dict[str, Any]] = []
+    removed_empty_fields = 0
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        present = {}
+        for key, value in item.items():
+            if _is_missing(value):
+                removed_empty_fields += 1
+                continue
+            present[key] = value.strip() if isinstance(value, str) else value
+        if not present:
+            continue
+        metric_names = set()
+        for key in present:
+            pair = _stat_metric_and_kind(key)
+            if pair is not None and pair[1] not in {"city_name", "district_name", "station_name"}:
+                metric_names.add(pair[0])
+        row: dict[str, Any] = {}
+        metrics: dict[str, dict[str, Any]] = {}
+        for key, value in sorted(present.items()):
+            if key == "dateTimeString":
+                row["time_range"] = value
+                continue
+            pair = _stat_metric_and_kind(key)
+            if pair is None:
+                if key in metric_names:
+                    metrics.setdefault(key, {})["value"] = value
+                else:
+                    row[key] = value
+                continue
+            metric, kind = pair
+            if kind in {"city_name", "district_name", "station_name"}:
+                row.setdefault(kind, value)
+                continue
+            metrics.setdefault(metric, {})[kind] = value
+        if metrics:
+            row["metrics"] = metrics
+        cleaned.append(row)
+
+    return cleaned, {
+        "raw_record_count": len(records),
+        "compacted_record_count": len(cleaned),
+        "removed_empty_field_count": removed_empty_fields,
+        "field_shape": "每条记录含 time_range、city_name/district_name/station_name 与 metrics{指标: {value, rank, same_compare, same_compare_rank}}；空值(—)字段已剔除。",
+    }
+
+
 def head_tail_sample(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return a bounded but representative preview for Agent context."""
     head_size = INLINE_RECORD_LIMIT // 2

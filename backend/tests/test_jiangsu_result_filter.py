@@ -1,6 +1,7 @@
 from app.tools.jiangsu.result_filter import (
     INLINE_RECORD_LIMIT,
     compact_air_quality_records,
+    compact_statistics_records,
     externalize_compact_records,
 )
 
@@ -70,3 +71,82 @@ def test_externalizes_filtered_result_over_inline_limit():
     assert state["sample_strategy"] == "head_tail"
     assert len(context.saved) == 1
     assert len(context.saved[0]["data"]) == 25
+
+
+def test_compact_statistics_records_collapses_metric_blocks_and_drops_missing():
+    records = [
+        {
+            "dateTimeString": "2026-08-17～2026-08-17",
+            "pM2_5_CityName": "南京市",
+            "pM2_5_DistrictName": "玄武区",
+            "pM2_5": "35",
+            "pM2_5_Rank": "3",
+            "pM2_5_SameCompare": "—",
+            "pM2_5_SameCompare_Rank": "—",
+            "pM2_5_SameCompare_CityName": "南京市",
+            "pM2_5_SameCompare_DistrictName": "玄武区",
+            "o3_8h_CityName": "南京市",
+            "o3_8h_DistrictName": "玄武区",
+            "o3_8h": "160",
+            "o3_8h_Rank": "1",
+            "o3_8h_SameCompare": "-5.2",
+            "o3_8h_SameCompare_Rank": "2",
+            "overDay_CityName": "南京市",
+            "overDay_DistrictName": "玄武区",
+            "overDay": "—",
+            "overDay_Rank": "—",
+        },
+        {"dateTimeString": "2026-08-17～2026-08-17", "pM2_5_CityName": "南京市", "pM2_5_DistrictName": "秦淮区", "pM2_5": "—", "pM2_5_Rank": "—"},
+    ]
+
+    compact, metadata = compact_statistics_records(records)
+
+    assert compact == [
+        {
+            "time_range": "2026-08-17～2026-08-17",
+            "city_name": "南京市",
+            "district_name": "玄武区",
+            "metrics": {
+                "pM2_5": {"value": "35", "rank": "3"},
+                "o3_8h": {"value": "160", "rank": "1", "same_compare": "-5.2", "same_compare_rank": "2"},
+            },
+        },
+        {
+            "time_range": "2026-08-17～2026-08-17",
+            "city_name": "南京市",
+            "district_name": "秦淮区",
+        },
+    ]
+    assert metadata["raw_record_count"] == 2
+    assert metadata["compacted_record_count"] == 2
+    assert metadata["removed_empty_field_count"] >= 6
+
+
+def test_compact_statistics_records_collapses_station_name_blocks():
+    records = [
+        {
+            "dateTimeString": "2026-08-17～2026-08-17",
+            "aqi_StationName": "南京站",
+            "aqi": "52",
+            "aqi_Rank": "5",
+        }
+    ]
+
+    compact, _ = compact_statistics_records(records)
+
+    assert compact == [
+        {
+            "time_range": "2026-08-17～2026-08-17",
+            "station_name": "南京站",
+            "metrics": {"aqi": {"value": "52", "rank": "5"}},
+        }
+    ]
+
+
+def test_compact_statistics_records_keeps_unknown_fields_at_row_level():
+    records = [{"transferRate": "98.6", "stationName": "备用站点", "auditFlag": "—"}]
+
+    compact, metadata = compact_statistics_records(records)
+
+    assert compact == [{"transferRate": "98.6", "stationName": "备用站点"}]
+    assert metadata["removed_empty_field_count"] == 1
