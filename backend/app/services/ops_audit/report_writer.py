@@ -7,7 +7,6 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
 
-
 EXCLUDED_REPORT_RULE_IDS = {
     "ATTACHMENT_FLOW_VISUAL_DIAGNOSTIC",
     "RF_AUDITOR_EMPTY",
@@ -104,7 +103,6 @@ def write_report(
     dataset: dict[str, Any] | None = None,
     final_issue_list: dict[str, Any] | None = None,
 ) -> None:
-    summary = audit["summary"]
     records = audit["records"]
     visible_issues = _collect_visible_issues(records)
     visible_records = {
@@ -240,16 +238,23 @@ def _format_linked_abnormal_groups(
                 f"   - 异常事实（{label}）：{_issue_message(fact)}"
                 f"（规则：{_display_value(fact.get('rule_id'), '未关联规则')}）"
             )
+            lines.extend(_format_decision_evidence_lines(fact))
             lines.extend(_format_evidence_images(fact, report_path))
         explanations = [
             item for item in ordered if item.get("issue_component") in ABNORMAL_EXPLANATION_COMPONENTS
         ]
+        if not explanations:
+            fact_with_remarks = next((item for item in ordered if "remark_status" in item), None)
+            if fact_with_remarks is not None:
+                lines.extend(_format_original_remark_lines(fact_with_remarks))
+                lines.append(f"   - 备注状态：{_remark_status_text(fact_with_remarks)}")
         for explanation in explanations:
             lines.extend(_format_original_remark_lines(explanation))
             judgment_label = _display_value(
                 explanation.get("remark_judgment_label"),
                 "说明缺失或无效",
             )
+            lines.append(f"   - 备注状态：{_remark_status_text(explanation)}")
             lines.append(f"   - 说明判断：{judgment_label}")
             lines.append(f"   - 语义结论：{_issue_message(explanation)}")
             lines.extend(_format_evidence_images(explanation, report_path))
@@ -312,6 +317,31 @@ def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
     if fallback:
         return [f"   - 原备注：{_single_line_text(fallback)}"]
     return ["   - 原备注：未填写"]
+
+
+def _format_decision_evidence_lines(item: dict[str, Any]) -> list[str]:
+    evidence = item.get("decision_evidence")
+    if not isinstance(evidence, dict):
+        return []
+
+    raw_value = _display_value(evidence.get("raw_value"), "未记录")
+    parts = [f"原始值 {raw_value}"]
+    if evidence.get("unit_conversion_applied"):
+        normalized = _display_value(evidence.get("normalized_value"), "未记录")
+        normalized_unit = str(evidence.get("normalized_unit") or "").strip()
+        parts.append(f"换算值 {normalized}{f' {normalized_unit}' if normalized_unit else ''}")
+    brand = str(evidence.get("brand") or "").strip()
+    expected_range = _display_value(evidence.get("expected_range"), "未配置")
+    parts.append(f"{f'{brand} 品牌' if brand else ''}正常范围 {expected_range}")
+    return [f"   - 判定依据：{'；'.join(parts)}"]
+
+
+def _remark_status_text(item: dict[str, Any]) -> str:
+    status = _display_value(item.get("remark_status_label"), "未确认")
+    review = str(item.get("remark_review_status_label") or "").strip()
+    if not review or review == status or (status == "未填写" and review == "未填写备注"):
+        return status
+    return f"{status}；{review}"
 
 
 def _single_line_text(value: Any) -> str:

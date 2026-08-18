@@ -1,3 +1,5 @@
+import json
+
 from app.services.ops_audit.rules.rf_range_rules import check_rf_range_values
 
 
@@ -131,6 +133,48 @@ def test_esa_nox_high_voltage_uses_v_unit_not_mv():
 
     matched = [issue for issue in issues if issue.rule_id in {"RF_RANGE_OUT_OF_SPEC", "RF_RANGE_UNIT_MISMATCH"}]
     assert matched == []
+
+
+def test_esa_nox_high_voltage_mv_records_conversion_range_and_empty_remark_evidence():
+    issues = []
+    order = {"WORKINGORDERCODE": "CH2608031785736302900"}
+    form = {
+        "WORKINGORDERCODE": "CH2608031785736302900",
+        "DEVICEBRAND": "ESA",
+        "DEVICEMODEL": "ESA",
+        "POLLUTANTTYPE": "NOX",
+        "GYCHECKVALUE": "670mv",
+        "GYCHECKROW": "",
+        "REMARK": "",
+        "PROCESSTYPE": 1.0,
+    }
+
+    check_rf_range_values(order, [("RF_W_GASEOUSCHECK_NOX", form)], issues)
+
+    matched = [issue for issue in issues if issue.rule_id == "RF_RANGE_OUT_OF_SPEC"]
+    assert len(matched) == 1
+    assert "检查值(670mv，换算为0.67 V)" in matched[0].message
+    evidence = json.loads(matched[0].evidence)
+    assert evidence["field"] == "GYCHECKVALUE"
+    assert evidence["field_label"] == "高压电源"
+    assert evidence["observed_value"] == {
+        "raw_value": "670mv",
+        "normalized_value": 0.67,
+        "raw_unit": "mv",
+        "normalized_unit": "V",
+        "unit_conversion_applied": True,
+    }
+    assert evidence["expected_range"] == {
+        "min": 500,
+        "max": 950,
+        "operator": None,
+        "unit": "V",
+        "text": "500-950 V",
+    }
+    assert evidence["handling_record_candidates"] == {
+        "GYCHECKROW": "",
+        "REMARK": "",
+    }
 
 
 def test_esa_nox_pressure_accepts_hpa_range_from_remark():
