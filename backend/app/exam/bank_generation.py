@@ -27,6 +27,7 @@ from app.services.llm_service import llm_service
 logger = structlog.get_logger(__name__)
 
 QUESTION_TYPES = ("single_choice", "multiple_choice", "judgment", "short_answer")
+MODEL_TIERS = {"auto", "flash", "pro"}
 
 
 @dataclass(frozen=True)
@@ -214,6 +215,26 @@ def _normalized_text(value: Any) -> str:
     return "".join(str(value or "").split())
 
 
+def _normalized_question_text(value: Any) -> str:
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(value or "")).casefold()
+
+
+def question_text_similarity(left: Any, right: Any) -> float:
+    """Return a conservative character similarity for duplicate-question gates."""
+    left_text = _normalized_question_text(left)
+    right_text = _normalized_question_text(right)
+    if not left_text or not right_text:
+        return 0.0
+    if left_text == right_text:
+        return 1.0
+    length_ratio = min(len(left_text), len(right_text)) / max(len(left_text), len(right_text))
+    if length_ratio < 0.65:
+        return 0.0
+    from rapidfuzz import fuzz
+
+    return float(fuzz.ratio(left_text, right_text)) / 100.0
+
+
 def evidence_quote_is_in_cited_chunks(
     batch: SourceBatch,
     evidence_chunk_indices: Any,
@@ -246,21 +267,38 @@ def evidence_quote_is_in_cited_chunks(
 class ExamBankGenerationService:
     """Generate draft questions exhaustively; never auto-publish model output."""
 
-    def __init__(self, session: AsyncSession, *, llm=None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        llm=None,
+        model_tier: str = "pro",
+        semantic_duplicate_threshold: float = 0.90,
+        generation_job_id: str | None = None,
+    ):
         self.session = session
         self.llm = llm or llm_service
+        normalized_tier = str(model_tier or "pro").strip().lower()
+        if normalized_tier not in MODEL_TIERS:
+            raise ValueError(f"不支持的题库生成模型档位: {model_tier}")
+        self.model_tier = normalized_tier
+        self.semantic_duplicate_threshold = max(
+            0.0,
+            min(float(semantic_duplicate_threshold), 1.0),
+        )
+        self.generation_job_id = str(generation_job_id or "").strip() or None
 
-    async def _call_pro_json(self, prompt: str) -> tuple[dict[str, Any], str]:
-        """Route exam generation and review through the configured Pro chain."""
+    async def _call_tier_json(self, prompt: str) -> tuple[dict[str, Any], str]:
+        """Route generation and review through the explicitly selected model tier."""
         use_model_tier = getattr(self.llm, "use_model_tier", None)
         if not callable(use_model_tier):
-            raise RuntimeError("题库生成模型不支持 PRO 模型链")
-        with use_model_tier("pro"):
+            raise RuntimeError("题库生成模型不支持模型档位选择")
+        with use_model_tier(self.model_tier):
             result = await self.llm.call_llm_with_json_response(
                 prompt,
                 max_retries=2,
             )
-            selected_model = str(getattr(self.llm, "model", "pro-model"))
+            selected_model = str(getattr(self.llm, "model", "unknown-model"))
         return result, selected_model
 
     async def generate_document(
@@ -353,9 +391,14 @@ class ExamBankGenerationService:
         *,
         requested_counts: dict[str, int] | None = None,
         excluded_knowledge_points: set[str] | None = None,
+        one_question_per_chunk: bool = False,
     ) -> dict[str, Any]:
-        generation, generation_model = await self._call_pro_json(
-            self._generation_prompt(batch, requested_counts=requested_counts)
+        generation, generation_model = await self._call_tier_json(
+            self._generation_prompt(
+                batch,
+                requested_counts=requested_counts,
+                one_question_per_chunk=one_question_per_chunk,
+            )
         )
         candidates = generation.get("questions") or []
         if not isinstance(candidates, list):
@@ -364,6 +407,10 @@ class ExamBankGenerationService:
         rejected = 0
         accepted_by_type: dict[str, int] = {}
         accepted_knowledge_points = set(excluded_knowledge_points or set())
+        accepted_anchor_chunks: set[int] = set()
+        existing_stems = list(
+            await self.session.scalars(select(ExamQuestion.stem))
+        )
         for index, candidate in enumerate(candidates):
             if not isinstance(candidate, dict):
                 rejected += 1
@@ -389,6 +436,31 @@ class ExamBankGenerationService:
                     errors.append("question_type_not_requested")
                 elif accepted_by_type.get(question_type, 0) >= requested_counts[question_type]:
                     errors.append("question_type_target_reached")
+            evidence_indices: list[int] = []
+            try:
+                evidence_indices = [
+                    int(item) for item in (candidate.get("evidence_chunk_indices") or [])
+                ]
+            except (TypeError, ValueError):
+                pass
+            if one_question_per_chunk:
+                if len(set(evidence_indices)) != 1:
+                    errors.append("one_question_requires_one_anchor_chunk")
+                elif evidence_indices[0] in accepted_anchor_chunks:
+                    errors.append("anchor_chunk_already_used")
+            candidate_stem = str(candidate.get("stem") or "").strip()
+            if any(
+                question_text_similarity(candidate_stem, existing_stem)
+                >= self.semantic_duplicate_threshold
+                for existing_stem in existing_stems
+            ):
+                errors.append("semantically_duplicate_stem")
+            if any(
+                question_text_similarity(candidate_stem, accepted["stem"])
+                >= self.semantic_duplicate_threshold
+                for accepted in locally_valid
+            ):
+                errors.append("semantically_duplicate_stem_in_batch")
             if errors:
                 rejected += 1
                 logger.warning("exam_question_candidate_rejected", errors=errors)
@@ -396,6 +468,8 @@ class ExamBankGenerationService:
             locally_valid.append(candidate)
             accepted_by_type[question_type] = accepted_by_type.get(question_type, 0) + 1
             accepted_knowledge_points.add(knowledge_point_key)
+            if one_question_per_chunk:
+                accepted_anchor_chunks.add(evidence_indices[0])
         if not locally_valid:
             return {
                 "created": 0,
@@ -405,7 +479,7 @@ class ExamBankGenerationService:
                 "created_knowledge_points": [],
             }
 
-        verification, verification_model = await self._call_pro_json(
+        verification, verification_model = await self._call_tier_json(
             self._verification_prompt(batch, locally_valid)
         )
         verdicts = {
@@ -438,7 +512,7 @@ class ExamBankGenerationService:
                     "source_match",
                     "worth_testing",
                 )
-            )
+            ) and not list(verdict.get("risk_flags") or [])
             if not approved or str(candidate["stem"]).strip() in existing_stems:
                 rejected += 1
                 continue
@@ -452,10 +526,12 @@ class ExamBankGenerationService:
                 "importance_reasons": [
                     str(item).strip() for item in candidate["importance_reasons"]
                 ],
-                "model_tier": "pro",
+                "model_tier": self.model_tier,
                 "generation_model": generation_model,
                 "verification_model": verification_model,
             }
+            if self.generation_job_id:
+                exam_outline["generation_job_id"] = self.generation_job_id
             question = ExamQuestion(
                 id=str(uuid.uuid4()),
                 question_type=candidate["question_type"],
@@ -519,6 +595,7 @@ class ExamBankGenerationService:
         batch: SourceBatch,
         *,
         requested_counts: dict[str, int] | None = None,
+        one_question_per_chunk: bool = False,
     ) -> str:
         mix_instruction = ""
         if requested_counts:
@@ -527,11 +604,18 @@ class ExamBankGenerationService:
                 + json.dumps(requested_counts, ensure_ascii=False)
                 + "。"
             )
+        anchor_instruction = ""
+        if one_question_per_chunk:
+            anchor_instruction = (
+                "每道题必须且只能引用一个 evidence_chunk_indices；每个 chunk_index 最多生成一道题。"
+                "分块不能独立、唯一支持一道高质量题时直接跳过，不得合并多个分块或改写凑题。"
+            )
         return f"""你是生态环境执法考试题库编辑。只依据给定政策原文生成候选题，不使用外部记忆。
 
 要求：
 1. 先识别可考知识点，再生成少量高质量题；不能从原文唯一推出答案时不要出题，不得为了满足数量硬凑。
 {mix_instruction}
+{anchor_instruction}
 2. 题型可为 single_choice、multiple_choice、judgment、short_answer。
 3. 选择题固定 A-D；多选至少两个正确项；简答题必须提供参考答案和 scoring_points，所有评分点分值合计 100 分。
 4. 每题提供 evidence_chunk_indices、evidence_quote、topic、knowledge_point、article、explanation_hint、difficulty。
