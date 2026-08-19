@@ -246,5 +246,85 @@ async def test_recover_expired_marks_orphan_extraction_runs_failed(tmp_path):
     await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_resumed_build_preserves_cumulative_chunk_counts(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'resume-counts.db'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with factory() as session, session.begin():
+        session.add(KnowledgeBase(
+            id="kb-resume",
+            name="Resume KB",
+            qdrant_collection="kb-resume",
+            scene_status="ready",
+            schema_version=1,
+            graph_schema={
+                "allowed_entity_types": ["Topic"],
+                "allowed_relation_types": [],
+                "schema_version": 1,
+            },
+        ))
+        session.add(Document(
+            id="doc-resume",
+            knowledge_base_id="kb-resume",
+            filename="resume.md",
+            graph_status="processing",
+        ))
+        session.add_all([
+            KnowledgeChunk(
+                id="chunk-resume-done",
+                kb_id="kb-resume",
+                document_id="doc-resume",
+                content_generation=1,
+                chunk_key="done",
+                content_hash="done",
+                chunk_index=0,
+                content="已完成",
+                embedding_text="已完成",
+                graph_status="completed",
+            ),
+            KnowledgeChunk(
+                id="chunk-resume-pending",
+                kb_id="kb-resume",
+                document_id="doc-resume",
+                content_generation=1,
+                chunk_key="pending",
+                content_hash="pending",
+                chunk_index=1,
+                content="待完成",
+                embedding_text="待完成",
+                graph_status="pending",
+            ),
+        ])
+        session.add(KnowledgeGraphBuildTask(
+            id="task-resume",
+            kb_id="kb-resume",
+            status="queued",
+            total_chunks=2,
+            remaining_chunks=1,
+            created_by="test",
+        ))
+
+    class Extractor:
+        async def extract_chunk(self, *, kb_id, chunk, schema):
+            return ChunkGraphExtraction(
+                chunk_id=chunk.id,
+                extractor_name="resume-test",
+                entities=[ExtractedEntity(
+                    local_id="resume",
+                    entity_type="Topic",
+                    name="恢复",
+                    evidence_text=chunk.content,
+                )],
+            )
+
+    result = await GraphBuildService(factory, extractor=Extractor()).run("task-resume")
+    assert result.status == "completed"
+    assert result.processed_chunks == 2
+    assert result.remaining_chunks == 0
+    await engine.dispose()
+
+
 async def _none():
     return None

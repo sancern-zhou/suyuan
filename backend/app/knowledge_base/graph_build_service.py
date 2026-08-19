@@ -183,6 +183,11 @@ class GraphBuildService:
                 q=select(KnowledgeChunk).where(KnowledgeChunk.kb_id==task.kb_id, KnowledgeChunk.graph_status!="completed")
                 if ids: q=q.where(KnowledgeChunk.id.in_(ids))
                 chunks=(await db.execute(q)).scalars().all()
+            total_chunks = max(int(task.total_chunks or 0), len(chunks))
+            # A resumed task may already have committed some chunks before its
+            # process died.  Count those completed chunks as the baseline so a
+            # later batch cannot overwrite the durable cumulative counters.
+            completed_before = max(0, total_chunks - len(chunks))
             await self._set_documents_graph_status(
                 {chunk.document_id for chunk in chunks}, "processing"
             )
@@ -245,11 +250,13 @@ class GraphBuildService:
                     (succeeded if ok else failed).append(c.id)
                     if not ok and err:
                         errors.append(err)
-                await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+                processed_count = min(total_chunks, completed_before + len(succeeded))
+                await self._set_task(task_id, processed_chunks=processed_count, failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,total_chunks-processed_count-len(failed)), last_error=(errors[-1] if errors else None))
                 if cancelled:
                     break
             status="cancelled" if cancelled else ("partial" if failed else "completed")
-            await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=len(succeeded), failed_chunks=len(failed), remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+            processed_count = min(total_chunks, completed_before + len(succeeded))
+            await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=processed_count, failed_chunks=len(failed), remaining_chunks=max(0,total_chunks-processed_count-len(failed)), last_error=(errors[-1] if errors else None))
             await self._sync_document_graph_statuses(task.kb_id)
             return await self.get_status(task_id=task_id)
         finally:
