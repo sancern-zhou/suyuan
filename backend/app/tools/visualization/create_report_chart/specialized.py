@@ -34,7 +34,50 @@ def render_specialized_chart(
         return _render_pollutant_calendar(chart_id, title, data, output_context, options)
     if chart_type == "generic_pollutant_wind_rose":
         return _render_generic_pollutant_wind_rose(chart_id, title, data, output_context, options)
+    if chart_type == "wind_timeseries":
+        return _render_wind_timeseries(chart_id, title, data, output_context, style_profile, options)
     raise ChartDataError(f"不支持的专用 chart_type：{chart_type}。")
+
+
+def _render_wind_timeseries(
+    chart_id: str | None,
+    title: str,
+    data: Dict[str, Any],
+    output_context: str,
+    style_profile: str,
+    options: Dict[str, Any],
+) -> Dict[str, Any]:
+    from app.tools.visualization.create_report_chart.domain.wind_timeseries import (
+        render_wind_timeseries,
+    )
+
+    image_base64, metadata, warnings = render_wind_timeseries(
+        title=title,
+        data=data,
+        options=options,
+        output_context=output_context,
+        style_profile=style_profile,
+    )
+    pollutant_name = metadata["pollutant_name"]
+    visual = _cache_base64_image(
+        image_base64,
+        chart_id or f"wind_timeseries_{pollutant_name}",
+        title,
+    )
+    return {
+        "chart_id": visual["image_id"],
+        "title": title,
+        "visuals": [visual],
+        "layout_warnings": warnings,
+        "metadata": {
+            "requested_chart_type": "wind_timeseries",
+            "applied_chart_type": "wind_timeseries",
+            "scope": "generic",
+            "output_context": output_context,
+            **metadata,
+        },
+        "summary": f"报告图表已生成：{title}。",
+    }
 
 
 def _render_aqi_calendar(
