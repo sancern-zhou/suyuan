@@ -13,6 +13,7 @@ from .ingestion_service import KnowledgeIngestionService
 from .graph_extractor import KnowledgeGraphExtractor
 from .index_outbox import KnowledgeIndexOutboxRepository
 from .graph_revision import bump_graph_revision
+from .scene_models import KnowledgeGraphExtractionRun
 
 class GraphBuildService:
     def __init__(self, session_factory, *, extractor=None, batch_size=20, lease_seconds=300, concurrency=4):
@@ -307,6 +308,22 @@ class GraphBuildService:
                 query = query.where(KnowledgeGraphBuildTask.kb_id == kb_id)
             rows=(await db.execute(query.with_for_update())).scalars().all()
             for t in rows:
+                # A process restart can leave a provenance row in ``running``
+                # even though the build lease has expired.  Mark only rows
+                # created before this task's lease deadline; newer rows belong
+                # to the recovery run and must remain active.
+                await db.execute(
+                    update(KnowledgeGraphExtractionRun)
+                    .where(
+                        KnowledgeGraphExtractionRun.kb_id == t.kb_id,
+                        KnowledgeGraphExtractionRun.status == "running",
+                        KnowledgeGraphExtractionRun.created_at < t.lease_until,
+                    )
+                    .values(
+                        status="failed",
+                        validation_errors=["orphaned_after_graph_build_lease_expired"],
+                    )
+                )
                 result = await db.execute(
                     update(KnowledgeGraphBuildTask)
                     .where(
