@@ -60,6 +60,9 @@ async def test_discovery_uses_goal_questions_and_representative_chunks():
     assert draft.business_objects[1].aliases == ["声源"]
     assert "企业有哪些主要噪声源" in llm.last_prompt
     assert "代表性文档" in llm.last_prompt
+    assert "只能使用 ASCII 小写英文字母、数字和下划线" in llm.last_prompt
+    assert "source_key、target_key 必须精确引用某个 business_objects.key" in llm.last_prompt
+    assert "diagnostics 必须是 JSON 对象，不能是数组" in llm.last_prompt
 
 
 def test_representative_chunk_selection_is_bounded_and_keeps_first_chunk():

@@ -131,10 +131,29 @@ class SceneDiscoveryService:
 3. 同义词和缩写；
 4. 应忽略的版式或背景信息；
 5. 样本文档覆盖不足或存在歧义的部分。
-不要把具体实例误当成对象类型，不要生成技术化英文关系给用户展示。
+不要把具体实例误当成对象类型。中文业务含义放在 name、statement、description、aliases 中，
+不要把内部技术标识直接当作面向用户的展示文本。
 只返回 JSON，字段为 business_objects、business_logic、ignored_content、diagnostics。
 business_objects 每项包含 key、name、description、aliases。
 business_logic 每项包含 key、statement、source_key、relation_key、target_key、policy；policy 只能是 required、allowed、forbidden。
+key、source_key、target_key、relation_key 是仅供系统内部引用的技术标识，必须满足以下规则：
+1. 只能使用 ASCII 小写英文字母、数字和下划线（snake_case），且必须以小写英文字母开头；
+2. business_objects.key 应使用稳定的英文类型标识，例如 monitoring_station、monitoring_device；
+3. business_logic.key 和 relation_key 应使用稳定的英文关系标识，例如 station_contains_device、contains；
+4. source_key、target_key 必须精确引用某个 business_objects.key，禁止填写中文名称或未定义标识。
+diagnostics 必须是 JSON 对象，不能是数组；建议包含 coverage、uncertainties 等字段。
+例如：
+{{
+  "business_objects": [
+    {{"key": "monitoring_station", "name": "监测站房", "description": "环境空气监测站房", "aliases": ["站房"]}},
+    {{"key": "monitoring_device", "name": "监测设备", "description": "站房内的监测仪器", "aliases": ["仪器"]}}
+  ],
+  "business_logic": [
+    {{"key": "station_contains_device", "statement": "监测站房包含监测设备", "source_key": "monitoring_station", "relation_key": "contains", "target_key": "monitoring_device", "policy": "allowed"}}
+  ],
+  "ignored_content": ["页眉页脚"],
+  "diagnostics": {{"coverage": "partial", "uncertainties": []}}
+}}
 
 场景目标：
 {scene_goal}
