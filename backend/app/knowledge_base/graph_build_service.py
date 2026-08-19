@@ -308,8 +308,11 @@ class GraphBuildService:
         now=datetime.utcnow(); out=[]
         async with self._session() as db:
             query = select(KnowledgeGraphBuildTask).where(
-                KnowledgeGraphBuildTask.status=="running",
-                KnowledgeGraphBuildTask.lease_until < now,
+                (KnowledgeGraphBuildTask.status == "queued")
+                | (
+                    (KnowledgeGraphBuildTask.status == "running")
+                    & (KnowledgeGraphBuildTask.lease_until < now)
+                ),
             )
             if kb_id:
                 query = query.where(KnowledgeGraphBuildTask.kb_id == kb_id)
@@ -331,6 +334,9 @@ class GraphBuildService:
                         validation_errors=["orphaned_after_graph_build_lease_expired"],
                     )
                 )
+                if t.status == "queued":
+                    out.append(t.id)
+                    continue
                 result = await db.execute(
                     update(KnowledgeGraphBuildTask)
                     .where(
@@ -338,7 +344,7 @@ class GraphBuildService:
                         KnowledgeGraphBuildTask.status == "running",
                         KnowledgeGraphBuildTask.lease_until < now,
                     )
-                .values(status="queued", lease_until=None)
+                    .values(status="queued", lease_until=None)
                 )
                 if result.rowcount:
                     out.append(t.id)
