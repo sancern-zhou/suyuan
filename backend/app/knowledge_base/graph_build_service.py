@@ -322,18 +322,19 @@ class GraphBuildService:
                 # even though the build lease has expired.  Mark only rows
                 # created before this task's lease deadline; newer rows belong
                 # to the recovery run and must remain active.
-                await db.execute(
-                    update(KnowledgeGraphExtractionRun)
-                    .where(
-                        KnowledgeGraphExtractionRun.kb_id == t.kb_id,
-                        KnowledgeGraphExtractionRun.status == "running",
-                        KnowledgeGraphExtractionRun.created_at < t.lease_until,
+                if t.status == "running" and t.lease_until is not None:
+                    await db.execute(
+                        update(KnowledgeGraphExtractionRun)
+                        .where(
+                            KnowledgeGraphExtractionRun.kb_id == t.kb_id,
+                            KnowledgeGraphExtractionRun.status == "running",
+                            KnowledgeGraphExtractionRun.created_at < t.lease_until,
+                        )
+                        .values(
+                            status="failed",
+                            validation_errors=["orphaned_after_graph_build_lease_expired"],
+                        )
                     )
-                    .values(
-                        status="failed",
-                        validation_errors=["orphaned_after_graph_build_lease_expired"],
-                    )
-                )
                 if t.status == "queued":
                     out.append(t.id)
                     continue
