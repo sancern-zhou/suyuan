@@ -130,3 +130,42 @@ async def test_operations_graph_matches_qualified_district_without_returning_ful
 
     assert result["success"] is True
     assert [entity["entity_id"] for entity in result["data"]["entities"]] == ["district:320115"]
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_externalizes_large_selection(monkeypatch):
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [
+        {"id": "OperationUnit", "pId": "Operation", "name": "运维单位", "level": 1},
+        {"id": "LLD1", "pId": "OperationUnit", "name": "隆力德", "level": 2},
+    ]
+    station_rows = [
+        {
+            "stationCode": f"S{i}", "positionName": f"隆力德站点{i}",
+            "cityCode": "320100", "cityName": "南京市",
+            "districtCode": "320115", "districtName": "江宁区",
+            "operationUnitId": "LLD1", "operationUnitName": "隆力德",
+        }
+        for i in range(80)
+    ]
+
+    async def request(path, params):
+        return {"result": group_rows if path == tool._GROUP_TREE_PATH else station_rows}
+
+    saved = {}
+
+    class Context:
+        def save_data(self, *, data, schema, metadata):
+            saved.update(data=data, schema=schema, metadata=metadata)
+            return "/tmp/jiangsu_operations_graph.json"
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(context=Context(), queries=["隆力德"], depth=1, max_entities=120)
+
+    assert result["success"] is True
+    assert result["data_complete"] is False
+    assert result["file_path"] == "/tmp/jiangsu_operations_graph.json"
+    assert result["metadata"]["record_count"] > result["metadata"]["returned_entity_count"]
+    assert saved["schema"] == "jiangsu_operations_graph"
+    assert len(saved["data"]["entities"]) == result["metadata"]["record_count"]
+    assert len(saved["data"]["relations"]) == result["metadata"]["relation_count"]

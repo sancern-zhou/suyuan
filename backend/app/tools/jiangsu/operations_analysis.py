@@ -18,7 +18,14 @@ logger = structlog.get_logger(__name__)
 class _JiangsuOperationsTool(LLMTool):
     """Shared authenticated read-only client for the Jiangsu operations API."""
 
-    def __init__(self, *, name: str, description: str, function_schema: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        function_schema: dict[str, Any],
+        requires_context: bool = False,
+    ) -> None:
         from config.settings import settings
 
         self.base_url = settings.jiangsu_ops_api_base_url.rstrip("/")
@@ -34,6 +41,7 @@ class _JiangsuOperationsTool(LLMTool):
             category=ToolCategory.QUERY,
             version="1.0.0",
             function_schema=function_schema,
+            requires_context=requires_context,
         )
 
     def _validate_config(self) -> None:
@@ -103,6 +111,12 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
     _GROUP_TREE_PATH = "operation/AirOperaBase/GetUserGroupTreeAsync"
     _STATION_PATH = "operation/AirOperaBase/GetOpaEnabledStationAsync"
     _CACHE_TTL_SECONDS = 300
+    # Keep the graph response small enough for the model context.  The full
+    # selected graph is saved through ExecutionContext when these limits are
+    # exceeded; the inline response remains a useful seed/type-balanced
+    # preview and carries the path to the complete artifact.
+    _INLINE_ENTITY_LIMIT = 48
+    _INLINE_RELATION_LIMIT = 96
 
     def __init__(self) -> None:
         self._graph_cache: dict[str, Any] | None = None
@@ -111,12 +125,16 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
         super().__init__(
             name="jiangsu_query_operations_graph",
             description="查询江苏运维人员、运维单位、责任站点、城市和区县的实时业务关系图，用于解析接口所需的人员/单位/站点标识。",
+            requires_context=True,
             function_schema={
                 "name": "jiangsu_query_operations_graph",
                 "description": (
                     "从江苏运维平台实时目录检索人员—运维单位—责任站点—区县—城市关系。"
                     "当后续接口需要人员姓名、运维单位编码或站点编码而用户只给出自然名称时，先调用本工具；"
                     "不得猜测或编造人员、单位和站点标识。返回的是实时业务目录关系，不依赖用户手动选择知识库。"
+                    "仅返回精简标识与关系（名称、编码、归属），不含站点完整台账字段（如经纬度）。"
+                    "如果结果超过上下文容量，完整实体/关系会外置保存并返回 file_path；需要完整清单时应让 execute_python 使用 load_data(file_path) 读取，"
+                    "不要把内联 preview 当作全量结果。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -191,19 +209,60 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 relation for relation in relations
                 if relation["source_id"] in selected_ids and relation["target_id"] in selected_ids
             ]
+            matched_queries = [
+                {
+                    "query": query,
+                    "entity_ids": self._match_entities(entities, [query]),
+                }
+                for query in queries
+            ]
+            complete_data = {
+                "entities": selected_entities,
+                "relations": selected_relations,
+                "matched_queries": matched_queries,
+            }
+            selected_type_counts: dict[str, int] = {}
+            for entity in selected_entities:
+                entity_type = str(entity.get("entity_type") or "unknown")
+                selected_type_counts[entity_type] = selected_type_counts.get(entity_type, 0) + 1
+            inline_entities = selected_entities
+            inline_relations = selected_relations
+            file_path: str | None = None
+            externalized = (
+                len(selected_entities) > self._INLINE_ENTITY_LIMIT
+                or len(selected_relations) > self._INLINE_RELATION_LIMIT
+            )
+            if externalized and context is not None and hasattr(context, "save_data"):
+                file_path = context.save_data(
+                    data=complete_data,
+                    schema="jiangsu_operations_graph",
+                    metadata={
+                        "source_tool": self.name,
+                        "queries": queries,
+                        "depth": depth,
+                        "entity_count": len(selected_entities),
+                        "relation_count": len(selected_relations),
+                        "root_type": "object",
+                    },
+                )
+                inline_ids = self._preview_entity_ids(
+                    selected_ids, entities, self._INLINE_ENTITY_LIMIT
+                )
+                inline_id_set = set(inline_ids)
+                inline_entities = [entities[entity_id] for entity_id in inline_ids]
+                inline_relations = [
+                    relation
+                    for relation in selected_relations
+                    if relation["source_id"] in inline_id_set
+                    and relation["target_id"] in inline_id_set
+                ][: self._INLINE_RELATION_LIMIT]
             return {
                 "status": "success",
                 "success": True,
                 "data": {
-                    "entities": selected_entities,
-                    "relations": selected_relations,
-                    "matched_queries": [
-                        {
-                            "query": query,
-                            "entity_ids": self._match_entities(entities, [query]),
-                        }
-                        for query in queries
-                    ],
+                    "entities": inline_entities,
+                    "relations": inline_relations,
+                    "matched_queries": matched_queries,
                 },
                 "metadata": {
                     "source": "jiangsu_operations_live_directory_graph",
@@ -212,14 +271,26 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                     "depth": depth,
                     "record_count": len(selected_entities),
                     "relation_count": len(selected_relations),
+                    "returned_entity_count": len(inline_entities),
+                    "returned_relation_count": len(inline_relations),
+                    "entity_type_counts": selected_type_counts,
+                    "data_complete": not externalized or file_path is None,
+                    "externalized": bool(file_path),
+                    **(
+                        {"externalization_skipped": "execution context unavailable"}
+                        if externalized and file_path is None
+                        else {}
+                    ),
                     "graph_counts": graph["counts"],
                     "cache_ttl_seconds": self._CACHE_TTL_SECONDS,
                     "queried_at": datetime.now().astimezone().isoformat(),
                 },
                 "summary": (
                     f"江苏运维关系图查询完成：命中 {len(seed_ids)} 个实体，"
-                    f"展开返回 {len(selected_entities)} 个实体和 {len(selected_relations)} 条关系。"
+                    f"展开得到 {len(selected_entities)} 个实体和 {len(selected_relations)} 条关系；"
+                    + (f"内联展示 {len(inline_entities)} 个实体，完整结果已保存到 file_path。" if file_path else "结果已完整内联返回。")
                 ),
+                **({"file_path": file_path, "data_complete": False} if file_path else {"data_complete": True}),
             }
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning("jiangsu_operations_graph_failed", error=str(exc))
@@ -229,6 +300,31 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 "data": {"entities": [], "relations": []},
                 "summary": f"江苏运维关系图查询失败：{exc}",
             }
+
+    @staticmethod
+    def _preview_entity_ids(
+        selected_ids: list[str],
+        entities: dict[str, dict[str, Any]],
+        limit: int,
+    ) -> list[str]:
+        """Choose a deterministic preview retaining seeds and entity types."""
+        if len(selected_ids) <= limit:
+            return selected_ids
+        result: list[str] = []
+        selected_types: set[str] = set()
+        # Preserve the first occurrence of every type (seeds are first in the
+        # selected list), then fill remaining slots in original order.
+        for entity_id in selected_ids:
+            entity_type = str(entities.get(entity_id, {}).get("entity_type"))
+            if entity_type not in selected_types:
+                result.append(entity_id)
+                selected_types.add(entity_type)
+        for entity_id in selected_ids:
+            if entity_id not in result:
+                result.append(entity_id)
+            if len(result) >= limit:
+                break
+        return result[:limit]
 
     async def _load_graph(self) -> dict[str, Any]:
         now = time.monotonic()
