@@ -66,6 +66,9 @@ async def run_startup(app: FastAPI) -> None:
             if app_role == "worker":
                 await start_social_worker_api_service(app)
             await start_knowledge_base_services()
+            from app.api.knowledge_graph_routes import start_graph_build_recovery
+
+            start_graph_build_recovery()
         else:
             logger.warning(
                 "database_dependent_services_skipped",
@@ -76,6 +79,9 @@ async def run_startup(app: FastAPI) -> None:
         if database_ready:
             await start_document_processing_queue()
             await warmup_knowledge_base_models_if_enabled()
+            from app.api.knowledge_graph_routes import start_graph_build_recovery
+
+            start_graph_build_recovery()
         else:
             logger.warning(
                 "database_dependent_services_skipped",
