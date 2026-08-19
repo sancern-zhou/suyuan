@@ -1,5 +1,6 @@
 """Contract tests for graph build executor."""
 import asyncio
+from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -192,6 +193,56 @@ async def test_long_extraction_renews_lease_and_completes(tmp_path):
         extraction_run = await session.scalar(select(KnowledgeGraphExtractionRun))
     assert chunk.graph_status == "completed"
     assert extraction_run.status == "completed"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_recover_expired_marks_orphan_extraction_runs_failed(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'recovery.db'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    now = datetime.utcnow()
+    async with factory() as session, session.begin():
+        session.add(KnowledgeBase(
+            id="kb-recovery",
+            name="Recovery KB",
+            qdrant_collection="kb-recovery",
+            scene_status="ready",
+            schema_version=1,
+        ))
+        session.add(KnowledgeGraphBuildTask(
+            id="task-recovery",
+            kb_id="kb-recovery",
+            status="running",
+            started_at=now - timedelta(minutes=6),
+            lease_until=now - timedelta(minutes=1),
+            total_chunks=1,
+            remaining_chunks=1,
+            created_by="test",
+        ))
+        session.add(KnowledgeGraphExtractionRun(
+            id="run-orphan",
+            kb_id="kb-recovery",
+            document_id="doc-recovery",
+            chunk_id="chunk-recovery",
+            content_generation=1,
+            scene_profile_version=1,
+            schema_version=1,
+            prompt_version="test",
+            model_name="test",
+            status="running",
+            created_at=now - timedelta(minutes=2),
+        ))
+
+    service = GraphBuildService(factory)
+    assert await service.recover_expired_tasks(kb_id="kb-recovery") == ["task-recovery"]
+    async with factory() as session:
+        task = await session.get(KnowledgeGraphBuildTask, "task-recovery")
+        run = await session.get(KnowledgeGraphExtractionRun, "run-orphan")
+    assert task.status == "queued"
+    assert run.status == "failed"
+    assert run.validation_errors == ["orphaned_after_graph_build_lease_expired"]
     await engine.dispose()
 
 
