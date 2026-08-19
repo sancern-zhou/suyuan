@@ -43,7 +43,6 @@ single-chart specifications selected by the routing table below.
 - Pollutant distribution, concentration spread, or station distribution box
   plot: read `boxplot.md`.
 - Pie or share chart: read `pie-rules.md`.
-- Table rendered as an image: read `table-image.md`.
 - Bar-line combination, dual-axis bar-line chart, or stacked bars with a trend:
   read `combo-chart.md`.
 - Confidence interval, target range, min/max band, or error bars: read
@@ -63,6 +62,8 @@ single-chart specifications selected by the routing table below.
   `generic-pollutant-wind-rose.md`.
 - Guangdong Province pollutant wind rose only: read `pollutant-wind-rose.md`
   and use `chart_type: "pollutant_wind_rose"`.
+- Wind direction, wind speed, and one pollutant changing over time: read
+  `wind-timeseries.md` and use `chart_type: "wind_timeseries"`.
 
 Use `create_report_chart` for formal report images. Use `execute_python` only
 for upstream data preparation or cases that require arbitrary Python beyond the

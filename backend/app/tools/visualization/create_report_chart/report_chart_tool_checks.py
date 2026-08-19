@@ -61,7 +61,6 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "histogram",
         "correlation_heatmap",
         "boxplot",
-        "table_image",
         "combo",
         "range_line",
         "waterfall",
@@ -71,6 +70,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "error_bar",
         "pollutant_calendar",
         "generic_pollutant_wind_rose",
+        "wind_timeseries",
         "aqi_calendar",
         "pollutant_wind_rose",
     ]
@@ -88,6 +88,20 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "不得自行构造、猜测或改写存储路径" in properties["file_path"]["description"]
     assert "执行环境内自行写入的中间路径" in properties["file_path"]["description"]
     assert "reference_lines" in properties["options"]["description"]
+    assert "wind_direction_convention" in properties["options"]["description"]
+    assert "east_u/north_v" in properties["options"]["description"]
+
+
+@pytest.mark.asyncio
+async def test_table_image_chart_type_is_not_supported():
+    result = await CreateReportChartTool().execute(
+        chart_type="table_image",
+        title="表格图片",
+        data={"columns": ["指标", "数值"], "rows": [["PM2.5", 18]]},
+    )
+
+    assert result["success"] is False
+    assert "不支持的 chart_type：table_image" in result["error"]
 
 
 def test_reference_paths_include_specialized_chart_type_documents():
@@ -105,7 +119,6 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "histogram",
         "correlation_heatmap",
         "boxplot",
-        "table_image",
         "combo_chart",
         "range_and_error",
         "waterfall_chart",
@@ -113,6 +126,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "comparison_charts",
         "pollutant_calendar",
         "generic_pollutant_wind_rose",
+        "wind_timeseries",
         "aqi_calendar",
         "pollutant_wind_rose",
     }
@@ -125,6 +139,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     pollutant_wind_rose_text = Path(paths["pollutant_wind_rose"]).read_text(encoding="utf-8")
     pollutant_calendar_text = Path(paths["pollutant_calendar"]).read_text(encoding="utf-8")
     generic_wind_rose_text = Path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
+    wind_timeseries_text = Path(paths["wind_timeseries"]).read_text(encoding="utf-8")
     index_text = Path(paths["index"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
@@ -132,6 +147,8 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "广东省专用" in pollutant_wind_rose_text
     assert "pollutant_calendar" in pollutant_calendar_text
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
+    assert "wind_timeseries" in wind_timeseries_text
+    assert "meteorological_from" in wind_timeseries_text
     assert "Supply at least one of `data` or `file_path`" in index_text
     assert "current session" in index_text
     assert "not infer arbitrary record fields" in index_text
@@ -372,6 +389,127 @@ async def test_generic_pollutant_wind_rose_renders_non_guangdong_distribution():
     assert result["data"]["metadata"]["direction_bin_count"] == 8
     assert result["data"]["metadata"]["valid_point_count"] == len(wind_directions)
     assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_wind_timeseries_renders_speed_direction_and_pm25_arrays():
+    timestamps = [f"2026-05-01 {hour:02d}:00:00" for hour in range(24)]
+    result = await CreateReportChartTool().execute(
+        chart_id="wind_timeseries_pm25_case",
+        chart_type="wind_timeseries",
+        title="风场与PM2.5浓度变化",
+        data={
+            "timestamps": timestamps,
+            "wind_speeds": [1.0 + (index % 6) * 0.4 for index in range(24)],
+            "wind_directions": [(index * 20) % 360 for index in range(24)],
+            "concentrations": [20 + (index % 8) * 3 for index in range(24)],
+            "wind_direction_convention": "meteorological_from",
+        },
+        options={"pollutant_name": "PM2.5", "unit": "μg/m³", "max_vectors": 18},
+    )
+
+    assert result["success"] is True
+    metadata = result["data"]["metadata"]
+    assert metadata["applied_chart_type"] == "wind_timeseries"
+    assert metadata["input_mode"] == "speed_direction"
+    assert metadata["wind_direction_convention"] == "meteorological_from"
+    assert metadata["pollutant_name"] == "PM2.5"
+    assert metadata["unit"] == "μg/m$^3$"
+    assert metadata["valid_point_count"] == 24
+    assert metadata["rendered_vector_count"] == 18
+    assert "wind_vectors_thinned" in result["data"]["layout_warnings"]
+    assert len(result["visuals"]) == 1
+    assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_wind_timeseries_renders_custom_pollutant_records_from_file_path():
+    records = [
+        {
+            "monitor_time": f"2026-05-01 {hour:02d}:00:00",
+            "ws": 1.5 + hour * 0.1,
+            "wd": (hour * 30) % 360,
+            "O3_8h": 60 + hour,
+        }
+        for hour in range(8)
+    ]
+    result = await CreateReportChartTool().execute(
+        context=FakeChartContext(records),
+        chart_id="wind_timeseries_o3_case",
+        chart_type="wind_timeseries",
+        title="风场与O3浓度变化",
+        file_path="chart_data:v1:abc",
+        options={
+            "pollutant_name": "O3",
+            "unit": "μg/m³",
+            "time_field": "monitor_time",
+            "wind_speed_field": "ws",
+            "wind_direction_field": "wd",
+            "concentration_field": "O3_8h",
+            "wind_direction_convention": "meteorological_from",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
+    metadata = result["data"]["metadata"]
+    assert metadata["input_mode"] == "records_speed_direction"
+    assert metadata["pollutant_name"] == "O3"
+    assert metadata["valid_point_count"] == len(records)
+    assert Path(result["visuals"][0]["local_path"]).exists()
+
+
+def test_wind_timeseries_converts_meteorological_direction_to_components():
+    from app.tools.visualization.create_report_chart.domain.wind_timeseries import (
+        _components_from_speed_direction,
+    )
+
+    east_u, north_v = _components_from_speed_direction(
+        [2.0, 3.0, 4.0],
+        [0.0, 90.0, 180.0],
+        "meteorological_from",
+    )
+
+    assert east_u == pytest.approx([0.0, -3.0, 0.0], abs=1e-10)
+    assert north_v == pytest.approx([-2.0, 0.0, 4.0], abs=1e-10)
+
+
+@pytest.mark.asyncio
+async def test_wind_timeseries_requires_explicit_direction_convention_for_angles():
+    result = await CreateReportChartTool().execute(
+        chart_type="wind_timeseries",
+        title="风场与PM2.5浓度变化",
+        data={
+            "timestamps": ["2026-05-01 00:00", "2026-05-01 01:00"],
+            "wind_speeds": [2.0, 3.0],
+            "wind_directions": [180.0, 270.0],
+            "concentrations": [20.0, 22.0],
+        },
+    )
+
+    assert result["success"] is False
+    assert "必须显式提供 wind_direction_convention" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_wind_timeseries_plots_supplied_components_without_direction_assumption():
+    result = await CreateReportChartTool().execute(
+        chart_id="wind_timeseries_components_case",
+        chart_type="wind_timeseries",
+        title="风场与PM10浓度变化",
+        data={
+            "timestamps": ["2026-05-01 00:00", "2026-05-01 01:00"],
+            "east_u": [-2.0, 3.0],
+            "north_v": [4.0, -5.0],
+            "concentrations": [30.0, 35.0],
+        },
+        options={"pollutant_name": "PM10"},
+    )
+
+    assert result["success"] is True
+    metadata = result["data"]["metadata"]
+    assert metadata["input_mode"] == "components"
+    assert metadata["wind_direction_convention"] == "components"
 
 
 @pytest.mark.asyncio
