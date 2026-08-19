@@ -1,6 +1,7 @@
 """Resumable knowledge graph build executor."""
 from __future__ import annotations
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from sqlalchemy import delete, func, select, update
@@ -19,6 +20,24 @@ class GraphBuildService:
         self.batch_size, self.lease_seconds, self.concurrency = batch_size, lease_seconds, max(1, concurrency)
 
     def _session(self): return self.session_factory()
+
+    async def _lease_heartbeat(self, task_id, owner_token, stop_event):
+        """Keep a long-running LLM batch from losing its build lease.
+
+        A single extraction request can take longer than the default lease when
+        provider failover/retries are involved.  Renewing only between batches
+        lets an otherwise healthy build get marked cancelled while a batch is
+        still awaiting the model.  The heartbeat is deliberately independent
+        of the extraction workers so it can renew during that wait.
+        """
+        interval = max(0.5, min(float(self.lease_seconds) / 3.0, 30.0))
+        while True:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                if not await self._renew_lease(task_id, owner_token):
+                    return
 
     async def create_task(self, kb_id, mode="pending", batch_size=None, user_id=None):
         async with self._session() as db:
@@ -152,81 +171,91 @@ class GraphBuildService:
             raise ValueError("task was claimed by another worker or is not runnable")
         task = await self.get_status(task_id=task_id)
         owner_token = now
-        if task.mode == "reset_and_build": await self.reset_graph(task.kb_id, task_id=task_id)
-        ids = list(task.failed_chunk_ids or [])
-        async with self._session() as db:
-            q=select(KnowledgeChunk).where(KnowledgeChunk.kb_id==task.kb_id, KnowledgeChunk.graph_status!="completed")
-            if ids: q=q.where(KnowledgeChunk.id.in_(ids))
-            chunks=(await db.execute(q)).scalars().all()
-        await self._set_documents_graph_status(
-            {chunk.document_id for chunk in chunks}, "processing"
+        heartbeat_stop = asyncio.Event()
+        heartbeat = asyncio.create_task(
+            self._lease_heartbeat(task_id, owner_token, heartbeat_stop)
         )
-        succeeded=[]; failed=[]; errors=[]; cancelled=False
-        async def one(c):
-            try:
-                current = await self.get_status(task_id=task_id)
+        try:
+            if task.mode == "reset_and_build": await self.reset_graph(task.kb_id, task_id=task_id)
+            ids = list(task.failed_chunk_ids or [])
+            async with self._session() as db:
+                q=select(KnowledgeChunk).where(KnowledgeChunk.kb_id==task.kb_id, KnowledgeChunk.graph_status!="completed")
+                if ids: q=q.where(KnowledgeChunk.id.in_(ids))
+                chunks=(await db.execute(q)).scalars().all()
+            await self._set_documents_graph_status(
+                {chunk.document_id for chunk in chunks}, "processing"
+            )
+            succeeded=[]; failed=[]; errors=[]; cancelled=False
+            async def one(c):
+                try:
+                    current = await self.get_status(task_id=task_id)
+                    if (
+                        current is None
+                        or current.status != "running"
+                        or current.started_at != owner_token
+                        or not current.lease_until
+                        or current.lease_until <= datetime.utcnow()
+                        or current.cancel_requested
+                    ):
+                        return None, None
+                    async with self._session() as db:
+                        kb=await db.get(KnowledgeBase, task.kb_id)
+                        schema=KnowledgeIngestionService._schema(kb.graph_schema)
+                    extractor=self.extractor or KnowledgeGraphExtractor()
+                    snap=SimpleNamespace(
+                        kb_id=task.kb_id,
+                        document_id=c.document_id,
+                        content_generation=c.content_generation,
+                        schema=schema,
+                        rule_version=int(kb.rule_version or 0),
+                    )
+                    svc=KnowledgeIngestionService(session_factory=self.session_factory, processor=None, extractor=extractor)
+                    extraction=await svc._extract_with_provenance(snap, c)
+                    if not await self._owns_task(task_id, owner_token):
+                        return None, None
+                    await svc._persist_graph_extraction(
+                        snap, c, extraction, task_id=task_id, owner_token=owner_token
+                    ); return True,None
+                except Exception as e:
+                    if not await self._owns_task(task_id, owner_token):
+                        return None, None
+                    async with self._session() as db:
+                        cc=await db.get(KnowledgeChunk,c.id)
+                        if cc: cc.graph_status="failed"; cc.last_error=str(e); await db.commit()
+                    return False,str(e)
+            sem=asyncio.Semaphore(self.concurrency)
+            async def guarded(c):
+                async with sem: return await one(c)
+            for i in range(0,len(chunks),self.batch_size):
+                cur=await self.get_status(task_id=task_id)
                 if (
-                    current is None
-                    or current.status != "running"
-                    or current.started_at != owner_token
-                    or not current.lease_until
-                    or current.lease_until <= datetime.utcnow()
-                    or current.cancel_requested
+                    cur is None
+                    or cur.status != "running"
+                    or cur.started_at != owner_token
+                    or not await self._renew_lease(task_id, owner_token)
                 ):
-                    return None, None
-                async with self._session() as db:
-                    kb=await db.get(KnowledgeBase, task.kb_id)
-                    schema=KnowledgeIngestionService._schema(kb.graph_schema)
-                extractor=self.extractor or KnowledgeGraphExtractor()
-                extraction=await extractor.extract_chunk(kb_id=task.kb_id, chunk=c, schema=schema)
-                if not await self._owns_task(task_id, owner_token):
-                    return None, None
-                snap=SimpleNamespace(
-                    kb_id=task.kb_id,
-                    document_id=c.document_id,
-                    content_generation=c.content_generation,
-                    schema=schema,
-                    rule_version=int(kb.rule_version or 0),
-                )
-                svc=KnowledgeIngestionService(session_factory=self.session_factory, processor=None, extractor=extractor)
-                await svc._persist_graph_extraction(
-                    snap, c, extraction, task_id=task_id, owner_token=owner_token
-                ); return True,None
-            except Exception as e:
-                if not await self._owns_task(task_id, owner_token):
-                    return None, None
-                async with self._session() as db:
-                    cc=await db.get(KnowledgeChunk,c.id)
-                    if cc: cc.graph_status="failed"; cc.last_error=str(e); await db.commit()
-                return False,str(e)
-        sem=asyncio.Semaphore(self.concurrency)
-        async def guarded(c):
-            async with sem: return await one(c)
-        for i in range(0,len(chunks),self.batch_size):
-            cur=await self.get_status(task_id=task_id)
-            if (
-                cur is None
-                or cur.status != "running"
-                or cur.started_at != owner_token
-                or not await self._renew_lease(task_id, owner_token)
-            ):
-                cancelled = True
-                break
-            if cur.cancel_requested: cancelled=True; break
-            for c,(ok,err) in zip(chunks[i:i+self.batch_size], await asyncio.gather(*(guarded(c) for c in chunks[i:i+self.batch_size]))):
-                if ok is None:
                     cancelled = True
-                    continue
-                (succeeded if ok else failed).append(c.id)
-                if not ok and err:
-                    errors.append(err)
-            await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
-            if cancelled:
-                break
-        status="cancelled" if cancelled else ("partial" if failed else "completed")
-        await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=len(succeeded), failed_chunks=len(failed), remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
-        await self._sync_document_graph_statuses(task.kb_id)
-        return await self.get_status(task_id=task_id)
+                    break
+                if cur.cancel_requested: cancelled=True; break
+                for c,(ok,err) in zip(chunks[i:i+self.batch_size], await asyncio.gather(*(guarded(c) for c in chunks[i:i+self.batch_size]))):
+                    if ok is None:
+                        cancelled = True
+                        continue
+                    (succeeded if ok else failed).append(c.id)
+                    if not ok and err:
+                        errors.append(err)
+                await self._set_task(task_id, processed_chunks=len(succeeded), failed_chunks=len(failed), failed_chunk_ids=failed, remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+                if cancelled:
+                    break
+            status="cancelled" if cancelled else ("partial" if failed else "completed")
+            await self._finish_task(task_id, owner_token, status=status, completed_at=datetime.utcnow(), lease_until=None, failed_chunk_ids=failed, processed_chunks=len(succeeded), failed_chunks=len(failed), remaining_chunks=max(0,len(chunks)-len(succeeded)-len(failed)), last_error=(errors[-1] if errors else None))
+            await self._sync_document_graph_statuses(task.kb_id)
+            return await self.get_status(task_id=task_id)
+        finally:
+            heartbeat_stop.set()
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
 
     async def _set_documents_graph_status(self, document_ids, status):
         if not document_ids:
