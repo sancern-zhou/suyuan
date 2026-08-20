@@ -80,6 +80,12 @@ ROUTER_REGISTRY = [
         description="Xuchang hourly air quality forecast",
         owner="xuchang-air-quality",
     ),
+    RouterSpec(
+        "app.api.jiangsu_work_order_routes",
+        optional=True,
+        description="Jiangsu fault work-order confirmation",
+        owner="legacy",
+    ),
     # System routes are registered last to preserve app/main.py route ordering.
     RouterSpec("app.api.system", description="System routes", owner="core"),
 ]
