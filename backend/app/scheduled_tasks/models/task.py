@@ -71,6 +71,10 @@ class ScheduledTask(BaseModel):
         default=None,
         description="执行时注入的已发布 Skill ID",
     )
+    knowledge_base_binding: Optional[str] = Field(
+        default=None,
+        description="项目知识库绑定键；由运行时解析为 knowledge_base_ids",
+    )
 
     # 触发配置
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
@@ -138,6 +142,11 @@ class ScheduledTask(BaseModel):
             if not skill_id or any(part in skill_id for part in ("/", "\\", "..")):
                 raise ValueError("skill_id must be a safe published skill id")
             self.skill_id = skill_id
+        if self.knowledge_base_binding is not None:
+            binding = self.knowledge_base_binding.strip()
+            if not binding or any(part in binding for part in ("/", "\\", "..")):
+                raise ValueError("knowledge_base_binding must be a safe binding key")
+            self.knowledge_base_binding = binding
         if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type is None:
             raise ValueError("schedule_type is required for schedule tasks")
         if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():
