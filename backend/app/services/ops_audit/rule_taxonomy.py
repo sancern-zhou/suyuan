@@ -63,6 +63,7 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_ENUM_VALUE_INVALID",
         "RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT",
         "RF_RANGE_UNIT_MISMATCH",
+        "RF_PM_FLOW_CALIBRATION_STATE_MISMATCH",
     }:
         return "一致性问题"
     if rule in {

@@ -65,6 +65,12 @@ rules:
     default_severity: 中
     scope: RF_W_PMCHECK
     rationale: 1405/TEOM 类颗粒物仪器使用滤膜，不使用纸带；纸带字段出现实质性内容时属于耗材类型填报错误。
+  - rule_id: RF_PM_FLOW_CALIBRATION_STATE_MISMATCH
+    name: 颗粒物流量校准状态与校准后结果不一致
+    category: 一致性
+    default_severity: 中
+    scope: RF_TW_PmFlowCalibrate
+    rationale: 两周颗粒物流量校准表未勾选校准时不应填写校准后读数；校准后结果出现即表示状态选择与内容不一致。
   - rule_id: RF_STATION_MISMATCH
     name: RF 表单站点与工单站点不一致
     category: 一致性
