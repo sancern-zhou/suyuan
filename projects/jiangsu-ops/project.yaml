@@ -192,6 +192,7 @@ backend:
     - jiangsu_get_device_control_state
     - jiangsu_prepare_device_control
     - jiangsu_execute_device_control
+    - jiangsu_prepare_fault_work_order
     - jiangsu_fetch_station_alarm_logs
     - jiangsu_fetch_fault_work_orders
     - jiangsu_fetch_auto_inspection
@@ -390,6 +391,7 @@ backend:
       - jiangsu_fetch_qc_monitoring_curve
       - jiangsu_query_operations_graph
       - knowledge_graph_query
+      - jiangsu_prepare_fault_work_order
   mode_prompt_files:
     knowledge: projects/jiangsu-ops/prompts/knowledge.md
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md
@@ -400,6 +402,10 @@ backend:
     station_fault_diagnosis: projects/jiangsu-ops/prompts/station_fault_diagnosis.md
 knowledge:
   collections: []
+  # Runtime resolves this exact name to the active graph-enabled KB id.
+  # Deployments may override it with JIANGSU_STATION_FAULT_KB_ID.
+  bindings:
+    station_fault_diagnosis: 空气站运维知识
 # 江苏部署仅加载下列项目自有任务，不加载共享定时任务。
 scheduled_tasks_enabled: true
 scheduled_tasks:
