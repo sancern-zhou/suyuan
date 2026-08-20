@@ -90,6 +90,7 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "RF_MULTIPOINT_RANGE_INVALID",
         "RF_RANGE_OUT_OF_SPEC",
         "RF_Q_GASEOUS_FLOW_ENV_HUMIDITY_OUT_OF_RANGE",
+        "RF_M_GASEOUS_CALIDEVICE_ENV_HUMIDITY_OUT_OF_RANGE",
         "RF_O3_VALUE_PASS_FIELD_POSITION_SUSPECT",
         "RF_O3_TRANSFER_RESULT_INVALID",
     }:
@@ -111,6 +112,7 @@ def issue_category(rule_id: str | None, category: str | None = None) -> str:
         "REMARK_SEMANTIC_INCOMPLETE",
         "RF_PERSONNEL_VEHICLE_FORMAT_LOW_VALUE",
         "RF_PM_TAPE_USAGE_INVALID",
+        "RF_PM_PAPER_TAPE_NOT_APPLICABLE_FILLED",
         "RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT",
     }:
         return "规范性问题"

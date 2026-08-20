@@ -59,6 +59,12 @@ rules:
     default_severity: 中
     scope: RF_W_PMCHECK
     rationale: 颗粒物 PM10/PM2.5 周检应按设备类型填写对应耗材状态；DEVICEMODEL 包含 1405 时应填写 TEOM 滤膜负载及处置情况，其他颗粒物仪器应填写纸带使用量及处置情况，不能为空或仅填写 /。
+  - rule_id: RF_PM_PAPER_TAPE_NOT_APPLICABLE_FILLED
+    name: 1405/TEOM 设备不应填写纸带用量
+    category: 规范性问题
+    default_severity: 中
+    scope: RF_W_PMCHECK
+    rationale: 1405/TEOM 类颗粒物仪器使用滤膜，不使用纸带；纸带字段出现实质性内容时属于耗材类型填报错误。
   - rule_id: RF_STATION_MISMATCH
     name: RF 表单站点与工单站点不一致
     category: 一致性
@@ -311,6 +317,12 @@ rules:
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck
     rationale: 季度气体流量检查作业环境湿度应在0-80%范围内，超出范围会影响MFC流量检查条件。
+  - rule_id: RF_M_GASEOUS_CALIDEVICE_ENV_HUMIDITY_OUT_OF_RANGE
+    name: 月度气态校准设备检查室内湿度超范围
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_M_GASEOUSCALIDEVICECHECK
+    rationale: 月度动态气体校准仪流量检查作业环境湿度应在0-80%范围内，超出范围会影响流量检查条件。
   - rule_id: RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT
     name: 能见度无设备说明与设备字段冲突
     category: 表单填报一致性

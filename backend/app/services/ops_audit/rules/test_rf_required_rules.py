@@ -51,6 +51,28 @@ def test_pm_paper_tape_placeholder_message_names_paper_tape_field():
     assert matched[0].message == "颗粒物周检纸带使用量及处置情况为空或为/，非1405颗粒物仪器应填写纸带使用量及处置情况"
 
 
+def test_pm_1405_substantive_paper_tape_value_is_not_applicable():
+    issues = []
+    order = {"WORKINGORDERCODE": "WO-TEOM-PAPER-TAPE"}
+    form = {
+        "WORKINGORDERCODE": "WO-TEOM-PAPER-TAPE",
+        "POLLUTANTTYPE": "PM10",
+        "DEVICEMODEL": "1405",
+        "TAPEUSAGEDISPOSAL": "已更换纸带",
+        "TEOMMEMBRANEDISPOSAL": "滤膜负载 30%，无需更换",
+    }
+
+    check_rf_required_fields(order, [("RF_W_PMCHECK", form)], issues)
+
+    matched = [
+        issue for issue in issues if issue.rule_id == "RF_PM_PAPER_TAPE_NOT_APPLICABLE_FILLED"
+    ]
+    assert len(matched) == 1
+    assert "1405/TEOM设备不使用纸带" in matched[0].message
+    evidence = json.loads(matched[0].evidence)
+    assert evidence["field"] == "TAPEUSAGEDISPOSAL"
+
+
 def test_visibility_env_fields_allow_not_configured_device_remark():
     issues = []
     order = {"WORKINGORDERCODE": "WO-NO-VISIBILITY"}

@@ -16,7 +16,9 @@ MISSING_RULE_ID = "RF_HY_ENV_HUMIDITY_SENSOR_VALUE_MISSING"
 UNCHANGED_RULE_ID = "RF_HY_ENV_HUMIDITY_BEFORE_AFTER_UNCHANGED_SUSPECT"
 DATE_RULE_ID = "RF_HY_ENV_HUMIDITY_CALIBRATION_DATE_INVALID"
 QUARTER_GAS_FLOW_HUMIDITY_RULE_ID = "RF_Q_GASEOUS_FLOW_ENV_HUMIDITY_OUT_OF_RANGE"
+MONTHLY_GAS_CALIBRATION_HUMIDITY_RULE_ID = "RF_M_GASEOUS_CALIDEVICE_ENV_HUMIDITY_OUT_OF_RANGE"
 TABLE = "RF_HY_EnvironmentHumidity"
+MONTHLY_GAS_CALIBRATION_TABLE = "RF_M_GASEOUSCALIDEVICECHECK"
 SKIP_VALUES = {"", "/", "-", "无", "不适用", "none", "null", "nan"}
 
 
@@ -32,6 +34,9 @@ def check_rf_environment_humidity_values(
             continue
         if table == "RF_Q_GaseousFlowCheck":
             _check_quarter_gaseous_flow_humidity(order, table, form, issues)
+            continue
+        if table == MONTHLY_GAS_CALIBRATION_TABLE:
+            _check_monthly_gaseous_calibration_humidity(order, table, form, issues)
             continue
         if table != TABLE:
             continue
@@ -112,6 +117,50 @@ def _check_quarter_gaseous_flow_humidity(
         "高",
         f"rf.{table}.Humidity",
         f"季度气体流量检查室内湿度{value}%超出0-80%",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _check_monthly_gaseous_calibration_humidity(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    """Check monthly gaseous calibration-device room humidity.
+
+    RF_M_GASEOUSCALIDEVICECHECK stores room humidity as ``SD`` (the monthly
+    dynamic-gas calibration form).  Some deployments expose the same value as
+    ``Humidity``/``INDOORHUMIDITY``; accept those aliases without changing the
+    stored evidence field.
+    """
+
+    field = next(
+        (candidate for candidate in ("SD", "Humidity", "INDOORHUMIDITY") if candidate in form),
+        None,
+    )
+    if not field:
+        return
+    value = _num(form.get(field))
+    if value is None or 0 <= value <= 80:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "field": field,
+        "raw_value": form.get(field),
+        "value": value,
+        "expected_min": 0,
+        "expected_max": 80,
+    }
+    add_issue(
+        issues,
+        MONTHLY_GAS_CALIBRATION_HUMIDITY_RULE_ID,
+        "表单结果合理性",
+        "高",
+        f"rf.{table}.{field}",
+        f"月度气态校准设备检查室内湿度{value}%超出0-80%",
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 
