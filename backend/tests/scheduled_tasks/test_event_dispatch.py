@@ -268,6 +268,80 @@ async def test_manual_event_dispatch_can_be_limited_to_one_task(
 
 
 @pytest.mark.asyncio
+async def test_disabled_event_task_can_be_manually_executed(
+    service,
+    event_task,
+    agent_factory,
+):
+    service.create_task(event_task)
+    service.disable_task(event_task.task_id)
+
+    result = await service.publish_event(
+        _event("manual-disabled"),
+        wait=True,
+        force_retry=True,
+        target_task_id=event_task.task_id,
+    )
+
+    assert result.matched_task_ids == [event_task.task_id]
+    assert result.accepted_task_ids == [event_task.task_id]
+    assert agent_factory.call_count == 1
+    assert service.claim_storage.get(event_task.task_id, "manual-disabled").status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_manual_execution_reruns_succeeded_event(
+    service,
+    event_task,
+    agent_factory,
+):
+    service.create_task(event_task)
+
+    first = await service.publish_event(
+        _event("manual-rerun"),
+        wait=True,
+        force_retry=True,
+        target_task_id=event_task.task_id,
+    )
+    second = await service.publish_event(
+        _event("manual-rerun"),
+        wait=True,
+        force_retry=True,
+        target_task_id=event_task.task_id,
+    )
+
+    assert first.accepted_task_ids == [event_task.task_id]
+    assert second.accepted_task_ids == [event_task.task_id]
+    assert agent_factory.call_count == 2
+    claim = service.claim_storage.get(event_task.task_id, "manual-rerun")
+    assert claim.attempt == 2
+    assert claim.status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_manual_execution_of_event_type_mismatch_reports_not_matched(
+    service,
+    event_task,
+    agent_factory,
+):
+    service.create_task(event_task)
+    result = await service.publish_event(
+        TaskEvent(
+            event_id="wrong-event",
+            event_type="other.event",
+            attributes={"city": "运城市"},
+        ),
+        wait=True,
+        force_retry=True,
+        target_task_id=event_task.task_id,
+    )
+
+    assert result.matched_task_ids == []
+    assert result.execution_ids == []
+    assert agent_factory.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_force_retry_recovers_stale_running_claim(
     service,
     event_task,
