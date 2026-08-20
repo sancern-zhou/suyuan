@@ -110,7 +110,10 @@ async def build_graph_guidance_provider(
                 "图谱仅提供候选规程/关系线索，必须用事件证据和实时接口核验。"
             ] if used else [],
             "data_requirements": [
-                "优先核验告警、监测、巡检和质控接口。"
+                {
+                    "data_name": "告警、监测、巡检和质控接口",
+                    "reason": "图谱只提供候选线索，需用实时接口核验。",
+                }
             ] if used else [],
             "suggested_tools": ["knowledge_graph_query"] if used else [],
             "sources": {"entities": matched, "relations": related},
