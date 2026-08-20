@@ -235,12 +235,25 @@ const getFileName = (filePath) => {
   return filePath.split('/').pop()
 }
 
+const getSkillIdentifier = (skill) => {
+  if (skill?.id) return skill.id
+
+  const filePath = String(skill?.file || '')
+  const fileName = getFileName(filePath)
+  // Project skills are package directories whose entry point is SKILL.md.
+  if (fileName.toLowerCase() === 'skill.md') {
+    const pathParts = filePath.split('/').filter(Boolean)
+    return pathParts[pathParts.length - 2] || fileName.replace(/\.md$/i, '')
+  }
+  return fileName.replace(/\.md$/i, '')
+}
+
 const viewSkillDetail = async (skill) => {
   try {
-    const fileName = getFileName(skill.file).replace('.md', '')
+    const skillIdentifier = getSkillIdentifier(skill)
     const data = skill.is_draft || activeSkillType.value === 'draft'
-      ? await getSkillDraftDetail(fileName)
-      : await getSkillDetail(fileName)
+      ? await getSkillDraftDetail(skillIdentifier)
+      : await getSkillDetail(skillIdentifier)
     if (data.success) {
       currentSkill.value = data.data
       editedContent.value = data.data.content
@@ -282,10 +295,10 @@ const saveSkill = async () => {
 
   saving.value = true
   try {
-    const fileName = getFileName(currentSkill.value.file).replace('.md', '')
+    const skillIdentifier = getSkillIdentifier(currentSkill.value)
     const data = currentSkill.value.is_draft
-      ? await saveSkillDraftDetail(fileName, editedContent.value)
-      : await saveSkillDetail(fileName, editedContent.value)
+      ? await saveSkillDraftDetail(skillIdentifier, editedContent.value)
+      : await saveSkillDetail(skillIdentifier, editedContent.value)
 
     if (data.success) {
       alert('保存成功')
