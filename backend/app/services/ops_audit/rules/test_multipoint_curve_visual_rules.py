@@ -138,6 +138,20 @@ def test_build_tasks_accepts_production_short_multipoint_filename(tmp_path):
     assert [item["filename"] for item in tasks[0]["candidate_items"]] == ["O3多点.png"]
 
 
+def test_review_prompt_allows_target_section_in_four_gas_record():
+    prompt = rules._review_prompt(
+        {
+            "pollutant": "O3",
+            "unit": "ppb",
+            "form_concentrations": [50, 100, 200],
+            "form": {},
+        },
+        {"filename": "四气态多点.png"},
+    )
+
+    assert "只要其中能看到O3对应栏目" in prompt
+
+
 class _Response:
     content = b"image-bytes"
 
