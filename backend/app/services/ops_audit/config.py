@@ -125,6 +125,17 @@ DEFAULT_ATTACHMENT_REQUIREMENTS = {
             "suggestion": "补充多点校准报告附件。",
         },
         {
+            "id": "O3_VALUE_PASS_REPORT",
+            "name": "O3动态校准仪量值传递报告",
+            "enabled": True,
+            "order_types": ["Check", "SupCheck"],
+            "maintenance_types": ["Quarter"],
+            "rf_tables": ["RF_HY_O3VALUEPASS"],
+            "required_types": ["report"],
+            "severity": "高",
+            "suggestion": "补充动态校准仪臭氧量值传递报告（含可追溯计算数据）。",
+        },
+        {
             "id": "PREVENTIVE_MAINTENANCE_REPORT",
             "name": "预防性维护报告",
             "enabled": True,

@@ -80,6 +80,51 @@ def test_multipoint_calibration_does_not_require_curve_attachment_when_report_ex
     assert issues == []
 
 
+def test_o3_value_pass_requires_dynamic_calibration_report():
+    issues = []
+
+    check_attachment_requirements(
+        {
+            "WORKINGORDERCODE": "WO-O3-MISSING-REPORT",
+            "DDWORKINGORDERTYPE": "Check",
+            "MAINTENANCETYPE": "Quarter",
+        },
+        [("RF_HY_O3VALUEPASS", {"WORKINGORDERCODE": "WO-O3-MISSING-REPORT"})],
+        [],
+        [],
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == "ATTACHMENT_REQUIRED_MISSING"
+    assert "O3动态校准仪量值传递报告" in issues[0].message
+
+
+def test_o3_value_pass_report_accepts_xlsx_attachment():
+    issues = []
+
+    check_attachment_requirements(
+        {
+            "WORKINGORDERCODE": "WO-O3-XLS-REPORT",
+            "DDWORKINGORDERTYPE": "Check",
+            "MAINTENANCETYPE": "Quarter",
+        },
+        [("RF_HY_O3VALUEPASS", {"WORKINGORDERCODE": "WO-O3-XLS-REPORT"})],
+        [],
+        [
+            {
+                "REFID": "WO-O3-XLS-REPORT",
+                "TYPECODE": "RF_HY_O3ValuePass",
+                "FILENAME": "臭氧量值传递计算.xlsx",
+                "FILEPATH": "/WebFiles/NewFiles/o3.xlsx",
+            }
+        ],
+        issues,
+    )
+
+    assert issues == []
+
+
 def test_visibility_calibration_attachment_requirement_allows_no_device_remark():
     issues = []
 
@@ -106,4 +151,3 @@ def test_visibility_calibration_attachment_requirement_allows_no_device_remark()
     )
 
     assert issues == []
-
