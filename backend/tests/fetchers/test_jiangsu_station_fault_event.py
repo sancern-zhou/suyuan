@@ -9,6 +9,7 @@ from app.fetchers.jiangsu_station_fault_event import (
     MAX_ALARM_EVENTS_PER_POLL,
     MAX_NEW_MONITOR_INCIDENTS_PER_POLL,
     MONITOR_INCIDENT_KEY_VERSION,
+    PLATFORM_ALARM_COOLDOWN_HOURS,
     JiangsuStationFaultEventFetcher,
     detect_monitoring_anomalies,
 )
@@ -32,6 +33,55 @@ class FakeAlarmTool:
                 "alarmlevel": "一般",
                 "ddRuleType": "仪器状态超上下限报警",
                 "callType": "Instrument",
+            }],
+        }
+
+
+class FakeRepeatingAlarmTool:
+    def __init__(self, *, stable_id=False):
+        self.calls = 0
+        self.stable_id = stable_id
+
+    async def execute(self, **kwargs):
+        self.calls += 1
+        return {
+            "success": True,
+            "data": [{
+                "id": 200001 if self.stable_id else 200000 + self.calls,
+                "stacode": "3001A",
+                "positionName": "江宁九龙湖",
+                "areaname": "南京市",
+                "district": "江宁区",
+                "content": (
+                    "CO-TH-2004H-测量电压的值为"
+                    f"{1700 + self.calls}.000mv，低于限定值【2000.000】"
+                ),
+                "alarmtime": "8/13/2026 3:00:00 PM",
+                "alarmlevel": "一般",
+                "ddalarmstate": 1,
+                "ddRuleType": "仪器状态超上下限报警",
+                "callType": "Instrument",
+            }],
+        }
+
+
+class FakeResolvedAlarmTool:
+    async def execute(self, **kwargs):
+        return {
+            "success": True,
+            "data": [{
+                "id": 300001,
+                "stacode": "3001A",
+                "positionName": "江宁九龙湖",
+                "areaname": "南京市",
+                "district": "江宁区",
+                "content": "已消缺告警",
+                "alarmtime": "8/13/2026 3:00:00 PM",
+                "alarmlevel": "一般",
+                "ddalarmstate": 3,
+                "ddalarmstateName": "已消缺",
+                "removetime": "2026-08-13T15:30:00+08:00",
+                "ddRuleType": "仪器状态超上下限报警",
             }],
         }
 
@@ -82,6 +132,11 @@ class FakeStationTool:
                     "co": str(0.5 + point * 0.01 + station_index * 0.01),
                     "o3": "50" if code == "3001A" else str(45 + point + station_index),
                     "pM2_5": str(25 + point + station_index),
+                    "windSpeed": str(1.0 + point * 0.1),
+                    "windDirect": str(90 + point),
+                    "temperature": str(25 + point),
+                    "humidity": str(60 + point),
+                    "pressure": "1005",
                 })
         return rows, {"codes": ["3001A", "3002A", "3003A"]}
 
@@ -89,6 +144,17 @@ class FakeStationTool:
 class FakeEvidenceTool:
     async def execute(self, **kwargs):
         return {"success": True, "status": "success", "data": [], "metadata": kwargs}
+
+
+class FakeOpsDirectoryTool:
+    def __init__(self, codes: set[str] | None = None):
+        self.codes = codes or {"3001A", "3002A", "3003A"}
+
+    async def execute(self, **kwargs):
+        return {
+            "success": True,
+            "data": [{"stationCode": code, "positionName": f"站点 {code}"} for code in sorted(self.codes)],
+        }
 
 
 class FakeStationToolWithNonReportingDirectoryStation(FakeStationTool):
@@ -112,8 +178,30 @@ async def test_fetch_monitoring_splits_province_window_by_prefecture_city(tmp_pa
     ]
     assert all(call["city_names"] != ["江苏省"] for call in station_tool.calls)
     assert all(call["data_type"] == 0 for call in station_tool.calls)
+    assert all(call["station_type"] == "省控" for call in station_tool.calls)
     assert len(records) == 18
     assert station_codes == ["3001A", "3002A", "3003A"]
+
+
+@pytest.mark.asyncio
+async def test_ops_jurisdiction_keeps_only_provincial_control_stations(tmp_path):
+    class TypedOpsDirectory:
+        async def execute(self, **kwargs):
+            return {
+                "success": True,
+                "data": [
+                    {"stationCode": "N", "stationType": 1},
+                    {"stationCode": "P", "stationTypeName": "省控"},
+                    {"stationCode": "M", "站点类型ID": 3.0},
+                ],
+            }
+
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        ops_directory_tool=TypedOpsDirectory(),
+    )
+
+    assert await fetcher._ops_jurisdiction_codes() == {"P"}
 
 
 def test_detect_monitoring_anomalies_finds_flatline():
@@ -126,6 +214,137 @@ def test_detect_monitoring_anomalies_finds_flatline():
         finding["type"] == "flatline" and finding["pollutant"] == "O3"
         for finding in anomalies[0]["findings"]
     )
+
+
+def test_detect_monitoring_anomalies_ignores_quality_marks():
+    rows = [{
+        "code": "3001A",
+        "name": "江宁九龙湖",
+        "cityName": "南京市",
+        "timePoint": "2026-08-13T16:00:00+08:00",
+        "pM2_5": "25",
+        "pM2_5_Mark": "质控",
+    }]
+
+    anomalies = detect_monitoring_anomalies(rows, now=NOW)
+
+    assert anomalies == []
+
+
+def test_weather_is_required_for_trend_and_city_inconsistency():
+    candidate = {
+        "source_type": "monitoring_anomaly",
+        "source_record": {
+            "findings": [{"type": "trend_inconsistency", "pollutant": "O3"}],
+        },
+    }
+
+    assert JiangsuStationFaultEventFetcher._requires_weather(candidate) is True
+
+
+def test_weather_is_required_for_platform_deviation_but_not_instrument_alarm():
+    deviation = {
+        "source_type": "platform_alarm",
+        "alarm_type": "偏差报警",
+        "summary": "数据偏差：PM2.5浓度偏高",
+    }
+    instrument = {
+        "source_type": "platform_alarm",
+        "alarm_type": "仪器状态超上下限报警",
+        "summary": "测量电压低于限定值",
+    }
+
+    assert JiangsuStationFaultEventFetcher._requires_weather(deviation) is True
+    assert JiangsuStationFaultEventFetcher._requires_weather(instrument) is False
+
+
+def test_compact_hour_record_keeps_pollutants_and_weather_only():
+    row = {
+        "code": "3001A",
+        "timePoint": "2026-08-13T16:00:00+08:00",
+        "pM2_5": "25",
+        "windSpeed": "1.2",
+        "windDirect": "180",
+        "temperature": "31",
+        "humidity": "70",
+        "pressure": "1005",
+        "internalLargePayload": "should not be copied",
+    }
+
+    compact = JiangsuStationFaultEventFetcher._compact_hour_record(row)
+    assert compact == {
+        "code": "3001A",
+        "timePoint": "2026-08-13T16:00:00+08:00",
+        "pM2_5": "25",
+        "windSpeed": "1.2",
+        "windDirect": "180",
+        "temperature": "31",
+        "humidity": "70",
+        "pressure": "1005",
+    }
+
+
+def test_compact_result_drops_work_order_attachments_and_limits_text():
+    result = {
+        "success": True,
+        "status": "success",
+        "summary": "x" * 2000,
+        "data": [{
+            "wo": {
+                "orderContent": "y" * 2000,
+                "commonFile": [{"filePath": "/large/attachment.jpg"}],
+            },
+        }],
+    }
+
+    compact = JiangsuStationFaultEventFetcher._compact_result(result, max_records=5)
+    assert compact["record_count"] == 1
+    assert compact["data"][0]["wo"]["orderContent"].endswith("…[truncated]")
+    assert "commonFile" not in compact["data"][0]["wo"]
+    assert len(compact["summary"]) < 1300
+
+
+@pytest.mark.asyncio
+async def test_event_package_adds_weather_and_filters_station_rows(tmp_path):
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+    candidate = {
+        "source_type": "monitoring_anomaly",
+        "source_record": {
+            "station_code": "3001A",
+            "findings": [{"type": "trend_inconsistency", "pollutant": "O3"}],
+        },
+        "station_code": "3001A",
+        "station_name": "江宁九龙湖",
+        "city_name": "南京市",
+        "district_name": "江宁区",
+        "alarm_type": "trend_inconsistency",
+        "severity": "warning",
+        "occurred_at": NOW.isoformat(),
+        "summary": "监测数据异常",
+    }
+
+    event = await fetcher._write_event_package(candidate, [], NOW, "a" * 64)
+    payload = json.loads(
+        (__import__("pathlib").Path(event.payload["evidence_pack_path"])).read_text(encoding="utf-8")
+    )
+
+    assert payload["monitoring_collection"]["record_count"] == 6
+    assert {row["code"] for row in payload["monitoring_hour_records"]} == {"3001A"}
+    assert payload["weather_collection"]["status"] == "success"
+    assert payload["weather_collection"]["required"] is True
+    assert len(payload["weather_hour_records"]) == 6
+    assert {"wind_speed", "wind_direction", "temperature", "humidity"}.issubset(
+        payload["weather_hour_records"][0]
+    )
+    assert (__import__("pathlib").Path(event.payload["evidence_pack_path"]).stat().st_size) < 100_000
 
 
 def test_monitor_incident_key_is_stable_when_findings_change():
@@ -257,6 +476,102 @@ async def test_fetcher_writes_packages_publishes_events_and_deduplicates(tmp_pat
         assert payload["station"]["station_code"] == "3001A"
         assert "historical_fault_work_orders" in payload
         assert "quality_control_history" in payload
+
+
+@pytest.mark.asyncio
+async def test_platform_alarm_cooldown_groups_new_upstream_ids(tmp_path):
+    events = []
+    current_time = [NOW]
+
+    async def publish(event):
+        events.append(event)
+
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: current_time[0],
+        alarm_tool=FakeRepeatingAlarmTool(),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+
+    first = await fetcher.fetch_and_store()
+    current_time[0] = NOW + timedelta(minutes=5)
+    second = await fetcher.fetch_and_store()
+    current_time[0] = NOW + timedelta(hours=PLATFORM_ALARM_COOLDOWN_HOURS, minutes=1)
+    third = await fetcher.fetch_and_store()
+
+    assert first["published_alarm_events"] == 1
+    assert second["published_alarm_events"] == 0
+    assert second["suppressed_alarm_events"] == 1
+    assert third["published_alarm_events"] == 1
+    assert sum(
+        event.attributes["source_type"] == "platform_alarm"
+        for event in events
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_platform_alarm_cooldown_allows_same_id_after_expiry(tmp_path):
+    events = []
+    current_time = [NOW]
+
+    async def publish(event):
+        events.append(event)
+
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: current_time[0],
+        alarm_tool=FakeRepeatingAlarmTool(stable_id=True),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+
+    await fetcher.fetch_and_store()
+    current_time[0] = NOW + timedelta(hours=PLATFORM_ALARM_COOLDOWN_HOURS, minutes=1)
+    result = await fetcher.fetch_and_store()
+
+    assert result["published_alarm_events"] == 1
+    assert sum(
+        event.attributes["source_type"] == "platform_alarm"
+        for event in events
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_resolved_platform_alarm_is_filtered(tmp_path):
+    events = []
+
+    async def publish(event):
+        events.append(event)
+
+    evidence_tool = FakeEvidenceTool()
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: NOW,
+        alarm_tool=FakeResolvedAlarmTool(),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=evidence_tool,
+        work_order_tool=evidence_tool,
+        inspection_tool=evidence_tool,
+        qc_history_tool=evidence_tool,
+    )
+
+    result = await fetcher.fetch_and_store()
+
+    assert result["published_alarm_events"] == 0
+    assert result["filtered_alarm_records"] == 1
+    assert not events
 
 
 @pytest.mark.asyncio
@@ -416,3 +731,57 @@ async def test_fetcher_drains_platform_alarm_backlog_without_advancing_cursor(tm
     assert second["deferred_alarm_events"] == 0
     assert second_state["last_alarm_poll_at"] == NOW.isoformat()
     assert len(events) == MAX_ALARM_EVENTS_PER_POLL + 2
+
+
+@pytest.mark.asyncio
+async def test_fetcher_filters_alarms_and_monitoring_outside_ops_jurisdiction(tmp_path):
+    events = []
+
+    async def publish(event):
+        events.append(event)
+
+    class OutOfJurisdictionAlarmTool(FakeAlarmTool):
+        async def execute(self, **kwargs):
+            result = await super().execute(**kwargs)
+            return {
+                **result,
+                "data": [
+                    *result["data"],
+                    {
+                        "id": 157854,
+                        "stacode": "7999X",
+                        "positionName": "街道站 7999X",
+                        "areaname": "南京市",
+                        "district": "江宁区",
+                        "content": "测量电压低于限定值",
+                        "alarmtime": "8/13/2026 3:00:00 PM",
+                        "alarmlevel": "一般",
+                        "ddalarmstate": 1,
+                        "ddRuleType": "仪器状态超上下限报警",
+                        "callType": "Instrument",
+                    },
+                ],
+            }
+
+    fetcher = JiangsuStationFaultEventFetcher(
+        registry_root=tmp_path,
+        event_publisher=publish,
+        clock=lambda: NOW,
+        alarm_tool=OutOfJurisdictionAlarmTool(),
+        station_tool=FakeStationTool(),
+        station_alarm_tool=FakeEvidenceTool(),
+        work_order_tool=FakeEvidenceTool(),
+        inspection_tool=FakeEvidenceTool(),
+        qc_history_tool=FakeEvidenceTool(),
+        ops_directory_tool=FakeOpsDirectoryTool(codes={"3001A", "3002A", "3003A"}),
+    )
+
+    result = await fetcher.fetch_and_store()
+
+    assert result["filtered_out_of_jurisdiction"] == 1
+    assert {event.attributes["station_code"] for event in events} == {"3001A"}
+    assert json.loads(fetcher.state_path.read_text(encoding="utf-8"))["monitor_station_codes"] == [
+        "3001A",
+        "3002A",
+        "3003A",
+    ]

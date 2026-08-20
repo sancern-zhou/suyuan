@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import os
+import re
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,7 +28,9 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuQcTaskHistoryTool,
     JiangsuStationAlarmLogsTool,
 )
+from app.tools.jiangsu.operations_analysis import JiangsuStationDirectoryTool
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
+from app.tools.jiangsu.station_type import filter_station_rows
 from app.utils.path_config import format_agent_path, get_data_registry
 
 logger = structlog.get_logger(__name__)
@@ -45,7 +49,34 @@ MAX_NEW_MONITOR_INCIDENTS_PER_POLL = int(
 MAX_ALARM_EVENTS_PER_POLL = int(
     os.getenv("JIANGSU_STATION_FAULT_MAX_ALARM_EVENTS_PER_POLL", "3")
 )
+PLATFORM_ALARM_COOLDOWN_HOURS = float(
+    os.getenv("JIANGSU_STATION_FAULT_ALARM_COOLDOWN_HOURS", "24")
+)
+MONITOR_INCIDENT_COOLDOWN_HOURS = PLATFORM_ALARM_COOLDOWN_HOURS
 MONITOR_INCIDENT_KEY_VERSION = 2
+EVIDENCE_MAX_TEXT_CHARS = int(os.getenv("JIANGSU_STATION_FAULT_EVIDENCE_MAX_TEXT_CHARS", "1200"))
+EVIDENCE_MAX_WORK_ORDERS = int(os.getenv("JIANGSU_STATION_FAULT_EVIDENCE_MAX_WORK_ORDERS", "5"))
+EVIDENCE_MAX_QC_RECORDS = int(os.getenv("JIANGSU_STATION_FAULT_EVIDENCE_MAX_QC_RECORDS", "40"))
+# The ops station directory changes rarely; refresh it hourly instead of on
+# every poll cycle.  A failed refresh keeps the last snapshot.
+OPS_DIRECTORY_TTL_SECONDS = float(os.getenv("JIANGSU_STATION_FAULT_OPS_DIRECTORY_TTL_SECONDS", "3600"))
+
+WEATHER_FIELDS = (
+    ("windSpeed", "wind_speed"),
+    ("windDirect", "wind_direction"),
+    ("temperature", "temperature"),
+    ("humidity", "humidity"),
+    ("pressure", "pressure"),
+    ("rainFall", "rainfall"),
+    ("precipitation", "precipitation"),
+    ("visibility", "visibility"),
+)
+WEATHER_TRIGGER_TYPES = {
+    "flatline",
+    "peer_aggregate_deviation",
+    "persistent_peer_bias",
+    "trend_inconsistency",
+}
 
 JIANGSU_PREFECTURE_CITIES = (
     "南京市",
@@ -174,15 +205,6 @@ def detect_monitoring_anomalies(
                     "severity": "major",
                     "pollutant": label,
                     "value": latest_value,
-                })
-            mark_key = f"{key}_Mark" if key != "co" else "cO_Mark"
-            mark = str(latest.get(mark_key) or "").strip()
-            if mark and mark not in {"-", "—"}:
-                findings.append({
-                    "type": "quality_flag",
-                    "severity": "warning",
-                    "pollutant": label,
-                    "flag": mark,
                 })
 
     peer_findings = _detect_peer_quality_findings(records)
@@ -344,6 +366,7 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         work_order_tool: JiangsuFaultWorkOrdersTool | None = None,
         inspection_tool: JiangsuAutoInspectionTool | None = None,
         qc_history_tool: JiangsuQcTaskHistoryTool | None = None,
+        ops_directory_tool: "JiangsuStationDirectoryTool | None" = None,
     ) -> None:
         super().__init__(
             name="jiangsu_station_fault_event",
@@ -362,6 +385,52 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         self.work_order_tool = work_order_tool or JiangsuFaultWorkOrdersTool()
         self.inspection_tool = inspection_tool or JiangsuAutoInspectionTool()
         self.qc_history_tool = qc_history_tool or JiangsuQcTaskHistoryTool()
+        self.ops_directory_tool = ops_directory_tool or JiangsuStationDirectoryTool()
+        self._ops_jurisdiction_snapshot: set[str] | None = None
+        self._ops_directory_fetched_at = 0.0
+
+    async def _ops_jurisdiction_codes(self) -> set[str] | None:
+        """Station codes the operations platform actually manages.
+
+        The monitoring network (air directory, ~1400 stations) is far wider
+        than the operations jurisdiction (ops directory, ~290 stations).  Work
+        orders can only be created for stations present in the ops directory,
+        so events outside it are filtered at the source.  A transient ops
+        directory failure keeps the last successful snapshot; if no snapshot
+        exists, the monitoring query itself is still constrained to `省控`,
+        while platform alarms remain unscoped until the directory recovers.
+        """
+        now = time.monotonic()
+        if self._ops_jurisdiction_snapshot is not None and now - self._ops_directory_fetched_at < OPS_DIRECTORY_TTL_SECONDS:
+            return self._ops_jurisdiction_snapshot
+        try:
+            result = await self.ops_directory_tool.execute()
+            directory_rows = [item for item in result.get("data") or [] if isinstance(item, dict)]
+            # The fault-event fetcher is intentionally narrower than the
+            # interactive station query: it must only monitor provincial-
+            # control stations managed by the operations platform.  Keep a
+            # compatibility fallback for older directory deployments that do
+            # not return any station-type field at all; a mixed directory is
+            # filtered strictly and unknown-type rows are excluded.
+            filtered_rows, type_filter_applied = filter_station_rows(directory_rows, "省控")
+            codes = {
+                str(item.get("stationCode") or item.get("StationCode") or "").strip()
+                for item in filtered_rows
+            }
+            codes.discard("")
+            if result.get("success") and (codes or type_filter_applied):
+                self._ops_jurisdiction_snapshot = codes
+                self._ops_directory_fetched_at = now
+                logger.info(
+                    "jiangsu_ops_directory_scoped_to_provincial_stations",
+                    station_count=len(codes),
+                    type_filter_applied=type_filter_applied,
+                )
+                return codes
+            logger.warning("jiangsu_ops_directory_empty", station_count=len(codes))
+        except Exception as exc:
+            logger.warning("jiangsu_ops_directory_unavailable", error=str(exc))
+        return self._ops_jurisdiction_snapshot
 
     async def fetch_and_store(self) -> dict[str, Any]:
         now = self.clock()
@@ -373,11 +442,23 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
                 since = previous - timedelta(minutes=POLL_OVERLAP_MINUTES)
 
         alarms = await self._fetch_alarms(since, now)
-        candidates = [
-            candidate
-            for row in alarms
-            if (candidate := self._alarm_candidate(row))["station_code"]
-        ]
+        jurisdiction = await self._ops_jurisdiction_codes()
+        candidates: list[dict[str, Any]] = []
+        filtered_alarm_records = 0
+        filtered_out_of_jurisdiction = 0
+        for row in alarms:
+            candidate = self._alarm_candidate(row)
+            if not candidate["station_code"]:
+                continue
+            if not self._alarm_is_eligible(row):
+                filtered_alarm_records += 1
+                continue
+            if jurisdiction is not None and candidate["station_code"] not in jurisdiction:
+                filtered_out_of_jurisdiction += 1
+                continue
+            if jurisdiction is not None:
+                candidate["station_type"] = "省控"
+            candidates.append(candidate)
 
         monitor_due = True
         previous_monitor = _parse_datetime(state.get("last_monitor_poll_at"))
@@ -387,8 +468,33 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         active_monitor_keys = list(state.get("active_monitor_keys") or [])
         monitor_station_codes = list(state.get("monitor_station_codes") or [])
         suppressed_monitor_events = 0
+        monitor_cooldowns = {
+            str(key): str(value)
+            for key, value in (state.get("monitor_cooldowns") or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
+        monitor_cooldown_cutoff = now - timedelta(hours=MONITOR_INCIDENT_COOLDOWN_HOURS)
+        monitor_cooldowns = {
+            key: value
+            for key, value in monitor_cooldowns.items()
+            if (published_at := _parse_datetime(value))
+            and published_at >= monitor_cooldown_cutoff
+        }
         if monitor_due:
             monitoring_records, _directory_station_codes = await self._fetch_monitoring(now)
+            if jurisdiction is not None:
+                # Only stations under the operations platform jurisdiction may
+                # produce monitoring anomalies; otherwise work-order creation
+                # would fail for stations the platform does not manage.
+                monitoring_records = [
+                    row
+                    for row in monitoring_records
+                    if str(row.get("code") or row.get("stationCode") or "").strip()
+                    in jurisdiction
+                ]
+                monitor_station_codes = [
+                    code for code in monitor_station_codes if code in jurisdiction
+                ]
             if not monitoring_records:
                 raise RuntimeError("江苏小时数据为空，本轮不生成站点断数事件")
             observed_station_codes = sorted({
@@ -410,6 +516,8 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
                     expected_station_codes=monitor_station_codes or None,
                 )
             ]
+            for candidate in monitor_candidates:
+                candidate["station_type"] = "省控"
             monitor_station_codes = sorted({
                 *monitor_station_codes,
                 *observed_station_codes,
@@ -444,6 +552,14 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
                 )
             else:
                 for incident_key in new_incident_keys:
+                    last_published_at = _parse_datetime(monitor_cooldowns.get(incident_key))
+                    if (
+                        last_published_at
+                        and now - last_published_at
+                        < timedelta(hours=MONITOR_INCIDENT_COOLDOWN_HOURS)
+                    ):
+                        suppressed_monitor_events += 1
+                        continue
                     candidate = current_by_key[incident_key]
                     candidate["incident_started_at"] = now.isoformat()
                     candidates.append(candidate)
@@ -455,9 +571,43 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         published = 0
         published_alarm_events = 0
         deferred_alarm_events = 0
+        suppressed_alarm_events = 0
+        alarm_cooldowns = {
+            str(key): str(value)
+            for key, value in (state.get("alarm_cooldowns") or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
+        cooldown_cutoff = now - timedelta(hours=PLATFORM_ALARM_COOLDOWN_HOURS)
+        alarm_cooldowns = {
+            key: value
+            for key, value in alarm_cooldowns.items()
+            if (published_at := _parse_datetime(value)) and published_at >= cooldown_cutoff
+        }
         for candidate in candidates:
             fingerprint = self._fingerprint(candidate)
-            if fingerprint in processed:
+            is_platform_alarm = candidate.get("source_type") == "platform_alarm"
+            alarm_incident_key = None
+            if is_platform_alarm:
+                # Keep the same event ID during one cooldown window, but make
+                # a post-cooldown reminder a new downstream event even when
+                # the upstream system reuses its original record ID.
+                cooldown_seconds = max(1.0, PLATFORM_ALARM_COOLDOWN_HOURS * 3600)
+                fingerprint = hashlib.sha256(
+                    f"{fingerprint}:{int(now.timestamp() // cooldown_seconds)}".encode("utf-8")
+                ).hexdigest()
+                alarm_incident_key = self._alarm_incident_key(candidate)
+                last_published_at = _parse_datetime(alarm_cooldowns.get(alarm_incident_key))
+                if (
+                    last_published_at
+                    and now - last_published_at
+                    < timedelta(hours=PLATFORM_ALARM_COOLDOWN_HOURS)
+                ):
+                    suppressed_alarm_events += 1
+                    if fingerprint not in processed:
+                        processed.add(fingerprint)
+                        processed_order.append(fingerprint)
+                    continue
+            elif fingerprint in processed:
                 continue
             if (
                 candidate.get("source_type") == "platform_alarm"
@@ -478,11 +628,17 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             published += 1
             if candidate.get("source_type") == "platform_alarm":
                 published_alarm_events += 1
+                if alarm_incident_key:
+                    alarm_cooldowns[alarm_incident_key] = now.isoformat()
+            elif candidate.get("source_type") == "monitoring_anomaly":
+                monitor_cooldowns[self._monitor_incident_key(candidate)] = now.isoformat()
             # Checkpoint each published fingerprint.  Do not advance poll
             # cursors until the complete cycle succeeds, but make a worker
             # restart resume after the last durable event instead of
             # recollecting and republishing the whole window.
             state["processed_fingerprints"] = processed_order[-10000:]
+            state["alarm_cooldowns"] = alarm_cooldowns
+            state["monitor_cooldowns"] = monitor_cooldowns
             self._write_json(self.state_path, state)
 
         last_alarm_poll_at = now.isoformat()
@@ -496,15 +652,22 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             "processed_fingerprints": processed_order[-10000:],
             "active_monitor_keys": active_monitor_keys,
             "monitor_station_codes": monitor_station_codes,
+            "monitor_station_type": "省控",
+            "alarm_cooldowns": alarm_cooldowns,
+            "monitor_cooldowns": monitor_cooldowns,
         })
         self._write_json(self.state_path, state)
         result = {
             "alarm_records": len(alarms),
             "monitoring_records": len(monitoring_records),
+            "monitor_station_type": "省控",
             "candidates": len(candidates),
             "published_events": published,
             "published_alarm_events": published_alarm_events,
             "deferred_alarm_events": deferred_alarm_events,
+            "suppressed_alarm_events": suppressed_alarm_events,
+            "filtered_alarm_records": filtered_alarm_records,
+            "filtered_out_of_jurisdiction": filtered_out_of_jurisdiction,
             "suppressed_monitor_events": suppressed_monitor_events,
         }
         logger.info("jiangsu_station_fault_poll_completed", **result)
@@ -518,6 +681,7 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
                 city_name="江苏省",
                 start_time=start.strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=end.strftime("%Y-%m-%d %H:%M:%S"),
+                alarm_state=1,
                 skip_count=skip_count,
                 max_result_count=100,
                 sorting="id",
@@ -547,6 +711,7 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
                 start_time=start.strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=end.strftime("%Y-%m-%d %H:%M:%S"),
                 data_type=0,
+                station_type="省控",
             )
             station_codes.update(
                 str(code).strip()
@@ -577,12 +742,56 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         }
 
     @staticmethod
+    def _alarm_is_eligible(row: dict[str, Any]) -> bool:
+        """Keep active alarms; tolerate fixtures/upstream rows without state."""
+        raw_state = row.get("ddalarmstate")
+        if raw_state is None or str(raw_state).strip() == "":
+            return True
+        try:
+            if int(raw_state) != 1:
+                return False
+        except (TypeError, ValueError):
+            # Unknown state values should not silently suppress a potentially
+            # new alarm.  The upstream state is retained in the evidence pack.
+            return True
+        return not bool(row.get("removetime"))
+
+    @staticmethod
+    def _alarm_incident_key(candidate: dict[str, Any]) -> str:
+        """Identify a physical alarm across upstream records with new IDs."""
+        source = candidate.get("source_record") or {}
+        content = str(candidate.get("summary") or source.get("content") or "")
+        # Alarm payloads often contain the current value, limit, date, and
+        # hour.  Those values change on every upstream record while the
+        # equipment/signal portion remains stable.  Do not replace digits
+        # embedded in identifiers such as ``CO-TH-2004H``.
+        normalized_content = re.sub(
+            r"(?<![A-Za-z0-9])\d+\.\d+(?=(?:年|月|日|时|分|秒|公里|μg|mg|mv|mV|ppm|ppb|%|[^A-Za-z0-9]|$))",
+            "#",
+            content,
+        )
+        normalized_content = re.sub(
+            r"(?<![A-Za-z0-9])\d+(?=(?:年|月|日|时|分|秒|公里|μg|mg|mv|mV|ppm|ppb|%|[，,。；;：:【】\[\]\s]|$))",
+            "#",
+            normalized_content,
+        )
+        identity = {
+            "station_code": str(candidate.get("station_code") or "").strip(),
+            "alarm_type": str(candidate.get("alarm_type") or "").strip(),
+            "call_type": str(source.get("callType") or "").strip(),
+            "content": re.sub(r"\s+", " ", normalized_content).strip(),
+        }
+        encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
     def _monitor_candidate(item: dict[str, Any]) -> dict[str, Any]:
         severities = [finding.get("severity") for finding in item["findings"]]
         return {
             "source_type": "monitoring_anomaly",
             "source_record": item,
             "station_code": item["station_code"],
+            "station_type": "省控",
             "station_name": item.get("station_name"),
             "city_name": item.get("city_name"),
             "district_name": item.get("district_name"),
@@ -626,17 +835,21 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         event_dir = self.output_root / created_at.strftime("%Y/%m/%d") / event_id
         event_dir.mkdir(parents=True, exist_ok=True)
         monitoring_error = None
-        if not monitoring_rows:
+        station_code = candidate["station_code"]
+        station_rows = self._station_rows(monitoring_rows, station_code)
+        if not station_rows:
             try:
-                monitoring_rows, _ = await self.station_tool.fetch_raw_records(
+                fetched_rows, _ = await self.station_tool.fetch_raw_records(
                     data_kind="station_hour",
-                    station_codes=[candidate["station_code"]],
+                    station_codes=[station_code],
                     start_time=(created_at - timedelta(hours=MONITOR_LOOKBACK_HOURS)).strftime(
                         "%Y-%m-%d %H:%M:%S"
                     ),
                     end_time=created_at.strftime("%Y-%m-%d %H:%M:%S"),
                     data_type=0,
+                    station_type="省控",
                 )
+                station_rows = self._station_rows(fetched_rows, station_code)
             except Exception as exc:
                 monitoring_error = str(exc)
         station_args = {
@@ -644,42 +857,72 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             "station_name": candidate.get("station_name"),
             "city_name": candidate.get("city_name"),
             "district_name": candidate.get("district_name"),
+            "station_type": candidate.get("station_type"),
         }
         station_alarm, work_orders, inspection, qc_history = await asyncio.gather(
-            self.station_alarm_tool.execute(station_codes=[candidate["station_code"]]),
+            self.station_alarm_tool.execute(station_codes=[station_code]),
             self.work_order_tool.execute(
-                station_codes=[candidate["station_code"]],
+                station_codes=[station_code],
                 take=5,
             ),
             self.inspection_tool.execute(
-                station_codes=[candidate["station_code"]],
+                station_codes=[station_code],
             ),
             self.qc_history_tool.execute(
-                station_codes=[candidate["station_code"]],
+                station_codes=[station_code],
                 start_time=(created_at - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"),
                 end_time=created_at.strftime("%Y-%m-%d %H:%M:%S"),
             ),
             return_exceptions=True,
         )
+        weather_required = self._requires_weather(candidate)
+        weather_rows = self._weather_rows(station_rows) if weather_required else []
+        compact_monitoring_rows = [self._compact_hour_record(row) for row in station_rows]
         evidence = {
             "schema_version": 1,
             "event_id": event_id,
             "created_at": created_at.isoformat(),
             "station": station_args,
             "trigger": candidate,
-            "monitoring_hour_records": monitoring_rows,
+            "monitoring_hour_records": compact_monitoring_rows,
             "monitoring_collection": {
+                "status": (
+                    "failed" if monitoring_error else
+                    "success" if compact_monitoring_rows else "empty"
+                ),
                 "success": monitoring_error is None,
                 "error": monitoring_error,
-                "record_count": len(monitoring_rows),
+                "record_count": len(compact_monitoring_rows),
+                "station_code": station_code,
+                "data_type": 0,
             },
-            "station_alarm_logs": self._safe_result(station_alarm),
-            "historical_fault_work_orders": self._safe_result(work_orders),
-            "auto_inspection": self._safe_result(inspection),
-            "quality_control_history": self._safe_result(qc_history),
+            "weather_hour_records": weather_rows,
+            "weather_collection": {
+                "status": (
+                    "failed" if weather_required and monitoring_error else
+                    "success" if weather_required and weather_rows else
+                    "empty" if weather_required else "skipped"
+                ),
+                "success": monitoring_error is None,
+                "required": weather_required,
+                "record_count": len(weather_rows),
+                "source": "jiangsu_station_hour",
+                "endpoint": JiangsuStationDataTool._ENDPOINTS["station_hour"],
+                "time_range": self._time_range(station_rows),
+                "reason": self._weather_reason(candidate) if weather_required else None,
+            },
+            "station_alarm_logs": self._compact_result(station_alarm, max_records=40, max_items=20),
+            "historical_fault_work_orders": self._compact_result(
+                work_orders, max_records=EVIDENCE_MAX_WORK_ORDERS, max_items=8
+            ),
+            "auto_inspection": self._compact_result(inspection, max_records=10, max_items=20),
+            "quality_control_history": self._compact_result(
+                qc_history, max_records=EVIDENCE_MAX_QC_RECORDS, max_items=20
+            ),
             "collection_notes": [
-                "证据包由只读接口自动抓取；单个补充接口失败不会丢弃原始事件。",
+                "证据包由只读接口自动抓取；事件包保留诊断摘要，不写入工单附件和大字段原文。",
                 "诊断结论必须区分已证实事实、推断和待核实项。",
+                "污染浓度偏高、偏低、恒值或趋势与城市不一致时，同步提供站点小时气象数据。",
             ],
         }
         evidence_path = event_dir / "diagnosis_evidence_pack.json"
@@ -711,6 +954,139 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         if isinstance(result, BaseException):
             return {"success": False, "status": "failed", "summary": str(result)}
         return result
+
+    @staticmethod
+    def _station_rows(rows: list[dict[str, Any]], station_code: str) -> list[dict[str, Any]]:
+        code = str(station_code or "").strip()
+        return [
+            row for row in rows
+            if isinstance(row, dict)
+            and str(row.get("code") or row.get("stationCode") or "").strip() == code
+        ]
+
+    @staticmethod
+    def _time_range(rows: list[dict[str, Any]]) -> list[str | None]:
+        timestamps = [
+            str(row.get("timePoint") or "").strip()
+            for row in rows
+            if str(row.get("timePoint") or "").strip()
+        ]
+        return [min(timestamps), max(timestamps)] if timestamps else [None, None]
+
+    @staticmethod
+    def _weather_reason(candidate: dict[str, Any]) -> str:
+        findings = (candidate.get("source_record") or {}).get("findings") or []
+        types = {
+            str(item.get("type") or "").strip()
+            for item in findings
+            if isinstance(item, dict)
+        }
+        if types.intersection(WEATHER_TRIGGER_TYPES):
+            return "污染浓度偏差、恒值或趋势与城市基线不一致"
+        return "平台污染浓度偏高或偏低告警"
+
+    @staticmethod
+    def _requires_weather(candidate: dict[str, Any]) -> bool:
+        source = candidate.get("source_record") or {}
+        findings = source.get("findings") or []
+        finding_types = {
+            str(item.get("type") or "").strip()
+            for item in findings
+            if isinstance(item, dict)
+        }
+        if finding_types.intersection(WEATHER_TRIGGER_TYPES):
+            return True
+        if candidate.get("source_type") != "platform_alarm":
+            return False
+        alarm_type = str(candidate.get("alarm_type") or "").lower()
+        summary = str(candidate.get("summary") or "").lower()
+        return "偏差" in alarm_type or any(
+            token in summary for token in ("浓度", "偏高", "偏低", "恒值")
+        )
+
+    @staticmethod
+    def _compact_hour_record(row: dict[str, Any]) -> dict[str, Any]:
+        fields = (
+            "code", "stationCode", "name", "cityName", "districtName", "timePoint", "dataType",
+            "sO2", "nO2", "pM10", "co", "o3", "pM2_5", "no", "nOx",
+            "sO2_Mark", "nO2_Mark", "pM10_Mark", "cO_Mark", "o3_Mark", "pM2_5_Mark",
+            "qualityType", "aqi", "primaryPollutant", "uniqueCode", "id",
+            *(field for field, _ in WEATHER_FIELDS),
+        )
+        return {key: row[key] for key in fields if key in row}
+
+    @staticmethod
+    def _weather_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        weather: list[dict[str, Any]] = []
+        for row in rows:
+            item = {
+                "station_code": row.get("code") or row.get("stationCode"),
+                "time_point": row.get("timePoint"),
+            }
+            for source_key, target_key in WEATHER_FIELDS:
+                if source_key in row:
+                    item[target_key] = row[source_key]
+            if any(
+                str(value or "").strip() not in {"", "-", "—", "-99", "-99.000"}
+                for key, value in item.items()
+                if key not in {"station_code", "time_point"}
+            ):
+                weather.append(item)
+        return weather
+
+    @classmethod
+    def _compact_result(
+        cls, result: Any, *, max_records: int, max_items: int = 40
+    ) -> dict[str, Any]:
+        if isinstance(result, BaseException):
+            return {"success": False, "status": "failed", "summary": str(result), "data": []}
+        if not isinstance(result, dict):
+            return {"success": False, "status": "failed", "summary": "补充数据返回格式异常", "data": []}
+        compact: dict[str, Any] = {
+            "success": result["success"] if "success" in result else False,
+            "status": result.get("status"),
+            "summary": cls._compact_text(result.get("summary", "")),
+            "metadata": cls._compact_value(result.get("metadata", {}), max_items=max_items),
+        }
+        data = result.get("data")
+        if isinstance(data, list):
+            compact["data"] = [
+                cls._compact_value(item, max_items=max_items) for item in data[:max_records]
+            ]
+            compact["record_count"] = len(data)
+            compact["returned_records"] = min(len(data), max_records)
+        elif isinstance(data, dict):
+            compact["data"] = cls._compact_value(data, max_items=max_items)
+        else:
+            compact["data"] = data if data is not None else []
+        if result.get("error"):
+            compact["error"] = cls._compact_text(result["error"])
+        return compact
+
+    @classmethod
+    def _compact_value(cls, value: Any, *, depth: int = 0, max_items: int = 40) -> Any:
+        if isinstance(value, str):
+            return cls._compact_text(value)
+        if depth >= 4:
+            return "[nested data omitted]" if isinstance(value, (dict, list)) else value
+        if isinstance(value, list):
+            return [cls._compact_value(item, depth=depth + 1, max_items=max_items) for item in value[:max_items]]
+        if isinstance(value, dict):
+            compact = {}
+            for key, item in value.items():
+                key_text = str(key).lower()
+                if any(token in key_text for token in ("commonfile", "attachment", "visuals", "resources", "image")):
+                    continue
+                compact[str(key)] = cls._compact_value(item, depth=depth + 1, max_items=max_items)
+            return compact
+        return value
+
+    @staticmethod
+    def _compact_text(value: Any) -> str:
+        text = str(value)
+        if len(text) <= EVIDENCE_MAX_TEXT_CHARS:
+            return text
+        return text[:EVIDENCE_MAX_TEXT_CHARS] + "…[truncated]"
 
     def _read_state(self) -> dict[str, Any]:
         try:
