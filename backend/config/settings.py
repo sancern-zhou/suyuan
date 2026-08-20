@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     jiangsu_qc_api_key: str = Field(default="")
     jiangsu_qc_api_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
     jiangsu_device_control_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=1800)
+    jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -462,7 +463,7 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="doubao/gpt-5.6-luna,bailian/qwen3.8-max",
+        default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
         description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"
     )
     llm_flash_models: str = Field(

@@ -32,6 +32,27 @@ def test_bailian_multimodal_download_timeout_is_not_provider_failure():
     assert should_fallback(failure) is False
 
 
+def test_403_auth_failure_triggers_fallback():
+    failure = classify_llm_failure(
+        httpx.HTTPStatusError(
+            "Client error '403 Forbidden' for url 'https://doubao.best/v1/chat/completions'",
+            request=httpx.Request("POST", "https://doubao.best/v1/chat/completions"),
+            response=httpx.Response(403),
+        )
+    )
+
+    assert failure.reason == "auth"
+    assert failure.status == 403
+    assert should_fallback(failure) is True
+
+
+def test_401_auth_failure_triggers_fallback():
+    failure = classify_llm_failure(RuntimeError("401 unauthorized: invalid api key"))
+
+    assert failure.reason == "auth"
+    assert should_fallback(failure) is True
+
+
 @pytest.mark.asyncio
 async def test_planner_retries_bailian_media_fetch_failure_with_base64(tmp_path):
     image_path = tmp_path / "sample.png"
