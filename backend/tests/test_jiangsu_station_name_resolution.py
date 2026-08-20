@@ -11,6 +11,8 @@ def test_station_tool_schema_exposes_atomic_area_and_station_selectors():
     assert {"station_codes", "station_names", "city_names", "district_names"} <= set(parameters["properties"])
     assert parameters["properties"]["allow_province_query"]["default"] is False
     assert parameters["properties"]["data_type"]["default"] == 1
+    assert parameters["properties"]["station_type"]["default"] == "国控"
+    assert parameters["properties"]["station_type"]["enum"] == ["国控", "省控", "市控", "全部"]
     assert tool.requires_context is True
 
 
@@ -61,6 +63,42 @@ async def test_station_tool_accepts_district_selector(monkeypatch):
     assert result["success"] is True
     assert result["metadata"]["station_codes"] == ["B"]
     assert requests[0]["codes"] == ["B"]
+
+
+@pytest.mark.asyncio
+async def test_station_tool_filters_city_by_station_type_and_defaults_to_national(monkeypatch):
+    tool = JiangsuStationDataTool(base_url="http://example.test", username="user", password="password")
+    directory = [
+        {"stationCode": "N", "positionName": "国控站", "cityName": "南京市", "stationType": 1},
+        {"stationCode": "P", "positionName": "省控站", "cityName": "南京市", "stationTypeName": "省控"},
+        {"stationCode": "M", "positionName": "市控站", "cityName": "南京市", "站点类型ID": 3.0},
+    ]
+    requests = []
+
+    async def get_directory():
+        return directory
+
+    async def request(data_kind, payload):
+        requests.append(payload)
+        return {"result": [{"stationCode": code} for code in payload["codes"]]}
+
+    monkeypatch.setattr(tool, "_get_station_directory", get_directory)
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(
+        data_kind="station_hour", city_names=["南京市"],
+        start_time="2026-08-12 00:00:00", end_time="2026-08-12 01:00:00",
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["station_type"] == "国控"
+    assert requests[0]["codes"] == ["N"]
+
+    result = await tool.execute(
+        data_kind="station_hour", city_names=["南京市"], station_type="市控",
+        start_time="2026-08-12 00:00:00", end_time="2026-08-12 01:00:00",
+    )
+    assert result["metadata"]["station_type"] == "市控"
+    assert requests[1]["codes"] == ["M"]
 
 
 @pytest.mark.asyncio

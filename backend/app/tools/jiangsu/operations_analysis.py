@@ -11,6 +11,7 @@ import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
+from app.tools.jiangsu.station_type import normalize_station_type, station_type_from_row
 
 logger = structlog.get_logger(__name__)
 
@@ -131,8 +132,10 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 "description": (
                     "从江苏运维平台实时目录检索人员—运维单位—责任站点—区县—城市关系。"
                     "当后续接口需要人员姓名、运维单位编码或站点编码而用户只给出自然名称时，先调用本工具；"
+                    "查询“运维单位”可返回目录中的全部运维单位（建议将 depth 设为 1）；"
+                    "站点、区县、城市、运维单位和运维人员之间支持双向关系展开；"
                     "不得猜测或编造人员、单位和站点标识。返回的是实时业务目录关系，不依赖用户手动选择知识库。"
-                    "仅返回精简标识与关系（名称、编码、归属），不含站点完整台账字段（如经纬度）。"
+                    "仅返回精简标识与关系（名称、编码、归属、站点类型），不含站点完整台账字段（如经纬度）。"
                     "如果结果超过上下文容量，完整实体/关系会外置保存并返回 file_path；需要完整清单时应让 execute_python 使用 load_data(file_path) 读取，"
                     "不要把内联 preview 当作全量结果。"
                 ),
@@ -160,6 +163,12 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                             "default": 120,
                             "description": "最多返回实体数，避免把全量人员目录写入上下文。",
                         },
+                        "station_type": {
+                            "type": "string",
+                            "enum": ["全部", "国控", "省控", "市控"],
+                            "default": "全部",
+                            "description": "站点类型筛选；默认全部。可选国控、省控或市控。",
+                        },
                     },
                     "required": ["queries"],
                 },
@@ -172,6 +181,7 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
         queries: list[str] | None = None,
         depth: int = 2,
         max_entities: int = 120,
+        station_type: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
         try:
@@ -185,8 +195,12 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 raise ValueError("depth 必须在 0 到 2 之间")
             if not isinstance(max_entities, int) or not 1 <= max_entities <= 300:
                 raise ValueError("max_entities 必须在 1 到 300 之间")
+            if station_type is not None and normalize_station_type(station_type, allow_all=True) is None:
+                raise ValueError("station_type 必须为 全部、国控、省控或市控")
+            effective_station_type = normalize_station_type(station_type, allow_all=True) or "全部"
 
             graph = await self._load_graph()
+            graph, type_filter_applied = self._filter_graph_station_type(graph, effective_station_type)
             entities: dict[str, dict[str, Any]] = graph["entities"]
             relations: list[dict[str, str]] = graph["relations"]
             seed_ids = self._match_entities(entities, queries)
@@ -198,6 +212,8 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                     "metadata": {
                         "source": "jiangsu_operations_live_directory_graph",
                         "queries": queries,
+                        "station_type": effective_station_type,
+                        "station_type_filter_applied": type_filter_applied,
                         "graph_counts": graph["counts"],
                     },
                     "summary": "江苏运维关系图未找到与查询名称或编码匹配的实体。",
@@ -240,6 +256,7 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                         "source_tool": self.name,
                         "queries": queries,
                         "depth": depth,
+                        "station_type": effective_station_type,
                         "entity_count": len(selected_entities),
                         "relation_count": len(selected_relations),
                         "root_type": "object",
@@ -283,6 +300,8 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                     ),
                     "graph_counts": graph["counts"],
                     "cache_ttl_seconds": self._CACHE_TTL_SECONDS,
+                    "station_type": effective_station_type,
+                    "station_type_filter_applied": type_filter_applied,
                     "queried_at": datetime.now().astimezone().isoformat(),
                 },
                 "summary": (
@@ -368,6 +387,29 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
 
         unit_rows = [row for row in group_rows if row.get("level") == 2 and row.get("id")]
         unit_ids = {str(row["id"]) for row in unit_rows}
+
+        # The platform directory represents the label “运维单位” as a level-1
+        # catalog node, while the actual companies are level-2 children.  Keep
+        # that catalog node in the graph so a query such as “有哪些运维单位” can
+        # resolve to the complete unit list instead of being reported empty.
+        unit_group_ids = {
+            str(row.get("pId"))
+            for row in unit_rows
+            if row.get("pId") not in (None, "")
+        }
+        group_rows_by_id = {
+            str(row["id"]): row
+            for row in group_rows
+            if row.get("id") and str(row["id"]) in unit_group_ids
+        }
+        for group_id in sorted(unit_group_ids):
+            group_row = group_rows_by_id.get(group_id, {})
+            add_entity(
+                f"operation_unit_group:{group_id}",
+                "operation_unit_group",
+                str(group_row.get("name") or "运维单位"),
+                group_id=group_id,
+            )
         for row in unit_rows:
             unit_id = str(row["id"])
             add_entity(
@@ -376,6 +418,13 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 str(row.get("name") or unit_id),
                 operation_unit_id=unit_id,
             )
+            group_id = str(row.get("pId") or "")
+            if group_id:
+                add_relation(
+                    f"operation_unit_group:{group_id}",
+                    "contains",
+                    f"operation_unit:{unit_id}",
+                )
         for row in group_rows:
             parent_id = str(row.get("pId") or "")
             if row.get("level") != 3 or not row.get("id") or parent_id not in unit_ids:
@@ -401,6 +450,7 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
             district_code = str(row.get("districtCode") or row.get("areaCode") or "").strip()
             district_name = str(row.get("districtName") or "").strip()
             unit_id = str(row.get("operationUnitId") or "").strip()
+            station_type = station_type_from_row(row)
             add_entity(
                 station_entity_id,
                 "station",
@@ -409,6 +459,7 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                 city_name=city_name,
                 district_name=district_name,
                 operation_unit_id=unit_id,
+                station_type=station_type,
             )
             if city_name:
                 city_entity_id = f"city:{city_code or city_name}"
@@ -437,8 +488,24 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                         operation_unit_id=unit_id,
                     )
                 add_relation(unit_entity_id, "responsible_for", station_entity_id)
+                # Keep aggregate unit-to-area edges in addition to the
+                # station ownership edge.  This makes all five operational
+                # entity types reachable from one another within two hops:
+                # person -> unit -> city/district and city/district -> unit
+                # -> person, without expanding the full station directory.
+                if city_name:
+                    add_relation(unit_entity_id, "operates_in", city_entity_id)
+                if district_name:
+                    add_relation(unit_entity_id, "operates_in", district_entity_id)
 
-        relation_priority = {"member_of": 0, "responsible_for": 1, "located_in": 2, "part_of": 3}
+        relation_priority = {
+            "contains": 0,
+            "member_of": 1,
+            "responsible_for": 2,
+            "operates_in": 3,
+            "located_in": 4,
+            "part_of": 5,
+        }
         relations = [
             {"source_id": source, "relation_type": relation_type, "target_id": target}
             for source, relation_type, target in sorted(
@@ -452,6 +519,45 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
             counts[entity_type] = counts.get(entity_type, 0) + 1
         counts["relations"] = len(relations)
         return {"entities": entities, "relations": relations, "counts": counts}
+
+    @classmethod
+    def _filter_graph_station_type(
+        cls, graph: dict[str, Any], requested_type: str
+    ) -> tuple[dict[str, Any], bool]:
+        """Return a filtered graph while preserving non-station context nodes."""
+
+        if requested_type == "全部":
+            return graph, False
+        entities = graph["entities"]
+        station_rows = [
+            (entity_id, entity)
+            for entity_id, entity in entities.items()
+            if entity.get("entity_type") == "station"
+        ]
+        typed = [(entity_id, entity) for entity_id, entity in station_rows if entity.get("properties", {}).get("station_type")]
+        if not typed:
+            return graph, False
+        allowed = {
+            entity_id
+            for entity_id, entity in typed
+            if entity.get("properties", {}).get("station_type") == requested_type
+        }
+        filtered_entities = {
+            entity_id: entity
+            for entity_id, entity in entities.items()
+            if entity.get("entity_type") != "station" or entity_id in allowed
+        }
+        filtered_relations = [
+            relation
+            for relation in graph["relations"]
+            if relation["source_id"] in filtered_entities and relation["target_id"] in filtered_entities
+        ]
+        counts: dict[str, int] = {}
+        for entity in filtered_entities.values():
+            entity_type = str(entity.get("entity_type") or "unknown")
+            counts[entity_type] = counts.get(entity_type, 0) + 1
+        counts["relations"] = len(filtered_relations)
+        return {"entities": filtered_entities, "relations": filtered_relations, "counts": counts}, True
 
     @classmethod
     def _match_entities(
@@ -481,10 +587,43 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                     exact.append(entity_id)
                 elif any(query_normalized in alias or alias in query_normalized for alias in aliases):
                     partial.append(entity_id)
-            for entity_id in exact or partial:
+            # A category question such as “有哪些运维单位” names an entity
+            # type, not an entity.  The level-1 catalog node normally makes
+            # this resolvable by name, but some platform directories leave the
+            # unit rows parentless; fall back to seeding every entity of the
+            # labelled type so the listing still works.
+            hits = exact or partial or cls._match_type_label(entities, query_normalized)
+            for entity_id in hits:
                 if entity_id not in matched:
                     matched.append(entity_id)
         return matched
+
+    _TYPE_LABELS: dict[str, str] = {
+        "运维单位": "operation_unit",
+        "运维公司": "operation_unit",
+        "运维人员": "person",
+        "人员": "person",
+        "监测站点": "station",
+        "站点": "station",
+        "城市": "city",
+        "区县": "district",
+    }
+
+    @classmethod
+    def _match_type_label(
+        cls, entities: dict[str, dict[str, Any]], query_normalized: str
+    ) -> list[str]:
+        if not query_normalized:
+            return []
+        for label in sorted(cls._TYPE_LABELS, key=len, reverse=True):
+            if label in query_normalized:
+                entity_type = cls._TYPE_LABELS[label]
+                return [
+                    entity_id
+                    for entity_id, entity in entities.items()
+                    if entity.get("entity_type") == entity_type
+                ]
+        return []
 
     @staticmethod
     def _expand(
@@ -502,8 +641,8 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
             if entity_id in entities
         }
         frontier = list(selected)
-        for _ in range(depth):
-            next_frontier: list[str] = []
+        for current_depth in range(depth):
+            candidates: list[str] = []
             for relation in relations:
                 source_id, target_id = relation["source_id"], relation["target_id"]
                 candidate = None
@@ -519,11 +658,52 @@ class JiangsuOperationsKnowledgeGraphTool(_JiangsuOperationsTool):
                     # paths stay available.
                     if str(entities.get(candidate, {}).get("entity_type")) in seed_types:
                         continue
-                    selected.append(candidate)
-                    selected_set.add(candidate)
-                    next_frontier.append(candidate)
-                    if len(selected) >= max_entities:
-                        return selected
+                    if candidate not in candidates:
+                        candidates.append(candidate)
+            if not candidates:
+                break
+
+            # A city or district can own hundreds of stations.  If all first
+            # hop candidates are consumed in relation order, the entity cap
+            # prevents the next hop (often people via their unit) from ever
+            # being visited.  Before consuming the remaining slots, distribute
+            # candidates across entity types so every cross-type path gets a
+            # chance to remain in the frontier.  The final hop keeps the old
+            # behavior and returns all direct candidates up to max_entities.
+            if current_depth < depth - 1:
+                candidates_by_type: dict[str, list[str]] = {}
+                type_order: list[str] = []
+                for candidate in candidates:
+                    candidate_type = str(entities.get(candidate, {}).get("entity_type"))
+                    if candidate_type not in candidates_by_type:
+                        candidates_by_type[candidate_type] = []
+                        type_order.append(candidate_type)
+                    candidates_by_type[candidate_type].append(candidate)
+                selected_types = {
+                    str(entities[entity_id].get("entity_type"))
+                    for entity_id in selected
+                    if entity_id in entities
+                }
+                type_order_index = {item: index for index, item in enumerate(type_order)}
+                type_order.sort(
+                    key=lambda item: (item in selected_types, type_order_index[item])
+                )
+                remaining_slots = max_entities - len(selected)
+                per_type = max(
+                    1,
+                    (remaining_slots + len(type_order) - 1) // len(type_order),
+                )
+                candidates = [
+                    candidate
+                    for candidate_type in type_order
+                    for candidate in candidates_by_type[candidate_type][:per_type]
+                ]
+
+            next_frontier = candidates[:max_entities - len(selected)]
+            selected.extend(next_frontier)
+            selected_set.update(next_frontier)
+            if len(selected) >= max_entities:
+                return selected
             frontier = next_frontier
             if not frontier:
                 break
@@ -605,12 +785,15 @@ class JiangsuStationDirectoryTool(_JiangsuOperationsTool):
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_station_directory",
-            description="查询江苏运维可用站点台账，用于获取站点城市、运维单位和空间位置等分析上下文。",
+            description="查询江苏运维站点台账明细：返回站点完整原始字段（城市、区县、运维单位、经纬度、站点类型等），适合解读签到定位、核对站点属性。",
             function_schema={
                 "name": "jiangsu_fetch_station_directory",
-                "description": "只读获取江苏运维站点台账；可用站点编码筛选，避免将台账用于修改站点。",
+                "description": (
+                    "只读获取江苏运维站点台账明细，返回站点完整字段（城市、区县、运维单位、经纬度、站点类型等空间位置）。"
+                    "适用场景：解读签到定位、核对站点属性、按站点编码筛选台账。不得用台账修改站点。"
+                ),
                 "parameters": {"type": "object", "properties": {
-                    "station_codes": {"type": "array", "items": {"type": "string"}, "maxItems": 100, "description": "可选站点编码筛选。"},
+                    "station_codes": {"type": "array", "items": {"type": "string"}, "maxItems": 100, "description": "可选站点编码筛选（精确匹配）。"},
                 }},
             },
         )

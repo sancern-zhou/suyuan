@@ -80,7 +80,7 @@ async def test_operations_graph_resolves_person_unit_station_and_area(monkeypatc
         {
             "stationCode": "5006A", "positionName": "江宁站", "cityCode": "320100",
             "cityName": "南京市", "districtCode": "320115", "districtName": "江宁区",
-            "operationUnitId": "TH", "operationUnitName": "武汉天虹",
+            "operationUnitId": "TH", "operationUnitName": "武汉天虹", "stationType": 1,
         }
     ]
 
@@ -104,6 +104,201 @@ async def test_operations_graph_resolves_person_unit_station_and_area(monkeypatc
     } >= {
         ("person:U1", "member_of", "operation_unit:TH"),
         ("operation_unit:TH", "responsible_for", "station:5006A"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_exposes_and_filters_station_type(monkeypatch):
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [{"id": "TH", "pId": "", "name": "江苏运维", "level": 2}]
+    stations = [
+        {"stationCode": "N", "positionName": "国控站", "cityName": "南京市", "stationType": 1},
+        {"stationCode": "P", "positionName": "省控站", "cityName": "南京市", "stationTypeName": "省控"},
+    ]
+
+    async def request(path, params):
+        if path == tool._GROUP_TREE_PATH:
+            return {"result": group_rows}
+        if path == tool._STATION_PATH:
+            return {"result": stations}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(queries=["南京市"], depth=1, station_type="省控")
+
+    assert result["success"] is True
+    station_entities = [
+        entity for entity in result["data"]["entities"] if entity["entity_type"] == "station"
+    ]
+    assert [(entity["name"], entity["properties"]["station_type"]) for entity in station_entities] == [("省控站", "省控")]
+    assert result["metadata"]["station_type"] == "省控"
+    assert result["metadata"]["station_type_filter_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_lists_units_when_querying_unit_category(monkeypatch):
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [
+        {"id": "Operation", "pId": "", "name": "运维", "level": 0},
+        {"id": "OperationUnit", "pId": "Operation", "name": "运维单位", "level": 1},
+        {"id": "TH", "pId": "OperationUnit", "name": "武汉天虹", "level": 2},
+        {"id": "SL1", "pId": "OperationUnit", "name": "江苏苏力", "level": 2},
+    ]
+
+    async def request(path, params):
+        if path == tool._GROUP_TREE_PATH:
+            return {"result": group_rows}
+        return {"result": []}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(queries=["有哪些运维单位"], depth=1, max_entities=10)
+
+    assert result["success"] is True
+    assert [entity["name"] for entity in result["data"]["entities"]] == [
+        "运维单位", "江苏苏力", "武汉天虹",
+    ]
+    assert result["data"]["matched_queries"][0]["entity_ids"] == [
+        "operation_unit_group:OperationUnit",
+    ]
+    assert {
+        (relation["source_id"], relation["relation_type"], relation["target_id"])
+        for relation in result["data"]["relations"]
+    } == {
+        ("operation_unit_group:OperationUnit", "contains", "operation_unit:SL1"),
+        ("operation_unit_group:OperationUnit", "contains", "operation_unit:TH"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_lists_units_when_directory_has_no_catalog_node(monkeypatch):
+    """Live directories may leave level-2 units parentless; the type-label
+    fallback must still list every operation unit for “有哪些运维单位”."""
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [
+        {"id": "TH", "pId": "", "name": "武汉天虹", "level": 2},
+        {"id": "SL1", "pId": "", "name": "江苏苏力", "level": 2},
+    ]
+
+    async def request(path, params):
+        if path == tool._GROUP_TREE_PATH:
+            return {"result": group_rows}
+        return {"result": []}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(queries=["运维单位"], depth=0, max_entities=50)
+
+    assert result["success"] is True
+    assert [entity["name"] for entity in result["data"]["entities"]] == [
+        "武汉天虹", "江苏苏力",
+    ]
+    assert result["data"]["matched_queries"][0]["entity_ids"] == [
+        "operation_unit:TH", "operation_unit:SL1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_type_fallback_never_overrides_name_match(monkeypatch):
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [
+        {"id": "TH", "pId": "", "name": "武汉天虹", "level": 2},
+        {"id": "SL1", "pId": "", "name": "江苏苏力", "level": 2},
+    ]
+    stations = [
+        {
+            "stationCode": "5006A", "positionName": "江宁站", "cityName": "南京市",
+            "districtName": "江宁区", "operationUnitId": "TH", "operationUnitName": "武汉天虹",
+        }
+    ]
+
+    async def request(path, params):
+        if path == tool._GROUP_TREE_PATH:
+            return {"result": group_rows}
+        return {"result": stations}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(queries=["武汉天虹"], depth=0)
+
+    assert result["data"]["matched_queries"][0]["entity_ids"] == ["operation_unit:TH"]
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_connects_all_entity_types_from_any_seed(monkeypatch):
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [
+        {"id": "OperationUnit", "pId": "Operation", "name": "运维单位", "level": 1},
+        {"id": "TH", "pId": "OperationUnit", "name": "武汉天虹", "level": 2},
+        {"id": "U1", "pId": "TH", "name": "张三", "level": 3},
+    ]
+    station_rows = [{
+        "stationCode": "5006A",
+        "positionName": "江宁站",
+        "cityCode": "320100",
+        "cityName": "南京市",
+        "districtCode": "320115",
+        "districtName": "江宁区",
+        "operationUnitId": "TH",
+        "operationUnitName": "武汉天虹",
+    }]
+
+    async def request(path, params):
+        if path == tool._GROUP_TREE_PATH:
+            return {"result": group_rows}
+        return {"result": station_rows}
+
+    monkeypatch.setattr(tool, "_request", request)
+    expected_types = {"person", "operation_unit", "station", "city", "district"}
+    for query in ("张三", "武汉天虹", "江宁站", "江宁区", "南京市"):
+        result = await tool.execute(queries=[query], depth=2, max_entities=20)
+        assert result["success"] is True
+        entity_types = {
+            entity["entity_type"]
+            for entity in result["data"]["entities"]
+            if entity["entity_type"] != "operation_unit_group"
+        }
+        assert entity_types == expected_types
+
+    graph = await tool._load_graph()
+    relation_keys = {
+        (relation["source_id"], relation["relation_type"], relation["target_id"])
+        for relation in graph["relations"]
+    }
+    assert ("operation_unit:TH", "operates_in", "city:320100") in relation_keys
+    assert ("operation_unit:TH", "operates_in", "district:320115") in relation_keys
+
+
+@pytest.mark.asyncio
+async def test_operations_graph_preserves_second_hop_types_when_station_fanout_is_large(monkeypatch):
+    tool = JiangsuOperationsKnowledgeGraphTool()
+    group_rows = [
+        {"id": "OperationUnit", "pId": "Operation", "name": "运维单位", "level": 1},
+        {"id": "TH", "pId": "OperationUnit", "name": "武汉天虹", "level": 2},
+        {"id": "U1", "pId": "TH", "name": "张三", "level": 3},
+    ]
+    station_rows = [
+        {
+            "stationCode": f"S{i}",
+            "positionName": f"站点{i}",
+            "cityCode": "320100",
+            "cityName": "南京市",
+            "districtCode": "320115",
+            "districtName": "江宁区",
+            "operationUnitId": "TH",
+            "operationUnitName": "武汉天虹",
+        }
+        for i in range(50)
+    ]
+
+    async def request(path, params):
+        if path == tool._GROUP_TREE_PATH:
+            return {"result": group_rows}
+        return {"result": station_rows}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(queries=["南京市"], depth=2, max_entities=20)
+
+    assert result["success"] is True
+    assert {entity["entity_type"] for entity in result["data"]["entities"]} >= {
+        "city", "district", "station", "operation_unit", "person",
     }
 
 

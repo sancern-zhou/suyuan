@@ -64,6 +64,81 @@ async def test_statistics_tool_defaults_to_audited_operating_conditions(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_station_statistics_filter_codes_by_station_type(monkeypatch):
+    tool = JiangsuStatisticsTool()
+    calls = []
+
+    async def request(path, params):
+        calls.append((path, params))
+        if path == "AirCityProductBase/GetAllEnabledBSDStationAsync":
+            return {"result": [
+                {"stationCode": "N", "stationType": 1},
+                {"stationCode": "P", "stationTypeName": "省控"},
+                {"stationCode": "M", "stationType": 3},
+            ]}
+        return {"result": {"items": [], "totalCount": 0}}
+
+    monkeypatch.setattr(tool, "_get", request)
+    result = await tool.execute(
+        statistic_kind="station_rank",
+        codes=["N", "P", "M"],
+        station_type="省控",
+        start_time="2026-08-01 00:00:00",
+        end_time="2026-08-12 00:00:00",
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["codes"] == ["P"]
+    assert result["metadata"]["station_type"] == "省控"
+    assert result["metadata"]["station_type_filter_applied"] is True
+    stats_call = calls[-1]
+    assert stats_call[0].endswith("GetStationRankStatisticsPagedAsync")
+    assert ("StationCode[0]", "P") in stats_call[1]
+    assert not any(value == "N" or value == "M" for key, value in stats_call[1] if key.startswith("StationCode"))
+
+
+@pytest.mark.asyncio
+async def test_area_statistics_reject_station_type_dimension(monkeypatch):
+    tool = JiangsuStatisticsTool()
+
+    async def request(path, params):
+        raise AssertionError("area statistic must be rejected before calling the platform")
+
+    monkeypatch.setattr(tool, "_get", request)
+    result = await tool.execute(
+        statistic_kind="city_rank",
+        codes=["320100"],
+        station_type="省控",
+        start_time="2026-08-01 00:00:00",
+        end_time="2026-08-12 00:00:00",
+    )
+
+    assert result["success"] is False
+    assert "city_rank/district_rank" in result["summary"]
+    assert tool.function_schema["parameters"]["properties"]["station_type"]["default"] == "全部"
+
+
+@pytest.mark.asyncio
+async def test_city_data_rejects_station_type_dimension(monkeypatch):
+    tool = JiangsuCityDataTool()
+
+    async def request(path, params):
+        raise AssertionError("area data must be rejected before calling the platform")
+
+    monkeypatch.setattr(tool, "_get", request)
+    result = await tool.execute(
+        data_kind="city_hour",
+        codes=["320100"],
+        station_type="省控",
+        start_time="2026-08-12 00:00:00",
+        end_time="2026-08-12 01:00:00",
+    )
+
+    assert result["success"] is False
+    assert "不支持 station_type" in result["summary"]
+
+
+@pytest.mark.asyncio
 async def test_city_data_resolves_jiangsu_name_inside_the_query_tool(monkeypatch):
     tool = JiangsuCityDataTool()
 

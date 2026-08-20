@@ -26,6 +26,40 @@ def test_result_filter_removes_empty_fields_and_exact_duplicates_but_keeps_time_
     assert metadata["removed_empty_field_count"] >= 3
 
 
+def test_result_filter_keeps_unknown_metric_fields_and_rejects_admin_columns():
+    """Reject-list behaviour: only admin/audit columns are dropped, every other
+    field with a real value — including metrics absent from any allow-list such
+    as per-pollutant IAQI breakdowns — must survive."""
+    records = [
+        {
+            "name": "江宁区",
+            "timePoint": "2026-08-18T00:00:00",
+            "aqi": "113",
+            "o3_8H_IAQI": "113",
+            "pM2_5_IAQI": "32",
+            "visibility": "8500",
+            "id": "f0f0",
+            "createTime": "2026-08-19 06:00:00",
+            "modifyTime": "2026-08-19 06:00:00",
+            "calAreaType": 2,
+            "o3_8H_Mark": "有效",
+        }
+    ]
+
+    compact, _ = compact_air_quality_records(records)
+
+    assert compact == [
+        {
+            "name": "江宁区",
+            "timePoint": "2026-08-18T00:00:00",
+            "aqi": "113",
+            "o3_8H_IAQI": "113",
+            "pM2_5_IAQI": "32",
+            "visibility": "8500",
+        }
+    ]
+
+
 def test_result_filter_does_not_collapse_one_city_hour_series_to_latest_record():
     records = [
         {
@@ -73,7 +107,7 @@ def test_externalizes_filtered_result_over_inline_limit():
     assert len(context.saved[0]["data"]) == 25
 
 
-def test_compact_statistics_records_collapses_metric_blocks_and_drops_missing():
+def test_compact_statistics_records_keeps_per_metric_holder_names():
     records = [
         {
             "dateTimeString": "2026-08-17～2026-08-17",
@@ -104,22 +138,85 @@ def test_compact_statistics_records_collapses_metric_blocks_and_drops_missing():
     assert compact == [
         {
             "time_range": "2026-08-17～2026-08-17",
-            "city_name": "南京市",
-            "district_name": "玄武区",
             "metrics": {
-                "pM2_5": {"value": "35", "rank": "3"},
-                "o3_8h": {"value": "160", "rank": "1", "same_compare": "-5.2", "same_compare_rank": "2"},
+                "pM2_5": {
+                    "city_name": "南京市",
+                    "district_name": "玄武区",
+                    "value": "35",
+                    "rank": "3",
+                    "same_compare_city_name": "南京市",
+                    "same_compare_district_name": "玄武区",
+                },
+                "o3_8h": {
+                    "city_name": "南京市",
+                    "district_name": "玄武区",
+                    "value": "160",
+                    "rank": "1",
+                    "same_compare": "-5.2",
+                    "same_compare_rank": "2",
+                },
             },
-        },
-        {
-            "time_range": "2026-08-17～2026-08-17",
-            "city_name": "南京市",
-            "district_name": "秦淮区",
-        },
+        }
     ]
     assert metadata["raw_record_count"] == 2
-    assert metadata["compacted_record_count"] == 2
+    assert metadata["compacted_record_count"] == 1
+    assert metadata["no_data_names"] == ["秦淮区"]
     assert metadata["removed_empty_field_count"] >= 6
+
+
+def test_compact_statistics_records_does_not_mix_metric_holders_within_slot():
+    """Regression: source rows are rank slots; each metric names its own holder.
+
+    Seen on the live district_rank API: fineRate_DistrictName sorts before
+    pM2_5_DistrictName and points at a different district.  Attributing the
+    whole row to the first name column swaps PM2.5 values between districts.
+    """
+    records = [
+        {
+            "dateTimeString": "2026-08-18～2026-08-18",
+            "fineRate_CityName": "南京市",
+            "fineRate_DistrictName": "江宁区",
+            "fineRate": "0",
+            "fineRate_Rank": "1",
+            "pM2_5_CityName": "南京市",
+            "pM2_5_DistrictName": "溧水区",
+            "pM2_5": "17",
+            "pM2_5_Rank": "1",
+            "pM2_5_SameCompare": "90",
+            "pM2_5_SameCompare_Rank": "1",
+            "pM2_5_SameCompare_CityName": "南京市",
+            "pM2_5_SameCompare_DistrictName": "高淳区",
+            "o3_8h_CityName": "南京市",
+            "o3_8h_DistrictName": "高淳区",
+            "o3_8h": "151",
+            "o3_8h_Rank": "1",
+        },
+        {
+            "dateTimeString": "2026-08-18～2026-08-18",
+            "fineRate_CityName": "南京市",
+            "fineRate_DistrictName": "溧水区",
+            "fineRate": "100",
+            "fineRate_Rank": "2",
+            "pM2_5_CityName": "南京市",
+            "pM2_5_DistrictName": "江宁区",
+            "pM2_5": "22",
+            "pM2_5_Rank": "3",
+        },
+    ]
+
+    compact, _ = compact_statistics_records(records)
+
+    assert compact[0]["metrics"]["pM2_5"]["district_name"] == "溧水区"
+    assert compact[0]["metrics"]["pM2_5"]["value"] == "17"
+    assert compact[0]["metrics"]["pM2_5"]["same_compare_district_name"] == "高淳区"
+    assert compact[0]["metrics"]["fineRate"]["district_name"] == "江宁区"
+    assert compact[0]["metrics"]["o3_8h"]["district_name"] == "高淳区"
+    assert compact[1]["metrics"]["pM2_5"]["district_name"] == "江宁区"
+    assert compact[1]["metrics"]["pM2_5"]["value"] == "22"
+    assert compact[1]["metrics"]["fineRate"]["district_name"] == "溧水区"
+    # no row-level district_name may exist: it would imply one holder per row
+    assert "district_name" not in compact[0]
+    assert "district_name" not in compact[1]
 
 
 def test_compact_statistics_records_collapses_station_name_blocks():
@@ -137,8 +234,7 @@ def test_compact_statistics_records_collapses_station_name_blocks():
     assert compact == [
         {
             "time_range": "2026-08-17～2026-08-17",
-            "station_name": "南京站",
-            "metrics": {"aqi": {"value": "52", "rank": "5"}},
+            "metrics": {"aqi": {"station_name": "南京站", "value": "52", "rank": "5"}},
         }
     ]
 

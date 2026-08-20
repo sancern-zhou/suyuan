@@ -13,13 +13,15 @@ from typing import Any
 INLINE_RECORD_LIMIT = 24
 
 _MISSING_VALUES = {"", "-", "—", "--", "null", "none", "nan", "-99", "-99.0", "-99.000"}
-_USEFUL_FIELDS = {
-    "name", "code", "cityName", "cityCode", "districtName", "districtCode",
-    "positionName", "stationName", "stationCode", "uniqueCode", "timePoint",
-    "dataType", "aqi", "qualityType", "primaryPollutant", "sO2", "nO2",
-    "pM10", "co", "o3", "o3_8H", "pM2_5", "no", "nOx", "windSpeed",
-    "windDirect", "pressure", "temperature", "humidity", "rainFall",
-}
+# Reject-list approach: drop only known non-analytic columns instead of a
+# allow-list, so new provincial metrics (IAQI breakdowns, visibility, ...)
+# flow through automatically instead of being silently discarded.
+_EXCLUDED_FIELDS = {"id", "createTime", "modifyTime", "calAreaType"}
+_EXCLUDED_SUFFIXES = ("_Mark",)
+
+
+def _is_excluded(key: str) -> bool:
+    return key in _EXCLUDED_FIELDS or key.endswith(_EXCLUDED_SUFFIXES)
 
 
 def _is_missing(value: Any) -> bool:
@@ -35,7 +37,7 @@ def compact_air_quality_records(records: list[Any]) -> tuple[list[dict[str, Any]
             continue
         row: dict[str, Any] = {}
         for key, value in item.items():
-            if key not in _USEFUL_FIELDS:
+            if _is_excluded(key):
                 continue
             if _is_missing(value):
                 removed_empty_fields += 1
@@ -55,18 +57,24 @@ def compact_air_quality_records(records: list[Any]) -> tuple[list[dict[str, Any]
         "deduplicated_record_count": len(deduplicated),
         "duplicate_record_count": len(cleaned) - len(deduplicated),
         "removed_empty_field_count": removed_empty_fields,
-        "omitted_field_policy": "已剔除空值、-99、—、审计标记、主键和创建/修改时间等非分析字段，并删除完全重复记录；保留查询范围内各城市/区县/站点的完整时间序列。",
+        "omitted_field_policy": "已剔除空值、-99、—、审计标记(_Mark)和主键、创建/修改时间、计算区域类型等非分析字段，并删除完全重复记录；其余字段（含分指标IAQI及新增指标）自动保留；保留查询范围内各城市/区县/站点的完整时间序列。",
     }
 
 
 _STAT_SUFFIX_KINDS = [
     ("_SameCompare_Rank", "same_compare_rank"),
+    ("_SameCompare_CityName", "same_compare_city_name"),
+    ("_SameCompare_DistrictName", "same_compare_district_name"),
+    ("_SameCompare_StationName", "same_compare_station_name"),
     ("_SameCompare", "same_compare"),
     ("_Rank", "rank"),
     ("_CityName", "city_name"),
     ("_DistrictName", "district_name"),
     ("_StationName", "station_name"),
 ]
+_NAME_KINDS = {"city_name", "district_name", "station_name",
+               "same_compare_city_name", "same_compare_district_name", "same_compare_station_name"}
+_VALUE_KINDS = {"value", "rank", "same_compare", "same_compare_rank"}
 
 
 def _stat_metric_and_kind(key: str) -> tuple[str, str] | None:
@@ -80,16 +88,29 @@ def _stat_metric_and_kind(key: str) -> tuple[str, str] | None:
 
 
 def compact_statistics_records(records: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Collapse per-metric rank statistics rows into a compact nested shape.
+    """Re-shape rank-slot statistics rows so values keep their own holder.
 
-    Source rows repeat the same city/district name for every metric and pad
-    missing values with "—": a single row easily exceeds 3,000 characters.
-    The compact shape keeps one name triple per row plus
-    ``metrics[metric] = {value, rank, same_compare, same_compare_rank}``
-    with missing entries removed.
+    The source emits one row per rank slot: inside a row every metric family
+    (pM2_5, o3_8h, ...) carries its own name/value/rank/same-compare columns
+    that may point at different areas, and naming a row after the first name
+    column would mis-attribute values to the wrong district or station.  The
+    compact shape keeps one output row per source rank slot with
+    ``metrics[metric] = {name fields..., value, rank, same_compare...}`` so
+    each number stays attached to the area it names, while empty "—" padding
+    is removed and rows without any metric values collapse into
+    ``no_data_names``.
     """
     cleaned: list[dict[str, Any]] = []
     removed_empty_fields = 0
+    no_data_names: list[str] = []
+    seen_no_data: set[str] = set()
+
+    def _track_no_data(name_value: Any) -> None:
+        text = str(name_value)
+        if text and text not in seen_no_data:
+            seen_no_data.add(text)
+            no_data_names.append(text)
+
     for item in records:
         if not isinstance(item, dict):
             continue
@@ -104,10 +125,11 @@ def compact_statistics_records(records: list[Any]) -> tuple[list[dict[str, Any]]
         metric_names = set()
         for key in present:
             pair = _stat_metric_and_kind(key)
-            if pair is not None and pair[1] not in {"city_name", "district_name", "station_name"}:
+            if pair is not None and pair[1] not in _NAME_KINDS:
                 metric_names.add(pair[0])
         row: dict[str, Any] = {}
         metrics: dict[str, dict[str, Any]] = {}
+        names_only: dict[str, dict[str, Any]] = {}
         for key, value in sorted(present.items()):
             if key == "dateTimeString":
                 row["time_range"] = value
@@ -120,19 +142,38 @@ def compact_statistics_records(records: list[Any]) -> tuple[list[dict[str, Any]]
                     row[key] = value
                 continue
             metric, kind = pair
-            if kind in {"city_name", "district_name", "station_name"}:
-                row.setdefault(kind, value)
-                continue
-            metrics.setdefault(metric, {})[kind] = value
-        if metrics:
-            row["metrics"] = metrics
+            if kind in _NAME_KINDS and metric not in metric_names:
+                names_only.setdefault(metric, {}).setdefault(kind, value)
+            else:
+                metrics.setdefault(metric, {})[kind] = value
+        # keep only metric families that carry at least one real value
+        valued: dict[str, dict[str, Any]] = {}
+        for metric, fields in metrics.items():
+            if any(kind in _VALUE_KINDS for kind in fields):
+                valued[metric] = fields
+        has_payload = bool(valued) or any(key != "time_range" for key in row)
+        if not has_payload:
+            # the row only carries names: every metric lacks a value, so its
+            # holders are areas without data for this statistic window
+            for fields in names_only.values():
+                holder = fields.get("district_name") or fields.get("station_name") or fields.get("city_name")
+                if holder is not None:
+                    _track_no_data(holder)
+            continue
+        if valued:
+            row["metrics"] = dict(sorted(valued.items()))
         cleaned.append(row)
 
     return cleaned, {
         "raw_record_count": len(records),
         "compacted_record_count": len(cleaned),
         "removed_empty_field_count": removed_empty_fields,
-        "field_shape": "每条记录含 time_range、city_name/district_name/station_name 与 metrics{指标: {value, rank, same_compare, same_compare_rank}}；空值(—)字段已剔除。",
+        "no_data_names": no_data_names,
+        "field_shape": (
+            "每条记录对应一个名次档位：time_range + metrics{指标: {district_name/station_name, value, rank, "
+            "same_compare, same_compare_rank, same_compare_*_name}}；同一档位内各指标的持有区域互相独立，"
+            "数值不会跨区域错配；空值(—)字段已剔除，全部指标为空的区域仅列入 metadata.no_data_names。"
+        ),
     }
 
 

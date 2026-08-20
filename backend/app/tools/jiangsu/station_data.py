@@ -11,6 +11,7 @@ import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.jiangsu.result_filter import compact_air_quality_records, externalize_compact_records
+from app.tools.jiangsu.station_type import filter_station_rows, normalize_station_type
 
 logger = structlog.get_logger(__name__)
 
@@ -61,12 +62,15 @@ class JiangsuStationDataTool(LLMTool):
         self._station_directory_lock = asyncio.Lock()
         super().__init__(
             name="jiangsu_fetch_station_data",
-            description="查询江苏省空气监测站的小时、日均或5分钟原始/审核、工况/标况数据。",
+            description="查询江苏省空气监测站的小时、日均或5分钟原始/审核、工况/标况数据，支持国控、省控、市控站点筛选。",
             category=ToolCategory.QUERY,
             version="1.0.0",
             function_schema={
                 "name": "jiangsu_fetch_station_data",
                 "description": (
+                    "读取站点明细数据（小时、日均或5分钟原始/审核、工况/标况），用于查看原始明细、核对有效天数或自定义时间粒度的分析；"
+                    "凡询问均值浓度、排名、综合指数、最高/最低站点等平台已有统计口径的问题，必须优先调用 jiangsu_query_statistics 直接查询，"
+                    "不要用本工具拉取明细后自行求平均或排序。"
                     "按江苏省、市、区县、站点名称或编码读取下辖站点数据；区域和站点编码由工具内部实时目录解析，"
                     "一次调用内受控串行分批，禁止由 Agent 拆成逐站并发查询。"
                     "全省查询成本很高，仅在用户明确要求且确有必要时使用，并必须传 allow_province_query=true；"
@@ -100,6 +104,12 @@ class JiangsuStationDataTool(LLMTool):
                             "type": "array", "items": {"type": "string"}, "minItems": 1,
                             "description": "江苏区县名称，例如江宁区；工具内部展开其下辖全部站点。可写成“南京市江宁区”以消除同名歧义。",
                         },
+                        "station_type": {
+                            "type": "string",
+                            "enum": ["国控", "省控", "市控", "全部"],
+                            "default": "国控",
+                            "description": "站点类型筛选；按城市、区县或站点名称解析时默认国控，可选省控、市控或全部。",
+                        },
                         "allow_province_query": {
                             "type": "boolean", "default": False,
                             "description": "仅当用户明确要求全省站点且确有必要时设为 true。全省查询会增加接口负载并产生大量结果；默认 false。",
@@ -132,6 +142,7 @@ class JiangsuStationDataTool(LLMTool):
         station_names: list[str] | None = None,
         city_names: list[str] | None = None,
         district_names: list[str] | None = None,
+        station_type: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
         data_type: int = 1,
@@ -140,11 +151,13 @@ class JiangsuStationDataTool(LLMTool):
         **_: Any,
     ) -> dict[str, Any]:
         try:
+            effective_station_type = normalize_station_type(station_type, allow_all=True) or "国控"
             self._validate_agent_scope(
                 station_codes=station_codes,
                 station_names=station_names,
                 city_names=city_names,
                 district_names=district_names,
+                station_type=station_type,
                 allow_province_query=allow_province_query,
             )
             records, payload = await self.fetch_raw_records(
@@ -158,6 +171,7 @@ class JiangsuStationDataTool(LLMTool):
                 data_type=data_type,
                 pollutant_codes=pollutant_codes,
                 allow_province_query=allow_province_query,
+                station_type=station_type,
             )
             compact_records, filter_metadata = compact_air_quality_records(records)
             raw_file_path = None
@@ -181,6 +195,7 @@ class JiangsuStationDataTool(LLMTool):
                 "data_type_label": self._DATA_TYPES[data_type],
                 "station_codes": payload["codes"],
                 "station_names": station_names or [], "city_names": city_names or [], "district_names": district_names or [],
+                "station_type": effective_station_type,
                 "province_query": payload.get("province_query", False),
                 "batching": payload.get("batching", {}),
                 "time_range": [start_time, end_time],
@@ -214,6 +229,7 @@ class JiangsuStationDataTool(LLMTool):
         station_names: list[str] | None,
         city_names: list[str] | None,
         district_names: list[str] | None,
+        station_type: str | None,
         allow_province_query: bool,
     ) -> None:
         selectors = [station_codes, station_names, city_names, district_names]
@@ -224,6 +240,8 @@ class JiangsuStationDataTool(LLMTool):
                 not values or not all(isinstance(item, str) and item.strip() for item in values)
             ):
                 raise ValueError("站点编码和区域/站点名称必须是非空字符串数组")
+        if station_type is not None and normalize_station_type(station_type, allow_all=True) is None:
+            raise ValueError("station_type 必须为 国控、省控、市控 或 全部")
         province_requested = any(
             "".join(item.split()) in self._PROVINCE_SELECTORS for item in city_names or []
         )
@@ -241,6 +259,7 @@ class JiangsuStationDataTool(LLMTool):
         station_names: list[str] | None = None,
         city_names: list[str] | None = None,
         district_names: list[str] | None = None,
+        station_type: str | None = None,
         start_time: str | None,
         end_time: str | None,
         data_type: int = 1,
@@ -255,7 +274,7 @@ class JiangsuStationDataTool(LLMTool):
         private HTTP helpers.
         """
         resolved_codes = await self._resolve_station_codes(
-            station_codes, station_names, city_names, district_names
+            station_codes, station_names, city_names, district_names, station_type=station_type
         )
         self._validate(
             data_kind, resolved_codes, start_time, end_time, data_type, pollutant_codes,
@@ -387,15 +406,44 @@ class JiangsuStationDataTool(LLMTool):
             raise ValueError(str(result.get("msg") or "江苏接口返回失败"))
         return result
 
-    async def _resolve_station_codes(self, station_codes, station_names, city_names, district_names) -> list[str]:
+    async def _resolve_station_codes(
+        self,
+        station_codes,
+        station_names,
+        city_names,
+        district_names,
+        *,
+        station_type: str | None = None,
+    ) -> list[str]:
         direct = [str(code).strip() for code in station_codes or [] if str(code).strip()]
         selectors = [*(station_names or []), *(city_names or []), *(district_names or [])]
         if not selectors:
-            return list(dict.fromkeys(direct))
+            # Exact codes are commonly supplied by background diagnostics. Do
+            # not add a directory round trip for the default case; an explicit
+            # type asks us to validate them against the live directory.
+            if station_type is None or normalize_station_type(station_type, allow_all=True) == "全部":
+                return list(dict.fromkeys(direct))
+            async with self._station_directory_lock:
+                if self._station_directory is None:
+                    self._station_directory = await self._get_station_directory()
+            typed_rows, _ = filter_station_rows(self._station_directory or [], station_type)
+            allowed = {
+                str(row.get("stationCode") or row.get("StationCode"))
+                for row in typed_rows
+                if row.get("stationCode") or row.get("StationCode")
+            }
+            # Older deployments may omit the type field altogether. In that
+            # case keep the exact codes and expose the limitation in metadata
+            # rather than returning an unexpected empty query.
+            return list(dict.fromkeys(code for code in direct if code in allowed)) or (
+                list(dict.fromkeys(direct)) if not allowed else []
+            )
         async with self._station_directory_lock:
             if self._station_directory is None:
                 self._station_directory = await self._get_station_directory()
         rows = self._station_directory or []
+        effective_type = normalize_station_type(station_type, allow_all=True) or "国控"
+        rows, _ = filter_station_rows(rows, effective_type)
         normalise = lambda value: str(value or "").strip().replace(" ", "").rstrip("省市区县")
         codes = list(direct)
         for name in station_names or []:

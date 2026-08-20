@@ -15,6 +15,7 @@ from app.tools.jiangsu.result_filter import (
     compact_statistics_records,
     externalize_compact_records,
 )
+from app.tools.jiangsu.station_type import filter_station_rows, normalize_station_type
 
 logger = structlog.get_logger(__name__)
 
@@ -154,13 +155,13 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
         )
         super().__init__(
             name=f"jiangsu_fetch_{self._SCOPE}_data",
-            description=f"查询江苏省{scope_cn}小时或日均空气质量明细数据。",
+            description=f"查询江苏省{scope_cn}小时或日均空气质量明细数据（平台区域汇总口径，不提供国控/省控/市控站点类型筛选）。",
             category=ToolCategory.QUERY,
             version="1.1.0",
             function_schema={
                 "name": f"jiangsu_fetch_{self._SCOPE}_data",
                 "description": (
-                    f"只读查询江苏省{scope_cn}小时或日均空气质量数据，返回 AQI、质量等级和主要污染物。"
+                    f"只读查询江苏省{scope_cn}小时或日均空气质量数据，返回 AQI、质量等级和主要污染物。该接口是平台按行政区划汇总的结果，不支持 station_type；需要按站点类型查询时使用站点明细或站点统计工具。"
                     f"{province_note}"
                     "超过24条过滤后结果将外部化保存，data仅返回首尾样本，file_path可供按需读取。"
                 ),
@@ -182,10 +183,13 @@ class _JiangsuAreaDataTool(_JiangsuApiTool):
 
     async def execute(self, context=None, data_kind: str | None = None, codes: list[str] | None = None, area_names: list[str] | None = None,
                       start_time: str | None = None, end_time: str | None = None, data_type: int = 1,
-                      max_results: int = 200, **_: Any) -> dict[str, Any]:
+                      max_results: int = 200, station_type: str | None = None,
+                      **_: Any) -> dict[str, Any]:
         try:
             if data_kind not in self._ENDPOINTS:
                 raise ValueError(f"data_kind 必须为 {'、'.join(self._ENDPOINTS)}")
+            if station_type is not None:
+                raise ValueError("城市/区县平台汇总数据不支持 station_type；请使用站点明细或站点统计工具")
             codes = await self._resolve_area_codes(codes, area_names, self._SCOPE)
             if not codes or len(codes) > 100 or not all(isinstance(code, str) and code.strip() for code in codes):
                 if len(codes) > 100:
@@ -388,22 +392,36 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
     _CODE_FIELDS = {"city_rank": "CityCode", "district_rank": "DistrictCode", "station_rank": "StationCode",
                     "station_o3_rank": "StationCode", "station_overday": "StationCode",
                     "station_transfer_rate": "codes", "station_effective_rate": "codes", "station_receive_rate": "codes"}
+    _STATION_STATISTIC_KINDS = {
+        "station_rank",
+        "station_o3_rank",
+        "station_overday",
+        "station_transfer_rate",
+        "station_effective_rate",
+        "station_receive_rate",
+    }
 
     def __init__(self) -> None:
         super().__init__(
-            name="jiangsu_query_statistics", description="查询江苏省城市、区县、站点排名及传输率、有效率等统计结果。",
+            name="jiangsu_query_statistics", description="查询江苏省城市、区县、站点的均值浓度、排名、综合指数及传输率、有效率等平台统计结果。",
             category=ToolCategory.QUERY, version="1.1.0",
             function_schema={
                 "name": "jiangsu_query_statistics",
                 "description": (
-                    "只读查询江苏平台已计算的排名、同比、达标率、超标天、传输率、有效率和接收率统计。"
-                    "结果已压缩为 time_range、名称字段与 metrics{指标: {value, rank, same_compare, same_compare_rank}}，空值字段已剔除；"
+                    "只读查询江苏平台已计算的统计结果；凡询问均值浓度（平均浓度、均值对比）、排名、综合指数、最高/最低站点或区域、同比、达标率、超标天、"
+                    "传输率、有效率和接收率等统计问题时，必须优先用本工具直接查询，禁止拉取明细数据自行求平均或排序来替代平台口径。"
+                    "排名类 statistic_kind（city_rank/district_rank/station_rank/station_o3_rank）返回的就是时段内污染物平均浓度排名。"
+                    "排名类结果每条记录对应一个名次档位：metrics{指标: {district_name/station_name, value, rank, "
+                    "same_compare, same_compare_rank, same_compare_*_name}}，同一档位内各指标的持有区域互相独立；"
+                    "空值字段已剔除，全部指标为空的区域仅列入 metadata.no_data_names；"
                     "超过24条时完整结果外部化保存为文件，data 仅返回首尾样本，可用 file_path 读取。"
-                    "district_rank 查询全省所有区县时，codes 可传 jiangsu_resolve_geography 解析出的全部区县编码。"
+                    "district_rank 查询全省所有区县时，codes 可传 jiangsu_resolve_geography 解析出的全部区县编码；"
+                    "站点编码未知时，可先用 jiangsu_fetch_station_directory 或 jiangsu_resolve_geography 解析再传入 codes。"
                 ),
                 "parameters": {"type": "object", "properties": {
-                    "statistic_kind": {"type": "string", "enum": list(self._ENDPOINTS), "description": "统计类型。"},
+                    "statistic_kind": {"type": "string", "enum": list(self._ENDPOINTS), "description": "统计类型。city_rank/district_rank/station_rank/station_o3_rank 为时段平均浓度排名（station_rank 按站点、district_rank 按区县、city_rank 按城市）；station_overday 为超标天数；station_transfer_rate/station_effective_rate/station_receive_rate 为传输率/有效率/接收率。"},
                     "codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "城市、区县或站点编码，最多300个；可先用 jiangsu_resolve_geography 将名称解析为编码。"},
+                    "station_type": {"type": "string", "enum": ["全部", "国控", "省控", "市控"], "default": "全部", "description": "仅 station_rank/station_o3_rank/station_overday/传输率/有效率/接收率生效；按实时站点目录过滤站点编码，默认全部。city_rank/district_rank 是平台区域汇总口径，不支持该维度。"},
                     "start_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "end_time": {"type": "string", "description": "YYYY-MM-DD HH:mm:ss"},
                     "data_type": {"type": "integer", "enum": [0, 1, 2, 3], "default": 1,
@@ -419,7 +437,8 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
     async def execute(self, context=None, statistic_kind: str | None = None, codes: list[str] | None = None,
                       start_time: str | None = None, end_time: str | None = None, data_type: int = 1,
                       pollutant_code: str | None = None, cal_area_type: int | None = None,
-                      ascending: bool = True, max_results: int = 200, **_: Any) -> dict[str, Any]:
+                      ascending: bool = True, max_results: int = 200,
+                      station_type: str | None = None, **_: Any) -> dict[str, Any]:
         try:
             if statistic_kind not in self._ENDPOINTS:
                 raise ValueError("不支持的 statistic_kind")
@@ -431,6 +450,25 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                 raise ValueError("station_overday 必须提供 pollutant_code")
             if not isinstance(max_results, int) or not 1 <= max_results <= 1000:
                 raise ValueError("max_results 必须在 1 至 1000 之间")
+            if station_type is not None and normalize_station_type(station_type, allow_all=True) is None:
+                raise ValueError("station_type 必须为 全部、国控、省控或市控")
+            effective_station_type = normalize_station_type(station_type, allow_all=True) or "全部"
+            if effective_station_type != "全部" and statistic_kind not in self._STATION_STATISTIC_KINDS:
+                raise ValueError("station_type 仅适用于站点排名、超标天数、传输率、有效率和接收率统计；city_rank/district_rank 不支持")
+            station_type_filter_applied = False
+            if effective_station_type != "全部" and statistic_kind in self._STATION_STATISTIC_KINDS:
+                directory_payload = await self._get("AirCityProductBase/GetAllEnabledBSDStationAsync", [])
+                directory_rows = [row for row in directory_payload.get("result") or [] if isinstance(row, dict)]
+                typed_rows, station_type_filter_applied = filter_station_rows(directory_rows, effective_station_type)
+                allowed_codes = {
+                    str(row.get("stationCode") or row.get("StationCode") or "").strip()
+                    for row in typed_rows
+                }
+                allowed_codes.discard("")
+                if station_type_filter_applied:
+                    codes = [code for code in codes if code in allowed_codes]
+                    if not codes:
+                        raise ValueError(f"站点编码中没有{effective_station_type}站点")
             self._parse_range(start_time, end_time)
             code_field = self._CODE_FIELDS[statistic_kind]
             params: list[tuple[str, Any]] = [("skipCount", 0), ("maxResultCount", max_results)]
@@ -454,7 +492,9 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
                 metadata={"source_tool": self.name, "source_record_count": len(items)},
             )
             metadata = {"source": "jiangsu_air_province_api", "endpoint": endpoint,
-                        "statistic_kind": statistic_kind, "codes": codes, "time_range": [start_time, end_time],
+                        "statistic_kind": statistic_kind, "codes": codes, "station_type": effective_station_type,
+                        "station_type_filter_applied": station_type_filter_applied,
+                        "time_range": [start_time, end_time],
                         "data_type": data_type, "data_type_label": self._DATA_TYPES[data_type],
                         "total_count": result.get("totalCount", len(items)), "record_count": len(compact_items),
                         "queried_at": datetime.now().astimezone().isoformat(), **filter_metadata}
@@ -462,7 +502,7 @@ class JiangsuStatisticsTool(_JiangsuApiTool):
             return {
                 "status": "success" if compact_items else "empty", "success": True, "data": inline_items,
                 "metadata": metadata,
-                "summary": f"江苏{statistic_kind}统计查询完成：压缩后保留 {len(compact_items)} 条记录（每条含指标值、排名与同比，空值字段已剔除）。",
+                "summary": f"江苏{statistic_kind}统计查询完成：保留 {len(compact_items)} 个名次档位记录（各指标的名称/值/排名互相独立归属，空值已剔除；无数据区域见 metadata.no_data_names）。",
                 **{key: externalization[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
                 **({"file_path": filtered_file_path} if filtered_file_path else {}),
             }
