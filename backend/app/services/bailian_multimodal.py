@@ -52,6 +52,10 @@ def _request_params(*, image_url: str, prompt: str, model: str, max_tokens: int)
     return {
         "model": model,
         "max_tokens": max_tokens,
+        # Structured attachment checks need a short, machine-readable answer.
+        # Qwen models may otherwise spend the whole output budget in a
+        # `thinking` block and never emit the requested JSON payload.
+        "thinking": {"type": "disabled"},
         "messages": [
             {
                 "role": "user",

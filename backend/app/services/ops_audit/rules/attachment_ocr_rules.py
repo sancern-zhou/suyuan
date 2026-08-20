@@ -199,6 +199,11 @@ def _check_o3_transfer_six_point_visual(
 
     if not _flow_visual_rule_enabled(O3_TRANSFER_SIX_POINT_RULE_ID):
         return
+    filename_text = str(item.get("filename") or "").upper().replace(" ", "")
+    # Individual concentration/zero-point photos are evidence for a single
+    # transfer point, not the six-row transfer summary this rule audits.
+    if any(token in filename_text for token in ("实测", "零点", "流量测", "流量示")):
+        return
     result = extract_attachment_json(
         str(item["source_path"]),
         provider="flow_visual",
@@ -1964,6 +1969,8 @@ def _is_flow_visual_candidate(item: dict[str, Any]) -> bool:
             "臭氧传递",
             "臭氧发生器",
             "工作标准",
+            "动态校准仪",
+            "浓度数采",
         )
     ):
         return True

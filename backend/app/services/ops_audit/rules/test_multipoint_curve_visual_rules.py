@@ -126,6 +126,18 @@ def test_build_tasks_selects_curves_and_excludes_point_and_record_photos(tmp_pat
     assert tasks[0]["candidate_items"][0]["original_path"] == "/WebFiles/梯度图.jpg"
 
 
+def test_build_tasks_accepts_production_short_multipoint_filename(tmp_path):
+    tasks = build_multipoint_curve_visual_tasks(
+        {"WORKINGORDERCODE": "CH1"},
+        [("RF_Q_GASEOUSMULTIPOINT_O3", _form())],
+        [_attachment("O3多点.png"), _attachment("O3多点90.jpg")],
+        [],
+        evidence_dir=tmp_path,
+    )
+
+    assert [item["filename"] for item in tasks[0]["candidate_items"]] == ["O3多点.png"]
+
+
 class _Response:
     content = b"image-bytes"
 

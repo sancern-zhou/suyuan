@@ -184,7 +184,12 @@ def _is_curve_candidate(item: dict[str, Any]) -> bool:
     normalized = filename.lower().replace(" ", "")
     if any(keyword in normalized for keyword in EXCLUDED_IMAGE_KEYWORDS):
         return False
-    return any(keyword in normalized for keyword in CURVE_KEYWORDS)
+    if any(keyword in normalized for keyword in CURVE_KEYWORDS):
+        return True
+    # Production attachments often use concise names such as ``O3多点.png``
+    # or ``四气态多点.png``.  Keep single-point screenshots such as
+    # ``O3多点90.jpg`` excluded because they do not show the full curve.
+    return "多点" in normalized and not re.search(r"多点\d+", normalized)
 
 
 def run_multipoint_curve_visual_task(task: dict[str, Any], issues: list[Issue]) -> None:
