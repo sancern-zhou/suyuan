@@ -300,6 +300,20 @@ class ScheduledTaskExecutor:
             f"prompt: {prompt[:100]}..."
         )
 
+        knowledge_base_ids = None
+        if task is not None and task.knowledge_base_binding:
+            from app.knowledge_base.project_bindings import resolve_project_knowledge_base_ids
+
+            knowledge_base_ids = await resolve_project_knowledge_base_ids(
+                task.knowledge_base_binding
+            )
+            if not knowledge_base_ids:
+                logger.warning(
+                    "scheduled_task_knowledge_base_unavailable",
+                    task_id=task.task_id,
+                    binding=task.knowledge_base_binding,
+                )
+
         # 收集Agent响应
         data_ids = []
         visuals = []
@@ -321,6 +335,7 @@ class ScheduledTaskExecutor:
                 manual_mode=manual_mode,
                 session_storage_mode=("custom" if manual_mode == "custom" else "assistant"),
                 selected_skill_context=selected_skill_context,
+                knowledge_base_ids=knowledge_base_ids,
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

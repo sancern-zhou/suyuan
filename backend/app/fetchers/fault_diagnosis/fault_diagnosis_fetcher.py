@@ -26,11 +26,25 @@ class FaultDiagnosisFetcher(DataFetcher):
 
     async def fetch_and_store(self):
         try:
-            result = FaultDiagnosisService(output_root=self.output_root).run(limit=self.limit)
+            # The graph is an optional, bounded hint source. If the binding or
+            # snapshot is unavailable, retain the service's explicit fallback
+            # metadata and continue with the evidence-pack diagnosis.
+            from app.knowledge_base.graph_guidance import build_graph_guidance_provider
+            from app.knowledge_base.project_bindings import resolve_project_knowledge_base_ids
+
+            knowledge_base_ids = await resolve_project_knowledge_base_ids(
+                "station_fault_diagnosis"
+            )
+            provider = await build_graph_guidance_provider(knowledge_base_ids)
+            result = FaultDiagnosisService(
+                output_root=self.output_root,
+                knowledge_graph_guidance_provider=provider,
+            ).run(limit=self.limit)
             logger.info(
                 "fault_diagnosis_fetcher_completed",
                 processed_count=result.get("processed_count", 0),
                 output_root=result.get("output_root"),
+                knowledge_graph_enabled=provider is not None,
             )
             return result
         except Exception as exc:
