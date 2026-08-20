@@ -85,7 +85,7 @@ const props = defineProps({ kbId: { type: String, required: true } })
 defineEmits(['open-document-chunk'])
 const store = useKnowledgeBaseStore(); const canvas = ref(null); const workbench = ref(null)
 const scene = computed(() => store.knowledgeScene)
-const includeHistory = ref(false); const showRelationLabels = ref(true); const selectedEntityTypes = ref(new Set()); const selectedRelationTypes = ref(new Set())
+const includeHistory = ref(false); const showRelationLabels = ref(false); const selectedEntityTypes = ref(new Set()); const selectedRelationTypes = ref(new Set())
 const selected = ref(null); const mergeSource = ref(null); const layouting = ref(false); const loadError = ref('')
 const buildMode = ref('pending'); const buildTask = ref(null)
 let buildPoller = null; let lastBuildStatus = null

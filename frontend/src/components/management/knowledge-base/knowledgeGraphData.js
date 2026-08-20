@@ -11,6 +11,15 @@ export function stableTypeColor(type, palette = NODE_COLORS) {
   return palette[hash(type) % palette.length]
 }
 
+// Keep the full value in `original`; these labels are only the compact canvas
+// representation.  Long entity/relation names otherwise dominate the global
+// view and overlap neighbouring edges.
+export function compactGraphLabel(value, maxLength = 14) {
+  const text = String(value || '')
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, Math.max(1, maxLength - 1))}…`
+}
+
 export function toG6Data(entities = [], relations = []) {
   const degrees = new Map(entities.map(entity => [String(entity.id), 0]))
   relations.forEach(relation => {
@@ -30,6 +39,7 @@ export function toG6Data(entities = [], relations = []) {
       id: String(entity.id),
       data: {
         label: entity.name || entity.canonical_name || String(entity.id),
+        displayLabel: compactGraphLabel(entity.name || entity.canonical_name || String(entity.id), 14),
         type: entity.entity_type || 'Entity',
         color: stableTypeColor(entity.entity_type || 'Entity'),
         degree: degrees.get(String(entity.id)) || 0,
@@ -46,6 +56,7 @@ export function toG6Data(entities = [], relations = []) {
       target: String(relation.target_entity_id),
       data: {
         label: relation.relation_type || 'RELATED_TO',
+        displayLabel: compactGraphLabel(relation.relation_type || 'RELATED_TO', 10),
         type: relation.relation_type || 'RELATED_TO',
         color: stableTypeColor(relation.relation_type || 'RELATED_TO', EDGE_COLORS),
         parallelIndex,
