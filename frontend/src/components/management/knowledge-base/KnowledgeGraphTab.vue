@@ -40,19 +40,19 @@
     <KnowledgeGraphToolbar
       :entity-types="entityTypes" :relation-types="relationTypes"
       :selected-entity-types="[...selectedEntityTypes]" :selected-relation-types="[...selectedRelationTypes]"
-      :show-labels="showRelationLabels" :include-history="includeHistory"
+      :show-labels="showRelationLabels" :neighborhood-mode="neighborhoodMode" :include-history="includeHistory"
       :loaded-entities="store.graphProgress.loadedEntities" :loaded-relations="store.graphProgress.loadedRelations"
       :entity-total="store.graphProgress.entityTotal" :relation-total="store.graphProgress.relationTotal"
       :loading="store.graphLoading" :layouting="layouting"
       @search="search" @entity-filter="toggleEntityType" @relation-filter="toggleRelationType"
-      @labels="showRelationLabels=$event" @history="changeHistory" @fit="canvas?.fitView()"
+      @labels="showRelationLabels=$event" @neighborhood="setNeighborhoodMode" @history="changeHistory" @fit="canvas?.fitView()"
       @layout="canvas?.relayout()" @fullscreen="fullscreen" @refresh="reload"
     />
     <p v-if="loadError" class="error">{{ loadError }} <button @click="reload">重试</button></p>
     <p v-if="mergeSource" class="merge-notice">请选择要合并到的目标实体：{{ mergeSource.name }} <button @click="mergeSource=null">取消</button></p>
     <div class="graph-workbench">
       <KnowledgeGraphCanvas ref="canvas" :nodes="visibleGraph.nodes" :edges="visibleGraph.edges" :show-relation-labels="showRelationLabels"
-        @node-click="selectEntity" @relation-click="selectRelation" @canvas-click="selected=null"
+        @node-click="selectEntity" @relation-click="selectRelation" @canvas-click="clearSelection"
         @layout-start="layouting=true" @layout-end="layouting=false" />
       <KnowledgeGraphDetailPanel v-if="selected" :kb-id="kbId" :selected="selected" @close="selected=null"
         @confirm="setReview($event, 'confirmed')" @reject="setReview($event, 'rejected')" @save="saveFact"
@@ -68,7 +68,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as api from '@/api/knowledgeBase'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore'
-import { filterGraphData, findEntityMatches, toG6Data } from './knowledgeGraphData.js'
+import { filterGraphData, findEntityMatches, neighborIds, toG6Data } from './knowledgeGraphData.js'
 import KnowledgeGraphChat from '../KnowledgeGraphChat.vue'
 import KnowledgeGraphCanvas from './KnowledgeGraphCanvas.vue'
 import KnowledgeGraphDetailPanel from './KnowledgeGraphDetailPanel.vue'
@@ -85,7 +85,7 @@ const props = defineProps({ kbId: { type: String, required: true } })
 defineEmits(['open-document-chunk'])
 const store = useKnowledgeBaseStore(); const canvas = ref(null); const workbench = ref(null)
 const scene = computed(() => store.knowledgeScene)
-const includeHistory = ref(false); const showRelationLabels = ref(false); const selectedEntityTypes = ref(new Set()); const selectedRelationTypes = ref(new Set())
+const includeHistory = ref(false); const showRelationLabels = ref(false); const neighborhoodMode = ref(false); const focusNodeId = ref(null); const selectedEntityTypes = ref(new Set()); const selectedRelationTypes = ref(new Set())
 const selected = ref(null); const mergeSource = ref(null); const layouting = ref(false); const loadError = ref('')
 const buildMode = ref('pending'); const buildTask = ref(null)
 let buildPoller = null; let lastBuildStatus = null
@@ -94,7 +94,12 @@ const buildStatusLabel = computed(() => ({ queued: '排队中', running: '构建
 const candidateCount = computed(() => store.graphEntities.filter(item => item.review_status === 'candidate').length)
 const confirmedCount = computed(() => store.graphEntities.filter(item => ['confirmed', 'published'].includes(item.review_status)).length)
 const fullGraph = computed(() => toG6Data(store.graphEntities, store.graphRelations))
-const visibleGraph = computed(() => filterGraphData(fullGraph.value, { entityTypes: selectedEntityTypes.value, relationTypes: selectedRelationTypes.value }))
+const visibleGraph = computed(() => {
+  const graph = filterGraphData(fullGraph.value, { entityTypes: selectedEntityTypes.value, relationTypes: selectedRelationTypes.value })
+  if (!neighborhoodMode.value || !focusNodeId.value) return graph
+  const ids = neighborIds(graph, focusNodeId.value)
+  return { nodes: graph.nodes.filter(node => ids.has(node.id)), edges: graph.edges.filter(edge => ids.has(edge.source) && ids.has(edge.target)) }
+})
 const entityTypes = computed(() => [...new Set(store.graphEntities.map(item => item.entity_type))].sort())
 const relationTypes = computed(() => [...new Set(store.graphRelations.map(item => item.relation_type))].sort())
 
@@ -102,13 +107,20 @@ async function reload() { loadError.value = ''; try { await store.loadGraph(prop
 function toggleSet(target, { type, checked }) { const next = new Set(target.value); checked ? next.add(type) : next.delete(type); target.value = next }
 const toggleEntityType = event => toggleSet(selectedEntityTypes, event); const toggleRelationType = event => toggleSet(selectedRelationTypes, event)
 const changeHistory = value => { includeHistory.value = value; reload() }
-function search(query) { const id = findEntityMatches(fullGraph.value, query)[0]; if (id) canvas.value?.focusNode(id) }
+function search(query) { const id = findEntityMatches(fullGraph.value, query)[0]; if (id) { if (neighborhoodMode.value) focusNodeId.value = id; canvas.value?.focusNode(id) } }
 function rawEntity(id) { return store.graphEntities.find(item => String(item.id) === String(id)) }
 function rawRelation(id) { return store.graphRelations.find(item => String(item.id) === String(id)) }
 async function selectEntity(id) {
   const entity = rawEntity(id); if (!entity) return
+  if (neighborhoodMode.value) focusNodeId.value = id
   if (mergeSource.value) { if (entity.id !== mergeSource.value.id && window.confirm(`确认将 ${mergeSource.value.name} 合并到 ${entity.name}？`)) await mergeEntities(mergeSource.value, entity); mergeSource.value = null; return }
   selected.value = { kind: 'entity', raw: entity }
+}
+function clearSelection() { selected.value = null; if (neighborhoodMode.value) focusNodeId.value = null }
+function setNeighborhoodMode(enabled) {
+  neighborhoodMode.value = enabled
+  if (!enabled) focusNodeId.value = null
+  else if (selected.value?.kind === 'entity') focusNodeId.value = selected.value.raw.id
 }
 function selectRelation(id) { const relation = rawRelation(id); if (relation) selected.value = { kind: 'relation', raw: relation } }
 async function setReview(item, review_status) { await (item.kind === 'entity' ? api.updateKnowledgeGraphEntity(props.kbId, item.raw.id, { review_status }) : api.updateKnowledgeGraphRelation(props.kbId, item.raw.id, { review_status })); await reload(); selected.value = null }
@@ -138,7 +150,7 @@ async function loadScene() {
 }
 onMounted(() => { loadScene(); buildPoller = setInterval(pollBuild, 2500) })
 onUnmounted(() => clearInterval(buildPoller))
-watch(() => props.kbId, () => { selected.value = null; mergeSource.value = null; selectedEntityTypes.value = new Set(); selectedRelationTypes.value = new Set(); buildTask.value = null; lastBuildStatus = null; loadScene() })
+watch(() => props.kbId, () => { selected.value = null; mergeSource.value = null; focusNodeId.value = null; neighborhoodMode.value = false; selectedEntityTypes.value = new Set(); selectedRelationTypes.value = new Set(); buildTask.value = null; lastBuildStatus = null; loadScene() })
 </script>
 
 <style scoped>
