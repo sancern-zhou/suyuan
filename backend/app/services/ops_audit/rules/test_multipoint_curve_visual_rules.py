@@ -41,7 +41,7 @@ def _attachment(filename, *, typecode="RF_Q_GaseousMultipoint_O3"):
 
 def test_build_tasks_uses_valid_form_concentrations(tmp_path):
     tasks = build_multipoint_curve_visual_tasks(
-        {"WORKINGORDERCODE": "CH1", "STATIONID": "1001"},
+        {"WORKINGORDERCODE": "CH1", "STATIONID": "1001", "STATIONNAME": "英德城南"},
         [
             (
                 "RF_Q_GASEOUSMULTIPOINT_O3",
@@ -135,7 +135,7 @@ class _Response:
 
 def _task(tmp_path, candidates):
     return build_multipoint_curve_visual_tasks(
-        {"WORKINGORDERCODE": "CH1", "STATIONID": "1001"},
+        {"WORKINGORDERCODE": "CH1", "STATIONID": "1001", "STATIONNAME": "英德城南"},
         [("RF_Q_GASEOUSMULTIPOINT_O3", _form())],
         candidates,
         [],
@@ -208,6 +208,38 @@ def test_pass_and_insufficient_evidence_do_not_emit_issue(monkeypatch, tmp_path)
     )
 
     assert issues == []
+
+
+def test_missing_multipoint_watermark_or_station_is_manual_review(monkeypatch, tmp_path):
+    monkeypatch.setattr(rules.requests, "get", lambda *args, **kwargs: _Response())
+
+    def fake_extract(source, *, provider, task, prompt):
+        assert "期望站点名称为：英德城南" in prompt
+        return {
+            "status": "success",
+            "data": {
+                "result": "PASS",
+                "reason_code": "NONE",
+                "reason": "曲线梯度可见。",
+                "observed_summary": "5个平台。",
+                "watermark_date_present": False,
+                "station_name_present": False,
+                "station_name_match": False,
+                "station_name_text": "",
+                "watermark_text": "",
+                "evidence_confidence": 0.96,
+            },
+        }
+
+    monkeypatch.setattr(rules, "extract_attachment_json", fake_extract)
+    issues = []
+    run_multipoint_curve_visual_task(_task(tmp_path, [_attachment("O3多点曲线.jpg")]), issues)
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == rules.WATERMARK_RULE_ID
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["missing_evidence"] == ["水印日期", "站点名称"]
+    assert evidence["needs_manual_review"] is True
 
 
 def test_issue_review_takes_precedence_over_pass(monkeypatch, tmp_path):

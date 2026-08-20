@@ -263,6 +263,18 @@ rules:
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
     rationale: O3量值传递表的斜率、截距、改变率及上级标准型号、设备号、序列号、传递日期、公式和有效期应与XLS附件按标签提取的值一致。
+  - rule_id: ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW
+    name: 多点校准附件水印和站点名称待复核
+    category: 附件质量问题
+    default_severity: 中
+    scope: RF_Q_GASEOUSMULTIPOINT_*
+    rationale: 多点校准附件应能通过现场水印日期和站点名称建立作业现场与工单的关联；模型高置信度识别缺失时转人工复核。
+  - rule_id: ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW
+    name: O3初始浓度更新后六点结果复核
+    category: 附件质量问题
+    default_severity: 中
+    scope: RF_HY_O3VALUEPASS
+    rationale: O3发生器初始浓度更新后，六次传递结果应重新填写；视觉模型仅在高置信度发现旧批次或未全部更新时生成待人工复核。
   - rule_id: ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW
     name: O3量值传递缺少XLS计算附件待复核
     category: 附件证据复核
