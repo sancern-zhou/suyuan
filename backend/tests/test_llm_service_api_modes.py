@@ -630,6 +630,7 @@ def test_bailian_multimodal_uses_native_anthropic_image_blocks(monkeypatch):
         "type": "image",
         "source": {"type": "base64", "media_type": "image/png", "data": "YWJj"},
     }
+    assert captured["request"]["thinking"] == {"type": "disabled"}
 
 
 def test_bailian_multimodal_normalizes_jpg_and_bmp_media_types():

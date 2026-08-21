@@ -13,6 +13,11 @@ from app.services.ops_audit.rules.base import add_issue
 RF_ENUM_PROFILES = load_rf_enum_profiles()
 
 _RANGE_LIKE_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:-|~|至|到)\s*\d+(?:\.\d+)?")
+_PM_FLOW_CALIBRATION_TABLE = "RF_TW_PmFlowCalibrate"
+_PM_FLOW_CALIBRATION_STATE_RULE_ID = "RF_PM_FLOW_CALIBRATION_STATE_MISMATCH"
+_NOT_CALIBRATED_VALUES = {"0", "0.0", "否", "NO", "FALSE"}
+_CALIBRATED_VALUES = {"1", "1.0", "是", "YES", "TRUE"}
+_EMPTY_VALUE_TOKENS = {"", "/", "-", "无", "不适用", "未填写", "未校准", "无需校准", "NONE", "NULL", "NAN"}
 
 
 def check_rf_enum_values(
@@ -31,6 +36,8 @@ def check_rf_enum_values(
             continue
 
         _check_pollutant_type(order, table, form, issues)
+        if table == _PM_FLOW_CALIBRATION_TABLE:
+            _check_pm_flow_calibration_state(order, table, form, issues)
 
         for profile in profiles:
             if not _table_matches(table, profile.get("tables", [])):
@@ -138,6 +145,60 @@ def _check_pollutant_type(
                 f"RF表单污染物类型与表名不一致: {field}={str(value).strip()}, expected={expected}",
                 json.dumps(evidence, ensure_ascii=False, default=str),
             )
+
+
+def _check_pm_flow_calibration_state(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    """Ensure a non-calibration record does not contain post-calibration results.
+
+    The form's ``IsCalibrate`` radio field controls whether the ``Next_*``
+    (post-calibration) row is applicable.  This is a deterministic consistency
+    check and deliberately ignores common placeholder values.
+    """
+
+    if "IsCalibrate" not in form:
+        return
+    state = _normalize(form.get("IsCalibrate"))
+    if state not in _NOT_CALIBRATED_VALUES | _CALIBRATED_VALUES:
+        return  # The enum rule reports the invalid state separately.
+    if state not in _NOT_CALIBRATED_VALUES:
+        return
+
+    post_fields = [field for field in ("Next_S", "Next_A", "Next_B", "Next_C") if field in form]
+    filled_fields = {
+        field: str(form.get(field)).strip()
+        for field in post_fields
+        if not _is_empty_calibration_value(form.get(field))
+    }
+    if not filled_fields:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "is_calibrate_field": "IsCalibrate",
+        "is_calibrate": form.get("IsCalibrate"),
+        "post_calibration_fields": filled_fields,
+        "expected": "IsCalibrate=是时才填写 Next_*",
+    }
+    first_field = next(iter(filled_fields))
+    add_issue(
+        issues,
+        _PM_FLOW_CALIBRATION_STATE_RULE_ID,
+        "一致性问题",
+        "中",
+        f"rf.{table}.{first_field}",
+        "颗粒物流量校准表勾选未校准但填写了校准后结果",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _is_empty_calibration_value(value: Any) -> bool:
+    return _normalize(value) in _EMPTY_VALUE_TOKENS
 
 
 def _normalize(value: Any) -> str:
