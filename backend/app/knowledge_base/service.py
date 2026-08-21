@@ -116,11 +116,13 @@ class KnowledgeBaseService:
         db: AsyncSession = None,
         vector_store = None,
         ingestion_service_factory=None,
+        session_factory=None,
     ):
         self.db = db
         self.processor = get_document_processor()
         self.vector_store = vector_store or get_vector_store()
         self.ingestion_service_factory = ingestion_service_factory
+        self.session_factory = session_factory
         self._reranker = None
 
     def _get_reranker(self):
@@ -248,12 +250,19 @@ class KnowledgeBaseService:
         Returns:
             知识库列表
         """
-        return await KnowledgeBasePermissions.get_accessible_knowledge_bases(
+        local_knowledge_bases = await KnowledgeBasePermissions.get_accessible_knowledge_bases(
             db=self.db,
             user_id=user_id,
             include_public=include_public,
             status=status
         )
+        from .shared_metadata import list_central_shared_knowledge_bases
+
+        central_shared = await list_central_shared_knowledge_bases(status=status)
+        by_id = {kb.id: kb for kb in local_knowledge_bases}
+        for kb in central_shared:
+            by_id.setdefault(kb.id, kb)
+        return list(by_id.values())
 
     async def update_knowledge_base(
         self,
@@ -409,8 +418,8 @@ class KnowledgeBaseService:
         except Exception as e:
             # 使用新session更新失败状态（原有连接可能已超时）
             try:
-                from app.db.knowledge_database import knowledge_async_session
-                async with knowledge_async_session() as fresh_db:
+                from app.db.database import async_session
+                async with async_session() as fresh_db:
                     doc_result = await fresh_db.execute(
                         select(Document).where(Document.id == doc_id)
                     )
@@ -425,8 +434,8 @@ class KnowledgeBaseService:
             raise
 
         # 返回最新状态的文档
-        from app.db.knowledge_database import knowledge_async_session
-        async with knowledge_async_session() as fresh_db:
+        from app.db.database import async_session
+        async with async_session() as fresh_db:
             doc_result = await fresh_db.execute(
                 select(Document).where(Document.id == doc_id)
             )
@@ -445,7 +454,7 @@ class KnowledgeBaseService:
         if self.ingestion_service_factory is not None:
             return self.ingestion_service_factory(processing_options or {})
 
-        from app.db.knowledge_database import knowledge_async_session
+        from app.db.database import async_session
         from app.knowledge_base.chunk_repository import KnowledgeChunkRepository
         from app.knowledge_base.graph_extractor import KnowledgeGraphExtractor
         from app.knowledge_base.graph_repository import KnowledgeGraphRepository
@@ -453,7 +462,7 @@ class KnowledgeBaseService:
         from app.knowledge_base.ingestion_service import KnowledgeIngestionService
 
         return KnowledgeIngestionService(
-            session_factory=knowledge_async_session,
+            session_factory=async_session,
             processor=self.processor,
             chunk_repository_factory=KnowledgeChunkRepository,
             graph_repository_factory=KnowledgeGraphRepository,
@@ -561,9 +570,9 @@ class KnowledgeBaseService:
                 temp_path.unlink()
             raise
 
-        from app.db.knowledge_database import knowledge_async_session
+        from app.db.database import async_session
 
-        async with knowledge_async_session() as session:
+        async with async_session() as session:
             document = await session.get(Document, doc_id)
             if document is None:
                 raise ValueError(f"Document not found after replacement: {doc_id}")
@@ -681,12 +690,12 @@ class KnowledgeBaseService:
             return []
 
         if use_graph_retrieval:
-            from app.db.knowledge_database import knowledge_async_session
+            from app.db.database import async_session
             from app.knowledge_base.retrieval_service import KnowledgeRetrievalService
 
             rerank_mode = self._normalize_rerank_mode(use_reranker)
             retrieval = KnowledgeRetrievalService(
-                session_factory=knowledge_async_session,
+                session_factory=self.session_factory or async_session,
                 vector_store=self.vector_store,
                 reranker=self._rerank if rerank_mode != "never" else None,
             )
@@ -1044,7 +1053,7 @@ class KnowledgeBaseService:
 
                 doc = docs_map.get(doc_id)
                 if doc:
-                    r.setdefault("filename", doc.filename)
+                    r["filename"] = r.get("filename") or doc.filename
                     r.setdefault("metadata", {})
                     # 检查是否有原文件
                     has_original_file = bool(

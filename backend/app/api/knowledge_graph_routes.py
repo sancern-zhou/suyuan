@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +54,8 @@ router = APIRouter(
 )
 
 _graph_build_tasks: set[asyncio.Task] = set()
+_graph_build_recovery_task: asyncio.Task | None = None
+logger = structlog.get_logger()
 
 
 def _build_data(task: KnowledgeGraphBuildTask) -> dict:
@@ -82,6 +86,41 @@ def _launch_build(task_id: str) -> None:
     task = asyncio.create_task(_run())
     _graph_build_tasks.add(task)
     task.add_done_callback(_graph_build_tasks.discard)
+
+
+async def _graph_build_recovery_loop() -> None:
+    """Resume durable graph tasks after a web/worker process restart."""
+    while True:
+        try:
+            service = GraphBuildService(async_session)
+            task_ids = await service.recover_expired_tasks()
+            for task_id in task_ids:
+                task = await service.get_status(task_id=task_id)
+                if task is not None:
+                    _launch_build(task_id)
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive lifecycle guard
+            logger.warning("knowledge_graph_recovery_loop_failed", error=str(exc))
+            await asyncio.sleep(30)
+
+
+def start_graph_build_recovery() -> None:
+    global _graph_build_recovery_task
+    if _graph_build_recovery_task is None or _graph_build_recovery_task.done():
+        _graph_build_recovery_task = asyncio.create_task(_graph_build_recovery_loop())
+
+
+async def stop_graph_build_recovery() -> None:
+    global _graph_build_recovery_task
+    task = _graph_build_recovery_task
+    _graph_build_recovery_task = None
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 async def _knowledge_base(db: AsyncSession, kb_id: str) -> KnowledgeBase:

@@ -14,22 +14,6 @@
     </div>
 
     <div v-if="!selectedHistoryTask" class="scheduled-tasks-content">
-      <!-- 统计信息 -->
-      <div class="scheduled-stats-card">
-        <div class="scheduled-stat-item">
-          <div class="scheduled-stat-value">{{ stats.total }}</div>
-          <div class="scheduled-stat-label">总任务</div>
-        </div>
-        <div class="scheduled-stat-item">
-          <div class="scheduled-stat-value">{{ stats.running }}</div>
-          <div class="scheduled-stat-label">运行中</div>
-        </div>
-        <div class="scheduled-stat-item">
-          <div class="scheduled-stat-value">{{ stats.successRate }}%</div>
-          <div class="scheduled-stat-label">成功率</div>
-        </div>
-      </div>
-
       <!-- 任务列表 -->
       <div class="scheduled-tasks-list">
         <div v-if="tasks.length === 0" class="scheduled-empty-state">
@@ -827,34 +811,6 @@ const saveTask = async () => {
   display: flex;
   flex-direction: column;
   gap: 20px;
-}
-
-.scheduled-stats-card {
-  display: flex;
-  gap: 15px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  padding: 15px;
-}
-
-.scheduled-stat-item {
-  flex: 1;
-  text-align: center;
-  padding: 12px;
-  background: white;
-  border-radius: 6px;
-}
-
-.scheduled-stat-value {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1976d2;
-  margin-bottom: 4px;
-}
-
-.scheduled-stat-label {
-  font-size: 12px;
-  color: #6c757d;
 }
 
 .scheduled-tasks-list {

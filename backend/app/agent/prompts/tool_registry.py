@@ -157,6 +157,17 @@ KNOWLEDGE_TOOL_NAMES = [
     "web_fetch",
 ]
 
+# ===== 知识问答模式工具 =====
+# 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
+KNOWLEDGE_TOOL_NAMES = [
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "knowledge_graph_query",
+    "read_session_resource",
+    "web_search",
+    "web_fetch",
+]
+
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",

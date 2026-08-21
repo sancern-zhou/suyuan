@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { filterGraphData, findEntityMatches, stableTypeColor, toG6Data } from './knowledgeGraphData.js'
+import { compactGraphLabel, filterGraphData, findEntityMatches, stableTypeColor, toG6Data } from './knowledgeGraphData.js'
 
 test('toG6Data preserves isolated nodes self loops and parallel relations', () => {
   const entities = [
@@ -20,6 +20,12 @@ test('toG6Data preserves isolated nodes self loops and parallel relations', () =
   assert.equal(graph.nodes.find(node => node.id === 'a').data.degree, 4)
   assert.equal(graph.nodes.find(node => node.id === 'isolated').data.degree, 0)
   assert.equal(stableTypeColor('Device'), stableTypeColor('Device'))
+  assert.equal(graph.nodes.find(node => node.id === 'a').data.displayLabel, 'Alpha')
+})
+
+test('compactGraphLabel keeps short labels and truncates long canvas labels', () => {
+  assert.equal(compactGraphLabel('PM2.5'), 'PM2.5')
+  assert.equal(compactGraphLabel('监测系统性能指标要求', 8), '监测系统性能指…')
 })
 
 test('filters and searches without mutating source data', () => {

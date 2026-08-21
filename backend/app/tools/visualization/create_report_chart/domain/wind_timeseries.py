@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import base64
 import math
+from collections.abc import Sequence
 from datetime import date, datetime
 from io import BytesIO
-from typing import Any, Dict, List, Sequence
+from typing import Any
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
@@ -18,11 +19,11 @@ from app.utils.font_utils import apply_font_to_figure, configure_chinese_font
 def render_wind_timeseries(
     *,
     title: str,
-    data: Dict[str, Any],
-    options: Dict[str, Any],
+    data: dict[str, Any],
+    options: dict[str, Any],
     output_context: str,
     style_profile: str,
-) -> tuple[str, Dict[str, Any], List[str]]:
+) -> tuple[str, dict[str, Any], list[str]]:
     prepared, warnings = _prepare_data(data, options)
     timestamps = prepared["timestamps"]
     east_u = np.asarray(prepared["east_u"], dtype=float)
@@ -107,7 +108,9 @@ def render_wind_timeseries(
         pollutant_ax.plot(timestamps, concentrations, color="#A23B72", linewidth=1.15)
         pollutant_ax.fill_between(timestamps, 0, concentrations, color="#A23B72", alpha=0.10)
         pollutant_ax.set_ylim(bottom=0)
-        pollutant_label = f"{pollutant_name}\n({pollutant_unit})" if pollutant_unit else pollutant_name
+        pollutant_label = (
+            f"{pollutant_name}\n({pollutant_unit})" if pollutant_unit else pollutant_name
+        )
         pollutant_ax.set_ylabel(pollutant_label, fontsize=9)
         pollutant_ax.set_xlabel("时间", fontsize=9)
 
@@ -131,7 +134,9 @@ def render_wind_timeseries(
         locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
         pollutant_ax.xaxis.set_major_locator(locator)
         pollutant_ax.xaxis.set_major_formatter(mdates.DateFormatter("%m月%d日\n%H:%M"))
-        fig.suptitle(str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", y=0.995)
+        fig.suptitle(
+            str(normalize_matplotlib_label_text(title)), fontsize=14, fontweight="bold", y=0.995
+        )
         fig.align_ylabels(axes)
         fig.subplots_adjust(left=0.13, right=0.975, top=0.945, bottom=0.10)
         apply_font_to_figure(fig)
@@ -154,9 +159,11 @@ def render_wind_timeseries(
         plt.close(fig)
 
 
-def _prepare_data(data: Dict[str, Any], options: Dict[str, Any]) -> tuple[Dict[str, Any], List[str]]:
+def _prepare_data(
+    data: dict[str, Any], options: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
     records = data.get("records")
-    warnings: List[str] = []
+    warnings: list[str] = []
     if isinstance(records, list):
         prepared, dropped = _prepare_records(records, data, options)
         if dropped:
@@ -164,7 +171,9 @@ def _prepare_data(data: Dict[str, Any], options: Dict[str, Any]) -> tuple[Dict[s
         return prepared, warnings
 
     raw_timestamps = data.get("timestamps") or data.get("times") or data.get("dates")
-    concentrations = data.get("concentrations") or data.get("pollutant_values") or data.get("values")
+    concentrations = (
+        data.get("concentrations") or data.get("pollutant_values") or data.get("values")
+    )
     if not isinstance(raw_timestamps, list) or not isinstance(concentrations, list):
         raise ChartDataError(
             "wind_timeseries 需要 timestamps、concentrations 和风速/风向或 east_u/north_v；也可提供 records。"
@@ -199,8 +208,8 @@ def _prepare_data(data: Dict[str, Any], options: Dict[str, Any]) -> tuple[Dict[s
 
 
 def _prepare_records(
-    records: Sequence[Any], data: Dict[str, Any], options: Dict[str, Any]
-) -> tuple[Dict[str, Any], int]:
+    records: Sequence[Any], data: dict[str, Any], options: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
     time_field = data.get("time_field") or options.get("time_field")
     speed_field = data.get("wind_speed_field") or options.get("wind_speed_field")
     direction_field = data.get("wind_direction_field") or options.get("wind_direction_field")
@@ -216,30 +225,62 @@ def _prepare_records(
     )
     convention = "components" if use_components else _direction_convention(data, options)
 
-    timestamps: List[datetime] = []
-    east_u: List[float] = []
-    north_v: List[float] = []
-    concentrations: List[float] = []
+    timestamps: list[datetime] = []
+    east_u: list[float] = []
+    north_v: list[float] = []
+    concentrations: list[float] = []
     dropped = 0
     for record in records:
         if not isinstance(record, dict):
             dropped += 1
             continue
         try:
-            timestamp = _parse_timestamp(_field_value(record, [time_field, "timestamp", "time", "datetime", "date", "监测时间", "时间"]))
+            timestamp = _parse_timestamp(
+                _field_value(
+                    record,
+                    [time_field, "timestamp", "time", "datetime", "date", "监测时间", "时间"],
+                )
+            )
             concentration = float(
                 _field_value(
                     record,
-                    [concentration_field, pollutant_name, pollutant_name.replace(".", ""), "concentration", "value", "浓度"],
+                    [
+                        concentration_field,
+                        pollutant_name,
+                        pollutant_name.replace(".", ""),
+                        "concentration",
+                        "value",
+                        "浓度",
+                    ],
                 )
             )
             if use_components:
                 east = float(_field_value(record, [east_field, "east_u", "east", "u"]))
                 north = float(_field_value(record, [north_field, "north_v", "north", "v"]))
             else:
-                speed = float(_field_value(record, [speed_field, "wind_speed_10m", "wind_speed", "WS", "ws", "speed", "风速"]))
-                direction = float(_field_value(record, [direction_field, "wind_direction_10m", "wind_direction", "WD", "wd", "direction", "风向"]))
-                east_values, north_values = _components_from_speed_direction([speed], [direction], convention)
+                speed = float(
+                    _field_value(
+                        record,
+                        [speed_field, "wind_speed_10m", "wind_speed", "WS", "ws", "speed", "风速"],
+                    )
+                )
+                direction = float(
+                    _field_value(
+                        record,
+                        [
+                            direction_field,
+                            "wind_direction_10m",
+                            "wind_direction",
+                            "WD",
+                            "wd",
+                            "direction",
+                            "风向",
+                        ],
+                    )
+                )
+                east_values, north_values = _components_from_speed_direction(
+                    [speed], [direction], convention
+                )
                 east, north = east_values[0], north_values[0]
             if not all(math.isfinite(value) for value in (east, north, concentration)):
                 raise ValueError("non-finite value")
@@ -264,7 +305,7 @@ def _prepare_records(
 
 def _components_from_speed_direction(
     speeds: Sequence[float], directions: Sequence[float], convention: str
-) -> tuple[List[float], List[float]]:
+) -> tuple[list[float], list[float]]:
     if len(speeds) != len(directions):
         raise ChartDataError("wind_timeseries 的 wind_speeds 与 wind_directions 长度必须一致。")
     radians = np.deg2rad(np.asarray(directions, dtype=float))
@@ -272,11 +313,13 @@ def _components_from_speed_direction(
     if np.any(speed_values < 0):
         raise ChartDataError("wind_timeseries 的风速不能为负数。")
     if convention == "meteorological_from":
-        return (-speed_values * np.sin(radians)).tolist(), (-speed_values * np.cos(radians)).tolist()
+        return (-speed_values * np.sin(radians)).tolist(), (
+            -speed_values * np.cos(radians)
+        ).tolist()
     return (speed_values * np.cos(radians)).tolist(), (speed_values * np.sin(radians)).tolist()
 
 
-def _direction_convention(data: Dict[str, Any], options: Dict[str, Any]) -> str:
+def _direction_convention(data: dict[str, Any], options: dict[str, Any]) -> str:
     raw_value = data.get("wind_direction_convention") or options.get("wind_direction_convention")
     if raw_value is None:
         raise ChartDataError(
@@ -308,10 +351,10 @@ def _parse_timestamp(value: Any) -> datetime:
         raise ChartDataError(f"wind_timeseries 无法解析时间：{value}。") from exc
 
 
-def _float_array(values: Any, name: str, allow_nan: bool = False) -> List[float]:
+def _float_array(values: Any, name: str, allow_nan: bool = False) -> list[float]:
     if not isinstance(values, list):
         raise ChartDataError(f"wind_timeseries 需要 {name} 数组。")
-    converted: List[float] = []
+    converted: list[float] = []
     for value in values:
         if value is None and allow_nan:
             converted.append(float("nan"))
@@ -345,14 +388,14 @@ def _validate_prepared(
         raise ChartDataError("wind_timeseries 没有可渲染的污染物浓度。")
 
 
-def _field_value(record: Dict[str, Any], candidates: Sequence[Any]) -> Any:
+def _field_value(record: dict[str, Any], candidates: Sequence[Any]) -> Any:
     for candidate in candidates:
         if isinstance(candidate, str) and candidate in record and record[candidate] is not None:
             return record[candidate]
     raise KeyError("missing field")
 
 
-def _has_field(record: Dict[str, Any], candidates: Sequence[Any]) -> bool:
+def _has_field(record: dict[str, Any], candidates: Sequence[Any]) -> bool:
     return any(
         isinstance(candidate, str) and candidate in record and record[candidate] is not None
         for candidate in candidates
@@ -379,5 +422,5 @@ def _figure_to_base64(fig) -> str:
     return base64.b64encode(buffer.read()).decode("utf-8")
 
 
-def _dedupe(values: Sequence[str]) -> List[str]:
+def _dedupe(values: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(values))

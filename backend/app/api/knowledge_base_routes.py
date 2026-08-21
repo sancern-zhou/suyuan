@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import time
+import asyncio
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -16,7 +17,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.db.knowledge_database import get_knowledge_db
+from app.db.database import get_db
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.knowledge_base.service import KnowledgeBaseService
@@ -79,7 +80,7 @@ def get_is_admin(user: CurrentUser = Depends(require_current_user)) -> bool:
 @router.post("", response_model=KnowledgeBaseResponse)
 async def create_knowledge_base(
     request: KnowledgeBaseCreate,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -123,7 +124,7 @@ async def create_knowledge_base(
 
 @router.get("", response_model=KnowledgeBaseListResponse)
 async def list_knowledge_bases(
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -153,7 +154,7 @@ async def list_knowledge_bases(
 
 @router.get("/stats", response_model=KnowledgeBaseStats)
 async def get_stats(
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """获取知识库统计信息"""
@@ -179,13 +180,14 @@ async def get_chunking_strategies():
 @router.get("/{kb_id}", response_model=KnowledgeBaseResponse)
 async def get_knowledge_base(
     kb_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """获取知识库详情"""
-    service = KnowledgeBaseService(db=db)
+    from app.knowledge_base.shared_metadata import knowledge_base_read_session
 
-    kb = await service.get_knowledge_base(kb_id)
+    async with knowledge_base_read_session(kb_id) as read_db:
+        kb = await KnowledgeBaseService(db=read_db).get_knowledge_base(kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
@@ -200,7 +202,7 @@ async def get_knowledge_base(
 async def update_knowledge_base(
     kb_id: str,
     request: KnowledgeBaseUpdate,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -235,7 +237,7 @@ async def update_knowledge_base(
 @router.delete("/{kb_id}")
 async def delete_knowledge_base(
     kb_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -273,7 +275,7 @@ async def upload_document(
     chunk_size: int = Form(default=1200),
     chunk_overlap: int = Form(default=100),
     llm_mode: str = Form(default="online"),  # 优先使用线上API（更快）
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -372,22 +374,20 @@ async def upload_document(
 @router.get("/{kb_id}/documents", response_model=DocumentListResponse)
 async def list_documents(
     kb_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """列出知识库中的文档"""
-    service = KnowledgeBaseService(db=db)
-
-    # 检查知识库访问权限
-    kb = await service.get_knowledge_base(kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    if kb.is_private and kb.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
+    from app.knowledge_base.shared_metadata import knowledge_base_read_session
     try:
-        docs = await service.list_documents(kb_id)
+        async with knowledge_base_read_session(kb_id) as read_db:
+            service = KnowledgeBaseService(db=read_db)
+            kb = await service.get_knowledge_base(kb_id)
+            if not kb:
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
+            if kb.is_private and kb.owner_id != user_id:
+                raise HTTPException(status_code=403, detail="Access denied")
+            docs = await service.list_documents(kb_id)
 
         processing = sum(1 for d in docs if d.status == DocumentStatus.PROCESSING)
         failed = sum(1 for d in docs if d.status == DocumentStatus.FAILED)
@@ -399,6 +399,8 @@ async def list_documents(
             failed=failed
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("list_documents_failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -409,7 +411,7 @@ async def replace_document_content(
     kb_id: str,
     doc_id: str,
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin),
 ):
@@ -439,7 +441,7 @@ async def replace_document_content(
 async def delete_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -471,7 +473,7 @@ async def delete_document(
 async def retry_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id),
     is_admin: bool = Depends(get_is_admin)
 ):
@@ -503,7 +505,7 @@ async def retry_document(
 async def get_document_chunks(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -511,14 +513,15 @@ async def get_document_chunks(
 
     返回文档在向量库中的所有分块内容，用于查看分段效果。
     """
-    service = KnowledgeBaseService(db=db)
+    from app.knowledge_base.shared_metadata import knowledge_base_read_session
 
     try:
-        result = await service.get_document_chunks(
-            kb_id=kb_id,
-            doc_id=doc_id,
-            user_id=user_id
-        )
+        async with knowledge_base_read_session(kb_id) as read_db:
+            result = await KnowledgeBaseService(db=read_db).get_document_chunks(
+                kb_id=kb_id,
+                doc_id=doc_id,
+                user_id=user_id
+            )
 
         return DocumentChunksResponse(
             document_id=result["document_id"],
@@ -553,39 +556,90 @@ async def search_knowledge_base(
 
     注意：检索API使用独立数据库会话，避免长时间Reranker推理导致连接超时
     """
-    from app.db.knowledge_database import knowledge_async_session
+    from app.db.database import async_session
     from sqlalchemy import select
-    from app.knowledge_base.models import Document
+    from app.knowledge_base.models import Document, KnowledgeBaseStatus
+    from app.knowledge_base.shared_metadata import (
+        get_central_shared_knowledge_base_ids,
+        get_shared_knowledge_session_factory,
+    )
 
     start_time = time.time()
 
     try:
-        # 使用独立会话，检索完成后立即关闭（不需要commit）
-        async with knowledge_async_session() as db:
-            service = KnowledgeBaseService(db=db)
-            results = await service.search(
-                query=request.query,
-                user_id=user_id,
-                knowledge_base_ids=request.knowledge_base_ids,
-                top_k=request.top_k,
-                score_threshold=request.score_threshold,
-                filters=request.filters,
-                use_reranker=request.use_reranker if request.use_reranker is not None else request.rerank_mode,
-                use_graph_retrieval=request.use_graph_retrieval,
-                graph_depth=request.graph_depth,
-                graph_seed_top_k=request.graph_seed_top_k,
-                graph_chunk_top_k=request.graph_chunk_top_k,
-                graph_weight=request.graph_weight,
-            )
+        requested_ids = request.knowledge_base_ids or []
+        async with async_session() as db:
+            if not requested_ids:
+                kbs = await KnowledgeBaseService(db=db).list_knowledge_bases(
+                    user_id=user_id,
+                    status=KnowledgeBaseStatus.ACTIVE,
+                )
+                requested_ids = [kb.id for kb in kbs]
+
+            central_ids = await get_central_shared_knowledge_base_ids(requested_ids)
+            shared_session = get_shared_knowledge_session_factory()
+            targets = []
+            local_ids = [kb_id for kb_id in requested_ids if kb_id not in central_ids]
+            if local_ids:
+                targets.append((async_session, local_ids))
+            if central_ids and shared_session is not None:
+                targets.append((shared_session, list(central_ids)))
+
+            async def search_target(session_factory, target_ids):
+                async with session_factory() as search_db:
+                    return await KnowledgeBaseService(
+                        db=search_db,
+                        session_factory=session_factory,
+                    ).search(
+                        query=request.query,
+                        user_id=user_id,
+                        knowledge_base_ids=target_ids,
+                        top_k=request.top_k,
+                        score_threshold=request.score_threshold,
+                        filters=request.filters,
+                        use_reranker=(
+                            request.use_reranker
+                            if request.use_reranker is not None
+                            else request.rerank_mode
+                        ),
+                        use_graph_retrieval=request.use_graph_retrieval,
+                        graph_depth=request.graph_depth,
+                        graph_seed_top_k=request.graph_seed_top_k,
+                        graph_chunk_top_k=request.graph_chunk_top_k,
+                        graph_weight=request.graph_weight,
+                    )
+
+            grouped_results = await asyncio.gather(*(
+                search_target(session_factory, target_ids)
+                for session_factory, target_ids in targets
+            )) if targets else []
+            results = [item for group in grouped_results for item in group]
+            results.sort(key=lambda item: float(item.get("score") or 0), reverse=True)
+            results = results[:request.top_k]
 
             # 为每个结果添加溯源链接
             doc_ids = list(set(r.get("document_id") for r in results if r.get("document_id")))
             if doc_ids:
-                # 批量查询文档存储信息
-                doc_result = await db.execute(
-                    select(Document).where(Document.id.in_(doc_ids))
-                )
-                docs_map = {doc.id: doc for doc in doc_result.scalars().all()}
+                local_doc_ids = [
+                    r.get("document_id") for r in results
+                    if (r.get("knowledge_base", {}) or {}).get("id") not in central_ids
+                ]
+                central_doc_ids = [
+                    r.get("document_id") for r in results
+                    if (r.get("knowledge_base", {}) or {}).get("id") in central_ids
+                ]
+                docs_map = {}
+                if local_doc_ids:
+                    doc_result = await db.execute(
+                        select(Document).where(Document.id.in_(local_doc_ids))
+                    )
+                    docs_map.update({doc.id: doc for doc in doc_result.scalars().all()})
+                if central_doc_ids and shared_session is not None:
+                    async with shared_session() as central_db:
+                        doc_result = await central_db.execute(
+                            select(Document).where(Document.id.in_(central_doc_ids))
+                        )
+                        docs_map.update({doc.id: doc for doc in doc_result.scalars().all()})
 
                 for r in results:
                     doc_id = r.get("document_id")
@@ -676,7 +730,7 @@ def _doc_to_response(doc) -> DocumentResponse:
 async def download_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -691,44 +745,39 @@ async def download_document(
     from app.knowledge_base.file_storage import DatabaseFileStorageService, LocalFileStorageService
     import io
 
-    service = KnowledgeBaseService(db=db)
-
-    # 检查知识库访问权限
-    kb = await service.get_knowledge_base(kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    if kb.is_private and kb.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    # 获取文档
-    result = await db.execute(
-        select(Document).where(
-            Document.id == doc_id,
-            Document.knowledge_base_id == kb_id
-        )
-    )
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-
+    from app.knowledge_base.shared_metadata import knowledge_base_read_session
     try:
-        file_bytes = None
-        mime_type = doc.file_mime_type or "application/octet-stream"
+        async with knowledge_base_read_session(kb_id) as read_db:
+            service = KnowledgeBaseService(db=read_db)
+            kb = await service.get_knowledge_base(kb_id)
+            if not kb:
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
+            if kb.is_private and kb.owner_id != user_id:
+                raise HTTPException(status_code=403, detail="Access denied")
 
-        if doc.file_storage_type == "database" and doc.original_file_oid:
-            # 从PostgreSQL Large Object读取
-            db_storage = DatabaseFileStorageService(db)
-            file_bytes, _ = await db_storage.retrieve_file(doc.original_file_oid)
-        elif doc.file_storage_type == "local" and doc.file_path:
-            # 从本地文件系统读取
-            local_storage = LocalFileStorageService()
-            file_bytes, mime_type = await local_storage.retrieve_file(doc.file_path)
-        else:
-            raise HTTPException(
-                status_code=404,
-                detail="Original file not available. File may not have been stored."
+            result = await read_db.execute(
+                select(Document).where(
+                    Document.id == doc_id,
+                    Document.knowledge_base_id == kb_id
+                )
             )
+            doc = result.scalar_one_or_none()
+            if not doc:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            file_bytes = None
+            mime_type = doc.file_mime_type or "application/octet-stream"
+            if doc.file_storage_type == "database" and doc.original_file_oid:
+                db_storage = DatabaseFileStorageService(read_db)
+                file_bytes, _ = await db_storage.retrieve_file(doc.original_file_oid)
+            elif doc.file_storage_type == "local" and doc.file_path:
+                local_storage = LocalFileStorageService()
+                file_bytes, mime_type = await local_storage.retrieve_file(doc.file_path)
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Original file not available. File may not have been stored."
+                )
 
         # 返回文件流（使用安全的 Content-Disposition，避免中文文件名导致 latin-1 编码错误）
         return StreamingResponse(
@@ -740,6 +789,8 @@ async def download_document(
             }
         )
 
+    except HTTPException:
+        raise
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -751,7 +802,7 @@ async def download_document(
 async def preview_document(
     kb_id: str,
     doc_id: str,
-    db: AsyncSession = Depends(get_knowledge_db),
+    db: AsyncSession = Depends(get_db),
     user_id: Optional[str] = Depends(get_user_id)
 ):
     """
@@ -762,24 +813,22 @@ async def preview_document(
     from sqlalchemy import select
     from app.knowledge_base.models import Document
 
-    service = KnowledgeBaseService(db=db)
+    from app.knowledge_base.shared_metadata import knowledge_base_read_session
 
-    # 检查知识库访问权限
-    kb = await service.get_knowledge_base(kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="Knowledge base not found")
-
-    if kb.is_private and kb.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    # 获取文档
-    result = await db.execute(
-        select(Document).where(
-            Document.id == doc_id,
-            Document.knowledge_base_id == kb_id
+    async with knowledge_base_read_session(kb_id) as read_db:
+        service = KnowledgeBaseService(db=read_db)
+        kb = await service.get_knowledge_base(kb_id)
+        if not kb:
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        if kb.is_private and kb.owner_id != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        result = await read_db.execute(
+            select(Document).where(
+                Document.id == doc_id,
+                Document.knowledge_base_id == kb_id
+            )
         )
-    )
-    doc = result.scalar_one_or_none()
+        doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 

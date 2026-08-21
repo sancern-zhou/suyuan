@@ -216,7 +216,7 @@ export const AGENT_SCENES = Object.freeze([
     id: 'office',
     name: '办公',
     description: '日常办公与内容创作',
-    modeIds: ['assistant', 'ppt', 'board'],
+    modeIds: ['assistant', 'knowledge', 'ppt', 'board'],
     iconPaths: [
       { tone: 'primary', d: 'M5 3.5h9l4 4V20H5V3.5Z' },
       { tone: 'primary', d: 'M14 3.5v4h4' },

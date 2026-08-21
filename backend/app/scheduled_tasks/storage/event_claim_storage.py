@@ -145,6 +145,22 @@ class EventClaimStorage:
             self._atomic_write(path, claim.model_dump(mode="json"))
             return claim
 
+    def reopen(self, task_id: str, event_id: str) -> EventClaim:
+        """Re-open a terminal (failed or succeeded) claim for a forced manual run."""
+        path = self._claim_path(task_id, event_id)
+        with self._locked():
+            if not path.exists():
+                raise ValueError(f"Event claim for {task_id}/{event_id} not found")
+            claim = self._read(path)
+            if claim.status not in {"failed", "succeeded"}:
+                raise ValueError("Only failed or succeeded event claims can be reopened")
+            claim.status = "claimed"
+            claim.attempt += 1
+            claim.execution_id = None
+            claim.updated_at = datetime.now().astimezone()
+            self._atomic_write(path, claim.model_dump(mode="json"))
+            return claim
+
     def fail_stale_running(
         self,
         task_id: str,

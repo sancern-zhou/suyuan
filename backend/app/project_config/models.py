@@ -78,8 +78,24 @@ class BackendManifest(StrictModel):
 
 class KnowledgeManifest(StrictModel):
     collections: list[str] = Field(default_factory=list)
+    # Logical bindings used by project-owned workflows. Values may be a
+    # knowledge-base id or an exact knowledge-base name; runtime resolution
+    # validates that the target is active and graph-enabled.
+    bindings: dict[str, str] = Field(default_factory=dict)
 
     _unique_collections = field_validator("collections")(unique)
+
+    @field_validator("bindings")
+    @classmethod
+    def validate_bindings(cls, value: dict[str, str]) -> dict[str, str]:
+        valid_identifier_map(value)
+        normalized: dict[str, str] = {}
+        for key, target in value.items():
+            target = str(target).strip()
+            if not target:
+                raise ValueError(f"knowledge binding {key!r} must not be empty")
+            normalized[key] = target
+        return normalized
 
 
 class ProjectManifest(StrictModel):

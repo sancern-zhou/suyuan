@@ -4,8 +4,8 @@ from app.agent.prompts.tool_registry import get_tools_by_mode
 from config.settings import settings
 
 
-def test_knowledge_mode_exposes_only_retrieval_and_document_reading(monkeypatch):
-    monkeypatch.setattr(settings, "project_id", "xuchang")
+def test_knowledge_mode_exposes_retrieval_web_and_registered_resources(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "default")
 
     assert list(get_tools_by_mode("knowledge")) == [
         "knowledge_qa_workflow",
@@ -23,13 +23,14 @@ def test_generic_knowledge_prompt_prioritizes_one_pass_retrieval():
     assert "一次检索尽量覆盖用户问题" in prompt
     assert "不得凭常识补成知识库结论" in prompt
     assert "全文总结才读取全文" in prompt
+    assert "read_session_resource" in prompt
+    assert "web_search / web_fetch" in prompt
 
 
-def test_xuchang_knowledge_mode_loads_project_prompt(monkeypatch):
-    monkeypatch.setattr(settings, "project_id", "xuchang")
+def test_knowledge_mode_builds_generic_prompt(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "default")
 
     prompt = build_react_system_prompt("knowledge")
 
-    assert "你是许昌项目的知识问答智能体" in prompt
-    assert "共享、本地和个人知识库" in prompt
-    assert "不进行数据库问数" in prompt
+    assert "你是知识问答智能体" in prompt
+    assert "knowledge_graph_query" in prompt

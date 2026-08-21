@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import pytest
 from PIL import Image
 
+from app.utils.font_utils import get_font_manager
 from app.tools.visualization.create_report_chart.tool import (
     CreateReportChartTool,
     report_chart_reference_paths,
@@ -16,7 +17,6 @@ from app.tools.visualization.create_report_chart.renderer import (
     _position_legends_below_plot,
     select_chinese_font,
 )
-from app.utils.font_utils import get_font_manager
 
 
 def test_schema_stays_compact_and_points_to_progressive_references():
@@ -61,7 +61,6 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "histogram",
         "correlation_heatmap",
         "boxplot",
-        "table_image",
         "combo",
         "range_line",
         "waterfall",
@@ -93,6 +92,18 @@ def test_schema_stays_compact_and_points_to_progressive_references():
     assert "east_u/north_v" in properties["options"]["description"]
 
 
+@pytest.mark.asyncio
+async def test_table_image_chart_type_is_not_supported():
+    result = await CreateReportChartTool().execute(
+        chart_type="table_image",
+        title="表格图片",
+        data={"columns": ["指标", "数值"], "rows": [["PM2.5", 18]]},
+    )
+
+    assert result["success"] is False
+    assert "不支持的 chart_type：table_image" in result["error"]
+
+
 def test_reference_paths_include_specialized_chart_type_documents():
     paths = report_chart_reference_paths()
 
@@ -108,7 +119,6 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "histogram",
         "correlation_heatmap",
         "boxplot",
-        "table_image",
         "combo_chart",
         "range_and_error",
         "waterfall_chart",
@@ -147,12 +157,22 @@ def test_reference_paths_include_specialized_chart_type_documents():
 
 def test_renderer_selects_existing_chinese_font_file_when_available():
     font_path = select_chinese_font()
-    font_manager = get_font_manager()
+    font_paths = get_font_manager().FONT_FILE_PATHS
+    expected = next(
+        (path for path in font_paths if path.exists()),
+        None,
+    )
+    fangzheng_path = Path("/home/xckj/.local/share/fonts/方正小标宋简.TTF")
+    gb_xbs_path = Path("/usr/share/fonts/gb-cjk/GB_XBS_GB18030.TTF")
+    noto_path = Path("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc")
 
-    assert font_path is not None
+    assert font_paths.index(fangzheng_path) < font_paths.index(gb_xbs_path)
+    assert font_paths.index(gb_xbs_path) < font_paths.index(noto_path)
+    assert expected is not None
+    assert font_path == str(expected)
     assert Path(font_path).exists()
-    assert font_manager.preferred_font_name() == "FZXiaoBiaoSong-B05S"
-    assert Path(font_path).resolve() == font_manager.FONT_FILE_PATHS[0].resolve()
+    if not fangzheng_path.exists() and gb_xbs_path.exists():
+        assert font_path == str(gb_xbs_path)
 
 
 def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_mathtext():
@@ -194,8 +214,6 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
 
     assert result["success"] is True
     assert image_path.exists()
-    assert result["visuals"][0]["url"].startswith("/api/image/")
-    assert result["visuals"][0]["image_url"] == result["visuals"][0]["url"]
     assert result["refs"]["data"] == [
         {
             "file_path": "/configured/data/root/sessions/agent_session_test/data/resource-refs.json",
@@ -206,11 +224,10 @@ async def test_report_chart_returns_resource_refs_and_resume_hints():
     assert result["refs"]["files"][0]["type"] == "image"
     assert result["refs"]["files"][0]["usage"] == "report_chart"
     assert result["refs"]["visuals"][0]["tool_path"] == str(image_path)
-    assert result["refs"]["visuals"][0]["image_url"] == result["visuals"][0]["image_url"]
     assert result["llm_resume"]["source_file_path"] == "/configured/data/root/sessions/agent_session_test/data/resource-refs.json"
     assert result["llm_resume"]["generated_visuals"][0]["tool_path"] == str(image_path)
-    assert result["llm_resume"]["generated_visuals"][0]["image_url"] == result["visuals"][0]["image_url"]
     assert str(image_path) in result["llm_resume"]["tool_hint"]
+    assert "Do not place this server path" in result["llm_resume"]["tool_hint"]
 
 
 @pytest.mark.asyncio
@@ -1218,8 +1235,6 @@ def test_report_legend_is_positioned_below_and_does_not_overlap_plot():
 
         assert exported_height > baseline_height + 20
     finally:
-        import matplotlib.pyplot as plt
-
         plt.close(fig)
 
 

@@ -20,6 +20,7 @@ from app.services.ops_audit.semantic.ocr_adapter import extract_attachment_json
 
 
 RULE_ID = "ATTACHMENT_MULTIPOINT_GRADIENT_REVIEW"
+WATERMARK_RULE_ID = "ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW"
 MULTIPOINT_TABLES = {
     "RF_Q_GASEOUSMULTIPOINT_CO": ("CO", "ppm"),
     "RF_Q_GASEOUSMULTIPOINT_NO2": ("NO2", "ppb"),
@@ -54,8 +55,11 @@ def build_multipoint_curve_visual_tasks(
 ) -> list[dict[str, Any]]:
     """Build one visual-review task for each quarterly gas multipoint form."""
 
-    enabled_rule_ids = load_semantic_review_profiles().get("flow_visual_enabled_rule_ids", [])
-    if RULE_ID not in {str(rule_id) for rule_id in enabled_rule_ids}:
+    enabled_rule_ids = {
+        str(rule_id)
+        for rule_id in load_semantic_review_profiles().get("flow_visual_enabled_rule_ids", [])
+    }
+    if not {RULE_ID, WATERMARK_RULE_ID} & enabled_rule_ids:
         return []
     items = _attachment_items(attachments, wo_commonfiles)
     tasks = []
@@ -180,7 +184,12 @@ def _is_curve_candidate(item: dict[str, Any]) -> bool:
     normalized = filename.lower().replace(" ", "")
     if any(keyword in normalized for keyword in EXCLUDED_IMAGE_KEYWORDS):
         return False
-    return any(keyword in normalized for keyword in CURVE_KEYWORDS)
+    if any(keyword in normalized for keyword in CURVE_KEYWORDS):
+        return True
+    # Production attachments often use concise names such as ``O3多点.png``
+    # or ``四气态多点.png``.  Keep single-point screenshots such as
+    # ``O3多点90.jpg`` excluded because they do not show the full curve.
+    return "多点" in normalized and not re.search(r"多点\d+", normalized)
 
 
 def run_multipoint_curve_visual_task(task: dict[str, Any], issues: list[Issue]) -> None:
@@ -203,6 +212,7 @@ def run_multipoint_curve_visual_task(task: dict[str, Any], issues: list[Issue]) 
         return
 
     reviews = [_review_candidate(task, item) for item in candidates]
+    _add_watermark_review_issues(task, reviews, issues)
     selected = _select_aggregate_result(reviews)
     if selected["result"] != "PASS":
         selected = {**selected, "reviewed_images": reviews}
@@ -249,19 +259,27 @@ def _review_candidate(task: dict[str, Any], item: dict[str, Any]) -> dict[str, A
 
 def _review_prompt(task: dict[str, Any], item: dict[str, Any]) -> str:
     concentrations = "、".join(_display_number(value) for value in task["form_concentrations"])
+    station_name = _expected_station_name(task)
     return (
         f"你正在审核{task['pollutant']}多点校准曲线，附件文件名为{item.get('filename') or '未命名'}。"
         f"RF表单填写的多点校准浓度依次为：{concentrations} {task['unit']}。"
+        f"工单期望站点名称为：{station_name or '未知'}。"
         "请结合图片直接判断曲线是否呈现与这些表单浓度点一致的多级平台和明显浓度梯度。"
+        f"图片可能是四气态合并记录；只要其中能看到{task['pollutant']}对应栏目，就按该栏目审核，不能因为同时出现其他污染物栏目就判定POLLUTANT_MISMATCH。"
         "曲线可以按浓度升序或降序；允许轻微波动、拍摄倾斜、屏幕摩尔纹和坐标刻度不清。"
         "只比较平台数量、明显梯度、顺序和相对量级，不审核站点、作业时间、平台持续时长或校准偏差。"
         "不要求精确提取每个平台数值，不要输出置信度，也不要根据看不清的内容猜测为无问题。"
         "无法确认时返回INSUFFICIENT_EVIDENCE。"
+        "同时检查图片是否有清晰的现场水印日期，以及是否能看到与期望站点对应的站点名称。"
+        "若图片没有水印、日期或站点名称，相关字段返回false；看不清或无法判断返回null。"
         "只输出JSON："
         '{"result":"PASS|ISSUE_REVIEW|INSUFFICIENT_EVIDENCE",'
         '"reason_code":"NONE|GRADIENT_MISMATCH|POINT_COUNT_MISMATCH|NO_CLEAR_GRADIENT|'
         'POLLUTANT_MISMATCH|NOT_MULTIPOINT_CURVE|CURVE_INCOMPLETE|IMAGE_UNREADABLE",'
-        '"reason":"简明中文原因","observed_summary":"图片中实际看到的梯度或资料不足情况"}'
+        '"reason":"简明中文原因","observed_summary":"图片中实际看到的梯度或资料不足情况",'
+        '"watermark_date_present":true/false/null,"station_name_present":true/false/null,'
+        '"station_name_match":true/false/null,"station_name_text":"图片中看到的站点名称或空",'
+        '"watermark_text":"图片中看到的水印文字或空","evidence_confidence":0到1}'
     )
 
 
@@ -285,7 +303,90 @@ def _normalize_model_result(data: Any) -> dict[str, Any]:
         "reason_code": reason_code,
         "reason": str(data.get("reason") or "").strip() or "模型未提供具体原因。",
         "observed_summary": str(data.get("observed_summary") or "").strip(),
+        "watermark_date_present": _optional_bool(data.get("watermark_date_present")),
+        "station_name_present": _optional_bool(data.get("station_name_present")),
+        "station_name_match": _optional_bool(data.get("station_name_match")),
+        "station_name_text": str(data.get("station_name_text") or "").strip(),
+        "watermark_text": str(data.get("watermark_text") or "").strip(),
+        "evidence_confidence": _optional_number(data.get("evidence_confidence")),
     }
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "是"}:
+        return True
+    if text in {"false", "0", "no", "否"}:
+        return False
+    return None
+
+
+def _optional_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0 <= number <= 1 else None
+
+
+def _expected_station_name(task: dict[str, Any]) -> str:
+    order = task.get("order") if isinstance(task.get("order"), dict) else {}
+    form = task.get("form") if isinstance(task.get("form"), dict) else {}
+    for source in (form, order):
+        for field in ("STATIONNAME", "STATION_NAME", "STATION", "SITENAME", "SITE_NAME"):
+            value = str(source.get(field) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _add_watermark_review_issues(task: dict[str, Any], reviews: list[dict[str, Any]], issues: list[Issue]) -> None:
+    if WATERMARK_RULE_ID not in {
+        str(rule_id)
+        for rule_id in load_semantic_review_profiles().get("flow_visual_enabled_rule_ids", [])
+    }:
+        return
+    for review in reviews:
+        confidence = review.get("evidence_confidence")
+        if confidence is None or confidence < 0.85:
+            continue
+        missing = []
+        if review.get("watermark_date_present") is False:
+            missing.append("水印日期")
+        if review.get("station_name_present") is False or review.get("station_name_match") is False:
+            missing.append("站点名称")
+        if not missing:
+            continue
+        evidence = {
+            "working_order_code": _working_order_code(task),
+            "station_id": task.get("order", {}).get("STATIONID"),
+            "expected_station_name": _expected_station_name(task),
+            "rf_table": task.get("table"),
+            "pollutant_type": task.get("pollutant"),
+            "missing_evidence": missing,
+            "station_name_text": review.get("station_name_text"),
+            "watermark_text": review.get("watermark_text"),
+            "evidence_confidence": confidence,
+            "attachment_filename": review.get("attachment_filename"),
+            "attachment_local_path": review.get("attachment_local_path"),
+            "model_result_path": review.get("model_result_path"),
+            "needs_manual_review": True,
+        }
+        add_issue(
+            issues,
+            WATERMARK_RULE_ID,
+            "附件质量问题",
+            "中",
+            f"attachment.multipoint.{str(task.get('pollutant') or '').lower()}.watermark",
+            f"多点校准附件缺少或无法确认{'、'.join(missing)}，需人工复核",
+            json.dumps(evidence, ensure_ascii=False, default=str),
+        )
+        # One issue per task is sufficient; reviewed_images retain other evidence.
+        return
 
 
 def _insufficient_result(reason_code: str, reason: str) -> dict[str, Any]:

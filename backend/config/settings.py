@@ -74,6 +74,28 @@ class Settings(BaseSettings):
         description="Allowed CORS origins (comma-separated)"
     )
 
+    # Jiangsu provincial air-quality API. Credentials are deployment secrets.
+    jiangsu_air_api_base_url: str = Field(default="")
+    jiangsu_air_api_username: str = Field(default="")
+    jiangsu_air_api_password: str = Field(default="")
+    jiangsu_air_api_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+
+    # Jiangsu operations alarm API. It is separate from the provincial air-data API
+    # and may be reachable only through the Jiangsu operations network.
+    jiangsu_ops_api_base_url: str = Field(default="")
+    jiangsu_ops_token_url: str = Field(default="")
+    jiangsu_ops_api_username: str = Field(default="")
+    jiangsu_ops_api_password: str = Field(default="")
+    jiangsu_ops_api_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+
+    # Jiangsu QC/device-control service. Keep its signing key server-side; it
+    # must never be exposed through an Agent tool schema or prompt.
+    jiangsu_qc_api_base_url: str = Field(default="")
+    jiangsu_qc_api_key: str = Field(default="")
+    jiangsu_qc_api_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    jiangsu_device_control_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=1800)
+    jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""
@@ -287,7 +309,7 @@ class Settings(BaseSettings):
         description="DeepSeek model name"
     )
     deepseek_api_mode: str = Field(
-        default="anthropic_messages",
+        default="chat_completions",
         description="DeepSeek API protocol mode: anthropic_messages or chat_completions"
     )
 
@@ -297,7 +319,7 @@ class Settings(BaseSettings):
         description="Alibaba Cloud Bailian Anthropic-compatible API base URL",
     )
     bailian_model: str = Field(
-        default="qwen3.8-max-preview",
+        default="qwen3.8-max",
         description="Default Bailian model used by Auto mode",
     )
     bailian_api_mode: str = Field(
@@ -441,16 +463,16 @@ class Settings(BaseSettings):
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(
-        default="doubao/gpt-5.6-luna,mimo/mimo-v2.5,deepseek/deepseek-v4-flash",
-        description="Comma-separated fallback models, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-flash"
+        default="doubao/gpt-5.6-luna,bailian/qwen3.8-max,deepseek/deepseek-v4-pro",
+        description="Comma-separated fallback models, e.g. bailian/qwen3.8-max"
     )
     llm_flash_models: str = Field(
-        default="doubao/gpt-5.6-luna,deepseek/deepseek-v4-flash",
-        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,deepseek/deepseek-v4-flash"
+        default="doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash",
+        description="Comma-separated Flash model priority chain, e.g. doubao/gpt-5.6-luna,bailian/deepseek-v4-flash-0731,deepseek/deepseek-v4-flash"
     )
     llm_pro_models: str = Field(
         default="bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro",
-        description="Comma-separated Pro model priority chain, e.g. agnes/agnes-2.0-flash,deepseek/deepseek-v4-pro"
+        description="Comma-separated Pro model priority chain, e.g. bailian/deepseek-v4-pro,deepseek/deepseek-v4-pro"
     )
     llm_multimodal_models: str = Field(
         default="",

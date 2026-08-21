@@ -416,7 +416,7 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式（办公任务），'ppt' - 幻灯片模式（可编辑演示文稿），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化），'ops' - 运维管理模式（工单审核、异常分析）"
+        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'chart' - 图表模式，'ops' - 运维管理模式"
     )
     user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
 - 如果提供：同一用户在不同session共享记忆

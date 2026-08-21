@@ -59,6 +59,18 @@ rules:
     default_severity: 中
     scope: RF_W_PMCHECK
     rationale: 颗粒物 PM10/PM2.5 周检应按设备类型填写对应耗材状态；DEVICEMODEL 包含 1405 时应填写 TEOM 滤膜负载及处置情况，其他颗粒物仪器应填写纸带使用量及处置情况，不能为空或仅填写 /。
+  - rule_id: RF_PM_PAPER_TAPE_NOT_APPLICABLE_FILLED
+    name: 1405/TEOM 设备不应填写纸带用量
+    category: 规范性问题
+    default_severity: 中
+    scope: RF_W_PMCHECK
+    rationale: 1405/TEOM 类颗粒物仪器使用滤膜，不使用纸带；纸带字段出现实质性内容时属于耗材类型填报错误。
+  - rule_id: RF_PM_FLOW_CALIBRATION_STATE_MISMATCH
+    name: 颗粒物流量校准状态与校准后结果不一致
+    category: 一致性
+    default_severity: 中
+    scope: RF_TW_PmFlowCalibrate
+    rationale: 两周颗粒物流量校准表未勾选校准时不应填写校准后读数；校准后结果出现即表示状态选择与内容不一致。
   - rule_id: RF_STATION_MISMATCH
     name: RF 表单站点与工单站点不一致
     category: 一致性
@@ -251,6 +263,18 @@ rules:
     default_severity: 高
     scope: RF_HY_O3VALUEPASS/WO_COMMONFILE
     rationale: O3量值传递表的斜率、截距、改变率及上级标准型号、设备号、序列号、传递日期、公式和有效期应与XLS附件按标签提取的值一致。
+  - rule_id: ATTACHMENT_MULTIPOINT_WATERMARK_REVIEW
+    name: 多点校准附件水印和站点名称待复核
+    category: 附件质量问题
+    default_severity: 中
+    scope: RF_Q_GASEOUSMULTIPOINT_*
+    rationale: 多点校准附件应能通过现场水印日期和站点名称建立作业现场与工单的关联；模型高置信度识别缺失时转人工复核。
+  - rule_id: ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW
+    name: O3初始浓度更新后六点结果复核
+    category: 附件质量问题
+    default_severity: 中
+    scope: RF_HY_O3VALUEPASS
+    rationale: O3发生器初始浓度更新后，六次传递结果应重新填写；视觉模型仅在高置信度发现旧批次或未全部更新时生成待人工复核。
   - rule_id: ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW
     name: O3量值传递缺少XLS计算附件待复核
     category: 附件证据复核
@@ -311,6 +335,12 @@ rules:
     default_severity: 高
     scope: RF_Q_GaseousFlowCheck
     rationale: 季度气体流量检查作业环境湿度应在0-80%范围内，超出范围会影响MFC流量检查条件。
+  - rule_id: RF_M_GASEOUS_CALIDEVICE_ENV_HUMIDITY_OUT_OF_RANGE
+    name: 月度气态校准设备检查室内湿度超范围
+    category: 表单结果合理性
+    default_severity: 高
+    scope: RF_M_GASEOUSCALIDEVICECHECK
+    rationale: 月度动态气体校准仪流量检查作业环境湿度应在0-80%范围内，超出范围会影响流量检查条件。
   - rule_id: RF_VISIBILITY_NO_DEVICE_FIELD_CONFLICT
     name: 能见度无设备说明与设备字段冲突
     category: 表单填报一致性

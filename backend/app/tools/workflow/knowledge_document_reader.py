@@ -70,8 +70,8 @@ class KnowledgeDocumentReader(WorkflowTool):
             )
 
         try:
-            from app.db.knowledge_database import knowledge_async_session
             from app.knowledge_base.service import KnowledgeBaseService
+            from app.knowledge_base.shared_metadata import knowledge_base_read_session
 
             self._record_step("document_chunks_read_start", "running", {
                 "knowledge_base_id": knowledge_base_id,
@@ -83,7 +83,7 @@ class KnowledgeDocumentReader(WorkflowTool):
                 "max_chunks": max_chunks
             })
 
-            async with knowledge_async_session() as db:
+            async with knowledge_base_read_session(knowledge_base_id) as db:
                 service = KnowledgeBaseService(db=db)
                 user_id = getattr(context, "user_identifier", None)
                 if is_enforcement_exam_context(context):
