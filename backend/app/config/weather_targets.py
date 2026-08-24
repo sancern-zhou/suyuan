@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-
 ERA5_MAIN_FETCHER = "era5_fetcher"
 ERA5_JINING_FETCHER = "jining_era5_fetcher"
 
@@ -72,6 +71,35 @@ def _nmc_station(
     )
 
 
+def _nmc_city_target(
+    *,
+    city: str,
+    key: str,
+    station_id: str,
+    station_name: str,
+    lat: float,
+    lon: float,
+    url_slug: str,
+) -> WeatherCityTarget:
+    """Build a city target backed only by an NMC observed station."""
+    return WeatherCityTarget(
+        city,
+        "河南省",
+        observed_stations=(
+            _nmc_station(
+                key=key,
+                station_id=station_id,
+                station_name=station_name,
+                province="河南省",
+                city=city,
+                lat=lat,
+                lon=lon,
+                url=f"/publish/forecast/AHA/{url_slug}.html",
+            ),
+        ),
+    )
+
+
 # This mapping is the single source of truth for explicitly fetched city targets.
 WEATHER_CITY_TARGETS: dict[str, WeatherCityTarget] = {
     "南京市": WeatherCityTarget("南京市", "江苏省", 32.0603, 118.7969, ERA5_MAIN_FETCHER),
@@ -87,6 +115,87 @@ WEATHER_CITY_TARGETS: dict[str, WeatherCityTarget] = {
     "镇江市": WeatherCityTarget("镇江市", "江苏省", 32.1878, 119.4250, ERA5_MAIN_FETCHER),
     "泰州市": WeatherCityTarget("泰州市", "江苏省", 32.4558, 119.9230, ERA5_MAIN_FETCHER),
     "宿迁市": WeatherCityTarget("宿迁市", "江苏省", 33.9630, 118.2750, ERA5_MAIN_FETCHER),
+    "郑州市": _nmc_city_target(
+        city="郑州市",
+        key="zhengzhou",
+        station_id="YVItN",
+        station_name="郑州",
+        lat=34.72,
+        lon=113.65,
+        url_slug="zhengzhou",
+    ),
+    "开封市": _nmc_city_target(
+        city="开封市",
+        key="kaifeng",
+        station_id="swtij",
+        station_name="开封",
+        lat=34.78,
+        lon=114.30,
+        url_slug="kaifeng",
+    ),
+    "洛阳市": _nmc_city_target(
+        city="洛阳市",
+        key="luoyang",
+        station_id="rYaxY",
+        station_name="洛阳",
+        lat=34.82,
+        lon=112.43,
+        url_slug="luoyang2",
+    ),
+    "平顶山市": _nmc_city_target(
+        city="平顶山市",
+        key="pingdingshan",
+        station_id="nRecJ",
+        station_name="平顶山",
+        lat=33.74,
+        lon=113.30,
+        url_slug="pingdingshan",
+    ),
+    "安阳市": _nmc_city_target(
+        city="安阳市",
+        key="anyang",
+        station_id="hNkdK",
+        station_name="安阳",
+        lat=36.05,
+        lon=114.13,
+        url_slug="anyang",
+    ),
+    "鹤壁市": _nmc_city_target(
+        city="鹤壁市",
+        key="hebi",
+        station_id="NYclC",
+        station_name="鹤壁",
+        lat=35.75,
+        lon=114.30,
+        url_slug="hebi",
+    ),
+    "新乡市": _nmc_city_target(
+        city="新乡市",
+        key="xinxiang",
+        station_id="VLpOH",
+        station_name="新乡",
+        lat=35.32,
+        lon=113.88,
+        url_slug="xinxiang",
+    ),
+    "焦作市": _nmc_city_target(
+        city="焦作市",
+        key="jiaozuo",
+        station_id="ubXHV",
+        station_name="焦作",
+        lat=35.23,
+        lon=113.25,
+        url_slug="jiaozuo",
+    ),
+    "濮阳市": _nmc_city_target(
+        city="濮阳市",
+        key="puyang",
+        station_id="XbbBI",
+        station_name="濮阳",
+        lat=35.76,
+        lon=115.03,
+        url_slug="zuoyang1",
+    ),
     "运城市": WeatherCityTarget(
         "运城市",
         "山西省",
@@ -124,6 +233,78 @@ WEATHER_CITY_TARGETS: dict[str, WeatherCityTarget] = {
                 url="/publish/forecast/AHA/xuchang.html",
             ),
         ),
+    ),
+    "漯河市": _nmc_city_target(
+        city="漯河市",
+        key="luohe",
+        station_id="lncFZ",
+        station_name="漯河",
+        lat=33.58,
+        lon=114.02,
+        url_slug="zuohe",
+    ),
+    "三门峡市": _nmc_city_target(
+        city="三门峡市",
+        key="sanmenxia",
+        station_id="TjcXC",
+        station_name="三门峡",
+        lat=34.80,
+        lon=111.20,
+        url_slug="sanmenxia",
+    ),
+    "南阳市": _nmc_city_target(
+        city="南阳市",
+        key="nanyang",
+        station_id="vRweN",
+        station_name="南阳",
+        lat=33.10,
+        lon=112.48,
+        url_slug="nanyang",
+    ),
+    "商丘市": _nmc_city_target(
+        city="商丘市",
+        key="shangqiu",
+        station_id="aMsMR",
+        station_name="商丘",
+        lat=34.45,
+        lon=115.65,
+        url_slug="shangqiu",
+    ),
+    "信阳市": _nmc_city_target(
+        city="信阳市",
+        key="xinyang",
+        station_id="hdKHW",
+        station_name="信阳",
+        lat=32.13,
+        lon=114.05,
+        url_slug="xinyang",
+    ),
+    "周口市": _nmc_city_target(
+        city="周口市",
+        key="zhoukou",
+        station_id="URskB",
+        station_name="周口",
+        lat=33.63,
+        lon=114.70,
+        url_slug="zhoukou",
+    ),
+    "驻马店市": _nmc_city_target(
+        city="驻马店市",
+        key="zhumadian",
+        station_id="ZmGSj",
+        station_name="驻马店",
+        lat=32.93,
+        lon=113.92,
+        url_slug="zhumadian",
+    ),
+    "济源市": _nmc_city_target(
+        city="济源市",
+        key="jiyuan",
+        station_id="TJdvk",
+        station_name="济源",
+        lat=35.08,
+        lon=112.58,
+        url_slug="jiyuan",
     ),
     "济宁市": WeatherCityTarget(
         "济宁市",
