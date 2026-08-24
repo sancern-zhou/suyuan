@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +47,12 @@ def _timestamp(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
+def _xml_ref_with_read_url(xml_ref: dict[str, Any] | None, read_url: str) -> dict[str, Any] | None:
+    if not xml_ref:
+        return xml_ref
+    return {**xml_ref, "read_url": read_url}
+
+
 def serialize_version(version: BoardVersion) -> dict[str, Any]:
     return {
         "id": version.id,
@@ -56,7 +63,10 @@ def serialize_version(version: BoardVersion) -> dict[str, Any]:
         "restored_from_version_id": version.restored_from_version_id,
         "source": version.source,
         "lifecycle_status": version.lifecycle_status,
-        "xml_ref": version.xml_ref,
+        "xml_ref": _xml_ref_with_read_url(
+            version.xml_ref,
+            f"/api/boards/{version.board_id}/versions/{version.id}/xml",
+        ),
         "xml_sha256": version.xml_sha256,
         "screenshot_ref": version.screenshot_ref,
         "quality_status": version.quality_status,
@@ -76,6 +86,11 @@ def serialize_board(board: Board) -> dict[str, Any]:
         "current_version_id": board.current_version_id,
         "revision": board.revision,
         "draft_revision": board.draft_revision,
+        "draft_xml_ref": _xml_ref_with_read_url(
+            board.draft_xml_ref,
+            f"/api/boards/{board.id}/draft/xml",
+        ),
+        "draft_sha256": board.draft_sha256,
         "updated_at": _timestamp(board.updated_at),
     }
 
@@ -183,3 +198,41 @@ async def get_board_version(
     except Exception as exc:
         _raise_version_error(exc)
     return {**serialize_board(board), "version": serialize_version(version)}
+
+
+@router.get("/{board_id}/versions/{version_id}/xml", response_class=PlainTextResponse)
+async def get_board_version_xml(
+    board_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+    artifact_root: Path = Depends(get_board_artifact_root),
+):
+    service, _ = await _authorized_service(
+        board_id, db=db, artifact_root=artifact_root, catalog=catalog, user=user, write=False
+    )
+    try:
+        xml = await service.read_version_xml(board_id, version_id)
+    except Exception as exc:
+        _raise_version_error(exc)
+    if xml is None:
+        raise HTTPException(status_code=404, detail="board_xml_not_found")
+    return PlainTextResponse(xml, media_type="application/xml")
+
+
+@router.get("/{board_id}/draft/xml", response_class=PlainTextResponse)
+async def get_board_draft_xml(
+    board_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+    artifact_root: Path = Depends(get_board_artifact_root),
+):
+    service, _ = await _authorized_service(
+        board_id, db=db, artifact_root=artifact_root, catalog=catalog, user=user, write=False
+    )
+    xml = await service.read_draft_xml(board_id)
+    if xml is None:
+        raise HTTPException(status_code=404, detail="board_draft_not_found")
+    return PlainTextResponse(xml, media_type="application/xml")

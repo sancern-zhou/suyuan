@@ -206,8 +206,7 @@ const emit = defineEmits([
   'tab-change',
   'board-xml-change',
   'board-selection-change',
-  'board-snapshot-confirm',
-  'board-version-restore'
+  'board-snapshot-confirm'
 ])
 const resourceStore = useSessionResourceStore()
 
@@ -277,10 +276,6 @@ const handleBoardSelectionChange = (selection) => {
 
 const handleBoardSnapshotConfirm = (snapshot) => {
   emit('board-snapshot-confirm', snapshot)
-}
-
-const handleBoardVersionRestore = (versionId) => {
-  emit('board-version-restore', versionId)
 }
 
 </script>
