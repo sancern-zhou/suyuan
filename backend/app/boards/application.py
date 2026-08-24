@@ -138,7 +138,10 @@ class BoardApplicationService:
                     version_number=int(candidate.version_number),
                     revision=int(board.revision),
                     lifecycle_status=str(candidate.lifecycle_status),
-                    xml_ref=dict(candidate.xml_ref),
+                    xml_ref={
+                        **dict(candidate.xml_ref),
+                        "read_url": f"/api/boards/{board.id}/versions/{candidate.id}/xml",
+                    },
                 )
         return receipt
 
@@ -185,7 +188,10 @@ class BoardApplicationService:
                     candidate_version_id=str(version.id),
                     title=str(board.title),
                     xml=Path(xml_path).read_text(encoding="utf-8"),
-                    xml_ref=dict(version.xml_ref),
+                    xml_ref={
+                        **dict(version.xml_ref),
+                        "read_url": f"/api/boards/{board.id}/versions/{version.id}/xml",
+                    },
                     lifecycle_status=str(version.lifecycle_status),
                     quality_status=str(version.quality_status),
                     quality_report=dict(version.quality_report or {}),
@@ -297,7 +303,10 @@ class BoardApplicationService:
             revision=int(board.revision),
             title=str(board.title),
             lifecycle_status=str(version.lifecycle_status),
-            xml_ref=dict(version.xml_ref),
+            xml_ref={
+                **dict(version.xml_ref),
+                "read_url": f"/api/boards/{board.id}/versions/{version.id}/xml",
+            },
             screenshot_ref=dict(version.screenshot_ref) if version.screenshot_ref else None,
             quality_status=str(version.quality_status),
             quality_report=dict(version.quality_report or {}),

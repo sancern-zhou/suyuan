@@ -14,6 +14,7 @@ import { AGENT_MODE_IDS } from '../config/agentModes.js'
 import {
   commitManualBoardVersion,
   getBoardVersions,
+  loadBoardVersionXml,
   saveBoardDraft
 } from '../api/board.js'
 import {
@@ -71,11 +72,19 @@ const scheduleDrawioDraftSave = (board) => {
   if (!boardId || !board?.currentXml) return
   cancelDrawioDraftSave(boardId)
   const xml = board.currentXml
+  board.syncStatus = 'syncing'
+  board.syncError = null
   const timer = setTimeout(async () => {
     drawioDraftTimers.delete(boardId)
     try {
-      await saveBoardDraft(boardId, xml)
+      const response = await saveBoardDraft(boardId, xml)
+      board.draftRevision = Number(response?.draft_revision ?? board.draftRevision ?? 0)
+      board.draftXmlRef = response?.draft_xml_ref || board.draftXmlRef || null
+      board.syncStatus = 'idle'
+      board.syncError = null
     } catch (error) {
+      board.syncStatus = 'error'
+      board.syncError = error?.code || error?.message || 'draft_save_failed'
       console.warn('[drawio-board] draft autosave failed', {
         boardId,
         error: error?.message || error
@@ -172,6 +181,8 @@ const createEmptyDrawioBoardState = () => ({
   versions: [],
   currentVersionId: null,
   baseVersionId: null,
+  draftRevision: 0,
+  draftXmlRef: null,
   selectedCells: [],
   pendingSnapshotAttachment: null,
   revision: 0,
@@ -225,11 +236,10 @@ const getDrawioBoardXmlRef = (payload = {}, result = {}) => {
 
 const readDrawioBoardXmlFromRef = async (xmlRef = {}) => {
   const directUrl = xmlRef.read_url || xmlRef.url || xmlRef.download_url
-  const localPath = xmlRef.local_path || xmlRef.path || xmlRef.file_path
   const normalizedDirectUrl = directUrl?.startsWith('/api/') && API_BASE_URL !== '/api'
     ? `${API_BASE_URL}${directUrl.slice(4)}`
     : directUrl
-  const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
+  const url = normalizedDirectUrl || ''
   if (!url) return ''
   const response = await authFetch(url, { cache: 'no-store' })
   if (!response.ok) {
@@ -2024,6 +2034,12 @@ export const useReactStore = defineStore('react', {
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'baseVersionId')) {
         targetState.board.baseVersionId = targetState.board.currentVersionId || null
       }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'draftRevision')) {
+        targetState.board.draftRevision = 0
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'draftXmlRef')) {
+        targetState.board.draftXmlRef = null
+      }
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'applyingHistory')) {
         targetState.board.applyingHistory = false
       }
@@ -2181,8 +2197,19 @@ export const useReactStore = defineStore('react', {
       const payload = getDrawioBoardPayload(result)
       if (getDrawioBoardXml(payload)) return this.applyDrawioBoardToolResult(result, targetState)
 
-      const xmlRef = getDrawioBoardXmlRef(payload, result)
+      let xmlRef = getDrawioBoardXmlRef(payload, result)
       if (!xmlRef) return false
+
+      if (!xmlRef.read_url && !xmlRef.url && !xmlRef.download_url) {
+        const boardId = payload.board_id || payload.active_board_id || payload.activeBoardId
+        const versionId = payload.candidate_version_id || payload.version_id || payload.versionId
+        if (boardId && versionId) {
+          xmlRef = {
+            ...xmlRef,
+            read_url: `/api/boards/${encodeURIComponent(boardId)}/versions/${encodeURIComponent(versionId)}/xml`
+          }
+        }
+      }
 
       try {
         const xml = await readDrawioBoardXmlFromRef(xmlRef)
@@ -2275,10 +2302,57 @@ export const useReactStore = defineStore('react', {
       const board = this.ensureDrawioBoardState(targetState)
       if (!board.activeBoardId) return []
       const response = await getBoardVersions(board.activeBoardId)
+      const previousCurrentVersionId = board.currentVersionId
       board.currentVersionId = response.current_version_id || board.currentVersionId
       board.baseVersionId = board.currentVersionId
       board.revision = Number(response.revision ?? board.revision ?? 0)
       board.versions = mapServerBoardVersions(response.versions || [], board.currentVersionId)
+      board.draftRevision = Number(response.draft_revision ?? board.draftRevision ?? 0)
+      board.draftXmlRef = response.draft_xml_ref || null
+
+      if (board.draftRevision > 0 && board.draftXmlRef) {
+        try {
+          const draftXml = await loadBoardVersionXml(
+            board.activeBoardId,
+            board.currentVersionId || previousCurrentVersionId || '',
+            { xml_ref: board.draftXmlRef }
+          )
+          this.updateDrawioBoardXml(
+            draftXml,
+            { dirty: true, saveDraft: false, updated_at: response.updated_at },
+            targetState
+          )
+          board.syncStatus = 'idle'
+        } catch (error) {
+          console.warn('[drawio-board] failed to restore saved draft', {
+            boardId: board.activeBoardId,
+            error: error?.message || error
+          })
+        }
+      } else if (!board.currentXml && board.currentVersionId) {
+        try {
+          const currentVersion = board.versions.find(
+            (version) => (version.versionId || version.id) === board.currentVersionId
+          )
+          const currentXml = await loadBoardVersionXml(
+            board.activeBoardId,
+            board.currentVersionId,
+            currentVersion || {}
+          )
+          this.updateDrawioBoardXml(
+            currentXml,
+            { dirty: false, saveDraft: false, updated_at: response.updated_at },
+            targetState
+          )
+          board.syncStatus = 'idle'
+        } catch (error) {
+          console.warn('[drawio-board] failed to restore current board version', {
+            boardId: board.activeBoardId,
+            versionId: board.currentVersionId,
+            error: error?.message || error
+          })
+        }
+      }
       return board.versions
     },
 

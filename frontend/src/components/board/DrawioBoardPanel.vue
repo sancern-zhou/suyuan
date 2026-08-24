@@ -7,6 +7,27 @@
         <button
           type="button"
           class="board-btn"
+          :disabled="readOnly || savingDraft || !boardId || previewVersionId"
+          :title="!boardId ? '当前画板尚未关联后端画板，无法保存草稿' : previewVersionId ? '请先返回当前工作版本' : ''"
+          @click="saveDraft"
+        >
+          {{ previewVersionId ? '预览版本' : savingDraft ? '保存中...' : draftSaved ? '草稿已保存' : '保存草稿' }}
+        </button>
+        <span v-if="draftSaveError" class="board-save-status board-save-error">{{ draftSaveError }}</span>
+        <span v-else-if="savingDraft" class="board-save-status">正在保存草稿...</span>
+        <span v-else-if="draftSaved" class="board-save-status board-save-success">
+          草稿已保存<span v-if="draftRevision">（第{{ draftRevision }}版）</span>
+        </span>
+        <span v-else-if="syncStatus === 'syncing'" class="board-save-status">自动保存中...</span>
+        <span v-else-if="syncStatus === 'error'" class="board-save-status board-save-error">
+          自动保存失败，请点击“保存草稿”重试
+        </span>
+        <span v-else-if="draftRevision" class="board-save-status board-save-success">
+          已保存草稿（第{{ draftRevision }}版）
+        </span>
+        <button
+          type="button"
+          class="board-btn"
           :disabled="exportingSnapshot"
           @click="downloadBoardImage"
         >
@@ -77,10 +98,14 @@
           {{ showQualityAttempts ? '收起' : '查看' }}质量核查过程（{{ qualityAttempts.length }}）
         </button>
         <div v-if="showQualityAttempts" class="quality-attempts">
-          <div
+          <button
             v-for="version in qualityAttempts"
             :key="getVersionKey(version)"
+            type="button"
             class="quality-attempt"
+            :class="{ current: getVersionKey(version) === displayedVersionId }"
+            :disabled="previewLoading"
+            @click="previewVersion(version)"
           >
             <AuthenticatedImage
               v-if="version.screenshotUrl"
@@ -95,7 +120,7 @@
               </span>
               <span class="quality-summary">{{ getQualitySummary(version) }}</span>
             </div>
-          </div>
+          </button>
         </div>
       </div>
     </div>
@@ -105,7 +130,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
-import { loadBoardVersionXml } from '@/api/board.js'
+import { loadBoardVersionXml, saveBoardDraft } from '@/api/board.js'
 import {
   getDrawioSelectionPayload,
   getDrawioSelectionPayloadFromExport,
@@ -143,13 +168,21 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  draftRevision: {
+    type: Number,
+    default: 0
+  },
+  syncStatus: {
+    type: String,
+    default: 'idle'
+  },
   readOnly: {
     type: Boolean,
     default: false
   }
 })
 
-const emit = defineEmits(['xml-change', 'selection-change', 'board-snapshot-confirm'])
+const emit = defineEmits(['xml-change', 'selection-change', 'board-snapshot-confirm', 'draft-saved'])
 
 const iframeRef = ref(null)
 const iframeReady = ref(false)
@@ -161,6 +194,9 @@ const previewSelection = ref([])
 const previewLoading = ref(false)
 const previewError = ref('')
 const exportingSnapshot = ref(false)
+const savingDraft = ref(false)
+const draftSaved = ref(false)
+const draftSaveError = ref('')
 const showVersionFiles = ref(false)
 const showQualityAttempts = ref(false)
 let pendingExportResolver = null
@@ -446,6 +482,24 @@ const applyEditorXml = (xml, event = 'sync') => {
     xmlLength: xml.length
   })
   emit('xml-change', xml)
+}
+
+const saveDraft = async () => {
+  if (!props.boardId || savingDraft.value) return
+  savingDraft.value = true
+  draftSaved.value = false
+  draftSaveError.value = ''
+  try {
+    const xml = await exportCurrentXml()
+    const response = await saveBoardDraft(props.boardId, xml)
+    draftSaved.value = true
+    emit('draft-saved', response)
+    window.setTimeout(() => { draftSaved.value = false }, 2500)
+  } catch (error) {
+    draftSaveError.value = `保存失败：${error?.message || error}`
+  } finally {
+    savingDraft.value = false
+  }
 }
 
 const exportCurrentXml = async () => {
@@ -956,11 +1010,21 @@ watch(() => props.boardId, () => {
 
 .quality-attempt {
   display: flex;
+  width: 100%;
   gap: 8px;
   padding: 6px;
   border: 1px solid #e5eaf0;
   border-radius: 5px;
   background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.quality-attempt:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 .quality-thumbnail {
@@ -1032,5 +1096,20 @@ watch(() => props.boardId, () => {
   min-height: 0;
   border: 0;
   background: #fff;
+}
+
+.board-save-status {
+  align-self: center;
+  color: #1677ff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.board-save-error {
+  color: #d92d20;
+}
+
+.board-save-success {
+  color: #079455;
 }
 </style>
