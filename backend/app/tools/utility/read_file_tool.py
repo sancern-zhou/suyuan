@@ -33,7 +33,13 @@ from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products
 from app.tools.utility.file_read_state import get_file_read_state
 from app.tools.resource_refs import build_file_ref
-from app.utils.path_config import PROJECT_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
+from app.utils.path_config import (
+    PROJECT_ROOT,
+    TEMP_ROOT,
+    get_data_registry,
+    is_path_within,
+    resolve_agent_path,
+)
 import structlog
 
 logger = structlog.get_logger()
@@ -98,8 +104,8 @@ class ReadFileTool(LLMTool):
 
         # Agent 相对路径统一从仓库根目录解析。
         self.working_dir = PROJECT_ROOT
-        # 允许访问的目录：整个项目目录（包含backend_data_registry）和临时目录
-        self.allowed_dirs = [PROJECT_ROOT, TEMP_ROOT]
+        # 持久化目录由部署配置决定，可能位于代码工作树之外。
+        self.allowed_dirs = [PROJECT_ROOT, get_data_registry(), TEMP_ROOT]
         self.max_image_size = 5 * 1024 * 1024  # 5MB
         self.max_pdf_size = 50 * 1024 * 1024  # 50MB
         self.max_docx_size = 20 * 1024 * 1024  # 20MB

@@ -33,6 +33,28 @@ def test_agent_path_contract_rejects_foreign_windows_path_on_posix():
         path_config.resolve_agent_path(r"D:\\溯源\\data\\document.pdf")
 
 
+@pytest.mark.asyncio
+async def test_read_file_allows_configured_registry_outside_project_root(
+    tmp_path, monkeypatch
+):
+    project_root = tmp_path / "checkout"
+    registry = tmp_path / "persistent-data"
+    upload = registry / "uploads" / "attachment.md"
+    project_root.mkdir()
+    upload.parent.mkdir(parents=True)
+    upload.write_text("attachment body", encoding="utf-8")
+
+    monkeypatch.setattr(read_file_tool, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(read_file_tool, "get_data_registry", lambda: registry)
+
+    tool = read_file_tool.ReadFileTool()
+    result = await tool.execute(path=str(upload))
+
+    assert registry.resolve() in tool.allowed_dirs
+    assert result["success"] is True
+    assert result["data"]["content"] == "attachment body"
+
+
 def test_core_file_tools_delegate_relative_paths_to_shared_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(path_config, "PROJECT_ROOT", tmp_path)
     expected = (tmp_path / "outputs/report.txt").resolve()
