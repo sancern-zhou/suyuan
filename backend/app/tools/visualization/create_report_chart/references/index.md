@@ -64,6 +64,8 @@ single-chart specifications selected by the routing table below.
   and use `chart_type: "pollutant_wind_rose"`.
 - Wind direction, wind speed, and one pollutant changing over time: read
   `wind-timeseries.md` and use `chart_type: "wind_timeseries"`.
+- Henan province city-level AQI or pollutant map: read `henan-city-map.md` and
+  use `chart_type: "henan_city_map"`.
 
 Use `create_report_chart` for formal report images. Use `execute_python` only
 for upstream data preparation or cases that require arbitrary Python beyond the

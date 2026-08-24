@@ -35,6 +35,7 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "wind_timeseries": str(REFERENCE_DIR / "wind-timeseries.md"),
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
+        "henan_city_map": str(REFERENCE_DIR / "henan-city-map.md"),
     }
 
 
@@ -48,7 +49,7 @@ class CreateReportChartTool(LLMTool):
             f"采用两层规范：先读公共入口 references/index.md={reference_paths['index']}，"
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
-            "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
+            "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）及河南省城市 AQI/污染物地图（henan_city_map）；"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
         )
         function_schema = {
@@ -89,6 +90,7 @@ class CreateReportChartTool(LLMTool):
                             "wind_timeseries",
                             "aqi_calendar",
                             "pollutant_wind_rose",
+                            "henan_city_map",
                         ],
                         "description": "图表类型。",
                     },
@@ -102,6 +104,7 @@ class CreateReportChartTool(LLMTool):
                             "line/bar 支持多序列 series，每个序列使用 name + data/values。"
                             "combo 使用 labels + series[{name,type,values,axis,stack}]，type 仅 bar/line。"
                             "普通图表不会自动推断任意 records 的横轴、纵轴或系列字段。"
+                            "henan_city_map 使用 records[{city,value}]（或 cities+values），可选 metric 与 geojson。"
                             "与 file_path 同时提供时，data 用于渲染，file_path 仅用于来源追踪。"
                         ),
                     },

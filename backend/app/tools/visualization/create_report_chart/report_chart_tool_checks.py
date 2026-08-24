@@ -73,6 +73,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "wind_timeseries",
         "aqi_calendar",
         "pollutant_wind_rose",
+        "henan_city_map",
     ]
     assert "不是 ECharts option" in properties["data"]["description"]
     assert "series[0].data" in properties["data"]["description"]
@@ -129,6 +130,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "wind_timeseries",
         "aqi_calendar",
         "pollutant_wind_rose",
+        "henan_city_map",
     }
 
     assert set(paths) == expected_keys
@@ -140,6 +142,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     pollutant_calendar_text = Path(paths["pollutant_calendar"]).read_text(encoding="utf-8")
     generic_wind_rose_text = Path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
     wind_timeseries_text = Path(paths["wind_timeseries"]).read_text(encoding="utf-8")
+    henan_city_map_text = Path(paths["henan_city_map"]).read_text(encoding="utf-8")
     index_text = Path(paths["index"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
@@ -149,6 +152,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
     assert "wind_timeseries" in wind_timeseries_text
     assert "meteorological_from" in wind_timeseries_text
+    assert "henan_city_map" in henan_city_map_text
     assert "Supply at least one of `data` or `file_path`" in index_text
     assert "current session" in index_text
     assert "not infer arbitrary record fields" in index_text
@@ -175,14 +179,31 @@ def test_renderer_selects_existing_chinese_font_file_when_available():
         assert font_path == str(gb_xbs_path)
 
 
+def test_henan_city_map_uses_new_standard_breakpoints_by_metric():
+    from app.tools.visualization.create_report_chart.domain.henan_city_map import (
+        LEVELS,
+        NEW_STANDARD_CONCENTRATION_BREAKS,
+        _metric_key,
+    )
+
+    assert LEVELS == (50, 100, 150, 200, 300)
+    assert NEW_STANDARD_CONCENTRATION_BREAKS["PM2_5"] == (35, 60, 115, 150, 250)
+    assert NEW_STANDARD_CONCENTRATION_BREAKS["PM10"] == (50, 120, 250, 350, 420)
+    assert NEW_STANDARD_CONCENTRATION_BREAKS["O3_8h"] == (100, 160, 215, 265, 800)
+    assert _metric_key("PM2.5") == "PM2_5"
+    assert _metric_key("O3_8H") == "O3_8h"
+
+
 def test_label_normalization_converts_ionic_superscripts_and_subscripts_to_mathtext():
     from app.tools.visualization.create_report_chart.text import normalize_matplotlib_label_text
 
     assert (
         normalize_matplotlib_label_text("各城市PM2.5中SO₄²⁻/NO₃⁻比值对比")
-        == "各城市PM2.5中SO$_4^{2-}$/NO$_3^-$比值对比"
+        == "各城市PM$_{2.5}$中SO$_4^{2-}$/NO$_3^-$比值对比"
     )
     assert normalize_matplotlib_label_text("NH₄⁺贡献占比") == "NH$_4^+$贡献占比"
+    assert normalize_matplotlib_label_text("O₃_8H日最大") == "O$_3$-8H日最大"
+    assert normalize_matplotlib_label_text("PM2.5浓度") == "PM$_{2.5}$浓度"
 
 
 @pytest.mark.asyncio
@@ -413,7 +434,7 @@ async def test_wind_timeseries_renders_speed_direction_and_pm25_arrays():
     assert metadata["applied_chart_type"] == "wind_timeseries"
     assert metadata["input_mode"] == "speed_direction"
     assert metadata["wind_direction_convention"] == "meteorological_from"
-    assert metadata["pollutant_name"] == "PM2.5"
+    assert metadata["pollutant_name"] == "PM$_{2.5}$"
     assert metadata["unit"] == "μg/m$^3$"
     assert metadata["valid_point_count"] == 24
     assert metadata["rendered_vector_count"] == 18
@@ -454,7 +475,7 @@ async def test_wind_timeseries_renders_custom_pollutant_records_from_file_path()
     assert result["metadata"]["source_file_path"] == "chart_data:v1:abc"
     metadata = result["data"]["metadata"]
     assert metadata["input_mode"] == "records_speed_direction"
-    assert metadata["pollutant_name"] == "O3"
+    assert metadata["pollutant_name"] == "O$_3$"
     assert metadata["valid_point_count"] == len(records)
     assert Path(result["visuals"][0]["local_path"]).exists()
 
@@ -671,10 +692,10 @@ async def test_line_chart_normalizes_title_legend_and_reference_labels_with_subs
 
     assert result["success"] is True
     normalized_text = result["data"]["metadata"]["normalized_text"]
-    assert normalized_text["title"] == "AQI与O$_3$_8H趋势"
-    assert normalized_text["series_names"] == ["PM$_{2.5}$ (μg/m$^3$)", "O$_3$_8H (μg/m$^3$)"]
+    assert normalized_text["title"] == "AQI与O$_3$-8H趋势"
+    assert normalized_text["series_names"] == ["PM$_{2.5}$ (μg/m$^3$)", "O$_3$-8H (μg/m$^3$)"]
     assert normalized_text["y_label"] == "浓度 (μg/m$^3$)"
-    assert normalized_text["reference_labels"] == ["O$_3$_8H日均限值"]
+    assert normalized_text["reference_labels"] == ["O$_3$-8H日均限值"]
     assert Path(result["visuals"][0]["local_path"]).exists()
 
 
@@ -831,7 +852,7 @@ async def test_dual_axis_line_renders_two_metric_trends_with_secondary_axis():
     assert result["success"] is True
     assert result["data"]["metadata"]["applied_chart_type"] == "dual_axis_line"
     assert result["data"]["metadata"]["axis_series_counts"] == {"left": 1, "right": 1}
-    assert result["data"]["metadata"]["normalized_text"]["right_y_label"] == "O$_3$_8H (μg/m$^3$)"
+    assert result["data"]["metadata"]["normalized_text"]["right_y_label"] == "O$_3$-8H (μg/m$^3$)"
     assert Path(result["visuals"][0]["local_path"]).exists()
 
 

@@ -37,6 +37,24 @@ def render_specialized_chart(
         return _render_generic_pollutant_wind_rose(chart_id, title, data, output_context, options)
     if chart_type == "wind_timeseries":
         return _render_wind_timeseries(chart_id, title, data, output_context, style_profile, options)
+    if chart_type == "henan_city_map":
+        from app.tools.visualization.create_report_chart.domain.henan_city_map import render_henan_city_map
+
+        image_base64, metadata, warnings = render_henan_city_map(title, data, options, output_context)
+        visual = _cache_base64_image(image_base64, chart_id or "henan_city_map", title)
+        return {
+            "chart_id": visual["image_id"],
+            "title": title,
+            "visuals": [visual],
+            "layout_warnings": warnings,
+            "metadata": {
+                "requested_chart_type": "henan_city_map",
+                "applied_chart_type": "henan_city_map",
+                "output_context": output_context,
+                **metadata,
+            },
+            "summary": f"报告图表已生成：{title}。",
+        }
     raise ChartDataError(f"不支持的专用 chart_type：{chart_type}。")
 
 
