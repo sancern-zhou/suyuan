@@ -29,9 +29,13 @@ async def resolve_board_context_reference(
     requested_revision = int(context.get("revision") or 0)
     if board.revision != requested_revision:
         raise BoardVersionConflict(board.revision)
-    if board.current_version_id != version_id:
-        raise BoardVersionConflict(board.revision)
     version = await service.get_version(board.id, version_id)
+    # A candidate is a valid continuation state even though it has not been
+    # promoted to board.current_version_id yet. This is required for a
+    # follow-up turn after candidate generation; treating it as a stale
+    # current version incorrectly produced HTTP 409.
+    if board.current_version_id != version_id and version.lifecycle_status != "candidate":
+        raise BoardVersionConflict(board.revision)
     path_value = version.xml_ref.get("local_path") or version.xml_ref.get("path")
     if not path_value:
         raise FileNotFoundError("board_version_xml_ref_missing")
@@ -48,5 +52,6 @@ async def resolve_board_context_reference(
         "version_id": version.id,
         "version": version.version_number,
         "revision": board.revision,
+        "lifecycle_status": version.lifecycle_status,
         "xml_sha256": version.xml_sha256,
     }

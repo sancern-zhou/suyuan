@@ -38,13 +38,16 @@ export const getBoardVersion = async (boardId, versionId) => request(
   `/boards/${encodeURIComponent(boardId)}/versions/${encodeURIComponent(versionId)}`
 )
 
-const readBoardVersionXmlRef = async (xmlRef = {}) => {
+const readBoardVersionXmlRef = async (xmlRef = {}, boardId = '', versionId = '') => {
   const directUrl = xmlRef.read_url || xmlRef.url || xmlRef.download_url
-  const localPath = xmlRef.local_path || xmlRef.path || xmlRef.file_path
   const normalizedDirectUrl = directUrl?.startsWith('/api/') && API_BASE_URL !== '/api'
     ? `${API_BASE_URL}${directUrl.slice(4)}`
     : directUrl
-  const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
+  const url = normalizedDirectUrl || (
+    boardId && versionId
+      ? `${API_BASE_URL}/boards/${encodeURIComponent(boardId)}/versions/${encodeURIComponent(versionId)}/xml`
+      : ''
+  )
   if (!url) throw new Error('board_version_xml_ref_missing')
 
   const response = await authFetch(url, { cache: 'no-store' })
@@ -63,7 +66,11 @@ export const loadBoardVersionXml = async (boardId, versionId, version = {}) => {
     versionPayload = response.version || response
   }
 
-  const xml = inlineXml || versionPayload.xml || versionPayload.current_xml || await readBoardVersionXmlRef(versionPayload.xml_ref)
+  const xml = inlineXml || versionPayload.xml || versionPayload.current_xml || await readBoardVersionXmlRef(
+    versionPayload.xml_ref,
+    boardId,
+    versionId
+  )
   const trimmed = String(xml || '').trim()
   if (!trimmed.startsWith('<mxfile') && !trimmed.startsWith('<mxGraphModel')) {
     throw new Error('board_version_xml_invalid')
