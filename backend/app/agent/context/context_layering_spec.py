@@ -5,6 +5,7 @@ import pytest
 
 from app.agent.context.context_builder import (
     MESSAGE_CONTEXT_LAYER_ORDER,
+    SYSTEM_CACHE_CHECKPOINT_KEY,
     SYSTEM_CONTEXT_LAYER_ORDER,
     SimplifiedContextBuilder,
 )
@@ -52,6 +53,38 @@ def test_system_context_uses_one_explicit_precedence_order():
     assert kwargs["board_context"] is None
     assert [item["name"] for item in builder.last_context_layers] == list(
         SYSTEM_CONTEXT_LAYER_ORDER
+    )
+
+
+def test_system_prompt_blocks_cache_static_prefix_before_dynamic_layers():
+    builder = SimplifiedContextBuilder(Mock(), Mock(), {})
+    builder.current_mode = "assistant"
+    builder.selected_skill_context = "skill-marker"
+    builder.fixed_policy_context = "policy-marker"
+    builder.session_resource_context = "resource-marker"
+    builder.memory_context = "memory-marker"
+
+    with patch(
+        "app.agent.prompts.prompt_builder.build_react_system_prompt",
+        return_value="mode-marker",
+    ):
+        prompt = builder._build_system_prompt()
+
+    blocks = builder.last_system_prompt_blocks
+    checkpoint_blocks = [
+        block for block in blocks if block.get(SYSTEM_CACHE_CHECKPOINT_KEY)
+    ]
+    assert len(checkpoint_blocks) == 1
+    assert "mode-marker" in checkpoint_blocks[0]["text"]
+    assert "skill-marker" not in checkpoint_blocks[0]["text"]
+    assert "policy-marker" not in checkpoint_blocks[0]["text"]
+    assert "resource-marker" not in checkpoint_blocks[0]["text"]
+    assert "memory-marker" not in checkpoint_blocks[0]["text"]
+    assert _layer_position(prompt, "mode_policy") < _layer_position(
+        prompt, "selected_skill"
+    )
+    assert _layer_position(prompt, "runtime_metadata") > _layer_position(
+        prompt, "long_term_memory"
     )
 
 
@@ -123,6 +156,8 @@ def test_long_term_memory_uses_the_same_layer_in_every_mode(mode):
 
 def test_compacted_history_places_summary_before_anchor_and_recent_messages():
     llm_client = Mock()
+    llm_client.api_mode = "chat_completions"
+    llm_client.anthropic_client = None
 
     async def _chat(**_kwargs):
         return "summary-marker"
