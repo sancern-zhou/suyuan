@@ -127,7 +127,7 @@ class ReActPlanner:
     async def think_and_action(
         self,
         query: str,
-        system_prompt: str,
+        system_prompt: Any,
         user_conversation: str,
         tools: List[Dict],
         iteration: int = 0,
@@ -218,7 +218,7 @@ class ReActPlanner:
     async def think_and_action_streaming(
         self,
         query: str,
-        system_prompt: str,
+        system_prompt: Any,
         user_conversation: str,
         tools: List[Dict],
         iteration: int = 0,
