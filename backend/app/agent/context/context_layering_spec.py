@@ -123,6 +123,8 @@ def test_long_term_memory_uses_the_same_layer_in_every_mode(mode):
 
 def test_compacted_history_places_summary_before_anchor_and_recent_messages():
     llm_client = Mock()
+    llm_client.api_mode = "chat_completions"
+    llm_client.anthropic_client = None
 
     async def _chat(**_kwargs):
         return "summary-marker"
