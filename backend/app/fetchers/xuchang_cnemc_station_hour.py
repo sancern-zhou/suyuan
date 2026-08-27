@@ -1,4 +1,4 @@
-"""Fetch CNEMC published hourly station data for Xuchang into dat_station_hour."""
+"""Fetch CNEMC published station hour and day metrics for Xuchang."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _time(value: Any) -> datetime:
 
 
 class XuchangCnemcStationHourFetcher(DataFetcher):
-    """Persist the official current published hour; reruns update the same rows."""
+    """Persist official hour observations and source-published rolling day metrics."""
 
     def __init__(self, session: requests.Session | None = None) -> None:
         super().__init__(
@@ -84,6 +84,38 @@ class XuchangCnemcStationHourFetcher(DataFetcher):
         }
 
     @staticmethod
+    def _day_record(row: dict[str, Any]) -> dict[str, Any] | None:
+        station_id = str(row.get("StationCode") or "").strip()
+        lat = _number(row.get("Latitude"))
+        lon = _number(row.get("Longitude"))
+        if not station_id or lat is None or lon is None:
+            return None
+
+        def daily_value(field: str) -> float | int:
+            value = _number(row.get(field))
+            return value if value is not None else MISSING_VALUE
+
+        data_time = _time(row.get("TimePoint")).replace(hour=0)
+        return {
+            "station_id": station_id,
+            "name": str(row.get("PositionName") or station_id).strip(),
+            "lon": float(lon),
+            "lat": float(lat),
+            "aqi": daily_value("AQI"),
+            "aqi_level": row.get("Quality"),
+            "pm10": daily_value("PM10_24h"),
+            "pm25": daily_value("PM2_5_24h"),
+            "no2": daily_value("NO2_24h"),
+            "so2": daily_value("SO2_24h"),
+            "co": float(daily_value("CO_24h")),
+            "o3": daily_value("O3_24h"),
+            "o3_8h": daily_value("O3_8h_24h"),
+            "pollutant": row.get("PrimaryPollutant"),
+            "data_time": data_time,
+            "city_area_code": XUCHANG_CITY_AREA_CODE,
+        }
+
+    @staticmethod
     def _upsert(cursor: pyodbc.Cursor, record: dict[str, Any]) -> None:
         cursor.execute(
             """
@@ -101,9 +133,39 @@ class XuchangCnemcStationHourFetcher(DataFetcher):
             record["station_id"], record["name"], record["lon"], record["lat"], record["aqi"], record["aqi_level"], record["pm10"], record["pm25"], record["no2"], record["so2"], record["co"], record["o3"], record["pollutant"], record["data_time"], record["city_area_code"],
         )
 
+    @staticmethod
+    def _upsert_day(cursor: pyodbc.Cursor, record: dict[str, Any]) -> None:
+        cursor.execute(
+            """
+            MERGE dbo.dat_station_day AS target
+            USING (SELECT ? AS station_id, ? AS data_time) AS source
+              ON target.station_id = source.station_id AND target.data_time = source.data_time
+            WHEN MATCHED THEN UPDATE SET
+              name=?, lon=?, lat=?, aqi=?, aqi_level=?, pm10=?, pm25=?, no2=?, so2=?,
+              co=?, o3=?, O38h=?, pollutant=?, city_area_code=?, CreateTime=GETDATE()
+            WHEN NOT MATCHED THEN INSERT
+              (station_id, name, lon, lat, aqi, aqi_level, pm10, pm25, no2, so2,
+               co, o3, O38h, pollutant, data_time, city_area_code, CreateTime)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE());
+            """,
+            record["station_id"], record["data_time"],
+            record["name"], record["lon"], record["lat"], record["aqi"],
+            record["aqi_level"], record["pm10"], record["pm25"], record["no2"],
+            record["so2"], record["co"], record["o3"], record["o3_8h"],
+            record["pollutant"], record["city_area_code"],
+            record["station_id"], record["name"], record["lon"], record["lat"],
+            record["aqi"], record["aqi_level"], record["pm10"], record["pm25"],
+            record["no2"], record["so2"], record["co"], record["o3"],
+            record["o3_8h"], record["pollutant"], record["data_time"],
+            record["city_area_code"],
+        )
+
     async def fetch_and_store(self) -> dict[str, int | str]:
         rows = self._fetch()
         records = [record for row in rows if (record := self._record(row)) is not None]
+        day_records = [
+            record for row in rows if (record := self._day_record(row)) is not None
+        ]
         if not records:
             raise ValueError("CNEMC returned no usable Xuchang station rows")
         connection = pyodbc.connect(xcai_connection_string(), timeout=30)
@@ -111,9 +173,17 @@ class XuchangCnemcStationHourFetcher(DataFetcher):
             cursor = connection.cursor()
             for record in records:
                 self._upsert(cursor, record)
+            for record in day_records:
+                self._upsert_day(cursor, record)
             connection.commit()
         finally:
             connection.close()
-        result = {"city": XUCHANG_CITY_NAME, "fetched": len(rows), "saved": len(records), "time": records[0]["data_time"].isoformat()}
+        result = {
+            "city": XUCHANG_CITY_NAME,
+            "fetched": len(rows),
+            "saved": len(records),
+            "daily_saved": len(day_records),
+            "time": records[0]["data_time"].isoformat(),
+        }
         logger.info("xuchang_cnemc_station_hour_fetch_completed", **result)
         return result

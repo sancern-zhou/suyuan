@@ -9,11 +9,12 @@ const readSource = (relativePath) => readFileSync(
 )
 
 
-test('scheduled task store requests execution history with the selected limit', () => {
+test('scheduled task store requests a selected page of execution summaries', () => {
   const source = readSource('../../stores/scheduledTasks.js')
 
-  assert.match(source, /async fetchTaskExecutions\(taskId, limit = 50\)/)
-  assert.match(source, /\$\{API_BASE\}\/\$\{taskId\}\/executions\?limit=\$\{limit\}/)
+  assert.match(source, /async fetchTaskExecutions\(taskId, \{ page = 1, pageSize = 10 \} = \{\}\)/)
+  assert.match(source, /page_size: String\(pageSize\)/)
+  assert.match(source, /totalPages: Number\(data\?\.total_pages\)/)
 })
 
 
@@ -21,7 +22,9 @@ test('task workspace only requests executions for the selected task', () => {
   const source = readSource('./TaskExecutionWorkspace.vue')
 
   assert.match(source, /const taskId = props\.task\?\.task_id/)
-  assert.match(source, /fetchTaskExecutions\(taskId, 50\)/)
+  assert.match(source, /fetchTaskExecutions\(taskId, \{/)
+  assert.match(source, /pageSize: pagination\.value\.pageSize/)
+  assert.match(source, /pagination\.totalPages > 1/)
   assert.doesNotMatch(source, /fetchRecentExecutions\(/)
 })
 

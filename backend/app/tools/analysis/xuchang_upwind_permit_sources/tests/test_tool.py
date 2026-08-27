@@ -3,7 +3,9 @@ from datetime import datetime
 import pytest
 
 from app.agent.tool_adapter import _standardize_tool_result
-from app.tools.analysis.xuchang_upwind_permit_sources.tool import AnalyzeXuchangUpwindPermitSourcesTool
+from app.tools.analysis.xuchang_upwind_permit_sources.tool import (
+    AnalyzeXuchangUpwindPermitSourcesTool,
+)
 
 
 class FakeRepository:
@@ -39,6 +41,18 @@ class FakeRepository:
                 "main_pollutant_categories": "大气污染物",
             }
         ]
+
+
+class MissingValidatorRepository(FakeRepository):
+    async def load_weather(self, **_kwargs):
+        class Row:
+            station_id = "ZzMTA"
+            time = datetime(2026, 8, 5, 8)
+            wind_direction_10m = 315
+            wind_speed_10m = 2.0
+            data_quality = "good"
+
+        return [Row()], []
 
 
 @pytest.mark.asyncio
@@ -91,6 +105,31 @@ async def test_tool_produces_a_rapid_output_for_one_valid_hour():
     assert result["data"]["scenario_1_output"]["meteorology"]["fan_radius_km"] == 5.0
 
 
+@pytest.mark.asyncio
+async def test_tool_reports_missing_validator_observations_instead_of_wind_mismatch():
+    tool = AnalyzeXuchangUpwindPermitSourcesTool(
+        repository=MissingValidatorRepository()
+    )
+
+    result = await tool.execute(
+        station_name="许昌受体",
+        lat=34.07,
+        lon=113.92,
+        pollutant="PM2.5",
+        start_time="2026-08-05 08:00:00",
+        end_time="2026-08-05 08:00:00",
+    )
+
+    assert result["status"] == "insufficient_meteorology"
+    assert result["summary"] == (
+        "事件时段缺少可用的校验气象站风向风速观测，无法完成多站风场一致性校验，"
+        "未生成企业候选排序。"
+    )
+    assert result["data"]["hourly_meteorology"][0]["reason"] == (
+        "no_validating_station_wind_available"
+    )
+
+
 def test_pollutant_match_outweighs_a_nearer_unrelated_permit():
     usable_hours = [{
         "time": "2026-08-05T08:00:00+08:00",
@@ -132,6 +171,54 @@ def test_pollutant_match_outweighs_a_nearer_unrelated_permit():
     assert results[0]["enterprise_name"] == "Farther particulate source"
     assert results[0]["pollutant_relevance_factor"] == 1.0
     assert results[1]["pollutant_relevance_factor"] == 0.1
+
+
+def test_inventory_emission_evidence_affects_candidate_ranking():
+    usable_hours = [{
+        "time": "2026-08-05T08:00:00+08:00",
+        "wind_from_deg": 320,
+        "wind_speed_ms": 2.0,
+        "sector_half_angle_deg": 45.0,
+        "stability": {"stability_class": "D"},
+    }]
+    candidates = [
+        {
+            "enterprise_name": "Low emission",
+            "industry_category": "其他",
+            "latitude": 34.08,
+            "longitude": 113.91,
+            "permit_pollutants": "颗粒物",
+            "main_pollutant_categories": "大气污染物",
+            "inventory_emissions": {"emission_pm25": 0.1},
+            "data_sources": ["permit_license", "emission_inventory"],
+        },
+        {
+            "enterprise_name": "High emission",
+            "industry_category": "其他",
+            "latitude": 34.08,
+            "longitude": 113.91,
+            "permit_pollutants": None,
+            "main_pollutant_categories": None,
+            "inventory_emissions": {"emission_pm25": 20.0},
+            "data_sources": ["emission_inventory"],
+        },
+    ]
+
+    results = AnalyzeXuchangUpwindPermitSourcesTool._score_candidates(
+        candidates=candidates,
+        usable_hours=usable_hours,
+        receptor_lat=34.07,
+        receptor_lon=113.92,
+        pollutant="PM2.5",
+        radius_km=5,
+        historical_wind_speed_ms=2,
+    )
+    results.sort(key=lambda item: item["final_score"], reverse=True)
+
+    assert results[0]["enterprise_name"] == "High emission"
+    assert results[0]["emission_value_tonnes"] == 20.0
+    assert results[0]["emission_norm"] == 1.0
+    assert results[0]["inventory_pollutant_relevance"] == "exact_match"
 
 
 @pytest.mark.asyncio

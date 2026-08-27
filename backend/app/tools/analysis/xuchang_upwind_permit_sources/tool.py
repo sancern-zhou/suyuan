@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from math import log1p
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -74,14 +75,15 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
         super().__init__(
             name="analyze_xuchang_upwind_permit_sources",
             description=(
-                "基于许昌、禹州、长葛气象观测与有效排污许可证，严格筛选已知异常受体点"
-                "在给定时段的上风向许可证企业。仅返回空间-时间一致性事实，不返回贡献率、责任或处置建议。"
+                "基于许昌、禹州、长葛气象观测、企业排放清单与有效排污许可证，严格筛选"
+                "已知异常受体点在给定时段的上风向候选企业。仅返回空间-时间一致性事实，"
+                "不返回贡献率、责任或处置建议。"
             ),
             category=ToolCategory.ANALYSIS,
-            version="1.0.0",
+            version="1.1.0",
             function_schema={
                 "name": "analyze_xuchang_upwind_permit_sources",
-                "description": "许昌场景一：严格代表站上风向许可证企业空间-时间一致性分析。",
+                "description": "许昌场景一：严格代表站上风向排放源企业空间-时间一致性分析。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -93,6 +95,11 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
                         "end_time": {"type": "string", "description": "事件窗口结束，ISO-8601 或 YYYY-MM-DD HH:MM:SS"},
                         "candidate_radius_km": {"type": "number", "default": 5, "minimum": 1, "maximum": 50},
                         "top_n": {"type": "integer", "default": 15, "minimum": 1, "maximum": 50},
+                        "include_emission_inventory": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "是否合并已注册的许昌企业排放清单候选及年度排放量证据",
+                        },
                         "event_context": {"type": "object", "description": "事件脚本已确认的站点偏差等上下文；工具仅原样回传"},
                     },
                     "required": ["station_name", "lat", "lon", "pollutant", "start_time", "end_time"],
@@ -111,6 +118,7 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
         end_time: str,
         candidate_radius_km: float = 5.0,
         top_n: int = 15,
+        include_emission_inventory: bool = True,
         event_context: dict[str, Any] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
@@ -141,6 +149,13 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
             receptor_lat=lat,
             receptor_lon=lon,
             radius_km=candidate_radius_km,
+            include_emission_inventory=include_emission_inventory,
+        )
+        inventory_status_loader = getattr(self.repository, "inventory_status", None)
+        inventory_status = (
+            inventory_status_loader()
+            if include_emission_inventory and inventory_status_loader is not None
+            else {"status": "not_requested"}
         )
         historical_wind_speed_ms, historical_wind_source = await self._historical_wind_mean(
             representative.station_id, start
@@ -184,10 +199,26 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
         # sufficient; multi-hour persistence belongs to Scenario 2.
         min_required_hours = 1
         if len(usable_hours) < min_required_hours:
+            excluded_reasons = [item.get("reason") for item in hourly]
+            if excluded_reasons and all(
+                reason == "no_validating_station_wind_available"
+                for reason in excluded_reasons
+            ):
+                summary = "事件时段缺少可用的校验气象站风向风速观测，无法完成多站风场一致性校验，未生成企业候选排序。"
+            elif excluded_reasons and all(
+                reason == "no_validating_station_with_consistent_wind_direction"
+                for reason in excluded_reasons
+            ):
+                summary = (
+                    f"事件时段校验站与代表站风向差均超过{MAX_WIND_DIRECTION_DIFFERENCE_DEG:g}度，"
+                    "未生成企业候选排序。"
+                )
+            else:
+                summary = f"严格风场校验后仅有{len(usable_hours)}个有效小时，少于{min_required_hours}个，未生成企业候选排序。"
             return {
                 "status": "insufficient_meteorology",
                 "success": False,
-                "summary": f"严格风场校验后仅有{len(usable_hours)}个有效小时，少于{min_required_hours}个，未生成企业候选排序。",
+                "summary": summary,
                 "metadata": self._result_metadata(candidate_count=0, total_candidate_count=0),
                 "data": {
                     "trigger_context": event_context or {},
@@ -230,10 +261,12 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
                 "total_hours": len(hourly),
                 "weather_coverage": round(len(usable_hours) / len(hourly), 3),
                 "stability_hours_available": sum(1 for item in usable_hours if item["stability"]["status"] == "available"),
-                "permit_candidates_in_radius": len(candidates),
+                "candidate_count_in_query_bounds": len(candidates),
+                "candidate_source_counts": self._candidate_source_counts(candidates),
+                "emission_inventory": inventory_status,
                 "limitations": [
                     "许可证信息不代表事件时段实际排放或生产工况。",
-                    "许可证公开数据没有企业年排放量；候选排序不使用或推断年排放量。",
+                    "排放清单是清单周期估算量，不代表事件时段实际排放或生产工况。",
                     "结果仅用于现场核查优先级，不输出企业贡献率或责任结论。",
                 ] + (["NOX类别使用站点NO2小时浓度作为空间异常代理，不代表总NOx实测浓度。"] if pollutant == "NOX" else []),
             },
@@ -243,6 +276,7 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
                 "scenario": "local_station_deviation_upwind_source_screening",
                 "wind_mode": "nearest_station_strict",
                 "fallbacks": "disabled",
+                "candidate_sources": ["emission_inventory", "permit_license"] if include_emission_inventory else ["permit_license"],
                 "sector_half_angle_deg": "dynamic_30_45_60",
                 "score_type": "dimensionless_evidence_score_not_contribution",
                 "algorithm_version": self.version,
@@ -251,7 +285,7 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
         return {
             "status": "success",
             "success": True,
-            "summary": f"{station_name}在严格风场校验后有{len(usable_hours)}个有效小时，发现{enterprises_in_fan}家空间-时间一致的许可证企业。",
+            "summary": f"{station_name}在严格风场校验后有{len(usable_hours)}个有效小时，发现{enterprises_in_fan}家空间-时间一致的候选企业。",
             "metadata": self._result_metadata(
                 candidate_count=len(matched),
                 total_candidate_count=enterprises_in_fan,
@@ -295,7 +329,17 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
         historical_wind_speed_ms: float,
     ) -> list[dict[str, Any]]:
         results = []
-        for candidate in candidates:
+        emission_values = {
+            index: AnalyzeXuchangUpwindPermitSourcesTool._emission_indicator(
+                pollutant, candidate.get("inventory_emissions")
+            )
+            for index, candidate in enumerate(candidates)
+        }
+        max_log_emission = max(
+            (log1p(value) for value in emission_values.values() if value is not None),
+            default=0.0,
+        )
+        for candidate_index, candidate in enumerate(candidates):
             distance_km = haversine_km(receptor_lat, receptor_lon, candidate["latitude"], candidate["longitude"])
             if distance_km > radius_km:
                 continue
@@ -315,8 +359,16 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
             if not hour_matches:
                 continue
             permit_text = " ".join(filter(None, [candidate.get("permit_pollutants"), candidate.get("main_pollutant_categories")]))
-            relevance = pollutant_relevance(pollutant, permit_text)
-            relevance_factor = pollutant_relevance_factor(pollutant, relevance, bool(permit_text.strip()))
+            permit_relevance = pollutant_relevance(pollutant, permit_text)
+            emission_value = emission_values[candidate_index]
+            inventory_relevance = AnalyzeXuchangUpwindPermitSourcesTool._inventory_relevance(
+                pollutant, emission_value
+            )
+            relevance = AnalyzeXuchangUpwindPermitSourcesTool._strongest_relevance(
+                permit_relevance, inventory_relevance
+            )
+            evidence_available = bool(permit_text.strip()) or emission_value is not None
+            relevance_factor = pollutant_relevance_factor(pollutant, relevance, evidence_available)
             longest = AnalyzeXuchangUpwindPermitSourcesTool._longest_consecutive_hours(hour_matches)
             dispersion_scores = []
             for item in hour_matches:
@@ -334,7 +386,13 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
             # Industry is a weak prior, not a substitute for source-specific
             # emission evidence. Limit it to a quarter of the configured effect.
             industry_prior = 1 + (sector_factor - 1) * 0.25
-            final_score = sector_score * relevance_factor * industry_prior
+            emission_norm = (
+                log1p(emission_value) / max_log_emission
+                if emission_value is not None and max_log_emission > 0
+                else None
+            )
+            emission_factor = 0.75 + 0.5 * emission_norm if emission_norm is not None else 1.0
+            final_score = sector_score * relevance_factor * industry_prior * emission_factor
             level = (
                 "strong"
                 if len(hour_matches) >= 3 and longest >= 2 and relevance != "no_recorded_match"
@@ -350,19 +408,79 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
                 "longest_consecutive_hours": longest,
                 "mean_angle_difference_deg": round(sum(item["angle_difference_deg"] for item in hour_matches) / len(hour_matches), 1),
                 "pollutant_relevance": relevance,
+                "permit_pollutant_relevance": permit_relevance,
+                "inventory_pollutant_relevance": inventory_relevance,
                 "pollutant_relevance_factor": relevance_factor,
                 "spatial_temporal_score": round(sector_score, 4),
                 "dispersion_weight": sum(dispersion_scores) / len(dispersion_scores),
                 "industry_factor": sector_factor,
                 "industry_prior": round(industry_prior, 4),
-                "emission_pmf": None,
-                "emission_norm": None,
-                "emission_data_status": "unavailable_in_permit_data",
+                "emission_pmf": round(emission_value, 6) if emission_value is not None else None,
+                "emission_value_tonnes": round(emission_value, 6) if emission_value is not None else None,
+                "emission_metric": AnalyzeXuchangUpwindPermitSourcesTool._emission_metric(pollutant),
+                "emission_norm": round(emission_norm, 6) if emission_norm is not None else None,
+                "emission_factor": round(emission_factor, 6),
+                "emission_data_status": "available_in_inventory" if emission_value is not None else "unavailable",
                 "final_score": round(final_score, 6),
                 "evidence_level": level,
                 "evidence_items": hour_matches,
             })
         return results
+
+    @staticmethod
+    def _emission_indicator(pollutant: str, emissions: dict[str, Any] | None) -> float | None:
+        if not emissions:
+            return None
+        if pollutant == "PM2.5":
+            fields = ("emission_pm25",)
+        elif pollutant == "O3":
+            fields = ("emission_vocs", "emission_nox")
+        else:
+            fields = ("emission_nox",)
+        values = []
+        for field in fields:
+            try:
+                values.append(max(0.0, float(emissions.get(field) or 0.0)))
+            except (TypeError, ValueError):
+                values.append(0.0)
+        return sum(values)
+
+    @staticmethod
+    def _emission_metric(pollutant: str) -> str:
+        return {
+            "PM2.5": "inventory_pm25_tonnes",
+            "O3": "inventory_vocs_plus_nox_tonnes",
+            "NOX": "inventory_nox_tonnes",
+        }[pollutant]
+
+    @staticmethod
+    def _inventory_relevance(pollutant: str, emission_value: float | None) -> str:
+        if emission_value is None or emission_value <= 0:
+            return "no_recorded_match"
+        return "precursor_match" if pollutant == "O3" else "exact_match"
+
+    @staticmethod
+    def _strongest_relevance(*values: str) -> str:
+        rank = {"no_recorded_match": 0, "precursor_match": 1, "exact_match": 2}
+        return max(values, key=lambda value: rank[value])
+
+    @staticmethod
+    def _candidate_source_counts(candidates: list[dict[str, Any]]) -> dict[str, int]:
+        return {
+            "emission_inventory": sum(
+                "emission_inventory" in (candidate.get("data_sources") or [])
+                for candidate in candidates
+            ),
+            "permit_license": sum(
+                "permit_license" in (candidate.get("data_sources") or [])
+                for candidate in candidates
+            ),
+            "merged": sum(
+                set(candidate.get("data_sources") or [])
+                >= {"emission_inventory", "permit_license"}
+                for candidate in candidates
+            ),
+        }
 
     async def _historical_wind_mean(self, station_id: str, event_hour: datetime) -> tuple[float, str]:
         loader = getattr(self.repository, "load_historical_wind_speeds", None)
@@ -420,8 +538,8 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
             and (event_context.get("data_rate") or 0) >= 0.8
         ):
             confidence = "medium"
-        # Annual emissions are unavailable by design, so the scheme cannot
-        # claim the plan's high-confidence source attribution category.
+        # Inventory values improve prioritization but remain annual/snapshot evidence,
+        # so this rapid screen still cannot claim high-confidence attribution.
         trigger = {
             "type": "spatial_deviation",
             "station": event_context.get("station_name"),
@@ -443,8 +561,12 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
                 "sector": item.get("industry_category") or "其他",
                 "distance_km": item["distance_km"],
                 "direction_deg": item["bearing_deg"],
-                "emission_pmf": None,
-                "emission_norm": None,
+                "emission_pmf": item["emission_pmf"],
+                "emission_value_tonnes": item["emission_value_tonnes"],
+                "emission_metric": item["emission_metric"],
+                "emission_norm": item["emission_norm"],
+                "emission_data_status": item["emission_data_status"],
+                "data_sources": item.get("data_sources") or [],
                 "industry_factor": item["industry_factor"],
                 "pollutant_relevance": item["pollutant_relevance"],
                 "pollutant_relevance_factor": item["pollutant_relevance_factor"],
@@ -471,7 +593,11 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
                 "top1": ranked[0] if ranked else None,
                 "top_n": ranked,
                 "confidence": confidence,
-                "confidence_cap_reason": "annual_emission_inventory_unavailable",
+                "confidence_cap_reason": (
+                    "annual_inventory_is_not_event_hour_actual_emission"
+                    if top1 and top1["emission_data_status"] == "available_in_inventory"
+                    else "annual_emission_inventory_unavailable"
+                ),
                 "score_interpretation": "dimensionless_screening_evidence_not_emission_contribution",
                 "top1_top2_margin_pct": round(margin, 1) if margin is not None else None,
             },
@@ -496,7 +622,7 @@ class AnalyzeXuchangUpwindPermitSourcesTool(LLMTool):
             "status": "failed",
             "success": False,
             "error": reason,
-            "summary": f"许昌上风向许可证企业分析失败：{reason}",
+            "summary": f"许昌上风向候选企业分析失败：{reason}",
             "metadata": {
                 "schema_version": "v1.0",
                 "tool_name": TOOL_NAME,

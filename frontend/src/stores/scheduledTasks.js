@@ -109,18 +109,38 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       }
     },
 
-    async fetchTaskExecutions(taskId, limit = 50) {
-      const response = await authFetch(`${API_BASE}/${taskId}/executions?limit=${limit}`);
+    async fetchTaskExecutions(taskId, { page = 1, pageSize = 10 } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      const response = await authFetch(`${API_BASE}/${taskId}/executions?${params}`);
       if (!response.ok) throw new Error('Failed to fetch task executions');
       const data = await response.json();
-      return Array.isArray(data?.executions) ? data.executions : [];
+      return {
+        executions: Array.isArray(data?.executions) ? data.executions : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
     },
 
-    async fetchRecentExecutions(limit = 50) {
-      const response = await authFetch(`${API_BASE}/executions/recent?limit=${limit}`);
+    async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      const response = await authFetch(`${API_BASE}/executions/recent?${params}`);
       if (!response.ok) throw new Error('Failed to fetch recent task executions');
       const data = await response.json();
-      return Array.isArray(data?.executions) ? data.executions : [];
+      return {
+        executions: Array.isArray(data?.executions) ? data.executions : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
     },
 
     async createTask(data) {

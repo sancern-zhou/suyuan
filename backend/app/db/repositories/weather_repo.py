@@ -10,7 +10,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.db.database import async_session
+from app.db.weather_database import weather_async_session
 from app.db.models import ERA5ReanalysisData, ObservedWeatherData, WeatherStation
 
 logger = structlog.get_logger()
@@ -26,7 +26,7 @@ class WeatherRepository:
         Returns:
             List[WeatherStation]: 站点列表
         """
-        async with async_session() as session:
+        async with weather_async_session() as session:
             result = await session.execute(
                 select(WeatherStation).where(WeatherStation.is_active == True)
             )
@@ -104,7 +104,7 @@ class WeatherRepository:
             records.append(record)
 
         # 批量插入，冲突时更新
-        async with async_session() as session:
+        async with weather_async_session() as session:
             stmt = insert(ERA5ReanalysisData).values(records)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["time", "lat", "lon"],
@@ -148,7 +148,7 @@ class WeatherRepository:
             bool: 数据是否存在
         """
         try:
-            async with async_session() as session:
+            async with weather_async_session() as session:
                 start_time = datetime.fromisoformat(f"{date}T00:00:00")
                 end_time = datetime.fromisoformat(f"{date}T23:59:59")
 
@@ -182,7 +182,7 @@ class WeatherRepository:
         try:
             record = data_point.to_dict()
 
-            async with async_session() as session:
+            async with weather_async_session() as session:
                 stmt = insert(ObservedWeatherData).values(record)
 
                 # 冲突时更新
@@ -251,7 +251,7 @@ class WeatherRepository:
         )
 
         try:
-            async with async_session() as session:
+            async with weather_async_session() as session:
                 logger.debug(
                     "weather_db_session_created",
                     lat=lat,
@@ -310,7 +310,7 @@ class WeatherRepository:
         Returns:
             List[ObservedWeatherData]: 观测数据列表
         """
-        async with async_session() as session:
+        async with weather_async_session() as session:
             result = await session.execute(
                 select(ObservedWeatherData).where(
                     ObservedWeatherData.station_id == station_id,

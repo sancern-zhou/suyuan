@@ -24,8 +24,14 @@ async def start_scheduled_task_service() -> None:
 
         from app.agent.react_agent import create_react_agent
         from app.scheduled_tasks import init_service, start_service
+        from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
 
-        init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+        service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+        sync_project_scheduled_tasks(
+            project_id=context.manifest.project,
+            task_ids=context.manifest.scheduled_tasks,
+            service=service,
+        )
         start_service()
         logger.info("scheduled_task_service_started")
     except Exception as e:

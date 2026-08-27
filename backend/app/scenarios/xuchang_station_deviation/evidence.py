@@ -384,7 +384,22 @@ class XuchangStationDeviationEvidenceCollector:
             ],
         }
 
-        asset_statuses = [air_quality.get("status"), observed_meteorology.get("status"), forecast_meteorology.get("status")]
+        source_screening_status = source_screening.get("status")
+        if source_screening_status != "success":
+            errors.append({
+                "asset": "source_screening",
+                "error": (
+                    source_screening.get("error")
+                    or source_screening.get("summary")
+                    or f"source_screening_{source_screening_status or 'failed'}"
+                ),
+            })
+        asset_statuses = [
+            source_screening_status,
+            air_quality.get("status"),
+            observed_meteorology.get("status"),
+            forecast_meteorology.get("status"),
+        ]
         if all(status == "success" for status in asset_statuses):
             collection_status = "complete"
         elif any(status in {"success", "partial"} for status in asset_statuses):

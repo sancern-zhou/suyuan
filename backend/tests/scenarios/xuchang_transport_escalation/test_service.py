@@ -35,6 +35,26 @@ def _alert(hour: int, *, event_id: str | None = None, pollutant: str = "PM2.5") 
     }
 
 
+def _daily_event(*, pollutant: str = "PM2.5") -> dict:
+    return {
+        "event_id": f"daily-XC001-{pollutant}",
+        "status": "confirmed",
+        "occurred_at": "2026-08-06T00:00:00+08:00",
+        "target_date": "2026-08-05",
+        "city": "许昌市",
+        "station_id": "XC001",
+        "station_name": "测试站",
+        "lat": 34.03,
+        "lon": 113.85,
+        "target_pollutant": pollutant,
+        "observed_indicator": pollutant,
+        "daily_value": 91.5,
+        "limit": 75.0,
+        "source_granularity": "station_day",
+        "source_table": "dbo.dat_station_day",
+    }
+
+
 def _trajectory_endpoints(backtrack_hours: int = 48, batch_count: int = 2) -> list[dict]:
     endpoints = []
     for batch_index in range(batch_count):
@@ -71,7 +91,7 @@ class FakeTrajectoryRunner:
 
 
 class FakeEnterpriseScreener:
-    async def screen(self, endpoints, *, pollutant):
+    async def screen(self, endpoints, *, pollutant, receptor_lat=None, receptor_lon=None):
         assert endpoints
         assert pollutant == "PM2.5"
         return {
@@ -99,35 +119,35 @@ class FakeCWTConcentrationLoader:
         return {hour: 50.0 + index for index, hour in enumerate(event_hours)}
 
 
-def test_two_consecutive_hours_create_one_escalation_job(tmp_path):
+def test_hourly_scenario_1_alert_never_creates_scenario_2_job(tmp_path):
     service = XuchangTransportEscalationService(output_root=tmp_path)
 
-    first = service.ingest_scenario_1_alert(_alert(10))
-    second = service.ingest_scenario_1_alert(_alert(11))
-    duplicate = service.ingest_scenario_1_alert(_alert(11))
+    result = service.ingest_scenario_1_alert(_alert(10))
 
-    assert first["status"] == "started"
-    assert second["status"] == "escalated"
-    assert second["job"]["event_hours"] == [
-        "2026-08-05T10:00:00+08:00",
-        "2026-08-05T11:00:00+08:00",
+    assert result == {
+        "status": "ignored",
+        "reason": "scenario_2_requires_confirmed_station_daily_exceedance",
+        "job": None,
+    }
+    assert service._load_state()["jobs"] == {}
+
+
+def test_daily_exceedance_creates_one_idempotent_analysis_job(tmp_path):
+    service = XuchangTransportEscalationService(output_root=tmp_path)
+
+    first = service.ingest_daily_exceedance(_daily_event())
+    duplicate = service.ingest_daily_exceedance(_daily_event())
+
+    assert first["status"] == "requested"
+    assert first["job"]["event_type"] == "xuchang.station_daily_source_analysis.requested"
+    assert first["job"]["target_date"] == "2026-08-05"
+    assert first["job"]["event_hours"] == [
+        f"2026-08-05T{hour:02d}:00:00+08:00" for hour in range(24)
     ]
-    assert second["job"]["control_event_hours"] == [
-        f"2026-08-05T{hour:02d}:00:00+08:00" for hour in range(4, 10)
-    ]
+    assert first["job"]["station_hourly"] == []
     assert duplicate["status"] == "duplicate"
+    assert duplicate["job"] is None
     assert len(service._load_state()["jobs"]) == 1
-
-
-def test_gap_starts_a_new_process_instead_of_escalating(tmp_path):
-    service = XuchangTransportEscalationService(output_root=tmp_path)
-
-    first = service.ingest_scenario_1_alert(_alert(10))
-    after_gap = service.ingest_scenario_1_alert(_alert(12))
-
-    assert first["process"]["process_id"] != after_gap["process"]["process_id"]
-    assert after_gap["status"] == "started"
-    assert after_gap["job"] is None
 
 
 def test_event_config_uses_exact_event_hour_and_pollutant_profile():
@@ -176,27 +196,25 @@ async def test_pending_job_outputs_diagnosis_enterprises_and_two_maps(tmp_path):
         trajectory_runner=runner,
         enterprise_screener=FakeEnterpriseScreener(),
     )
-    service.ingest_scenario_1_alert(_alert(10))
-    service.ingest_scenario_1_alert(_alert(11))
+    service.ingest_daily_exceedance(_daily_event())
 
     results = await service.run_pending()
 
     assert len(results) == 1
     output = results[0]
     assert output["status"] == "completed"
-    assert runner.calls == [[10, 11], [4, 5, 6, 7, 8, 9]]
+    assert runner.calls == [list(range(24)), [18, 19, 20, 21, 22, 23]]
     assert output["trajectory_request"]["event_hours"] == [
-        "2026-08-05T10:00:00+08:00",
-        "2026-08-05T11:00:00+08:00",
+        f"2026-08-05T{hour:02d}:00:00+08:00" for hour in range(24)
     ]
     assert len(output["trajectory_request"]["control_event_hours"]) == 6
     assert output["primary_corridor_height_m_agl"] == 100
     assert set(output["transport_corridors_by_height"]) == {"100", "500", "1000"}
     assert all(item["start_height_m_agl"] == 100 for item in output["transport_corridors"])
-    assert output["trajectory_clustering_readiness"]["status"] == "directional_screening_only"
+    assert output["trajectory_clustering_readiness"]["status"] == "minimum_sample_reached"
     assert output["cwt"]["status"] == "accumulating_samples"
-    assert output["cwt"]["archive_sample_count"] == 8
-    assert output["cwt"]["sample_groups"] == {"pollution": 2, "control": 6}
+    assert output["cwt"]["archive_sample_count"] == 30
+    assert output["cwt"]["sample_groups"] == {"pollution": 24, "control": 6}
     assert Path(output["cwt"]["archive_path"]).exists()
     assert output["transport_corridors"]
     assert output["enterprise_screening"]["enterprises"][0]["enterprise_name"] == "测试企业"
@@ -223,32 +241,22 @@ async def test_pending_job_outputs_diagnosis_enterprises_and_two_maps(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_continuing_pollution_process_only_runs_new_arrival_hour(tmp_path):
+async def test_duplicate_daily_event_does_not_run_an_incremental_job(tmp_path):
     runner = FakeTrajectoryRunner()
     service = XuchangTransportEscalationService(
         output_root=tmp_path,
         trajectory_runner=runner,
         enterprise_screener=FakeEnterpriseScreener(),
     )
-    service.ingest_scenario_1_alert(_alert(10))
-    service.ingest_scenario_1_alert(_alert(11))
+    service.ingest_daily_exceedance(_daily_event())
     initial = (await service.run_pending())[0]
 
-    third = service.ingest_scenario_1_alert(_alert(12))
-    incremental = (await service.run_pending())[0]
+    duplicate = service.ingest_daily_exceedance(_daily_event())
+    incremental = await service.run_pending()
 
-    assert third["status"] == "escalated"
-    assert third["job"]["event_hours"] == ["2026-08-05T12:00:00+08:00"]
-    assert third["job"]["control_event_hours"] == []
-    assert runner.calls == [[10, 11], [4, 5, 6, 7, 8, 9], [12]]
-    assert len(initial["trajectory_request"]["event_hours"]) == 2
-    assert len(incremental["trajectory_request"]["event_hours"]) == 3
-    assert incremental["trajectory_request"]["incremental_event_hours"] == [
-        "2026-08-05T12:00:00+08:00"
-    ]
-    assert len(incremental["trajectory_endpoints"]) > len(initial["trajectory_endpoints"])
-    assert incremental["cwt"]["archive_sample_count"] == 9
-    assert incremental["cwt"]["sample_groups"] == {"pollution": 3, "control": 6}
+    assert duplicate["status"] == "duplicate"
+    assert incremental == []
+    assert len(initial["trajectory_request"]["event_hours"]) == 24
 
 
 @pytest.mark.asyncio

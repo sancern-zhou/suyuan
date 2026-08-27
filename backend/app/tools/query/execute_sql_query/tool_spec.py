@@ -23,6 +23,25 @@ def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
     assert "city_area_code = '{city_code}'" in description
     assert "污染物字段使用小写" in description
 
+    assert "dat_zhongda_station_minute" in description
+    assert "dat_zhongda_station_hour" in description
+    assert "data_table_type = 'Act'" in description
+    assert "NO浓度列名是no_val" in description
+    assert "-99为平台无效值" in description
+
+    assert "dat_zhongda_station_day" in description
+    assert "时间为data_date（DATE类型）" in description
+    assert "dat_zhongda_city_hour" in description
+    assert "dat_zhongda_city_day" in description
+    assert "SubstitutionBack" in description
+    assert "城市表由平台聚合任务生成，可能为空" in description
+    assert "2026-01-01起为'155th'" in description
+    assert "用错规划期会返回空" in description
+
+    assert "优先查询中大平台表（dat_zhongda_*）" in description
+    assert "中大源为审核后数据" in description
+    assert "本表仅作补充" in description
+
     assert "WeatherForecast7Day" in description
     assert "cityname仅用于此预报表" in description
 

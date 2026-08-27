@@ -3,6 +3,9 @@ from pathlib import Path
 import pytest
 
 from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.scenarios.xuchang_station_deviation.episodes import (
+    XuchangStationDeviationEpisodeService,
+)
 
 
 class _ScenarioService:
@@ -53,6 +56,11 @@ class _AnalysisTool:
         }
 
 
+class _FailedAnalysisTool:
+    async def execute(self, **kwargs):
+        return {"status": "failed", "error": "permit coordinate mapping missing"}
+
+
 class _TaskService:
     def __init__(self):
         self.events = []
@@ -87,6 +95,7 @@ async def test_trigger_runs_analysis_persists_output_and_publishes_event(tmp_pat
     fetcher = XuchangStationDeviationAlertFetcher(
         service=_ScenarioService(tmp_path),
         analysis_tool=analysis_tool,
+        episode_service=XuchangStationDeviationEpisodeService(output_root=tmp_path),
         evidence_collector=evidence_collector,
     )
 
@@ -98,6 +107,7 @@ async def test_trigger_runs_analysis_persists_output_and_publishes_event(tmp_pat
     assert alert["scenario_1_output"]["sla_target_ms"] == 5000
     assert alert["scenario_1_output"]["sla_met"] is True
     assert analysis_tool.calls[0]["candidate_radius_km"] == 10.0
+    assert analysis_tool.calls[0]["include_emission_inventory"] is True
     assert analysis_tool.calls[0]["start_time"] == "2026-08-05T00:00:00+08:00"
     assert (tmp_path / "scenario-1-e2e.scenario-1.json").exists()
     assert (tmp_path / "scenario-1-e2e.evidence.json").exists()
@@ -107,3 +117,26 @@ async def test_trigger_runs_analysis_persists_output_and_publishes_event(tmp_pat
     assert len(task_service.events) == 1
     assert task_service.events[0].payload["scenario_1_output"]["scenario"] == 1
     assert task_service.events[0].payload["evidence_package_path"].endswith(".evidence.json")
+
+
+@pytest.mark.asyncio
+async def test_failed_analysis_does_not_meet_sla_and_still_publishes_alert(tmp_path, monkeypatch):
+    task_service = _TaskService()
+    evidence_collector = _EvidenceCollector()
+    monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: task_service)
+    fetcher = XuchangStationDeviationAlertFetcher(
+        service=_ScenarioService(tmp_path),
+        analysis_tool=_FailedAnalysisTool(),
+        episode_service=XuchangStationDeviationEpisodeService(output_root=tmp_path),
+        evidence_collector=evidence_collector,
+    )
+
+    result = await fetcher.fetch_and_store()
+
+    alert = result["alerts"][0]
+    assert alert["source_screening_status"] == "failed"
+    assert alert["source_screening_sla_met"] is False
+    assert alert["source_screening_error"] == "permit coordinate mapping missing"
+    assert "scenario_1_output" not in alert
+    assert len(task_service.events) == 1
+    assert task_service.events[0].payload["source_screening_status"] == "failed"

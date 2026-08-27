@@ -48,7 +48,12 @@ from app.fetchers.xuchang_cnemc_station_hour import XuchangCnemcStationHourFetch
 from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmentForecastFetcher
 from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
 from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_station_daily_pollution import XuchangStationDailyPollutionFetcher
 from app.fetchers.xuchang_transport_analysis import XuchangTransportAnalysisFetcher
+from app.fetchers.xuchang_zhongda_station import (
+    XuchangZhongdaCityFetcher,
+    XuchangZhongdaStationFetcher,
+)
 from app.project_config.loader import load_project_context
 
 # 导入单一工具注册源
@@ -130,7 +135,16 @@ def _configured_fetchers(project_context):
         "xuchang_cnemc_station_hour_fetcher": XuchangCnemcStationHourFetcher,
         "xuchang_henan_month_year_accumulate_fetcher": XuchangHenanMonthYearAccumulateFetcher,
         "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
+        "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,
         "xuchang_transport_analysis_fetcher": XuchangTransportAnalysisFetcher,
+        "xuchang_zhongda_station_minute_fetcher": XuchangZhongdaStationFetcher,
+        "xuchang_zhongda_station_hour_fetcher":
+            lambda: XuchangZhongdaStationFetcher(data_kind="hour"),
+        "xuchang_zhongda_station_day_fetcher":
+            lambda: XuchangZhongdaStationFetcher(data_kind="day"),
+        "xuchang_zhongda_city_hour_fetcher": XuchangZhongdaCityFetcher,
+        "xuchang_zhongda_city_day_fetcher":
+            lambda: XuchangZhongdaCityFetcher(data_kind="city_day"),
         "gems_xuchang_image_fetcher": GemsImageFetcher,
     }
     configured = project_context.manifest.backend.fetchers

@@ -81,8 +81,8 @@ nohup setsid "${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 
 NEW_PID=$!
 echo "${NEW_PID}" > "${PID_FILE}"
 
-# 4. 等待启动
-for _ in $(seq 1 60); do
+# 4. 等待启动（本机全量工具注册约需 2 分钟）
+for _ in $(seq 1 180); do
     if ! kill -0 "${NEW_PID}" 2>/dev/null; then
         echo "[ERROR] 后端进程启动失败，日志如下："
         tail -80 /tmp/backend.log
@@ -94,7 +94,43 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 
-# 5. 检查状态
+# 5. 重启 app worker（fetcher 调度器运行在 worker 进程内）
+echo ""
+echo "=== 重启 app worker ==="
+WORKER_UNIT="${WORKER_UNIT:-suyuan-app-worker.service}"
+WORKER_PID_FILE="${WORKER_PID_FILE:-/tmp/suyuan_backend_worker.pid}"
+if command -v systemctl >/dev/null 2>&1 && systemctl cat "${WORKER_UNIT}" >/dev/null 2>&1; then
+    echo "通过 systemd 重启 ${WORKER_UNIT}..."
+    systemctl restart "${WORKER_UNIT}"
+    sleep 3
+    systemctl is-active "${WORKER_UNIT}" || {
+        echo "[ERROR] worker 服务未恢复运行："
+        journalctl -u "${WORKER_UNIT}" -n 50 --no-pager || true
+        exit 1
+    }
+else
+    echo "未找到 systemd 单元 ${WORKER_UNIT}，直接后台启动 worker..."
+    if [ -f "${WORKER_PID_FILE}" ]; then
+        OLD_WORKER_PID="$(tr -d '[:space:]' < "${WORKER_PID_FILE}")"
+        if [ -n "${OLD_WORKER_PID}" ] && kill -0 "${OLD_WORKER_PID}" 2>/dev/null; then
+            kill -TERM "${OLD_WORKER_PID}" 2>/dev/null || true
+            for _ in $(seq 1 20); do
+                kill -0 "${OLD_WORKER_PID}" 2>/dev/null || break
+                sleep 0.5
+            done
+            kill -KILL "${OLD_WORKER_PID}" 2>/dev/null || true
+        fi
+        rm -f "${WORKER_PID_FILE}"
+    fi
+    pkill -TERM -f "${PYTHON_BIN} -m app\.worker" 2>/dev/null || true
+    sleep 2
+    nohup setsid env APP_ROLE=worker "${PYTHON_BIN}" -m app.worker > /tmp/backend-worker.log 2>&1 &
+    NEW_WORKER_PID=$!
+    echo "${NEW_WORKER_PID}" > "${WORKER_PID_FILE}"
+    echo "worker PID: ${NEW_WORKER_PID}，日志: /tmp/backend-worker.log"
+fi
+
+# 6. 检查状态
 echo "=== 服务器状态 ==="
 ps aux | grep "uvicorn.*app.main" | grep -v grep
 echo ""

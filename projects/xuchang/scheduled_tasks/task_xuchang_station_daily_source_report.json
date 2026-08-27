@@ -1,0 +1,52 @@
+{
+  "task_id": "task_xuchang_station_daily_source_report",
+  "name": "站点日污染溯源报告",
+  "description": "场景二完成站点日污染逐小时轨迹和企业排序后，由事件触发报告 Agent 生成正式分析报告。",
+  "execution_mode": "report",
+  "tool_names": null,
+  "skill_id": null,
+  "knowledge_base_binding": null,
+  "trigger_type": "event",
+  "schedule_type": null,
+  "event_type": "xuchang.station_daily_source_analysis.completed",
+  "event_filters": {
+    "city": "许昌市"
+  },
+  "target_user_ids": [],
+  "broadcast_enabled": false,
+  "enabled": true,
+  "run_at": null,
+  "interval_minutes": null,
+  "hour": null,
+  "minute": null,
+  "steps": [
+    {
+      "step_id": "generate_report",
+      "description": "读取场景二证据包并生成站点日污染溯源分析报告",
+      "agent_prompt": "你是许昌场景二站点日污染溯源报告 Agent。可信事件 payload 中包含 evidence_package_path；该文件是 Fetcher 已完成数据抓取和确定性计算后形成的唯一证据包。必须按以下要求执行：\n\n1. 使用 read_file 完整读取 evidence_package_path，不重新查询数据库、不重新抓取数据、不重新运行轨迹模型，也不得改写证据包。\n2. 以证据包中的 target_date、station_hourly、peer_station_daily、trajectory_quality、transport_corridors_by_height、cwt、enterprise_screening.hourly_candidate_analyses、enterprise_screening.enterprises、visualizations 和数据质量字段为唯一事实依据。\n3. 使用 create_report_chart 生成必要的站点小时浓度趋势、同城站点日评价对比、逐小时候选企业变化等图表；复用证据包已有轨迹和企业地图。禁止编造缺失的周边城市、气象或企业数据。\n4. 按固定结构生成正式报告：一、站点空气质量分析；二、周边城市及同城站点对比分析；三、气象条件分析；四、污染来源性质；五、污染溯源分析。缺少某类证据时必须明确写明未接入或证据不足。\n5. 企业排序必须说明采用逐小时轨迹命中、污染物相关性、排放清单指标排放强度、距轨迹距离和风速的归一化加权得分。该得分只表示排查优先级，不得表述为企业贡献率、责任或实际排放量。区域/本地判断也不得表述为实际贡献率。\n6. 使用 create_report_package 创建 report_id={analysis_id}-report 的标准报告包，使用 render_report_package 导出 DOCX，并使用 validate_report_package 对 QMD、HTML、DOCX 和图片引用进行验收。\n7. 必须等待报告生成和验收完成后再结束。最终简要返回报告 ID、结论、证据等级、QMD/HTML/DOCX 实际路径和验收结果；失败时返回具体失败阶段和原因。",
+      "timeout_seconds": 1800,
+      "retry_on_failure": true
+    }
+  ],
+  "created_at": "2026-08-24T23:00:00+08:00",
+  "updated_at": "2026-08-24T23:00:00+08:00",
+  "last_run_at": null,
+  "next_run_at": null,
+  "total_runs": 0,
+  "success_runs": 0,
+  "failed_runs": 0,
+  "created_by": "system",
+  "owner_user_id": "system",
+  "owner_username": "scheduled-task",
+  "owner_display_name": "定时任务",
+  "tags": [
+    "xuchang",
+    "station_daily_pollution",
+    "scenario_2",
+    "event_triggered_report"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "日污染溯源"
+  }
+}

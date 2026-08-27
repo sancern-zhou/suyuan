@@ -1,3 +1,7 @@
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from app.scenarios.xuchang_transport_escalation.spatial_analysis import (
@@ -19,6 +23,9 @@ def _low_path():
         }
         for age in range(13)
     ]
+
+
+TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class FakePermitRepository:
@@ -117,4 +124,70 @@ async def test_enterprise_screening_excludes_permit_pollutant_mismatch():
         "主类别匹配企业",
     }
     assert result["coverage"]["pollutant_mismatch_excluded_count"] == 1
-    assert result["coverage"]["pollutant_filter"] == "exclude_permit_pollutant_mismatch"
+    assert result["coverage"]["pollutant_filter"] == "permit_or_inventory_pollutant_match"
+
+
+class InventoryRankingRepository:
+    async def load_candidates_in_bounds(self, **kwargs):
+        return [
+            {
+                "enterprise_name": "低排放近源",
+                "industry_category": "工业",
+                "latitude": 34.03,
+                "longitude": 113.82,
+                "permit_pollutants": None,
+                "main_pollutant_categories": None,
+                "inventory_emissions": {"emission_pm25": 1.0},
+                "data_sources": ["emission_inventory"],
+            },
+            {
+                "enterprise_name": "高排放沿线源",
+                "industry_category": "工业",
+                "latitude": 34.03,
+                "longitude": 113.79,
+                "permit_pollutants": None,
+                "main_pollutant_categories": None,
+                "inventory_emissions": {"emission_pm25": 100.0},
+                "data_sources": ["emission_inventory"],
+            },
+        ]
+
+    async def load_weather(self, **kwargs):
+        start = kwargs["start_time"]
+        return ([
+            SimpleNamespace(
+                station_id="ZzMTA",
+                time=start + timedelta(hours=hour),
+                wind_speed_10m=2.5 + hour,
+            )
+            for hour in range(2)
+        ], [])
+
+
+@pytest.mark.asyncio
+async def test_daily_ranking_exposes_normalized_emission_distance_hit_and_wind_scores():
+    start = datetime(2026, 8, 5, tzinfo=TZ_SHANGHAI)
+    endpoints = []
+    for batch in range(2):
+        arrival = (start + timedelta(hours=batch)).isoformat()
+        endpoints.extend({**item, "batch_index": batch, "arrival_time": arrival} for item in _low_path())
+    screener = TrajectoryEnterpriseScreener(repository=InventoryRankingRepository())
+
+    result = await screener.screen(
+        endpoints,
+        pollutant="PM2.5",
+        receptor_lat=34.03,
+        receptor_lon=113.85,
+    )
+
+    assert len(result["hourly_candidate_analyses"]) == 2
+    assert result["coverage"]["wind"]["matched_hours"] == 2
+    assert result["enterprises"][0]["enterprise_name"] == "高排放沿线源"
+    assert set(result["enterprises"][0]["normalized_scores"]) == {
+        "trajectory_hit",
+        "pollutant_relevance",
+        "emission_intensity",
+        "path_distance",
+        "wind_transport",
+    }
+    assert result["enterprises"][0]["score_type"] == "screening_priority_not_contribution"

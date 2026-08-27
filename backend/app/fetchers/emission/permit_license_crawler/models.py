@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -53,6 +54,11 @@ class PermitLicense(Base):
     unified_social_credit_code = Column(String(18), index=True)
     enterprise_name = Column(Text, nullable=False)
     production_site_address = Column(Text)
+    longitude = Column(Numeric(10, 6))
+    latitude = Column(Numeric(9, 6))
+    coordinate_source = Column(String(64))
+    coordinate_fetched_at = Column(DateTime)
+    coordinate_crs = Column(String(32))
     industry_category = Column(Text)
     valid_from = Column(Date)
     valid_to = Column(Date)
@@ -61,6 +67,7 @@ class PermitLicense(Base):
     current_status = Column(String(32), nullable=False, default="unknown")
     latest_business_type = Column(String(64))
     detail_url = Column(Text, nullable=False)
+    permit_original_path = Column(Text)
     list_page_no = Column(Integer, nullable=False)
     detail_status = Column(String(24), nullable=False, default="pending")
     documents_status = Column(String(24), nullable=False, default="pending")

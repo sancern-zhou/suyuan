@@ -1,4 +1,4 @@
-"""Persist Scenario 1 episodes and run quality-gated Scenario 2 trajectories."""
+"""Run quality-gated Scenario 2 trajectories for confirmed station-day pollution."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ from .visualization import generate_transport_maps
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
-ESCALATED_EVENT_TYPE = "xuchang.station_deviation.escalated"
-COMPLETED_EVENT_TYPE = "xuchang.transport_analysis.completed"
+REQUESTED_EVENT_TYPE = "xuchang.station_daily_source_analysis.requested"
+COMPLETED_EVENT_TYPE = "xuchang.station_daily_source_analysis.completed"
 
 
 @dataclass(frozen=True)
@@ -169,7 +169,7 @@ def diagnose_transport_tendency(
 
 
 class XuchangTransportEscalationService:
-    """Aggregate consecutive Scenario 1 hours and execute pending NOAA jobs."""
+    """Create idempotent station-day analyses and execute pending NOAA jobs."""
 
     def __init__(
         self,
@@ -197,130 +197,121 @@ class XuchangTransportEscalationService:
         return self.output_root / "process_state.json"
 
     def ingest_scenario_1_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
-        """Record one hour and create exactly one pending job after two hours."""
-        pollutant = str(alert.get("target_pollutant") or "").upper()
+        """Compatibility boundary: hourly Scenario 1 alerts never trigger Scenario 2."""
+        return {
+            "status": "ignored",
+            "reason": "scenario_2_requires_confirmed_station_daily_exceedance",
+            "job": None,
+        }
+
+    def ingest_daily_exceedance(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Create one idempotent daily analysis for station, pollutant and date."""
+        pollutant = str(event.get("target_pollutant") or "").upper().replace("_8H", "")
         if pollutant not in POLLUTANT_TRANSPORT_PROFILES:
-            return {"status": "ignored", "reason": "unsupported_pollutant"}
-        if float(alert.get("data_rate") or 0) < self.min_data_rate:
-            return {"status": "ignored", "reason": "insufficient_data_rate"}
+            return {"status": "ignored", "reason": "unsupported_pollutant", "job": None}
+        if event.get("status") != "confirmed":
+            return {"status": "ignored", "reason": "daily_exceedance_not_confirmed", "job": None}
+        if (
+            event.get("source_granularity") != "station_day"
+            and float(event.get("data_rate") or 0) < self.min_data_rate
+        ):
+            return {"status": "ignored", "reason": "insufficient_data_rate", "job": None}
+        station_id = str(event.get("station_id") or "").strip()
+        target_date = str(event.get("target_date") or "").strip()
+        if not station_id or not target_date:
+            return {"status": "ignored", "reason": "missing_daily_identity", "job": None}
+        try:
+            day = datetime.fromisoformat(target_date).date()
+            lat = float(event["lat"])
+            lon = float(event["lon"])
+        except (KeyError, TypeError, ValueError):
+            return {"status": "ignored", "reason": "invalid_daily_identity", "job": None}
 
-        occurred_at = _parse_hour(alert.get("occurred_at"))
-        station_id = str(alert.get("station_id") or "").strip()
-        if not station_id:
-            return {"status": "ignored", "reason": "missing_station_id"}
-
+        pollutant_slug = pollutant.lower().replace(".", "")
+        analysis_id = f"xuchang-daily-{day:%Y%m%d}-{station_id}-{pollutant_slug}"
+        job_id = f"{analysis_id}-analysis"
         with self._lock:
             state = self._load_state()
-            key = f"{station_id}::{pollutant}"
-            active = state["active_processes"].get(key)
-            if active and alert.get("event_id") in active.get("parent_event_ids", []):
-                return {"status": "duplicate", "process": active}
-
-            if active:
-                last_hour = _parse_hour(active["end_at"])
-                if occurred_at <= last_hour:
-                    return {"status": "stale", "process": active}
-                if occurred_at - last_hour != timedelta(hours=1):
-                    active["status"] = "ended"
-                    active["ended_reason"] = "non_consecutive_hour"
-                    state["process_history"].append(active)
-                    active = None
-
-            if active is None:
-                process_id = (
-                    f"xuchang-transport-{occurred_at:%Y%m%d%H}-"
-                    f"{station_id}-{pollutant.lower().replace('.', '')}"
-                )
-                active = {
-                    "process_id": process_id,
-                    "status": "observing",
-                    "city": alert.get("city", "许昌市"),
-                    "station_id": station_id,
-                    "station_name": alert.get("station_name") or station_id,
-                    "lat": float(alert["lat"]),
-                    "lon": float(alert["lon"]),
-                    "target_pollutant": pollutant,
-                    "observed_indicator": alert.get("observed_indicator"),
-                    "start_at": occurred_at.isoformat(),
-                    "end_at": occurred_at.isoformat(),
-                    "consecutive_hours": 0,
-                    "parent_event_ids": [],
-                    "hourly_evidence": [],
-                    "job_id": None,
-                    "job_ids": [],
-                    "scheduled_event_hours": [],
+            existing = state["daily_analyses"].get(analysis_id)
+            if existing:
+                return {
+                    "status": "duplicate",
+                    "analysis": existing,
+                    "job": None,
                 }
-                state["active_processes"][key] = active
 
-            active["end_at"] = occurred_at.isoformat()
-            active["consecutive_hours"] += 1
-            active["parent_event_ids"].append(alert.get("event_id"))
-            active["hourly_evidence"].append(self._evidence_snapshot(alert, occurred_at))
-
-            status = "updated" if active["consecutive_hours"] > 1 else "started"
-            job = None
-            if active["consecutive_hours"] >= 2:
-                profile = POLLUTANT_TRANSPORT_PROFILES[pollutant]
-                scheduled_hours = set(active.get("scheduled_event_hours", []))
-                if active.get("job_id") and not scheduled_hours:
-                    # Migrate active processes created before incremental jobs existed.
-                    scheduled_hours.update(
-                        item["occurred_at"] for item in active["hourly_evidence"][:-1]
-                    )
-                pending_hours = [
-                    item["occurred_at"]
-                    for item in active["hourly_evidence"]
-                    if item["occurred_at"] not in scheduled_hours
-                ]
-                is_initial = not active.get("job_id") and not active.get("job_ids")
-                if is_initial:
-                    job_id = f"{active['process_id']}-initial"
-                    first_hour = _parse_hour(active["hourly_evidence"][0]["occurred_at"])
-                    control_hours = [
-                        (first_hour - timedelta(hours=offset)).isoformat()
-                        for offset in range(CONTROL_LOOKBACK_HOURS, 0, -1)
-                    ]
-                else:
-                    job_id = f"{active['process_id']}-hour-{occurred_at:%Y%m%d%H}"
-                    control_hours = []
-                job = {
-                    "job_id": job_id,
-                    "event_id": job_id,
-                    "event_type": ESCALATED_EVENT_TYPE,
-                    "status": "pending",
-                    "attempts": 0,
-                    "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
-                    "process_id": active["process_id"],
-                    "parent_event_ids": list(active["parent_event_ids"]),
-                    "city": active["city"],
-                    "station_id": station_id,
-                    "station_name": active["station_name"],
-                    "lat": active["lat"],
-                    "lon": active["lon"],
-                    "target_pollutant": pollutant,
-                    "observed_indicator": active.get("observed_indicator"),
-                    "event_hours": pending_hours,
-                    "event_concentrations": {
-                        item["occurred_at"]: item.get("station_value")
-                        for item in active["hourly_evidence"]
-                        if item["occurred_at"] in pending_hours
-                    },
-                    "control_event_hours": control_hours,
-                    "window_policy": "pollution_hours_hourly_with_pre_event_control",
-                    "backtrack_hours": profile.backtrack_hours,
-                    "heights_m_agl": list(profile.heights_m_agl),
-                    "meteo_source": self.meteo_source,
-                }
-                state["jobs"][job_id] = job
-                active["job_id"] = job_id
-                active.setdefault("job_ids", []).append(job_id)
-                active.setdefault("scheduled_event_hours", []).extend(pending_hours)
-                active["status"] = "escalated"
-                status = "escalated"
-
+            day_start = datetime.combine(day, datetime.min.time(), tzinfo=TZ_SHANGHAI)
+            hourly_rows = event.get("hourly_rows") or []
+            concentrations = {}
+            for row in hourly_rows:
+                try:
+                    hour = _parse_hour(row["time"])
+                    value = row.get("concentration")
+                    if hour.date() == day and value is not None:
+                        concentrations[hour.isoformat()] = float(value)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            event_hours = [
+                (day_start + timedelta(hours=hour)).isoformat()
+                for hour in range(24)
+            ]
+            control_hours = [
+                (day_start - timedelta(hours=offset)).isoformat()
+                for offset in range(CONTROL_LOOKBACK_HOURS, 0, -1)
+            ]
+            profile = POLLUTANT_TRANSPORT_PROFILES[pollutant]
+            analysis = {
+                "analysis_id": analysis_id,
+                "status": "pending",
+                "city": event.get("city", "许昌市"),
+                "station_id": station_id,
+                "station_name": event.get("station_name") or station_id,
+                "target_date": day.isoformat(),
+                "target_pollutant": pollutant,
+                "daily_value": event.get("daily_value"),
+                "limit": event.get("limit"),
+                "parent_event_id": event.get("event_id"),
+                "job_id": job_id,
+            }
+            job = {
+                "job_id": job_id,
+                "event_id": job_id,
+                "event_type": REQUESTED_EVENT_TYPE,
+                "status": "pending",
+                "attempts": 0,
+                "created_at": datetime.now(TZ_SHANGHAI).isoformat(),
+                "process_id": analysis_id,
+                "analysis_id": analysis_id,
+                "parent_event_ids": [event.get("event_id")],
+                "city": analysis["city"],
+                "station_id": station_id,
+                "station_name": analysis["station_name"],
+                "lat": lat,
+                "lon": lon,
+                "target_date": day.isoformat(),
+                "target_pollutant": pollutant,
+                "observed_indicator": event.get("observed_indicator"),
+                "daily_value": event.get("daily_value"),
+                "limit": event.get("limit"),
+                "valid_hours": event.get("valid_hours"),
+                "data_rate": event.get("data_rate"),
+                "station_hourly": list(hourly_rows),
+                "peer_station_daily": list(event.get("peer_station_daily") or []),
+                "event_hours": event_hours,
+                "event_concentrations": {
+                    hour: concentrations.get(hour) for hour in event_hours
+                },
+                "control_event_hours": control_hours,
+                "window_policy": "daily_hourly_arrivals_with_pre_day_control",
+                "backtrack_hours": profile.backtrack_hours,
+                "heights_m_agl": list(profile.heights_m_agl),
+                "meteo_source": self.meteo_source,
+            }
+            state["daily_analyses"][analysis_id] = analysis
+            state["jobs"][job_id] = job
             state["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
             self._save_state(state)
-            return {"status": status, "process": active, "job": job}
+            return {"status": "requested", "analysis": analysis, "job": job}
 
     async def run_pending(self, limit: int = 1) -> list[dict[str, Any]]:
         """Run a bounded number of pending jobs so NOAA load remains controlled."""
@@ -370,6 +361,8 @@ class XuchangTransportEscalationService:
                     enterprise_screening = await enterprise_screener.screen(
                         endpoints,
                         pollutant=job["target_pollutant"],
+                        receptor_lat=float(job["lat"]),
+                        receptor_lon=float(job["lon"]),
                     )
                 except Exception as exc:
                     logger.exception(
@@ -468,16 +461,27 @@ class XuchangTransportEscalationService:
             quality=quality,
         )
         return {
-            "schema_version": "xuchang_transport_analysis/v1",
+            "schema_version": "xuchang_station_daily_source_analysis/v2",
             "status": "completed" if quality["status"] == "sufficient" else "insufficient_evidence",
             "event_id": job["event_id"],
             "event_type": COMPLETED_EVENT_TYPE,
             "process_id": job["process_id"],
+            "analysis_id": job.get("analysis_id", job["process_id"]),
             "parent_event_ids": job["parent_event_ids"],
             "city": job["city"],
             "station_id": job["station_id"],
             "station_name": job["station_name"],
             "target_pollutant": job["target_pollutant"],
+            "target_date": job.get("target_date"),
+            "daily_evaluation": {
+                "value": job.get("daily_value"),
+                "limit": job.get("limit"),
+                "valid_hours": job.get("valid_hours"),
+                "data_rate": job.get("data_rate"),
+                "status": "confirmed_exceedance",
+            },
+            "station_hourly": job.get("station_hourly", []),
+            "peer_station_daily": job.get("peer_station_daily", []),
             "observed_indicator": job.get("observed_indicator"),
             "trajectory_request": {
                 "event_hours": pollution_event_hours,
@@ -816,6 +820,12 @@ class XuchangTransportEscalationService:
             job["completed_at"] = datetime.now(TZ_SHANGHAI).isoformat()
             job["result_status"] = output["status"]
             job["output_path"] = output["output_path"]
+            analysis = state.get("daily_analyses", {}).get(job.get("analysis_id"))
+            if analysis is not None:
+                analysis["status"] = "completed"
+                analysis["result_status"] = output["status"]
+                analysis["output_path"] = output["output_path"]
+                analysis["completed_at"] = job["completed_at"]
             self._save_state(state)
 
     def _fail_job(self, job_id: str, error: str) -> None:
@@ -826,11 +836,16 @@ class XuchangTransportEscalationService:
             job["status"] = (
                 "pending_retry" if int(job.get("attempts", 0)) < self.max_attempts else "failed"
             )
+            analysis = state.get("daily_analyses", {}).get(job.get("analysis_id"))
+            if analysis is not None:
+                analysis["status"] = job["status"]
+                analysis["last_error"] = error
             self._save_state(state)
 
     def _write_output(self, job: dict[str, Any], output: dict[str, Any]) -> Path:
         path = self._output_dir(job) / f"{job['job_id']}.json"
         output["output_path"] = format_agent_path(path)
+        output["evidence_package_path"] = output["output_path"]
         self._write_json(path, output)
         return path
 
@@ -845,6 +860,7 @@ class XuchangTransportEscalationService:
                 "updated_at": None,
                 "active_processes": {},
                 "process_history": [],
+                "daily_analyses": {},
                 "jobs": {},
             }
         try:
@@ -855,6 +871,7 @@ class XuchangTransportEscalationService:
         state.setdefault("updated_at", None)
         state.setdefault("active_processes", {})
         state.setdefault("process_history", [])
+        state.setdefault("daily_analyses", {})
         state.setdefault("jobs", {})
         return state
 

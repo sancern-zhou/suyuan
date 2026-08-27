@@ -22,7 +22,7 @@ class XuchangTransportAnalysisFetcher(DataFetcher):
             name="xuchang_transport_analysis_fetcher",
             description="许昌场景二NOAA后向轨迹与本地输送诊断",
             schedule="25 * * * *",
-            version="1.0.0",
+            version="2.0.0",
         )
         self.service = service or XuchangTransportEscalationService()
 
@@ -45,7 +45,17 @@ class XuchangTransportAnalysisFetcher(DataFetcher):
                         "station_id": result["station_id"],
                         "diagnosis": result["transport_diagnosis"]["classification"],
                     },
-                    payload=result,
+                    payload={
+                        "analysis_id": result["analysis_id"],
+                        "city": result["city"],
+                        "station_id": result["station_id"],
+                        "station_name": result["station_name"],
+                        "target_date": result["target_date"],
+                        "target_pollutant": result["target_pollutant"],
+                        "status": result["status"],
+                        "diagnosis": result["transport_diagnosis"]["classification"],
+                        "evidence_package_path": result["evidence_package_path"],
+                    },
                 ))
         logger.info("xuchang_transport_analysis_completed", job_count=len(results))
         return {"jobs": results, "job_count": len(results)}

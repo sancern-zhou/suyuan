@@ -53,6 +53,21 @@ def test_strict_hour_requires_a_consistent_validator():
     assert result["reason"] == "no_validating_station_with_consistent_wind_direction"
 
 
+def test_strict_hour_distinguishes_missing_validator_wind():
+    representative = WeatherStation("primary", "Primary", 34.0, 113.0)
+    result = strict_hour_weather(
+        timestamp=datetime(2026, 8, 5, 10),
+        representative=representative,
+        station_records={
+            "primary": {"wind_direction_10m": 315, "wind_speed_10m": 2},
+        },
+    )
+
+    assert result["usable"] is False
+    assert result["reason"] == "no_validating_station_wind_available"
+    assert result["validator_direction_differences_deg"] == {}
+
+
 def test_strict_hour_accepts_circularly_close_winds():
     representative = WeatherStation("primary", "Primary", 34.0, 113.0)
     result = strict_hour_weather(

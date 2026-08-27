@@ -91,9 +91,16 @@ backend:
     - xuchang_cnemc_station_hour_fetcher
     - xuchang_henan_month_year_accumulate_fetcher
     - xuchang_station_deviation_alert_fetcher
+    - xuchang_station_daily_pollution_fetcher
     - xuchang_transport_analysis_fetcher
+    - xuchang_zhongda_station_minute_fetcher
+    - xuchang_zhongda_station_hour_fetcher
+    - xuchang_zhongda_station_day_fetcher
+    - xuchang_zhongda_city_hour_fetcher
+    - xuchang_zhongda_city_day_fetcher
     - gems_xuchang_image_fetcher
 knowledge:
   collections:
   - xuchang
-scheduled_tasks: []
+scheduled_tasks:
+  - task_xuchang_station_daily_source_report

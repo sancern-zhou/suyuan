@@ -38,6 +38,15 @@
           </button>
         </div>
       </section>
+      <nav v-if="pagination.totalPages > 1" class="pagination" aria-label="执行记录分页">
+        <button type="button" :disabled="loading || pagination.page <= 1" @click="changePage(pagination.page - 1)">
+          上一页
+        </button>
+        <span>第 {{ pagination.page }} / {{ pagination.totalPages }} 页，共 {{ pagination.total }} 条</span>
+        <button type="button" :disabled="loading || pagination.page >= pagination.totalPages" @click="changePage(pagination.page + 1)">
+          下一页
+        </button>
+      </nav>
     </div>
   </section>
 </template>
@@ -52,6 +61,7 @@ const store = useScheduledTasksStore()
 const executions = ref([])
 const loading = ref(false)
 const error = ref('')
+const pagination = ref({ page: 1, pageSize: 10, total: 0, totalPages: 0 })
 
 const statusMap = {
   success: { key: 'success', label: '成功' },
@@ -62,25 +72,9 @@ const statusMap = {
   cancelled: { key: 'failed', label: '已取消' }
 }
 
-const basename = (value) => String(value || '').split(/[\\/]/).pop() || ''
-
-const getArtifacts = (execution) => {
-  const values = []
-  for (const step of execution?.steps || []) {
-    for (const visual of step.result_visuals || []) {
-      const value = visual?.title || visual?.name || visual?.file_name
-      if (value) values.push(value)
-    }
-    const response = String(step.agent_response || '')
-    const mediaMatches = response.match(/(?:[A-Za-z]:)?[^\s"'`<>]+\.(?:docx|pdf|xlsx?|csv|qmd|md|png|jpg|jpeg)/gi) || []
-    values.push(...mediaMatches.map(basename))
-  }
-  return [...new Set(values.map(item => basename(item)).filter(Boolean))]
-}
-
 const normalizedExecutions = computed(() => executions.value.map(execution => ({
   ...execution,
-  artifacts: getArtifacts(execution)
+  artifacts: Array.isArray(execution.artifacts) ? execution.artifacts : []
 })))
 const groupedExecutions = computed(() => {
   const groups = new Map()
@@ -114,18 +108,29 @@ const formatExecutionTitle = (record) => {
 const formatDuration = seconds => seconds < 60 ? `${Math.round(seconds)}秒` : `${Math.floor(seconds / 60)}分${Math.round(seconds % 60)}秒`
 const restore = record => { if (record.session_id) emit('restore-execution-session', record.session_id) }
 
-const load = async () => {
+const load = async (page = 1) => {
   const taskId = props.task?.task_id
   if (!taskId) {
     executions.value = []
     error.value = ''
+    pagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
     return
   }
 
   loading.value = true
   error.value = ''
   try {
-    executions.value = await store.fetchTaskExecutions(taskId, 50)
+    const result = await store.fetchTaskExecutions(taskId, {
+      page,
+      pageSize: pagination.value.pageSize
+    })
+    executions.value = result.executions
+    pagination.value = {
+      page: result.page,
+      pageSize: result.pageSize,
+      total: result.total,
+      totalPages: result.totalPages
+    }
   } catch (err) {
     console.error(`Failed to fetch executions for scheduled task ${taskId}:`, err)
     error.value = '分析记录加载失败，请重试'
@@ -134,7 +139,12 @@ const load = async () => {
   }
 }
 
-watch(() => props.task?.task_id, load, { immediate: true })
+const changePage = page => {
+  if (page < 1 || page > pagination.value.totalPages || page === pagination.value.page) return
+  load(page)
+}
+
+watch(() => props.task?.task_id, () => load(1), { immediate: true })
 </script>
 
 <style scoped>
@@ -158,5 +168,8 @@ h2 { margin: 4px 0; font-size: 22px; color: #17223b; }
 .artifacts { margin-top: 11px; }
 .artifact-chip { padding: 4px 8px; border-radius: 4px; background: #eef5ff; color: #275a9a; font-size: 12px; }
 .state { padding: 48px; color: #64748b; text-align: center; }.state.error { color: #c2413b; }
+.pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; margin-top: 20px; color: #64748b; font-size: 13px; }
+.pagination button { min-width: 72px; padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; cursor: pointer; }
+.pagination button:disabled { opacity: .45; cursor: not-allowed; }
 @media (max-width: 700px) { .task-workspace { padding: 18px; }.status { margin-left: 0; } }
 </style>

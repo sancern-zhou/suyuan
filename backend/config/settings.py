@@ -96,6 +96,28 @@ class Settings(BaseSettings):
     jiangsu_device_control_confirmation_ttl_seconds: int = Field(default=300, ge=30, le=1800)
     jiangsu_work_order_draft_ttl_hours: int = Field(default=48, ge=1, le=720)
 
+    # 中大空气质量联网监测管理平台（许昌市站点 5 分钟/小时数据）。
+    # 账号密码通过环境变量注入，禁止写入代码或提交到仓库。
+    zhongda_api_base_url: str = Field(default="http://125.45.235.130:81")
+    zhongda_username: str = Field(default="")
+    zhongda_password: str = Field(default="")
+    zhongda_station_codes: str = Field(
+        default="1003A,1005A,1008A,1009A,1011A,1012A",
+        description="平台内部站点编码，逗号分隔",
+    )
+    zhongda_data_table_type: str = Field(default="Act", description="Act=实况；Std=标况")
+    zhongda_parameter_type: str = Field(default="gp", description="gp=常规污染物；mp=气象；gh=温室气体")
+    zhongda_data_source_type: str = Field(
+        default="App", description="小时/日均数据口径：App=审核后；Src=原始"
+    )
+    zhongda_data_type_plan: str = Field(
+        default="145th", description="评价规划期：135th/145th/155th"
+    )
+    zhongda_day_lookback_days: int = Field(default=40, ge=1, le=400, description="站点日均回看天数")
+    zhongda_city_day_lookback_days: int = Field(default=40, ge=1, le=400, description="城市日均回看天数")
+    zhongda_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    zhongda_login_retries: int = Field(default=8, ge=1, le=30, description="验证码 OCR 重试次数")
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins string into list."""

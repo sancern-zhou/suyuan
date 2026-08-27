@@ -617,6 +617,24 @@ class ScheduledTaskService:
         else:
             return self.execution_storage.list_recent(limit=limit)
 
+    def list_executions_page(
+        self,
+        task_id: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 10,
+    ):
+        """List a page of executions and the total matching record count."""
+        if task_id:
+            return self.execution_storage.list_by_task_page(
+                task_id,
+                page=page,
+                page_size=page_size,
+            )
+        return self.execution_storage.list_recent_page(
+            page=page,
+            page_size=page_size,
+        )
+
     def get_statistics(self, task_id: Optional[str] = None, days: int = 7):
         """获取统计信息"""
         return self.execution_storage.get_statistics(task_id=task_id, days=days)

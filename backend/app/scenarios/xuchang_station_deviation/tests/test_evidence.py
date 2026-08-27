@@ -131,7 +131,39 @@ async def test_collect_records_partial_evidence_without_losing_source_screening(
 
     assert result["collection"]["status"] == "partial"
     assert result["collection"]["errors"] == [
-        {"asset": "air_quality_context", "error": "database unavailable"}
+        {"asset": "air_quality_context", "error": "database unavailable"},
+        {
+            "asset": "source_screening",
+            "error": "source_screening_insufficient_meteorology",
+        },
     ]
     assert result["air_quality_context"]["status"] == "failed"
     assert result["source_screening"] == source_screening
+
+
+@pytest.mark.asyncio
+async def test_collect_marks_failed_source_screening_as_partial(monkeypatch):
+    collector = XuchangStationDeviationEvidenceCollector(
+        forecast_client=_ForecastClient(),
+        weather_repo=_WeatherRepo(),
+    )
+    monkeypatch.setattr(
+        collector,
+        "_load_air_quality",
+        lambda start, end: {
+            "status": "success",
+            "target_city_hour_records": [],
+            "nearby_city_hour_records": [],
+            "local_station_hour_records": [],
+        },
+    )
+
+    result = await collector.collect(
+        alert=_alert(),
+        source_screening={"status": "failed", "error": "permit coordinate mapping missing"},
+    )
+
+    assert result["collection"]["status"] == "partial"
+    assert result["collection"]["errors"] == [
+        {"asset": "source_screening", "error": "permit coordinate mapping missing"}
+    ]

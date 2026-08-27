@@ -32,17 +32,29 @@ _EVENT_DEFINITIONS = {
         description="许昌市站点小时浓度相对其他站点均值偏差超过阈值，场景一上风向分析上下文已生成",
         filter_fields=["city", "target_pollutant", "station_id"],
     ),
-    "xuchang.station_deviation.escalated": EventDefinition(
-        event_type="xuchang.station_deviation.escalated",
-        label="许昌站点异常升级为输送分析",
-        description="同站点同污染物连续两个有效小时触发场景二轨迹分析任务",
+    "xuchang.station_deviation.episode_closed": EventDefinition(
+        event_type="xuchang.station_deviation.episode_closed",
+        label="许昌站点空间偏差过程结束",
+        description="同站点同污染物连续小时异常过程已结束",
         filter_fields=["city", "target_pollutant", "station_id"],
     ),
-    "xuchang.transport_analysis.completed": EventDefinition(
-        event_type="xuchang.transport_analysis.completed",
-        label="许昌输送路径分析完成",
-        description="NOAA后向轨迹、本地输送走廊及轨迹覆盖企业筛查已完成",
-        filter_fields=["city", "target_pollutant", "station_id", "diagnosis"],
+    "xuchang.station_daily_pollution.confirmed": EventDefinition(
+        event_type="xuchang.station_daily_pollution.confirmed",
+        label="许昌站点日污染超标确认",
+        description="站点PM2.5日均值或臭氧日最大8小时滑动平均确认超标",
+        filter_fields=["city", "target_date", "target_pollutant", "station_id"],
+    ),
+    "xuchang.station_daily_source_analysis.requested": EventDefinition(
+        event_type="xuchang.station_daily_source_analysis.requested",
+        label="许昌站点日污染溯源分析已请求",
+        description="站点日污染超标已创建唯一的场景二溯源分析任务",
+        filter_fields=["city", "target_date", "target_pollutant", "station_id"],
+    ),
+    "xuchang.station_daily_source_analysis.completed": EventDefinition(
+        event_type="xuchang.station_daily_source_analysis.completed",
+        label="许昌站点日污染溯源分析完成",
+        description="超标日逐小时后向轨迹、输送走廊及轨迹沿线企业排序已完成",
+        filter_fields=["city", "target_date", "target_pollutant", "station_id", "diagnosis"],
     ),
 }
 

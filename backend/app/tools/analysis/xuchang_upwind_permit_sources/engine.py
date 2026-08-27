@@ -111,10 +111,15 @@ def strict_hour_weather(
 
     accepted = [item for item in validators if item[1] <= max_direction_difference_deg]
     if not accepted:
+        reason = (
+            "no_validating_station_wind_available"
+            if not validators
+            else "no_validating_station_with_consistent_wind_direction"
+        )
         return {
             "time": timestamp.isoformat(),
             "usable": False,
-            "reason": "no_validating_station_with_consistent_wind_direction",
+            "reason": reason,
             "representative_station": representative.station_name,
             "validator_direction_differences_deg": {station_id: round(diff, 1) for station_id, diff in validators},
         }

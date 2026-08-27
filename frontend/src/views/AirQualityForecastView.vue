@@ -7,6 +7,21 @@
       </div>
     </header>
 
+    <section v-if="dailyForecasts.length" class="daily-forecast" aria-label="未来五天逐日AQI预报">
+      <div
+        v-for="item in dailyForecasts"
+        :key="item.date"
+        class="daily-card"
+        :style="{ borderTopColor: aqiColor(item.aqi) }"
+      >
+        <p class="daily-date">{{ formatDailyDate(item.date) }}</p>
+        <p class="daily-weekday">{{ formatDailyWeekday(item.date) }}</p>
+        <p class="daily-aqi" :style="{ color: aqiColor(item.aqi) }">{{ aqiRangeText(item) }}</p>
+        <p class="daily-level">{{ dailyLevelName(item) }}</p>
+        <p class="daily-pollutant" v-if="item.primary_pollutant">首要污染物：{{ item.primary_pollutant }}</p>
+      </div>
+    </section>
+
     <section class="toolbar" aria-label="预报筛选">
       <label class="field-label">
         <span>指标</span>
@@ -29,13 +44,7 @@
           <span><i class="forecast-key"></i>预报</span>
           <span><i class="observed-key"></i>观测</span>
           <span>{{ visibleRangeText }}</span>
-        </div>
-        <div class="range-control">
-          <div class="range-labels"><span>展示时段</span><strong>{{ visibleRangeText }}</strong></div>
-          <div class="range-sliders">
-            <input v-model.number="rangeStart" type="range" :min="0" :max="maxIndex" step="1" aria-label="展示起始时间" />
-            <input v-model.number="rangeEnd" type="range" :min="0" :max="maxIndex" step="1" aria-label="展示结束时间" />
-          </div>
+          <span class="zoom-hint">滚轮缩放 · 拖拽平移</span>
         </div>
       </template>
     </section>
@@ -58,9 +67,10 @@ const chart = ref(null)
 const loading = ref(true)
 const error = ref('')
 const data = ref({ observations: [], forecasts: [], reference_time: '' })
+const dailyForecasts = ref([])
 const metric = ref('aqi')
-const rangeStart = ref(0)
-const rangeEnd = ref(0)
+const visibleRangeText = ref('暂无可展示时段')
+const zoomWindow = { start: 0, end: 100 }
 let chartResizeObserver = null
 
 const metrics = [
@@ -68,9 +78,7 @@ const metrics = [
   { key: 'pm25', label: 'PM2.5', unit: 'μg/m³' },
   { key: 'pm10', label: 'PM10', unit: 'μg/m³' },
   { key: 'o3', label: 'O3', unit: 'μg/m³' },
-  { key: 'no2', label: 'NO2', unit: 'μg/m³' },
-  { key: 'so2', label: 'SO2', unit: 'μg/m³' },
-  { key: 'co', label: 'CO', unit: 'μg/m³' }
+  { key: 'no2', label: 'NO2', unit: 'μg/m³' }
 ]
 const activeMetric = computed(() => metrics.find(item => item.key === metric.value) || metrics[0])
 
@@ -79,9 +87,7 @@ const thresholds = {
   pm25: [35, 75, 115, 150, 250],
   pm10: [50, 150, 250, 350, 420],
   o3: [160, 200, 300, 400, 800],
-  no2: [80, 200, 700, 1200, 2340],
-  so2: [150, 500, 650, 800, 1600],
-  co: [2000, 4000, 14000, 24000, 36000]
+  no2: [80, 200, 700, 1200, 2340]
 }
 const levelPalette = ['#21a366', '#e5ae22', '#ee7d32', '#d85245', '#914c95', '#7a2432']
 const legendLevels = computed(() => [
@@ -100,12 +106,74 @@ const timeline = computed(() => {
   })
   return [...merged.values()].sort((a, b) => new Date(a.time) - new Date(b.time))
 })
-const maxIndex = computed(() => Math.max(timeline.value.length - 1, 0))
-const displayedRows = computed(() => timeline.value.slice(rangeStart.value, rangeEnd.value + 1))
-const visibleRangeText = computed(() => {
-  const rows = displayedRows.value
-  return rows.length ? `${formatTime(rows[0].time)} 至 ${formatTime(rows.at(-1).time)}` : '暂无可展示时段'
-})
+
+function updateVisibleRange() {
+  const rows = timeline.value
+  if (!chart.value || !rows.length) {
+    visibleRangeText.value = '暂无可展示时段'
+    return
+  }
+  const zoom = chart.value.getOption()?.dataZoom?.[0]
+  if (zoom) {
+    zoomWindow.start = zoom.start ?? 0
+    zoomWindow.end = zoom.end ?? 100
+  }
+  const lastIndex = rows.length - 1
+  const startIndex = Math.round((zoomWindow.start / 100) * lastIndex)
+  const endIndex = Math.round((zoomWindow.end / 100) * lastIndex)
+  const from = rows[startIndex]?.time
+  const to = rows[endIndex]?.time
+  visibleRangeText.value = from && to ? `${formatTime(from)} 至 ${formatTime(to)}` : '暂无可展示时段'
+}
+
+function applyZoomWindow(start, end) {
+  zoomWindow.start = start
+  zoomWindow.end = end
+  chart.value?.dispatchAction({ type: 'dataZoom', start, end })
+}
+
+function onWheel(event) {
+  if (!chart.value || !timeline.value.length) return
+  event.preventDefault()
+  const rect = chartEl.value.getBoundingClientRect()
+  if (!rect.width) return
+  const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
+  const span = zoomWindow.end - zoomWindow.start
+  const minSpan = Math.max((8 / timeline.value.length) * 100, 1)
+  const factor = event.deltaY > 0 ? 1.25 : 1 / 1.25
+  const newSpan = Math.min(100, Math.max(minSpan, span * factor))
+  const anchor = (zoomWindow.start + ratio * span) / 100
+  let newStart = anchor * 100 - ratio * newSpan
+  newStart = Math.min(Math.max(newStart, 0), 100 - newSpan)
+  applyZoomWindow(newStart, newStart + newSpan)
+}
+
+let dragState = null
+
+function onDragStart(event) {
+  if (!chart.value || event.button !== 0) return
+  event.preventDefault()
+  dragState = { x: event.clientX, start: zoomWindow.start, end: zoomWindow.end }
+  window.addEventListener('mousemove', onDragMove)
+  window.addEventListener('mouseup', onDragEnd)
+}
+
+function onDragMove(event) {
+  if (!dragState || !chartEl.value) return
+  const rect = chartEl.value.getBoundingClientRect()
+  if (!rect.width) return
+  const span = dragState.end - dragState.start
+  const shift = -((event.clientX - dragState.x) / rect.width) * span
+  let newStart = dragState.start + shift
+  newStart = Math.min(Math.max(newStart, 0), 100 - span)
+  applyZoomWindow(newStart, newStart + span)
+}
+
+function onDragEnd() {
+  dragState = null
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', onDragEnd)
+}
 
 function formatTime(value) {
   if (!value) return '--'
@@ -132,10 +200,42 @@ function colorFor(value) {
   return levelPalette[index === -1 ? levelPalette.length - 1 : index]
 }
 
+function aqiColor(value) {
+  if (value === null || value === undefined) return '#9aa5ad'
+  const index = thresholds.aqi.findIndex(limit => value <= limit)
+  return levelPalette[index === -1 ? levelPalette.length - 1 : index]
+}
+
+const aqiLevelNames = ['优', '良', '轻度污染', '中度污染', '重度污染', '严重污染']
+
+function dailyLevelName(item) {
+  if (item.aqi === null || item.aqi === undefined) return item.level || '暂无等级'
+  const index = thresholds.aqi.findIndex(limit => item.aqi <= limit)
+  return aqiLevelNames[index === -1 ? aqiLevelNames.length - 1 : index]
+}
+
+function aqiRangeText(item) {
+  if (item.min_aqi != null && item.max_aqi != null) return `${item.min_aqi}~${item.max_aqi}`
+  return item.aqi ?? '--'
+}
+
+function formatDailyDate(value) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit'
+  }).format(new Date(value)).replace(/\//g, '-')
+}
+
+function formatDailyWeekday(value) {
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'long' }).format(new Date(value))
+}
+
 function renderChart() {
   if (!chartEl.value || !timeline.value.length) return
-  if (!chart.value) chart.value = echarts.init(chartEl.value)
-  const rows = displayedRows.value
+  if (!chart.value) {
+    chart.value = echarts.init(chartEl.value)
+    chart.value.on('dataZoom', updateVisibleRange)
+  }
+  const rows = timeline.value
   const hourLabels = rows.map(row => formatHour(row.time))
   const dates = rows.map(row => formatDate(row.time))
   const dateLabels = dates.map((date, index) => index === 0 || dates[index - 1] !== date ? date : '')
@@ -143,6 +243,18 @@ function renderChart() {
   chart.value.setOption({
     animationDuration: 180,
     grid: { left: 60, right: 28, top: 36, bottom: 102 },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: [0, 1],
+        zoomOnMouseWheel: false,
+        moveOnMouseMove: false,
+        moveOnMouseWheel: false,
+        filterMode: 'none',
+        start: zoomWindow.start,
+        end: zoomWindow.end
+      }
+    ],
     tooltip: {
       show: true,
       trigger: 'axis',
@@ -165,7 +277,7 @@ function renderChart() {
       {
         type: 'category', data: hourLabels,
         axisLine: { lineStyle: { color: '#aeb9bf' } }, axisTick: { alignWithLabel: true },
-        axisLabel: { color: '#64747d', interval: Math.max(0, Math.ceil(rows.length / 24) - 1), margin: 10 }
+        axisLabel: { color: '#64747d', margin: 10 }
       },
       {
         type: 'category', data: dateLabels, position: 'bottom', offset: 31,
@@ -199,12 +311,12 @@ async function load() {
   error.value = ''
   try {
     data.value = await fetchXuchangHourlyForecast()
-    rangeStart.value = Math.max(0, timeline.value.length - 96)
-    rangeEnd.value = maxIndex.value
+    dailyForecasts.value = data.value.daily_forecasts || []
     loading.value = false
     await nextTick()
     await new Promise(resolve => requestAnimationFrame(resolve))
     renderChart()
+    updateVisibleRange()
   } catch (err) {
     error.value = err.message || '预报数据加载失败'
   } finally {
@@ -212,9 +324,9 @@ async function load() {
   }
 }
 
-watch([metric, rangeStart, rangeEnd], () => {
-  if (rangeStart.value > rangeEnd.value) [rangeStart.value, rangeEnd.value] = [rangeEnd.value, rangeStart.value]
+watch(metric, () => {
   renderChart()
+  updateVisibleRange()
 })
 watch(chartEl, (element) => {
   if (element && chartResizeObserver) chartResizeObserver.observe(element)
@@ -225,10 +337,21 @@ onMounted(() => {
   window.addEventListener('resize', onResize)
   chartResizeObserver = new ResizeObserver(() => chart.value?.resize())
   if (chartEl.value) chartResizeObserver.observe(chartEl.value)
+  const el = chartEl.value
+  if (el) {
+    el.addEventListener('wheel', onWheel, { passive: false })
+    el.addEventListener('mousedown', onDragStart)
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   chartResizeObserver?.disconnect()
+  onDragEnd()
+  const el = chartEl.value
+  if (el) {
+    el.removeEventListener('wheel', onWheel)
+    el.removeEventListener('mousedown', onDragStart)
+  }
   chart.value?.dispose()
 })
 </script>
@@ -251,12 +374,19 @@ select { height: 34px; min-width: 120px; border: 1px solid #aebfbb; border-radiu
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
 .source-time { margin-left: auto; font-size: 12px; color: #718087; white-space: nowrap; }
 .chart-section { margin-top: 16px; padding: 18px 20px 20px; }
-.forecast-chart { height: min(57vh, 560px); min-height: 360px; }
+.forecast-chart { height: min(57vh, 560px); min-height: 360px; cursor: grab; }
 .embedded .chart-section { margin: 0; padding: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .embedded .forecast-chart { height: clamp(470px, calc(100vh - 250px), 820px); min-height: 470px; flex: 1; }
 .series-key { border-top: 1px solid #edf1f0; padding: 12px 2px 0; display: flex; gap: 22px; color: #596a72; font-size: 12px; }
-.forecast-key, .observed-key { display: inline-block; width: 16px; height: 9px; }.forecast-key { background: #e5ae22; }.observed-key { background: #176f89; height: 3px; }
-.range-control { margin-top: 16px; padding-top: 15px; border-top: 1px solid #edf1f0; }.range-labels { display: flex; justify-content: space-between; color: #52636a; font-size: 13px; }.range-labels strong { color: #234d55; font-weight: 600; }.range-sliders { position: relative; height: 28px; margin-top: 8px; }.range-sliders input { position: absolute; width: 100%; accent-color: #267a70; pointer-events: none; }.range-sliders input::-webkit-slider-thumb { pointer-events: auto; }.range-sliders input::-moz-range-thumb { pointer-events: auto; }
+.forecast-key, .observed-key { display: inline-block; width: 16px; height: 9px; }.forecast-key { background: #2f9e63; }.observed-key { background: #176f89; height: 3px; }
+.daily-forecast { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.daily-card { background: #fff; border: 1px solid #dbe4e2; border-top: 4px solid #9aa5ad; border-radius: 6px; padding: 14px 16px 12px; text-align: center; }
+.daily-date { margin: 0; font-size: 15px; font-weight: 700; color: #1f2d33; }
+.daily-weekday { margin: 2px 0 10px; font-size: 12px; color: #718087; }
+.daily-aqi { margin: 0; font-size: 30px; font-weight: 700; line-height: 1.1; }
+.daily-level { margin: 6px 0 0; font-size: 13px; color: #4d5e66; }
+.daily-pollutant { margin: 4px 0 0; font-size: 12px; color: #8a979e; }
+.zoom-hint { margin-left: auto; color: #8a979e; }
 .status { min-height: 430px; display: grid; place-items: center; color: #64747d; }.error { color: #b4403a; }
-@media (max-width: 760px) { .forecast-page { padding: 18px 14px; }.page-header { align-items: center; }.page-header h1 { font-size: 21px; }.toolbar { align-items: flex-start; flex-direction: column; gap: 12px; }.source-time { margin-left: 0; }.forecast-chart { height: 420px; min-height: 0; }.series-key { flex-wrap: wrap; gap: 12px; }.range-labels { flex-direction: column; gap: 5px; } }
+@media (max-width: 760px) { .forecast-page { padding: 18px 14px; }.page-header { align-items: center; }.page-header h1 { font-size: 21px; }.daily-forecast { grid-template-columns: repeat(2, 1fr); }.toolbar { align-items: flex-start; flex-direction: column; gap: 12px; }.source-time { margin-left: 0; }.forecast-chart { height: 420px; min-height: 0; }.series-key { flex-wrap: wrap; gap: 12px; } }
 </style>

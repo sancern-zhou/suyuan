@@ -2,6 +2,8 @@
 定时任务API路由
 提供RESTful API接口
 """
+import math
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -89,10 +91,31 @@ class TaskResponse(BaseModel):
     is_running: bool = False
 
 
+class ExecutionSummary(BaseModel):
+    """列表页所需的轻量执行摘要，不返回 Agent 详细执行日志。"""
+    execution_id: str
+    task_id: str
+    task_name: str
+    session_id: Optional[str] = None
+    status: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    trigger_type: str
+    total_steps: int
+    completed_steps: int
+    failed_steps: int
+    error_message: Optional[str] = None
+    artifacts: List[str] = Field(default_factory=list)
+
+
 class ExecutionListResponse(BaseModel):
     """执行记录列表响应"""
-    executions: List[TaskExecution]
+    executions: List[ExecutionSummary]
     total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class StatisticsResponse(BaseModel):
@@ -107,6 +130,28 @@ class StatisticsResponse(BaseModel):
 
 
 # ===== API端点 =====
+
+
+_ARTIFACT_PATTERN = re.compile(
+    r"(?:[A-Za-z]:)?[^\s\"'`<>]+\.(?:docx|pdf|xlsx?|csv|qmd|md|png|jpg|jpeg)",
+    re.IGNORECASE,
+)
+
+
+def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
+    artifacts: List[str] = []
+    for step in execution.steps:
+        for visual in step.result_visuals:
+            value = visual.get("title") or visual.get("name") or visual.get("file_name")
+            if value:
+                artifacts.append(str(value).replace("\\", "/").rsplit("/", 1)[-1])
+        for value in _ARTIFACT_PATTERN.findall(step.agent_response or ""):
+            artifacts.append(value.replace("\\", "/").rsplit("/", 1)[-1])
+
+    return ExecutionSummary(
+        **execution.model_dump(exclude={"steps", "event_attributes", "delivery_results"}),
+        artifacts=list(dict.fromkeys(filter(None, artifacts))),
+    )
 
 
 async def _validate_event_task_config(task: ScheduledTask) -> None:
@@ -502,16 +547,31 @@ async def retry_failed_delivery(execution_id: str):
 @router.get("/{task_id}/executions", response_model=ExecutionListResponse)
 async def get_task_executions(
     task_id: str,
-    limit: int = Query(default=10, ge=1, le=50, description="返回记录数")
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=50, description="每页记录数"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="兼容旧客户端的每页记录数",
+    ),
 ):
     """获取任务的执行记录"""
     try:
         service = get_scheduled_task_service()
-        executions = service.list_executions(task_id=task_id, limit=limit)
+        effective_page_size = limit or page_size
+        executions, total = service.list_executions_page(
+            task_id=task_id,
+            page=page,
+            page_size=effective_page_size,
+        )
 
         return ExecutionListResponse(
-            executions=executions,
-            total=len(executions)
+            executions=[_execution_summary(item) for item in executions],
+            total=total,
+            page=page,
+            page_size=effective_page_size,
+            total_pages=math.ceil(total / effective_page_size),
         )
 
     except Exception as e:
@@ -520,16 +580,30 @@ async def get_task_executions(
 
 @router.get("/executions/recent", response_model=ExecutionListResponse)
 async def get_recent_executions(
-    limit: int = Query(default=20, ge=1, le=50, description="返回记录数")
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=50, description="每页记录数"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="兼容旧客户端的每页记录数",
+    ),
 ):
     """获取最近的执行记录"""
     try:
         service = get_scheduled_task_service()
-        executions = service.list_executions(limit=limit)
+        effective_page_size = limit or page_size
+        executions, total = service.list_executions_page(
+            page=page,
+            page_size=effective_page_size,
+        )
 
         return ExecutionListResponse(
-            executions=executions,
-            total=len(executions)
+            executions=[_execution_summary(item) for item in executions],
+            total=total,
+            page=page,
+            page_size=effective_page_size,
+            total_pages=math.ceil(total / effective_page_size),
         )
 
     except Exception as e:

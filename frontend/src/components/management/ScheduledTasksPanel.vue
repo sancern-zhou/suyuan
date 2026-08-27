@@ -140,6 +140,28 @@
           </span>
         </button>
       </div>
+      <nav
+        v-if="!executionHistoryLoading && executionHistoryPagination.totalPages > 1"
+        class="execution-history-pagination"
+        aria-label="执行记录分页"
+      >
+        <button
+          type="button"
+          class="panel-btn small"
+          :disabled="executionHistoryPagination.page <= 1"
+          @click="changeExecutionHistoryPage(executionHistoryPagination.page - 1)"
+        >上一页</button>
+        <span>
+          第 {{ executionHistoryPagination.page }} / {{ executionHistoryPagination.totalPages }} 页，
+          共 {{ executionHistoryPagination.total }} 条
+        </span>
+        <button
+          type="button"
+          class="panel-btn small"
+          :disabled="executionHistoryPagination.page >= executionHistoryPagination.totalPages"
+          @click="changeExecutionHistoryPage(executionHistoryPagination.page + 1)"
+        >下一页</button>
+      </nav>
     </div>
 
     <!-- 新建/编辑任务弹窗 -->
@@ -421,6 +443,7 @@ const selectedHistoryTask = ref(null)
 const executionHistory = ref([])
 const executionHistoryLoading = ref(false)
 const executionHistoryError = ref('')
+const executionHistoryPagination = ref({ page: 1, pageSize: 10, total: 0, totalPages: 0 })
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const weixinUsers = computed(() => selectableWeixinUsers(scheduledTasksStore.socialUsers))
@@ -489,16 +512,26 @@ const handleExecutionModeChange = async () => {
   }
 }
 
-const refreshExecutionHistory = async () => {
+const refreshExecutionHistory = async (requestedPage = executionHistoryPagination.value.page) => {
   if (!selectedHistoryTask.value) return
+  const page = Number.isInteger(requestedPage)
+    ? requestedPage
+    : executionHistoryPagination.value.page
   executionHistoryLoading.value = true
   executionHistoryError.value = ''
   try {
-    const records = await loadScheduledTaskExecutions(
+    const result = await loadScheduledTaskExecutions(
       scheduledTasksStore,
-      selectedHistoryTask.value
+      selectedHistoryTask.value,
+      { page, pageSize: executionHistoryPagination.value.pageSize }
     )
-    executionHistory.value = sortExecutionsNewestFirst(records)
+    executionHistory.value = sortExecutionsNewestFirst(result.executions)
+    executionHistoryPagination.value = {
+      page: result.page,
+      pageSize: result.pageSize,
+      total: result.total,
+      totalPages: result.totalPages
+    }
   } catch (error) {
     console.error('Failed to fetch task executions:', error)
     executionHistoryError.value = '执行记录加载失败，请重试'
@@ -510,13 +543,20 @@ const refreshExecutionHistory = async () => {
 const openExecutionHistory = async (task) => {
   selectedHistoryTask.value = task
   executionHistory.value = []
-  await refreshExecutionHistory()
+  executionHistoryPagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
+  await refreshExecutionHistory(1)
 }
 
 const closeExecutionHistory = () => {
   selectedHistoryTask.value = null
   executionHistory.value = []
   executionHistoryError.value = ''
+  executionHistoryPagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
+}
+
+const changeExecutionHistoryPage = page => {
+  if (page < 1 || page > executionHistoryPagination.value.totalPages) return
+  refreshExecutionHistory(page)
 }
 
 const restoreExecutionSession = (execution) => {
@@ -1083,6 +1123,17 @@ const saveTask = async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.execution-history-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .execution-history-item {
