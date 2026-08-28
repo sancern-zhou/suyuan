@@ -72,19 +72,11 @@ const scheduleDrawioDraftSave = (board) => {
   if (!boardId || !board?.currentXml) return
   cancelDrawioDraftSave(boardId)
   const xml = board.currentXml
-  board.syncStatus = 'syncing'
-  board.syncError = null
   const timer = setTimeout(async () => {
     drawioDraftTimers.delete(boardId)
     try {
-      const response = await saveBoardDraft(boardId, xml)
-      board.draftRevision = Number(response?.draft_revision ?? board.draftRevision ?? 0)
-      board.draftXmlRef = response?.draft_xml_ref || board.draftXmlRef || null
-      board.syncStatus = 'idle'
-      board.syncError = null
+      await saveBoardDraft(boardId, xml)
     } catch (error) {
-      board.syncStatus = 'error'
-      board.syncError = error?.code || error?.message || 'draft_save_failed'
       console.warn('[drawio-board] draft autosave failed', {
         boardId,
         error: error?.message || error
@@ -181,6 +173,9 @@ const createEmptyDrawioBoardState = () => ({
   versions: [],
   currentVersionId: null,
   baseVersionId: null,
+  acceptedVersionId: null,
+  workingVersionId: null,
+  candidateVersionId: null,
   draftRevision: 0,
   draftXmlRef: null,
   selectedCells: [],
@@ -1542,7 +1537,11 @@ export const useReactStore = defineStore('react', {
 
           const appliedDrawioBoard = this.applyDrawioBoardToolResult(result, targetState)
           if (!appliedDrawioBoard) {
-            this.applyDrawioBoardToolResultFromRef(result, targetState)
+            this.applyDrawioBoardToolResultFromRef(result, targetState).catch(error => {
+              console.warn('[drawio-board] failed to apply streamed board result', {
+                error: error?.message || error
+              })
+            })
           }
 
           break
@@ -2031,6 +2030,15 @@ export const useReactStore = defineStore('react', {
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'currentVersionId')) {
         targetState.board.currentVersionId = null
       }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'acceptedVersionId')) {
+        targetState.board.acceptedVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'workingVersionId')) {
+        targetState.board.workingVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'candidateVersionId')) {
+        targetState.board.candidateVersionId = null
+      }
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'baseVersionId')) {
         targetState.board.baseVersionId = targetState.board.currentVersionId || null
       }
@@ -2162,6 +2170,10 @@ export const useReactStore = defineStore('react', {
           board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
           board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
           board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
+          board.currentVersionId = versionRecord?.version_id || versionRecord?.id || board.currentVersionId
+          board.workingVersionId = board.currentVersionId
+          board.candidateVersionId = board.currentVersionId
+          board.baseVersionId = board.currentVersionId
         }
         targetState.hasResults = true
         return true
@@ -2180,6 +2192,9 @@ export const useReactStore = defineStore('react', {
       board.version = versionRecord?.versionNumber || (Number.isFinite(nextVersion) ? nextVersion : board.version)
       board.revision = Number(payload.revision ?? board.revision ?? 0)
       board.currentVersionSha256 = payload.xml_sha256 || payload.xml_ref?.sha256 || board.currentVersionSha256
+      board.acceptedVersionId = payload.version_id || payload.versionId || board.currentVersionId
+      board.workingVersionId = board.currentVersionId
+      board.candidateVersionId = null
       board.qualityStatus = payload.quality_status || board.qualityStatus || null
       board.qualityReport = payload.quality_report || board.qualityReport || {}
       board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
@@ -2200,6 +2215,9 @@ export const useReactStore = defineStore('react', {
       let xmlRef = getDrawioBoardXmlRef(payload, result)
       if (!xmlRef) return false
 
+      // Older tool results may only contain board/version identity. Prefer the
+      // authenticated board endpoint and never expose a local filesystem path
+      // to the browser.
       if (!xmlRef.read_url && !xmlRef.url && !xmlRef.download_url) {
         const boardId = payload.board_id || payload.active_board_id || payload.activeBoardId
         const versionId = payload.candidate_version_id || payload.version_id || payload.versionId
@@ -2303,13 +2321,34 @@ export const useReactStore = defineStore('react', {
       if (!board.activeBoardId) return []
       const response = await getBoardVersions(board.activeBoardId)
       const previousCurrentVersionId = board.currentVersionId
-      board.currentVersionId = response.current_version_id || board.currentVersionId
-      board.baseVersionId = board.currentVersionId
+      const acceptedVersionId = response.current_version_id || board.acceptedVersionId || board.currentVersionId
+      board.acceptedVersionId = acceptedVersionId || null
       board.revision = Number(response.revision ?? board.revision ?? 0)
-      board.versions = mapServerBoardVersions(response.versions || [], board.currentVersionId)
+      board.versions = mapServerBoardVersions(response.versions || [], acceptedVersionId)
+      const requestedWorkingVersionId = board.workingVersionId || previousCurrentVersionId
+      const requestedWorking = board.versions.find(version => (
+        (version.version_id || version.id) === requestedWorkingVersionId &&
+        ['accepted', 'candidate'].includes(version.lifecycleStatus || version.lifecycle_status)
+      ))
+      const latestCandidate = [...board.versions]
+        .filter(version => (version.lifecycleStatus || version.lifecycle_status) === 'candidate')
+        .sort((a, b) => Number(b.versionNumber || b.version_number || 0) - Number(a.versionNumber || a.version_number || 0))[0]
+      const working = requestedWorking || latestCandidate || board.versions.find(version => (
+        (version.version_id || version.id) === acceptedVersionId
+      ))
+      board.currentVersionId = working?.version_id || working?.id || acceptedVersionId || null
+      board.workingVersionId = board.currentVersionId
+      board.candidateVersionId = (working?.lifecycleStatus || working?.lifecycle_status) === 'candidate'
+        ? board.currentVersionId
+        : null
+      board.baseVersionId = board.currentVersionId
       board.draftRevision = Number(response.draft_revision ?? board.draftRevision ?? 0)
       board.draftXmlRef = response.draft_xml_ref || null
 
+      // A browser edit is autosaved as a board draft before the user sends the
+      // next message. Restore that draft on session reopen so the editor shows
+      // the user's last manual layout instead of silently falling back to the
+      // last accepted/agent version.
       if (board.draftRevision > 0 && board.draftXmlRef) {
         try {
           const draftXml = await loadBoardVersionXml(
@@ -2330,6 +2369,9 @@ export const useReactStore = defineStore('react', {
           })
         }
       } else if (!board.currentXml && board.currentVersionId) {
+        // A restored session may not carry the board XML in its message
+        // history. Load the current accepted version so the panel is usable
+        // even when there has never been a browser draft.
         try {
           const currentVersion = board.versions.find(
             (version) => (version.versionId || version.id) === board.currentVersionId
@@ -2503,12 +2545,18 @@ export const useReactStore = defineStore('react', {
       const board = state?.board
       if (!board?.currentXml) return null
 
-      const compactVersionContext = board.currentVersionId && Number.isFinite(Number(board.revision))
+      const workingVersionId = board.workingVersionId || board.currentVersionId
+      const acceptedVersionId = board.acceptedVersionId || board.currentVersionId
+      const compactVersionContext = workingVersionId && Number.isFinite(Number(board.revision))
       if (compactVersionContext) {
         return {
           artifact_kind: 'drawio_board',
           board_id: board.activeBoardId,
-          version_id: board.currentVersionId,
+          version_id: workingVersionId,
+          current_version_id: workingVersionId,
+          working_version_id: workingVersionId,
+          accepted_version_id: acceptedVersionId,
+          candidate_version_id: board.candidateVersionId || null,
           revision: Number(board.revision),
           selected_cells: board.selectedCells || [],
           title: board.title,
@@ -2527,7 +2575,10 @@ export const useReactStore = defineStore('react', {
         design_spec: board.designSpec || {},
         theme_tokens: board.themeTokens || {},
         version: board.version,
-        current_version_id: board.currentVersionId || null,
+        current_version_id: workingVersionId || null,
+        working_version_id: workingVersionId || null,
+        accepted_version_id: acceptedVersionId || null,
+        candidate_version_id: board.candidateVersionId || null,
         base_version_id: board.baseVersionId || board.currentVersionId || null,
         version_files: (board.versions || []).map(version => ({
           version_id: version.version_id || version.id,
@@ -2538,7 +2589,7 @@ export const useReactStore = defineStore('react', {
           format: version.format || 'drawio',
           source: version.source,
           created_at: version.created_at,
-          is_current: (version.version_id || version.id) === board.currentVersionId
+          is_current: (version.version_id || version.id) === workingVersionId
         })),
         dirty: board.dirty,
         updated_at: board.updatedAt

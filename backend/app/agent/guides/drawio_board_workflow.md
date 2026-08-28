@@ -25,7 +25,7 @@
 7. 一般情况下，建议调用 `render_drawio_board_candidate` 获取截图并检查布局、文字、连线和整体可读性；是否重试、修改或接受由 Agent 结合当前任务自主决定。
 8. 如果用户选择了画布元素，优先用 `board_context.selected_cells` 解释“这个”“这里”“选中的模块”等指代。
 9. 工具返回失败时，先修正 XML 或 operations，再重试；不要直接向用户输出无法渲染的 XML。截图失败不影响已生成 XML 的前端预览。
-10. `create_drawio_board` 返回 `routing_status=partial` 或 `fallback` 时，候选画板已经成功生成。应继续截图和验收，不要仅因 routing_issues 再次调用 `create_drawio_board`；只有用户明确要求整理连线或截图显示严重不可读时，才做局部编辑。
+10. `create_drawio_board` 返回 `routing_status=partial` 或 `fallback` 时，候选画板仍可继续生成和预览；Agent 应读取路由指标并结合截图决定是否局部疏解或拆图，这些告警不构成系统级阻断。
 
 ## 专项设计文档路由
 

@@ -385,7 +385,7 @@ def test_reports_straight_edge_that_crosses_a_node():
     assert issue["repair_actions"][0]["action"] == "convert_edge_to_orthogonal"
 
 
-def test_reports_edge_crossings_without_failing_candidate():
+def test_routes_edges_around_existing_routes_when_possible():
     result = _route("""
     <mxCell id="left" value="L" vertex="1" parent="1"><mxGeometry x="0" y="80" width="60" height="40" as="geometry"/></mxCell>
     <mxCell id="right" value="R" vertex="1" parent="1"><mxGeometry x="320" y="80" width="60" height="40" as="geometry"/></mxCell>
@@ -396,7 +396,7 @@ def test_reports_edge_crossings_without_failing_candidate():
     """)
 
     assert result.metrics["edge_vertex_intersection_count"] == 0
-    assert result.metrics["edge_edge_crossing_count"] == 1
+    assert result.metrics["edge_edge_crossing_count"] == 0
 
 
 def test_reports_diagonal_straight_edge_that_crosses_a_node():
@@ -460,6 +460,20 @@ def test_parent_shape_with_child_badge_remains_an_obstacle():
 
     assert result.metrics["rerouted_edge_count"] == 1
     assert _edge(result.xml).find("mxGeometry/Array[@as='points']") is not None
+
+
+def test_unstyled_parent_with_structural_children_is_not_a_routing_obstacle():
+    result = _route("""
+    <mxCell id="source" value="S" vertex="1" parent="1"><mxGeometry x="0" y="120" width="80" height="40" as="geometry"/></mxCell>
+    <mxCell id="runtime" value="运行时容器" vertex="1" parent="1"><mxGeometry x="120" y="40" width="260" height="200" as="geometry"/></mxCell>
+    <mxCell id="child_a" value="A" vertex="1" parent="runtime"><mxGeometry x="20" y="40" width="100" height="50" as="geometry"/></mxCell>
+    <mxCell id="child_b" value="B" vertex="1" parent="runtime"><mxGeometry x="140" y="120" width="100" height="50" as="geometry"/></mxCell>
+    <mxCell id="target" value="T" vertex="1" parent="1"><mxGeometry x="460" y="120" width="80" height="40" as="geometry"/></mxCell>
+    <mxCell id="edge" edge="1" parent="1" source="source" target="target" style="edgeStyle=orthogonalEdgeStyle;"><mxGeometry relative="1" as="geometry"/></mxCell>
+    """)
+
+    assert result.metrics["edge_vertex_intersection_count"] == 0
+    assert result.metrics["rerouted_edge_count"] == 1
 
 
 def test_reports_non_orthogonal_edge_with_explicit_points_through_node():

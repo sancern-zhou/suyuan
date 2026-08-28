@@ -183,6 +183,7 @@ def test_board_tools_receive_authoritative_internal_version_context():
     assert create_args["_agent_run_id"] == state.run_id
     assert create_args["_board_id"] == "board-db"
     assert create_args["_base_revision"] == 7
+    assert create_args["_base_version_id"] == "candidate-7"
     assert accept_error is None
     assert accept_args["_board_id"] == "board-db"
     assert accept_args["_expected_board_revision"] == 7
@@ -217,6 +218,8 @@ def test_runtime_tracks_pending_visual_review_until_candidate_is_accepted(tmp_pa
     assert state.pending_board_candidate_id == "candidate-1"
     assert state.board_quality_repair_count == 0
     assert state.board_context["candidate_version_id"] == "candidate-1"
+    assert state.board_context["working_version_id"] == "candidate-1"
+    assert state.board_context["current_version_id"] == "candidate-1"
 
     runtime._capture_drawio_board_context(state, {
         "success": True,

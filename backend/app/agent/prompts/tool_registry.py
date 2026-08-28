@@ -235,12 +235,6 @@ OPS_TOOL_NAMES = [
     "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
     "knowledge_graph_query", "execute_ops_sql_query",
 
-    # 展示型流程图（已废弃 create_diagram_artifact，使用画板模式替代）
-    "create_report_chart",
-
-    # 报告产物收口
-    "create_report_package", "render_report_package", "validate_report_package",
-
     # 子 Agent 复核
     "call_sub_agent",
 
@@ -280,6 +274,9 @@ SOCIAL_TOOL_NAMES = [
 
     # 代码执行和模式互调
     "execute_python", "call_sub_agent",
+
+    # 正式报告生成与收口
+    "create_report_chart", "create_report_package", "validate_report_package",
 
     # 网络搜索
     "web_search", "web_fetch",

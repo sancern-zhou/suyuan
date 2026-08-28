@@ -50,6 +50,8 @@ def _timestamp(value: datetime | None) -> str | None:
 def _xml_ref_with_read_url(xml_ref: dict[str, Any] | None, read_url: str) -> dict[str, Any] | None:
     if not xml_ref:
         return xml_ref
+    # Keep the persisted local path for backend consumers, while giving the
+    # browser an authenticated endpoint instead of exposing a filesystem path.
     return {**xml_ref, "read_url": read_url}
 
 

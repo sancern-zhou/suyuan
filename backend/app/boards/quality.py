@@ -121,6 +121,16 @@ def evaluate_drawio_quality(
 
     cells = [cell for cell in root.iter("mxCell") if cell.attrib.get("id") not in {None, "0", "1"}]
     cell_ids = {cell.attrib["id"] for cell in cells}
+    structural_child_parents = {
+        str(cell.attrib.get("parent"))
+        for cell in cells
+        if cell.attrib.get("vertex") == "1"
+        and cell.attrib.get("parent") in cell_ids
+        and (
+            cell.find("mxGeometry") is None
+            or cell.find("mxGeometry").attrib.get("relative") != "1"
+        )
+    }
     vertices: list[tuple[ET.Element, dict[str, float]]] = []
     edges: list[ET.Element] = []
     connected_ids: set[str] = set()
@@ -208,7 +218,7 @@ def evaluate_drawio_quality(
     if len(vertices) > DETAIL_BUDGETS["faithful"]["nodes"]:
         warnings.append({
             "code": "diagram_split_recommended",
-            "message": "节点超过 24 个，建议拆分为总览画板和分区详情画板",
+            "message": "节点超过 20 个，建议拆分为总览画板和分区详情画板",
         })
     container_count = int((structural_digest.get("metrics") or {}).get("container_count") or 0)
     if len(vertices) > 12 and container_count == 0:
@@ -290,6 +300,7 @@ def evaluate_drawio_quality(
             parent_style.get("container") == "1"
             or "swimlane" in parent_style
             or "group" in parent_style
+            or parent_cell.attrib["id"] in structural_child_parents
         )
         if not is_container:
             continue

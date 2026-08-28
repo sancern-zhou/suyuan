@@ -520,6 +520,23 @@ class AgentRuntime:
                 state.pending_board_candidate_id = str(candidate_version_id)
             elif candidate_accepted or data.get("lifecycle_status") == "rejected":
                 state.pending_board_candidate_id = None
+            working_version_id = (
+                data.get("working_version_id")
+                or data.get("current_version_id")
+                or data.get("version_id")
+                or candidate_version_id
+                or previous.get("working_version_id")
+                or previous.get("current_version_id")
+            )
+            accepted_version_id = (
+                data.get("accepted_version_id")
+                or previous.get("accepted_version_id")
+                or (
+                    previous.get("current_version_id")
+                    if previous.get("lifecycle_status") != "candidate"
+                    else None
+                )
+            )
             state.board_context = {
                 **previous,
                 "current_xml": xml,
@@ -529,7 +546,9 @@ class AgentRuntime:
                 "title": data.get("title") or previous.get("title"),
                 "revision": data.get("revision", previous.get("revision", 0)),
                 "candidate_version_id": candidate_version_id or previous.get("candidate_version_id"),
-                "current_version_id": data.get("current_version_id") or previous.get("current_version_id"),
+                "current_version_id": working_version_id,
+                "working_version_id": working_version_id,
+                "accepted_version_id": accepted_version_id,
                 "version_id": data.get("version_id") or previous.get("version_id"),
                 "quality_status": data.get("quality_status") or previous.get("quality_status"),
                 "quality_report": data.get("quality_report") or previous.get("quality_report"),

@@ -33,6 +33,56 @@ _OUTPUT_PATH_FIELDS = (
 )
 
 
+def _audit_item_id(item: Dict[str, Any]) -> str:
+    """Stable, non-content-heavy identity used for human-vs-Agent comparison."""
+
+    return "|".join(
+        str(item.get(field) or "")
+        for field in ("working_order_code", "rule_id", "field", "rf_record_key")
+    )
+
+
+def _record_audit_feedback(result: Dict[str, Any], dataset_path: Path) -> str | None:
+    """Create an outcome case when the deterministic audit produces output."""
+
+    try:
+        from config.settings import settings
+
+        # ``ops_audit`` is shared by multiple deployments; only the Jiangsu
+        # project owns this pilot feedback stream.
+        if settings.project_id != "jiangsu-ops":
+            return None
+        from app.services.jiangsu_feedback_loop import (
+            audit_case_id,
+            get_feedback_loop_store,
+        )
+
+        final_items = (result.get("final_issue_list") or {}).get("items") or []
+        run_key = (result.get("final_issue_list") or {}).get("generated_at") or str(
+            result.get("final_issue_list_path") or ""
+        )
+        case_id = audit_case_id(str(dataset_path), run_key)
+        get_feedback_loop_store().agent_recommendation(
+            case_id=case_id,
+            scenario="ops_work_order_audit",
+            source_record_id=str(dataset_path),
+            recommendation_id=str(result.get("final_issue_list_path") or case_id),
+            subject={"dataset_path": str(dataset_path)},
+            payload={
+                "dataset_path": str(dataset_path),
+                "audit_result_path": result.get("audit_result_path"),
+                "final_issue_list_path": result.get("final_issue_list_path"),
+                "ai_item_ids": [_audit_item_id(item) for item in final_items if isinstance(item, dict)],
+                "ai_issue_count": len(final_items),
+            },
+        )
+        return case_id
+    except Exception as exc:
+        # Calibration instrumentation must not fail an otherwise valid audit.
+        logger.warning("jiangsu_audit_feedback_record_failed", error=str(exc))
+        return None
+
+
 def _declared_resource_refs(data: Dict[str, Any]) -> Dict[str, list[Dict[str, Any]]]:
     files = []
     for field in _OUTPUT_PATH_FIELDS:
@@ -344,6 +394,7 @@ class OpsAuditRunRulesTool(LLMTool):
                 evidence_level=evidence_level,
                 enable_visual=visual_enabled,
             )
+            result["feedback_case_id"] = _record_audit_feedback(result, resolved_dataset_path)
             if context and hasattr(context, "save_data"):
                 result["file_path"] = context.save_data(
                     data=[_context_summary_record(result)],

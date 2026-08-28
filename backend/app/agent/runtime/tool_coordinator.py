@@ -86,6 +86,12 @@ class ToolCoordinator:
             }
             if tool_name == "create_drawio_board":
                 normalized["_base_revision"] = int(board_context.get("revision") or 0)
+                normalized["_base_version_id"] = (
+                    board_context.get("working_version_id")
+                    or board_context.get("current_version_id")
+                    or board_context.get("version_id")
+                    or board_context.get("candidate_version_id")
+                )
             elif tool_name == "accept_drawio_board_candidate":
                 normalized["_expected_board_revision"] = int(board_context.get("revision") or 0)
         if self._is_drawio_edit_without_current_xml(tool_name, normalized, state.mode):
