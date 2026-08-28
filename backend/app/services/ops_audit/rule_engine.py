@@ -9,6 +9,7 @@ from typing import Any
 from app.services.ops_audit.config import load_rule_catalog, rules_for_review_stage
 from app.services.ops_audit.evidence_builder import build_dataset_evidence, build_inspection_item
 from app.services.ops_audit.final_issue_list import build_final_issue_list
+from app.services.ops_audit.review_artifacts import REVIEW_INPUT_FILENAME, build_review_input, persist_review_input
 from app.services.ops_audit.semantic.reviewer import build_semantic_review_results, build_semantic_review_tasks
 from app.services.ops_audit.semantic_candidates import build_semantic_candidates
 from app.services.ops_audit.visual_evidence import archive_visual_evidence
@@ -55,6 +56,7 @@ def run_rule_engine(
     semantic_review_path = output_dir / "latest_finished_work_orders_semantic_review_tasks.json"
     semantic_review_results_path = output_dir / "latest_finished_work_orders_semantic_review_results.json"
     final_issue_list_path = output_dir / "latest_finished_work_orders_final_issue_list.json"
+    review_input_path = output_dir / REVIEW_INPUT_FILENAME
 
     if persist_outputs:
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -62,6 +64,9 @@ def run_rule_engine(
         semantic_review_path.write_text(json.dumps(semantic_review_tasks, ensure_ascii=False, indent=2), encoding="utf-8")
         semantic_review_results_path.write_text(json.dumps(semantic_review_results, ensure_ascii=False, indent=2), encoding="utf-8")
         final_issue_list_path.write_text(json.dumps(final_issue_list, ensure_ascii=False, indent=2), encoding="utf-8")
+        review_input = persist_review_input(final_issue_list, review_input_path)
+    else:
+        review_input = build_review_input(final_issue_list)
 
     return {
         "success": True,
@@ -70,6 +75,8 @@ def run_rule_engine(
         "semantic_review_tasks_path": str(semantic_review_path),
         "semantic_review_results_path": str(semantic_review_results_path),
         "final_issue_list_path": str(final_issue_list_path),
+        "review_input_path": str(review_input_path),
+        "review_source_sha256": review_input.get("source", {}).get("sha256") if review_input else None,
         "visual_evidence_manifest_path": visual_evidence["manifest_path"],
         "summary": audit.get("summary", {}),
         "audit_info": audit.get("audit_info", {}),

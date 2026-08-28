@@ -28,7 +28,8 @@ from .resources.runtime import (
     resource_error_event,
 )
 from .resources.resource_service import SessionResourceService, StoredResource
-from .resources.resource_map import project_agent_resource_map
+from .resources.resource_map import project_agent_resource_map, resource_access_path
+from app.utils.path_config import get_data_registry
 from .selection_context import (
     resource_refs_to_current_turn_context,
     resource_refs_to_runtime_attachments,
@@ -523,6 +524,22 @@ class ReActAgent:
                         resource_page.resources,
                         query=user_query,
                     )
+                    # Bridge durable catalog files (uploads etc.) into the sandbox
+                    # staging allowlist so execute_python can open them without
+                    # relying on code-string path scanning.
+                    authorized_paths = []
+                    registry_root = str(get_data_registry())
+                    for stored in resource_page.resources:
+                        access_path = resource_access_path(stored)
+                        if access_path and access_path.startswith(registry_root):
+                            authorized_paths.append(access_path)
+                    if authorized_paths:
+                        run_executor.set_authorized_input_paths(authorized_paths)
+                        logger.info(
+                            "session_input_paths_authorized",
+                            session_id=actual_session_id,
+                            count=len(authorized_paths),
+                        )
             except Exception as exc:
                 logger.error("session_resource_context_load_failed", session_id=actual_session_id, error=str(exc))
 

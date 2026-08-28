@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -84,6 +85,88 @@ async def test_execute_python_publishes_matplotlib_as_one_visual_group():
     assert resources[1].parent_key == resources[0].resource_key
     assert "/api/image/" not in result["summary"]
     assert "Do not place this server path" in result["llm_resume"]["tool_hint"]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_publishes_qmd_as_rendered_report_package(monkeypatch, tmp_path):
+    from app.tools import artifact_utils
+
+    report_dir = tmp_path / "reports" / "source_qmd_demo"
+    package_qmd = report_dir / "report.qmd"
+    package_html = report_dir / "report.html"
+    package_qmd.parent.mkdir(parents=True)
+    package_qmd.write_text("# Report", encoding="utf-8")
+    package_html.write_text("<h1>Report</h1>", encoding="utf-8")
+
+    def fake_attach(data, path, *, generator):
+        assert str(path).lower().endswith(".qmd")
+        artifact_utils.attach_report_package_resources(
+            data,
+            package_qmd,
+            report_id="source_qmd_demo",
+            html_path=package_html,
+            generator=generator,
+        )
+        data["resources"][0]["label"] = Path(path).name
+        return True
+
+    monkeypatch.setattr(
+        "app.tools.utility.execute_python_tool.attach_rendered_qmd_report_resources",
+        fake_attach,
+    )
+
+    result = await ExecutePythonTool().execute(
+        code=(
+            "from pathlib import Path\n"
+            "Path('draft_report.qmd').write_text('# Report', encoding='utf-8')\n"
+        ),
+        timeout=10,
+    )
+
+    assert result["success"] is True
+    resources = [
+        ResourceDeclaration.model_validate(item) for item in result["resources"]
+    ]
+    assert [resource.resource_key for resource in resources] == ["qmd", "html"]
+    assert resources[0].group_key == "report:source_qmd_demo"
+    assert resources[0].relation.value == "primary"
+    assert resources[0].label.startswith("draft_report")
+    assert resources[0].label.endswith(".qmd")
+    assert "render" in {item.value for item in resources[0].capabilities}
+    assert resources[1].relation.value == "preview"
+    assert resources[1].renderer.value == "html"
+    assert resources[1].parent_key == "qmd"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_keeps_qmd_downloadable_when_render_fails(monkeypatch):
+    def fake_attach(data, _path, *, generator):
+        del generator
+        data["preview_error"] = "quarto unavailable"
+        return False
+
+    monkeypatch.setattr(
+        "app.tools.utility.execute_python_tool.attach_rendered_qmd_report_resources",
+        fake_attach,
+    )
+
+    result = await ExecutePythonTool().execute(
+        code=(
+            "from pathlib import Path\n"
+            "Path('draft_report.qmd').write_text('# Report', encoding='utf-8')\n"
+        ),
+        timeout=10,
+    )
+
+    assert result["success"] is True
+    [resource] = [
+        ResourceDeclaration.model_validate(item) for item in result["resources"]
+    ]
+    assert resource.resource_key == "primary:qmd"
+    assert resource.relation.value == "primary"
+    assert resource.renderer.value == "markdown"
+    assert {item.value for item in resource.capabilities} == {"preview", "download"}
+    assert result["data"]["preview_error"] == "quarto unavailable"
 
 
 @pytest.mark.asyncio

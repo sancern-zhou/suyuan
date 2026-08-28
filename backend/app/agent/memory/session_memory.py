@@ -346,6 +346,31 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
         "refs", "context_refs", "llm_resume", "content_preview", "visual_ids",
     }
     minimal = {k: _compact_tool_result_value(v) for k, v in value.items() if k in keep_keys}
+    data = value.get("data")
+    if isinstance(data, list) and data:
+        # Keep a tiny head-tail sample so the model retains a usable hint of
+        # what the oversized payload looked like instead of nothing at all.
+        # The compaction pass may have appended a {"_truncated", ...} marker
+        # entry; drop it from the sample and reuse its original_count.
+        records = [item for item in data if not (isinstance(item, dict) and item.get("_truncated") is True)]
+        original_count = len(records)
+        for item in data:
+            if isinstance(item, dict) and item.get("_truncated") is True and isinstance(item.get("original_count"), int):
+                original_count = max(original_count, item["original_count"])
+        metadata = value.get("metadata")
+        sampling = metadata.get("tool_result_sampling") if isinstance(metadata, dict) else None
+        if isinstance(sampling, dict) and isinstance(sampling.get("original_count"), int):
+            original_count = max(original_count, sampling["original_count"])
+        if records:
+            sample = _sample_sequence(records, max_items=3)
+            try:
+                sample_json = json.dumps(sample, ensure_ascii=False, default=str)
+            except Exception:
+                sample_json = None
+            if sample_json is not None and len(sample_json) <= 4_000:
+                minimal["data"] = sample
+                minimal["data_sampled"] = True
+                minimal["data_original_record_count"] = original_count
     if "summary" not in minimal:
         minimal["summary"] = _safe_content_preview(value, 2_000)
     minimal["tool_result_truncated"] = True
