@@ -187,7 +187,7 @@ def test_write_report_includes_remark_context_for_non_linked_items(tmp_path: Pat
 
     assert "纸带使用量填写异常、RF_PM_TAPE_USAGE_INVALID" in text
     assert "原备注（备注/REMARK）：仪器运行正常，未说明纸带使用量异常原因。" in text
-    assert "备注状态：已填写；与当前异常无关" in text
+    assert "备注状态：" not in text
 
 
 def test_write_report_expands_structured_evidence_details(tmp_path: Path) -> None:
@@ -410,14 +410,22 @@ def test_write_report_separates_value_abnormal_from_missing_explanation(tmp_path
                 "message": "原备注仅写已处理，未说明与当前异常的具体关联",
                 "issue_component": "abnormal_explanation_issue",
                 "issue_group_id": "WO-SPLIT::RF_W_GASEOUSCHECK_NOX::PMTCHECKVALUE",
-                "remark_status": "provided",
-                "remark_judgment": "unrelated",
-                "remark_judgment_label": "与当前异常无关",
+                "semantic_remark_review": {
+                    "judgment_type": "valid",
+                    "remark": "PMTCHECKROW:厂家备案参数0-4.096V",
+                },
+                "remark_judgment": "valid",
+                "remark_judgment_label": "有效说明",
                 "original_remarks": [
                     {
-                        "field": "EXCEPTIONHANDLINGRECORD",
-                        "field_label": "异常时处理记录",
-                        "value": "已处理，但未记录复测结果",
+                        "field": "REMARK",
+                        "field_label": "备注",
+                        "value": "NO零跨检查质控任务合格；",
+                    },
+                    {
+                        "field": "PMTCHECKROW",
+                        "field_label": "检查项说明",
+                        "value": "厂家备案参数0-4.096V",
                     }
                 ],
             },
@@ -430,8 +438,9 @@ def test_write_report_separates_value_abnormal_from_missing_explanation(tmp_path
 
     assert "#### 异常事实与说明对照" in text
     assert "异常事实（值异常）：参考PMT信号值0.002超出正常范围" in text
-    assert "原备注（异常时处理记录/EXCEPTIONHANDLINGRECORD）：已处理，但未记录复测结果" in text
-    assert "说明判断：与当前异常无关" in text
+    assert "原备注（检查项说明/PMTCHECKROW）：厂家备案参数0-4.096V" in text
+    assert "原备注（备注/REMARK）：NO零跨检查质控任务合格；" not in text
+    assert "说明判断：有效说明" in text
     assert "语义结论：原备注仅写已处理，未说明与当前异常的具体关联" in text
 
 
@@ -462,6 +471,7 @@ def test_write_report_marks_missing_original_remark(tmp_path: Path) -> None:
     text = out_path.read_text(encoding="utf-8")
 
     assert "原备注：未填写" in text
+    assert "备注状态：" not in text
 
 
 def test_write_report_shows_range_decision_and_remark_status_without_semantic_result(
@@ -513,7 +523,7 @@ def test_write_report_shows_range_decision_and_remark_status_without_semantic_re
 
     assert "判定依据：原始值 670mv；换算值 0.67 V；ESA 品牌正常范围 500-950 V" in text
     assert "原备注（异常时处理记录/EXCEPTIONHANDLINGRECORD）：已检查高压电源接线，待复测。" in text
-    assert "备注状态：已填写；内容有效性待语义复核" in text
+    assert "备注状态：" not in text
 
     item = final_issue_list["items"][0]
     item.update(
@@ -530,4 +540,4 @@ def test_write_report_shows_range_decision_and_remark_status_without_semantic_re
     write_report(audit, missing_path, final_issue_list=final_issue_list)
     missing_text = missing_path.read_text(encoding="utf-8")
     assert "原备注：未填写" in missing_text
-    assert "备注状态：未填写" in missing_text
+    assert "备注状态：" not in missing_text

@@ -33,7 +33,7 @@ BOARD_CANVAS_PRESETS = {"auto", "board-wide", "board-tall", "slide-16x9", "docum
 DETAIL_BUDGETS = {
     "simplified": {"nodes": 7, "edges": 10},
     "balanced": {"nodes": 12, "edges": 16},
-    "faithful": {"nodes": 24, "edges": 36},
+    "faithful": {"nodes": 20, "edges": 28},
 }
 
 DEFAULT_BOARD_THEME_TOKENS = {

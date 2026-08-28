@@ -218,6 +218,7 @@ class BoardVersionService:
         board_id: str,
         *,
         base_revision: int,
+        parent_version_id: str | None = None,
         xml: str,
         agent_run_id: str,
         quality_status: str = "pending",
@@ -241,6 +242,11 @@ class BoardVersionService:
         if existing is not None:
             return existing
         self._require_revision(board, base_revision)
+        parent_id = parent_version_id or board.current_version_id
+        if parent_id:
+            parent = await self.get_version(board_id, parent_id)
+            if parent.board_id != board_id:
+                raise BoardVersionNotFound(parent_id)
         version = await self._create_version(
             board,
             source="agent",
@@ -251,6 +257,7 @@ class BoardVersionService:
             screenshot_ref=screenshot_ref,
             agent_run_id=agent_run_id,
             summary=summary,
+            parent_version_id=parent_id,
         )
         await self.session.flush()
         return version

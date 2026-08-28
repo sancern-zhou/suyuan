@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,16 +120,16 @@ def test_drawio_workflow_routes_to_specialized_design_guides():
         assert (backend_root / guide_path).exists()
 
 
-def test_drawio_guides_treat_routing_degradation_as_non_blocking():
+def test_drawio_guides_keep_routing_degradation_non_blocking():
     backend_root = Path(__file__).resolve().parents[4]
     workflow = (backend_root / "app/agent/guides/drawio_board_workflow.md").read_text(encoding="utf-8")
     xml_rules = (backend_root / "app/agent/guides/drawio_xml_rules.md").read_text(encoding="utf-8")
 
     assert "routing_status=partial" in workflow
-    assert "继续截图和验收" in workflow
-    assert "不要仅因 routing_issues" in workflow
+    assert "仍可继续生成和预览" in workflow
+    assert "不构成系统级阻断" in workflow
     assert "无法避让的连线会保留原始路径" in xml_rules
-    assert "不得阻止候选画板生成" in xml_rules
+    assert "明确 warning" in xml_rules
 
 
 def test_specialized_design_guides_define_professional_constraints():
@@ -248,6 +249,49 @@ async def test_ai_candidate_routes_edge_around_intermediate_node_before_persisti
 
 
 @pytest.mark.asyncio
+async def test_ai_candidate_keeps_excessive_edge_crossings_as_warning(monkeypatch):
+    xml = '<mxCell id="a" value="A" vertex="1" parent="1"><mxGeometry x="40" y="40" width="120" height="60" as="geometry"/></mxCell>'
+    monkeypatch.setattr(
+        drawio_tool_module,
+        "route_drawio_candidate",
+        lambda _xml: SimpleNamespace(
+            xml=_xml,
+            metrics={
+                "edge_count": 4,
+                "degraded_edge_count": 0,
+                "edge_edge_crossing_count": 4,
+                "remaining_intersection_count": 0,
+            },
+            status="applied",
+            issues=(),
+        ),
+    )
+
+    async def capture_candidate(**_payload):
+        return {
+            "board_id": "db-board-id",
+            "candidate_version_id": "candidate-version-id",
+            "version_number": 1,
+            "revision": 0,
+            "xml_ref": {"kind": "drawio_board_xml", "local_path": "/tmp/candidate.drawio"},
+        }
+
+    result = await CreateDrawioBoardTool(candidate_persister=capture_candidate).execute(
+        artifact_id="crowded_board",
+        title="拥挤画板",
+        operation="create",
+        xml=xml,
+        _session_id="board_session_tool",
+        _base_revision=0,
+        _agent_run_id="run-tool",
+    )
+
+    assert result["success"] is True
+    assert result["data"]["routing_metrics"]["edge_edge_crossing_count"] == 4
+    assert result["data"]["quality_report"]["status"] == "warning"
+
+
+@pytest.mark.asyncio
 async def test_non_candidate_create_does_not_apply_automatic_routing():
     result = await CreateDrawioBoardTool().execute(
         artifact_id="manual_compatible_board",
@@ -302,16 +346,7 @@ async def test_unroutable_ai_candidate_is_persisted_with_routing_warning():
     assert result["success"] is True
     assert result["data"]["routing_status"] == "partial"
     assert result["data"]["routing_metrics"]["degraded_edge_count"] == 1
-    issue = result["data"]["routing_issue"]
-    assert issue["edge_id"] == "edge"
-    assert issue["cause"] == "source_terminal_trapped"
-    assert issue["retry_strategy"] == "move_terminal_then_regenerate_edges"
-    assert issue["repair_actions"][0]["cell_id"] == "source"
-    assert issue["preserved_original_edge"] is True
-    assert issue["blocking"] is False
-    assert issue["retry_required"] is False
-    assert result["data"]["routing_issues"] == [issue]
-    assert "保留原始路径" in result["summary"]
+    assert result["data"]["quality_report"]["status"] == "warning"
 
 
 @pytest.mark.asyncio

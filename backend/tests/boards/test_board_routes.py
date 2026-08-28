@@ -89,6 +89,35 @@ async def test_manual_commit_and_history_contract(board_api):
 
 
 @pytest.mark.asyncio
+async def test_draft_and_version_xml_are_restorable_through_authorized_routes(board_api):
+    client, board_id = board_api
+
+    draft = await client.put(
+        f"/api/boards/{board_id}/draft",
+        json={"xml": "<mxfile>draft-layout</mxfile>"},
+    )
+    assert draft.status_code == 200
+    draft_payload = draft.json()
+    assert draft_payload["draft_revision"] == 1
+    assert draft_payload["draft_xml_ref"]["read_url"].endswith(
+        f"/api/boards/{board_id}/draft/xml"
+    )
+
+    draft_xml = await client.get(f"/api/boards/{board_id}/draft/xml")
+    assert draft_xml.status_code == 200
+    assert draft_xml.text == "<mxfile>draft-layout</mxfile>"
+
+    committed = await client.post(
+        f"/api/boards/{board_id}/versions/manual",
+        json={"base_revision": 0, "xml": "<mxfile>accepted-layout</mxfile>"},
+    )
+    version_id = committed.json()["version"]["id"]
+    version_xml = await client.get(f"/api/boards/{board_id}/versions/{version_id}/xml")
+    assert version_xml.status_code == 200
+    assert version_xml.text == "<mxfile>accepted-layout</mxfile>"
+
+
+@pytest.mark.asyncio
 async def test_stale_manual_commit_returns_conflict_contract(board_api):
     client, board_id = board_api
     first = await client.post(

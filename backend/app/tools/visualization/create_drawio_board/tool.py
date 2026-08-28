@@ -58,6 +58,8 @@ class CreateDrawioBoardTool(LLMTool):
             "routed by drawio_board_workflow.md before calling this tool for a new, structural, or major edit; "
             "never read every pattern guide. Minor text, color, font, size, or position-only edits may skip pattern guides. "
             "For create or major redesign, provide design_spec with type, story, audience, detail, canvas, and focal cells. "
+            "The board XML and preview resources are registered automatically by this tool; never call "
+            "publish_session_file for the returned local_path. The XML is readable through the authenticated board API. "
         )
         function_schema = {
             "name": name,
@@ -415,6 +417,7 @@ class CreateDrawioBoardTool(LLMTool):
             else _store_drawio_xml(safe_artifact_id, normalized_xml)
         )
         base_revision = int(kwargs.get("_base_revision") or 0)
+        base_version_id = str(kwargs.get("_base_version_id") or "").strip() or None
         server_board_id = str(kwargs.get("_board_id") or "").strip() or None
         candidate_payload = None
         quality_report = None
@@ -462,6 +465,7 @@ class CreateDrawioBoardTool(LLMTool):
                 board_id=server_board_id,
                 title=safe_title,
                 base_revision=base_revision,
+                parent_version_id=base_version_id,
                 agent_run_id=agent_run_id,
                 xml=normalized_xml,
                 quality_status="pending",
@@ -556,6 +560,7 @@ class CreateDrawioBoardTool(LLMTool):
         board_id: Optional[str],
         title: str,
         base_revision: int,
+        parent_version_id: Optional[str],
         agent_run_id: str,
         xml: str,
         quality_status: str,
@@ -569,6 +574,7 @@ class CreateDrawioBoardTool(LLMTool):
             board_id=board_id,
             title=title,
             base_revision=base_revision,
+            parent_version_id=parent_version_id,
             agent_run_id=agent_run_id,
             xml=xml,
             quality_status=quality_status,
@@ -694,6 +700,9 @@ def _store_drawio_xml(artifact_id: str, xml: str) -> Dict[str, Any]:
         "artifact_id": artifact_id,
         "local_path": local_path,
         "path": local_path,
+        # Keep the legacy file URL for non-session callers. Session-bound
+        # candidates are enriched with the authenticated board URL by the
+        # application service before they reach the browser.
         "read_url": f"/api/file/{quote(local_path, safe='')}",
         "mime_type": "application/xml",
         "format": "drawio",

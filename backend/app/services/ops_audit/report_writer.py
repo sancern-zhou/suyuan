@@ -302,10 +302,7 @@ def _format_numbered_issue_items(
 def _format_remark_context_lines(item: dict[str, Any]) -> list[str]:
     if not _has_remark_context(item):
         return []
-    return [
-        *_format_original_remark_lines(item),
-        f"   - 备注状态：{_remark_status_text(item)}",
-    ]
+    return _format_original_remark_lines(item)
 
 
 def _has_remark_context(item: dict[str, Any]) -> bool:
@@ -329,8 +326,9 @@ def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
     if isinstance(entries, list):
         nonempty_entries = [entry for entry in entries if isinstance(entry, dict) and str(entry.get("value") or "").strip()]
         if nonempty_entries:
+            display_entries = _select_remark_entries_for_display(item, nonempty_entries)
             lines = []
-            for entry in nonempty_entries:
+            for entry in display_entries:
                 raw_field = _display_value(entry.get("field"), "备注")
                 field_label = _display_value(entry.get("field_label"), raw_field)
                 field = field_label if field_label == raw_field else f"{field_label}/{raw_field}"
@@ -342,6 +340,87 @@ def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
     if fallback:
         return [f"   - 原备注：{_single_line_text(fallback)}"]
     return ["   - 原备注：未填写"]
+
+
+def _select_remark_entries_for_display(
+    item: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    # Prefer the semantic review's field-level note when it can be matched back to
+    # a concrete original remark entry. Otherwise keep the original remark list.
+    preferred_text = _semantic_remark_text(item)
+    if not preferred_text:
+        return entries
+
+    normalized_preferred = _normalize_remark_text(preferred_text)
+    if not normalized_preferred:
+        return entries
+
+    matched = [
+        entry
+        for entry in entries
+        if _remark_entry_matches_text(entry, normalized_preferred)
+    ]
+    if matched:
+        return matched
+
+    value_matches = [
+        entry
+        for entry in entries
+        if (entry_value := _remark_entry_value(entry)) and entry_value in normalized_preferred
+    ]
+    if len(value_matches) == 1:
+        return value_matches
+
+    return entries
+
+
+def _semantic_remark_text(item: dict[str, Any]) -> str:
+    for key in ("semantic_remark_review", "remark_review"):
+        review = item.get(key)
+        if not isinstance(review, dict):
+            continue
+        remark = str(review.get("remark") or "").strip()
+        if remark:
+            return remark
+    return ""
+
+
+def _remark_entry_matches_text(entry: dict[str, Any], normalized_preferred: str) -> bool:
+    field = _normalize_remark_text(entry.get("field"))
+    field_label = _normalize_remark_text(entry.get("field_label"))
+    value = _remark_entry_value(entry)
+    if not value:
+        return False
+
+    if normalized_preferred == value:
+        return True
+
+    candidates = [
+        f"{field}:{value}" if field else "",
+        f"{field_label}:{value}" if field_label else "",
+        f"{field_label}/{field}:{value}" if field and field_label and field_label != field else "",
+    ]
+    for candidate in candidates:
+        if candidate and candidate in normalized_preferred:
+            return True
+
+    if value in normalized_preferred and (
+        not field
+        or field in normalized_preferred
+        or not field_label
+        or field_label in normalized_preferred
+    ):
+        return True
+    return False
+
+
+def _remark_entry_value(entry: dict[str, Any]) -> str:
+    return _normalize_remark_text(entry.get("value"))
+
+
+def _normalize_remark_text(value: Any) -> str:
+    return "".join(str(value or "").split()).replace("：", ":").replace("／", "/")
 
 
 def _format_decision_evidence_lines(item: dict[str, Any]) -> list[str]:
@@ -650,14 +729,6 @@ def _unique_lines(lines: list[str]) -> list[str]:
         seen.add(line)
         unique.append(line)
     return unique
-
-
-def _remark_status_text(item: dict[str, Any]) -> str:
-    status = _display_value(item.get("remark_status_label"), "未确认")
-    review = str(item.get("remark_review_status_label") or "").strip()
-    if not review or review == status or (status == "未填写" and review == "未填写备注"):
-        return status
-    return f"{status}；{review}"
 
 
 def _single_line_text(value: Any) -> str:

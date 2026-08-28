@@ -22,6 +22,9 @@ export const prepareBoardForSend = async ({ board, exportXml, getSourceVersionId
   updateXml(xml)
   board.activeBoardId = response.board_id || board.activeBoardId
   board.currentVersionId = response.current_version_id
+  board.acceptedVersionId = response.current_version_id
+  board.workingVersionId = response.current_version_id
+  board.candidateVersionId = null
   board.baseVersionId = response.current_version_id
   board.currentVersionSha256 = version.xml_sha256 || board.currentVersionSha256 || null
   board.revision = Number(response.revision)

@@ -273,7 +273,9 @@ class ConversationPersistenceService:
             or board_context.get("id")
         )
         current_version_id = (
-            board_context.get("current_version_id")
+            board_context.get("working_version_id")
+            or board_context.get("workingVersionId")
+            or board_context.get("current_version_id")
             or board_context.get("currentVersionId")
             or board_context.get("version_id")
         )
@@ -287,7 +289,7 @@ class ConversationPersistenceService:
             **({"theme_tokens": theme_tokens} if isinstance(theme_tokens, dict) else {}),
         }
         if board_id and current_version_id and board_context.get("revision") is not None:
-            return {
+            normalized = {
                 "artifact_kind": "drawio_board",
                 "board_id": board_id,
                 "active_board_id": board_id,
@@ -298,6 +300,16 @@ class ConversationPersistenceService:
                 "updated_at": board_context.get("updated_at") or board_context.get("updatedAt"),
                 **design_metadata,
             }
+            for key in (
+                "working_version_id",
+                "accepted_version_id",
+                "candidate_version_id",
+                "lifecycle_status",
+            ):
+                value = board_context.get(key)
+                if value is not None:
+                    normalized[key] = value
+            return normalized
 
         current_xml = (
             board_context.get("current_xml")

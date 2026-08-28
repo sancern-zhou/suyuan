@@ -3,6 +3,7 @@ from app.agent.prompts.assistant_prompt import build_assistant_prompt
 from app.agent.prompts.board_prompt import build_board_prompt
 from app.agent.prompts.chart_prompt import build_chart_prompt
 from app.agent.prompts.ops_prompt import build_ops_prompt
+from app.agent.prompts.social_prompt import build_social_prompt
 
 
 
@@ -37,12 +38,43 @@ def test_ops_mode_exposes_call_sub_agent_for_audit_confirmation_gate():
     assert "call_sub_agent" in tools
 
 
-def test_ops_prompt_requires_sub_agent_excluded_items_gate_before_report_package():
-    prompt = build_ops_prompt(["call_sub_agent", "create_report_package"])
+def test_ops_mode_no_longer_exposes_report_package_tools():
+    tools = get_tools_by_mode("ops")
 
-    assert "call_sub_agent(target_mode='ops')" in prompt
-    assert "excluded_items" in prompt
-    assert "剔除这些 excluded_items" in prompt
+    assert "create_report_chart" not in tools
+    assert "create_report_package" not in tools
+    assert "validate_report_package" not in tools
+
+
+def test_ops_prompt_stays_review_only_and_hands_off_report_generation():
+    prompt = build_ops_prompt(["call_sub_agent", "ops_audit_run_rules"])
+
+    assert "## 复核交接" in prompt
+    assert "report_input_path" in prompt
+    assert "正式报告优先使用" not in prompt
+    assert "生成标准报告包" not in prompt
+    assert "不要把正式报告委托给 `report` 子Agent" in prompt
+    assert "当前模式只负责数据抽取、规则/语义复核和结果文件落盘" in prompt
+    assert "call_sub_agent(target_mode='ops')" not in prompt
+
+
+def test_social_mode_exposes_report_package_tools_for_main_agent_reporting():
+    tools = get_tools_by_mode("social")
+
+    assert "create_report_chart" in tools
+    assert "create_report_package" in tools
+    assert "validate_report_package" in tools
+
+
+def test_social_prompt_prefers_main_agent_report_generation():
+    prompt = build_social_prompt(
+        ["create_report_chart", "create_report_package", "validate_report_package", "call_sub_agent"],
+    )
+
+    assert "正式报告、QMD、Word 和报告包由当前主 Agent 直接完成" in prompt
+    assert "不委托 `report` 子Agent" in prompt
+    assert "运维审核子Agent只负责复核和持久化记录" in prompt
+    assert "target_mode=\"report\"" not in prompt
 
 
 def test_ops_prompt_discovers_active_audit_skill_without_hardcoded_shared_path():
@@ -65,15 +97,12 @@ def test_assistant_prompt_does_not_describe_task_tools():
 
 
 def test_assistant_prompt_distinguishes_freeform_and_template_diagram_references():
-    prompt = build_assistant_prompt(["create_diagram_artifact", "read_file"])
+    prompt = build_assistant_prompt(["create_report_chart", "read_file"])
 
-    assert "diagram_mode=\"freeform\"" in prompt
-    assert "freeform-index.md" in prompt
-    assert "freeform-architecture.md" in prompt
-    assert "canvas/shapes/connectors/groups" in prompt
-    assert "diagram_mode=\"template\"" in prompt
-    assert "references/index.md" in prompt
-    assert "layers/groups/items" in prompt
+    assert "create_report_chart" in prompt
+    assert "diagram_mode" not in prompt
+    assert "create_diagram_artifact" not in prompt
+    assert "QMD/Word 正式报告的静态数据图表优先使用 `create_report_chart`" in prompt
 
 
 def test_board_mode_exposes_drawio_board_not_diagram_artifact():

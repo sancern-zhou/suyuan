@@ -42,6 +42,9 @@ async def test_candidate_command_returns_detached_receipt_after_commit(applicati
     assert receipt.version_number == 1
     assert receipt.lifecycle_status == "candidate"
     assert receipt.xml_ref["sha256"]
+    assert receipt.xml_ref["read_url"].endswith(
+        f"/api/boards/{receipt.board_id}/versions/{receipt.candidate_version_id}/xml"
+    )
 
 
 @pytest.mark.asyncio
