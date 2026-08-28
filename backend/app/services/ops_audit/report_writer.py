@@ -24,6 +24,7 @@ ABNORMAL_FACT_LABELS = {
     "abnormal_fact": "异常状态",
     "data_suspect": "数据疑点",
 }
+MAX_STRUCTURED_EVIDENCE_ITEMS = 5
 
 
 def _parse_date(value: str | None) -> str:
@@ -239,22 +240,21 @@ def _format_linked_abnormal_groups(
                 f"（规则：{_display_value(fact.get('rule_id'), '未关联规则')}）"
             )
             lines.extend(_format_decision_evidence_lines(fact))
+            lines.extend(_format_structured_evidence_lines(fact))
             lines.extend(_format_evidence_images(fact, report_path))
         explanations = [
             item for item in ordered if item.get("issue_component") in ABNORMAL_EXPLANATION_COMPONENTS
         ]
         if not explanations:
-            fact_with_remarks = next((item for item in ordered if "remark_status" in item), None)
+            fact_with_remarks = next((item for item in ordered if _has_remark_context(item)), None)
             if fact_with_remarks is not None:
-                lines.extend(_format_original_remark_lines(fact_with_remarks))
-                lines.append(f"   - 备注状态：{_remark_status_text(fact_with_remarks)}")
+                lines.extend(_format_remark_context_lines(fact_with_remarks))
         for explanation in explanations:
-            lines.extend(_format_original_remark_lines(explanation))
+            lines.extend(_format_remark_context_lines(explanation))
             judgment_label = _display_value(
                 explanation.get("remark_judgment_label"),
                 "说明缺失或无效",
             )
-            lines.append(f"   - 备注状态：{_remark_status_text(explanation)}")
             lines.append(f"   - 说明判断：{judgment_label}")
             lines.append(f"   - 语义结论：{_issue_message(explanation)}")
             lines.extend(_format_evidence_images(explanation, report_path))
@@ -293,10 +293,32 @@ def _format_numbered_issue_items(
             f"{_issue_message(item)}、"
             f"{_display_value(item.get('rule_id'), '未关联规则')}"
         )
-        if item.get("issue_component") in {"abnormal_explanation_issue", "abnormal_without_explanation"}:
-            lines.extend(_format_original_remark_lines(item))
+        lines.extend(_format_structured_evidence_lines(item))
+        lines.extend(_format_remark_context_lines(item))
         lines.extend(_format_evidence_images(item, report_path))
     return lines
+
+
+def _format_remark_context_lines(item: dict[str, Any]) -> list[str]:
+    if not _has_remark_context(item):
+        return []
+    return _format_original_remark_lines(item)
+
+
+def _has_remark_context(item: dict[str, Any]) -> bool:
+    return any(
+        key in item
+        for key in (
+            "original_remarks",
+            "original_remark_text",
+            "remark_status",
+            "remark_status_label",
+            "remark_review_status",
+            "remark_review_status_label",
+            "remark_judgment",
+            "remark_judgment_label",
+        )
+    )
 
 
 def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
@@ -304,8 +326,9 @@ def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
     if isinstance(entries, list):
         nonempty_entries = [entry for entry in entries if isinstance(entry, dict) and str(entry.get("value") or "").strip()]
         if nonempty_entries:
+            display_entries = _select_remark_entries_for_display(item, nonempty_entries)
             lines = []
-            for entry in nonempty_entries:
+            for entry in display_entries:
                 raw_field = _display_value(entry.get("field"), "备注")
                 field_label = _display_value(entry.get("field_label"), raw_field)
                 field = field_label if field_label == raw_field else f"{field_label}/{raw_field}"
@@ -317,6 +340,87 @@ def _format_original_remark_lines(item: dict[str, Any]) -> list[str]:
     if fallback:
         return [f"   - 原备注：{_single_line_text(fallback)}"]
     return ["   - 原备注：未填写"]
+
+
+def _select_remark_entries_for_display(
+    item: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    # Prefer the semantic review's field-level note when it can be matched back to
+    # a concrete original remark entry. Otherwise keep the original remark list.
+    preferred_text = _semantic_remark_text(item)
+    if not preferred_text:
+        return entries
+
+    normalized_preferred = _normalize_remark_text(preferred_text)
+    if not normalized_preferred:
+        return entries
+
+    matched = [
+        entry
+        for entry in entries
+        if _remark_entry_matches_text(entry, normalized_preferred)
+    ]
+    if matched:
+        return matched
+
+    value_matches = [
+        entry
+        for entry in entries
+        if (entry_value := _remark_entry_value(entry)) and entry_value in normalized_preferred
+    ]
+    if len(value_matches) == 1:
+        return value_matches
+
+    return entries
+
+
+def _semantic_remark_text(item: dict[str, Any]) -> str:
+    for key in ("semantic_remark_review", "remark_review"):
+        review = item.get(key)
+        if not isinstance(review, dict):
+            continue
+        remark = str(review.get("remark") or "").strip()
+        if remark:
+            return remark
+    return ""
+
+
+def _remark_entry_matches_text(entry: dict[str, Any], normalized_preferred: str) -> bool:
+    field = _normalize_remark_text(entry.get("field"))
+    field_label = _normalize_remark_text(entry.get("field_label"))
+    value = _remark_entry_value(entry)
+    if not value:
+        return False
+
+    if normalized_preferred == value:
+        return True
+
+    candidates = [
+        f"{field}:{value}" if field else "",
+        f"{field_label}:{value}" if field_label else "",
+        f"{field_label}/{field}:{value}" if field and field_label and field_label != field else "",
+    ]
+    for candidate in candidates:
+        if candidate and candidate in normalized_preferred:
+            return True
+
+    if value in normalized_preferred and (
+        not field
+        or field in normalized_preferred
+        or not field_label
+        or field_label in normalized_preferred
+    ):
+        return True
+    return False
+
+
+def _remark_entry_value(entry: dict[str, Any]) -> str:
+    return _normalize_remark_text(entry.get("value"))
+
+
+def _normalize_remark_text(value: Any) -> str:
+    return "".join(str(value or "").split()).replace("：", ":").replace("／", "/")
 
 
 def _format_decision_evidence_lines(item: dict[str, Any]) -> list[str]:
@@ -336,16 +440,300 @@ def _format_decision_evidence_lines(item: dict[str, Any]) -> list[str]:
     return [f"   - 判定依据：{'；'.join(parts)}"]
 
 
-def _remark_status_text(item: dict[str, Any]) -> str:
-    status = _display_value(item.get("remark_status_label"), "未确认")
-    review = str(item.get("remark_review_status_label") or "").strip()
-    if not review or review == status or (status == "未填写" and review == "未填写备注"):
-        return status
-    return f"{status}；{review}"
+def _format_structured_evidence_lines(item: dict[str, Any]) -> list[str]:
+    if item.get("rule_id") == "RF_DEVICE_IDENTITY_INCONSISTENT":
+        return []
+    evidence = _parse_evidence(item.get("evidence"))
+    if not evidence:
+        return []
+
+    lines: list[str] = []
+    lines.extend(_format_attachment_requirement_lines(evidence))
+    lines.extend(_format_attachment_comparison_lines(evidence))
+    if not item.get("decision_evidence"):
+        lines.extend(_format_flat_field_evidence_lines(evidence))
+    lines.extend(_format_violation_evidence_lines(evidence))
+    return _unique_lines(lines)
+
+
+def _format_attachment_requirement_lines(evidence: dict[str, Any]) -> list[str]:
+    if not any(key in evidence for key in ("requirement_name", "missing_type", "missing_types", "required_types")):
+        return []
+    parts = [
+        f"要求 {_display_value(evidence.get('requirement_name') or evidence.get('requirement_id'), '未命名附件要求')}",
+    ]
+    if "required_types" in evidence:
+        parts.append(f"应有 {_format_sequence(evidence.get('required_types'), '未记录')}")
+    missing = evidence.get("missing_types")
+    if missing is None and "missing_type" in evidence:
+        missing = [evidence.get("missing_type")]
+    if missing is not None:
+        parts.append(f"缺失 {_format_sequence(missing, '未记录')}")
+    if "attachment_count" in evidence:
+        parts.append(f"当前附件 {evidence.get('attachment_count')} 个")
+    type_counts = evidence.get("type_counts")
+    if isinstance(type_counts, dict):
+        parts.append(f"类型分布 {_format_mapping(type_counts, '无')}")
+    samples = _attachment_sample_names(evidence.get("sample_attachments"))
+    if samples:
+        parts.append(f"附件样例 {samples}")
+    return [f"   - 附件核查：{'；'.join(parts)}"]
+
+
+def _format_attachment_comparison_lines(evidence: dict[str, Any]) -> list[str]:
+    comparisons = evidence.get("comparisons")
+    if isinstance(comparisons, list):
+        comparison_items = [item for item in comparisons if isinstance(item, dict)]
+    elif isinstance(evidence.get("comparison"), dict):
+        comparison_items = [evidence["comparison"]]
+    else:
+        return []
+    if not comparison_items:
+        return []
+
+    attachment = evidence.get("attachment")
+    filename = (
+        str(attachment.get("filename") or "").strip()
+        if isinstance(attachment, dict)
+        else ""
+    )
+    lines: list[str] = []
+    multiple = len(comparison_items) > 1
+    for index, comparison in enumerate(comparison_items[:MAX_STRUCTURED_EVIDENCE_ITEMS], start=1):
+        parts = []
+        if filename:
+            parts.append(f"附件 {filename}")
+        parts.append(f"字段 {_field_display_text(comparison.get('label'), comparison.get('field'))}")
+        cell = comparison.get("cell") or comparison.get("configured_cell")
+        if cell:
+            parts.append(f"XLS单元格 {cell}")
+        parts.append(f"表单值 {_display_value(comparison.get('form_value'), '空')}")
+        parts.append(f"附件值 {_display_value(comparison.get('xls_value'), '空')}")
+        label = f"附件比对{index}" if multiple else "附件比对"
+        lines.append(f"   - {label}：{'；'.join(parts)}")
+    lines.extend(_overflow_line("附件比对", len(comparison_items)))
+    return lines
+
+
+def _format_flat_field_evidence_lines(evidence: dict[str, Any]) -> list[str]:
+    if "violations" in evidence or "violation" in evidence:
+        return []
+    interesting_keys = {
+        "raw_value",
+        "value",
+        "expected",
+        "expected_min",
+        "expected_max",
+        "allowed_min",
+        "allowed_max",
+        "device_model",
+        "instrument_type",
+        "problem_reason",
+        "temperature_value",
+        "temperature_status",
+        "missing",
+        "abnormal_status",
+        "out_of_range",
+    }
+    if "field" not in evidence or not any(key in evidence for key in interesting_keys):
+        return []
+    parts = [f"字段 {_field_display_text(evidence.get('field_label') or evidence.get('label'), evidence.get('field'))}"]
+    if "raw_value" in evidence:
+        parts.append(f"原始值 {_display_value(evidence.get('raw_value'), '空')}")
+    if "value" in evidence and evidence.get("value") != evidence.get("raw_value"):
+        parts.append(f"解析值 {_display_value(evidence.get('value'), '空')}")
+    if "expected" in evidence:
+        parts.append(f"要求 {_single_line_text(evidence.get('expected'))}")
+    range_text = _expected_range_text(evidence)
+    if range_text:
+        parts.append(f"期望范围 {range_text}")
+    if "temperature_value" in evidence:
+        parts.append(f"温度值 {_display_value(evidence.get('temperature_value'), '空')}")
+    if "temperature_status" in evidence:
+        parts.append(f"温度状态 {_display_value(evidence.get('temperature_status'), '空')}")
+    if "missing" in evidence:
+        parts.append(f"是否缺失 {_bool_text(evidence.get('missing'))}")
+    if "abnormal_status" in evidence:
+        parts.append(f"状态是否异常 {_bool_text(evidence.get('abnormal_status'))}")
+    if "out_of_range" in evidence:
+        parts.append(f"是否超范围 {_bool_text(evidence.get('out_of_range'))}")
+    if "device_model" in evidence:
+        parts.append(f"设备型号 {_display_value(evidence.get('device_model'), '未记录')}")
+    if "instrument_type" in evidence:
+        parts.append(f"仪器类型 {_display_value(evidence.get('instrument_type'), '未记录')}")
+    if "problem_reason" in evidence:
+        parts.append(f"原因 {_single_line_text(evidence.get('problem_reason'))}")
+    return [f"   - 字段核查：{'；'.join(parts)}"]
+
+
+def _format_violation_evidence_lines(evidence: dict[str, Any]) -> list[str]:
+    violations = evidence.get("violations")
+    if isinstance(violations, list):
+        violation_items = [item for item in violations if isinstance(item, dict)]
+    elif isinstance(evidence.get("violation"), dict):
+        violation_items = [evidence["violation"]]
+    else:
+        return []
+    if not violation_items:
+        return []
+
+    lines: list[str] = []
+    multiple = len(violation_items) > 1
+    for index, violation in enumerate(violation_items[:MAX_STRUCTURED_EVIDENCE_ITEMS], start=1):
+        detail = _violation_detail_text(violation)
+        if detail:
+            label = f"核查明细{index}" if multiple else "核查明细"
+            lines.append(f"   - {label}：{detail}")
+    lines.extend(_overflow_line("核查明细", len(violation_items)))
+    return lines
+
+
+def _violation_detail_text(violation: dict[str, Any]) -> str:
+    parts: list[str] = []
+    description = str(violation.get("description") or "").strip()
+    if description:
+        parts.append(_single_line_text(description))
+    else:
+        context = []
+        for key, label in (
+            ("label", "项目"),
+            ("gas_type", "气体"),
+            ("point", "点位"),
+            ("field", "字段"),
+            ("display_field", "标示字段"),
+            ("measured_field", "测量字段"),
+            ("error_field", "误差字段"),
+            ("actual_field", "字段"),
+            ("prev_field", "上次校准字段"),
+            ("next_field", "有效期字段"),
+            ("formula_id", "公式"),
+        ):
+            if _has_value(violation.get(key)):
+                context.append(f"{label}{_single_line_text(violation.get(key))}")
+        if context:
+            parts.append("，".join(context))
+
+    for key, label in (
+        ("value", "填写值"),
+        ("actual", "实填值"),
+        ("expected", "复算值"),
+        ("expected_target", "目标值"),
+        ("delta", "差值"),
+        ("tolerance", "容差"),
+        ("allowed_tolerance", "允许偏差"),
+        ("display_value", "标示值"),
+        ("measured_value", "测量值"),
+        ("expected_error", "复算误差"),
+    ):
+        if _has_value(violation.get(key)):
+            parts.append(f"{label}{_single_line_text(violation.get(key))}")
+
+    range_text = _expected_range_text(violation)
+    if range_text:
+        parts.append(f"允许范围 {range_text}")
+    if _has_value(violation.get("model_field")) or _has_value(violation.get("model_value")):
+        parts.append(
+            f"设备型号字段 {_display_value(violation.get('model_field'), '-')}"
+            f"={_display_value(violation.get('model_value'), '空')}"
+        )
+    if _has_value(violation.get("situation_field")) or _has_value(violation.get("situation_value")):
+        parts.append(
+            f"运行情况字段 {_display_value(violation.get('situation_field'), '-')}"
+            f"={_display_value(violation.get('situation_value'), '空')}"
+        )
+    related_values = violation.get("related_values")
+    if isinstance(related_values, dict) and related_values:
+        parts.append(f"关联字段 {_format_mapping(related_values, '无')}")
+    inputs = violation.get("inputs")
+    if isinstance(inputs, dict) and inputs:
+        parts.append(f"输入 {_format_mapping(inputs, '无')}")
+    if _has_value(violation.get("reason")):
+        parts.append(f"原因 {_single_line_text(violation.get('reason'))}")
+    return "；".join(parts)
+
+
+def _field_display_text(label: Any, field: Any) -> str:
+    label_text = str(label or "").strip()
+    field_text = str(field or "").strip()
+    if label_text and field_text and label_text != field_text:
+        return f"{label_text}/{field_text}"
+    return _display_value(label_text or field_text, "未关联字段")
+
+
+def _expected_range_text(source: dict[str, Any]) -> str:
+    minimum = source.get("expected_min", source.get("allowed_min"))
+    maximum = source.get("expected_max", source.get("allowed_max"))
+    if not (_has_value(minimum) or _has_value(maximum)):
+        return ""
+    unit = str(source.get("unit") or "").strip()
+    if _has_value(minimum) and _has_value(maximum):
+        text = f"{minimum}-{maximum}"
+    elif _has_value(minimum):
+        text = f">={minimum}"
+    else:
+        text = f"<={maximum}"
+    return f"{text}{unit}".strip()
+
+
+def _format_sequence(value: Any, fallback: str) -> str:
+    if isinstance(value, (list, tuple, set)):
+        parts = [_single_line_text(item) for item in value if _has_value(item)]
+        return "、".join(parts) if parts else fallback
+    if _has_value(value):
+        return _single_line_text(value)
+    return fallback
+
+
+def _format_mapping(value: dict[str, Any], fallback: str) -> str:
+    parts = [
+        f"{key}={_display_value(raw_value, '空')}"
+        for key, raw_value in value.items()
+        if _has_value(key)
+    ]
+    return "，".join(parts) if parts else fallback
+
+
+def _bool_text(value: Any) -> str:
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    return _display_value(value, "未记录")
+
+
+def _attachment_sample_names(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    names = []
+    for item in value[:3]:
+        if isinstance(item, dict):
+            name = item.get("filename") or item.get("FILENAME") or item.get("name")
+        else:
+            name = item
+        if _has_value(name):
+            names.append(_single_line_text(name))
+    return "、".join(names)
+
+
+def _overflow_line(label: str, total_count: int) -> list[str]:
+    overflow = total_count - MAX_STRUCTURED_EVIDENCE_ITEMS
+    if overflow <= 0:
+        return []
+    return [f"   - {label}：另有 {overflow} 条明细未展开，详见最终问题清单。"]
+
+
+def _unique_lines(lines: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique = []
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        unique.append(line)
+    return unique
 
 
 def _single_line_text(value: Any) -> str:
-    return " / ".join(part.strip() for part in str(value or "").splitlines() if part.strip()) or "未填写"
+    text = "" if value is None else str(value)
+    return " / ".join(part.strip() for part in text.splitlines() if part.strip()) or "未填写"
 
 
 def _format_pending_visual_reviews(
@@ -550,5 +938,11 @@ def _parse_evidence(evidence: Any) -> dict[str, Any]:
 
 
 def _display_value(value: Any, fallback: str) -> str:
-    text = str(value or "").strip()
+    if value is None:
+        return fallback
+    text = str(value).strip()
     return text if text else fallback
+
+
+def _has_value(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""

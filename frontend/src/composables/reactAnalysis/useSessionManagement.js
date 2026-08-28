@@ -289,6 +289,10 @@ export function useSessionManagement(store) {
         const board = store.ensureDrawioBoardState(store.currentState)
         board.activeBoardId = restoredBoard.board_id
         board.title = restoredBoard.title || board.title
+        board.acceptedVersionId = restoredBoard.accepted_version_id || restoredBoard.acceptedVersionId || null
+        board.workingVersionId = restoredBoard.working_version_id || restoredBoard.workingVersionId ||
+          restoredBoard.candidate_version_id || restoredBoard.candidateVersionId || null
+        board.candidateVersionId = restoredBoard.candidate_version_id || restoredBoard.candidateVersionId || null
         try {
           await store.loadDrawioBoardVersions(store.currentState)
         } catch (error) {

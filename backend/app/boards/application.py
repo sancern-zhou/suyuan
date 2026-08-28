@@ -19,6 +19,7 @@ class BoardCandidateReceipt:
     revision: int
     lifecycle_status: str
     xml_ref: dict[str, Any]
+    parent_version_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,7 @@ class BoardApplicationService:
         quality_report: dict[str, Any],
         screenshot_ref: dict[str, Any] | None,
         summary: str,
+        parent_version_id: str | None = None,
         lifecycle_status: str = "candidate",
     ) -> BoardCandidateReceipt:
         async with self.session_factory() as session:
@@ -118,6 +120,7 @@ class BoardApplicationService:
                 candidate = await domain.create_candidate(
                     board.id,
                     base_revision=base_revision,
+                    parent_version_id=parent_version_id,
                     xml=xml,
                     agent_run_id=agent_run_id,
                     quality_status=quality_status,
@@ -140,8 +143,17 @@ class BoardApplicationService:
                     lifecycle_status=str(candidate.lifecycle_status),
                     xml_ref={
                         **dict(candidate.xml_ref),
-                        "read_url": f"/api/boards/{board.id}/versions/{candidate.id}/xml",
+                        # The persisted local path is for backend consumers;
+                        # browser clients must use the authenticated board API.
+                        "read_url": (
+                            f"/api/boards/{board.id}/versions/{candidate.id}/xml"
+                        ),
                     },
+                    parent_version_id=(
+                        str(candidate.parent_version_id)
+                        if candidate.parent_version_id
+                        else None
+                    ),
                 )
         return receipt
 

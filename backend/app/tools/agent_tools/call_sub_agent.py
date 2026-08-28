@@ -37,7 +37,6 @@ class CallSubAgentTool(LLMTool):
 
     用法：
     - Social Agent调用Query Agent：call_sub_agent(target_mode="query", ...)
-    - Social Agent调用Report Agent：call_sub_agent(target_mode="report", ...)
     - 助手Agent调用其他Agent：call_sub_agent(target_mode="...", ...)
     """
 

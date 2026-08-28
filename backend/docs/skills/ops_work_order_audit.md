@@ -31,9 +31,9 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 将上一步的 `data.dataset_path` 原值传给 `ops_audit_run_rules`。
 
 - 默认执行流量或读数图片视觉识别；用户要求关闭视觉识别或排查图片误判时传 `enable_visual=false`。
-- 工具会执行确定性规则、适用的视觉比对和语义辅助复核，并生成 `final_issue_list_path` 等结果文件。
+- 工具会执行确定性规则、适用的视觉比对和语义辅助复核，并生成 `final_issue_list_path`、`review_input_path` 等结果文件。
 - `semantic_candidates` 是候选，`semantic_review_tasks` 是待执行任务，`semantic_review_results` 是语义辅助结果；三者都不是正式报告的问题清单。
-- 只有本轮 `final_issue_list.items` 可以成为正式问题明细。若 `final_issue_list_path` 缺失或不可读，不得声称完整审核已完成。
+- 只有本轮 `final_issue_list.items` 可以成为正式问题明细，复核后由 `ops_audit_submit_review` 生成仅含保留项的 `report_input`。若 `final_issue_list_path` 或 `review_input_path` 缺失或不可读，不得声称完整审核已完成。
 
 ### 4. 按需解释
 
@@ -52,9 +52,10 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 
 用户要求正式报告、QMD 报告或报告包时：
 
-1. 完整读取 [最终问题复核协议](backend/docs/skills/ops_work_order_audit/references/final-review.md)，复核本轮 `final_issue_list.items`。
-2. 完整读取 [审核报告输出规范](backend/docs/skills/ops_work_order_audit/references/report-format.md)，严格按其中结构和字段约束组织报告。
-3. 使用 `create_report_package` 生成报告包，再用 `validate_report_package` 验收；有渲染或资源错误时先修复。
+1. 完整读取 [最终问题复核协议](backend/docs/skills/ops_work_order_audit/references/final-review.md)，按协议驱动子 Agent 对本轮 `review_input.items` 逐条决策并调用 `ops_audit_submit_review` 持久化。
+2. 复核产物就绪后（`report_ready=true`），问题明细只使用 `ops_audit_submit_review` 返回的 `report_input_path`；禁止重新读取原始 `final_issue_list` 拼装问题明细。
+3. 完整读取 [审核报告输出规范](backend/docs/skills/ops_work_order_audit/references/report-format.md)，严格按其中结构和字段约束组织报告。
+4. 使用 `create_report_package` 生成报告包，再用 `validate_report_package` 验收；有渲染或资源错误时先修复。
 
 报告阶段不得重新发现问题。除结果文件缺失或用户明确要求补查外，不再调用审核分析工具或 SQL。
 

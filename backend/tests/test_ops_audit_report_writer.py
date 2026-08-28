@@ -147,6 +147,183 @@ def test_write_report_groups_final_issue_list_by_operation_unit(tmp_path: Path) 
     assert "WO-1 | 站点" not in text
 
 
+def test_write_report_includes_remark_context_for_non_linked_items(tmp_path: Path) -> None:
+    audit = {
+        "audit_info": {
+            "generated_at": "2026-08-18 10:00:00",
+            "rule_stage": "deterministic_with_semantic_review",
+            "order_count": 1,
+        },
+        "summary": {"audit_level_counts": {"需补正": 1}},
+        "records": [{"working_order_code": "WO-REMARK", "create_time": "2026-08-18 08:00:00"}],
+    }
+    final_issue_list = {
+        "items": [
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "颗粒物PM10/PM2.5自动监测分析仪运行状况检查记录表（每周）",
+                "working_order_code": "WO-REMARK",
+                "message": "纸带使用量填写异常",
+                "rule_id": "RF_PM_TAPE_USAGE_INVALID",
+                "remark_status": "provided",
+                "remark_status_label": "已填写",
+                "remark_review_status": "semantic_confirmed",
+                "remark_review_status_label": "与当前异常无关",
+                "original_remarks": [
+                    {
+                        "field": "REMARK",
+                        "field_label": "备注",
+                        "value": "仪器运行正常，未说明纸带使用量异常原因。",
+                    }
+                ],
+            }
+        ]
+    }
+
+    out_path = tmp_path / "report.md"
+    write_report(audit, out_path, final_issue_list=final_issue_list)
+    text = out_path.read_text(encoding="utf-8")
+
+    assert "纸带使用量填写异常、RF_PM_TAPE_USAGE_INVALID" in text
+    assert "原备注（备注/REMARK）：仪器运行正常，未说明纸带使用量异常原因。" in text
+    assert "备注状态：" not in text
+
+
+def test_write_report_expands_structured_evidence_details(tmp_path: Path) -> None:
+    audit = {
+        "audit_info": {
+            "generated_at": "2026-08-18 10:00:00",
+            "rule_stage": "deterministic_with_semantic_review",
+            "order_count": 1,
+        },
+        "summary": {"audit_level_counts": {"需补正": 1}},
+        "records": [{"working_order_code": "WO-EVIDENCE", "create_time": "2026-08-18 08:00:00"}],
+    }
+    final_issue_list = {
+        "items": [
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "季度气体流量检查记录表",
+                "working_order_code": "WO-EVIDENCE",
+                "message": "季度气体流量检查气压真实值复算不一致",
+                "rule_id": "RF_Q_GASEOUSFLOWCHECK_PRESSURE_TRUE_VALUE_MISMATCH",
+                "evidence": json.dumps(
+                    {
+                        "working_order_code": "WO-EVIDENCE",
+                        "rf_table": "RF_Q_GaseousFlowCheck",
+                        "violation_count": 1,
+                        "violations": [
+                            {
+                                "formula_id": "quarter_gaseous_flow_pressure_true_value",
+                                "actual_field": "P_Pa",
+                                "actual": 752.6,
+                                "expected": 751.615074,
+                                "delta": 0.984926,
+                                "tolerance": 0.2,
+                                "inputs": {
+                                    "P_MeasuringValue": 752.3,
+                                    "P_As": 1.00438,
+                                    "P_Bs": -3.98,
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "臭氧量值传递记录表",
+                "working_order_code": "WO-EVIDENCE",
+                "message": "O3量值传递表单与XLS附件不一致",
+                "rule_id": "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
+                "evidence": json.dumps(
+                    {
+                        "working_order_code": "WO-EVIDENCE",
+                        "rf_table": "RF_HY_O3VALUEPASS",
+                        "attachment": {"filename": "臭氧标准传递.xls"},
+                        "comparison": {
+                            "field": "DELIVERFROM6VALUE",
+                            "label": "上级标准设备号",
+                            "cell": "C20",
+                            "form_value": "/",
+                            "xls_value": "N.A.",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "其他设备周检表",
+                "working_order_code": "WO-EVIDENCE",
+                "message": "其他设备周检存在无对应设备但说明不清",
+                "rule_id": "RF_NO_DEVICE_WITHOUT_REMARK",
+                "evidence": json.dumps(
+                    {
+                        "working_order_code": "WO-EVIDENCE",
+                        "rf_table": "RF_W_OTHERDEVICECHECK",
+                        "violations": [
+                            {
+                                "label": "气象设备",
+                                "model_field": "WEATHERDEVICEMODEL",
+                                "model_value": "/",
+                                "situation_field": "WEATHERSITUATION",
+                                "situation_value": "/",
+                            },
+                            {
+                                "label": "能见度设备",
+                                "model_field": "VISIBILITYDEVICEMODEL",
+                                "model_value": "/",
+                                "situation_field": "VISIBILITYSITUATION",
+                                "situation_value": "/",
+                            },
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "operation_unit": "测试运维",
+                "station_name": "测试站",
+                "rf_form_name": "颗粒物周检表",
+                "working_order_code": "WO-EVIDENCE",
+                "message": "采样管温度未填",
+                "rule_id": "RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL",
+                "evidence": json.dumps(
+                    {
+                        "working_order_code": "WO-EVIDENCE",
+                        "rf_table": "RF_W_PMCHECK",
+                        "field": "AIRTEMPVALUE/AIRTEMPISNORMAL",
+                        "temperature_value": "/",
+                        "temperature_status": "/",
+                        "missing": True,
+                        "abnormal_status": False,
+                        "out_of_range": False,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+    }
+
+    out_path = tmp_path / "report.md"
+    write_report(audit, out_path, final_issue_list=final_issue_list)
+    text = out_path.read_text(encoding="utf-8")
+
+    assert "核查明细：字段P_Pa，公式quarter_gaseous_flow_pressure_true_value" in text
+    assert "实填值752.6；复算值751.615074；差值0.984926；容差0.2" in text
+    assert "输入 P_MeasuringValue=752.3，P_As=1.00438，P_Bs=-3.98" in text
+    assert "附件比对：附件 臭氧标准传递.xls；字段 上级标准设备号/DELIVERFROM6VALUE；XLS单元格 C20；表单值 /；附件值 N.A." in text
+    assert "核查明细1：项目气象设备；设备型号字段 WEATHERDEVICEMODEL=/；运行情况字段 WEATHERSITUATION=/" in text
+    assert "核查明细2：项目能见度设备；设备型号字段 VISIBILITYDEVICEMODEL=/；运行情况字段 VISIBILITYSITUATION=/" in text
+    assert "字段核查：字段 AIRTEMPVALUE/AIRTEMPISNORMAL；温度值 /；温度状态 /；是否缺失 是；状态是否异常 否；是否超范围 否" in text
+
+
 def test_write_report_expands_device_identity_evidence_details(tmp_path: Path) -> None:
     audit = {
         "audit_info": {
@@ -233,14 +410,22 @@ def test_write_report_separates_value_abnormal_from_missing_explanation(tmp_path
                 "message": "原备注仅写已处理，未说明与当前异常的具体关联",
                 "issue_component": "abnormal_explanation_issue",
                 "issue_group_id": "WO-SPLIT::RF_W_GASEOUSCHECK_NOX::PMTCHECKVALUE",
-                "remark_status": "provided",
-                "remark_judgment": "unrelated",
-                "remark_judgment_label": "与当前异常无关",
+                "semantic_remark_review": {
+                    "judgment_type": "valid",
+                    "remark": "PMTCHECKROW:厂家备案参数0-4.096V",
+                },
+                "remark_judgment": "valid",
+                "remark_judgment_label": "有效说明",
                 "original_remarks": [
                     {
-                        "field": "EXCEPTIONHANDLINGRECORD",
-                        "field_label": "异常时处理记录",
-                        "value": "已处理，但未记录复测结果",
+                        "field": "REMARK",
+                        "field_label": "备注",
+                        "value": "NO零跨检查质控任务合格；",
+                    },
+                    {
+                        "field": "PMTCHECKROW",
+                        "field_label": "检查项说明",
+                        "value": "厂家备案参数0-4.096V",
                     }
                 ],
             },
@@ -253,8 +438,9 @@ def test_write_report_separates_value_abnormal_from_missing_explanation(tmp_path
 
     assert "#### 异常事实与说明对照" in text
     assert "异常事实（值异常）：参考PMT信号值0.002超出正常范围" in text
-    assert "原备注（异常时处理记录/EXCEPTIONHANDLINGRECORD）：已处理，但未记录复测结果" in text
-    assert "说明判断：与当前异常无关" in text
+    assert "原备注（检查项说明/PMTCHECKROW）：厂家备案参数0-4.096V" in text
+    assert "原备注（备注/REMARK）：NO零跨检查质控任务合格；" not in text
+    assert "说明判断：有效说明" in text
     assert "语义结论：原备注仅写已处理，未说明与当前异常的具体关联" in text
 
 
@@ -285,6 +471,7 @@ def test_write_report_marks_missing_original_remark(tmp_path: Path) -> None:
     text = out_path.read_text(encoding="utf-8")
 
     assert "原备注：未填写" in text
+    assert "备注状态：" not in text
 
 
 def test_write_report_shows_range_decision_and_remark_status_without_semantic_result(
@@ -336,7 +523,7 @@ def test_write_report_shows_range_decision_and_remark_status_without_semantic_re
 
     assert "判定依据：原始值 670mv；换算值 0.67 V；ESA 品牌正常范围 500-950 V" in text
     assert "原备注（异常时处理记录/EXCEPTIONHANDLINGRECORD）：已检查高压电源接线，待复测。" in text
-    assert "备注状态：已填写；内容有效性待语义复核" in text
+    assert "备注状态：" not in text
 
     item = final_issue_list["items"][0]
     item.update(
@@ -353,4 +540,4 @@ def test_write_report_shows_range_decision_and_remark_status_without_semantic_re
     write_report(audit, missing_path, final_issue_list=final_issue_list)
     missing_text = missing_path.read_text(encoding="utf-8")
     assert "原备注：未填写" in missing_text
-    assert "备注状态：未填写" in missing_text
+    assert "备注状态：" not in missing_text

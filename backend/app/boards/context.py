@@ -16,7 +16,13 @@ async def resolve_board_context_reference(
 ) -> dict[str, Any]:
     context = dict(board_context or {})
     board_id = str(context.get("board_id") or context.get("active_board_id") or "").strip()
-    version_id = str(context.get("version_id") or context.get("current_version_id") or "").strip()
+    version_id = str(
+        context.get("working_version_id")
+        or context.get("version_id")
+        or context.get("current_version_id")
+        or context.get("candidate_version_id")
+        or ""
+    ).strip()
     if not board_id or not version_id:
         return context
     if not expected_session_id:
@@ -30,10 +36,11 @@ async def resolve_board_context_reference(
     if board.revision != requested_revision:
         raise BoardVersionConflict(board.revision)
     version = await service.get_version(board.id, version_id)
-    # A candidate is a valid continuation state even though it has not been
-    # promoted to board.current_version_id yet. This is required for a
-    # follow-up turn after candidate generation; treating it as a stale
-    # current version incorrectly produced HTTP 409.
+    # A board-mode conversation may intentionally continue from an AI
+    # candidate.  Candidates do not advance board.current_version_id until
+    # they are accepted, but their XML is still the authoritative working
+    # state for that conversation.  Keep the optimistic revision check above:
+    # an accepted/manual update still invalidates an older candidate branch.
     if board.current_version_id != version_id and version.lifecycle_status != "candidate":
         raise BoardVersionConflict(board.revision)
     path_value = version.xml_ref.get("local_path") or version.xml_ref.get("path")
@@ -52,6 +59,11 @@ async def resolve_board_context_reference(
         "version_id": version.id,
         "version": version.version_number,
         "revision": board.revision,
+        "working_version_id": version.id,
+        "accepted_version_id": board.current_version_id,
         "lifecycle_status": version.lifecycle_status,
+        "candidate_version_id": (
+            version.id if version.lifecycle_status == "candidate" else context.get("candidate_version_id")
+        ),
         "xml_sha256": version.xml_sha256,
     }

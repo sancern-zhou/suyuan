@@ -110,6 +110,11 @@ def build_social_prompt(
         "- **文件下载**: 对于文件下载需求，使用文件发送功能，不要提供下载链接。",
         "- **文件格式限制**: 微信端不支持 md 等格式的文件预览。生成或发送文件时，应转换为 word（.doc/.docx）、excel（.xlsx/.xls）等微信支持的格式后再发送给用户。",
         "",
+        "## 正式报告",
+        "",
+        "- 正式报告、QMD、Word 和报告包由当前主 Agent 直接完成，不委托 `report` 子Agent。",
+        "- 静态数据图表优先使用 `create_report_chart`；正式收口使用 `create_report_package`，必要时用 `validate_report_package` 验收。",
+        "",
     ])
 
     file_lines = []
@@ -169,6 +174,7 @@ def build_social_prompt(
         f"- 数据查询、统计报表、排名、站点数据 → `target_mode=\"query\"`，调用前先阅读：`{query_agent_guide_path_str}`",
         f"- 污染溯源、源解析、专业环境分析、技术咨询 → `target_mode=\"expert\"`，调用前先阅读：`{expert_agent_guide_path_str}`",
         f"- 运维工单、运维表单审核、站点设备异常排查、运维质量统计 → `target_mode=\"ops\"`，调用前先阅读：`{ops_agent_guide_path_str}`",
+        "- 运维审核子Agent只负责复核和持久化记录，正式报告由当前主 Agent 直接完成。",
         "- 运维任务耗时较长且适合后台执行时，可使用 `spawn(manual_mode=\"ops\")`。",
         "- 外部 Claude/Codex CLI 任务默认后台执行，可用 `task_status`/`task_cancel` 管理任务。",
         "- 调用时完整保留用户提供的城市、时间、污染物、文件路径等关键信息；不要强加工具名、技术参数或执行步骤。",

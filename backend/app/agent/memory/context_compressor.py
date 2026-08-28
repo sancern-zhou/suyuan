@@ -19,6 +19,8 @@ class ContextCompressor:
         "This is compressed context, not ground truth.\n"
         "The session history and persisted files remain authoritative; re-read data or files when exact details matter.\n\n"
     )
+    ANCHOR_LABEL = "[压缩保留的原始任务锚点]"
+    ANCHOR_PREFIX = ANCHOR_LABEL + "\n"
 
     COMPACT_MEMORY_PROMPT = """You compress older tool-using agent history into short working memory for continued execution.
 Return plain text only. Do not call tools. Do not invent facts.
@@ -210,32 +212,73 @@ Older history to compress:
             return text
         return text[: max_chars - 16].rstrip() + "...[truncated]"
 
+    def _normalize_anchor_text(self, text: str) -> str:
+        normalized = str(text or "").strip()
+        while normalized.startswith(self.ANCHOR_LABEL):
+            normalized = normalized[len(self.ANCHOR_LABEL):].lstrip()
+        return normalized.strip()
+
+    def _anchor_text_from_message(self, msg: Dict[str, Any]) -> str:
+        if self._message_kind(msg) != "user":
+            return ""
+
+        text = self._content_to_text(msg.get("content", ""), max_chars=4000).strip()
+        if not text or text.startswith("[系统提示]"):
+            return ""
+
+        anchor_text = self._normalize_anchor_text(text)
+        if not anchor_text or anchor_text.startswith("[系统提示]"):
+            return ""
+
+        return anchor_text[:4000]
+
+    def _anchor_message(self, anchor_text: str) -> Dict[str, Any]:
+        return {
+            "type": "user",
+            "role": "user",
+            "content": f"{self.ANCHOR_PREFIX}{anchor_text[:4000]}",
+        }
+
+    def _is_existing_anchor_message(self, msg: Dict[str, Any]) -> bool:
+        if self._message_kind(msg) != "user":
+            return False
+        text = self._content_to_text(msg.get("content", ""), max_chars=4000).strip()
+        return text.startswith(self.ANCHOR_LABEL)
+
+    def _normalize_existing_anchor_messages(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        normalized_messages = []
+        for msg in messages:
+            if self._is_existing_anchor_message(msg):
+                anchor_text = self._anchor_text_from_message(msg)
+                if anchor_text:
+                    msg_copy = dict(msg)
+                    msg_copy.update(self._anchor_message(anchor_text))
+                    normalized_messages.append(msg_copy)
+                    continue
+            normalized_messages.append(msg)
+        return normalized_messages
+
+    def _drop_existing_anchor_messages(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        return [
+            msg
+            for msg in messages
+            if not self._is_existing_anchor_message(msg)
+        ]
+
     def _extract_user_anchor(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Preserve the first substantive user request as an anchor for compaction."""
         for msg in messages:
-            if self._message_kind(msg) != "user":
-                continue
-
-            text = self._content_to_text(msg.get("content", ""), max_chars=4000).strip()
-            if not text or text.startswith("[系统提示]"):
-                continue
-
-            return [{
-                "type": "user",
-                "role": "user",
-                "content": f"[压缩保留的原始任务锚点]\n{text[:4000]}"
-            }]
+            anchor_text = self._anchor_text_from_message(msg)
+            if anchor_text:
+                return [self._anchor_message(anchor_text)]
 
         return []
-
-    def _contains_anchor_equivalent(self, messages: List[Dict[str, Any]], anchor: Dict[str, Any]) -> bool:
-        anchor_content = str(anchor.get("content", ""))
-        anchor_text = anchor_content.replace("[压缩保留的原始任务锚点]\n", "").strip()
-        if not anchor_text:
-            return True
-
-        needle = anchor_text[:200]
-        return any(needle in str(msg.get("content", "")) for msg in messages)
 
     def _is_compact_memory_message(self, msg: Dict[str, Any]) -> bool:
         content = msg.get("content", "")
@@ -349,7 +392,9 @@ Older history to compress:
         error: Exception,
     ) -> List[Dict[str, Any]]:
         compacted_groups, recent_groups = self._split_recent_groups(messages)
-        recent_messages = self._flatten_groups(recent_groups)
+        recent_messages = self._drop_existing_anchor_messages(
+            self._flatten_groups(recent_groups)
+        )
         boundary_msg = self._create_compaction_boundary(
             original_count=original_count,
             compressed_count=len(anchor_messages) + 1 + len(recent_messages),
@@ -369,6 +414,7 @@ Older history to compress:
         model: str = None,
     ) -> List[Dict[str, Any]]:
         existing_memory_text, eligible_messages = self._split_existing_compact_memory(messages_to_compress)
+        eligible_messages = self._drop_existing_anchor_messages(eligible_messages)
         compacted_groups, recent_groups = self._split_recent_groups(eligible_messages)
 
         if not compacted_groups:
@@ -426,7 +472,10 @@ Older history to compress:
             existing_memory_text=existing_memory_text,
         )
 
-        recent_messages = self._flatten_groups(recent_groups)
+        recent_messages = self._drop_existing_anchor_messages(
+            self._flatten_groups(recent_groups)
+        )
+        protected_messages = self._drop_existing_anchor_messages(protected_messages)
         final_messages = [compact_memory] + anchor_messages + recent_messages + protected_messages
 
         logger.info(
@@ -481,6 +530,7 @@ Older history to compress:
 
         # 阶段一：工具输出预截断（在 LLM 压缩前，先截断过长的工具输出）
         messages = self._truncate_tool_outputs(messages)
+        messages = self._normalize_existing_anchor_messages(messages)
 
         anchor_messages = self._extract_user_anchor(messages)
 
