@@ -812,7 +812,7 @@ class AgentRuntime:
 
         async for event in self.planner.think_and_action_streaming(
             query=state.user_query,
-            system_prompt=context_result["system_prompt"],
+            system_prompt=context_result.get("system_prompt_blocks") or context_result["system_prompt"],
             user_conversation=context_result["user_conversation"],
             tools=tool_schemas,
             iteration=state.iteration,
@@ -1025,7 +1025,7 @@ class AgentRuntime:
             )
         result = await self.planner.think_and_action(
             query=state.user_query,
-            system_prompt=context_result["system_prompt"],
+            system_prompt=context_result.get("system_prompt_blocks") or context_result["system_prompt"],
             user_conversation=context_result["user_conversation"],
             tools=tool_schemas,
             iteration=state.iteration,

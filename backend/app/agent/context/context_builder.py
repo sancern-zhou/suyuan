@@ -27,6 +27,7 @@ SYSTEM_CONTEXT_LAYER_ORDER = (
     "acceptance_checklist",
     "session_resources",
     "long_term_memory",
+    "runtime_metadata",
 )
 
 MESSAGE_CONTEXT_LAYER_ORDER = (
@@ -34,6 +35,9 @@ MESSAGE_CONTEXT_LAYER_ORDER = (
     "recent_messages",
     "current_turn",
 )
+
+SYSTEM_CACHE_CHECKPOINT_KEY = "_suyuan_cache_checkpoint"
+CACHEABLE_SYSTEM_CONTEXT_LAYER = "mode_policy"
 
 
 class SimplifiedContextBuilder:
@@ -123,6 +127,10 @@ class SimplifiedContextBuilder:
 
         # 最近一次组装的层级摘要，仅包含名称和大小，不记录正文。
         self.last_context_layers: List[Dict[str, Any]] = []
+
+        # 最近一次组装的 system content blocks。字符串 system_prompt 继续用于
+        # 日志和 token 估算；请求层优先使用 blocks 以便在稳定前缀处打缓存断点。
+        self.last_system_prompt_blocks: List[Dict[str, Any]] = []
 
         # 知识库图谱上下文，由 Agent 入口按 graph 模式绑定注入。
 
@@ -254,6 +262,7 @@ class SimplifiedContextBuilder:
 
         return {
             "system_prompt": system_prompt,
+            "system_prompt_blocks": list(self.last_system_prompt_blocks),
             "user_conversation": user_conversation,
             "context_layers": list(self.last_context_layers),
             "tokens": {
@@ -270,6 +279,7 @@ class SimplifiedContextBuilder:
         rendered_layers = []
         layer_contents = self._build_system_context_layers()
         self.last_context_layers = []
+        self.last_system_prompt_blocks = []
         for priority, layer_name in enumerate(SYSTEM_CONTEXT_LAYER_ORDER, start=1):
             content = layer_contents.get(layer_name)
             if not content or not content.strip():
@@ -280,6 +290,10 @@ class SimplifiedContextBuilder:
                 "</context_layer>"
             )
             rendered_layers.append(rendered)
+            block: Dict[str, Any] = {"type": "text", "text": rendered}
+            if layer_name == CACHEABLE_SYSTEM_CONTEXT_LAYER:
+                block[SYSTEM_CACHE_CHECKPOINT_KEY] = True
+            self.last_system_prompt_blocks.append(block)
             self.last_context_layers.append({
                 "name": layer_name,
                 "priority": priority,
@@ -389,6 +403,7 @@ class SimplifiedContextBuilder:
             ),
             "session_resources": self._build_session_resources_layer(),
             "long_term_memory": self._build_long_term_memory_layer(),
+            "runtime_metadata": self._build_runtime_metadata_prompt(),
         }
 
     @staticmethod
@@ -407,8 +422,6 @@ class SimplifiedContextBuilder:
             "历史裁剪只允许改变历史消息，不得删除、摘要或改写任何 system context layer。\n"
             "</context_precedence>\n\n"
             + self._build_agent_control_prompt()
-            + "\n\n"
-            + self._build_runtime_metadata_prompt()
         )
 
     def _build_session_resources_layer(self) -> str:

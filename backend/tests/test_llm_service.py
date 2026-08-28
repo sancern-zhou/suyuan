@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, SYSTEM_CACHE_CHECKPOINT_KEY
 from app.services import llm_failover
 from config.settings import Settings
 
@@ -22,6 +22,51 @@ def test_agent_modes_use_the_normal_model_chains_without_multimodal_override():
     assert settings.agnes_model == "agnes-2.0-flash"
     assert settings.agnes_api_mode == "chat_completions"
     assert settings.llm_multimodal_models == ""
+
+
+def test_add_cache_control_uses_explicit_system_checkpoint():
+    service = object.__new__(LLMService)
+    params = {
+        "system": [
+            {
+                "type": "text",
+                "text": "stable platform and mode",
+                SYSTEM_CACHE_CHECKPOINT_KEY: True,
+            },
+            {"type": "text", "text": "dynamic session resources"},
+        ],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    result = service._add_cache_control(params)
+
+    assert SYSTEM_CACHE_CHECKPOINT_KEY not in str(result["system"])
+    assert result["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in result["system"][1]
+
+
+def test_anthropic_params_strip_system_checkpoint_when_cache_control_is_unsupported():
+    service = object.__new__(LLMService)
+    service.provider = "deepseek"
+    service.model = "deepseek-test"
+
+    params = service._build_anthropic_api_params(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        max_tokens=1024,
+        temperature=0.2,
+        system=[
+            {
+                "type": "text",
+                "text": "stable platform and mode",
+                SYSTEM_CACHE_CHECKPOINT_KEY: True,
+            },
+            {"type": "text", "text": "dynamic session resources"},
+        ],
+    )
+
+    assert SYSTEM_CACHE_CHECKPOINT_KEY not in str(params["system"])
+    assert "cache_control" not in str(params["system"])
 
 
 @pytest.mark.asyncio
@@ -117,5 +162,5 @@ async def test_chat_anthropic_rebuilds_params_for_fallback_candidate(monkeypatch
     assert second_params["model"] == "deepseek-test"
     assert all(msg["role"] in {"user", "assistant"} for msg in second_params["messages"])
     assert all(msg["role"] != "system" for msg in second_params["messages"])
-    assert second_params["thinking"] == {"type": "disabled"}
+    assert second_params["extra_body"]["thinking"] == {"type": "disabled"}
     assert "cache_control" not in str(second_params)

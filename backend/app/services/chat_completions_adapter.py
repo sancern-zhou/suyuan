@@ -135,7 +135,7 @@ def convert_anthropic_tools_to_chat(
 def convert_anthropic_messages_to_chat(
     messages: List[Dict[str, Any]],
     *,
-    system: Optional[str] = None,
+    system: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     converted: List[Dict[str, Any]] = []
     if system:
