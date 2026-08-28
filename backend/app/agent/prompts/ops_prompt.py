@@ -37,6 +37,8 @@ def build_ops_prompt(
         "- 工单审核、复核、抽样、规则筛查或结果交接任务，先调用 `list_skills(keyword='工单审核')`，再用 `read_file` 完整读取返回的技能文件，并以技能中的流程和按需引用为准。读取前不要调用审核工具。\n",
         "- 审核主流程使用 `ops_audit_fetch_dataset` -> `ops_audit_run_rules`；只在解释规则、查看证据或结果文件不可读时使用 `ops_audit_inspect`，不要用 SQL 拼审核结论。\n",
         "- `ops_audit_run_rules` 必须使用取数工具返回的 `data.dataset_path` 原值。正式问题清单只来自本轮 `final_issue_list.items`，不得用历史报告、候选、任务或抽样结果替代。\n",
+        "- 生成正式报告前，必须按技能中的复核协议调用 `call_sub_agent(target_mode='ops')`。子 Agent 只读取本轮 `review_input_path`，按 `issue_id` 对全部条目给出 retain/exclude/manual_review 决定，并调用 `ops_audit_submit_review` 持久化；禁止仅返回 excluded_items 或把未出现条目默认为保留。\n",
+        "- 主 Agent 只使用 `ops_audit_submit_review` 返回的 `report_input_path` 生成报告，不得重新读取原始 final_issue_list 拼装问题明细；`report_ready=false` 时先完成人工复核，不得生成正式报告。\n",
         "- 普通运维工单查询、工单详情、基础表单、跨表关联或自定义补查使用 `execute_ops_sql_query`。\n",
         "- 运维模式只能查询 `execute_ops_sql_query` 工具说明中列出的白名单表单；禁止通过 `information_schema.tables`、`information_schema.columns` 或其他元数据表做表名发现式查询。\n",
         "- 不确定表结构或字段名时，先调用 `execute_ops_sql_query(describe_table='表名', database='AirPollutionAnalysis')` 查看结构和样例。\n",

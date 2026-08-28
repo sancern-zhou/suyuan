@@ -8,9 +8,11 @@ The share HTML embeds resources into a standalone file.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -594,7 +596,16 @@ class QuartoReportRenderer:
     def _run_quarto(self, cwd: Path, args: list[str]) -> None:
         quarto = shutil.which("quarto") or "quarto"
         command = [quarto, *args]
-        logger.info("quarto_render_start", cwd=str(cwd), command=command)
+        # Quarto 的 jupyter 引擎按 PATH 自动探测 Python，可能选中缺少
+        # nbformat/jupyter 的系统环境；固定使用后端 conda 环境。
+        env = dict(os.environ)
+        env["QUARTO_PYTHON"] = str(Path(sys.executable).resolve())
+        logger.info(
+            "quarto_render_start",
+            cwd=str(cwd),
+            command=command,
+            quarto_python=env["QUARTO_PYTHON"],
+        )
         try:
             completed = subprocess.run(
                 command,
@@ -602,6 +613,7 @@ class QuartoReportRenderer:
                 check=True,
                 capture_output=True,
                 text=True,
+                env=env,
             )
         except FileNotFoundError as exc:
             raise ReportRenderError("Quarto is not installed or not available on PATH") from exc

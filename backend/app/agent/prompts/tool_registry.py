@@ -232,7 +232,7 @@ OPS_TOOL_NAMES = [
     "list_skills", "view_skill", "read_file",
 
     # 工单查询
-    "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
+    "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect", "ops_audit_submit_review",
     "knowledge_graph_query", "execute_ops_sql_query",
 
     # 子 Agent 复核

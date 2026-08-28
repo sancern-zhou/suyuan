@@ -75,6 +75,9 @@ class ToolExecutor:
         self.resource_context_builder: Optional[Any] = None
         self.resource_run_id: str = ""
         self.resource_query: str = ""
+        # File inputs from the durable session resource catalog (uploads etc.).
+        # Consumed by sandboxed tools as a staging allowlist.
+        self.authorized_input_paths: List[str] = []
 
         # Initialize DataContextManager if memory_manager provided
         if memory_manager:
@@ -250,6 +253,10 @@ class ToolExecutor:
         self.resource_service = service
         self.resource_context_builder = context_builder
         self.resource_query = query
+
+    def set_authorized_input_paths(self, paths: List[str]) -> None:
+        """Set durable catalog file inputs staged into sandboxed tools."""
+        self.authorized_input_paths = list(dict.fromkeys(p for p in paths if p))
 
     async def _persist_boundary_resources(
         self,
@@ -1015,6 +1022,7 @@ class ToolExecutor:
             context.tool_executor = self
             context.runtime_mode = self.runtime_mode
             context.user_identifier = self.user_identifier
+            context.authorized_input_paths = list(self.authorized_input_paths)
 
             logger.debug(
                 "execution_context_created",

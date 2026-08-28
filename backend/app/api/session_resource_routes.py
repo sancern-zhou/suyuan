@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import re
 import tempfile
 from pathlib import Path
 from typing import Literal
@@ -55,6 +56,18 @@ def user_visible_resource(item: StoredResource) -> bool:
     )
 
 
+_DRAWIO_BOARD_PATH_RE = re.compile(r"(?:^|/)drawio_boards/([0-9a-f-]{36})(?:/|$)", re.IGNORECASE)
+
+
+def _board_id_from_resource(item: StoredResource) -> str | None:
+    """Expose only the opaque board UUID needed by the board editor."""
+    if item.renderer != "board":
+        return None
+    path = str((item.locator or {}).get("path") or "")
+    match = _DRAWIO_BOARD_PATH_RE.search(path)
+    return match.group(1) if match else None
+
+
 def resource_dto(session_id: str, item: StoredResource) -> dict:
     """Project a resource without exposing server locators or tool metadata."""
     base = resource_content_base(session_id, item)
@@ -92,7 +105,7 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         download_url = (
             f"{download_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
         )
-    return {
+    dto = {
         "resource_id": item.resource_id,
         "ref_id": item.resource_id,
         "group_id": item.group_id,
@@ -115,6 +128,10 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
     }
+    board_id = _board_id_from_resource(item)
+    if board_id:
+        dto["board_id"] = board_id
+    return dto
 
 
 MAX_SPREADSHEET_SAVE_BYTES = 50 * 1024 * 1024

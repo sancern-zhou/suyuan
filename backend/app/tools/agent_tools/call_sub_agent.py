@@ -303,11 +303,13 @@ class CallSubAgentTool(LLMTool):
 
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
+            parent_resource_lines = await self._collect_parent_resource_lines(context)
             child_request_prompt = self._build_child_request_prompt(
                 goal=effective_goal,
                 context=effective_context,
                 workspace_path=effective_workspace,
-                target_mode=target_mode
+                target_mode=target_mode,
+                parent_resource_lines=parent_resource_lines,
             )
             logger.debug(
                 "child_request_prompt_built",
@@ -453,12 +455,51 @@ class CallSubAgentTool(LLMTool):
                 "summary": "任务执行失败"
             }
 
+    async def _collect_parent_resource_lines(self, context) -> List[str]:
+        """列出父会话已登记文件资源，供子 Agent 直接按路径读取。
+
+        子 Agent 使用独立 session_id，查不到父会话的资源目录；把父会话
+        catalog 中的真实文件路径随任务一起下发，子 Agent 的沙箱会按
+        白名单把这些文件 ro-bind 进执行环境。
+        """
+        try:
+            executor = getattr(context, "tool_executor", None)
+            service = getattr(executor, "resource_service", None)
+            parent_session_id = getattr(getattr(executor, "memory_manager", None), "session_id", None)
+            if service is None or not parent_session_id:
+                return []
+
+            from app.agent.resources.resource_map import resource_access_path
+            from app.utils.path_config import get_data_registry
+
+            registry_root = str(get_data_registry())
+            page = await service.list_resources(parent_session_id, limit=500)
+            lines = []
+            seen_paths = set()
+            for stored in page.resources:
+                if stored.kind not in {"file", "artifact"}:
+                    continue
+                access_path = resource_access_path(stored)
+                if not access_path or not access_path.startswith(registry_root):
+                    continue
+                if access_path in seen_paths:
+                    continue
+                seen_paths.add(access_path)
+                lines.append(f"- {stored.label} -> {access_path}")
+                if len(lines) >= 50:
+                    break
+            return lines
+        except Exception as exc:
+            logger.warning("parent_resource_transfer_failed", error=str(exc))
+            return []
+
     def _build_child_request_prompt(
         self,
         goal: str,
         context: Optional[str] = None,
         workspace_path: Optional[str] = None,
-        target_mode: str = "assistant"
+        target_mode: str = "assistant",
+        parent_resource_lines: Optional[List[str]] = None,
     ) -> str:
         """
         构建子 Agent 本轮请求（分离 goal、补充上下文和工作目录）
@@ -480,6 +521,13 @@ class CallSubAgentTool(LLMTool):
         # 添加补充上下文（如果有）
         if context and context.strip():
             parts.append(f"**补充上下文**:\n{context}\n")
+
+        # 父会话已登记文件（上传附件等）；子会话无法查询父会话资源目录，
+        # 这些真实路径可直接用于 read_file / execute_python（沙箱按白名单挂载）。
+        if parent_resource_lines:
+            parts.append("**父会话可用文件**（可直接按路径读取，勿编造其他路径）:\n")
+            parts.extend(parent_resource_lines)
+            parts.append("")
 
         # 添加工作目录（如果有）
         if workspace_path and workspace_path.strip():
@@ -526,6 +574,7 @@ class CallSubAgentTool(LLMTool):
         context: Optional[str] = None,
         workspace_path: Optional[str] = None,
         target_mode: str = "assistant",
+        parent_resource_lines: Optional[List[str]] = None,
     ) -> str:
         """Backward-compatible alias for the child request prompt builder."""
         return self._build_child_request_prompt(
@@ -533,6 +582,7 @@ class CallSubAgentTool(LLMTool):
             context=context,
             workspace_path=workspace_path,
             target_mode=target_mode,
+            parent_resource_lines=parent_resource_lines,
         )
 
     def _extract_final_result(self, events: list) -> Dict:
