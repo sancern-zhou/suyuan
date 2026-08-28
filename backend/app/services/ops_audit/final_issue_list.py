@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from hashlib import sha256
 from typing import Any
 
 from app.services.ops_audit.config import review_stage_for_rule, rules_for_review_stage
@@ -59,6 +60,7 @@ def build_final_issue_list(
                 seen.add(key)
                 items.append(item)
 
+    _assign_issue_ids(items)
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "purpose": "final_issue_list_for_reporting",
@@ -372,27 +374,70 @@ def _attach_original_remarks(
 
 
 def _remark_entries(value: Any, *, default_field: str = "remark") -> list[dict[str, str]]:
-    if isinstance(value, dict):
-        candidates = value.items()
-    elif isinstance(value, (list, tuple)):
-        candidates = ((default_field, item) for item in value)
-    elif value is None:
-        candidates = []
-    else:
-        candidates = [(default_field, value)]
-
     entries: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for field, raw_value in candidates:
-        if str(field or "").upper() == "PROCESSTYPE":
-            continue
+
+    def add_entry(field: Any, raw_value: Any) -> None:
+        field_text = str(field or default_field)
+        if _remark_field_tail(field_text).upper() == "PROCESSTYPE":
+            return
         text = str(raw_value or "")
-        key = (str(field or default_field), text)
+        key = (field_text, text)
         if key in seen:
-            continue
+            return
         seen.add(key)
         entries.append({"field": key[0], "value": text})
+
+    def visit(node: Any, field: str) -> None:
+        if isinstance(node, dict):
+            for child_field, child_value in node.items():
+                visit(child_value, _join_remark_field(field, child_field))
+            return
+        if isinstance(node, (list, tuple)):
+            for child in node:
+                if isinstance(child, dict):
+                    visit(child, field)
+                    continue
+                child_field, child_value = _split_embedded_remark_field(child)
+                if child_field:
+                    add_entry(_join_remark_field(field, child_field), child_value)
+                else:
+                    add_entry(field, child_value)
+            return
+        add_entry(field, node)
+
+    if value is not None:
+        visit(value, default_field)
     return entries
+
+
+def _join_remark_field(parent: str, child: Any) -> str:
+    child_text = str(child or "").strip()
+    if not child_text:
+        return parent
+    if not parent or parent == "remark":
+        return child_text
+    return f"{parent}.{child_text}"
+
+
+def _remark_field_tail(field: str) -> str:
+    for separator in (".", "/"):
+        if separator in field:
+            field = field.rsplit(separator, 1)[1]
+    return field
+
+
+def _split_embedded_remark_field(value: Any) -> tuple[str | None, Any]:
+    text = str(value or "")
+    if "=" not in text:
+        return None, value
+    field, content = text.split("=", 1)
+    field = field.strip()
+    if not field:
+        return None, value
+    if not all(char.isalnum() or char == "_" for char in field):
+        return None, value
+    return field, content
 
 
 def _effective_remark_judgment(
@@ -557,6 +602,41 @@ def _item_key(item: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
         str(item.get("field") or ""),
         str(item.get("message") or ""),
     )
+
+
+def issue_id_for_item(item: dict[str, Any]) -> str:
+    """Return a stable identity that distinguishes repeated rules in one order."""
+
+    identity = {
+        "working_order_code": str(item.get("working_order_code") or ""),
+        "rf_table": str(item.get("rf_table") or ""),
+        "rf_record_key": str(item.get("rf_record_key") or ""),
+        "pollutant_type": str(item.get("pollutant_type") or ""),
+        "rule_id": str(item.get("rule_id") or ""),
+        "issue_group_id": str(item.get("issue_group_id") or ""),
+        "issue_component": str(item.get("issue_component") or ""),
+        "field": str(item.get("field") or ""),
+        "message": str(item.get("message") or ""),
+    }
+    payload = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"ops_issue_v1_{sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+
+
+def ensure_issue_ids(issue_list: dict[str, Any]) -> dict[str, Any]:
+    """Add issue IDs in place for current and legacy final issue lists."""
+
+    _assign_issue_ids(issue_list.get("items", []))
+    return issue_list
+
+
+def _assign_issue_ids(items: list[dict[str, Any]]) -> None:
+    seen: set[str] = set()
+    for item in items:
+        issue_id = str(item.get("issue_id") or issue_id_for_item(item))
+        if issue_id in seen:
+            raise ValueError(f"duplicate final issue identity: {issue_id}")
+        seen.add(issue_id)
+        item["issue_id"] = issue_id
 
 
 def _parse_evidence(evidence: Any) -> dict[str, Any]:

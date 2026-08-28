@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 REMARK_FIELD_LABELS = {
     "REMARK": "备注",
     "REMARKS": "备注",
@@ -12,6 +11,7 @@ REMARK_FIELD_LABELS = {
     "BZ": "备注",
     "COMMENT": "说明",
     "DESCRIPTION": "说明",
+    "CLEANINGREMARK": "切割头清洗备注",
     "EXCEPTIONHANDLINGRECORD": "异常时处理记录",
     "AIRTEMPEXCEPTION": "采样管温度异常说明",
     "AIRTEMPISNORMAL": "采样管温度状态",
@@ -24,6 +24,11 @@ REMARK_FIELD_LABELS = {
 
 def remark_field_display_name(field: Any) -> str:
     raw = str(field or "").strip()
+    for separator in (".", "/"):
+        if separator in raw:
+            prefix, tail = raw.rsplit(separator, 1)
+            tail_label = remark_field_display_name(tail)
+            return f"{prefix}/{tail_label}" if tail_label != tail else raw
     upper = raw.upper()
     if upper in REMARK_FIELD_LABELS:
         return REMARK_FIELD_LABELS[upper]

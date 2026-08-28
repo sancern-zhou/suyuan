@@ -220,6 +220,54 @@ def test_final_issue_list_marks_empty_range_remark_candidates_as_missing():
     assert item["remark_review_status"] == "missing"
 
 
+def test_final_issue_list_flattens_nested_remark_candidates():
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-NESTED-REMARK",
+                "station_name": "测试站",
+                "scoring_issues": [
+                    {
+                        "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                        "category": "表单结果合理性",
+                        "severity": "高",
+                        "field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+                        "message": "参考PMT信号检查值超出正常范围",
+                        "evidence": (
+                            '{"working_order_code":"WO-NESTED-REMARK",'
+                            '"rf_table":"RF_W_GASEOUSCHECK_NOX","brand":"FPI",'
+                            '"out_of_spec_values":[{"field":"PMTCHECKVALUE","label":"参考PMT信号",'
+                            '"raw_value":"0.002","value":0.002,"raw_unit":"","unit":"V",'
+                            '"min":1.5,"max":4.096,"operator":null}],'
+                            '"handling_record_candidates":{'
+                            '"PM10":["CleaningRemark=PM10颗粒物切割头已清洁","REMARK="],'
+                            '"PM2.5":["CleaningRemark=PM2.5颗粒物切割头已清洁","REMARK="],'
+                            '"PROCESSTYPE":0.0},'
+                            '"needs_semantic_review":true}'
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    item = build_final_issue_list(audit)["items"][0]
+
+    assert item["original_remarks"] == [
+        {
+            "field": "PM10.CleaningRemark",
+            "field_label": "PM10/切割头清洗备注",
+            "value": "PM10颗粒物切割头已清洁",
+        },
+        {
+            "field": "PM2.5.CleaningRemark",
+            "field_label": "PM2.5/切割头清洗备注",
+            "value": "PM2.5颗粒物切割头已清洁",
+        },
+    ]
+    assert item["original_remark_text"] == "PM10颗粒物切割头已清洁\nPM2.5颗粒物切割头已清洁"
+
+
 @pytest.mark.parametrize(
     ("rule_id", "component"),
     [
