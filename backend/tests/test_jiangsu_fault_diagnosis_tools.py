@@ -1,15 +1,20 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agent.prompts.tool_registry import get_tool_order
+from app.agent.resources.contracts import ResourceDeclaration
+from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
 from app.tools.jiangsu.fault_diagnosis import (
     JiangsuAutoInspectionTool,
+    JiangsuFaultWorkOrderDetailTool,
     JiangsuFaultWorkOrdersTool,
     JiangsuQcMonitoringCurveTool,
     JiangsuQcRunLogTool,
     JiangsuQcTaskHistoryTool,
     JiangsuStationAlarmLogsTool,
 )
-from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
 
 
 def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_tools():
@@ -192,6 +197,341 @@ async def test_fault_work_orders_rejects_more_stations_than_limit():
 
     assert result["success"] is False
     assert f"一次最多并发查询 {JiangsuFaultWorkOrdersTool._MAX_STATIONS} 个站点" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_list_mode_applies_platform_status_defaults(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        requested.append(params)
+        return {"success": True, "result": {"items": [{"workingOrderCode": "WO-1"}], "totalCount": 1}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute()
+
+    assert result["success"] is True
+    assert result["metadata"]["query_mode"] == "filtered"
+    assert result["metadata"]["total_count"] == 1
+    assert ("OrderType", "Fault") in requested[0]
+    assert ("WorkFlowStatus", "ToAssign") in requested[0]
+    assert ("WorkFlowStatus", "ToAccept") in requested[0]
+    assert ("WorkFlowStatus", "Doing") in requested[0]
+    assert ("OrderStatus", "Wait") in requested[0]
+    assert ("OrderStatus", "Doing") in requested[0]
+    assert ("OrderStatus", "Finish") in requested[0]
+    assert result["metadata"]["defaults_applied"] is True
+    assert "待处理/处理中/已完成" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_list_mode_supports_order_code_time_and_statuses(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        requested.append(params)
+        return {"success": True, "result": {"items": [], "totalCount": 0}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(
+        working_order_code="GD20260801001",
+        start_time="2026-08-01 00:00:00",
+        end_time="2026-08-24 23:59:59",
+        workflow_statuses=["已完成", "Reject"],
+        order_statuses=[],
+        fetch_all=False,
+        page=2,
+        page_size=20,
+    )
+
+    assert result["success"] is True
+    assert result["status"] == "empty"
+    assert ("WorkingOrderCode", "GD20260801001") in requested[0]
+    assert ("CreateTime", "2026-08-01 00:00:00") in requested[0]
+    assert ("CreateTime", "2026-08-24 23:59:59") in requested[0]
+    assert ("WorkFlowStatus", "Finish") in requested[0]
+    assert ("WorkFlowStatus", "Reject") in requested[0]
+    assert not any(key == "OrderStatus" for key, _ in requested[0])
+    assert ("SkipCount", "20") in requested[0]
+    assert ("MaxResultCount", "20") in requested[0]
+    assert result["metadata"]["defaults_applied"] is False
+    assert result["metadata"]["filters"]["order_statuses"] == []
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_list_mode_resolves_node_names(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        requested.append((path, params))
+        if path.endswith("GetWorkFlowByUser"):
+            assert params == [("Type", "Fault")]
+            return {"success": True, "result": {"stepList": [
+                {"guid": "guid-process", "taskName": "故障处理"},
+                {"guid": "guid-review", "taskName": "故障审核"},
+            ]}}
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        return {"success": True, "result": {"items": [{"workingOrderCode": "WO-9"}], "totalCount": 1}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(current_points=["故障审核", "guid-process"])
+
+    assert result["success"] is True
+    list_params = requested[-1][1]
+    assert ("CurrentPoint", "guid-review") in list_params
+    assert ("CurrentPoint", "guid-process") in list_params
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_list_mode_rejects_unknown_node_and_status(monkeypatch):
+    async def fake_get(self, path, params):
+        if path.endswith("GetWorkFlowByUser"):
+            return {"success": True, "result": {"stepList": [{"guid": "guid-1", "taskName": "故障处理"}]}}
+        raise AssertionError("list endpoint should not be reached")
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    tool = JiangsuFaultWorkOrdersTool()
+
+    unknown_node = await tool.execute(current_points=["不存在的节点"])
+    assert unknown_node["success"] is False
+    assert "未知工单节点" in unknown_node["summary"]
+
+    unknown_status = await tool.execute(workflow_statuses=["Done"])
+    assert unknown_status["success"] is False
+    assert "无效值" in unknown_status["summary"]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_filters_with_stations_use_list_mode(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        requested.append((path, params))
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"success": True, "result": [
+                {"positionName": "站点甲", "cityName": "南京市", "stationCode": "1001A", "uniqueCode": "U1"},
+            ]}
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        return {"success": True, "result": {"items": [{"workingOrderCode": "WO-2"}], "totalCount": 1}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(
+        station_codes=["1001A"], workflow_statuses=["ToAccept"],
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["query_mode"] == "filtered"
+    list_params = requested[-1][1]
+    assert ("StationCode", "1001A") in list_params
+    assert ("WorkFlowStatus", "ToAccept") in list_params
+
+
+class _FaultOrderContext:
+    def __init__(self):
+        self.saved = []
+
+    def save_data(self, *, data, schema, metadata):
+        self.saved.append({"data": data, "schema": schema, "metadata": metadata})
+        return f"backend/backend_data_registry/sessions/test/data/{schema}.json"
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_fetches_all_pages_and_externalizes_over_24(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        requested.append(params)
+        skip = int(dict(params)["SkipCount"])
+        count = 50 if skip == 0 else 5
+        items = [
+            {
+                "workingOrderCode": f"WO-{index:03d}",
+                "uniqueCode": f"U-{index:03d}",
+                "orderTitle": f"故障工单 {index}",
+                "orderStatusStr": "处理中",
+                "btnEdit": True,
+                "commonFile": {"unused": "platform ui state"},
+            }
+            for index in range(skip, skip + count)
+        ]
+        return {"success": True, "result": {"items": items, "totalCount": 55}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    context = _FaultOrderContext()
+    result = await JiangsuFaultWorkOrdersTool().execute(context=context)
+
+    assert result["success"] is True
+    assert len(requested) == 2
+    assert [dict(params)["SkipCount"] for params in requested] == ["0", "50"]
+    assert result["record_count"] == 55
+    assert result["returned_records"] == 24
+    assert result["data_complete"] is False
+    assert result["metadata"]["source_data_complete"] is True
+    assert result["file_path"].endswith("jiangsu_fault_work_order_list.json")
+    assert len(result["data"]) == 24
+    assert len(context.saved) == 1
+    assert len(context.saved[0]["data"]) == 55
+    assert "btnEdit" not in context.saved[0]["data"][0]
+    assert "commonFile" not in context.saved[0]["data"][0]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_keeps_exactly_24_compact_records_inline(monkeypatch):
+    async def fake_get(self, path, params):
+        items = [
+            {
+                "workingOrderCode": f"WO-{index:03d}",
+                "uniqueCode": f"U-{index:03d}",
+                "stationName": "测试站",
+                "orderTitle": "颗粒物分析仪故障",
+                "orderContent": "设备出现告警，请核查处置。",
+                "orderStatusStr": "处理中",
+                "commonFile": {"large": "x" * 1000},
+                "btnEdit": True,
+            }
+            for index in range(24)
+        ]
+        return {"success": True, "result": {"items": items, "totalCount": 24}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    context = _FaultOrderContext()
+    result = await JiangsuFaultWorkOrdersTool().execute(context=context)
+
+    assert result["data_complete"] is True
+    assert result["record_count"] == 24
+    assert "file_path" not in result
+    assert context.saved == []
+    assert "commonFile" not in result["data"][0]
+    assert len(json.dumps(result, ensure_ascii=False)) < 20_000
+
+
+@pytest.mark.asyncio
+async def test_fault_work_order_detail_locates_downloads_attachments_and_returns_exact_order(monkeypatch, tmp_path):
+    requested = []
+    downloaded = []
+
+    async def fake_get(self, path, params):
+        requested.append((path, params))
+        if path.endswith("GetMtcWorkingOrderPagedListAsync"):
+            return {"success": True, "result": {"items": [
+                {"workingOrderCode": "WO-EXACT", "uniqueCode": "U-1"},
+            ], "totalCount": 1}}
+        assert path.endswith("GetWorkingOrderInfoByUniqueCode")
+        return {"success": True, "result": [
+            {"wo": {"workingOrderCode": "WO-OTHER"}, "details": []},
+            {
+                "wo": {
+                    "workingOrderCode": "WO-EXACT",
+                    "orderTitle": "分析仪故障",
+                    "btnEdit": True,
+                    "commonFile": [
+                        {
+                            "id": 7,
+                            "fileName": "evidence.jpg",
+                            "filePath": "/NewFiles/Fault/FaultProcess/2026/8/evidence.jpg",
+                            "typeCode": "FaultProcess",
+                        },
+                        {
+                            "id": 8,
+                            "fileName": "invalid.jpg",
+                            "filePath": "/outside/invalid.jpg",
+                            "typeCode": "FaultProcess",
+                        },
+                    ],
+                },
+                "details": [{"processContent": "已更换备件"}],
+                "faultContentItems": [{"faultName": "通讯异常"}],
+                "checkItemList": [{"name": "通信检查"}],
+                "faultDevice": {"deviceName": "PM2.5 分析仪"},
+                "workFlowInfo": {"stepList": [{
+                    "guid": "step-1", "taskName": "省中心审核", "orderDetailDto": {"large": "x" * 1000},
+                }]},
+                "selectDevices": [
+                    {"id": index, "label": f"候选设备 {index}", "unused": "x" * 100}
+                    for index in range(1682)
+                ],
+            },
+        ]}
+
+    async def fake_download_file(self, path, params, *, max_bytes, retry_unauthorized=True):
+        downloaded.append((path, params, max_bytes, retry_unauthorized))
+        return b"\xff\xd8\xff\xe0JFIF-test-image", "image/jpeg"
+
+    attachment_dir = tmp_path / "attachments"
+    attachment_dir.mkdir()
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr(
+        "app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.download_file",
+        fake_download_file,
+    )
+    monkeypatch.setattr(
+        "app.tools.jiangsu.fault_diagnosis._fault_attachment_output_dir",
+        lambda raw_resource_path, order_code: attachment_dir,
+    )
+    context = _FaultOrderContext()
+    result = await JiangsuFaultWorkOrderDetailTool().execute(
+        context=context, working_order_code="WO-EXACT",
+    )
+
+    assert result["success"] is True
+    assert result["data"][0]["wo"]["workingOrderCode"] == "WO-EXACT"
+    assert result["data"][0]["details"][0]["processContent"] == "已更换备件"
+    assert result["data"][0]["workFlowInfo"]["stepList"][0]["taskName"] == "省中心审核"
+    assert result["data"][0]["attachments"][0]["fileName"] == "evidence.jpg"
+    assert result["data"][0]["attachments"][0]["download_status"] == "success"
+    assert result["data"][0]["attachments"][0]["content_type"] == "image/jpeg"
+    assert Path(result["data"][0]["attachments"][0]["local_path"]).is_file()
+    assert result["data"][0]["attachments"][1]["download_status"] == "failed"
+    assert "NewFiles" in result["data"][0]["attachments"][1]["download_error"]
+    assert "commonFile" not in result["data"][0]["wo"]
+    assert "btnEdit" not in result["data"][0]["wo"]
+    assert "selectDevices" not in result["data"][0]
+    assert result["metadata"]["process_record_count"] == 1
+    assert result["metadata"]["select_devices_omitted"] == 1682
+    assert result["metadata"]["attachment_count"] == 2
+    assert result["metadata"]["attachments_downloaded"] == 1
+    assert result["metadata"]["attachments_failed"] == 1
+    assert result["metadata"]["attachments_skipped"] == 0
+    assert result["metadata"]["attachment_bytes"] == len(b"\xff\xd8\xff\xe0JFIF-test-image")
+    assert result["metadata"]["inline_projection"] == "fault_order_review_v1"
+    assert result["resources"][0]["role"] == "attachment"
+    assert result["resources"][0]["renderer"] == "image"
+    assert result["resources"][0]["label"] == "evidence.jpg"
+    assert ResourceDeclaration.model_validate(result["resources"][0])
+    assert result["file_path"].endswith("jiangsu_fault_work_order_detail_raw.json")
+    assert context.saved[0]["schema"] == "jiangsu_fault_work_order_detail_raw"
+    assert len(context.saved[0]["data"][0]["selectDevices"]) == 1682
+    assert len(json.dumps(result, ensure_ascii=False, indent=2)) < 20_000
+    assert requested[0][1][-1] == ("WorkingOrderCode", "WO-EXACT")
+    assert requested[1][1] == [("uniqueCode", "U-1"), ("take", "20")]
+    assert downloaded == [(
+        "basicinfo/FileCommon/DownFile",
+        [("filePath", "/NewFiles/Fault/FaultProcess/2026/8/evidence.jpg")],
+        20 * 1024 * 1024,
+        True,
+    )]
+
+
+@pytest.mark.asyncio
+async def test_fault_work_order_detail_never_substitutes_another_order(monkeypatch):
+    async def fake_get(self, path, params):
+        if path.endswith("GetMtcWorkingOrderPagedListAsync"):
+            return {"success": True, "result": {"items": [
+                {"workingOrderCode": "WO-EXACT", "uniqueCode": "U-1"},
+            ], "totalCount": 1}}
+        return {"success": True, "result": [
+            {"wo": {"workingOrderCode": "WO-OTHER"}, "details": [{"processContent": "其他工单"}]},
+        ]}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrderDetailTool().execute(working_order_code="WO-EXACT")
+
+    assert result["success"] is False
+    assert result["data"] == []
+    assert "未使用其他工单替代" in result["summary"]
 
 
 @pytest.mark.asyncio

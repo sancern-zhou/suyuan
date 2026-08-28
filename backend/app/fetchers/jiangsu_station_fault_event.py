@@ -947,6 +947,31 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
             },
         )
         self._write_json(event_dir / "event.json", event.model_dump(mode="json"))
+        # Create the workflow case at detection time, before Agent diagnosis.
+        # This preserves failed/timeout/insufficient-evidence events as
+        # measurable business outcomes instead of losing them because no
+        # work-order draft was produced.
+        try:
+            from app.services.jiangsu_feedback_loop import (
+                fault_case_id,
+                get_feedback_loop_store,
+            )
+
+            get_feedback_loop_store().ensure_case(
+                case_id=fault_case_id(event_id),
+                scenario="station_fault_diagnosis",
+                source_record_id=event_id,
+                subject={
+                    "station_code": station_code,
+                    "station_name": candidate.get("station_name"),
+                    "alarm_type": candidate.get("alarm_type"),
+                    "severity": candidate.get("severity"),
+                },
+            )
+        except Exception as exc:
+            # Instrumentation failure must not suppress publication of a
+            # valid station event.
+            logger.warning("jiangsu_feedback_case_create_failed", event_id=event_id, error=str(exc))
         return event
 
     @staticmethod
@@ -1108,4 +1133,20 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
     async def _publish_event(event: TaskEvent) -> Any:
         from app.scheduled_tasks import get_scheduled_task_service
 
-        return await get_scheduled_task_service().publish_event(event)
+        dispatch = await get_scheduled_task_service().publish_event(event)
+        try:
+            from app.services.jiangsu_feedback_loop import fault_case_id, get_feedback_loop_store
+
+            accepted = list(getattr(dispatch, "accepted_task_ids", []) or [])
+            if accepted:
+                get_feedback_loop_store().record(
+                    case_id=fault_case_id(event.event_id),
+                    scenario="station_fault_diagnosis",
+                    event_type="diagnosis_dispatched",
+                    to_status="analyzing",
+                    source_record_id=event.event_id,
+                    payload={"task_ids": accepted, "execution_ids": list(getattr(dispatch, "execution_ids", []) or [])},
+                )
+        except Exception as exc:
+            logger.warning("jiangsu_feedback_dispatch_record_failed", event_id=event.event_id, error=str(exc))
+        return dispatch

@@ -529,6 +529,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     if any(is_project_tool_enabled(context, "legacy", tool_name) for tool_name in {
         "jiangsu_fetch_station_alarm_logs",
         "jiangsu_fetch_fault_work_orders",
+        "jiangsu_fetch_fault_work_order_detail",
         "jiangsu_fetch_auto_inspection",
         "jiangsu_fetch_network_inspection_summary",
         "jiangsu_fetch_station_environment_history",
@@ -540,6 +541,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         try:
             from app.tools.jiangsu.fault_diagnosis import (
                 JiangsuAutoInspectionTool,
+                JiangsuFaultWorkOrderDetailTool,
                 JiangsuFaultWorkOrdersTool,
                 JiangsuNetworkInspectionSummaryTool,
                 JiangsuStationEnvironmentHistoryTool,
@@ -550,7 +552,8 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 JiangsuStationAlarmLogsTool,
             )
             for tool in (
-                JiangsuStationAlarmLogsTool(), JiangsuFaultWorkOrdersTool(), JiangsuAutoInspectionTool(),
+                JiangsuStationAlarmLogsTool(), JiangsuFaultWorkOrdersTool(), JiangsuFaultWorkOrderDetailTool(),
+                JiangsuAutoInspectionTool(),
                 JiangsuNetworkInspectionSummaryTool(), JiangsuStationEnvironmentHistoryTool(),
                 JiangsuQcTaskHistoryTool(), JiangsuQcTaskStatusTool(), JiangsuQcRunLogTool(), JiangsuQcMonitoringCurveTool(),
             ):

@@ -27,6 +27,7 @@
 2. 逐条阅读 `working_order_code`、`rule_id`、`category`、`message` 和 `evidence`。
 3. 对照排除标准逐条判断，只返回应排除的条目；其余默认保留。
 4. 同一工单同一规则存在多条问题时，逐项判断并为每个被排除项单独输出一条记录。
+5. 在调用 `ops_audit_submit_review` 之前，先在内存中完成条数、`issue_id` 集合和重复项校验；任何一项不通过都禁止提交，必须先修正后再提交，不要故意发起一次会失败的提交。
 
 禁止不读文件直接返回、按 `rule_id` 批量排除、把 `needs_followup` 等状态当成排除理由，或使用未引用具体证据的模板化理由。
 
@@ -51,4 +52,4 @@
 3. 对可疑排除项自行读取原条目复核，或要求子 Agent 重新复核。
 4. 按 `working_order_code` 与 `rule_id` 匹配；存在重复键时，结合 `exclude_reason` 引用的具体证据逐项匹配，不扩大排除范围。
 5. 得到 `retained_items = final_issue_list.items - validated_excluded_items`。报告明细和所有统计只使用 `retained_items`。
-
+6. 子 Agent 只负责复核和持久化记录，不负责生成 `report.qmd`、HTML 或 Word；正式报告由主 Agent 生成。

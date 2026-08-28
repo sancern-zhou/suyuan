@@ -505,6 +505,41 @@ class JiangsuFaultWorkOrderDraftTool(LLMTool):
                 "urgency": urgency,
                 "plan_finish_time": (now + timedelta(hours=plan_finish_hours)).strftime("%Y-%m-%d %H:%M:%S"),
             }
+            # The draft is the first durable business hand-off in the fault
+            # workflow.  Link it to a case here so later human confirmation,
+            # platform creation and verification can become outcome labels
+            # without asking the operator to rate the Agent response.
+            feedback_case_id = None
+            try:
+                from app.services.jiangsu_feedback_loop import (
+                    fault_case_id,
+                    get_feedback_loop_store,
+                )
+
+                feedback_case_id = fault_case_id(draft["event_id"], draft_id)
+                draft["feedback_case_id"] = feedback_case_id
+                get_feedback_loop_store().agent_recommendation(
+                    case_id=feedback_case_id,
+                    scenario="station_fault_diagnosis",
+                    source_record_id=draft["event_id"] or draft_id,
+                    recommendation_id=draft_id,
+                    subject={
+                        "station_code": station["station_code"],
+                        "station_name": station.get("station_name"),
+                    },
+                    payload={
+                        "draft_id": draft_id,
+                        "evidence_ref": draft["evidence_ref"],
+                        "order_title": title,
+                        "device_id": device["device_id"],
+                        "fault_content_ids": selected_ids,
+                        "verification_standards": standards,
+                    },
+                )
+            except Exception as exc:
+                # Feedback instrumentation must never prevent an otherwise
+                # valid work-order draft from reaching the operator.
+                logger.warning("jiangsu_feedback_recommendation_record_failed", error=str(exc))
             save_draft(draft)
             audit_path = audit_event({
                 "occurred_at": now.isoformat(),

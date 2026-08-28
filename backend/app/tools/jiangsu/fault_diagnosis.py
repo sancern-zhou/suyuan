@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 from datetime import datetime, timedelta
+from pathlib import Path, PurePosixPath
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import structlog
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.jiangsu.device_control import _DeviceControlClient
+from app.tools.jiangsu.result_filter import externalize_compact_records
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
-from app.tools.resource_declarations import resources_for_visuals
+from app.tools.resource_declarations import resources_for_visuals, single_file_product
+from app.utils.path_config import (
+    format_agent_path,
+    get_sessions_dir,
+    is_path_within,
+    resolve_agent_path,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -80,6 +91,51 @@ class _JiangsuAuthenticatedApi:
             return body
         return {"result": body}
 
+    async def download_file(
+        self,
+        path: str,
+        params: list[tuple[str, str]],
+        *,
+        max_bytes: int,
+        retry_unauthorized: bool = True,
+    ) -> tuple[bytes, str]:
+        """Download one authenticated platform file with a hard size limit."""
+        token = await self._get_token()
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with client.stream(
+                "GET",
+                f"{self.base_url}/{path.lstrip('/')}",
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "SysCode": self.sys_code,
+                    "Accept": "*/*",
+                },
+            ) as response:
+                if response.status_code == 401 and retry_unauthorized:
+                    self._token = None
+                    return await self.download_file(
+                        path,
+                        params,
+                        max_bytes=max_bytes,
+                        retry_unauthorized=False,
+                    )
+                response.raise_for_status()
+                declared_size = response.headers.get("content-length")
+                if declared_size:
+                    try:
+                        parsed_size = int(declared_size)
+                    except ValueError:
+                        parsed_size = None
+                    if parsed_size is not None and parsed_size > max_bytes:
+                        raise ValueError(f"附件超过单文件 {max_bytes // (1024 * 1024)}MB 限制")
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > max_bytes:
+                        raise ValueError(f"附件超过单文件 {max_bytes // (1024 * 1024)}MB 限制")
+                return bytes(content), str(response.headers.get("content-type") or "application/octet-stream")
+
     async def _get_token(self) -> str:
         if self._token:
             return self._token
@@ -133,7 +189,7 @@ class JiangsuStationAlarmLogsTool(LLMTool):
             data = list(await asyncio.gather(
                 *(self._fetch_station(api, station) for station in stations)
             ))
-            count = sum(len((item["result"].get("alarmLogs") or [])) for item in data)
+            count = sum(len(item["result"].get("alarmLogs") or []) for item in data)
             failed_count = sum(1 for item in data if not item["success"])
             success = failed_count < len(stations)
             summary = f"站房告警查询完成：并发查询 {len(stations)} 个站点，返回 {count} 条告警记录"
@@ -170,37 +226,477 @@ class JiangsuStationAlarmLogsTool(LLMTool):
         )
 
 
+_FAULT_ORDER_LIST_FIELDS = (
+    "workingOrderCode",
+    "uniqueCode",
+    "stationCodeStr",
+    "stationName",
+    "city",
+    "deviceId",
+    "deviceInfo",
+    "deviceCode",
+    "operationUnitName",
+    "orderTitle",
+    "orderContent",
+    "orderStatus",
+    "orderStatusStr",
+    "urgencyType",
+    "urgencyTypeStr",
+    "workFlowStatus",
+    "workFlowStatusStr",
+    "currentPointName",
+    "currentPointFormCode",
+    "createTime",
+    "updateTime",
+    "finishTime",
+    "otherContent",
+    "isMakeup",
+    "faultProcessType",
+    "id",
+)
+
+
+def _compact_fault_order_list_item(item: Any) -> dict[str, Any]:
+    """Keep list/review fields while dropping platform UI state and empty placeholders."""
+    if not isinstance(item, dict):
+        return {}
+    compact = {
+        field: item[field]
+        for field in _FAULT_ORDER_LIST_FIELDS
+        if field in item and item[field] not in (None, "", [], {})
+    }
+    if "stationCodeStr" not in compact:
+        station_codes = item.get("stationCodes")
+        if isinstance(station_codes, list) and station_codes:
+            compact["stationCodeStr"] = str(station_codes[0])
+    return compact
+
+
+def _detail_working_order_code(entry: Any) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    work_order = entry.get("wo") if isinstance(entry.get("wo"), dict) else entry
+    return str(work_order.get("workingOrderCode") or "").strip()
+
+
+_FAULT_ORDER_WORKFLOW_FIELDS = ("name", "description", "type", "status", "version")
+_FAULT_ORDER_WORKFLOW_STEP_FIELDS = (
+    "guid", "taskName", "description", "formCode", "rank", "roleId", "status", "createTime",
+)
+_FAULT_ORDER_ATTACHMENT_FIELDS = (
+    "id", "workingOrderCode", "functionCode", "typeCode", "fileName", "filePath",
+    "remark", "createTime", "updateTime",
+)
+_FAULT_ORDER_ATTACHMENT_KEYS = {"commonFile", "commonFile1", "commonFile2"}
+_FAULT_ORDER_DETAIL_UI_FIELDS = {
+    "checkTask", "isEdit", "isFormEdit", "isShow", "isShowModifyRecord",
+    "orderDetailDto", "selectDevices", "wflWorkFlowTaskList",
+}
+_FAULT_ORDER_ATTACHMENT_DOWNLOAD_PATH = "basicinfo/FileCommon/DownFile"
+_FAULT_ORDER_ATTACHMENT_MAX_COUNT = 20
+_FAULT_ORDER_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+_FAULT_ORDER_ATTACHMENT_TOTAL_MAX_BYTES = 100 * 1024 * 1024
+_FAULT_ORDER_ATTACHMENT_CONCURRENCY = 4
+_FAULT_ORDER_BLOCKED_ATTACHMENT_SUFFIXES = {
+    ".asp", ".aspx", ".bat", ".cmd", ".com", ".dll", ".exe", ".msi", ".php", ".ps1", ".sh",
+}
+
+
+def _compact_fields(item: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    return {
+        field: item[field]
+        for field in fields
+        if field in item and item[field] not in (None, "", [], {})
+    }
+
+
+def _prune_empty_detail_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: compact
+            for key, item in value.items()
+            if key not in _FAULT_ORDER_ATTACHMENT_KEYS
+            and key not in _FAULT_ORDER_DETAIL_UI_FIELDS
+            and not key.startswith("btn")
+            and (compact := _prune_empty_detail_value(item)) not in (None, "", [], {})
+        }
+    if isinstance(value, list):
+        return [
+            compact
+            for item in value
+            if (compact := _prune_empty_detail_value(item)) not in (None, "", [], {})
+        ]
+    return value
+
+
+def _extract_fault_order_attachments(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    attachments: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _walk(value: Any, source: str) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                child_source = f"{source}.{key}" if source else key
+                if key in _FAULT_ORDER_ATTACHMENT_KEYS:
+                    candidates = item if isinstance(item, list) else [item]
+                    for candidate in candidates:
+                        compact = _compact_fields(candidate, _FAULT_ORDER_ATTACHMENT_FIELDS)
+                        if not compact:
+                            continue
+                        identity = (
+                            str(compact.get("id") or ""),
+                            str(compact.get("filePath") or ""),
+                            str(compact.get("fileName") or ""),
+                        )
+                        if identity in seen:
+                            continue
+                        seen.add(identity)
+                        compact["source"] = child_source
+                        attachments.append(compact)
+                    continue
+                if key != "selectDevices":
+                    _walk(item, child_source)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                _walk(item, f"{source}[{index}]")
+
+    _walk(detail, "")
+    return attachments
+
+
+def _compact_fault_order_detail(detail: Any) -> tuple[dict[str, Any], dict[str, int]]:
+    if not isinstance(detail, dict):
+        return {}, {"select_devices_omitted": 0, "attachment_count": 0}
+
+    compact: dict[str, Any] = {}
+    work_order = _prune_empty_detail_value(detail.get("wo") or {})
+    if work_order:
+        compact["wo"] = work_order
+
+    processes = _prune_empty_detail_value(detail.get("details") or [])
+    compact["details"] = processes
+
+    for field in ("faultContentItems", "checkItemList"):
+        value = _prune_empty_detail_value(detail.get(field) or [])
+        if value:
+            compact[field] = value
+    for field in ("faultDevice", "changeDevice"):
+        value = _prune_empty_detail_value(detail.get(field) or {})
+        if value:
+            compact[field] = value
+
+    workflow = detail.get("workFlowInfo") or {}
+    if isinstance(workflow, dict):
+        compact_workflow: dict[str, Any] = {}
+        workflow_header = _compact_fields(workflow.get("workFlow"), _FAULT_ORDER_WORKFLOW_FIELDS)
+        if workflow_header:
+            compact_workflow["workFlow"] = workflow_header
+        steps = [
+            step
+            for item in (workflow.get("stepList") or [])
+            if (step := _compact_fields(item, _FAULT_ORDER_WORKFLOW_STEP_FIELDS))
+        ]
+        if steps:
+            compact_workflow["stepList"] = steps
+        if compact_workflow:
+            compact["workFlowInfo"] = compact_workflow
+
+    attachments = _extract_fault_order_attachments(detail)
+    if attachments:
+        compact["attachments"] = attachments
+    selected_devices = detail.get("selectDevices")
+    selected_device_count = len(selected_devices) if isinstance(selected_devices, list) else 0
+    return compact, {
+        "select_devices_omitted": selected_device_count,
+        "attachment_count": len(attachments),
+    }
+
+
+def _validated_fault_attachment_path(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw or "\x00" in raw or "\\" in raw or "?" in raw or "#" in raw:
+        raise ValueError("附件路径无效")
+    path = PurePosixPath(raw)
+    if not path.is_absolute() or len(path.parts) < 3 or path.parts[1] != "NewFiles":
+        raise ValueError("附件不在平台 NewFiles 目录")
+    if any(part in {"", ".", ".."} for part in path.parts[1:]):
+        raise ValueError("附件路径包含非法目录")
+    return raw
+
+
+def _safe_fault_attachment_name(attachment: dict[str, Any], index: int) -> str:
+    raw_name = str(attachment.get("fileName") or "").replace("\x00", "").replace("\\", "/")
+    safe_name = Path(raw_name).name.strip()
+    remote_suffix = PurePosixPath(str(attachment.get("filePath") or "")).suffix.lower()
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = f"attachment-{index + 1}{remote_suffix}"
+    safe_name = re.sub(r"[^0-9A-Za-z._()\-\u4e00-\u9fff]+", "_", safe_name).strip("._")
+    if not safe_name:
+        safe_name = f"attachment-{index + 1}{remote_suffix}"
+    suffix = Path(safe_name).suffix.lower() or remote_suffix
+    if suffix in _FAULT_ORDER_BLOCKED_ATTACHMENT_SUFFIXES:
+        raise ValueError(f"不允许下载可执行附件类型 {suffix}")
+    if not Path(safe_name).suffix and remote_suffix:
+        safe_name += remote_suffix
+    if len(safe_name) <= 180:
+        return safe_name
+    suffix = Path(safe_name).suffix
+    return f"{Path(safe_name).stem[:180 - len(suffix)]}{suffix}"
+
+
+def _fault_attachment_output_dir(raw_resource_path: str, order_code: str) -> Path:
+    raw_path = resolve_agent_path(raw_resource_path)
+    sessions_dir = get_sessions_dir().resolve()
+    if not raw_path.is_file() or not is_path_within(raw_path, [sessions_dir]):
+        raise ValueError("详单审计资源不在当前会话目录")
+    safe_order_code = re.sub(r"[^0-9A-Za-z_-]+", "_", order_code).strip("_") or "fault-order"
+    output_dir = (raw_path.parent / "attachments" / safe_order_code).resolve()
+    if not is_path_within(output_dir, [raw_path.parent]):
+        raise ValueError("附件输出目录无效")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def _save_fault_attachment(output_dir: Path, file_name: str, content: bytes, identity: str) -> Path:
+    identity_prefix = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    target = (output_dir / f"{identity_prefix}-{file_name}").resolve()
+    if not is_path_within(target, [output_dir]):
+        raise ValueError("附件文件名无效")
+    checksum = hashlib.sha256(content).hexdigest()
+    if target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == checksum:
+        return target
+    temporary = target.with_name(f".{target.name}.tmp-{uuid4().hex}")
+    try:
+        temporary.write_bytes(content)
+        temporary.replace(target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return target
+
+
+async def _download_fault_order_attachments(
+    *,
+    api: _JiangsuAuthenticatedApi,
+    attachments: list[dict[str, Any]],
+    raw_resource_path: str | None,
+    order_code: str,
+    tool_name: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    if not attachments:
+        return attachments, [], {"downloaded": 0, "failed": 0, "skipped": 0, "bytes": 0}
+    if not raw_resource_path:
+        for attachment in attachments:
+            attachment["download_status"] = "skipped"
+            attachment["download_error"] = "会话上下文不可用，未保存附件"
+        return attachments, [], {"downloaded": 0, "failed": 0, "skipped": len(attachments), "bytes": 0}
+
+    try:
+        output_dir = _fault_attachment_output_dir(raw_resource_path, order_code)
+    except (OSError, ValueError) as exc:
+        for attachment in attachments:
+            attachment["download_status"] = "failed"
+            attachment["download_error"] = f"附件会话目录不可用：{str(exc)[:240]}"
+        return attachments, [], {"downloaded": 0, "failed": len(attachments), "skipped": 0, "bytes": 0}
+    semaphore = asyncio.Semaphore(_FAULT_ORDER_ATTACHMENT_CONCURRENCY)
+
+    async def _fetch(index: int, attachment: dict[str, Any]) -> dict[str, Any]:
+        if index >= _FAULT_ORDER_ATTACHMENT_MAX_COUNT:
+            return {"status": "skipped", "error": f"附件数量超过 {_FAULT_ORDER_ATTACHMENT_MAX_COUNT} 个限制"}
+        try:
+            remote_path = _validated_fault_attachment_path(attachment.get("filePath"))
+            file_name = _safe_fault_attachment_name(attachment, index)
+            async with semaphore:
+                content, content_type = await api.download_file(
+                    _FAULT_ORDER_ATTACHMENT_DOWNLOAD_PATH,
+                    [("filePath", remote_path)],
+                    max_bytes=_FAULT_ORDER_ATTACHMENT_MAX_BYTES,
+                )
+            return {
+                "status": "downloaded",
+                "content": content,
+                "content_type": content_type,
+                "file_name": file_name,
+                "remote_path": remote_path,
+            }
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"status": "failed", "error": str(exc)[:300]}
+        except Exception as exc:
+            logger.warning(
+                "jiangsu_fault_attachment_download_failed",
+                working_order_code=order_code,
+                attachment_index=index,
+                error=str(exc),
+            )
+            return {"status": "failed", "error": str(exc)[:300]}
+
+    resources: list[dict[str, Any]] = []
+    downloaded = failed = skipped = total_bytes = 0
+    for batch_start in range(0, len(attachments), _FAULT_ORDER_ATTACHMENT_CONCURRENCY):
+        batch = attachments[batch_start:batch_start + _FAULT_ORDER_ATTACHMENT_CONCURRENCY]
+        if total_bytes >= _FAULT_ORDER_ATTACHMENT_TOTAL_MAX_BYTES:
+            for attachment in batch:
+                skipped += 1
+                attachment["download_status"] = "skipped"
+                attachment["download_error"] = "附件总大小超过 100MB 限制"
+            continue
+        fetched = await asyncio.gather(*(
+            _fetch(batch_start + offset, attachment)
+            for offset, attachment in enumerate(batch)
+        ))
+        for offset, (attachment, result) in enumerate(zip(batch, fetched, strict=True)):
+            index = batch_start + offset
+            status = result["status"]
+            if status == "skipped":
+                skipped += 1
+                attachment["download_status"] = "skipped"
+                attachment["download_error"] = result["error"]
+                continue
+            if status == "failed":
+                failed += 1
+                attachment["download_status"] = "failed"
+                attachment["download_error"] = result["error"]
+                continue
+
+            content = result["content"]
+            if total_bytes + len(content) > _FAULT_ORDER_ATTACHMENT_TOTAL_MAX_BYTES:
+                skipped += 1
+                attachment["download_status"] = "skipped"
+                attachment["download_error"] = "附件总大小超过 100MB 限制"
+                continue
+            identity = str(attachment.get("id") or result["remote_path"] or index)
+            try:
+                saved_path = _save_fault_attachment(output_dir, result["file_name"], content, identity)
+            except (OSError, ValueError) as exc:
+                failed += 1
+                attachment["download_status"] = "failed"
+                attachment["download_error"] = f"保存附件失败：{str(exc)[:240]}"
+                continue
+            checksum = hashlib.sha256(content).hexdigest()
+            total_bytes += len(content)
+            downloaded += 1
+            attachment.update({
+                "download_status": "success",
+                "local_path": format_agent_path(saved_path),
+                "content_type": result["content_type"],
+                "size_bytes": len(content),
+                "sha256": checksum,
+            })
+            resources.append(single_file_product(
+                saved_path,
+                tool_name=tool_name,
+                role="attachment",
+                label=str(attachment.get("fileName") or result["file_name"]),
+                logical_key=(
+                    f"jiangsu-fault-attachment:{order_code}:"
+                    f"{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
+                ),
+                metadata={
+                    "working_order_code": order_code,
+                    "attachment_id": attachment.get("id"),
+                    "source": attachment.get("source"),
+                    "size_bytes": len(content),
+                    "sha256": checksum,
+                },
+            ))
+    return attachments, resources, {
+        "downloaded": downloaded,
+        "failed": failed,
+        "skipped": skipped,
+        "bytes": total_bytes,
+    }
+
+
 class JiangsuFaultWorkOrdersTool(LLMTool):
     _PATH = "operation/FaultOrder/GetWorkingOrderInfoByUniqueCode"
+    # Station-free filtered listing, mirroring the platform's FaultOrder page
+    # (front FaultHandling.vue): order code, creation time, workflow node,
+    # node status and order status are all optional server-side filters.
+    _LIST_PATH = "operation/WorkingOrder/GetMtcWorkingOrderPagedListAsync"
+    _WORKFLOW_PATH = "operation/WflWorkFlow/GetWorkFlowByUser"
     _STATION_DIRECTORY_PATH = "AirCityProductBase/GetAllEnabledBSDStationAsync"
     # Per-station serial calls need ~1.3s each upstream; a city-wide sweep
     # (Nanjing: 121 stations) would take minutes.  Geographic fan-out is
     # therefore rejected in favour of directly addressed concurrent queries.
     _MAX_STATIONS = 10
+    _MAX_FETCH_ALL_RECORDS = 1000
+    _WORKFLOW_STATUS_LABELS = {"待分配": "ToAssign", "待领取": "ToAccept", "处理中": "Doing",
+                               "已完成": "Finish", "已拒绝": "Reject"}
+    _ORDER_STATUS_LABELS = {"待处理": "Wait", "处理中": "Doing", "已完成": "Finish", "已作废": "Invalid"}
+    # Platform defaults for the fault-order list page: in-flight workflow
+    # nodes plus all not-invalidated order states.
+    _DEFAULT_WORKFLOW_STATUSES = ["ToAssign", "ToAccept", "Doing"]
+    _DEFAULT_ORDER_STATUSES = ["Wait", "Doing", "Finish"]
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_fault_work_orders",
-            description="按直接指定的站点（名称/平台编码/唯一编码，最多 10 个，并发查询）读取故障工单与历史处置记录；仅用于故障诊断。",
+            description="查询江苏故障工单清单：按工单号、创建时间、工单节点和状态筛选时，默认在一次工具调用内取齐匹配清单；超过 24 条时完整清单外部化保存、上下文返回 24 条首尾预览。也可仅按明确站点读取最近工单与历史处置详情。具体工单复核请继续调用 jiangsu_fetch_fault_work_order_detail。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "按站点名称、平台站点编码或唯一编码查询最近故障工单，最多 10 个站点并发；不支持城市/区县批量。",
+            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "查询故障工单清单。默认 fetch_all=true，由工具内部完成分页并一次返回完整匹配范围；超过 24 条自动保存完整数据文件并内联首尾 24 条。仅当用户明确要求浏览某一页时才设置 fetch_all=false。",
                              "parameters": {"type": "object", "properties": {
                                  "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
-                                                    "description": "站点名称列表，最多 10 个。"},
+                                                    "description": "站点名称列表，最多 10 个；与其他筛选条件组合时作为站点过滤。"},
                                  "station_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
-                                                    "description": "平台站点编码列表，最多 10 个。"},
+                                                    "description": "平台站点编码列表，例如 [\"5006A\"]，最多 10 个。"},
                                  "unique_codes": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
-                                                   "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
-                                 "take": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                                                    "description": "平台唯一编码列表；已知时可直接使用，最多 10 个。"},
+                                 "take": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5,
+                                           "description": "仅按站点查询时每站返回的最近工单条数。"},
+                                 "working_order_code": {"type": "string",
+                                                         "description": "工单号，模糊匹配，如 \"GD20260801001\"。"},
+                                 "start_time": {"type": "string", "description": "创建时间起，YYYY-MM-DD HH:mm:ss。"},
+                                 "end_time": {"type": "string", "description": "创建时间止，YYYY-MM-DD HH:mm:ss。"},
+                                 "current_points": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                                                     "description": "工单节点名称列表，如 [\"故障处理\"]；也可传节点 guid。"},
+                                 "workflow_statuses": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                                                        "description": "节点状态：ToAssign 待分配、ToAccept 待领取、Doing 处理中、Finish 已完成、Reject 已拒绝；也接受中文。默认 [\"ToAssign\",\"ToAccept\",\"Doing\"]。"},
+                                 "order_statuses": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                                                     "description": "工单状态：Wait 待处理、Doing 处理中、Finish 已完成、Invalid 已作废；也接受中文。默认 [\"Wait\",\"Doing\",\"Finish\"]。"},
+                                 "fetch_all": {"type": "boolean", "default": True,
+                                                 "description": "默认 true：工具内部取齐匹配清单，禁止 Agent 自行逐页重复调用。仅在用户明确要求某页时设为 false。"},
+                                 "page": {"type": "integer", "minimum": 1, "default": 1,
+                                          "description": "仅 fetch_all=false 时生效，页码从 1 开始。"},
+                                 "page_size": {"type": "integer", "minimum": 1, "maximum": 50, "default": 50,
+                                                "description": "内部分页或显式分页的每页条数，最大 50。"},
                              }, "required": []}},
+            requires_context=True,
         )
 
     async def execute(self, context=None, station_names: list[str] | None = None,
                       station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
-                      take: int = 5, **_: Any) -> dict[str, Any]:
+                      take: int = 5, working_order_code: str | None = None,
+                      start_time: str | None = None, end_time: str | None = None,
+                      current_points: list[str] | None = None,
+                      workflow_statuses: list[str] | None = None,
+                      order_statuses: list[str] | None = None,
+                      fetch_all: bool = True,
+                      page: int = 1, page_size: int = 50, **_: Any) -> dict[str, Any]:
         try:
             if not isinstance(take, int) or not 1 <= take <= 20:
                 raise ValueError("take 必须为 1–20 的整数")
+            if _.get("city_name") or _.get("district_name"):
+                raise ValueError("不支持城市/区县批量：请直接指定站点（station_names/station_codes/unique_codes），"
+                                 "或改用工单号、状态、时间等条件筛选工单列表")
+            def _nonempty(values: list[str] | None) -> bool:
+                return any(isinstance(value, str) and value.strip() for value in (values or []))
+
+            stations_given = _nonempty(station_names) or _nonempty(station_codes) or _nonempty(unique_codes)
+            points = current_points if isinstance(current_points, list) else None
+            filters_given = bool(working_order_code or start_time or end_time
+                                 or (points is not None and len(points) > 0)
+                                 or workflow_statuses is not None or order_statuses is not None)
+            if not stations_given or filters_given:
+                return await self._execute_filtered(
+                    context,
+                    station_names, station_codes, unique_codes,
+                    working_order_code=working_order_code, start_time=start_time, end_time=end_time,
+                    current_points=points, workflow_statuses=workflow_statuses,
+                    order_statuses=order_statuses, fetch_all=fetch_all,
+                    page=page, page_size=page_size,
+                )
             stations = await _resolve_direct_station_scope(
                 station_names, station_codes, unique_codes,
                 max_stations=self._MAX_STATIONS, require_unique_code=True,
@@ -218,11 +714,232 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             return {"status": "success" if success and orders else ("empty" if success else "failed"),
                     "success": success, "data": orders,
                     "metadata": {"source": "jiangsu_operations_api", "endpoint": self._PATH,
+                                 "query_mode": "per_station",
                                  "station_count": len(stations), "failed_station_count": failed_count,
                                  "record_count": len(orders), "queried_at": datetime.now().astimezone().isoformat()},
                     "summary": summary + "。"}
         except (ValueError, httpx.HTTPError) as exc:
             return {"status": "failed", "success": False, "data": [], "summary": f"故障工单查询失败：{exc}"}
+
+    async def _execute_filtered(
+        self,
+        context: Any,
+        station_names: list[str] | None,
+        station_codes: list[str] | None,
+        unique_codes: list[str] | None,
+        *,
+        working_order_code: str | None,
+        start_time: str | None,
+        end_time: str | None,
+        current_points: list[str] | None,
+        workflow_statuses: list[str] | None,
+        order_statuses: list[str] | None,
+        fetch_all: bool,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        """List fault orders through the platform's filtered paged endpoint."""
+        try:
+            page, page_size = int(page or 1), int(page_size or 50)
+            if page < 1 or not 1 <= page_size <= 50:
+                raise ValueError("page 必须从 1 开始，page_size 必须为 1–50 的整数")
+            if not isinstance(fetch_all, bool):
+                raise ValueError("fetch_all 必须为布尔值")
+            order_code = str(working_order_code or "").strip()
+            if len(order_code) > 64:
+                raise ValueError("working_order_code 过长")
+            filter_params: list[tuple[str, str]] = []
+            if order_code:
+                filter_params.append(("WorkingOrderCode", order_code))
+            time_range: list[str] = []
+            if start_time or end_time:
+                start = _parse_iso_time(start_time, "start_time") if start_time else datetime(2000, 1, 1)
+                end = _parse_iso_time(end_time, "end_time") if end_time else datetime.now()
+                if start > end:
+                    raise ValueError("开始时间不能晚于结束时间")
+                time_range = [start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")]
+                filter_params += [("CreateTime", time_range[0]), ("CreateTime", time_range[1])]
+            point_guids: list[str] = []
+            if current_points:
+                point_guids = await self._resolve_point_guids(current_points)
+                filter_params += [("CurrentPoint", guid) for guid in point_guids]
+            workflow_values, workflow_default = self._normalise_status_values(
+                workflow_statuses, self._WORKFLOW_STATUS_LABELS,
+                self._DEFAULT_WORKFLOW_STATUSES, "workflow_statuses",
+            )
+            order_values, order_default = self._normalise_status_values(
+                order_statuses, self._ORDER_STATUS_LABELS,
+                self._DEFAULT_ORDER_STATUSES, "order_statuses",
+            )
+            filter_params += [("WorkFlowStatus", value) for value in workflow_values]
+            filter_params += [("OrderStatus", value) for value in order_values]
+            station_filter_codes: list[str] = []
+            if station_names or station_codes or unique_codes:
+                stations = await _resolve_direct_station_scope(
+                    station_names, station_codes, unique_codes, max_stations=self._MAX_STATIONS,
+                )
+                station_filter_codes = [station["station_code"] for station in stations]
+                filter_params += [("StationCode", code) for code in station_filter_codes]
+
+            api = _JiangsuAuthenticatedApi(source="ops")
+            request_page = 1 if fetch_all else page
+            request_page_size = 50 if fetch_all else page_size
+            payload = await self._fetch_filtered_page(
+                api, filter_params, page=request_page, page_size=request_page_size,
+            )
+            result = payload.get("result") or {}
+            if not isinstance(result, dict):
+                raise ValueError("故障工单列表接口 result 无效")
+            items = result.get("items") or []
+            total_count = result.get("totalCount", len(items))
+            if not isinstance(items, list):
+                raise ValueError("故障工单列表接口 items 无效")
+            try:
+                total_count = max(int(total_count), len(items))
+            except (TypeError, ValueError):
+                total_count = len(items)
+
+            source_data_complete = (
+                (request_page - 1) * request_page_size + len(items) >= total_count
+            )
+            fetch_limit = min(total_count, self._MAX_FETCH_ALL_RECORDS)
+            if fetch_all and len(items) < fetch_limit:
+                page_count = (fetch_limit + request_page_size - 1) // request_page_size
+                remaining = await asyncio.gather(*(
+                    self._fetch_filtered_page(
+                        api, filter_params, page=page_number, page_size=request_page_size,
+                    )
+                    for page_number in range(2, page_count + 1)
+                ))
+                for page_payload in remaining:
+                    page_result = page_payload.get("result") or {}
+                    page_items = page_result.get("items") or []
+                    if not isinstance(page_items, list):
+                        raise ValueError("故障工单列表接口分页 items 无效")
+                    items.extend(page_items)
+                items = items[:fetch_limit]
+                source_data_complete = len(items) >= total_count
+
+            compact_items = [
+                compact
+                for compact in (_compact_fault_order_list_item(item) for item in items)
+                if compact
+            ]
+            inline_items, file_path, externalization = externalize_compact_records(
+                compact_items,
+                context=context,
+                schema="jiangsu_fault_work_order_list",
+                metadata={
+                    "source_tool": self.name,
+                    "source_endpoint": self._LIST_PATH,
+                    "total_count": total_count,
+                    "source_data_complete": source_data_complete,
+                },
+            )
+            defaults_applied = workflow_default or order_default
+            summary = f"故障工单查询完成：按条件筛选获取 {len(compact_items)} 条记录（共匹配 {total_count} 条）"
+            if file_path:
+                summary += "；完整清单已外部化保存，当前内联首尾 24 条预览"
+            if fetch_all and not source_data_complete:
+                summary += f"；匹配量超过单次完整抓取上限 {self._MAX_FETCH_ALL_RECORDS} 条，当前数据不完整"
+            if defaults_applied:
+                summary += "；默认状态筛选：节点状态 待分配/待领取/处理中，工单状态 待处理/处理中/已完成，传空数组可清除"
+            metadata = {"source": "jiangsu_operations_api", "endpoint": self._LIST_PATH,
+                        "query_mode": "filtered",
+                        "filters": {"working_order_code": order_code or None,
+                                    "create_time": time_range or None,
+                                    "current_points": current_points or [],
+                                    "workflow_statuses": workflow_values,
+                                    "order_statuses": order_values,
+                                    "station_codes": station_filter_codes},
+                        "defaults_applied": defaults_applied,
+                        "record_count": len(compact_items), "total_count": total_count,
+                        "returned_records": len(inline_items),
+                        "fetch_all": fetch_all, "source_data_complete": source_data_complete,
+                        "page": request_page, "page_size": request_page_size,
+                        "context_data": externalization,
+                        "queried_at": datetime.now().astimezone().isoformat()}
+            return {"status": "success" if compact_items else "empty", "success": True, "data": inline_items,
+                    "metadata": metadata,
+                    "summary": summary + ".",
+                    **{key: externalization[key] for key in (
+                        "data_complete", "record_count", "returned_records", "sample_strategy"
+                    )},
+                    **({"file_path": file_path} if file_path else {})}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"status": "failed", "success": False, "data": [], "summary": f"故障工单查询失败：{exc}"}
+
+    async def _fetch_filtered_page(
+        self,
+        api: _JiangsuAuthenticatedApi,
+        filter_params: list[tuple[str, str]],
+        *,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        params = [
+            ("OrderType", "Fault"),
+            ("MaxResultCount", str(page_size)),
+            ("SkipCount", str((page - 1) * page_size)),
+            *filter_params,
+        ]
+        return await api.get(self._LIST_PATH, params)
+
+    def _normalise_status_values(
+        self,
+        values: list[str] | None,
+        labels: dict[str, str],
+        defaults: list[str],
+        name: str,
+    ) -> tuple[list[str], bool]:
+        """Map labels to enum values; None applies the platform defaults."""
+        if values is None:
+            return list(defaults), True
+        if not isinstance(values, list):
+            raise ValueError(f"{name} 必须是字符串数组")
+        allowed = set(labels.values())
+        resolved: list[str] = []
+        for raw in values:
+            token = str(raw or "").strip()
+            value = labels.get(token, token)
+            if value not in allowed:
+                options = "、".join(f"{v}({k})" for k, v in labels.items())
+                raise ValueError(f"{name} 含无效值“{token}”；可选：{options}")
+            if value not in resolved:
+                resolved.append(value)
+        return resolved, False
+
+    async def _resolve_point_guids(self, names: list[str]) -> list[str]:
+        """Resolve workflow node names (or guids) against the Fault workflow."""
+        payload = await _JiangsuAuthenticatedApi(source="ops").get(self._WORKFLOW_PATH, [("Type", "Fault")])
+        result = payload.get("result") or {}
+        steps = result.get("stepList") or []
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("未获取到故障工单流程节点")
+        by_name: dict[str, str] = {}
+        guids: set[str] = set()
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            guid = str(step.get("guid") or "").strip()
+            task_name = str(step.get("taskName") or "").strip()
+            if not guid:
+                continue
+            guids.add(guid)
+            if task_name:
+                by_name.setdefault(task_name, guid)
+        resolved: list[str] = []
+        for raw in names:
+            token = str(raw or "").strip()
+            if not token:
+                continue
+            guid = token if token in guids else by_name.get(token)
+            if not guid:
+                available = "、".join(by_name) or "、".join(sorted(guids))
+                raise ValueError(f"未知工单节点“{token}”；可用节点：{available}")
+            if guid not in resolved:
+                resolved.append(guid)
+        return resolved
 
     async def _fetch_orders(self, api: _JiangsuAuthenticatedApi, station: dict[str, str], take: int) -> dict[str, Any]:
         try:
@@ -266,6 +983,156 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             raise ValueError("匹配站点缺少江苏平台唯一编码")
         return resolved
 
+
+class JiangsuFaultWorkOrderDetailTool(LLMTool):
+    """Resolve one exact fault-order code and return its full platform detail."""
+
+    _LIST_PATH = JiangsuFaultWorkOrdersTool._LIST_PATH
+    _DETAIL_PATH = JiangsuFaultWorkOrdersTool._PATH
+    _DETAIL_TAKE = 20
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="jiangsu_fetch_fault_work_order_detail",
+            description=(
+                "按完整故障工单号查询江苏运维平台详单。先用清单接口精确定位工单所属站点，"
+                "再读取该站点最近详单并按工单号精确匹配。直接返回适合审核上下文的工单、"
+                "处置记录、故障/检查项、当前设备和关键流程；同步下载附件并保存为会话资源，"
+                "完整接口原文另存审计资源。"
+            ),
+            category=ToolCategory.QUERY,
+            function_schema={
+                "name": "jiangsu_fetch_fault_work_order_detail",
+                "description": "按一个完整 working_order_code 获取对应故障工单详单；不得用清单记录替代详单。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "working_order_code": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64,
+                            "description": "完整故障工单号，例如 FA260824178755355757547。",
+                        },
+                    },
+                    "required": ["working_order_code"],
+                },
+            },
+            requires_context=True,
+        )
+
+    async def execute(self, context=None, working_order_code: str | None = None, **_: Any) -> dict[str, Any]:
+        try:
+            order_code = str(working_order_code or "").strip()
+            if not order_code:
+                raise ValueError("working_order_code 不能为空")
+            if len(order_code) > 64:
+                raise ValueError("working_order_code 过长")
+
+            api = _JiangsuAuthenticatedApi(source="ops")
+            list_payload = await api.get(self._LIST_PATH, [
+                ("OrderType", "Fault"),
+                ("MaxResultCount", "50"),
+                ("SkipCount", "0"),
+                ("WorkingOrderCode", order_code),
+            ])
+            list_result = list_payload.get("result") or {}
+            list_items = list_result.get("items") or []
+            if not isinstance(list_items, list):
+                raise ValueError("故障工单定位接口 items 无效")
+            exact = [
+                item for item in list_items
+                if isinstance(item, dict)
+                and str(item.get("workingOrderCode") or "").strip().casefold() == order_code.casefold()
+            ]
+            if not exact:
+                return {"status": "empty", "success": True, "data": [],
+                        "metadata": {"source": "jiangsu_operations_api", "query_mode": "detail_by_code",
+                                     "working_order_code": order_code, "record_count": 0},
+                        "summary": f"未找到与工单号 {order_code} 完全匹配的故障工单。"}
+
+            unique_code = str(exact[0].get("uniqueCode") or "").strip()
+            if not unique_code:
+                raise ValueError(f"工单 {order_code} 缺少站点唯一编码，无法读取详单")
+            detail_payload = await api.get(self._DETAIL_PATH, [
+                ("uniqueCode", unique_code),
+                ("take", str(self._DETAIL_TAKE)),
+            ])
+            detail_items = detail_payload.get("result") or []
+            if not isinstance(detail_items, list):
+                raise ValueError("故障工单详单接口 result 无效")
+            matches = [
+                entry for entry in detail_items
+                if _detail_working_order_code(entry).casefold() == order_code.casefold()
+            ]
+            if not matches:
+                return {"status": "failed", "success": False, "data": [],
+                        "metadata": {"source": "jiangsu_operations_api", "query_mode": "detail_by_code",
+                                     "working_order_code": order_code, "unique_code": unique_code,
+                                     "detail_candidates": len(detail_items), "record_count": 0},
+                        "summary": (
+                            f"已定位工单 {order_code}，但站点最近 {self._DETAIL_TAKE} 条详单中未找到完全匹配记录；"
+                            "未使用其他工单替代。"
+                        )}
+
+            detail = matches[0]
+            compact_detail, projection = _compact_fault_order_detail(detail)
+            if not compact_detail:
+                raise ValueError("故障工单详单内容无效")
+            process_count = len(compact_detail.get("details") or [])
+            file_path = None
+            if context is not None and hasattr(context, "save_data"):
+                file_path = context.save_data(
+                    data=[detail],
+                    schema="jiangsu_fault_work_order_detail_raw",
+                    metadata={
+                        "source_tool": self.name,
+                        "source_endpoint": self._DETAIL_PATH,
+                        "working_order_code": order_code,
+                        "unique_code": unique_code,
+                        "record_count": 1,
+                        "root_type": "array",
+                        "payload_role": "raw_audit_copy",
+                    },
+                )
+            attachment_resources: list[dict[str, Any]] = []
+            attachment_download = {"downloaded": 0, "failed": 0, "skipped": 0, "bytes": 0}
+            attachments = compact_detail.get("attachments") or []
+            if isinstance(attachments, list):
+                attachments, attachment_resources, attachment_download = await _download_fault_order_attachments(
+                    api=api,
+                    attachments=attachments,
+                    raw_resource_path=file_path,
+                    order_code=order_code,
+                    tool_name=self.name,
+                )
+                if attachments:
+                    compact_detail["attachments"] = attachments
+            return {"status": "success", "success": True, "data": [compact_detail],
+                    "metadata": {"source": "jiangsu_operations_api",
+                                 "endpoints": {"locator": self._LIST_PATH, "detail": self._DETAIL_PATH},
+                                 "query_mode": "detail_by_code", "working_order_code": order_code,
+                                 "unique_code": unique_code, "record_count": 1,
+                                 "process_record_count": process_count,
+                                 "inline_projection": "fault_order_review_v1",
+                                 "raw_resource_saved": bool(file_path),
+                                 "attachments_downloaded": attachment_download["downloaded"],
+                                 "attachments_failed": attachment_download["failed"],
+                                 "attachments_skipped": attachment_download["skipped"],
+                                 "attachment_bytes": attachment_download["bytes"],
+                                 **projection,
+                                 "queried_at": datetime.now().astimezone().isoformat()},
+                    "summary": (
+                        f"故障工单 {order_code} 详单查询完成，直接返回审核详单和 {process_count} 条处置/流转记录"
+                        f"；已剔除 {projection['select_devices_omitted']} 条页面设备候选项"
+                        f"；附件下载 {attachment_download['downloaded']} 个、失败 {attachment_download['failed']} 个"
+                        f"、跳过 {attachment_download['skipped']} 个"
+                        + ("，完整接口原文已保存为审计资源。" if file_path else "。")
+                    ),
+                    **({"resources": attachment_resources} if attachment_resources else {}),
+                    **({"file_path": file_path} if file_path else {})}
+        except (ValueError, httpx.HTTPError) as exc:
+            return {"status": "failed", "success": False, "data": [],
+                    "summary": f"故障工单详单查询失败：{exc}"}
 
 async def _resolve_station_rows(
     station_name: str | None,
