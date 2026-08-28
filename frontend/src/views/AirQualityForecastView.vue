@@ -242,7 +242,7 @@ function renderChart() {
   const currentIndex = rows.findIndex(row => row.time === data.value.reference_time)
   chart.value.setOption({
     animationDuration: 180,
-    grid: { left: 60, right: 28, top: 36, bottom: 102 },
+    grid: { left: 8, right: 8, top: 36, bottom: 102, containLabel: true },
     dataZoom: [
       {
         type: 'inside',
@@ -328,23 +328,36 @@ watch(metric, () => {
   renderChart()
   updateVisibleRange()
 })
-watch(chartEl, (element) => {
-  if (element && chartResizeObserver) chartResizeObserver.observe(element)
+watch(chartEl, (element, previous) => {
+  if (previous) {
+    previous.removeEventListener('wheel', onWheel)
+    previous.removeEventListener('mousedown', onDragStart)
+    chartResizeObserver?.unobserve(previous)
+  }
+  if (element) {
+    chartResizeObserver?.observe(element)
+    element.addEventListener('wheel', onWheel, { passive: false })
+    element.addEventListener('mousedown', onDragStart)
+  }
 })
 const onResize = () => chart.value?.resize()
+const onTransitionEnd = (event) => {
+  if (event.target === chartEl.value) return
+  requestAnimationFrame(() => chart.value?.resize())
+}
 onMounted(() => {
   load()
   window.addEventListener('resize', onResize)
-  chartResizeObserver = new ResizeObserver(() => chart.value?.resize())
+  window.addEventListener('transitionend', onTransitionEnd)
+  chartResizeObserver = new ResizeObserver(() => {
+    chart.value?.resize()
+    updateVisibleRange()
+  })
   if (chartEl.value) chartResizeObserver.observe(chartEl.value)
-  const el = chartEl.value
-  if (el) {
-    el.addEventListener('wheel', onWheel, { passive: false })
-    el.addEventListener('mousedown', onDragStart)
-  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('transitionend', onTransitionEnd)
   chartResizeObserver?.disconnect()
   onDragEnd()
   const el = chartEl.value
@@ -373,7 +386,7 @@ select { height: 34px; min-width: 120px; border: 1px solid #aebfbb; border-radiu
 .legend span, .series-key span { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
 .source-time { margin-left: auto; font-size: 12px; color: #718087; white-space: nowrap; }
-.chart-section { margin-top: 16px; padding: 18px 20px 20px; }
+.chart-section { margin-top: 16px; padding: 18px 8px 20px; }
 .forecast-chart { height: min(57vh, 560px); min-height: 360px; cursor: grab; }
 .embedded .chart-section { margin: 0; padding: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .embedded .forecast-chart { height: clamp(470px, calc(100vh - 250px), 820px); min-height: 470px; flex: 1; }

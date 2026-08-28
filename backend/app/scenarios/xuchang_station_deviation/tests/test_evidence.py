@@ -108,10 +108,6 @@ async def test_collect_combines_source_air_weather_and_precomputed_indicators(mo
     assert station_process["target_peer_hourly_comparison"][-1]["deviation_percent"] == 100.0
     assert station_process["current_pollutant_ratios"]["pm25_pm10"] == 0.625
     assert result["collection"]["excluded_data"]["city_air_quality_forecast"].startswith("not_collected")
-    assert [row["time"] for row in result["forecast_meteorology"]["hourly"]] == [
-        "2026-08-05T13:00:00+08:00",
-        "2026-08-06T13:00:00+08:00",
-    ]
 
 
 @pytest.mark.asyncio

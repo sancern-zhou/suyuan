@@ -29,14 +29,23 @@ TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 EVENT_TYPE = "xuchang.station_deviation.alert_created"
 POLLUTANT_COLUMNS = {
     "PM2.5": "pm25",
+    "PM10": "pm10",
+    "SO2": "so2",
+    "NO2": "no2",
+    "CO": "co",
     "O3": "o3",
     # The station table publishes NO2 rather than total NOx. Treat it as an
     # explicit screening proxy instead of silently claiming a NOx measurement.
     "NOX": "no2",
 }
-OBSERVED_INDICATORS = {"PM2.5": "PM2.5", "O3": "O3", "NOX": "NO2"}
+POLLUTANT_SOURCES = {"PM2.5": "hour", "PM10": "minute", "SO2": "minute", "NO2": "minute", "CO": "minute", "O3": "minute", "NOX": "minute"}
+OBSERVED_INDICATORS = {"PM2.5": "PM2.5", "PM10": "PM10", "SO2": "SO2", "NO2": "NO2", "CO": "CO", "O3": "O3", "NOX": "NO2"}
 DEFAULT_ABSOLUTE_DELTA_THRESHOLDS = {
     "PM2.5": 10.0,
+    "PM10": 10.0,
+    "SO2": 5.0,
+    "NO2": 10.0,
+    "CO": 0.2,
     "O3": 30.0,
     "NOX": 15.0,
 }
@@ -49,9 +58,13 @@ class StationDeviationConfig:
     deviation_threshold: float = 0.5
     min_station_count: int = 3
     min_data_rate: float = 0.8
-    pollutants: tuple[str, ...] = ("PM2.5", "O3", "NOX")
+    pollutants: tuple[str, ...] = ("PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "NOX")
     absolute_delta_thresholds: tuple[tuple[str, float], ...] = (
         ("PM2.5", 10.0),
+        ("PM10", 10.0),
+        ("SO2", 5.0),
+        ("NO2", 10.0),
+        ("CO", 0.2),
         ("O3", 30.0),
         ("NOX", 15.0),
     )
@@ -69,10 +82,22 @@ def _float(value: Any) -> float | None:
     return result if result >= 0 else None
 
 
+def _has_mark(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
 def _hour(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(minute=0, second=0, microsecond=0)
     return value.astimezone(TZ_SHANGHAI).replace(minute=0, second=0, microsecond=0)
+
+
+def _slot(value: datetime, source: str) -> datetime:
+    value = value if value.tzinfo else value.replace(tzinfo=TZ_SHANGHAI)
+    value = value.astimezone(TZ_SHANGHAI)
+    if source == "minute":
+        return value.replace(minute=(value.minute // 5) * 5, second=0, microsecond=0)
+    return _hour(value)
 
 
 def detect_station_deviations(
@@ -80,6 +105,7 @@ def detect_station_deviations(
     *,
     expected_station_count: int,
     config: StationDeviationConfig,
+    expected_station_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Apply the documented leave-one-out station-deviation rule."""
     grouped: dict[datetime, list[dict[str, Any]]] = defaultdict(list)
@@ -87,7 +113,7 @@ def detect_station_deviations(
         timestamp = row.get("data_time")
         if not isinstance(timestamp, datetime):
             continue
-        grouped[_hour(timestamp)].append(row)
+        grouped[_slot(timestamp, row.get("data_source", "hour"))].append(row)
 
     alerts: list[dict[str, Any]] = []
     checks: list[dict[str, Any]] = []
@@ -101,20 +127,35 @@ def detect_station_deviations(
             column = POLLUTANT_COLUMNS.get(pollutant)
             if not column:
                 continue
-            values = [(station_id, row, _float(row.get(column))) for station_id, row in station_rows.items()]
+            source = POLLUTANT_SOURCES.get(pollutant, "hour")
+            source_rows = {
+                station_id: row for station_id, row in station_rows.items()
+                if row.get("data_source", "hour") == source
+            }
+            marked_station_count = 0
+            if source == "minute":
+                mark_column = f"{column}_mark"
+                marked_station_count = sum(1 for row in source_rows.values() if _has_mark(row.get(mark_column)))
+                source_rows = {
+                    station_id: row for station_id, row in source_rows.items()
+                    if not _has_mark(row.get(mark_column))
+                }
+            values = [(station_id, row, _float(row.get(column))) for station_id, row in source_rows.items()]
             values = [(station_id, row, value) for station_id, row, value in values if value is not None]
             available_stations = len(values)
-            data_rate = available_stations / expected_station_count if expected_station_count else 0.0
+            expected_count = (expected_station_counts or {}).get(source, expected_station_count)
+            data_rate = available_stations / expected_count if expected_count else 0.0
             check = {
                 "time": timestamp.isoformat(),
                 "pollutant": pollutant,
                 "observed_indicator": OBSERVED_INDICATORS[pollutant],
-                "expected_station_count": expected_station_count,
+                "expected_station_count": expected_count,
                 "available_station_count": available_stations,
+                "marked_station_count": marked_station_count,
                 "data_rate": round(data_rate, 3),
                 "status": "checked",
             }
-            if expected_station_count < config.min_station_count or available_stations < config.min_station_count:
+            if expected_count < config.min_station_count or available_stations < config.min_station_count:
                 check["status"] = "insufficient_station_count"
                 checks.append(check)
                 continue
@@ -155,18 +196,21 @@ def detect_station_deviations(
             pollutant_alerts.sort(key=lambda item: (item["deviation_ratio"], item["absolute_delta"]), reverse=True)
             primary = pollutant_alerts[0]
             alerts.append({
-                    "event_id": f"xuchang-station-deviation-{timestamp:%Y%m%d%H}-{pollutant.lower().replace('.', '')}",
+                    "event_id": f"xuchang-station-deviation-{timestamp:%Y%m%d%H%M}-{pollutant.lower().replace('.', '')}",
                     "event_type": EVENT_TYPE,
                     "occurred_at": timestamp.isoformat(),
                     "city": config.city,
                     "city_area_code": config.city_area_code,
                     "target_pollutant": pollutant,
+                    "data_source": source,
+                    "measurement_granularity": "5min" if source == "minute" else "hour",
                     "observed_indicator": OBSERVED_INDICATORS[pollutant],
                     "nox_proxy_note": "NO2站点小时浓度作为NOX空间异常筛查代理" if pollutant == "NOX" else None,
                     **primary,
                     "secondary_stations": pollutant_alerts[1:],
                     "available_station_count": available_stations,
-                    "expected_station_count": expected_station_count,
+                    "marked_station_count": marked_station_count,
+                    "expected_station_count": expected_count,
                     "data_rate": round(data_rate, 3),
                     "threshold": config.deviation_threshold,
                     "absolute_delta_threshold": absolute_threshold,
@@ -193,10 +237,10 @@ class XuchangStationDeviationAlertService:
         finally:
             connection.close()
 
-    def load_station_rows(self, timestamp: datetime) -> tuple[list[dict[str, Any]], int]:
-        start = _hour(timestamp)
+    def load_station_rows(self, timestamp: datetime) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        start = _hour(timestamp) - timedelta(hours=1)
         end = start + timedelta(hours=1)
-        expected = self._query(
+        expected_hour = self._query(
             """
             SELECT MAX(station_count) AS count FROM (
                 SELECT COUNT(DISTINCT station_id) AS station_count
@@ -207,8 +251,8 @@ class XuchangStationDeviationAlertService:
             """,
             [self.config.city_area_code, start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
-        expected_count = int(expected[0]["count"] or 0) if expected else 0
-        rows = self._query(
+        expected_hour_count = int(expected_hour[0]["count"] or 0) if expected_hour else 0
+        hour_rows = self._query(
             """
             SELECT station_id, name, lon, lat, pm25, pm10, o3, no2, so2, co, data_time
             FROM dbo.dat_station_hour
@@ -217,12 +261,50 @@ class XuchangStationDeviationAlertService:
             """,
             [self.config.city_area_code, start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
-        return rows, expected_count
+        for row in hour_rows:
+            row["data_source"] = "hour"
+
+        # 5-minute observations are queried for the completed five-minute slot.
+        minute_start = timestamp.replace(second=0, microsecond=0)
+        minute_start = minute_start.replace(minute=(minute_start.minute // 5) * 5)
+        minute_end = minute_start + timedelta(minutes=5)
+        expected_minute = self._query(
+            """
+            SELECT MAX(station_count) AS count FROM (
+                SELECT COUNT(DISTINCT station_code) AS station_count
+                FROM dbo.dat_zhongda_station_minute
+                WHERE area = ? AND time_point >= DATEADD(hour, -24, ?) AND time_point < ?
+                GROUP BY time_point
+            ) AS slot_counts
+            """,
+            [self.config.city, minute_start.replace(tzinfo=None), minute_end.replace(tzinfo=None)],
+        )
+        expected_minute_count = int(expected_minute[0]["count"] or 0) if expected_minute else 0
+        minute_rows = self._query(
+            """
+            SELECT station_code AS station_id, station_name AS name,
+                   coords.lon, coords.lat, pm25, pm10, o3, no2, so2, co,
+                   pm25_mark, pm10_mark, o3_mark, no2_mark, so2_mark, co_mark, nox_mark,
+                   time_point AS data_time
+            FROM dbo.dat_zhongda_station_minute AS minute_data
+            LEFT JOIN (
+                SELECT station_id, MAX(lon) AS lon, MAX(lat) AS lat
+                FROM dbo.dat_station_hour
+                GROUP BY station_id
+            ) AS coords ON coords.station_id = minute_data.station_code
+            WHERE minute_data.area = ? AND minute_data.time_point >= ? AND minute_data.time_point < ?
+            ORDER BY minute_data.time_point, minute_data.station_code
+            """,
+            [self.config.city, minute_start.replace(tzinfo=None), minute_end.replace(tzinfo=None)],
+        )
+        for row in minute_rows:
+            row["data_source"] = "minute"
+        return [*hour_rows, *minute_rows], {"hour": expected_hour_count, "minute": expected_minute_count}
 
     def _write_event(self, alert: dict[str, Any]) -> Path:
         timestamp = datetime.fromisoformat(alert["occurred_at"])
         path = self.output_root / timestamp.strftime("%Y%m%d") / f"{alert['event_id']}.json"
-        payload = {"schema_version": "1.0", "scenario": "local_station_deviation_upwind_source_screening", **alert}
+        payload = {"schema_version": "1.0", "scenario": "station_pollution_monitoring_alert", **alert}
         self._write_json(path, payload)
         return path
 
@@ -247,17 +329,24 @@ class XuchangStationDeviationAlertService:
         temp_path.replace(path)
 
     async def run(self, target_time: datetime | None = None) -> dict[str, Any]:
-        # Run after the source hour closes; never inspect a partial current hour.
-        target_hour = _hour(target_time or datetime.now(TZ_SHANGHAI) - timedelta(hours=1))
-        rows, expected_station_count = self.load_station_rows(target_hour)
-        result = detect_station_deviations(rows, expected_station_count=expected_station_count, config=self.config)
+        # Run after the source five-minute slot closes; PM2.5 is still read
+        # from the most recently completed hourly record for that hour.
+        target_slot = _slot(target_time or datetime.now(TZ_SHANGHAI), "minute")
+        rows, expected_station_count = self.load_station_rows(target_slot)
+        result = detect_station_deviations(
+            rows,
+            expected_station_count=expected_station_count.get("hour", 0),
+            expected_station_counts=expected_station_count,
+            config=self.config,
+        )
         events = []
         for alert in result["alerts"]:
             path = self._write_event(alert)
             events.append({**alert, "event_json_path": format_agent_path(path)})
         return {
             "city": self.config.city,
-            "target_hour": target_hour.isoformat(),
+            "target_slot": target_slot.isoformat(),
+            "target_hour": target_slot.isoformat(),
             "expected_station_count": expected_station_count,
             "rows": len(rows),
             "alerts": events,

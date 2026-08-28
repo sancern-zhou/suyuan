@@ -153,7 +153,8 @@ import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectC
 import {
   getRunningAgentSessionId,
   isAgentModeRunning,
-  resolveAgentSelection
+  resolveAgentSelection,
+  resolveTaskWorkspaceMode
 } from '@/components/agentPlatform/workspacePolicy.js'
 
 // 引入composables
@@ -421,6 +422,10 @@ const handleSidebarAction = async (actionId) => {
     await scheduledTasksStore.fetchTasks()
     const task = scheduledTasksStore.tasks.find(item => item.task_id === actionId.taskId)
     if (!task) return
+    const taskMode = resolveTaskWorkspaceMode(task, store.currentMode)
+    if (taskMode !== store.currentMode) {
+      store.switchMode(taskMode)
+    }
     taskWorkspaceTask.value = task
     workspace.value = 'chat'
     showManagementPanel('task-workspace')

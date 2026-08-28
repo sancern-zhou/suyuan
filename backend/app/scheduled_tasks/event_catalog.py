@@ -29,7 +29,7 @@ _EVENT_DEFINITIONS = {
     "xuchang.station_deviation.alert_created": EventDefinition(
         event_type="xuchang.station_deviation.alert_created",
         label="许昌站点空间偏差告警",
-        description="许昌市站点小时浓度相对其他站点均值偏差超过阈值，场景一上风向分析上下文已生成",
+        description="许昌市站点5分钟或PM2.5小时浓度相对其他站点偏差超过阈值，监测对比、气象和质控证据已生成",
         filter_fields=["city", "target_pollutant", "station_id"],
     ),
     "xuchang.station_deviation.episode_closed": EventDefinition(

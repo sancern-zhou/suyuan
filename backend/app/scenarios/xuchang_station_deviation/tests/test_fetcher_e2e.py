@@ -102,20 +102,13 @@ async def test_trigger_runs_analysis_persists_output_and_publishes_event(tmp_pat
     result = await fetcher.fetch_and_store()
 
     alert = result["alerts"][0]
-    assert alert["source_screening_status"] == "success"
-    assert alert["scenario_1_output"]["response_time_ms"] >= 0
-    assert alert["scenario_1_output"]["sla_target_ms"] == 5000
-    assert alert["scenario_1_output"]["sla_met"] is True
-    assert analysis_tool.calls[0]["candidate_radius_km"] == 10.0
-    assert analysis_tool.calls[0]["include_emission_inventory"] is True
-    assert analysis_tool.calls[0]["start_time"] == "2026-08-05T00:00:00+08:00"
-    assert (tmp_path / "scenario-1-e2e.scenario-1.json").exists()
+    assert not analysis_tool.calls
     assert (tmp_path / "scenario-1-e2e.evidence.json").exists()
     assert alert["evidence_collection"]["status"] == "complete"
     assert alert["evidence_package_path"].endswith("scenario-1-e2e.evidence.json")
-    assert evidence_collector.calls[0]["source_screening"]["status"] == "success"
+    assert evidence_collector.calls[0]["source_screening"]["status"] == "not_run"
     assert len(task_service.events) == 1
-    assert task_service.events[0].payload["scenario_1_output"]["scenario"] == 1
+    assert task_service.events[0].payload["evidence_collection"]["status"] == "complete"
     assert task_service.events[0].payload["evidence_package_path"].endswith(".evidence.json")
 
 
@@ -134,9 +127,7 @@ async def test_failed_analysis_does_not_meet_sla_and_still_publishes_alert(tmp_p
     result = await fetcher.fetch_and_store()
 
     alert = result["alerts"][0]
-    assert alert["source_screening_status"] == "failed"
-    assert alert["source_screening_sla_met"] is False
-    assert alert["source_screening_error"] == "permit coordinate mapping missing"
+    assert "source_screening_status" not in alert
     assert "scenario_1_output" not in alert
     assert len(task_service.events) == 1
-    assert task_service.events[0].payload["source_screening_status"] == "failed"
+    assert task_service.events[0].payload["evidence_collection"]["status"] == "complete"

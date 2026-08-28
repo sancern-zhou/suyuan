@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import {
   getRunningAgentSessionId,
   isAgentModeRunning,
-  resolveAgentSelection
+  resolveAgentSelection,
+  resolveTaskWorkspaceMode
 } from './workspacePolicy.js'
 
 const createState = () => ({
@@ -64,4 +65,17 @@ test('unsupported mode selection is rejected', () => {
     mode: 'missing',
     action: 'invalid'
   })
+})
+
+test('report task workspace selects the task agent instead of the current query mode', () => {
+  assert.equal(
+    resolveTaskWorkspaceMode({ execution_mode: 'report' }, 'query'),
+    'report'
+  )
+})
+
+test('non-chat task modes preserve the current agent', () => {
+  assert.equal(resolveTaskWorkspaceMode({ execution_mode: 'custom' }, 'query'), 'query')
+  assert.equal(resolveTaskWorkspaceMode({ execution_mode: 'social' }, 'report'), 'report')
+  assert.equal(resolveTaskWorkspaceMode({}, 'query'), 'query')
 })

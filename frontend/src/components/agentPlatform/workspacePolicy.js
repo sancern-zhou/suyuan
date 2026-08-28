@@ -19,6 +19,15 @@ export const isAgentModeRunning = (mode, state) => {
   return Boolean(getRunningAgentSessionId(mode, state))
 }
 
+// Workspace tasks may be configured with non-chat modes (social/custom). Only
+// switch the conversation when the task explicitly targets a supported agent.
+export const resolveTaskWorkspaceMode = (task, currentMode) => {
+  const taskMode = typeof task?.execution_mode === 'string'
+    ? task.execution_mode.trim()
+    : ''
+  return AGENT_MODE_IDS.includes(taskMode) ? taskMode : currentMode
+}
+
 export const resolveAgentSelection = (mode, state) => {
   if (!AGENT_MODE_IDS.includes(mode)) {
     return { mode, action: 'invalid' }

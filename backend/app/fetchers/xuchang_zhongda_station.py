@@ -603,7 +603,9 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
             "minute": (
                 "xuchang_zhongda_station_minute_fetcher",
                 "抓取中大平台许昌市站点5分钟数据",
-                "*/5 * * * *",
+                # 中大平台的5分钟批次通常在时间点后约1分钟才可查询；
+                # 例如16:45批次在16:46抓取，避免整点触发时读不到最新批次。
+                "1-59/5 * * * *",
             ),
             "hour": (
                 "xuchang_zhongda_station_hour_fetcher",

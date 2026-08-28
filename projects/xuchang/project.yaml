@@ -103,4 +103,5 @@ knowledge:
   collections:
   - xuchang
 scheduled_tasks:
+  - task_xuchang_station_deviation_alert
   - task_xuchang_station_daily_source_report

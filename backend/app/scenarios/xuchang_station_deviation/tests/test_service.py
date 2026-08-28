@@ -87,9 +87,13 @@ def test_one_pollutant_event_keeps_primary_and_secondary_stations():
 
 
 def test_nox_uses_no2_as_an_explicit_proxy():
+    rows = [_row("a", 100), _row("b", 40), _row("c", 40)]
+    for row in rows:
+        row["data_source"] = "minute"
     result = detect_station_deviations(
-        [_row("a", 100), _row("b", 40), _row("c", 40)],
+        rows,
         expected_station_count=3,
+        expected_station_counts={"minute": 3},
         config=StationDeviationConfig(pollutants=("NOX",)),
     )
 
@@ -97,3 +101,35 @@ def test_nox_uses_no2_as_an_explicit_proxy():
     assert alert["target_pollutant"] == "NOX"
     assert alert["observed_indicator"] == "NO2"
     assert "代理" in alert["nox_proxy_note"]
+
+
+def test_minute_rows_are_grouped_in_five_minute_slots():
+    rows = [_row("a", 100), _row("b", 40), _row("c", 40)]
+    for row in rows:
+        row["data_source"] = "minute"
+        row["data_time"] = datetime(2026, 8, 4, 8, 7)
+    result = detect_station_deviations(
+        rows,
+        expected_station_count=3,
+        expected_station_counts={"minute": 3},
+        config=StationDeviationConfig(pollutants=("O3",)),
+    )
+
+    assert result["alerts"][0]["occurred_at"].endswith("08:05:00+08:00")
+
+
+def test_marked_minute_value_is_exempt_from_alert_calculation():
+    rows = [_row("a", 100), _row("b", 40), _row("c", 40)]
+    for row in rows:
+        row["data_source"] = "minute"
+        row["data_time"] = datetime(2026, 8, 4, 8, 5)
+    rows[0]["o3_mark"] = "质控"
+    result = detect_station_deviations(
+        rows,
+        expected_station_count=3,
+        expected_station_counts={"minute": 3},
+        config=StationDeviationConfig(pollutants=("O3",)),
+    )
+
+    assert result["alerts"] == []
+    assert result["checks"][0]["available_station_count"] == 2

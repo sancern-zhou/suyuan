@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from math import atan2, cos, degrees, radians, sin, sqrt
 from statistics import mean, median
 from typing import Any
@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo
 import pyodbc
 
 from app.db.repositories.weather_repo import WeatherRepository
-from app.external_apis.openmeteo_client import OpenMeteoClient
 from app.integrations.xcai_station_sql import xcai_connection_string
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -24,7 +23,6 @@ XUCHANG_NEARBY_CITIES = ("郑州市", "开封市", "周口市", "漯河市", "�
 NMC_STATIONS = {"ZzMTA": "许昌", "HFqwM": "禹州", "sHlBF": "长葛"}
 POLLUTANT_COLUMNS = {"PM2.5": "pm25", "O3": "o3", "NOX": "no2"}
 AIR_QUALITY_LOOKBACK_HOURS = 12
-METEOROLOGY_FORECAST_HOURS = 24
 CALM_WIND_THRESHOLD_MS = 1.5
 
 
@@ -33,6 +31,13 @@ def _event_hour(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=TZ_SHANGHAI)
     return parsed.astimezone(TZ_SHANGHAI).replace(minute=0, second=0, microsecond=0)
+
+
+def _event_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=TZ_SHANGHAI)
+    return parsed.astimezone(TZ_SHANGHAI)
 
 
 def _record_hour(value: Any) -> datetime | None:
@@ -209,6 +214,56 @@ def _station_indicators(
     }
 
 
+def _station_5min_indicators(alert: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    field = POLLUTANT_COLUMNS.get(str(alert.get("target_pollutant"))) or str(alert.get("target_pollutant", "")).lower()
+    station_id = str(alert.get("station_id") or "")
+    parsed = []
+    for row in rows:
+        try:
+            timestamp = datetime.fromisoformat(str(row.get("time")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        value = _number(row.get(field))
+        if value is not None:
+            parsed.append((timestamp, row, value))
+    target = sorted((t, v) for t, row, v in parsed if str(row.get("station_id")) == station_id)
+    target_changes = [
+        {"time": t.isoformat(), "value": _rounded(value), "absolute_change": _rounded(value - target[i - 1][1]),
+         "percent_change": _rounded((value - target[i - 1][1]) / target[i - 1][1] * 100, 1) if target[i - 1][1] else None}
+        for i, (t, value) in enumerate(target) if i and t - target[i - 1][0] <= timedelta(minutes=10)
+    ]
+    peer_comparison = []
+    for timestamp in sorted({t for t, _, _ in parsed}):
+        slot_rows = [(row, value) for t, row, value in parsed if t == timestamp]
+        target_value = next((value for row, value in slot_rows if str(row.get("station_id")) == station_id), None)
+        peers = [value for row, value in slot_rows if str(row.get("station_id")) != station_id]
+        peer_value = median(peers) if peers else None
+        peer_comparison.append({
+            "time": timestamp.isoformat(),
+            "target_value": _rounded(target_value),
+            "peer_median": _rounded(peer_value),
+            "absolute_delta": _rounded(target_value - peer_value) if target_value is not None and peer_value is not None else None,
+            "deviation_percent": _rounded((target_value - peer_value) / peer_value * 100, 1) if target_value is not None and peer_value else None,
+            "peer_count": len(peers),
+        })
+    mark_fields = [f"{field}_mark"]
+    marked = [
+        {"time": str(row.get("time")), "station_id": row.get("station_id"), "mark": row.get(mark_fields[0])}
+        for _, row, _ in parsed if str(row.get("station_id")) == station_id and row.get(mark_fields[0]) not in (None, "")
+    ]
+    return {
+        "status": "success" if target else "unavailable",
+        "pollutant": alert.get("target_pollutant"),
+        "observed_field": field,
+        "window": "previous_1_hour",
+        "target_station_values": [{"time": t.isoformat(), "value": _rounded(v)} for t, v in target],
+        "target_station_5min_changes": target_changes,
+        "target_peer_5min_comparison": peer_comparison,
+        "marked_quality_records": marked,
+        "peer_comparison_note": "每个5分钟槽位的周边站点中位数用于对比；带mark记录不作为污染异常事实直接解释。",
+    }
+
+
 def _regional_indicators(
     city_rows: list[dict[str, Any]], pollutant: str, event_hour: datetime
 ) -> dict[str, Any]:
@@ -312,11 +367,10 @@ class XuchangStationDeviationEvidenceCollector:
         self,
         *,
         connection_string_factory: Callable[[], str] = xcai_connection_string,
-        forecast_client: OpenMeteoClient | None = None,
+        forecast_client: Any | None = None,
         weather_repo: WeatherRepository | None = None,
     ) -> None:
         self.connection_string_factory = connection_string_factory
-        self.forecast_client = forecast_client or OpenMeteoClient()
         self.weather_repo = weather_repo or WeatherRepository()
 
     async def collect(
@@ -325,17 +379,12 @@ class XuchangStationDeviationEvidenceCollector:
         alert: dict[str, Any],
         source_screening: dict[str, Any],
     ) -> dict[str, Any]:
+        event_time = _event_time(alert["occurred_at"])
         event_hour = _event_hour(alert["occurred_at"])
         air_start = event_hour - timedelta(hours=AIR_QUALITY_LOOKBACK_HOURS)
-        forecast_end = event_hour + timedelta(hours=METEOROLOGY_FORECAST_HOURS)
-
-        air_result, observed_result, forecast_result = await asyncio.gather(
-            asyncio.to_thread(self._load_air_quality, air_start, event_hour),
+        air_result, observed_result = await asyncio.gather(
+            asyncio.to_thread(self._load_air_quality, air_start, event_time),
             self._load_observed_weather(air_start, event_hour),
-            self._load_forecast(
-                lat=float(alert["lat"]), lon=float(alert["lon"]),
-                start=event_hour, end=forecast_end,
-            ),
             return_exceptions=True,
         )
 
@@ -345,7 +394,9 @@ class XuchangStationDeviationEvidenceCollector:
             air_quality: dict[str, Any] = {
                 "status": "failed", "window": {"start": air_start.isoformat(), "end": event_hour.isoformat()},
                 "target_city": XUCHANG_CITY, "nearby_cities": list(XUCHANG_NEARBY_CITIES),
-                "target_city_hour_records": [], "nearby_city_hour_records": [], "local_station_hour_records": [],
+                "target_city_hour_records": [], "nearby_city_hour_records": [],
+                "local_station_hour_records": [], "local_station_5min_records": [],
+                "maintenance_qc_review": {"required": False, "instruction": "5分钟证据不可用，无法判断运维质控影响。"},
             }
         else:
             air_quality = air_result
@@ -359,19 +410,13 @@ class XuchangStationDeviationEvidenceCollector:
         else:
             observed_meteorology = observed_result
 
-        if isinstance(forecast_result, BaseException):
-            errors.append({"asset": "forecast_meteorology", "error": str(forecast_result)})
-            forecast_meteorology: dict[str, Any] = {
-                "status": "failed", "window": {"start": event_hour.isoformat(), "end": forecast_end.isoformat()},
-                "receptor": {"lat": alert["lat"], "lon": alert["lon"]}, "hourly": [],
-            }
-        else:
-            forecast_meteorology = forecast_result
-
         computed_indicators = {
             "calculation_status": "success" if air_quality.get("local_station_hour_records") else "unavailable",
             "station_process": _station_indicators(
                 alert, air_quality.get("local_station_hour_records", []), event_hour
+            ),
+            "station_5min_process": _station_5min_indicators(
+                alert, air_quality.get("local_station_5min_records", [])
             ),
             "regional_comparison": _regional_indicators(
                 [*air_quality.get("target_city_hour_records", []), *air_quality.get("nearby_city_hour_records", [])],
@@ -385,7 +430,7 @@ class XuchangStationDeviationEvidenceCollector:
         }
 
         source_screening_status = source_screening.get("status")
-        if source_screening_status != "success":
+        if source_screening_status not in {"success", "not_run"}:
             errors.append({
                 "asset": "source_screening",
                 "error": (
@@ -394,12 +439,9 @@ class XuchangStationDeviationEvidenceCollector:
                     or f"source_screening_{source_screening_status or 'failed'}"
                 ),
             })
-        asset_statuses = [
-            source_screening_status,
-            air_quality.get("status"),
-            observed_meteorology.get("status"),
-            forecast_meteorology.get("status"),
-        ]
+        asset_statuses = [air_quality.get("status"), observed_meteorology.get("status")]
+        if source_screening_status != "not_run":
+            asset_statuses.insert(0, source_screening_status)
         if all(status == "success" for status in asset_statuses):
             collection_status = "complete"
         elif any(status in {"success", "partial"} for status in asset_statuses):
@@ -413,7 +455,6 @@ class XuchangStationDeviationEvidenceCollector:
             "source_screening": source_screening,
             "air_quality_context": air_quality,
             "observed_meteorology": observed_meteorology,
-            "forecast_meteorology": forecast_meteorology,
             "computed_indicators": computed_indicators,
             "collection": {
                 "status": collection_status,
@@ -422,8 +463,8 @@ class XuchangStationDeviationEvidenceCollector:
                     "city_air_quality_forecast": "not_collected: event scope is station-level source tracing",
                 },
                 "interpretation_contract": (
-                    "Agent只读取本证据包开展逻辑分析，不重新调用上风向筛查、空气质量或气象查询工具；"
-                    "确定性指标直接引用computed_indicators，相关性不得表述为因果归因。"
+                    "Agent只读取本证据包开展监测告警通报；确定性指标直接引用computed_indicators，"
+                    "mark造成的质控影响必须与污染事实区分。"
                 ),
             },
         }
@@ -436,6 +477,7 @@ class XuchangStationDeviationEvidenceCollector:
         connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
         try:
             cursor = connection.cursor()
+            minute_start_value = (end - timedelta(hours=1)).replace(tzinfo=None)
             cursor.execute(
                 f"""
                 SELECT TimePoint AS time, Area AS city, CityCode AS city_code,
@@ -460,20 +502,43 @@ class XuchangStationDeviationEvidenceCollector:
                 [XUCHANG_CITY_AREA_CODE, start_value, end_value],
             )
             station_rows = _rows(cursor)
+            cursor.execute(
+                """
+                SELECT time_point AS time, station_code AS station_id,
+                       station_name, area,
+                       pm25, pm25_mark, pm10, pm10_mark,
+                       o3, o3_mark, no2, no2_mark,
+                       so2, so2_mark, co, co_mark, nox, nox_mark
+                FROM dbo.dat_zhongda_station_minute
+                WHERE area = ? AND time_point >= ? AND time_point <= ?
+                ORDER BY time_point, station_code
+                """,
+                [XUCHANG_CITY, minute_start_value, end_value],
+            )
+            station_minute_rows = _rows(cursor)
         finally:
             connection.close()
 
-        air_status = "success" if city_rows and station_rows else "partial" if city_rows or station_rows else "empty"
+        air_status = "success" if city_rows and (station_rows or station_minute_rows) else "partial" if city_rows or station_rows or station_minute_rows else "empty"
         return {
             "status": air_status,
-            "source": "XcAiDb.CityAQIPublishHistory + dbo.dat_station_hour",
+            "source": "XcAiDb.CityAQIPublishHistory + dbo.dat_station_hour + dbo.dat_zhongda_station_minute",
             "window": {"start": start.isoformat(), "end": end.isoformat()},
             "target_city": XUCHANG_CITY,
             "nearby_cities": list(XUCHANG_NEARBY_CITIES),
             "target_city_hour_records": [row for row in city_rows if row.get("city") == XUCHANG_CITY],
             "nearby_city_hour_records": [row for row in city_rows if row.get("city") != XUCHANG_CITY],
             "local_station_hour_records": station_rows,
-            "record_counts": {"city_hours": len(city_rows), "local_station_hours": len(station_rows)},
+            "local_station_5min_records": station_minute_rows,
+            "record_counts": {
+                "city_hours": len(city_rows),
+                "local_station_hours": len(station_rows),
+                "local_station_5min": len(station_minute_rows),
+            },
+            "maintenance_qc_review": {
+                "required": bool(station_minute_rows),
+                "instruction": "检查告警前1小时5分钟记录中的*_mark字段；有标识的污染物数据可能受运维质控操作影响，不应直接归因于污染变化。",
+            },
         }
 
     async def _load_observed_weather(self, start: datetime, end: datetime) -> dict[str, Any]:
@@ -494,38 +559,4 @@ class XuchangStationDeviationEvidenceCollector:
                 "temperature_2m": "degC", "relative_humidity_2m": "%", "wind_speed_10m": "m/s",
                 "wind_direction_10m": "degree", "surface_pressure": "hPa", "precipitation": "mm",
             },
-        }
-
-    async def _load_forecast(
-        self, *, lat: float, lon: float, start: datetime, end: datetime,
-    ) -> dict[str, Any]:
-        raw = await self.forecast_client.fetch_forecast(
-            lat=lat, lon=lon, forecast_days=2, past_days=0, hourly=True, daily=True,
-        )
-        hourly_source = raw.get("hourly") if isinstance(raw.get("hourly"), dict) else {}
-        times = hourly_source.get("time") or []
-        hourly = []
-        for index, time_value in enumerate(times):
-            parsed = datetime.fromisoformat(str(time_value).replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            local_time = parsed.astimezone(TZ_SHANGHAI)
-            if not start <= local_time <= end:
-                continue
-            record = {"time": local_time.isoformat()}
-            for field, values in hourly_source.items():
-                if field == "time" or not isinstance(values, list):
-                    continue
-                record[field] = values[index] if index < len(values) else None
-            hourly.append(record)
-
-        return {
-            "status": "success" if hourly else "empty",
-            "source": "Open-Meteo Forecast API (meteorology only)",
-            "window": {"start": start.isoformat(), "end": end.isoformat()},
-            "receptor": {"lat": lat, "lon": lon},
-            "hourly": hourly,
-            "record_count": len(hourly),
-            "daily": raw.get("daily") or {},
-            "units": {"hourly": raw.get("hourly_units") or {}, "daily": raw.get("daily_units") or {}},
         }
