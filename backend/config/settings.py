@@ -528,6 +528,10 @@ class Settings(BaseSettings):
     redis_port: int = Field(default=6379, description="Redis port")
     redis_db: int = Field(default=0, description="Redis database number")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
+    redis_ssl: bool = Field(
+        default=False,
+        description="Use TLS for Redis (rediss://); enable after the server enables tls-port",
+    )
     agent_steering_redis_prefix: str = Field(
         default="suyuan:agent:steering",
         description="Redis key prefix for cross-worker active-run steering",
@@ -758,7 +762,15 @@ class Settings(BaseSettings):
     )
     sqlserver_driver: str = Field(
         default="ODBC Driver 17 for SQL Server",
-        description="SQL Server ODBC driver name"
+        description="SQL Server ODBC driver name",
+    )
+    sqlserver_encrypt: str = Field(
+        default="no",
+        description="ODBC Encrypt flag: yes/no/strict; set yes once the server TLS is verified",
+    )
+    sqlserver_trust_server_certificate: str = Field(
+        default="yes",
+        description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
 
     @property
@@ -774,8 +786,9 @@ class Settings(BaseSettings):
             f"SERVER={self.sqlserver_host},{self.sqlserver_port};"
             f"DATABASE={self.sqlserver_database};"
             f"UID={self.sqlserver_user};"
-            f"PWD={{{self.sqlserver_password}}};"  # Wrap password in braces for special chars
-            f"TrustServerCertificate=yes;"
+            f"PWD={{{self.sqlserver_password}}};"
+            f"Encrypt={self.sqlserver_encrypt};"
+            f"TrustServerCertificate={self.sqlserver_trust_server_certificate};"
         )
 
     # Query Template Configuration
@@ -817,9 +830,11 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         """Construct Redis URL."""
-        if self.redis_password:
-            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
-        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        scheme = "rediss" if self.redis_ssl else "redis"
+        auth = f":{self.redis_password}" if self.redis_password else ""
+        return f"{scheme}://{auth}@{self.redis_host}:{self.redis_port}/{self.redis_db}" if auth else (
+            f"{scheme}://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        )
 
     def get_llm_config(self) -> dict:
         """Get LLM configuration based on provider."""
