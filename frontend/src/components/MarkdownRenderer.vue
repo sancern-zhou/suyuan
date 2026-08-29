@@ -25,6 +25,7 @@ import {
   renderDeferredApiImage
 } from './markdownApiImages.js'
 import { normalizeRestoredContent } from '@/stores/sessionContent.js'
+import { sanitizeRichHtml } from '@/utils/sanitize.js'
 
 // 预处理后的内容
 const processedContent = ref('')
@@ -312,7 +313,8 @@ const renderedHtml = computed(() => {
     console.log('[MarkdownRenderer] 警告：渲染后的HTML中没有img标签！')
   }
 
-  return rendered
+  // 渲染结果统一净化，阻断 LLM/知识库内容中的脚本注入（XSS）
+  return sanitizeRichHtml(rendered)
 })
 
 // 收集Markdown中的所有图片

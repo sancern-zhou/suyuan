@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from app.services.ops_audit.models import Issue
+from app.services.ops_audit.remote_fetch import guarded_get
 from app.services.ops_audit.rules.base import add_issue
 
 RULE_ID = "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH"
@@ -820,7 +821,7 @@ def _resolve_source(source: str) -> dict[str, Any]:
 
 def _download_to_temp(url: str) -> dict[str, Any]:
     try:
-        response = requests.get(url, timeout=30)
+        response = guarded_get(url, timeout=30)
         response.raise_for_status()
     except requests.RequestException as exc:
         return {"status": "error", "error": f"下载附件失败：{exc}"}
