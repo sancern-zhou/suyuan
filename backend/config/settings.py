@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
     environment: str = Field(default="development", description="Environment name")
-    debug: bool = Field(default=True, description="Debug mode")
+    debug: bool = Field(default=False, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
     project_id: str = Field(
         default="default",
@@ -206,6 +206,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_authentication_safety(self):
+        if "*" in self.cors_origins_list:
+            raise ValueError(
+                "CORS_ORIGINS must not use '*' because credentialed CORS is enabled"
+            )
+
+        internal_host = self.social_worker_internal_host.strip().lower()
+        if (
+            internal_host not in {"127.0.0.1", "localhost", "::1"}
+            and not (self.social_worker_internal_token or "").strip()
+        ):
+            raise ValueError(
+                "SOCIAL_WORKER_INTERNAL_TOKEN is required when the worker "
+                "internal API binds beyond loopback"
+            )
+
         if self.environment.strip().lower() != "production":
             return self
 

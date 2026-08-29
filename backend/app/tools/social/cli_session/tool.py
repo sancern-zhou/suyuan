@@ -480,7 +480,8 @@ class CliSessionTool(LLMTool):
             "--session-id",
             state["vendor_session_id"],
             "--permission-mode",
-            permission_mode if permission_mode in {"default", "acceptEdits", "bypassPermissions", "dontAsk", "plan"} else "acceptEdits",
+            # bypassPermissions 等效关闭审批，禁止使用
+            permission_mode if permission_mode in {"default", "acceptEdits", "dontAsk", "plan"} else "acceptEdits",
         ]
         if model:
             args.extend(["--model", model])
@@ -510,20 +511,10 @@ class CliSessionTool(LLMTool):
             state["cwd"],
         ]
 
-        # 在SELinux环境下，bubblewrap无法正常工作，需要绕过沙箱
-        # 检测SELinux状态，如果启用则使用dangerously-bypass模式
-        try:
-            import subprocess
-            selinux_result = subprocess.run(["getenforce"], capture_output=True, text=True, timeout=2)
-            if selinux_result.stdout.strip() in ["Enforcing", "Permissive"]:
-                # SELinux启用时，绕过沙箱以避免bubblewrap权限问题
-                args.append("--dangerously-bypass-approvals-and-sandbox")
-            else:
-                # 正常情况下使用沙箱
-                args.extend(["--sandbox", sandbox if sandbox in {"read-only", "workspace-write", "danger-full-access"} else "workspace-write"])
-        except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError):
-            # 无法检测SELinux状态，使用沙箱
-            args.extend(["--sandbox", sandbox if sandbox in {"read-only", "workspace-write", "danger-full-access"} else "workspace-write"])
+        # 沙箱模式固定为只读/工作区写入；danger-full-access 与
+        # --dangerously-bypass-approvals-and-sandbox 一律不再提供，
+        # 以免社交渠道经提示注入获得宿主机完全访问权限。
+        args.extend(["--sandbox", sandbox if sandbox in {"read-only", "workspace-write"} else "workspace-write"])
 
         # Add approval policy via config override (仅在不绕过沙箱时有效)
         if approval_policy in {"untrusted", "on-failure", "on-request", "never"}:

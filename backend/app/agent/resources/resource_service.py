@@ -9,7 +9,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from app.utils.path_config import get_data_registry, get_sessions_dir
+from app.utils.path_config import (
+    TEMP_ROOT,
+    get_data_registry,
+    get_sessions_dir,
+    get_uploads_dir,
+    is_path_within,
+)
 
 from .contracts import ResourceDeclaration, ResourceRelation
 
@@ -202,6 +208,12 @@ class SessionResourceService:
                 continue
             if not source.exists():
                 raise ValueError(f"resource path does not exist: {source}")
+            # 防止任意主机文件被发布为可下载会话资源：
+            # 仅允许数据注册表、上传目录与临时目录来源。
+            if not is_path_within(source, [registry_root, get_uploads_dir(), TEMP_ROOT]):
+                raise ValueError(
+                    f"resource path outside allowed data areas: {source}"
+                )
             if publication_root is None:
                 publication_root = (
                     self._storage_root / session_key / publication_key

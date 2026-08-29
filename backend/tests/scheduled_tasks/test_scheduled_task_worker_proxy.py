@@ -88,9 +88,25 @@ def test_worker_internal_api_exposes_scheduled_tasks(monkeypatch):
     client = TestClient(app)
 
     assert client.get("/api/scheduled-tasks").status_code == 403
+    # 仅提供共享令牌但没有内部身份时，路由层鉴权拒绝访问
     response = client.get(
         "/api/scheduled-tasks",
         headers={"x-social-worker-token": "secret"},
+    )
+    assert response.status_code == 401
+
+    admin_user = CurrentUser(
+        id="admin-1",
+        username="admin",
+        display_name="管理员",
+        is_admin=True,
+    )
+    response = client.get(
+        "/api/scheduled-tasks",
+        headers={
+            "x-social-worker-token": "secret",
+            INTERNAL_USER_HEADER: encode_internal_user(admin_user, secret="secret"),
+        },
     )
 
     assert response.status_code == 200
@@ -175,7 +191,7 @@ def test_proxy_replaces_spoofed_identity_with_authenticated_request_user(monkeyp
     )
 
     assert response.status_code == 200
-    forwarded = decode_internal_user(captured[INTERNAL_USER_HEADER])
+    forwarded = decode_internal_user(captured[INTERNAL_USER_HEADER], secret="secret")
     assert forwarded.id == "creator-1"
     assert forwarded.username == "creator"
     assert forwarded.display_name == "任务创建人"
@@ -218,7 +234,7 @@ def test_worker_restores_trusted_identity_for_task_creation(monkeypatch):
         "/api/scheduled-tasks",
         headers={
             "x-social-worker-token": "secret",
-            INTERNAL_USER_HEADER: encode_internal_user(user),
+            INTERNAL_USER_HEADER: encode_internal_user(user, secret="secret"),
         },
         json={
             "name": "测试任务",
@@ -296,7 +312,8 @@ async def test_worker_rejects_unsigned_identity_from_non_loopback_peer():
     assert response.json() == {"detail": "internal_identity_transport_not_configured"}
 
 
-def test_authenticated_web_request_creates_worker_task_for_resolved_user(
+@pytest.mark.asyncio
+async def test_authenticated_web_request_creates_worker_task_for_resolved_user(
     monkeypatch,
 ):
     from app.api import scheduled_task_routes
@@ -337,6 +354,8 @@ def test_authenticated_web_request_creates_worker_task_for_resolved_user(
     original_request = httpx.AsyncClient.request
 
     async def forward_to_worker(self, method, url, **kwargs):
+        if not str(url).startswith("http://worker"):
+            return await original_request(self, method, url, **kwargs)
         transport = httpx.ASGITransport(
             app=worker_app,
             client=("127.0.0.1", 12345),
@@ -364,20 +383,22 @@ def test_authenticated_web_request_creates_worker_task_for_resolved_user(
         auth_service=FakeAuthService(),
     )
 
-    response = TestClient(web_app).post(
-        "/api/scheduled-tasks",
-        json={
-            "name": "端到端任务",
-            "description": "验证完整身份链路",
-            "schedule_type": "once",
-            "run_at": "2026-07-18T12:00:00",
-            "steps": [{
-                "step_id": "step-1",
-                "description": "执行",
-                "agent_prompt": "执行",
-            }],
-        },
-    )
+    transport = httpx.ASGITransport(app=web_app, client=("127.0.0.1", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://web") as web_client:
+        response = await web_client.post(
+            "/api/scheduled-tasks",
+            json={
+                "name": "端到端任务",
+                "description": "验证完整身份链路",
+                "schedule_type": "once",
+                "run_at": "2026-07-18T12:00:00",
+                "steps": [{
+                    "step_id": "step-1",
+                    "description": "执行",
+                    "agent_prompt": "执行",
+                }],
+            },
+        )
 
     assert response.status_code == 200
     assert service.created.owner_user_id == "creator-e2e"

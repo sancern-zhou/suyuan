@@ -72,7 +72,10 @@ class SocialAccountWorkerProxyMiddleware:
             headers["x-social-worker-token"] = self.worker_token
         current_user = (scope.get("state") or {}).get("current_user")
         if isinstance(current_user, CurrentUser):
-            headers[INTERNAL_USER_HEADER] = encode_internal_user(current_user)
+            headers[INTERNAL_USER_HEADER] = encode_internal_user(
+                current_user,
+                secret=self.worker_token,
+            )
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:

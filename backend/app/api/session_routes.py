@@ -8,8 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Optional, Any, Dict, List
 from datetime import datetime
 import structlog
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.session import get_session_manager
+from app.boards.models import Board
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations import ConversationSource
@@ -20,6 +23,7 @@ from app.conversations.adapters import (
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.agent.resources.resource_service import SessionResourceService
+from app.db.database import get_db
 
 logger = structlog.get_logger()
 
@@ -63,6 +67,36 @@ async def _resource_catalog_summary(session_id: str) -> tuple[int, dict[str, int
         "visualizations": counts.visualizations,
         "files": counts.files,
     }
+
+
+async def _attach_drawio_board_summary(
+    payload: dict[str, Any],
+    *,
+    session_id: str,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Hydrate board identity from the authoritative board row for session restore."""
+    if not hasattr(db, "scalar"):
+        return payload
+    board = await db.scalar(select(Board).where(Board.session_id == session_id))
+    if board is None:
+        return payload
+    metadata = dict(payload.get("metadata") or {})
+    stored = dict(metadata.get("drawio_board") or {})
+    metadata["drawio_board"] = {
+        **stored,
+        "artifact_kind": "drawio_board",
+        "board_id": board.id,
+        "active_board_id": board.id,
+        "title": board.title,
+        "current_version_id": board.current_version_id,
+        "revision": board.revision,
+        "draft_revision": board.draft_revision,
+        "has_draft": bool(board.draft_xml_ref and board.draft_revision > 0),
+        "updated_at": board.updated_at.isoformat() if board.updated_at else None,
+    }
+    payload["metadata"] = metadata
+    return payload
 
 
 def _strip_lazy_artifacts(obj: Any) -> Any:
@@ -385,6 +419,7 @@ async def restore_session(
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     恢复会话（数据库层分页加载：只返回最新N条消息）
@@ -427,6 +462,11 @@ async def restore_session(
                 error=str(exc),
             )
         normalized_session = _strip_lazy_artifacts(normalized_session)
+        normalized_session = await _attach_drawio_board_summary(
+            normalized_session,
+            session_id=session_id,
+            db=db,
+        )
         normalized_session["resource_counts"] = resource_counts
         normalized_session["resource_version"] = resource_version
         return {
@@ -465,9 +505,15 @@ async def restore_session(
     # 清理特殊浮点值，防止 JSON 序列化错误
     session_data = _sanitize_floats(session_data)
 
+    restored_session = {**session_data, **row.model_dump(mode="json")}
+    restored_session = await _attach_drawio_board_summary(
+        restored_session,
+        session_id=session_id,
+        db=db,
+    )
     return {
         "message": f"Session {session_id} restored successfully",
-        "session": {**session_data, **row.model_dump(mode="json")}
+        "session": restored_session,
     }
 
 

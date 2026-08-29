@@ -51,11 +51,15 @@ def test_ops_prompt_stays_review_only_and_hands_off_report_generation():
 
     assert "## 复核交接" in prompt
     assert "report_input_path" in prompt
+    assert "call_sub_agent(target_mode='ops')" in prompt
+    assert "ops_audit_submit_review" in prompt
+    assert "issue_id" in prompt
+    assert "禁止仅返回 excluded_items" in prompt
+    assert "report_ready=false" in prompt
     assert "正式报告优先使用" not in prompt
     assert "生成标准报告包" not in prompt
     assert "不要把正式报告委托给 `report` 子Agent" in prompt
     assert "当前模式只负责数据抽取、规则/语义复核和结果文件落盘" in prompt
-    assert "call_sub_agent(target_mode='ops')" not in prompt
 
 
 def test_social_mode_exposes_report_package_tools_for_main_agent_reporting():
