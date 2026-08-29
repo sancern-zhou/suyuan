@@ -33,6 +33,7 @@ from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
 from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
+from app.fetchers.weather.city_air_quality_forecast_fetcher import CityAirQualityForecastFetcher
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.weather.jiangsu_nmc_observed_fetcher import (
@@ -114,6 +115,7 @@ def _configured_fetchers(project_context):
         "nmc_observed_weather": NMCObservedWeatherFetcher,
         "nmc_weather_chart": NMCWeatherChartFetcher,
         "open_meteo_air_quality_forecast": OpenMeteoAirQualityForecastFetcher,
+        "city_air_quality_forecast": CityAirQualityForecastFetcher,
         "nasa_firms": NASAFirmsFetcher,
         "cams_dust": CAMSDustFetcher,
         "air_quality_data_quality_monitor": AirQualityDataQualityFetcher,
