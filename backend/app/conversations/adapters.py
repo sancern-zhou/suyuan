@@ -6,7 +6,10 @@ from sqlalchemy.orm import selectinload
 from app.agent.session import get_session_manager
 from app.db.database import async_session
 from app.knowledge_base.models import ConversationSession
-from app.agent.session.session_resolver import load_session_for_mode
+from app.agent.session.session_resolver import (
+    get_session_manager_for_mode,
+    load_session_for_mode,
+)
 
 from .schemas import ConversationCatalogRecord, ConversationSource
 
@@ -143,6 +146,11 @@ class SocialConversationAdapter:
         if not session:
             return None
         return {"normalized_session": self._payload(session, row, message_limit)}
+
+    async def delete(self, row: ConversationCatalogRecord) -> bool:
+        """Delete the file-backed social transcript owned by the App user."""
+        manager = get_session_manager_for_mode("social")
+        return bool(manager.delete_session(row.session_id))
 
 
 class ConversationAdapterRegistry:

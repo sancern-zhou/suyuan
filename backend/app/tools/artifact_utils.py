@@ -34,6 +34,7 @@ def attach_report_package_resources(
     report_id: str,
     html_path: str | Path | None = None,
     docx_path: str | Path | None = None,
+    pdf_path: str | Path | None = None,
     share_html_path: str | Path | None = None,
     generator: str = "report_package",
 ) -> Dict[str, Any]:
@@ -75,8 +76,18 @@ def attach_report_package_resources(
         )
         resources.append(html_preview)
 
+    if docx_path is None:
+        candidate = source.with_name("report.docx")
+        if candidate.is_file():
+            docx_path = candidate
+    if pdf_path is None:
+        candidate = source.with_name("report.pdf")
+        if candidate.is_file():
+            pdf_path = candidate
+
     rendition_specs = (
         ("docx", docx_path, "file"),
+        ("pdf", pdf_path, "pdf"),
         ("share_html", share_html_path, "html"),
     )
     for resource_key, raw_path, renderer in rendition_specs:

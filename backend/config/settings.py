@@ -3,7 +3,7 @@ Application settings and configuration management.
 """
 from typing import List, Optional, Dict, Any, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 import yaml
 from pathlib import Path
 
@@ -161,6 +161,23 @@ class Settings(BaseSettings):
     auth_mock_username: str = Field(default="local-developer")
     auth_mock_display_name: str = Field(default="本地开发用户")
     auth_mock_role_codes: str = Field(default="")
+
+    # Android App account gateway. Account secrets are provisioned outside the
+    # repository as a JSON object: {"account_id": {"secret": "...", "name": "..."}}.
+    app_auth_secret: str = Field(
+        default="",
+        description="HMAC secret used to sign Android App access tokens",
+    )
+    app_accounts_json: str = Field(
+        default="{}",
+        description="Provisioned Android App accounts as a JSON object",
+    )
+    app_access_token_ttl_seconds: int = Field(
+        default=86400,
+        ge=300,
+        le=2592000,
+        description="Android App access token lifetime",
+    )
 
     # Gateway routing and trust boundary
     gateway_api_prefix: str = Field(default="/api/suyuan")
@@ -398,6 +415,30 @@ class Settings(BaseSettings):
     voice_asr_timeout_seconds: float = Field(
         default=30.0,
         description="Timeout in seconds for voice ASR requests"
+    )
+    voice_realtime_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SOCIAL_APP_ASR_API_KEY",
+            "KNOWLEDGE_RERANK_API_KEY",
+            "BAILIAN_API_KEY",
+        ),
+        description="Alibaba Cloud realtime ASR API key (server-side only)",
+    )
+    voice_realtime_model: str = Field(
+        default="qwen-audio-3.0-asr-flash-streaming",
+        validation_alias=AliasChoices("SOCIAL_APP_ASR_MODEL", "BAILIAN_ASR_MODEL"),
+        description="Alibaba Cloud realtime ASR model",
+    )
+    voice_realtime_ws_url: str = Field(
+        default="wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+        validation_alias="SOCIAL_APP_ASR_WS_URL",
+        description="Alibaba Cloud realtime ASR WebSocket endpoint",
+    )
+    voice_realtime_workspace_id: Optional[str] = Field(
+        default=None,
+        validation_alias="BAILIAN_WORKSPACE_ID",
+        description="Optional Beijing Model Studio workspace ID",
     )
     voice_tts_timeout_seconds: float = Field(
         default=45.0,
