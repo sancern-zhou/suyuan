@@ -20,7 +20,7 @@ class CurrentUser(BaseModel):
     role_codes: tuple[str, ...] = ()
     is_admin: bool = False
     sys_code: str = "SUYUAN"
-    auth_source: Literal["company", "mock"] = "company"
+    auth_source: Literal["company", "mock", "app"] = "company"
 
     @classmethod
     def from_company_payload(
