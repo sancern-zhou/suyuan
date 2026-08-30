@@ -62,7 +62,10 @@ def test_ops_prompt_stays_review_only_and_hands_off_report_generation():
     assert "当前模式只负责数据抽取、规则/语义复核和结果文件落盘" in prompt
 
 
-def test_social_mode_exposes_report_package_tools_for_main_agent_reporting():
+def test_social_mode_exposes_report_package_tools_for_main_agent_reporting(monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "project_id", "default")
     tools = get_tools_by_mode("social")
 
     assert "create_report_chart" in tools

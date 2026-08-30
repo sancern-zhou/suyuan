@@ -67,3 +67,53 @@ def test_report_prompt_has_no_guangdong_business_text(monkeypatch):
     assert "粤西" not in prompt
     assert "粤北" not in prompt
     assert "珠三角" not in prompt
+
+
+def test_xuchang_social_mode_uses_lightweight_query_toolset(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+    tools = get_tools_by_mode("social")
+
+    for required in (
+        "execute_sql_query",
+        "execute_postgres_sql_query",
+        "query_xcai_city_history",
+        "get_weather_data",
+        "execute_python",
+        "create_report_chart",
+        "knowledge_qa_workflow",
+        "knowledge_document_reader",
+        "web_search",
+        "web_fetch",
+        "schedule_task",
+        "send_notification",
+    ):
+        assert required in tools
+    for forbidden in (
+        "bash",
+        "cli_session",
+        "terminal_session",
+        "spawn",
+        "wait_task",
+        "call_sub_agent",
+        "create_report_package",
+        "broadcast_social_users",
+    ):
+        assert forbidden not in tools
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    default_social = get_tools_by_mode("social")
+    assert "bash" in default_social
+    assert "call_sub_agent" in default_social
+
+
+def test_xuchang_social_prompt_overrides_shared_social_prompt(monkeypatch):
+    monkeypatch.setattr(settings, "project_id", "xuchang")
+
+    prompt = build_react_system_prompt("social")
+
+    assert "许昌市问数分析助理" in prompt
+    assert "get_weather_data" in prompt
+    assert "移动端助理" not in prompt
+
+    monkeypatch.setattr(settings, "project_id", "default")
+    assert "移动端助理" in build_react_system_prompt("social")

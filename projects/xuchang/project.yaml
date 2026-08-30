@@ -70,6 +70,22 @@ backend:
       - render_report_package
       - validate_report_package
       - broadcast_social_users
+    social:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - execute_sql_query
+      - execute_postgres_sql_query
+      - query_xcai_city_history
+      - get_weather_data
+      - execute_python
+      - create_report_chart
+      - knowledge_qa_workflow
+      - knowledge_document_reader
+      - web_search
+      - web_fetch
+      - schedule_task
+      - send_notification
   disabled_tools:
     - analyze_city_pollutant_rankings
     - get_5min_data
@@ -82,6 +98,7 @@ backend:
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
     expert: projects/xuchang/prompts/expert.md
+    social: projects/xuchang/prompts/social.md
   fetchers:
     - nmc_observed_weather
     - nmc_weather_chart
