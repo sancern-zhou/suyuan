@@ -18,7 +18,7 @@ def test_fast_pdf_parse_does_not_load_unstructured(tmp_path, monkeypatch):
             AssertionError("PDF fast parsing must not load Unstructured")
         ),
     )
-    monkeypatch.setattr(processor, "_extract_tables_with_gmft", lambda _path: [])
+    monkeypatch.setattr(processor, "_extract_tables_with_pdfplumber", lambda _path: [])
 
     content, is_scanned = processor._try_fast_pdf_parse(str(pdf_path))
 
