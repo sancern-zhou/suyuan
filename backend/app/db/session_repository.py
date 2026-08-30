@@ -25,7 +25,7 @@ from sqlalchemy.orm import sessionmaker, load_only
 from sqlalchemy import select, update, delete, func, cast, Text, case
 
 from .models_session import SessionDB, SessionMessageDB
-from .database import engine
+from .database import session_engine
 
 logger = structlog.get_logger()
 
@@ -76,7 +76,7 @@ class SessionRepository:
     """
 
     def __init__(self):
-        self.engine = engine
+        self.engine = session_engine
 
     def _pool_status(self) -> dict:
         pool = self.engine.pool

@@ -18,7 +18,7 @@ from app.agent.resources.resource_service import (
     stable_resource_id,
     validate_publication,
 )
-from app.db.database import engine
+from app.db.database import session_engine
 from app.db.models_session import SessionResourceDB, SessionResourceVersionDB
 
 
@@ -87,7 +87,7 @@ def _upsert_update_values(values: dict) -> dict:
 
 class SessionResourcesRepository:
     def __init__(self, db_engine=None):
-        self.engine = db_engine or engine
+        self.engine = db_engine or session_engine
 
     async def _lock_catalog_version(
         self, db: AsyncSession, session_id: str

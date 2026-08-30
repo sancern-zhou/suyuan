@@ -9,20 +9,26 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 import structlog
 
-from app.db.database import DATABASE_URL
+from app.db.database import SESSION_DATABASE_URL
 from app.db.models_session import Base
+from app.conversations.models import ConversationCatalogDB
 
 logger = structlog.get_logger()
 
 
 async def init_session_tables():
     """初始化会话数据库表"""
-    engine = create_async_engine(DATABASE_URL, echo=True)
+    engine = create_async_engine(SESSION_DATABASE_URL, echo=True)
 
     try:
         # 创建所有表
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(
+                lambda sync_conn: ConversationCatalogDB.__table__.create(
+                    sync_conn, checkfirst=True
+                )
+            )
 
         logger.info("session_tables_created_successfully")
 
@@ -32,13 +38,26 @@ async def init_session_tables():
                 SELECT table_name
                 FROM information_schema.tables
                 WHERE table_schema = 'public'
-                AND table_name IN ('sessions', 'session_messages')
+                AND table_name IN (
+                    'sessions',
+                    'session_messages',
+                    'session_resources',
+                    'session_resource_versions',
+                    'conversation_catalog'
+                )
             """))
             tables = [row[0] for row in result]
 
             logger.info("tables_verified", tables=tables)
 
-            if "sessions" in tables and "session_messages" in tables:
+            expected_tables = {
+                "sessions",
+                "session_messages",
+                "session_resources",
+                "session_resource_versions",
+                "conversation_catalog",
+            }
+            if expected_tables.issubset(tables):
                 logger.info("✅ 所有表创建成功")
             else:
                 logger.error("❌ 部分表创建失败", created_tables=tables)
