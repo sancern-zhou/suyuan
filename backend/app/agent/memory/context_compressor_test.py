@@ -861,6 +861,41 @@ def test_tool_result_history_minimalization_preserves_refs_and_resume(monkeypatc
     assert "rows" not in json.dumps(result, ensure_ascii=False)
 
 
+def test_tool_result_history_minimalization_keeps_bounded_data_sample(monkeypatch):
+    monkeypatch.setattr(session_memory, "MAX_TOOL_RESULT_JSON_CHARS", 500)
+
+    records = [{"name": f"区县{index}", "aqi": str(20 + index)} for index in range(50)]
+    result = session_memory._prepare_tool_result_for_history({
+        "success": True,
+        "status": "success",
+        "summary": "生成了大结果",
+        "data": records,
+    })
+
+    assert result["tool_result_truncated"] is True
+    assert result["data_sampled"] is True
+    assert result["data_original_record_count"] == 50
+    sampled = result["data"]
+    assert 1 <= len(sampled) <= 3
+    assert sampled[0]["name"] == "区县0"
+    assert sampled[-1]["name"] == "区县49"
+
+
+def test_tool_result_history_minimalization_skips_oversized_data_sample(monkeypatch):
+    monkeypatch.setattr(session_memory, "MAX_TOOL_RESULT_JSON_CHARS", 500)
+
+    result = session_memory._prepare_tool_result_for_history({
+        "success": True,
+        "status": "success",
+        "summary": "生成了大结果",
+        "data": [{"blob": "x" * 10_000} for _ in range(50)],
+    })
+
+    assert result["tool_result_truncated"] is True
+    assert "data" not in result
+    assert "data_sampled" not in result
+
+
 def test_standardized_legacy_tool_result_survives_history_restore_projection(tmp_path):
     standardized = _standardize_tool_result(
         "read_file",

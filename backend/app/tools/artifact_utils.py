@@ -4,12 +4,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import structlog
+
 from app.tools.resource_declarations import (
     derivative_file,
     directory_artifact,
     primary_file,
     single_file_product,
 )
+
+logger = structlog.get_logger()
 
 
 def preview_output_path(*descriptors: Any) -> Path | None:
@@ -112,6 +116,68 @@ def attach_report_package_resources(
 
     result_data["resources"] = resources
     return result_data
+
+
+def attach_rendered_qmd_report_resources(
+    data: Dict[str, Any],
+    path: str | Path,
+    *,
+    generator: str,
+) -> bool:
+    """Render a standalone .qmd through quarto and attach its report package.
+
+    Shared fallback for tools that auto-publish QMD deliverables (execute_python,
+    publish_session_file): a bare QMD must reach the frontend as the canonical
+    ReportPackage group (qmd primary + HTML preview + render capability), not as
+    a plain markdown product. Returns True when the package was attached;
+    callers keep their generic file-product fallback otherwise so the source
+    file stays downloadable either way.
+    """
+    from app.services.report_preview_refresh import (
+        create_report_preview_for_source_qmd_path,
+        refresh_report_preview_for_qmd_path,
+    )
+
+    source = Path(path).expanduser().resolve()
+    try:
+        report_preview = (
+            refresh_report_preview_for_qmd_path(source)
+            or create_report_preview_for_source_qmd_path(source)
+        )
+    except Exception as exc:
+        data["preview_error"] = str(exc)[:200]
+        logger.warning(
+            "qmd_report_preview_conversion_failed",
+            path=str(source),
+            error=data["preview_error"],
+        )
+        return False
+    if not isinstance(report_preview, dict) or not report_preview.get("html_preview"):
+        if isinstance(report_preview, dict) and report_preview.get("render_error"):
+            data["preview_error"] = str(report_preview["render_error"])[:200]
+            logger.warning(
+                "qmd_report_preview_render_failed",
+                path=str(source),
+                error=data["preview_error"],
+            )
+        return False
+    html_path = preview_output_path(report_preview.get("html_preview"))
+    if html_path is None:
+        return False
+    report_id = str(report_preview.get("report_id") or source.stem)
+    package_qmd = html_path.parent / "report.qmd"
+    if not package_qmd.is_file():
+        return False
+    data["report_id"] = report_id
+    attach_report_package_resources(
+        data,
+        package_qmd,
+        report_id=report_id,
+        html_path=html_path,
+        generator=generator,
+    )
+    data["resources"][0]["label"] = source.name
+    return True
 
 
 def attach_document_resources(

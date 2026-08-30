@@ -154,3 +154,22 @@ async def test_publish_session_file_rejects_paths_outside_allowed_roots(tmp_path
 
     assert result["success"] is False
     assert "超出允许目录范围" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_publish_session_file_allows_configured_data_registry(tmp_path, monkeypatch):
+    registry_root = tmp_path / "backend_data_registry_shared"
+    document = registry_root / "reports" / "report.txt"
+    document.parent.mkdir(parents=True)
+    document.write_text("report", encoding="utf-8")
+
+    monkeypatch.setattr(
+        publish_session_file_tool, "get_data_registry", lambda: registry_root
+    )
+    tool = publish_session_file_tool.PublishSessionFileTool()
+
+    assert registry_root.resolve() in tool.allowed_dirs
+
+    result = await tool.execute(str(document))
+
+    assert result["success"] is True

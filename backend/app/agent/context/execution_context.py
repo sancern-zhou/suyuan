@@ -69,6 +69,9 @@ class ExecutionContext:
         self.task_list = task_list
         self.current_file_path: Optional[str] = None
         self.available_file_paths: List[str] = []
+        # Durable session inputs (uploads etc.) authorized for sandbox staging.
+        # Separate from available_file_paths, which doubles as output declarations.
+        self.authorized_input_paths: List[str] = []
 
         logger.debug(
             "execution_context_created",
@@ -307,5 +310,6 @@ class ExecutionContext:
         # Copy over the tracking attributes
         copied.current_file_path = updates.get("current_file_path", self.current_file_path)
         copied.available_file_paths = list(updates.get("available_file_paths", self.available_file_paths))
+        copied.authorized_input_paths = list(updates.get("authorized_input_paths", self.authorized_input_paths))
 
         return copied

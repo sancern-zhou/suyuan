@@ -15,6 +15,7 @@ from app.services.ops_work_order_audit import (
     fetch_ops_audit_dataset,
     inspect_ops_audit,
     list_ops_audit_rules,
+    review_ops_audit_issues,
     run_ops_audit_rules,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -30,6 +31,10 @@ _OUTPUT_PATH_FIELDS = (
     "semantic_review_tasks_path",
     "semantic_review_results_path",
     "final_issue_list_path",
+    "review_input_path",
+    "review_decisions_path",
+    "reviewed_issue_list_path",
+    "report_input_path",
 )
 
 
@@ -529,6 +534,81 @@ class OpsAuditInspectTool(LLMTool):
         return f"已返回 {result.get('count', 0)} 条 {mode} 检查结果。"
 
 
+class OpsAuditSubmitReviewTool(LLMTool):
+    """Persist a complete child-Agent review and materialize report input."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="ops_audit_submit_review",
+            description="提交完整工单问题复核决定，并确定性生成已复核问题清单和精简报告输入。",
+            category=ToolCategory.ANALYSIS,
+            function_schema={
+                "name": "ops_audit_submit_review",
+                "description": "按 issue_id 提交 final_issue_list 的全量复核结果。缺项、重复项、未知ID或源文件已变化时拒绝写入。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "final_issue_list_path": {"type": "string", "description": "本轮规则工具返回的 final_issue_list_path 原值。"},
+                        "expected_source_sha256": {"type": "string", "description": "本轮 review_input.source.sha256 原值。"},
+                        "decisions": {
+                            "type": "array",
+                            "description": "每个 issue_id 必须且只能出现一次。",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "issue_id": {"type": "string"},
+                                    "decision": {"type": "string", "enum": ["retain", "exclude", "manual_review"]},
+                                    "reason": {"type": "string", "description": "exclude/manual_review 必填；retain 可简写。"},
+                                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": ["issue_id", "decision"],
+                            },
+                        },
+                        "reviewer_name": {"type": "string", "description": "复核者或子Agent标识。"},
+                        "reviewer_model": {"type": "string", "description": "可选：复核模型标识。"},
+                        "output_dir": {"type": "string", "description": "可选：输出目录，默认与 final_issue_list 同目录。"},
+                    },
+                    "required": ["final_issue_list_path", "expected_source_sha256", "decisions"],
+                },
+            },
+            version="1.0.0",
+            requires_context=True,
+        )
+
+    async def execute(
+        self,
+        context=None,
+        final_issue_list_path: str = "",
+        expected_source_sha256: str = "",
+        decisions: Optional[list[dict[str, Any]]] = None,
+        reviewer_name: Optional[str] = None,
+        reviewer_model: Optional[str] = None,
+        output_dir: Optional[str] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        if not final_issue_list_path:
+            return _standard_failure(self.name, "请提供 final_issue_list_path。", "missing_final_issue_list_path")
+        try:
+            result = await asyncio.to_thread(
+                review_ops_audit_issues,
+                resolve_agent_path(final_issue_list_path),
+                decisions or [],
+                expected_source_sha256=expected_source_sha256,
+                reviewer={"name": reviewer_name or "ops_review_agent", "model": reviewer_model or ""},
+                output_dir=resolve_agent_path(output_dir) if output_dir else None,
+            )
+            summary = (
+                f"复核决定已持久化：保留 {result['retained_count']} 条，"
+                f"排除 {result['excluded_count']} 条，人工复核 {result['manual_review_count']} 条。"
+            )
+            if not result["report_ready"]:
+                summary += "仍有人工复核项，当前报告输入不可作为正式报告依据。"
+            return _standard_success(self.name, summary, result)
+        except Exception as exc:
+            logger.warning("ops_audit_submit_review_failed", error=str(exc))
+            return _standard_failure(self.name, f"工单问题复核提交失败: {str(exc)}", str(exc))
+
+
 async def ops_audit_fetch_dataset(context=None, **kwargs: Any) -> Dict[str, Any]:
     """Function export for callers that invoke the audit tool directly."""
     return await OpsAuditFetchDatasetTool().execute(context=context, **kwargs)
@@ -544,11 +624,18 @@ async def ops_audit_inspect(context=None, **kwargs: Any) -> Dict[str, Any]:
     return await OpsAuditInspectTool().execute(context=context, **kwargs)
 
 
+async def ops_audit_submit_review(context=None, **kwargs: Any) -> Dict[str, Any]:
+    """Function export for callers that invoke the review tool directly."""
+    return await OpsAuditSubmitReviewTool().execute(context=context, **kwargs)
+
+
 __all__ = [
     "OpsAuditFetchDatasetTool",
     "OpsAuditRunRulesTool",
     "OpsAuditInspectTool",
+    "OpsAuditSubmitReviewTool",
     "ops_audit_fetch_dataset",
     "ops_audit_run_rules",
     "ops_audit_inspect",
+    "ops_audit_submit_review",
 ]

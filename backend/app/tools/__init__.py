@@ -443,6 +443,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             OpsAuditFetchDatasetTool,
             OpsAuditInspectTool,
             OpsAuditRunRulesTool,
+            OpsAuditSubmitReviewTool,
         )
         registry.register(OpsAuditFetchDatasetTool(), priority=48)
         logger.info("tool_loaded", tool="ops_audit_fetch_dataset")
@@ -450,6 +451,8 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="ops_audit_run_rules")
         registry.register(OpsAuditInspectTool(), priority=50)
         logger.info("tool_loaded", tool="ops_audit_inspect")
+        registry.register(OpsAuditSubmitReviewTool(), priority=51)
+        logger.info("tool_loaded", tool="ops_audit_submit_review")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
