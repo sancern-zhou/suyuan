@@ -128,11 +128,11 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
             not user
             or user.status != "active"
             or not user.social_user_id
-            or not str(user.channel or "").startswith("weixin")
+            or not str(user.channel or "").startswith(("weixin", "app"))
         ):
             raise HTTPException(
                 status_code=400,
-                detail=f"User {user_id} is not an active bound WeChat user",
+                detail=f"User {user_id} is not an active bound WeChat user or App user",
             )
 
 

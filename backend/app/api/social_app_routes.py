@@ -30,7 +30,14 @@ from app.db.database import get_db
 from app.knowledge_base.models import UploadedFile
 from app.agent.resources.resource_service import SessionResourceService
 from app.utils.path_config import get_data_registry
-from app.social.app_identity import AppIdentity, issue_access_token, require_app_identity, resolve_access_token
+from app.social.app_identity import (
+    AppIdentity,
+    issue_access_token,
+    issue_token_pair,
+    require_app_identity,
+    resolve_access_token,
+    resolve_refresh_token,
+)
 from app.social.session_mapper import SessionMapper
 from config.settings import settings
 
@@ -48,8 +55,10 @@ class AppLoginRequest(BaseModel):
 
 class AppLoginResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
     expires_at: int
+    refresh_expires_at: int | None = None
     account_id: str
     display_name: str
     social_user_id: str
@@ -72,6 +81,64 @@ class AppRenameSessionRequest(BaseModel):
 class AppVoiceResponse(BaseModel):
     text: str
     language: str = "zh"
+
+
+class AppOAuthExchangeRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=4096)
+    code_verifier: str = Field(..., min_length=43, max_length=128)
+    redirect_uri: str | None = Field(default=None, max_length=512)
+
+
+class AppRefreshRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=1, max_length=8192)
+
+
+class AppPushDeviceRequest(BaseModel):
+    provider: str = Field(default="getui", min_length=1, max_length=32)
+    device_id: str = Field(..., min_length=8, max_length=256)
+    platform: str = Field(default="android", min_length=1, max_length=32)
+    app_id: str | None = Field(default=None, max_length=128)
+
+
+def _broadcast_attachment_payload(item: object) -> dict | None:
+    """Project internal broadcast attachment metadata to an App-safe shape."""
+    if not isinstance(item, dict):
+        return None
+    name = str(item.get("filename") or item.get("name") or "附件").strip() or "附件"
+    mime_type = str(item.get("mime_type") or item.get("mimeType") or "").strip()
+    raw_url = str(item.get("url") or "").strip()
+    payload = {
+        "filename": name,
+        "name": name,
+        "type": "image" if mime_type.lower().startswith("image/") else "file",
+        "mime_type": mime_type or "application/octet-stream",
+    }
+    # Only forward URLs, never server filesystem paths.
+    if raw_url.startswith("/") or raw_url.startswith("https://") or raw_url.startswith("http://"):
+        payload["url"] = raw_url
+    return payload
+
+
+def _broadcast_payload(item: dict) -> dict:
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    raw_attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    attachments = [
+        attachment
+        for raw in raw_attachments
+        if (attachment := _broadcast_attachment_payload(raw)) is not None
+    ]
+    return {
+        "message_id": str(item.get("id") or ""),
+        "content": str(item.get("content") or ""),
+        "timestamp": item.get("timestamp"),
+        "read": bool(item.get("read") is True or data.get("read") is True),
+        "attachments": attachments,
+        "metadata": {
+            key: value
+            for key, value in data.items()
+            if key not in {"attachments", "read", "read_at"}
+        },
+    }
 
 
 @router.websocket("/voice/realtime")
@@ -195,9 +262,55 @@ async def realtime_voice(websocket: WebSocket) -> None:
 @router.post("/auth/login", response_model=AppLoginResponse)
 async def login(request: AppLoginRequest) -> AppLoginResponse:
     token, identity = issue_access_token(request.account_id, request.account_secret)
+    access_token, refresh_token, expires_at, refresh_expires_at = issue_token_pair(identity)
     return AppLoginResponse(
-        access_token=token,
-        expires_at=identity.expires_at,
+        access_token=access_token or token,
+        refresh_token=refresh_token,
+        expires_at=expires_at,
+        refresh_expires_at=refresh_expires_at,
+        account_id=identity.account_id,
+        display_name=identity.display_name,
+        social_user_id=identity.social_user_id,
+    )
+
+
+@router.get("/auth/oidc/config")
+async def oidc_config() -> dict:
+    from app.social.company_oauth import authorization_config
+
+    return authorization_config()
+
+
+@router.post("/auth/oidc/exchange", response_model=AppLoginResponse)
+async def oidc_exchange(payload: AppOAuthExchangeRequest) -> AppLoginResponse:
+    from app.social.company_oauth import exchange_code
+
+    identity = await exchange_code(
+        code=payload.code,
+        code_verifier=payload.code_verifier,
+        redirect_uri=payload.redirect_uri,
+    )
+    access_token, refresh_token, expires_at, refresh_expires_at = issue_token_pair(identity)
+    return AppLoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_at=expires_at,
+        refresh_expires_at=refresh_expires_at,
+        account_id=identity.account_id,
+        display_name=identity.display_name,
+        social_user_id=identity.social_user_id,
+    )
+
+
+@router.post("/auth/refresh", response_model=AppLoginResponse)
+async def refresh_token(payload: AppRefreshRequest) -> AppLoginResponse:
+    identity = resolve_refresh_token(payload.refresh_token)
+    access_token, refresh_token_value, expires_at, refresh_expires_at = issue_token_pair(identity)
+    return AppLoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token_value,
+        refresh_expires_at=refresh_expires_at,
+        expires_at=expires_at,
         account_id=identity.account_id,
         display_name=identity.display_name,
         social_user_id=identity.social_user_id,
@@ -212,6 +325,50 @@ async def me(identity: AppIdentity = Depends(require_app_identity)) -> dict:
         "social_user_id": identity.social_user_id,
         "expires_at": identity.expires_at,
     }
+
+
+@router.get("/push/status")
+async def app_push_status(identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    """Return provider status without exposing provider credentials."""
+    del identity
+    from app.social.push_service import get_unified_push_service
+
+    return get_unified_push_service().status()
+
+
+@router.post("/push/devices")
+async def register_app_push_device(
+    payload: AppPushDeviceRequest,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Bind the current App account to a provider-neutral device identifier."""
+    provider = payload.provider.strip().lower()
+    platform = payload.platform.strip().lower()
+    if provider != "getui":
+        raise HTTPException(status_code=400, detail="unsupported_push_provider")
+    if platform != "android":
+        raise HTTPException(status_code=400, detail="unsupported_app_platform")
+    from app.social.push_service import PushDeviceStore, get_unified_push_service
+
+    device = await PushDeviceStore().upsert(
+        identity.social_user_id,
+        provider=provider,
+        device_id=payload.device_id.strip(),
+        platform=platform,
+        app_id=payload.app_id,
+    )
+    return {"registered": True, "device": device, "push": get_unified_push_service().status()}
+
+
+@router.delete("/push/devices/{device_id}")
+async def unregister_app_push_device(
+    device_id: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    from app.social.push_service import PushDeviceStore
+
+    removed = await PushDeviceStore().remove(identity.social_user_id, device_id.strip(), provider="getui")
+    return {"removed": removed}
 
 
 @router.post("/voice/transcribe", response_model=AppVoiceResponse)
@@ -266,6 +423,48 @@ async def upload_file(
         user=identity.as_current_user(),
         catalog=get_conversation_catalog(),
     )
+
+
+@router.get("/broadcasts")
+async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    """Return the authenticated App account's persistent broadcast inbox."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    messages = [
+        _broadcast_payload(item)
+        for item in await load_broadcast_messages(identity.social_user_id)
+    ]
+    return {
+        "messages": messages,
+        "unread_count": sum(1 for item in messages if not item["read"]),
+    }
+
+
+@router.post("/broadcasts/{message_id}/read")
+async def app_mark_broadcast_read(
+    message_id: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Mark one broadcast as read; repeated calls are idempotent."""
+    from app.social.broadcast_context import mark_broadcast_read
+    from app.social.broadcast_context import load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    if not any(str(item.get("id")) == message_id for item in messages):
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    changed = await mark_broadcast_read(identity.social_user_id, message_id)
+    return {"message_id": message_id, "read": True, "changed": changed}
+
+
+@router.post("/broadcasts/read-all")
+async def app_mark_all_broadcasts_read(
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Mark all broadcasts in the inbox as read."""
+    from app.social.broadcast_context import mark_broadcast_read
+
+    changed = await mark_broadcast_read(identity.social_user_id)
+    return {"read_all": True, "changed": changed}
 
 
 def _session_mapper(request: Request) -> SessionMapper:

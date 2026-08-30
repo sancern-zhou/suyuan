@@ -7,6 +7,7 @@ import httpx
 from fastapi import FastAPI
 
 from app.social import app_identity
+from app.social import company_oauth
 from app.social.session_mapper import SessionMapper
 from app.api.social_app_routes import router as app_router
 from app.api import social_app_routes
@@ -208,3 +209,70 @@ async def test_app_gateway_bypasses_company_boundary_but_requires_app_token(monk
         )
         assert profile.status_code == 200
         assert profile.json()["social_user_id"] == "app:android:alice"
+
+        refresh_response = await client.post(
+            "/api/social/app/auth/refresh",
+            json={"refresh_token": login_response.json()["refresh_token"]},
+        )
+        assert refresh_response.status_code == 200
+        assert refresh_response.json()["refresh_token"] != login_response.json()["refresh_token"]
+        refreshed_profile = await client.get(
+            "/api/social/app/me",
+            headers={"Authorization": f"Bearer {refresh_response.json()['access_token']}"},
+        )
+        assert refreshed_profile.status_code == 200
+
+
+def test_company_identity_token_pair_round_trip_without_local_account(monkeypatch):
+    monkeypatch.setattr(app_identity.settings, "app_auth_secret", "test-signing-secret")
+    monkeypatch.setattr(app_identity.settings, "app_accounts_json", "{}")
+    identity = app_identity.AppIdentity(
+        "company-user-1",
+        "公司用户",
+        "company:company-user-1",
+        0,
+        auth_source="company",
+        username="company.user",
+        sys_code="SUYUAN",
+    )
+    access, refresh, _, _ = app_identity.issue_token_pair(identity)
+    assert app_identity.resolve_access_token(access).as_current_user().auth_source == "company"
+    assert app_identity.resolve_refresh_token(refresh).username == "company.user"
+
+
+@pytest.mark.asyncio
+async def test_company_oidc_exchange_calls_authentication_more(monkeypatch):
+    monkeypatch.setattr(company_oauth.settings, "company_oidc_client_id", "mobile-client")
+    monkeypatch.setattr(company_oauth.settings, "company_oidc_token_endpoint", "https://id.example/connect/token")
+    monkeypatch.setattr(company_oauth.settings, "company_oidc_redirect_uri", "com.suyuan.mobile://oauth/callback")
+    monkeypatch.setattr(company_oauth.settings, "company_authentication_more_url", "https://app.example/api/jwt/oauth/authenticationMore")
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            if url.endswith("/connect/token"):
+                return FakeResponse(200, {"id_token": "id-token-from-company"})
+            return FakeResponse(200, {"success": True, "result": [{"userId": "u-1", "userName": "zhangsan", "name": "张三", "sysCode": "SUYUAN", "roleCodes": ["agent.user"]}]})
+
+    monkeypatch.setattr(company_oauth.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    identity = await company_oauth.exchange_code(code="auth-code", code_verifier="a" * 43)
+    assert identity.account_id == "u-1"
+    assert identity.auth_source == "company"
+    assert identity.role_codes == ("agent.user",)
+    assert calls[0][1]["data"]["code_verifier"] == "a" * 43
+    assert calls[1][1]["headers"]["Authorization"] == "Bearer id-token-from-company"

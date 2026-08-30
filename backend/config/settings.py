@@ -178,6 +178,30 @@ class Settings(BaseSettings):
         le=2592000,
         description="Android App access token lifetime",
     )
+    app_refresh_token_ttl_seconds: int = Field(
+        default=2592000,
+        ge=3600,
+        le=31536000,
+        description="Android App refresh token lifetime",
+    )
+
+    # IDBase OAuth/OIDC integration for the Android App.  The client id and
+    # authenticationMore URL are provisioned per deployment, never in source.
+    company_oidc_issuer: str = Field(default="https://idaut.cnemc.cn")
+    company_oidc_authorization_endpoint: str = Field(
+        default="https://idaut.cnemc.cn/connect/authorize"
+    )
+    company_oidc_token_endpoint: str = Field(
+        default="https://idaut.cnemc.cn/connect/token"
+    )
+    company_oidc_client_id: str = Field(default="")
+    company_oidc_redirect_uri: str = Field(default="com.suyuan.mobile://oauth/callback")
+    company_oidc_scopes: str = Field(default="openid profile roles offline_access")
+    company_oidc_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+    company_authentication_more_url: str = Field(
+        default="",
+        description="Local business endpoint equivalent to api/jwt/oauth/authenticationMore",
+    )
 
     # Gateway routing and trust boundary
     gateway_api_prefix: str = Field(default="/api/suyuan")
@@ -216,6 +240,10 @@ class Settings(BaseSettings):
     @property
     def trusted_gateway_networks_list(self) -> List[str]:
         return self._split_unique_csv(self.trusted_gateway_networks)
+
+    @property
+    def company_oidc_scopes_list(self) -> List[str]:
+        return self._split_unique_csv(self.company_oidc_scopes.replace(" ", ","))
 
     @property
     def nacos_server_addresses_list(self) -> List[str]:
@@ -839,6 +867,20 @@ class Settings(BaseSettings):
         default="",
         description="Shared token for web-to-worker social account API calls"
     )
+
+    # Unified mobile push service.  The application only deals with provider
+    # neutral device identifiers (CID); vendor-specific offline channels stay
+    # inside the selected push provider.
+    push_provider: str = Field(
+        default="none",
+        description="Unified push provider: none or getui",
+    )
+    push_getui_app_id: str = Field(default="")
+    push_getui_app_key: str = Field(default="")
+    push_getui_master_secret: str = Field(default="")
+    push_getui_base_url: str = Field(default="https://restapi.getui.com/v2")
+    push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+    push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
 
     @property
     def redis_url(self) -> str:
