@@ -1,7 +1,12 @@
 import pytest
 
 from app.agent.session.models import Session
-from app.social.broadcast_context import persist_broadcast_context
+from app.social.broadcast_context import (
+    broadcast_session_id,
+    load_broadcast_messages,
+    mark_broadcast_read,
+    persist_broadcast_context,
+)
 from app.social.broadcast_service import SocialBroadcastService
 
 
@@ -131,6 +136,47 @@ async def test_same_broadcast_message_is_idempotent(monkeypatch, tmp_path):
     ]
     assert len(broadcasts) == 1
     assert "office_documents" not in session.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_uses_dedicated_session_and_read_state(monkeypatch):
+    sessions = {}
+    saved = []
+
+    async def fake_load(session_id, *, mode):
+        assert mode == "social"
+        return sessions.get(session_id)
+
+    async def fake_append(session, *, mode):
+        sessions[session.session_id] = session
+        saved.append(session.session_id)
+        return True
+
+    async def fake_replace(session, *, mode):
+        sessions[session.session_id] = session
+        return True
+
+    class MapperMustNotBeUsed:
+        async def get_or_create_session(self, *_args, **_kwargs):
+            raise AssertionError("broadcasts must not use the normal session mapping")
+
+    monkeypatch.setattr("app.social.broadcast_context.load_session_for_mode", fake_load)
+    monkeypatch.setattr("app.social.broadcast_context.append_session_transcript_for_mode", fake_append)
+    monkeypatch.setattr("app.social.broadcast_context.replace_session_transcript_for_mode", fake_replace)
+
+    social_id = "app:android:alice"
+    assert await persist_broadcast_context(
+        session_mapper=MapperMustNotBeUsed(),
+        social_user_id=social_id,
+        message="广播内容",
+        media=[],
+        metadata={"task_id": "task", "event_id": "event"},
+    )
+    assert saved == [broadcast_session_id(social_id)]
+    messages = await load_broadcast_messages(social_id)
+    assert messages[0]["read"] is False
+    assert await mark_broadcast_read(social_id, messages[0]["id"])
+    assert (await load_broadcast_messages(social_id))[0]["read"] is True
 
 
 @pytest.mark.asyncio

@@ -26,7 +26,7 @@ class EventTaskDelivery:
             if not record or record.status != "active" or not record.social_user_id:
                 continue
             channel = str(record.channel or "")
-            if not channel.startswith("weixin"):
+            if not channel.startswith(("weixin", "app")):
                 continue
             recipients.append({
                 "user_id": user_id,
@@ -51,10 +51,14 @@ class EventTaskDelivery:
             recipient["social_user_id"]: recipient["user_id"]
             for recipient in recipients
         }
+        channels = sorted({
+            "app" if str(recipient.get("social_user_id", "")).startswith("app:") else "weixin"
+            for recipient in recipients
+        })
         result = await self.broadcast_service.broadcast(
             message=output.broadcast.message,
             media=output.broadcast.media,
-            channels=["weixin"],
+            channels=channels,
             target_user_ids=list(social_to_user),
             persist_context=True,
             context_metadata={

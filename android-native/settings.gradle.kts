@@ -2,6 +2,7 @@ pluginManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://mvn.getui.com/nexus/content/repositories/releases/") }
         gradlePluginPortal()
     }
 }
@@ -11,6 +12,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://mvn.getui.com/nexus/content/repositories/releases/") }
     }
     versionCatalogs {
         create("libs") {
@@ -22,6 +24,8 @@ dependencyResolutionManagement {
             version("lifecycle", "2.8.6")
             version("okhttp", "4.12.0")
             version("coroutines", "1.8.1")
+            version("getui", "3.3.15.0")
+            version("getuiGtc", "3.3.3.0")
             plugin("androidApplication", "com.android.application").versionRef("agp")
             plugin("kotlinAndroid", "org.jetbrains.kotlin.android").versionRef("kotlin")
             library("androidx-activity-compose", "androidx.activity", "activity-compose").versionRef("activity")
@@ -34,6 +38,8 @@ dependencyResolutionManagement {
             library("androidx-compose-material3", "androidx.compose.material3", "material3").withoutVersion()
             library("okhttp", "com.squareup.okhttp3", "okhttp").versionRef("okhttp")
             library("kotlinx-coroutines-android", "org.jetbrains.kotlinx", "kotlinx-coroutines-android").versionRef("coroutines")
+            library("getui-sdk", "com.getui", "gtsdk").versionRef("getui")
+            library("getui-gtc", "com.getui", "gtc").versionRef("getuiGtc")
         }
     }
 }

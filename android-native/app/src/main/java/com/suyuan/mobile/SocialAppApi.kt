@@ -14,9 +14,30 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-data class LoginResult(val token: String, val accountId: String, val displayName: String)
+data class LoginResult(
+    val token: String,
+    val accountId: String,
+    val displayName: String,
+    val refreshToken: String? = null,
+    val expiresAt: Long = 0L,
+    val refreshExpiresAt: Long = 0L,
+)
+data class OidcConfig(
+    val authorizationEndpoint: String,
+    val clientId: String,
+    val redirectUri: String,
+    val scopes: String,
+)
 data class AgentEvent(val type: String, val data: String)
 data class SessionInfo(val sessionId: String, val mode: String, val title: String = "新对话", val updatedAt: String? = null)
+data class BroadcastMessage(
+    val messageId: String,
+    val content: String,
+    val timestamp: String? = null,
+    val read: Boolean = false,
+    val attachments: List<UploadedAttachment> = emptyList(),
+)
+data class BroadcastInbox(val messages: List<BroadcastMessage>, val unreadCount: Int)
 data class ChatMessage(
     val id: String,
     val kind: String,
@@ -130,12 +151,63 @@ class ApiException(val statusCode: Int, message: String) : IllegalStateException
 
 class SocialAppApi(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
+    private val sessionStore: AppSessionStore? = null,
+) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
-        .build(),
-) {
+        .authenticator(object : okhttp3.Authenticator {
+            override fun authenticate(route: okhttp3.Route?, response: okhttp3.Response): Request? {
+                if (this@SocialAppApi.responseCount(response) > 1) return null
+                val store = this@SocialAppApi.sessionStore ?: return null
+                val currentRefresh = store.refreshToken()
+                if (currentRefresh.isBlank()) return null
+                val refreshed = runCatching { this@SocialAppApi.refreshBlocking(currentRefresh) }.getOrNull() ?: return null
+                store.save(refreshed)
+                return response.request.newBuilder()
+                    .header("Authorization", "Bearer ${refreshed.token}")
+                    .build()
+            }
+        })
+        .build()
     private fun url(path: String) = baseUrl.trimEnd('/') + path
+
+    private fun responseCount(response: okhttp3.Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) {
+            count += 1
+            prior = prior.priorResponse
+        }
+        return count
+    }
+
+    private fun parseLogin(body: String): LoginResult {
+        val json = JSONObject(body)
+        return LoginResult(
+            token = json.getString("access_token"),
+            accountId = json.getString("account_id"),
+            displayName = json.optString("display_name", json.getString("account_id")),
+            refreshToken = json.optString("refresh_token", "").ifBlank { null },
+            expiresAt = json.optLong("expires_at", 0L),
+            refreshExpiresAt = json.optLong("refresh_expires_at", 0L),
+        )
+    }
+
+    private fun refreshBlocking(refreshToken: String): LoginResult {
+        val body = JSONObject().put("refresh_token", refreshToken)
+            .toString().toRequestBody("application/json".toMediaType())
+        val response = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+            .newCall(Request.Builder().url(url("/api/social/app/auth/refresh")).post(body).build())
+            .execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "登录已过期")
+            return parseLogin(it.body?.string().orEmpty())
+        }
+    }
 
     suspend fun login(accountId: String, accountSecret: String): LoginResult = withContext(Dispatchers.IO) {
         val body = JSONObject().apply {
@@ -146,7 +218,70 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "登录失败 (${it.code})")
             val json = JSONObject(it.body?.string().orEmpty())
-            LoginResult(json.getString("access_token"), json.getString("account_id"), json.optString("display_name", accountId))
+            parseLogin(json.toString())
+        }
+    }
+
+    suspend fun oidcConfig(): OidcConfig = withContext(Dispatchers.IO) {
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/auth/oidc/config")).get().build()).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "公司认证配置不可用 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            OidcConfig(
+                authorizationEndpoint = json.getString("authorization_endpoint"),
+                clientId = json.getString("client_id"),
+                redirectUri = json.getString("redirect_uri"),
+                scopes = json.optJSONArray("scopes")?.let { values ->
+                    (0 until values.length()).joinToString(" ") { index -> values.getString(index) }
+                } ?: "openid profile roles offline_access",
+            )
+        }
+    }
+
+    suspend fun exchangeOidcCode(code: String, codeVerifier: String, redirectUri: String): LoginResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("code", code)
+            .put("code_verifier", codeVerifier)
+            .put("redirect_uri", redirectUri)
+            .toString().toRequestBody("application/json".toMediaType())
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/auth/oidc/exchange")).post(body).build()).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "公司账号绑定失败 (${it.code})")
+            parseLogin(it.body?.string().orEmpty())
+        }
+    }
+
+    suspend fun refresh(refreshToken: String): LoginResult = withContext(Dispatchers.IO) {
+        refreshBlocking(refreshToken)
+    }
+
+    suspend fun registerPushDevice(token: String, deviceId: String): Boolean = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("provider", "getui")
+            put("device_id", deviceId)
+            put("platform", "android")
+            put("app_id", BuildConfig.GETUI_APPID)
+        }.toString().toRequestBody("application/json".toMediaType())
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/push/devices"))
+                .header("Authorization", "Bearer $token")
+                .post(body).build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "推送设备登记失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optBoolean("registered")
+        }
+    }
+
+    suspend fun unregisterPushDevice(token: String, deviceId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/push/devices/${java.net.URLEncoder.encode(deviceId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token")
+                .delete().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "推送设备解绑失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optBoolean("removed")
         }
     }
 
@@ -316,6 +451,64 @@ class SocialAppApi(
                     add(ChatMessage("history-$index", kind, content, attachments, streaming = false, expanded = false))
                 }
             }
+        }
+    }
+
+    suspend fun broadcasts(token: String): BroadcastInbox = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/broadcasts"))
+                .header("Authorization", "Bearer $token").get().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "广播消息查询失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty())
+            val array = json.optJSONArray("messages") ?: org.json.JSONArray()
+            val messages = buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val attachments = item.optJSONArray("attachments")?.let { values ->
+                        buildList {
+                            for (attachmentIndex in 0 until values.length()) {
+                                values.optJSONObject(attachmentIndex)?.let { add(UploadedAttachment.fromJson(it)) }
+                            }
+                        }
+                    }.orEmpty()
+                    add(
+                        BroadcastMessage(
+                            messageId = item.optString("message_id", "broadcast-$index"),
+                            content = item.optString("content"),
+                            timestamp = item.optString("timestamp", "").ifBlank { null },
+                            read = item.optBoolean("read", false),
+                            attachments = attachments,
+                        )
+                    )
+                }
+            }
+            BroadcastInbox(messages, json.optInt("unread_count", messages.count { !it.read }))
+        }
+    }
+
+    suspend fun markBroadcastRead(token: String, messageId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/broadcasts/${java.net.URLEncoder.encode(messageId, "UTF-8")}/read"))
+                .header("Authorization", "Bearer $token")
+                .post("".toRequestBody("application/json".toMediaType())).build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "广播消息已读失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optBoolean("read", true)
+        }
+    }
+
+    suspend fun markAllBroadcastsRead(token: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/broadcasts/read-all"))
+                .header("Authorization", "Bearer $token")
+                .post("".toRequestBody("application/json".toMediaType())).build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "广播消息已读失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optBoolean("read_all", true)
         }
     }
 

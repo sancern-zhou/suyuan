@@ -16,6 +16,10 @@ import android.content.ContentValues
 import android.os.Environment
 import android.os.Build
 import android.provider.MediaStore
+import android.content.Intent
+import android.util.Base64
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.ArrayDeque
 import java.util.UUID
 
@@ -40,6 +44,10 @@ data class AppUiState(
     val attachmentPreviews: Map<String, AttachmentPreview> = emptyMap(),
     val loading: Boolean = false,
     val error: String? = null,
+    val broadcastMessages: List<BroadcastMessage> = emptyList(),
+    val unreadBroadcastCount: Int = 0,
+    val broadcastLoading: Boolean = false,
+    val broadcastError: String? = null,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -60,9 +68,16 @@ class AppViewModel(
     val state: StateFlow<AppUiState> = _state.asStateFlow()
     private var streamJob: Job? = null
     private val pendingTurns = ArrayDeque<PendingTurn>()
+    private var registeredPushCid: String? = null
 
     init {
-        if (_state.value.loggedIn) refreshSessions()
+        val refreshToken = store.refreshToken()
+        val needsRefresh = refreshToken.isNotBlank() && store.expiresAt() <= (System.currentTimeMillis() / 1000L) + 60L
+        if (needsRefresh) refreshSession(showError = false)
+        else if (_state.value.loggedIn) {
+            refreshSessions()
+            refreshBroadcasts()
+        }
     }
 
     fun updateDraft(value: String) = _state.value.let { _state.value = it.copy(draft = value, error = null) }
@@ -140,11 +155,113 @@ class AppViewModel(
             _state.value = _state.value.copy(loading = true, error = null)
             runCatching { repository.login(accountId, secret) }
                 .onSuccess { result ->
-                    store.save(result)
-                    _state.value = AppUiState(result.token, result.accountId, result.displayName, loading = false)
-                    refreshSessions()
+                    applyLoginResult(result)
                 }
                 .onFailure { _state.value = _state.value.copy(loading = false, error = friendlyError(it)) }
+        }
+    }
+
+    fun startCompanyLogin(context: Context) {
+        if (_state.value.loading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
+            runCatching {
+                val config = repository.oidcConfig()
+                val state = randomUrlToken(32)
+                val verifier = randomUrlToken(32)
+                store.savePendingOAuth(state, verifier)
+                val challenge = Base64.encodeToString(
+                    MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)),
+                    Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+                )
+                val authorizationUri = Uri.parse(config.authorizationEndpoint).buildUpon()
+                    .appendQueryParameter("response_type", "code")
+                    .appendQueryParameter("client_id", config.clientId)
+                    .appendQueryParameter("redirect_uri", config.redirectUri)
+                    .appendQueryParameter("scope", config.scopes)
+                    .appendQueryParameter("state", state)
+                    .appendQueryParameter("code_challenge", challenge)
+                    .appendQueryParameter("code_challenge_method", "S256")
+                    .build()
+                context.startActivity(Intent(Intent.ACTION_VIEW, authorizationUri))
+            }.onFailure { failure ->
+                store.clearPendingOAuth()
+                _state.value = _state.value.copy(loading = false, error = friendlyError(failure))
+            }.onSuccess {
+                _state.value = _state.value.copy(loading = false)
+            }
+        }
+    }
+
+    fun handleCompanyOAuthCallback(uri: Uri) {
+        val returnedState = uri.getQueryParameter("state").orEmpty()
+        val expectedState = store.pendingOAuthState()
+        val verifier = store.pendingOAuthVerifier()
+        val code = uri.getQueryParameter("code").orEmpty()
+        store.clearPendingOAuth()
+        if (returnedState.isBlank() || expectedState.isBlank() || returnedState != expectedState) {
+            _state.value = _state.value.copy(loading = false, error = "公司认证回调校验失败")
+            return
+        }
+        val providerError = uri.getQueryParameter("error").orEmpty()
+        if (providerError.isNotBlank() || code.isBlank() || verifier.isBlank()) {
+            _state.value = _state.value.copy(loading = false, error = "公司认证未完成")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
+            runCatching {
+                val config = repository.oidcConfig()
+                repository.exchangeOidcCode(code, verifier, config.redirectUri)
+            }.onSuccess { result -> applyLoginResult(result) }
+                .onFailure { failure -> _state.value = _state.value.copy(loading = false, error = friendlyError(failure)) }
+        }
+    }
+
+    fun refreshSession(showError: Boolean = true) {
+        val refreshToken = store.refreshToken()
+        if (refreshToken.isBlank()) {
+            if (showError) _state.value = _state.value.copy(error = "登录已过期，请重新登录")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = if (showError) null else _state.value.error)
+            runCatching { repository.refresh(refreshToken) }
+                .onSuccess { result -> applyLoginResult(result) }
+                .onFailure {
+                    store.clear()
+                    _state.value = AppUiState(error = if (showError) "登录已过期，请重新登录" else null)
+                }
+        }
+    }
+
+    private fun applyLoginResult(result: LoginResult) {
+        store.save(result)
+        _state.value = AppUiState(result.token, result.accountId, result.displayName, loading = false)
+        refreshSessions()
+        refreshBroadcasts()
+    }
+
+    private fun randomUrlToken(size: Int): String = Base64.encodeToString(
+        ByteArray(size).also { SecureRandom().nextBytes(it) },
+        Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+    )
+
+    fun registerPushDevice(deviceId: String) {
+        val cid = deviceId.trim()
+        val current = _state.value
+        if (!current.loggedIn || cid.isBlank() || registeredPushCid == cid) return
+        registeredPushCid = cid
+        viewModelScope.launch {
+            runCatching { repository.registerPushDevice(current.token, cid) }
+                .onFailure { failure ->
+                    // Push is optional during local development; keep chat
+                    // usable when the provider has not been configured yet.
+                    registeredPushCid = null
+                    if (failure is ApiException && failure.statusCode == 401) {
+                        logout("登录已过期，请重新登录")
+                    }
+                }
         }
     }
 
@@ -545,9 +662,68 @@ class AppViewModel(
     }
 
     fun logout(message: String? = null) {
+        val current = _state.value
+        val cid = registeredPushCid
+        if (current.loggedIn && !cid.isNullOrBlank()) {
+            viewModelScope.launch {
+                runCatching { repository.unregisterPushDevice(current.token, cid) }
+            }
+        }
+        registeredPushCid = null
         streamJob?.cancel(); streamJob = null
         store.clear()
         _state.value = AppUiState(error = message)
+    }
+
+    fun refreshBroadcasts() {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(broadcastLoading = true, broadcastError = null)
+            runCatching { repository.broadcasts(token) }
+                .onSuccess { inbox ->
+                    _state.value = _state.value.copy(
+                        broadcastMessages = inbox.messages,
+                        unreadBroadcastCount = inbox.unreadCount,
+                        broadcastLoading = false,
+                    )
+                }
+                .onFailure { failure ->
+                    if (failure is ApiException && failure.statusCode == 401) logout("登录已过期，请重新登录")
+                    else _state.value = _state.value.copy(broadcastLoading = false, broadcastError = friendlyError(failure))
+                }
+        }
+    }
+
+    fun openBroadcasts() {
+        refreshBroadcasts()
+        val unread = _state.value.unreadBroadcastCount
+        if (unread == 0) return
+        viewModelScope.launch {
+            runCatching { repository.markAllBroadcastsRead(_state.value.token) }
+                .onSuccess {
+                    _state.value = _state.value.copy(
+                        unreadBroadcastCount = 0,
+                        broadcastMessages = _state.value.broadcastMessages.map { it.copy(read = true) },
+                    )
+                }
+        }
+    }
+
+    fun markBroadcastRead(message: BroadcastMessage) {
+        if (message.read) return
+        val token = _state.value.token
+        viewModelScope.launch {
+            runCatching { repository.markBroadcastRead(token, message.messageId) }
+                .onSuccess {
+                    _state.value = _state.value.copy(
+                        broadcastMessages = _state.value.broadcastMessages.map { item ->
+                            if (item.messageId == message.messageId) item.copy(read = true) else item
+                        },
+                        unreadBroadcastCount = (_state.value.unreadBroadcastCount - 1).coerceAtLeast(0),
+                    )
+                }
+        }
     }
 
     private fun refreshSessions() {

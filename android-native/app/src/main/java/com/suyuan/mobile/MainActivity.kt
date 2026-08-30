@@ -2,6 +2,7 @@ package com.suyuan.mobile
 
 import android.Manifest
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
@@ -18,6 +19,7 @@ import android.os.ParcelFileDescriptor
 import android.webkit.WebView
 import android.widget.Toast
 import java.io.File
+import kotlinx.coroutines.delay
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -88,18 +90,32 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
+    private var oauthCallback by mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        oauthCallback = intent?.data
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         window.statusBarColor = android.graphics.Color.BLACK
         window.navigationBarColor = android.graphics.Color.BLACK
         setContent {
             val context = LocalContext.current
+            val store = remember { AppSessionStore(context) }
             val appViewModel: AppViewModel = viewModel(
-                factory = AppViewModelFactory(SocialAppRepository(SocialAppApi()), AppSessionStore(context))
+                factory = AppViewModelFactory(SocialAppRepository(SocialAppApi(sessionStore = store)), store)
             )
-            SuyuanApp(appViewModel)
+            SuyuanApp(appViewModel, oauthCallback) { oauthCallback = null }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        oauthCallback = intent.data
+    }
+
+    companion object {
+        const val NOTIFICATION_PERMISSION_REQUEST = 7001
     }
 }
 
@@ -114,8 +130,38 @@ private class AppViewModelFactory(
 }
 
 @Composable
-private fun SuyuanApp(viewModel: AppViewModel) {
+private fun SuyuanApp(viewModel: AppViewModel, oauthCallback: Uri?, consumeOAuthCallback: () -> Unit) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    LaunchedEffect(oauthCallback) {
+        oauthCallback?.let {
+            viewModel.handleCompanyOAuthCallback(it)
+            consumeOAuthCallback()
+        }
+    }
+    LaunchedEffect(state.loggedIn) {
+        if (state.loggedIn) {
+            val activity = context as? ComponentActivity
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                activity != null &&
+                ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                activity.requestPermissions(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    MainActivity.NOTIFICATION_PERMISSION_REQUEST,
+                )
+            }
+            val application = context.applicationContext as? android.app.Application
+            repeat(10) {
+                val cid = application?.let { UnifiedPushManager.currentClientId(it) }
+                if (!cid.isNullOrBlank()) {
+                    viewModel.registerPushDevice(cid)
+                    return@LaunchedEffect
+                }
+                delay(1000)
+            }
+        }
+    }
     Surface(modifier = Modifier.fillMaxSize(), color = SuyuanColors.background) {
         if (state.loggedIn) ChatScreen(state, viewModel) else LoginScreen(state, viewModel)
     }
@@ -123,6 +169,7 @@ private fun SuyuanApp(viewModel: AppViewModel) {
 
 @Composable
 private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
+    val context = LocalContext.current
     var accountId by remember { mutableStateOf("") }
     var secret by remember { mutableStateOf("") }
     Column(
@@ -164,6 +211,13 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
             if (state.loading) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
             else Text("登录", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
+        TextButton(
+            onClick = { viewModel.startCompanyLogin(context) },
+            enabled = !state.loading,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) {
+            Text("公司统一登录", color = SuyuanColors.primary, fontSize = 15.sp)
+        }
         state.error?.let { Text(it, color = SuyuanColors.error, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp)) }
     }
 }
@@ -184,6 +238,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var requestKeyboardFocus by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
+    var showBroadcasts by remember { mutableStateOf(false) }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     DisposableEffect(voiceClient) {
         onDispose { voiceClient.stop() }
@@ -222,6 +277,14 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     }
     DisposableEffect(Unit) {
         onDispose { voiceHoldHandler.removeCallbacks(voiceHoldRunnable) }
+    }
+    LaunchedEffect(state.loggedIn) {
+        if (state.loggedIn) {
+            while (true) {
+                viewModel.refreshBroadcasts()
+                delay(30_000L)
+            }
+        }
     }
     LaunchedEffect(requestKeyboardFocus, voiceMode) {
         if (requestKeyboardFocus && !voiceMode) {
@@ -265,10 +328,31 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
 
     Box(Modifier.fillMaxSize().background(SuyuanColors.background)) {
         Column(Modifier.fillMaxSize()) {
-        AppTopBar(showHistory = showHistory, onHistory = { showHistory = true }, onBack = { showHistory = false }, onNew = { showHistory = false; viewModel.newConversation() })
-        if (showHistory) {
-            HistoryPanel(state, viewModel, onBack = { showHistory = false })
+        AppTopBar(
+            showHistory = showHistory,
+            onHistory = { showHistory = true; showBroadcasts = false },
+            onBack = { showHistory = false; showBroadcasts = false },
+            onBroadcasts = { showBroadcasts = true; showHistory = false; viewModel.openBroadcasts() },
+            unreadBroadcastCount = state.unreadBroadcastCount,
+            onNew = { showHistory = false; showBroadcasts = false; viewModel.newConversation() },
+        )
+        if (showBroadcasts) {
+            BroadcastPanel(state, viewModel, onBack = { showBroadcasts = false })
+        } else if (showHistory) {
+            HistoryPanel(state, viewModel, onBack = { showHistory = false }, onBroadcasts = { showBroadcasts = true; showHistory = false; viewModel.openBroadcasts() })
         } else Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+            if (state.unreadBroadcastCount > 0) {
+                Surface(
+                    color = SuyuanColors.primary.copy(alpha = .08f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clickable { showBroadcasts = true; viewModel.openBroadcasts() },
+                ) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Icon(painterResource(R.drawable.ic_broadcast), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
+                        Text("收到 ${state.unreadBroadcastCount} 条广播消息", color = SuyuanColors.primary, fontSize = 13.sp, modifier = Modifier.padding(start = 7.dp))
+                    }
+                }
+            }
             val conversationListState = rememberLazyListState()
             val waitingForAssistant = state.loading && state.messages.lastOrNull()?.kind == "user"
             var initiallyScrolledSession by remember { mutableStateOf<String?>(null) }
@@ -480,7 +564,14 @@ private fun VoiceRecordingOverlay(offsetX: Float) {
 }
 
 @Composable
-private fun AppTopBar(showHistory: Boolean, onHistory: () -> Unit, onBack: () -> Unit, onNew: () -> Unit) {
+private fun AppTopBar(
+    showHistory: Boolean,
+    onHistory: () -> Unit,
+    onBack: () -> Unit,
+    onBroadcasts: () -> Unit,
+    unreadBroadcastCount: Int,
+    onNew: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().background(Color.White).statusBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -490,6 +581,16 @@ private fun AppTopBar(showHistory: Boolean, onHistory: () -> Unit, onBack: () ->
                 Icon(painterResource(if (showHistory) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory) "返回对话" else "历史会话", tint = SuyuanColors.text)
             }
             if (showHistory) Text("历史会话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            if (!showHistory) {
+                Box {
+                    IconButton(onClick = onBroadcasts) {
+                        Icon(painterResource(R.drawable.ic_broadcast), contentDescription = "广播消息", tint = SuyuanColors.text)
+                    }
+                    if (unreadBroadcastCount > 0) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
+                    }
+                }
+            }
         }
         IconButton(onClick = onNew) {
             Icon(painterResource(R.drawable.ic_new_chat), contentDescription = "新建对话", tint = SuyuanColors.text, modifier = Modifier.size(28.dp))
@@ -498,18 +599,30 @@ private fun AppTopBar(showHistory: Boolean, onHistory: () -> Unit, onBack: () ->
 }
 
 @Composable
-private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
+private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, onBroadcasts: () -> Unit) {
     var actionSession by remember { mutableStateOf<SessionInfo?>(null) }
     var renameSession by remember { mutableStateOf<SessionInfo?>(null) }
     var deleteSession by remember { mutableStateOf<SessionInfo?>(null) }
     var renameTitle by remember { mutableStateOf("") }
-    if (state.sessions.isEmpty()) {
-        Column(Modifier.fillMaxSize(), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text("暂无历史会话", color = SuyuanColors.secondaryText, fontSize = 16.sp)
-        }
-        return
-    }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+        item {
+            Surface(
+                color = if (state.unreadBroadcastCount > 0) SuyuanColors.primary.copy(alpha = .08f) else Color.White,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp).clickable(onClick = onBroadcasts),
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Icon(painterResource(R.drawable.ic_broadcast), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text("广播消息", color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(if (state.unreadBroadcastCount > 0) "${state.unreadBroadcastCount} 条未读消息" else "暂无未读消息", color = SuyuanColors.secondaryText, fontSize = 11.sp)
+                    }
+                    if (state.unreadBroadcastCount > 0) {
+                        Text(state.unreadBroadcastCount.toString(), color = Color.White, fontSize = 11.sp, modifier = Modifier.clip(CircleShape).background(SuyuanColors.error).padding(horizontal = 7.dp, vertical = 3.dp))
+                    }
+                }
+            }
+        }
         items(state.sessions) { session ->
             Surface(
                 color = Color.White,
@@ -527,6 +640,11 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
                         Icon(painterResource(R.drawable.ic_more), contentDescription = "会话操作", tint = SuyuanColors.secondaryText)
                     }
                 }
+            }
+        }
+        if (state.sessions.isEmpty()) {
+            item {
+                Text("暂无历史会话", color = SuyuanColors.secondaryText, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp))
             }
         }
     }
@@ -571,6 +689,60 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
             confirmButton = { TextButton(onClick = { viewModel.deleteSession(session); deleteSession = null }) { Text("删除", color = SuyuanColors.error) } },
             dismissButton = { TextButton(onClick = { deleteSession = null }) { Text("取消") } },
         )
+    }
+}
+
+@Composable
+private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(painterResource(R.drawable.ic_back), contentDescription = "返回对话", tint = SuyuanColors.text)
+            }
+            Text("广播消息", color = SuyuanColors.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            if (state.broadcastMessages.any { !it.read }) {
+                TextButton(onClick = { viewModel.openBroadcasts() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
+            }
+        }
+        if (state.broadcastLoading && state.broadcastMessages.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
+        } else if (state.broadcastMessages.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 16.dp),
+            ) {
+                items(state.broadcastMessages, key = { it.messageId }) { broadcast ->
+                    Surface(
+                        color = Color.White,
+                        shape = RoundedCornerShape(12.dp),
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.fillMaxWidth().clickable { viewModel.markBroadcastRead(broadcast) },
+                    ) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Icon(painterResource(R.drawable.ic_broadcast), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
+                                Text(if (broadcast.read) "广播消息" else "广播消息 · 未读", color = if (broadcast.read) SuyuanColors.secondaryText else SuyuanColors.primary, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                                Spacer(Modifier.weight(1f))
+                                broadcast.timestamp?.let { Text(it.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp) }
+                            }
+                            Text(broadcast.content, color = SuyuanColors.text, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
+                            broadcast.attachments.forEach { attachment ->
+                                Row(Modifier.padding(top = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                    Icon(painterResource(if (isImageAttachment(attachment)) R.drawable.ic_file else R.drawable.ic_file), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
+                                    Text(attachment.filename, color = SuyuanColors.secondaryText, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 6.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -13,6 +13,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        manifestPlaceholders["GETUI_APPID"] = (project.findProperty("getuiAppId") as String?)?.trim().orEmpty()
     }
 
     buildTypes {
@@ -38,6 +39,10 @@ android {
         .replace("\"", "\\\"")
     buildTypes.all {
         buildConfigField("String", "API_BASE_URL", "\"$escapedApiBaseUrl\"")
+        val getuiAppId = (project.findProperty("getuiAppId") as String?)?.trim().orEmpty()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "GETUI_APPID", "\"$getuiAppId\"")
     }
 }
 
@@ -51,5 +56,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.getui.sdk)
+    implementation(libs.getui.gtc)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
