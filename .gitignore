@@ -282,4 +282,15 @@ id_rsa*
 id_ed25519*
 *credentials*.json
 *secrets*.yaml
-
+# Android client
+android-native/.gradle/
+android-native/.cache/
+android-native/build/
+android-native/app/build/
+android-native/artifacts/
+android-native/local.properties
+android-native/**/*.apk
+android-native/**/*.aab
+# Launcher icons are source assets and must remain versioned despite the
+# repository-wide generated-image rule above.
+!android-native/app/src/main/res/**/*.png
