@@ -334,7 +334,7 @@ class ScheduledTaskService:
             if task.broadcast_enabled:
                 recipients = await self.event_delivery.resolve_recipients(task.target_user_ids)
                 if not recipients:
-                    raise ValueError("no active bound WeChat recipients")
+                    raise ValueError("no active bound social recipients")
 
             execution = await self.executor.execute_task(
                 task,
@@ -504,7 +504,7 @@ class ScheduledTaskService:
                     execution = self._create_failed_event_execution(
                         task,
                         event,
-                        "no active bound WeChat recipients",
+                        "no active bound social recipients",
                     )
                     self.task_storage.update_run_stats(task.task_id, success=False)
                     self.claim_storage.mark_status(

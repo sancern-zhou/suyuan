@@ -22,6 +22,15 @@ class EventTaskDelivery:
     ) -> list[dict[str, str]]:
         recipients: list[dict[str, str]] = []
         for user_id in target_user_ids:
+            # App identities can be targeted directly without a legacy
+            # social-user registry row.
+            if str(user_id).startswith("app:"):
+                recipients.append({
+                    "user_id": user_id,
+                    "social_user_id": user_id,
+                    "name": user_id.rsplit(":", 1)[-1],
+                })
+                continue
             record = await self.user_registry.get_user(user_id)
             if not record or record.status != "active" or not record.social_user_id:
                 continue
