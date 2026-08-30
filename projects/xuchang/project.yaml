@@ -90,9 +90,9 @@ backend:
     - xuchang_annual_attainment_forecast_fetcher
     - xuchang_cnemc_station_hour_fetcher
     - xuchang_henan_month_year_accumulate_fetcher
+    - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
-    - xuchang_transport_analysis_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
     - xuchang_zhongda_station_day_fetcher

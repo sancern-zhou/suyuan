@@ -1,4 +1,4 @@
-"""Run quality-gated Scenario 2 trajectories for confirmed station-day pollution."""
+"""Run quality-gated Scenario 3 trajectories for confirmed station-day pollution."""
 
 from __future__ import annotations
 
@@ -21,10 +21,7 @@ from app.utils.path_config import format_agent_path, get_data_registry
 
 from .cwt_analysis import XuchangStationConcentrationLoader, calculate_wcwt
 from .interactive_map import build_transport_map_programs, write_transport_map_programs
-from .spatial_analysis import (
-    TrajectoryEnterpriseScreener,
-    identify_transport_corridors_by_height,
-)
+from .spatial_analysis import identify_transport_corridors_by_height
 from .visualization import generate_transport_maps
 
 logger = structlog.get_logger()
@@ -197,10 +194,10 @@ class XuchangTransportEscalationService:
         return self.output_root / "process_state.json"
 
     def ingest_scenario_1_alert(self, alert: dict[str, Any]) -> dict[str, Any]:
-        """Compatibility boundary: hourly Scenario 1 alerts never trigger Scenario 2."""
+        """Compatibility boundary: hourly Scenario 1 alerts never trigger Scenario 3."""
         return {
             "status": "ignored",
-            "reason": "scenario_2_requires_confirmed_station_daily_exceedance",
+            "reason": "scenario_3_requires_confirmed_station_daily_exceedance",
             "job": None,
         }
 
@@ -212,7 +209,7 @@ class XuchangTransportEscalationService:
         if event.get("status") != "confirmed":
             return {"status": "ignored", "reason": "daily_exceedance_not_confirmed", "job": None}
         if (
-            event.get("source_granularity") != "station_day"
+            event.get("source_granularity") not in {"station_day", "station_hour"}
             and float(event.get("data_rate") or 0) < self.min_data_rate
         ):
             return {"status": "ignored", "reason": "insufficient_data_rate", "job": None}
@@ -296,6 +293,31 @@ class XuchangTransportEscalationService:
                 "valid_hours": event.get("valid_hours"),
                 "data_rate": event.get("data_rate"),
                 "station_hourly": list(hourly_rows),
+                "hourly_alerts": list(event.get("hourly_alerts") or []),
+                "hourly_checks": list(event.get("hourly_checks") or []),
+                "pollutant_synchronous_changes": list(event.get("pollutant_synchronous_changes") or []),
+                "pollutant_change_classifications": list(event.get("pollutant_change_classifications") or []),
+                "pollutant_source_features": event.get("pollutant_source_features") or {
+                    "status": "insufficient_samples",
+                    "classification": "indeterminate",
+                },
+                "component_station_evidence": event.get("component_station_evidence") or {
+                    "status": "not_available",
+                    "reason": "component_station_data_not_integrated",
+                },
+                "township_and_provincial_transport": event.get("township_and_provincial_transport") or {
+                    "status": "not_available",
+                    "reason": "township_and_provincial_station_data_not_integrated",
+                },
+                "meteorology_evidence": event.get("meteorology_evidence") or {
+                    "status": "not_available",
+                    "reason": "yesterday_hourly_meteorology_not_integrated",
+                },
+                "local_source_indicators": event.get("local_source_indicators") or {
+                    "status": "not_available",
+                    "reason": "local_source_activity_data_not_integrated",
+                },
+                "data_quality": event.get("data_quality") or {},
                 "peer_station_daily": list(event.get("peer_station_daily") or []),
                 "event_hours": event_hours,
                 "event_concentrations": {
@@ -318,7 +340,6 @@ class XuchangTransportEscalationService:
         jobs = self._claim_pending(limit)
         results = []
         trajectory_runner = self.trajectory_runner or TrajectoryRunner(max_concurrent=3)
-        enterprise_screener = self.enterprise_screener or TrajectoryEnterpriseScreener()
         for job in jobs:
             try:
                 event_hours = [_parse_hour(value) for value in job["event_hours"]]
@@ -357,21 +378,14 @@ class XuchangTransportEscalationService:
                 )
                 primary_height = str(job["heights_m_agl"][0])
                 corridors = corridors_by_height.get(primary_height, [])
-                try:
-                    enterprise_screening = await enterprise_screener.screen(
-                        endpoints,
-                        pollutant=job["target_pollutant"],
-                        receptor_lat=float(job["lat"]),
-                        receptor_lon=float(job["lon"]),
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "xuchang_transport_enterprise_screening_failed", job_id=job["job_id"]
-                    )
-                    enterprise_screening = {
-                        "enterprises": [],
-                        "coverage": {"status": "failed", "error": str(exc)},
-                    }
+                # Scenario 3 no longer performs an upwind/trajectory enterprise
+                # screening. Enterprise checks are a final report layer after
+                # pollution, transport and meteorological evidence are reviewed.
+                enterprise_screening = {
+                    "status": "not_run",
+                    "reason": "enterprise_review_is_deferred_to_final_analysis_layer",
+                    "enterprises": [],
+                }
                 output_dir = self._output_dir(job)
                 map_artifacts = generate_transport_maps(
                     output_dir=output_dir,
@@ -461,7 +475,7 @@ class XuchangTransportEscalationService:
             quality=quality,
         )
         return {
-            "schema_version": "xuchang_station_daily_source_analysis/v2",
+            "schema_version": "xuchang_station_daily_source_analysis/v3",
             "status": "completed" if quality["status"] == "sufficient" else "insufficient_evidence",
             "event_id": job["event_id"],
             "event_type": COMPLETED_EVENT_TYPE,
@@ -478,9 +492,19 @@ class XuchangTransportEscalationService:
                 "limit": job.get("limit"),
                 "valid_hours": job.get("valid_hours"),
                 "data_rate": job.get("data_rate"),
-                "status": "confirmed_exceedance",
+                "status": "hourly_station_high_value",
             },
             "station_hourly": job.get("station_hourly", []),
+            "hourly_alerts": job.get("hourly_alerts", []),
+            "hourly_checks": job.get("hourly_checks", []),
+            "pollutant_synchronous_changes": job.get("pollutant_synchronous_changes", []),
+            "pollutant_change_classifications": job.get("pollutant_change_classifications", []),
+            "pollutant_source_features": job.get("pollutant_source_features"),
+            "component_station_evidence": job.get("component_station_evidence"),
+            "township_and_provincial_transport": job.get("township_and_provincial_transport"),
+            "meteorology_evidence": job.get("meteorology_evidence"),
+            "local_source_indicators": job.get("local_source_indicators"),
+            "data_quality": job.get("data_quality", {}),
             "peer_station_daily": job.get("peer_station_daily", []),
             "observed_indicator": job.get("observed_indicator"),
             "trajectory_request": {

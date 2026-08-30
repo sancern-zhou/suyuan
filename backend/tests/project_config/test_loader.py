@@ -92,9 +92,14 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_annual_attainment_forecast_fetcher",
         "xuchang_cnemc_station_hour_fetcher",
         "xuchang_henan_month_year_accumulate_fetcher",
+        "xuchang_nmc_hourly_forecast_fetcher",
         "xuchang_station_deviation_alert_fetcher",
         "xuchang_station_daily_pollution_fetcher",
-        "xuchang_transport_analysis_fetcher",
+        "xuchang_zhongda_station_minute_fetcher",
+        "xuchang_zhongda_station_hour_fetcher",
+        "xuchang_zhongda_station_day_fetcher",
+        "xuchang_zhongda_city_hour_fetcher",
+        "xuchang_zhongda_city_day_fetcher",
         "gems_xuchang_image_fetcher",
     ]
     assert context.manifest.backend.disabled_tools == [
@@ -107,7 +112,8 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "query_station_standard_yoy_report",
     ]
     assert context.manifest.scheduled_tasks == [
-        "task_xuchang_station_daily_source_report"
+        "task_xuchang_station_deviation_alert",
+        "task_xuchang_station_daily_source_report",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 

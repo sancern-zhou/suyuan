@@ -1,7 +1,7 @@
 {
   "task_id": "task_xuchang_station_deviation_alert",
   "name": "站点快速污染抬升告警",
-  "description": "场景1站点5分钟或PM2.5小时偏差告警，汇总监测对比、抬升趋势、气象和运维质控信息。",
+  "description": "场景1站点 episode 告警通报。",
   "execution_mode": "expert",
   "tool_names": null,
   "skill_id": null,
@@ -20,8 +20,8 @@
   "steps": [
     {
       "step_id": "monitoring_alert",
-      "description": "读取场景1证据包并生成快速告警通报",
-      "agent_prompt": "你是许昌场景1站点快速污染告警 Agent。事件 payload 中的 evidence_package_path 是本次告警的事实来源。使用 read_file 完整读取证据包，并仅依据其中的数据生成通报，不改写证据包。\n\n请向用户输出一份简明但完整的告警通报，必须包含：\n1. 告警站点、污染物、数据粒度（5分钟；PM2.5为小时）、告警时间，以及当前告警槽位的站点实测值、周边站点中位数、绝对差和相对偏差。这是当前时刻的空间偏差快照。有效站点数、mark豁免站点数只用于后端质量判断，除非数据不足或质控影响导致结论受限，否则不要向用户展示。\n2. 时间趋势必须与当前空间快照分开表述：\n   - 对PM2.5小时告警，引用 station_process.changes，说明告警站点过去1小时的小时环比变化；不要把它写成5分钟环比。\n   - 对其他污染物5分钟告警，引用 station_5min_process.target_station_5min_changes，说明告警站点相对上一个5分钟槽位的环比变化；可连续列出过去1小时各槽位变化，但每一项均按5分钟计算。\n   - 周边站点的同步或偏离只作为时间趋势的补充，引用 target_peer_5min_comparison（5分钟告警）或 station_process.target_peer_hourly_comparison（PM2.5小时告警），不要重复罗列当前槽位的绝对差和相对偏差。\n3. 引用 observed_meteorology 中最近几个小时的风速、风向、温度、湿度、降水和扩散条件变化；证据缺失时明确说明。未来天气预报不属于本次告警证据。\n4. 检查 maintenance_qc_review、station_5min_process.marked_quality_records 以及 local_station_5min_records 中告警前一个小时目标站点的*_mark字段，判断是否存在运维质控影响。若存在，明确告知用户相关数据不宜直接解释为污染变化，并列出时间、污染物和标识。\n5. 给出现场排查建议，限定为核实设备状态、校准/质控记录、采样和周边站点变化。\n\n结论必须区分“当前空间偏差事实”“时间趋势”“可能的质控影响”和“待现场核实事项”。",
+      "description": "读取站点 episode 证据并生成合并通报",
+      "agent_prompt": "你是许昌场景1站点快速污染告警 Agent。事件 payload 中的 evidence_package_path 是本次站点 episode 的唯一事实来源。使用 read_file 完整读取证据包，并仅依据其中数据生成一条简明通报；证据包 alerts 数组中的多个污染物必须合并在同一条站点通报中。\n\n通报只保留以下内容：\n1. 当前空间偏差事实：站点、污染物、数据粒度、告警时间、实测值、周边站点中位数、绝对差、相对偏差。\n2. 时间趋势：PM2.5引用 station_process.changes；其他污染物引用 station_5min_process.target_station_5min_changes；周边站点变化只作补充。\n3. 仅当证据包中的 maintenance_qc_review 不为空且包含实际标记时，增加“运维质控影响”小节并列出标记；没有质控标记时完全省略该小节。\n4. 引用 observed_meteorology 中许昌气象站最近几小时的风速、风向、温度、湿度、降水和扩散条件；不要输出其他气象站数据。\n\n不要输出“综合结论”“现场排查建议”或其他建议章节，不要使用未来天气预报。",
       "timeout_seconds": 300,
       "retry_on_failure": true
     }

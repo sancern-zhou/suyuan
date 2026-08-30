@@ -119,14 +119,14 @@ class FakeCWTConcentrationLoader:
         return {hour: 50.0 + index for index, hour in enumerate(event_hours)}
 
 
-def test_hourly_scenario_1_alert_never_creates_scenario_2_job(tmp_path):
+def test_hourly_scenario_1_alert_never_creates_scenario_3_job(tmp_path):
     service = XuchangTransportEscalationService(output_root=tmp_path)
 
     result = service.ingest_scenario_1_alert(_alert(10))
 
     assert result == {
         "status": "ignored",
-        "reason": "scenario_2_requires_confirmed_station_daily_exceedance",
+        "reason": "scenario_3_requires_confirmed_station_daily_exceedance",
         "job": None,
     }
     assert service._load_state()["jobs"] == {}

@@ -45,6 +45,33 @@ def test_missing_station_day_values_do_not_trigger():
     assert result["evaluations"][0]["o3_8h"]["status"] == "missing_daily_value"
 
 
+def test_hourly_change_classification_is_deterministic():
+    day = date(2026, 8, 5)
+    rows = [
+        {"station_id": "XC001", "name": "目标站", "lat": 34.0, "lon": 113.8,
+         "pm25": 45, "o3": 90, "data_time": datetime(2026, 8, 5, 10), "data_source": "hour"},
+        {"station_id": "XC001", "name": "目标站", "lat": 34.0, "lon": 113.8,
+         "pm25": 30, "o3": 70, "data_time": datetime(2026, 8, 5, 11), "data_source": "hour"},
+        {"station_id": "XC002", "name": "参照站", "lat": 34.1, "lon": 113.9,
+         "pm25": 20, "o3": 70, "data_time": datetime(2026, 8, 5, 11), "data_source": "hour"},
+        {"station_id": "XC003", "name": "参照站2", "lat": 34.2, "lon": 114.0,
+         "pm25": 20, "o3": 70, "data_time": datetime(2026, 8, 5, 11), "data_source": "hour"},
+        {"station_id": "XC001", "name": "目标站", "lat": 34.0, "lon": 113.8,
+         "pm25": 50, "o3": 80, "data_time": datetime(2026, 8, 5, 12), "data_source": "hour"},
+        {"station_id": "XC002", "name": "参照站", "lat": 34.1, "lon": 113.9,
+         "pm25": 20, "o3": 70, "data_time": datetime(2026, 8, 5, 12), "data_source": "hour"},
+        {"station_id": "XC003", "name": "参照站2", "lat": 34.2, "lon": 114.0,
+         "pm25": 20, "o3": 70, "data_time": datetime(2026, 8, 5, 12), "data_source": "hour"},
+        {"station_id": "XC001", "name": "目标站", "lat": 34.0, "lon": 113.8,
+         "pm25": 80, "o3_8h": 170, "data_time": datetime(2026, 8, 5), "data_source": "day"},
+    ]
+    result = evaluate_station_daily_pollution(rows, target_date=day)
+    event = next(item for item in result["events"] if item["target_pollutant"] == "PM2.5")
+    classification = event["pollutant_change_classifications"][0]
+    assert classification["classification"] == "multi_pollutant_sync"
+    assert "O3" in classification["synchronized_pollutants"]
+
+
 class _AnalysisService:
     def __init__(self):
         self.events = []

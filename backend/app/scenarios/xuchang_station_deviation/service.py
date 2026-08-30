@@ -320,6 +320,31 @@ class XuchangStationDeviationAlertService:
         self._write_json(path, evidence)
         return path
 
+    def write_episode_evidence_package(
+        self,
+        *,
+        station_id: str,
+        occurred_at: str,
+        alerts: list[dict[str, Any]],
+    ) -> Path:
+        """Persist one evidence envelope for all pollutants in a station episode."""
+        timestamp = datetime.fromisoformat(occurred_at)
+        path = self.output_root / timestamp.strftime("%Y%m%d") / (
+            f"xuchang-station-episode-{timestamp:%Y%m%d%H%M}-{station_id}.evidence.json"
+        )
+        primary_evidence = alerts[0].get("evidence", {}) if alerts else {}
+        self._write_json(path, {
+            "schema_version": "xuchang_station_deviation_episode_evidence/v1",
+            "station_id": station_id,
+            "occurred_at": occurred_at,
+            # Keep the first alert's evidence fields at the top level for
+            # backwards-compatible readers; all pollutant evidence follows
+            # in the alerts array.
+            **primary_evidence,
+            "alerts": alerts,
+        })
+        return path
+
     @staticmethod
     def _write_json(path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

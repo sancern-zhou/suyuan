@@ -257,7 +257,7 @@ class TrajectoryEnterpriseScreener:
     def __init__(self, repository: Any | None = None) -> None:
         if repository is None:
             # Defer this import because the permit models currently live below
-            # app.fetchers, whose package initializer registers Scenario 2.
+            # app.fetchers, whose package initializer registers Scenario 3.
             from app.tools.analysis.xuchang_upwind_permit_sources.repository import (
                 XuchangUpwindPermitRepository,
             )

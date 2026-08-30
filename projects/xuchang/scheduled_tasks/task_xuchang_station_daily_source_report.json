@@ -1,17 +1,19 @@
 {
   "task_id": "task_xuchang_station_daily_source_report",
   "name": "站点日污染溯源报告",
-  "description": "场景二完成站点日污染逐小时轨迹和企业排序后，由事件触发报告 Agent 生成正式分析报告。",
+    "description": "每日例行生成许昌昨日回顾报告；无小时异常时仅生成气象条件分析和周边城市对比，有小时异常时补充完整告警分析。",
   "execution_mode": "report",
   "tool_names": null,
   "skill_id": null,
   "knowledge_base_binding": null,
   "trigger_type": "event",
   "schedule_type": null,
-  "event_type": "xuchang.station_daily_source_analysis.completed",
+  "event_type": "xuchang.station_daily_pollution.review_completed",
   "event_filters": {
     "city": "许昌市"
   },
+  "report_template_path": "/home/xckj/suyuan/backend/backend_data_registry/uploads/401ecbb4-c402-4f55-b37c-331e7a88b49d.docx",
+  "no_hourly_alert_sections": ["二、气象条件分析", "三、周边城市对比"],
   "target_user_ids": [],
   "broadcast_enabled": false,
   "enabled": true,
@@ -23,7 +25,7 @@
     {
       "step_id": "generate_report",
       "description": "读取场景二证据包并生成站点日污染溯源分析报告",
-      "agent_prompt": "你是许昌场景二站点日污染溯源报告 Agent。可信事件 payload 中包含 evidence_package_path；该文件是 Fetcher 已完成数据抓取和确定性计算后形成的唯一证据包。必须按以下要求执行：\n\n1. 使用 read_file 完整读取 evidence_package_path，不重新查询数据库、不重新抓取数据、不重新运行轨迹模型，也不得改写证据包。\n2. 以证据包中的 target_date、station_hourly、peer_station_daily、trajectory_quality、transport_corridors_by_height、cwt、enterprise_screening.hourly_candidate_analyses、enterprise_screening.enterprises、visualizations 和数据质量字段为唯一事实依据。\n3. 使用 create_report_chart 生成必要的站点小时浓度趋势、同城站点日评价对比、逐小时候选企业变化等图表；复用证据包已有轨迹和企业地图。禁止编造缺失的周边城市、气象或企业数据。\n4. 按固定结构生成正式报告：一、站点空气质量分析；二、周边城市及同城站点对比分析；三、气象条件分析；四、污染来源性质；五、污染溯源分析。缺少某类证据时必须明确写明未接入或证据不足。\n5. 企业排序必须说明采用逐小时轨迹命中、污染物相关性、排放清单指标排放强度、距轨迹距离和风速的归一化加权得分。该得分只表示排查优先级，不得表述为企业贡献率、责任或实际排放量。区域/本地判断也不得表述为实际贡献率。\n6. 使用 create_report_package 创建 report_id={analysis_id}-report 的标准报告包，使用 render_report_package 导出 DOCX，并使用 validate_report_package 对 QMD、HTML、DOCX 和图片引用进行验收。\n7. 必须等待报告生成和验收完成后再结束。最终简要返回报告 ID、结论、证据等级、QMD/HTML/DOCX 实际路径和验收结果；失败时返回具体失败阶段和原因。",
+      "agent_prompt": "你是许昌场景二昨日污染回顾分析报告 Agent。可信事件 payload 中包含 evidence_package_path；该文件是 Fetcher 已完成数据抓取和确定性计算后形成的唯一证据包。必须按以下要求执行：\n\n1. 使用 read_file 完整读取 evidence_package_path，不重新查询数据库、不重新抓取数据、不重新运行模型，也不得改写证据包。\n2. 仅以证据包中的 target_date、daily_evaluation、station_hourly、hourly_alerts、hourly_checks、pollutant_synchronous_changes、pollutant_change_classifications、pollutant_source_features、peer_station_daily、component_station_evidence、township_and_provincial_transport、trajectory_quality、transport_corridors_by_height、cwt、meteorology 和 data_quality 字段为事实依据。component_station_evidence 和 township_and_provincial_transport 当前可能为 not_available，必须如实说明，不得补写结论。\n3. 多污染物同步变化、单一污染物变化或无法判断，必须直接采用 pollutant_change_classifications 中的程序计算结果；污染物来源类型必须直接采用 pollutant_source_features 中的程序计算结果。该计算先求 PM=PM10-PM2.5，再求 SO2、NO2、CO、PM2.5 和 PM 在总和中的占比，以当前样本与历史均值加一个标准差比较，映射为偏综合型、偏二次型、偏机动车型、偏燃煤型、偏扬尘型或其他类型。样本不足时只能写证据不足。LLM 只解释业务含义，不得自行修改判定。\n4. 先分析污染物小时变化和告警过程，再解释同步变化、来源特征及可能的高湿二次转化；随后分析组分站证据（无数据则明确缺失）；再判断周边城市、省内传输（当前未接入乡镇/省控站时明确证据不足）；之后分析已有气象证据；工地和企业只能作为最后核查层，当前没有企业筛选证据时不得声称存在上风向企业或企业贡献。任何判断都必须区分事实、推断和证据不足，不得写贡献率或责任认定。\n5. 使用 create_report_chart 生成站点小时污染物趋势、小时告警和同城站点日评价对比图；禁止编造缺失的周边城市、组分、乡镇、气象、工地或企业数据。\n6. 按固定结构生成正式报告：一、昨日站点污染过程与小时告警；二、污染物同步变化；三、不同污染物来源典型特征；四、周边区域传输证据；五、气象扩散条件；六、工地与企业末端核查；七、证据缺口与建议。\n7. 使用 create_report_package 创建 report_id={analysis_id}-report 的标准报告包，使用 render_report_package 导出 DOCX，并使用 validate_report_package 对 QMD、HTML、DOCX 和图片引用进行验收。\n8. 必须等待报告生成和验收完成后再结束。最终简要返回报告 ID、分层结论、证据等级、QMD/HTML/DOCX 实际路径和验收结果；失败时返回具体失败阶段和原因。",
       "timeout_seconds": 1800,
       "retry_on_failure": true
     }

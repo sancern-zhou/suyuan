@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -37,10 +38,10 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
         super().__init__(
             name="xuchang_station_deviation_alert_fetcher",
             description="许昌场景一站点空间偏差阈值告警",
-            # Poll every minute so a slow 5-minute ingestion run is analyzed
-            # on the next tick instead of waiting for another five-minute slot.
-            schedule="* * * * *",
-            version="1.1.0",
+            # 中大分钟抓取在每个 5 分钟槽的第 1 分钟启动；本任务在入口
+            # 延迟 30 秒，给抓取和入库留出时间（01:30、06:30...）。
+            schedule="1-59/5 * * * *",
+            version="1.2.0",
         )
         self.service = service or XuchangStationDeviationAlertService()
         # Kept as a compatibility argument for callers; source attribution is
@@ -49,6 +50,7 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
         self.evidence_collector = evidence_collector or XuchangStationDeviationEvidenceCollector()
 
     async def fetch_and_store(self) -> dict[str, Any]:
+        await asyncio.sleep(30)
         result = await self.service.run()
         target_hour = datetime.fromisoformat(result["target_hour"])
         closed_episodes = self.episode_service.close_stale(target_hour)
@@ -68,6 +70,7 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                     },
                     payload=episode,
                 ))
+            analyzable_by_station: dict[str, list[dict[str, Any]]] = {}
             for alert in result["alerts"]:
                 episode_result = self.episode_service.record(alert)
                 alert["scenario_1_episode"] = {
@@ -78,36 +81,46 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                 }
                 if not episode_result["should_analyze"]:
                     continue
-                try:
-                    evidence = await self.evidence_collector.collect(
-                        alert=alert,
-                        source_screening={
-                            "status": "not_run",
-                            "reason": "event alert path reports monitoring facts; upwind enterprise analysis is disabled",
-                        },
-                    )
-                    evidence_path = self.service.write_evidence_package(alert, evidence)
-                    alert["evidence_package_path"] = format_agent_path(evidence_path)
-                    alert["evidence_collection"] = evidence["collection"]
-                except Exception as exc:
-                    logger.exception(
-                        "xuchang_scenario_1_evidence_collection_failed",
-                        event_id=alert["event_id"],
-                    )
-                    alert["evidence_collection"] = {
-                        "status": "failed",
-                        "errors": [{"asset": "evidence_package", "error": str(exc)}],
-                    }
+                analyzable_by_station.setdefault(str(alert["station_id"]), []).append(alert)
+
+            # 一个站点 episode 内的多个污染物共用一次 Agent 分析，避免同一
+            # 站点在同一批次产生多条几乎相同的处置消息。
+            for station_id, alerts in analyzable_by_station.items():
+                evidences = []
+                for alert in alerts:
+                    try:
+                        evidence = await self.evidence_collector.collect(
+                            alert=alert,
+                            source_screening={
+                                "status": "not_run",
+                                "reason": "event alert path reports monitoring facts; upwind enterprise analysis is disabled",
+                            },
+                        )
+                        evidences.append({"alert": alert, "evidence": evidence})
+                    except Exception as exc:
+                        logger.exception("xuchang_scenario_1_evidence_collection_failed", event_id=alert["event_id"])
+                        alert["evidence_collection"] = {"status": "failed", "errors": [{"asset": "evidence_package", "error": str(exc)}]}
+                if not evidences:
+                    continue
+                primary = alerts[0]
+                episode_path = self.service.write_episode_evidence_package(
+                    station_id=station_id,
+                    occurred_at=primary["occurred_at"],
+                    alerts=evidences,
+                )
+                payload = {
+                    **primary,
+                    "station_episode_alerts": alerts,
+                    "evidence_package_path": format_agent_path(episode_path),
+                    "station_episode": True,
+                }
+                event_id = f"xuchang-station-episode-{primary['occurred_at'].replace(':', '').replace('+', '')}-{station_id}"
                 await task_service.publish_event(TaskEvent(
-                    event_id=alert["event_id"],
+                    event_id=event_id,
                     event_type=EVENT_TYPE,
-                    occurred_at=alert["occurred_at"],
-                    attributes={
-                        "city": alert["city"],
-                        "target_pollutant": alert["target_pollutant"],
-                        "station_id": alert["station_id"],
-                    },
-                    payload=alert,
+                    occurred_at=primary["occurred_at"],
+                    attributes={"city": primary["city"], "target_pollutant": primary["target_pollutant"], "station_id": station_id},
+                    payload=payload,
                 ))
         result["closed_episodes"] = closed_episodes
         logger.info("xuchang_station_deviation_alert_completed", alert_count=len(result["alerts"]), target_hour=result["target_hour"])

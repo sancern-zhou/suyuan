@@ -1,4 +1,4 @@
-"""Static map artifacts for Xuchang Scenario 2 transport analysis."""
+"""Static map artifacts for Xuchang Scenario 3 transport analysis."""
 
 from __future__ import annotations
 

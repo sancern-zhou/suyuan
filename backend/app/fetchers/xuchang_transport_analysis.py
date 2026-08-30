@@ -1,4 +1,4 @@
-"""Run pending Xuchang Scenario 2 NOAA trajectory jobs."""
+"""Run pending Xuchang Scenario 3 NOAA trajectory jobs."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ class XuchangTransportAnalysisFetcher(DataFetcher):
     def __init__(self, service: XuchangTransportEscalationService | None = None) -> None:
         super().__init__(
             name="xuchang_transport_analysis_fetcher",
-            description="许昌场景二NOAA后向轨迹与本地输送诊断",
+            description="许昌场景三NOAA后向轨迹与本地输送诊断",
             schedule="25 * * * *",
-            version="2.0.0",
+            version="3.0.0",
         )
         self.service = service or XuchangTransportEscalationService()
 

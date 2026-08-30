@@ -34,6 +34,8 @@ MONITORING_SQL_TABLES = [
     'CurrentAirQuality',
     'OpenMeteoAirQualityForecast72h',
     'dbo.OpenMeteoAirQualityForecast72h',
+    'XuchangNmcHourlyWeatherForecast',
+    'dbo.XuchangNmcHourlyWeatherForecast',
     'dat_station_day',
     'dat_station_hour',
     'dat_weather_hour',
@@ -74,6 +76,11 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "dat_zhongda_city_day）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
     "准确性更高。仅当中大表不覆盖所需时间（如城市聚合滞后约1天）或字段缺失时，再用通用发布表补充。"
     "站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
+    "\n【预报数据源优先级】查询未来气象预报（温度、湿度、风向风速、气压、降水概率、天气现象）时，"
+    "优先查询NMC气象预报数据（XuchangNmcHourlyWeatherForecast，中央气象台官方预报，7天×3小时间隔）；"
+    "Open-Meteo预报数据（OpenMeteoAirQualityForecast72h）作为补充，仅当NMC表不覆盖所需时间、"
+    "需要逐1小时更细时间分辨率、或需要空气质量要素（AQI、污染物浓度）时使用——"
+    "注意Open-Meteo表不含温湿风等气象要素，禁止把它当作气象预报来源。"
     "\n- CurrentAirQuality（城市当前实况及今明两天预报摘要）："
     "城市字段为CityID，按行政区代码筛选：CityID = '{city_code}'；"
     "没有cityname、Area、CityCode，不得把城市名称写入CityID。"
@@ -154,6 +161,20 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "预报字段为DayTitle, MinAqi, MaxAqi, MaxPollution, WeatherCondition, "
     "Temperature, WindLevel, WindDirection, UpdateDate, UpdateTime。"
     "cityname仅用于此预报表，不得用于CurrentAirQuality或城市、站点历史表。"
+    "\n- XuchangNmcHourlyWeatherForecast（中央气象台NMC逐3小时气象预报，未来7天）："
+    "城市字段为city_name和city_code，按城市全称或行政区代码筛选："
+    "city_name = N'{city_name}'或city_code = '{city_code}'；站点字段为station_id（NMC站点号）。"
+    "时间字段为forecast_time（3小时间隔，每日8个时次如02/05/08/11/14/17/20/23时，覆盖未来7天约56条）；"
+    "气象字段：temperature（℃）、humidity（%）、pressure（hPa）、wind_speed（m/s）、"
+    "wind_direction（中文风向如北风）、wind_direction_degrees（风向角度0~360）、"
+    "precipitation_probability（降水概率%）、weather_code/weather_text（天气现象，如晴/多云/小雨）；"
+    "溯源字段：publish_time（预报发布时间）、fetched_at（抓取时间）、source（'NMC'）。"
+    "同一(station_id, forecast_time)只保留最新一次预报（重复抓取覆盖更新），统计前无需去重；"
+    "字段为NULL表示源缺测（源端9999哨兵已归一为NULL）。"
+    "查询未来气象要素预报时本表为优先源（见上方预报数据源优先级）。"
+    "示例：SELECT TOP 56 forecast_time, temperature, humidity, pressure, wind_direction, "
+    "wind_speed, precipitation_probability, weather_text FROM dbo.XuchangNmcHourlyWeatherForecast "
+    "WHERE city_code = '{city_code}' AND forecast_time >= '2026-08-30 11:00' ORDER BY forecast_time。"
 )
 
 
@@ -892,7 +913,8 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n\n常用表说明（按数据库分类）："
             "\n【XcAiDb数据库-空气质量】"
             "\n- WeatherForecast7Day：7天空气质量预报（全国319城，含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint）"
-            "\n- OpenMeteoAirQualityForecast72h：Open-Meteo未来72小时空气质量预报明细"
+            "\n- XuchangNmcHourlyWeatherForecast：NMC中央气象台未来7天×3小时间隔气象预报（温/湿/风/气压/降水概率/天气现象，气象预报优先源）"
+            "\n- OpenMeteoAirQualityForecast72h：Open-Meteo未来72小时空气质量预报明细（预报补充源，不含气象要素）"
             "\n- CityDayAQIPublishHistory：城市日空气质量历史数据（次选，优先中大表）"
             "\n- CityAQIPublishHistory：城市小时空气质量历史数据（次选，优先中大表）"
             "\n- CurrentAirQuality：当前空气质量"

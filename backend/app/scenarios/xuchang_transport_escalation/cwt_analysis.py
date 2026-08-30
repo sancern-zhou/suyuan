@@ -1,4 +1,4 @@
-"""Concentration-weighted trajectory analysis for accumulated Scenario 2 samples."""
+"""Concentration-weighted trajectory analysis for accumulated Scenario 3 samples."""
 
 from __future__ import annotations
 

@@ -81,6 +81,20 @@ def test_execute_sql_query_allows_open_meteo_air_quality_forecast_tables():
         assert is_valid, error
 
 
+def test_execute_sql_query_allows_xuchang_nmc_hourly_weather_forecast_tables():
+    tool = ExecuteSQLQueryTool()
+
+    for sql in (
+        "SELECT TOP 56 forecast_time, temperature, humidity, wind_direction, wind_speed,"
+        " precipitation_probability, weather_text FROM XuchangNmcHourlyWeatherForecast"
+        " WHERE city_code = '411000' ORDER BY forecast_time",
+        "SELECT TOP 1 forecast_time FROM dbo.XuchangNmcHourlyWeatherForecast",
+    ):
+        is_valid, error = tool.sql_validator.validate(sql)
+
+        assert is_valid, error
+
+
 def test_execute_sql_query_allows_henan_city_accumulate_ranking_table():
     tool = ExecuteSQLQueryTool()
 
