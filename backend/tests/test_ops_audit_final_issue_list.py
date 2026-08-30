@@ -696,6 +696,46 @@ def test_final_issue_list_does_not_promote_rf_abnormal_without_source_issue():
     assert result["issue_count"] == 0
 
 
+def test_final_issue_list_uses_attachment_requirement_display_name():
+    audit = {
+        "records": [
+            {
+                "working_order_code": "CH2608211787318189359",
+                "station_name": "翁源龙仙",
+                "station_id": "1725",
+                "order_type": "Check",
+                "maintenance_type": "Year",
+                "scoring_issues": [
+                    {
+                        "rule_id": "ATTACHMENT_REQUIRED_MISSING",
+                        "category": "附件清单",
+                        "severity": "中",
+                        "field": "attachment.PREVENTIVE_MAINTENANCE_REPORT.report.missing",
+                        "message": "预防性维护报告缺失：report",
+                        "evidence": (
+                            '{"working_order_code":"CH2608211787318189359",'
+                            '"requirement_id":"PREVENTIVE_MAINTENANCE_REPORT",'
+                            '"requirement_name":"预防性维护报告",'
+                            '"required_types":["report","photo"],'
+                            '"missing_type":"report",'
+                            '"missing_types":["report"],'
+                            '"attachment_count":0}'
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = build_final_issue_list(audit)
+
+    assert result["issue_count"] == 1
+    item = result["items"][0]
+    assert item["rf_table"] == "PREVENTIVE_MAINTENANCE_REPORT"
+    assert item["rf_form_name"] == "预防性维护报告"
+    assert item["message"] == "预防性维护报告缺失：report"
+
+
 def test_final_issue_list_excludes_technical_diagnostics():
     audit = {
         "records": [

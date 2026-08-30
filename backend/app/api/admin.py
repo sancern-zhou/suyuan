@@ -1,13 +1,18 @@
 """
 Admin API endpoints for workflow visualization and configuration.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, List
 from pydantic import BaseModel
+from app.auth.dependencies import require_admin_user
 from app.config.config_manager import config_manager
 import structlog
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(
+    prefix="/api/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin_user)],
+)
 logger = structlog.get_logger()
 
 
@@ -276,4 +281,3 @@ async def reload_config() -> Dict[str, Any]:
         "sections": len(config_manager.config),
         "config": config_manager.get_all_config()
     }
-

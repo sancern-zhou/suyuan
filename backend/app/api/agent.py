@@ -31,7 +31,7 @@ from app.agent.selection_context import (
     select_conversation_resources,
 )
 from app.agent.resources.resource_service import SessionResourceService
-from app.auth.dependencies import require_current_user
+from app.auth.dependencies import require_admin_user, require_current_user
 from app.auth.models import CurrentUser
 from app.boards.application import BoardApplicationService
 from app.boards.service import BoardNotFound, BoardVersionConflict, BoardVersionNotFound
@@ -1607,7 +1607,11 @@ async def list_tools():
         )
 
 
-@router.get("/tools/{tool_name}", response_model=ToolInfo)
+@router.get(
+    "/tools/{tool_name}",
+    response_model=ToolInfo,
+    dependencies=[Depends(require_admin_user)],
+)
 async def get_tool_info(tool_name: str):
     """
     获取特定工具的详细信息
@@ -1641,7 +1645,10 @@ async def get_tool_info(tool_name: str):
         )
 
 
-@router.patch("/tools/{tool_name}")
+@router.patch(
+    "/tools/{tool_name}",
+    dependencies=[Depends(require_admin_user)],
+)
 async def update_tool_status(tool_name: str, enabled: bool = Body(..., embed=True)):
     """
     更新工具启用/禁用状态
@@ -1696,7 +1703,10 @@ async def update_tool_status(tool_name: str, enabled: bool = Body(..., embed=Tru
         )
 
 
-@router.get("/tools/categories")
+@router.get(
+    "/tools/categories",
+    dependencies=[Depends(require_admin_user)],
+)
 async def get_tools_categories():
     """
     获取所有工具类别

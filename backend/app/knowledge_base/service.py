@@ -1045,42 +1045,58 @@ class KnowledgeBaseService:
             )
             docs_map = {doc.id: doc for doc in doc_result.scalars().all()}
 
+            orphaned_doc_ids = sorted(doc_id for doc_id in doc_ids if doc_id not in docs_map)
+            if orphaned_doc_ids:
+                logger.info(
+                    "filtered_orphaned_knowledge_search_results",
+                    orphaned_count=len(orphaned_doc_ids),
+                    sample_document_ids=orphaned_doc_ids[:5],
+                )
+
+            filtered_results = []
             # 为每个结果添加原文档信息
             for r in results:
                 doc_id = r.get("document_id")
                 if not doc_id:
+                    filtered_results.append(r)
                     continue
 
                 doc = docs_map.get(doc_id)
-                if doc:
-                    r["filename"] = r.get("filename") or doc.filename
-                    r.setdefault("metadata", {})
-                    # 检查是否有原文件
-                    has_original_file = bool(
-                        doc.original_file_oid or
-                        (doc.file_storage_type == "local" and doc.file_path)
-                    )
+                if not doc:
+                    continue
 
-                    # 添加原文档信息
-                    r["document"] = {
-                        "id": doc.id,
-                        "filename": doc.filename,
-                        "file_type": doc.file_type,
-                        "file_size": doc.file_size,
-                        "file_storage_type": doc.file_storage_type,
-                        "file_mime_type": doc.file_mime_type,
-                        "has_original_file": has_original_file,
-                        "created_at": doc.created_at.isoformat() if doc.created_at else None,
-                        "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
-                    }
+                r["filename"] = r.get("filename") or doc.filename
+                r.setdefault("metadata", {})
+                # 检查是否有原文件
+                has_original_file = bool(
+                    doc.original_file_oid or
+                    (doc.file_storage_type == "local" and doc.file_path)
+                )
 
-                    # 如果有原文件，添加知识库ID（用于生成下载链接）
-                    if has_original_file:
-                        kb_info = r.get("knowledge_base", {})
-                        kb_id = kb_info.get("id")
-                        if kb_id:
-                            r["document"]["download_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/download"
-                            r["document"]["preview_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/preview"
+                # 添加原文档信息
+                r["document"] = {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "file_type": doc.file_type,
+                    "file_size": doc.file_size,
+                    "file_storage_type": doc.file_storage_type,
+                    "file_mime_type": doc.file_mime_type,
+                    "has_original_file": has_original_file,
+                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+                }
+
+                # 如果有原文件，添加知识库ID（用于生成下载链接）
+                if has_original_file:
+                    kb_info = r.get("knowledge_base", {})
+                    kb_id = kb_info.get("id")
+                    if kb_id:
+                        r["document"]["download_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/download"
+                        r["document"]["preview_url"] = f"/api/knowledge-base/{kb_id}/documents/{doc_id}/preview"
+
+                filtered_results.append(r)
+
+            results[:] = filtered_results
 
         except Exception as e:
             logger.warning(

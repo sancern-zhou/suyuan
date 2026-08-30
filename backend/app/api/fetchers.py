@@ -3,16 +3,21 @@ Data Fetchers API Routes
 
 提供数据抓取器的管理接口
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, List
 import structlog
 
+from app.auth.dependencies import require_admin_user
 from app.fetchers import create_scheduler
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/api/fetchers", tags=["fetchers"])
+router = APIRouter(
+    prefix="/api/fetchers",
+    tags=["fetchers"],
+    dependencies=[Depends(require_admin_user)],
+)
 
 # 全局调度器实例（延迟初始化）
 _fetcher_scheduler = None

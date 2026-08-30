@@ -1,10 +1,12 @@
 """API routes - Basic configuration endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import structlog
 import asyncio
+
+from app.auth.dependencies import require_admin_user
 
 logger = structlog.get_logger()
 
@@ -41,7 +43,7 @@ class ERA5HistoricalFetchRequest(BaseModel):
     date: str  # 日期字符串 (YYYY-MM-DD)
 
 
-@router.post("/fetchers/era5/historical")
+@router.post("/fetchers/era5/historical", dependencies=[Depends(require_admin_user)])
 async def fetch_era5_historical(request: ERA5HistoricalFetchRequest):
     """
     手动触发ERA5历史数据补采
@@ -94,7 +96,7 @@ class JiningERA5FetchRequest(BaseModel):
     station_id: Optional[str] = None  # 站点ID（可选，如 "11149A"）
 
 
-@router.post("/fetchers/jining_era5/fetch")
+@router.post("/fetchers/jining_era5/fetch", dependencies=[Depends(require_admin_user)])
 async def fetch_jining_era5(request: JiningERA5FetchRequest):
     """
     手动触发济宁市ERA5数据抓取
@@ -160,7 +162,7 @@ async def fetch_jining_era5(request: JiningERA5FetchRequest):
         raise HTTPException(status_code=500, detail=f"Failed to fetch Jining ERA5 data: {str(e)}")
 
 
-@router.get("/fetchers/jining_era5/stations")
+@router.get("/fetchers/jining_era5/stations", dependencies=[Depends(require_admin_user)])
 async def list_jining_stations():
     """
     获取济宁市监测站点列表和市中心点
@@ -201,7 +203,7 @@ async def list_jining_stations():
 
 # =============== 工具/技能管理 API ===============
 
-@router.get("/tools")
+@router.get("/tools", dependencies=[Depends(require_admin_user)])
 async def get_tools_list():
     """
     获取所有工具列表
@@ -225,7 +227,7 @@ async def get_tools_list():
         raise HTTPException(status_code=500, detail=f"Failed to get tools list: {str(e)}")
 
 
-@router.get("/tools/{tool_name}")
+@router.get("/tools/{tool_name}", dependencies=[Depends(require_admin_user)])
 async def get_tool_detail(tool_name: str):
     """
     获取单个工具的详细信息
@@ -258,7 +260,7 @@ class ToolStatusUpdate(BaseModel):
     enabled: bool
 
 
-@router.patch("/tools/{tool_name}")
+@router.patch("/tools/{tool_name}", dependencies=[Depends(require_admin_user)])
 async def update_tool_status(tool_name: str, request: ToolStatusUpdate):
     """
     更新工具启用/禁用状态
@@ -287,7 +289,7 @@ async def update_tool_status(tool_name: str, request: ToolStatusUpdate):
         raise HTTPException(status_code=500, detail=f"Failed to update tool status: {str(e)}")
 
 
-@router.get("/tools/categories")
+@router.get("/tools/categories", dependencies=[Depends(require_admin_user)])
 async def get_tools_categories():
     """
     获取所有工具类别

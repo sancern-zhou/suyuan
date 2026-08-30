@@ -1,4 +1,4 @@
-"""Display names for RF forms used by operations audit reports."""
+"""Display names for RF forms and attachment requirements used by reports."""
 
 from __future__ import annotations
 
@@ -54,6 +54,16 @@ RF_FORM_NAMES: dict[str, str] = {
     "RF_HY_O3VALUEPASS": "臭氧（O3）校准仪（工作标准）量值传递记录表（每季度）",
 }
 
+ATTACHMENT_REQUIREMENT_NAMES: dict[str, str] = {
+    "MONTH_FLOW_CHECK_REPORT": "月流量检查报告",
+    "TWOWEEK_PM_FLOW_CHECK_REPORT": "两周颗粒物流量检查报告",
+    "MULTIPOINT_CALIBRATION_CURVE": "多点校准曲线图",
+    "O3_VALUE_PASS_REPORT": "O3动态校准仪量值传递报告",
+    "PREVENTIVE_MAINTENANCE_REPORT": "预防性维护报告",
+    "MONTH_STATION_MAINTAIN_PHOTOS": "站点设备维护现场照片",
+    "VISIBILITY_CALIBRATION_EVIDENCE": "能见度校准记录附件",
+}
+
 
 def rf_form_display_name(rf_table: str | None) -> str | None:
     if not rf_table:
@@ -61,4 +71,8 @@ def rf_form_display_name(rf_table: str | None) -> str | None:
     table = str(rf_table).strip()
     if not table:
         return None
-    return RF_FORM_NAMES.get(table, "RF表单（中文名称待配置）")
+    return (
+        RF_FORM_NAMES.get(table)
+        or ATTACHMENT_REQUIREMENT_NAMES.get(table)
+        or "RF表单（中文名称待配置）"
+    )
