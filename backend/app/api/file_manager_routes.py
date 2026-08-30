@@ -4,7 +4,7 @@ File Manager API Routes
 提供文件浏览和下载功能，限制访问范围在/tmp目录内。
 """
 import mimetypes
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pathlib import Path
 import os
@@ -13,11 +13,17 @@ from datetime import datetime
 import logging
 from urllib.parse import quote
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 允许访问的根目录
 ALLOWED_ROOT = Path("/tmp")
+
+# 以 inline 方式打开会有脚本执行风险的类型，一律改为附件下载
+_INLINE_UNSAFE_SUFFIXES = {".html", ".htm", ".svg", ".xml", ".xhtml"}
 
 # 路径安全检查
 def is_safe_path(path: Path) -> bool:
@@ -65,7 +71,9 @@ def get_file_info(file_path: Path, relative_path: str) -> Dict[str, Any]:
         return None
 
 @router.get("/file-manager/test")
-async def test_path():
+async def test_path(
+    _: CurrentUser = Depends(require_current_user),
+):
     """测试路径解析"""
     test_cases = [
         ("", "空字符串"),
@@ -91,7 +99,10 @@ async def test_path():
     return {"results": results}
 
 @router.get("/file-manager/list")
-async def list_directory(path: str = Query("", description="目录路径，相对于/tmp")):
+async def list_directory(
+    path: str = Query("", description="目录路径，相对于/tmp"),
+    _: CurrentUser = Depends(require_current_user),
+):
     """
     列出目录内容
 
@@ -185,7 +196,10 @@ async def list_directory(path: str = Query("", description="目录路径，相�
         raise HTTPException(status_code=500, detail=f"列出目录失败: {str(e)}")
 
 @router.get("/file-manager/download")
-async def download_file(path: str = Query(..., description="文件路径，相对于/tmp")):
+async def download_file(
+    path: str = Query(..., description="文件路径，相对于/tmp"),
+    _: CurrentUser = Depends(require_current_user),
+):
     """
     下载或预览文件
 
@@ -216,14 +230,13 @@ async def download_file(path: str = Query(..., description="文件路径，相�
         # 根据文件扩展名确定 media_type
         media_type = mimetypes.guess_type(str(target_path))[0] or 'application/octet-stream'
 
-        # HTML文件在线展示，其他文件下载
-        headers = {}
+        # 所有文件一律以附件形式下载，杜绝在 API 同源下 inline 执行 HTML/SVG
+        headers = {"X-Content-Type-Options": "nosniff"}
+        if media_type == "application/octet-stream" and target_path.suffix.lower() == ".log":
+            media_type = "text/plain"
         # 使用 RFC 2231 标准编码中文文件名
         filename_encoded = quote(target_path.name, safe='')
-        if media_type == 'text/html':
-            headers['Content-Disposition'] = f"inline; filename*=UTF-8''{filename_encoded}"
-        else:
-            headers['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename_encoded}"
+        headers['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename_encoded}"
 
         # 返回文件
         return FileResponse(
@@ -240,7 +253,10 @@ async def download_file(path: str = Query(..., description="文件路径，相�
         raise HTTPException(status_code=500, detail=f"下载文件失败: {str(e)}")
 
 @router.get("/file-manager/info")
-async def get_file_info_api(path: str = Query(..., description="文件/目录路径，相对于/tmp")):
+async def get_file_info_api(
+    path: str = Query(..., description="文件/目录路径，相对于/tmp"),
+    _: CurrentUser = Depends(require_current_user),
+):
     """
     获取文件/目录详细信息
 

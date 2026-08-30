@@ -82,7 +82,8 @@ class FetcherWorkerProxyMiddleware:
         headers = {
             key: value
             for key, value in request.headers.items()
-            if key.lower() not in {"host", "content-length"}
+            if key.lower()
+            not in {"host", "content-length", "x-suyuan-current-user"}
         }
         if self.worker_token:
             headers["x-social-worker-token"] = self.worker_token

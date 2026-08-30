@@ -4,13 +4,15 @@ LLM 监控 API 路由
 提供查看 LLM 调用统计的 API 端点
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime
 from pathlib import Path
 import structlog
 
+from app.auth.dependencies import require_current_user
+from app.auth.models import CurrentUser
 from app.monitoring import (
     get_statistics,
     print_report,
@@ -18,10 +20,22 @@ from app.monitoring import (
     export_to_json,
     get_monitor
 )
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
+
+
+def _require_admin(user: CurrentUser) -> None:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="admin_required")
+
+
+def _export_dir() -> Path:
+    export_dir = get_data_registry() / "exports" / "monitoring"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    return export_dir
 
 
 class StatisticsResponse(BaseModel):
@@ -40,13 +54,16 @@ class StatisticsResponse(BaseModel):
 
 
 @router.get("/stats", response_model=StatisticsResponse)
-async def get_llm_stats():
+async def get_llm_stats(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
-    获取 LLM 调用统计信息
-    
+    获取 LLM 调用统计信息（仅管理员）
+
     Returns:
         统计信息（JSON 格式）
     """
+    _require_admin(user)
     try:
         stats = get_statistics()
         return StatisticsResponse(**stats)
@@ -56,13 +73,16 @@ async def get_llm_stats():
 
 
 @router.get("/report")
-async def get_llm_report():
+async def get_llm_report(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
-    获取 LLM 调用报告（文本格式）
-    
+    获取 LLM 调用报告（文本格式，仅管理员）
+
     Returns:
         文本格式的统计报告
     """
+    _require_admin(user)
     try:
         from io import StringIO
         import sys
@@ -88,24 +108,24 @@ async def get_llm_report():
 
 
 @router.post("/export/csv")
-async def export_stats_csv(output_dir: Optional[str] = None):
+async def export_stats_csv(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
-    导出统计信息为 CSV
-    
-    Args:
-        output_dir: 输出目录（可选，默认为当前目录）
-    
+    导出统计信息为 CSV（仅管理员，输出目录固定在数据注册表内）
+
     Returns:
         导出文件路径
     """
+    _require_admin(user)
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path(output_dir) / f"llm_stats_{timestamp}.csv" if output_dir else f"llm_stats_{timestamp}.csv"
-        
+        output_path = _export_dir() / f"llm_stats_{timestamp}.csv"
+
         export_to_csv(str(output_path))
-        
+
         logger.info("stats_exported_to_csv", filepath=str(output_path))
-        
+
         return {
             "success": True,
             "filepath": str(output_path),
@@ -117,24 +137,24 @@ async def export_stats_csv(output_dir: Optional[str] = None):
 
 
 @router.post("/export/json")
-async def export_stats_json(output_dir: Optional[str] = None):
+async def export_stats_json(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
-    导出统计信息为 JSON
-    
-    Args:
-        output_dir: 输出目录（可选，默认为当前目录）
-    
+    导出统计信息为 JSON（仅管理员，输出目录固定在数据注册表内）
+
     Returns:
         导出文件路径
     """
+    _require_admin(user)
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path(output_dir) / f"llm_stats_{timestamp}.json" if output_dir else f"llm_stats_{timestamp}.json"
-        
+        output_path = _export_dir() / f"llm_stats_{timestamp}.json"
+
         export_to_json(str(output_path))
-        
+
         logger.info("stats_exported_to_json", filepath=str(output_path))
-        
+
         return {
             "success": True,
             "filepath": str(output_path),
@@ -146,12 +166,15 @@ async def export_stats_json(output_dir: Optional[str] = None):
 
 
 @router.delete("/reset")
-async def reset_stats():
+async def reset_stats(
+    user: CurrentUser = Depends(require_current_user),
+):
     """
-    重置统计信息（清空所有记录）
-    
+    重置统计信息（清空所有记录，仅管理员）
+
     ⚠️ 警告：此操作不可逆
     """
+    _require_admin(user)
     try:
         monitor = get_monitor()
         monitor.records.clear()

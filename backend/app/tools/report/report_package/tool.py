@@ -38,7 +38,7 @@ from app.tools.artifact_utils import (
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import resolve_agent_path
-from app.utils.path_config import get_images_dir
+from app.utils.path_config import get_data_registry, get_images_dir, get_uploads_dir, is_path_within, TEMP_ROOT
 
 logger = structlog.get_logger()
 
@@ -68,10 +68,23 @@ def _safe_report_id(raw_id: str) -> str:
     return report_id
 
 
+def _asset_source_allowed(src: Path) -> bool:
+    """Asset sources must stay inside data/registry/temp areas (anti-exfiltration)."""
+    allowed_roots = [get_data_registry(), get_uploads_dir(), TEMP_ROOT]
+    return is_path_within(src, allowed_roots)
+
+
 def _copy_file_to_dir(source: str, target_dir: Path, *, preferred_name: str | None = None) -> Dict[str, Any]:
     src = resolve_agent_path(source)
     if not src.exists() or not src.is_file():
         return {"source": source, "success": False, "error": "file not found"}
+    if not _asset_source_allowed(src):
+        logger.warning("report_asset_source_rejected", source=source)
+        return {
+            "source": source,
+            "success": False,
+            "error": "asset source outside allowed data directories",
+        }
 
     target_dir.mkdir(parents=True, exist_ok=True)
     target_name = preferred_name or src.name

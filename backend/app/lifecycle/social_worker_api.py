@@ -69,7 +69,10 @@ def create_social_worker_api_app(
                     status_code=503,
                 )
             try:
-                request.state.current_user = decode_internal_user(identity_envelope)
+                request.state.current_user = decode_internal_user(
+                    identity_envelope,
+                    secret=internal_token,
+                )
             except ValueError:
                 return JSONResponse(
                     {"detail": "invalid_internal_identity"},

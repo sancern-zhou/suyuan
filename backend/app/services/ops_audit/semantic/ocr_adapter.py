@@ -22,6 +22,8 @@ from app.services.bailian_multimodal import call_bailian_vision_sync
 BAILIAN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
 MIMO_VL_BASE_URL = "https://api.xiaomimimo.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 30
+
+from app.services.ops_audit.remote_fetch import guarded_get  # noqa: E402
 DEFAULT_FLOW_VISUAL_TIMEOUT_SECONDS = 90
 DEFAULT_PROMPT = "请识别图片中的所有文字内容，按原文输出，不要添加任何解释。"
 DEFAULT_MIMO_MODEL = "mimo-v2.5"
@@ -327,7 +329,7 @@ def _build_image_url_payload(resolved: dict[str, Any]) -> dict[str, Any]:
         url = str(resolved["url"])
         if _looks_like_pdf_source(url):
             try:
-                response = requests.get(url, timeout=DEFAULT_TIMEOUT_SECONDS)
+                response = guarded_get(url, timeout=DEFAULT_TIMEOUT_SECONDS)
                 response.raise_for_status()
             except requests.Timeout as exc:
                 return {"status": "error", "error": f"下载PDF首页失败，请求超时：{exc}"}

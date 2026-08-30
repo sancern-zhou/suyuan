@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
     environment: str = Field(default="development", description="Environment name")
-    debug: bool = Field(default=True, description="Debug mode")
+    debug: bool = Field(default=False, description="Debug mode")
     log_level: str = Field(default="DEBUG", description="Logging level")
     project_id: str = Field(
         default="default",
@@ -251,6 +251,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_authentication_safety(self):
+        if "*" in self.cors_origins_list:
+            raise ValueError(
+                "CORS_ORIGINS must not use '*' because credentialed CORS is enabled"
+            )
+
+        internal_host = self.social_worker_internal_host.strip().lower()
+        if (
+            internal_host not in {"127.0.0.1", "localhost", "::1"}
+            and not (self.social_worker_internal_token or "").strip()
+        ):
+            raise ValueError(
+                "SOCIAL_WORKER_INTERNAL_TOKEN is required when the worker "
+                "internal API binds beyond loopback"
+            )
+
         if self.environment.strip().lower() != "production":
             return self
 
@@ -582,6 +597,10 @@ class Settings(BaseSettings):
     redis_port: int = Field(default=6379, description="Redis port")
     redis_db: int = Field(default=0, description="Redis database number")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
+    redis_ssl: bool = Field(
+        default=False,
+        description="Use TLS for Redis (rediss://); enable after the server enables tls-port",
+    )
     agent_steering_redis_prefix: str = Field(
         default="suyuan:agent:steering",
         description="Redis key prefix for cross-worker active-run steering",
@@ -812,7 +831,15 @@ class Settings(BaseSettings):
     )
     sqlserver_driver: str = Field(
         default="ODBC Driver 17 for SQL Server",
-        description="SQL Server ODBC driver name"
+        description="SQL Server ODBC driver name",
+    )
+    sqlserver_encrypt: str = Field(
+        default="no",
+        description="ODBC Encrypt flag: yes/no/strict; set yes once the server TLS is verified",
+    )
+    sqlserver_trust_server_certificate: str = Field(
+        default="yes",
+        description="Trust server cert without validation; set no after installing a CA-signed cert",
     )
 
     @property
@@ -828,8 +855,9 @@ class Settings(BaseSettings):
             f"SERVER={self.sqlserver_host},{self.sqlserver_port};"
             f"DATABASE={self.sqlserver_database};"
             f"UID={self.sqlserver_user};"
-            f"PWD={{{self.sqlserver_password}}};"  # Wrap password in braces for special chars
-            f"TrustServerCertificate=yes;"
+            f"PWD={{{self.sqlserver_password}}};"
+            f"Encrypt={self.sqlserver_encrypt};"
+            f"TrustServerCertificate={self.sqlserver_trust_server_certificate};"
         )
 
     # Query Template Configuration
@@ -885,9 +913,11 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         """Construct Redis URL."""
-        if self.redis_password:
-            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
-        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        scheme = "rediss" if self.redis_ssl else "redis"
+        auth = f":{self.redis_password}" if self.redis_password else ""
+        return f"{scheme}://{auth}@{self.redis_host}:{self.redis_port}/{self.redis_db}" if auth else (
+            f"{scheme}://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        )
 
     def get_llm_config(self) -> dict:
         """Get LLM configuration based on provider."""

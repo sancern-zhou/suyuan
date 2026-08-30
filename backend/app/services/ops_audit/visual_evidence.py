@@ -14,6 +14,8 @@ from urllib.parse import urljoin
 
 import requests
 
+from app.services.ops_audit.remote_fetch import guarded_get
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".heic"}
 
@@ -181,7 +183,7 @@ def _archive_one(
             if source_type == "local":
                 shutil.copy2(Path(resolved_source), target)
             else:
-                response = requests.get(str(resolved_source), timeout=30)
+                response = guarded_get(str(resolved_source), timeout=30)
                 response.raise_for_status()
                 target.write_bytes(response.content)
         if target.stat().st_size == 0:

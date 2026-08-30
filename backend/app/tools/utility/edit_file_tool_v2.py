@@ -35,7 +35,7 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
+from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, is_agent_protected_write_path, is_path_within, resolve_agent_path
 import structlog
 
 logger = structlog.get_logger()
@@ -556,6 +556,13 @@ class EditFileToolV2(LLMTool):
                     "edit_file_v2_path_escape",
                     requested_path=path,
                     allowed_dirs=", ".join(str(allowed_dir) for allowed_dir in self.allowed_dirs)
+                )
+                return None
+
+            if is_agent_protected_write_path(file_path):
+                logger.warning(
+                    "edit_file_v2_protected_path",
+                    requested_path=path,
                 )
                 return None
 

@@ -168,7 +168,9 @@ async def test_large_output_preserved():
 
     # 测试 5.1: 长输出保留
     print("\n[测试 5.1] 生成长输出")
-    result = await tool.execute(command="python -c \"print('A' * 100000)\"")
+    result = await tool.execute(
+        command="awk 'BEGIN{s=\"\";for(i=0;i<100000;i++)s=s \"A\"; print s}'"
+    )
     print(f"状态: {result['status']}")
     print(f"输出长度: {len(result['data']['stdout'])} 字符")
     print(f"metadata 输出长度: {result['metadata']['stdout_length']}")

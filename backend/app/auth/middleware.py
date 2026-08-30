@@ -75,15 +75,18 @@ class GatewayAuthenticationMiddleware:
             return
 
         path = scope.get("path", "")
-        if scope.get("method") == "OPTIONS" or self._is_public(path):
+        method = scope.get("method", "")
+        if method == "OPTIONS" or (
+            method in {"GET", "HEAD"} and self._is_public(path)
+        ):
             await self.app(scope, receive, send)
             return
 
-        if self._valid_resource_preview(scope, path):
+        if method in {"GET", "HEAD"} and self._valid_resource_preview(scope, path):
             await self.app(scope, receive, send)
             return
 
-        if self.settings.auth_mode == "company" and not self._is_trusted_peer(scope):
+        if not self._is_trusted_peer(scope):
             await self._error(scope, receive, send, 403, "untrusted_gateway_peer")
             return
 

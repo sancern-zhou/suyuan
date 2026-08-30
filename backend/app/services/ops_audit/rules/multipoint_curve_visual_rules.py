@@ -13,6 +13,8 @@ from urllib.parse import urljoin
 
 import requests
 
+from app.services.ops_audit.remote_fetch import guarded_get
+
 from app.services.ops_audit.config import load_semantic_review_profiles
 from app.services.ops_audit.models import Issue
 from app.services.ops_audit.rules.base import add_issue
@@ -413,7 +415,7 @@ def _persist_attachment(task: dict[str, Any], item: dict[str, Any]) -> dict[str,
     target = target_dir / f"{Path(filename).stem}_{digest}{Path(filename).suffix.lower()}"
     if not target.exists():
         if source.startswith(("http://", "https://")):
-            response = requests.get(source, timeout=30)
+            response = guarded_get(source, timeout=30)
             response.raise_for_status()
             target.write_bytes(response.content)
         else:
@@ -424,7 +426,7 @@ def _persist_attachment(task: dict[str, Any], item: dict[str, Any]) -> dict[str,
                 remote_url = _relative_source_url(source)
                 if not remote_url:
                     raise FileNotFoundError(source)
-                response = requests.get(remote_url, timeout=30)
+                response = guarded_get(remote_url, timeout=30)
                 response.raise_for_status()
                 target.write_bytes(response.content)
     if target.stat().st_size == 0:
