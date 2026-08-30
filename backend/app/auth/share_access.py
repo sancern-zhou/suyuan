@@ -97,11 +97,19 @@ _service: ShareAccessService | None = None
 def get_share_access_service() -> ShareAccessService:
     global _service
     if _service is None:
-        secret = (
-            settings.share_signing_secret
-            or settings.minimax_api_key
-            or "development-share-grant-secret"
-        )
+        secret = (settings.share_signing_secret or "").strip()
+        if not secret:
+            if settings.environment.strip().lower() == "production":
+                raise ValueError("SHARE_SIGNING_SECRET must be configured")
+            import secrets as _secrets
+
+            import structlog
+
+            secret = _secrets.token_urlsafe(48)
+            structlog.get_logger().warning(
+                "share_signing_secret_missing_using_ephemeral_secret",
+                hint="set SHARE_SIGNING_SECRET to keep issued preview tickets stable",
+            )
         _service = ShareAccessService(
             secret,
             ttl_seconds=settings.auth_share_grant_ttl_seconds,

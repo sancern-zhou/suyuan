@@ -25,8 +25,13 @@ echo "停止现有uvicorn进程..."
 is_backend_master() {
     local candidate_pid="$1"
     local command_line
+    local candidate_cwd
     command_line="$(ps -o args= -p "${candidate_pid}" 2>/dev/null || true)"
-    [[ "${command_line}" == *"${PYTHON_BIN} -m uvicorn app.main:app"* ]]
+    candidate_cwd="$(readlink -f "/proc/${candidate_pid}/cwd" 2>/dev/null || true)"
+    [[ "${candidate_cwd}" = "${SCRIPT_DIR}" ]] &&
+        [[ "${command_line}" == *"${PYTHON_BIN} -m uvicorn app.main:app"* ]] &&
+        [[ "${command_line}" == *"--port 8000"* ]] &&
+        [[ "${command_line}" == *"--env-file .env"* ]]
 }
 
 stop_backend_tree() {
@@ -60,17 +65,44 @@ stop_backend_tree() {
 
 if [ -f "${PID_FILE}" ]; then
     OLD_PID="$(tr -d '[:space:]' < "${PID_FILE}")"
-    if [ -n "${OLD_PID}" ] && kill -0 "${OLD_PID}" 2>/dev/null && is_backend_master "${OLD_PID}"; then
+    if [[ "${OLD_PID}" =~ ^[0-9]+$ ]] && kill -0 "${OLD_PID}" 2>/dev/null && is_backend_master "${OLD_PID}"; then
         stop_backend_tree "${OLD_PID}"
+    elif [ -n "${OLD_PID}" ]; then
+        echo "[WARNING] 忽略失效或不属于当前部署的PID文件: ${OLD_PID}"
     fi
     rm -f "${PID_FILE}"
-else
-    # Compatibility path for servers launched before process-group PID tracking.
-    mapfile -t LEGACY_PIDS < <(pgrep -f "${PYTHON_BIN} -m uvicorn app.main:app" || true)
-    for OLD_PID in "${LEGACY_PIDS[@]}"; do
-        is_backend_master "${OLD_PID}" && stop_backend_tree "${OLD_PID}"
-    done
 fi
+
+# PID文件可能缺失、过期或只记录了其中一个实例，因此始终扫描实际进程。
+# 工作目录和启动参数校验会排除其他工作树（例如江苏 8001）。
+mapfile -t RUNNING_PIDS < <(pgrep -f "${PYTHON_BIN} -m uvicorn app.main:app" || true)
+for OLD_PID in "${RUNNING_PIDS[@]}"; do
+    is_backend_master "${OLD_PID}" && stop_backend_tree "${OLD_PID}"
+done
+
+is_backend_listener_ready() {
+    local master_pid="$1"
+    local listener_pid
+    local listener_pgid
+
+    if ! command -v ss >/dev/null 2>&1; then
+        curl -fsS --max-time 2 http://localhost:8000/health >/dev/null
+        return
+    fi
+
+    while read -r listener_pid; do
+        listener_pgid="$(ps -o pgid= -p "${listener_pid}" 2>/dev/null | tr -d '[:space:]')"
+        if [ "${listener_pgid}" = "${master_pid}" ]; then
+            return 0
+        fi
+    done < <(
+        ss -H -ltnp 'sport = :8000' 2>/dev/null |
+            grep -oE 'pid=[0-9]+' |
+            cut -d= -f2 |
+            sort -u
+    )
+    return 1
+}
 
 # 3. 启动服务器
 echo "启动服务器..."
@@ -82,13 +114,15 @@ NEW_PID=$!
 echo "${NEW_PID}" > "${PID_FILE}"
 
 # 4. 等待启动（本机全量工具注册约需 2 分钟）
+STARTED=false
 for _ in $(seq 1 180); do
     if ! kill -0 "${NEW_PID}" 2>/dev/null; then
         echo "[ERROR] 后端进程启动失败，日志如下："
         tail -80 /tmp/backend.log
         exit 1
     fi
-    if curl -fsS --max-time 2 http://localhost:8000/health >/dev/null; then
+    if is_backend_listener_ready "${NEW_PID}" && curl -fsS --max-time 2 http://localhost:8000/health >/dev/null; then
+        STARTED=true
         break
     fi
     sleep 1
@@ -128,6 +162,12 @@ else
     NEW_WORKER_PID=$!
     echo "${NEW_WORKER_PID}" > "${WORKER_PID_FILE}"
     echo "worker PID: ${NEW_WORKER_PID}，日志: /tmp/backend-worker.log"
+fi
+
+if [ "${STARTED}" != true ]; then
+    echo "[ERROR] 新后端进程未在规定时间内接管8000端口，日志如下："
+    tail -80 /tmp/backend.log
+    exit 1
 fi
 
 # 6. 检查状态

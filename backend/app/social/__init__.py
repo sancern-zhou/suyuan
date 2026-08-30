@@ -3,7 +3,6 @@
 from app.social.events import InboundMessage, OutboundMessage
 from app.social.message_bus import MessageBus
 from app.social.session_mapper import SessionMapper
-from app.social.agent_bridge import AgentBridge
 
 __all__ = [
     "InboundMessage",
@@ -12,3 +11,12 @@ __all__ = [
     "SessionMapper",
     "AgentBridge",
 ]
+
+
+def __getattr__(name: str):
+    """Load AgentBridge only for channel workers that explicitly use it."""
+    if name == "AgentBridge":
+        from app.social.agent_bridge import AgentBridge
+
+        return AgentBridge
+    raise AttributeError(name)

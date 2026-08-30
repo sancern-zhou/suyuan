@@ -204,7 +204,7 @@ class PublishSessionFileTool(LLMTool):
         file_type: str,
     ) -> None:
         preview_path = None
-        if file_type in {"document", "presentation"}:
+        if file_type in {"document", "presentation", "spreadsheet"}:
             try:
                 # Conversion is best effort. Failure must not prevent the user
                 # from downloading the original file.

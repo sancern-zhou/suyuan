@@ -3,6 +3,9 @@ Weather Data Fetchers
 
 气象数据获取后台
 """
+from app.fetchers.weather.city_air_quality_forecast_fetcher import (
+    CityAirQualityForecastFetcher,
+)
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
 from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
@@ -17,4 +20,5 @@ __all__ = [
     "JiningERA5Fetcher",
     "NMCObservedWeatherFetcher",
     "OpenMeteoAirQualityForecastFetcher",
+    "CityAirQualityForecastFetcher",
 ]

@@ -1,8 +1,14 @@
-"""Persist outbound broadcasts in each recipient's main social conversation."""
+"""Persist outbound broadcasts in a recipient-specific broadcast inbox.
+
+Broadcasts intentionally live outside the user's normal social session.  This
+keeps scheduled notifications out of the Agent context while retaining a
+durable inbox that the Android App can query after a push/reminder arrives.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +16,55 @@ from app.agent.session.models import Session
 from app.agent.session.session_resolver import (
     append_session_transcript_for_mode,
     load_session_for_mode,
+    replace_session_transcript_for_mode,
 )
+
+
+def broadcast_session_id(social_user_id: str) -> str:
+    """Return a stable, non-guessable session id for one social identity."""
+    digest = hashlib.sha256(str(social_user_id).encode("utf-8")).hexdigest()[:32]
+    return f"broadcast_session_{digest}"
+
+
+async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
+    """Load the broadcast inbox for one identity, newest message first."""
+    session = await load_session_for_mode(
+        broadcast_session_id(social_user_id), mode="social"
+    )
+    if session is None:
+        return []
+    messages = [
+        item for item in session.conversation_history
+        if isinstance(item, dict) and item.get("type") == "broadcast"
+    ]
+    return list(reversed(messages))
+
+
+async def mark_broadcast_read(social_user_id: str, message_id: str | None = None) -> bool:
+    """Mark one message (or all messages when id is omitted) as read."""
+    session = await load_session_for_mode(
+        broadcast_session_id(social_user_id), mode="social"
+    )
+    if session is None:
+        return False
+    changed = False
+    for item in session.conversation_history:
+        if not isinstance(item, dict) or item.get("type") != "broadcast":
+            continue
+        if message_id and item.get("id") != message_id:
+            continue
+        data = item.setdefault("data", {})
+        if not isinstance(data, dict):
+            data = {}
+            item["data"] = data
+        if item.get("read") is not True or data.get("read") is not True:
+            item["read"] = True
+            data["read"] = True
+            data["read_at"] = datetime.now().astimezone().isoformat()
+            changed = True
+    if not changed:
+        return False
+    return bool(await replace_session_transcript_for_mode(session, mode="social"))
 
 
 async def persist_broadcast_context(
@@ -22,17 +76,21 @@ async def persist_broadcast_context(
     metadata: dict[str, Any],
 ) -> bool:
     """Append one idempotent assistant broadcast with message attachments."""
-    session_id = await session_mapper.get_or_create_session(
-        social_user_id,
-        mode="social",
-    )
+    # Keep the mapper argument for service compatibility, but never use the
+    # user's normal chat mapping for broadcasts.
+    del session_mapper
+    session_id = broadcast_session_id(social_user_id)
     session = await load_session_for_mode(session_id, mode="social")
     if session is None:
-        session = Session(session_id=session_id, query="社交广播上下文")
+        session = Session(
+            session_id=session_id,
+            query="广播消息",
+            metadata={"kind": "broadcast_inbox", "social_user_id": social_user_id},
+        )
 
-    message_id = (
-        f"broadcast:{metadata['task_id']}:{metadata['event_id']}:{social_user_id}"
-    )
+    task_id = str(metadata.get("task_id") or "manual")
+    event_id = str(metadata.get("event_id") or hashlib.sha256(message.encode("utf-8")).hexdigest()[:16])
+    message_id = f"broadcast:{task_id}:{event_id}:{social_user_id}"
     attachments = [
         {
             "name": Path(media_path).name or "attachment",
@@ -53,7 +111,8 @@ async def persist_broadcast_context(
             "role": "assistant",
             "content": message,
             "timestamp": datetime.now().astimezone().isoformat(),
-            "data": {**metadata, "attachments": attachments},
+            "read": False,
+            "data": {**metadata, "attachments": attachments, "read": False},
         })
 
     return bool(

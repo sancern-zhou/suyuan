@@ -40,6 +40,7 @@ _PUBLIC_EXACT_PATHS = {
     "/expert-deliberation",
 }
 _PUBLIC_STATIC_PREFIXES = ("/assets/", "/static/", "/dist/")
+_APP_GATEWAY_PREFIXES = ("/api/social/app/",)
 _PUBLIC_SHARE_PATTERNS = (re.compile(r"^/session/[^/]+$"),)
 _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
@@ -74,15 +75,18 @@ class GatewayAuthenticationMiddleware:
             return
 
         path = scope.get("path", "")
-        if scope.get("method") == "OPTIONS" or self._is_public(path):
+        method = scope.get("method", "")
+        if method == "OPTIONS" or (
+            method in {"GET", "HEAD"} and self._is_public(path)
+        ):
             await self.app(scope, receive, send)
             return
 
-        if self._valid_resource_preview(scope, path):
+        if method in {"GET", "HEAD"} and self._valid_resource_preview(scope, path):
             await self.app(scope, receive, send)
             return
 
-        if self.settings.auth_mode == "company" and not self._is_trusted_peer(scope):
+        if not self._is_trusted_peer(scope):
             await self._error(scope, receive, send, 403, "untrusted_gateway_peer")
             return
 
@@ -126,6 +130,10 @@ class GatewayAuthenticationMiddleware:
         if path in _PUBLIC_EXACT_PATHS:
             return True
         if path.startswith(_PUBLIC_STATIC_PREFIXES):
+            return True
+        # App Gateway performs its own HMAC token validation. It must be
+        # reachable without the company gateway's syscode credential.
+        if path.startswith(_APP_GATEWAY_PREFIXES):
             return True
         if self.settings.auth_docs_public and path in _DOCS_PATHS:
             return True

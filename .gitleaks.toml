@@ -1,2 +1,26 @@
 [extend]
 useDefault = true
+
+# Project-specific credential formats that default rules miss.
+
+[[rules]]
+id = "suyuan-dify-api-key"
+description = "Dify application API key"
+regex = '''\bapp-[A-Za-z0-9]{20,}\b'''
+tags = ["key", "dify"]
+
+# Known historical leaks pending SECURITY_HISTORY_REMEDIATION.md cleanup.
+# Remove this allowlist after the history rewrite + credential rotation.
+[allowlist]
+description = "Historical leaks already triaged; awaiting history rewrite"
+commits = [
+  "04b56375ee2d2c79a3e9fc4e15db238e812eec36",
+  "80b2b05de3837e9c547d4dbc17e98e7257e267a1",
+  "1219f4060d4eb1290b173bb433d1f07749dba7cf",
+  "366e8e02b3b311199e5351944c10253e7f21c26b",
+  "174167afacba7fc4f3908237df7ea3e76846812d",
+  "a0b0dfa35604cca364195d3a1c9088c874a12cad",
+  "fccc562b6e1aa53d5679c2e6f67ad33e712763e3",
+  "a6c3676e59ce1d36db7ce599db7d65be4f93fe3b",
+  "9cccc3b12f1029dc6188b9261858a0f95c6f0931",
+]

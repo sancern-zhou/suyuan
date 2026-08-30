@@ -60,6 +60,38 @@ def is_path_within(path: str | Path, allowed_roots: Iterable[str | Path]) -> boo
     )
 
 
+_AGENT_SENSITIVE_NAME_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".htpasswd")
+_AGENT_SENSITIVE_FILE_NAMES = {"social_config.yaml", "credentials.json", "secrets.yaml"}
+
+
+def is_agent_sensitive_path(path: str | Path) -> bool:
+    """Secrets and VCS internals that agent file tools must never touch."""
+    resolved = Path(path).expanduser().resolve()
+    name = resolved.name
+    if name.startswith(".env") or name in _AGENT_SENSITIVE_FILE_NAMES:
+        return True
+    if name.endswith(_AGENT_SENSITIVE_NAME_SUFFIXES) or name.startswith("id_rsa"):
+        return True
+    parts = {p.lower() for p in resolved.parts}
+    return bool(parts & {".git", ".ssh", ".gnupg"})
+
+
+def is_agent_protected_write_path(path: str | Path) -> bool:
+    """Source/config/deploy areas that agent file tools must never modify."""
+    if is_agent_sensitive_path(path):
+        return True
+    resolved = Path(path).expanduser().resolve()
+    protected_roots = [
+        BACKEND_ROOT / "app",
+        BACKEND_ROOT / "config",
+        BACKEND_ROOT / "alembic",
+        PROJECT_ROOT / "deploy",
+        PROJECT_ROOT / ".github",
+        PROJECT_ROOT / "scripts",
+    ]
+    return any(resolved.is_relative_to(root.resolve()) for root in protected_roots)
+
+
 def format_agent_path(path: str | Path) -> str:
     """Format a filesystem path for Agent output without an ambiguous base.
 

@@ -29,6 +29,7 @@ from app.services.report_preview_refresh import (
 from app.services.report_preview_refresh import (
     record_report_update,
 )
+from app.services.pdf_converter import pdf_converter
 from app.tools.artifact_utils import (
     attach_document_resources,
     attach_report_package_resources,
@@ -37,7 +38,7 @@ from app.tools.artifact_utils import (
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.path_config import resolve_agent_path
-from app.utils.path_config import get_images_dir
+from app.utils.path_config import get_data_registry, get_images_dir, get_uploads_dir, is_path_within, TEMP_ROOT
 
 logger = structlog.get_logger()
 
@@ -67,10 +68,23 @@ def _safe_report_id(raw_id: str) -> str:
     return report_id
 
 
+def _asset_source_allowed(src: Path) -> bool:
+    """Asset sources must stay inside data/registry/temp areas (anti-exfiltration)."""
+    allowed_roots = [get_data_registry(), get_uploads_dir(), TEMP_ROOT]
+    return is_path_within(src, allowed_roots)
+
+
 def _copy_file_to_dir(source: str, target_dir: Path, *, preferred_name: str | None = None) -> Dict[str, Any]:
     src = resolve_agent_path(source)
     if not src.exists() or not src.is_file():
         return {"source": source, "success": False, "error": "file not found"}
+    if not _asset_source_allowed(src):
+        logger.warning("report_asset_source_rejected", source=source)
+        return {
+            "source": source,
+            "success": False,
+            "error": "asset source outside allowed data directories",
+        }
 
     target_dir.mkdir(parents=True, exist_ok=True)
     target_name = preferred_name or src.name
@@ -859,7 +873,7 @@ class RenderReportPackageTool(LLMTool):
                     "report_id": {"type": "string", "description": "报告ID。"},
                     "format": {
                         "type": "string",
-                        "enum": ["html", "docx", "share_html"],
+                        "enum": ["html", "docx", "pdf", "share_html"],
                         "description": "渲染格式。",
                         "default": "html",
                     },
@@ -908,6 +922,31 @@ class RenderReportPackageTool(LLMTool):
                     report_id=safe_id,
                     html_path=report_dir / "report.html",
                     docx_path=path,
+                    generator="render_report_package",
+                )
+            elif format == "pdf":
+                docx_path = quarto_report_renderer.render_docx(safe_id)
+                pdf_result = await pdf_converter.convert_to_pdf(str(docx_path))
+                pdf_path = Path(pdf_result["pdf_path"])
+                report_dir = quarto_report_renderer.get_report_dir(safe_id)
+                stable_pdf_path = report_dir / "report.pdf"
+                shutil.copyfile(pdf_path, stable_pdf_path)
+                qmd_path = report_dir / "report.qmd"
+                data = {
+                    "report_id": safe_id,
+                    "file_path": str(qmd_path),
+                    "path": str(stable_pdf_path),
+                    "file_type": "report",
+                    "generator": "render_report_package",
+                    "pdf_preview": {"pdf_path": str(stable_pdf_path), "pages": pdf_result.get("pages", 0), "size": stable_pdf_path.stat().st_size},
+                }
+                attach_report_package_resources(
+                    data,
+                    qmd_path,
+                    report_id=safe_id,
+                    html_path=report_dir / "report.html",
+                    docx_path=docx_path,
+                    pdf_path=stable_pdf_path,
                     generator="render_report_package",
                 )
             elif format == "share_html":

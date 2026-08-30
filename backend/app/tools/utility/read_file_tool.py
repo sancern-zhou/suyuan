@@ -37,6 +37,7 @@ from app.utils.path_config import (
     PROJECT_ROOT,
     TEMP_ROOT,
     get_data_registry,
+    is_agent_sensitive_path,
     is_path_within,
     resolve_agent_path,
 )
@@ -1446,6 +1447,14 @@ class ReadFileTool(LLMTool):
                     "path_escape_attempt",
                     requested_path=path,
                     allowed_dirs=[str(d) for d in self.allowed_dirs]
+                )
+                return None
+
+            # 安全检查：禁止读取 .env/密钥等敏感文件（防凭证外带）
+            if is_agent_sensitive_path(file_path):
+                logger.warning(
+                    "read_file_sensitive_path",
+                    requested_path=path,
                 )
                 return None
 

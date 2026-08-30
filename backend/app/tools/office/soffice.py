@@ -17,9 +17,10 @@ Usage:
 import os
 import socket
 import subprocess
-import tempfile
 import shutil
 from pathlib import Path
+
+from app.utils.path_config import get_data_registry
 
 
 def _find_soffice_executable() -> str:
@@ -119,7 +120,15 @@ def run_soffice(args: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 
-_SHIM_SO = Path(tempfile.gettempdir()) / "lo_socket_shim.so"
+def _shim_dir() -> Path:
+    """Private directory for the compiled shim (never world-writable /tmp)."""
+    base = get_data_registry() / "system" / "lo_shim"
+    base.mkdir(parents=True, exist_ok=True)
+    try:
+        base.chmod(0o700)
+    except OSError:
+        pass
+    return base
 
 
 def _needs_shim() -> bool:
@@ -136,18 +145,20 @@ def _needs_shim() -> bool:
 
 
 def _ensure_shim() -> Path:
-    if _SHIM_SO.exists():
-        return _SHIM_SO
+    shim_dir = _shim_dir()
+    shim = shim_dir / "lo_socket_shim.so"
+    if shim.exists():
+        return shim
 
-    src = Path(tempfile.gettempdir()) / "lo_socket_shim.c"
+    src = shim_dir / "lo_socket_shim.c"
     src.write_text(_SHIM_SOURCE)
     subprocess.run(
-        ["gcc", "-shared", "-fPIC", "-o", str(_SHIM_SO), str(src), "-ldl"],
+        ["gcc", "-shared", "-fPIC", "-o", str(shim), str(src), "-ldl"],
         check=True,
         capture_output=True,
     )
     src.unlink()
-    return _SHIM_SO
+    return shim
 
 
 

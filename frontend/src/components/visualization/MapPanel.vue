@@ -359,6 +359,15 @@ async function renderEnterprises(AMap) {
 }
 
 // 显示企业信息窗口
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function showEnterpriseInfo(AMap, marker, ent) {
   let emissionsHtml = ''
   if (ent.emissions && typeof ent.emissions === 'object') {
@@ -370,8 +379,8 @@ function showEnterpriseInfo(AMap, marker, ent) {
           <div class="emissions-grid">
             ${emissionEntries.map(([key, val]) => `
               <div class="emission-item">
-                <div class="em-label">${key}</div>
-                <div class="em-value">${val}</div>
+                <div class="em-label">${escapeHtml(key)}</div>
+                <div class="em-value">${escapeHtml(val)}</div>
               </div>
             `).join('')}
           </div>
@@ -384,20 +393,20 @@ function showEnterpriseInfo(AMap, marker, ent) {
   const distance = ent.distance_km || ent.distance
   const content = `
     <div class="enterprise-popup">
-      <h3>${ent.name}</h3>
+      <h3>${escapeHtml(ent.name)}</h3>
       <div class="info-row">
         <span class="label">行业</span>
-        <span class="value" style="color: ${getIndustryColor(ent.industry)}">${ent.industry || '未知'}</span>
+        <span class="value" style="color: ${getIndustryColor(ent.industry)}">${escapeHtml(ent.industry || '未知')}</span>
       </div>
       ${distance !== undefined ? `
       <div class="info-row">
         <span class="label">距离</span>
-        <span class="value">${distance.toFixed(2)} km</span>
+        <span class="value">${Number(distance).toFixed(2)} km</span>
       </div>` : ''}
       ${ent.score !== undefined ? `
       <div class="info-row">
         <span class="label">评分</span>
-        <span class="value">${ent.score}</span>
+        <span class="value">${escapeHtml(ent.score)}</span>
       </div>` : ''}
       ${emissionsHtml}
     </div>
