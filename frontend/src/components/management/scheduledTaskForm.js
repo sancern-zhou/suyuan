@@ -4,6 +4,12 @@ export const selectableWeixinUsers = (users = []) => users.filter(user =>
   String(user.channel || '').startsWith('weixin')
 )
 
+export const selectableSocialUsers = (users = []) => users.filter(user =>
+  user.status === 'active' &&
+  Boolean(user.social_user_id) &&
+  (String(user.channel || '').startsWith('weixin') || String(user.channel || '').startsWith('app'))
+)
+
 
 export const buildExecutionModeOptions = (
   projectModes = [],

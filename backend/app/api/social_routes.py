@@ -1,5 +1,6 @@
 """Social platform management API routes."""
 
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
@@ -100,7 +101,26 @@ async def list_social_users() -> List[SocialUserRecord]:
     """List social users."""
     try:
         registry = get_social_user_registry()
-        return await registry.list_users()
+        users = await registry.list_users()
+        from app.social.app_identity import _accounts
+        now = datetime.now().isoformat()
+        existing_ids = {user.social_user_id for user in users}
+        for account_id, account in _accounts().items():
+            social_user_id = f"app:android:{account_id}"
+            if social_user_id in existing_ids or str(account.get("status", "active")).lower() != "active":
+                continue
+            users.append(SocialUserRecord(
+                id=f"app-account-{account_id}",
+                name=str(account.get("name") or account_id),
+                status="active",
+                social_user_id=social_user_id,
+                channel="app",
+                bot_account="android",
+                sender_id=account_id,
+                created_at=now,
+                updated_at=now,
+            ))
+        return users
     except Exception as e:
         logger.error("failed_to_list_social_users", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
