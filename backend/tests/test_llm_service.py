@@ -15,7 +15,11 @@ def test_mimo_default_base_url_uses_anthropic_endpoint():
     assert settings.mimo_base_url == "https://api.xiaomimimo.com/anthropic"
 
 
-def test_agent_modes_use_the_normal_model_chains_without_multimodal_override():
+def test_agent_modes_use_the_normal_model_chains_without_multimodal_override(monkeypatch):
+    monkeypatch.delenv("AGNES_BASE_URL", raising=False)
+    monkeypatch.delenv("AGNES_MODEL", raising=False)
+    monkeypatch.delenv("AGNES_API_MODE", raising=False)
+    monkeypatch.delenv("LLM_MULTIMODAL_MODELS", raising=False)
     settings = Settings(_env_file=None)
 
     assert settings.agnes_base_url == "https://apihub.agnes-ai.com/v1"
