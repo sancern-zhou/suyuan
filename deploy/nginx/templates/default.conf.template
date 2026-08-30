@@ -83,6 +83,35 @@ server {
         proxy_set_header X-Is-Admin "";
     }
 
+    location ^~ /api/social/app/voice/realtime {
+        proxy_pass ${BUSINESS_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /api/social/app/ {
+        proxy_pass ${BUSINESS_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_buffering off;
+
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location = /index.html {
         add_header Cache-Control "no-store" always;
         add_header X-Content-Type-Options "nosniff" always;
