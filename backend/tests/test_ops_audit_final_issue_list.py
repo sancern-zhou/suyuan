@@ -1,6 +1,6 @@
-from app.services.ops_audit.final_issue_list import build_final_issue_list
-
 import pytest
+
+from app.services.ops_audit.final_issue_list import build_final_issue_list
 
 
 def test_final_issue_list_keeps_deterministic_and_promoted_remark_only():
@@ -91,7 +91,10 @@ def test_final_issue_list_splits_value_abnormal_and_missing_explanation():
                             '{"working_order_code":"WO-RANGE-SEMANTIC","rf_table":"RF_W_GASEOUSCHECK_NOX",'
                             '"needs_semantic_review":true,'
                             '"handling_record_candidates":{"EXCEPTIONHANDLINGRECORD":"已处理"},'
-                            '"out_of_spec_values":[{"field":"PMTCHECKVALUE","label":"参考PMT信号","raw_value":"0.002"}]}'
+                            '"brand":"FPI",'
+                            '"out_of_spec_values":[{"field":"PMTCHECKVALUE","label":"参考PMT信号",'
+                            '"raw_value":"0.002","value":0.002,"raw_unit":"","unit":"V",'
+                            '"min":1.5,"max":4.096,"operator":null}]}'
                         ),
                     },
                     {
@@ -141,6 +144,25 @@ def test_final_issue_list_splits_value_abnormal_and_missing_explanation():
     value_item, remark_item = result["items"]
     assert value_item["issue_component"] == "value_abnormal"
     assert value_item["review_status"] == "rule_detected"
+    assert value_item["decision_evidence"] == {
+        "brand": "FPI",
+        "field": "PMTCHECKVALUE",
+        "field_label": "参考PMT信号",
+        "raw_value": "0.002",
+        "normalized_value": 0.002,
+        "raw_unit": "",
+        "normalized_unit": "V",
+        "unit_conversion_applied": False,
+        "expected_range": "1.5-4.096 V",
+        "expected_min": 1.5,
+        "expected_max": 4.096,
+        "expected_operator": None,
+        "expected_unit": "V",
+        "comparison_result": "out_of_spec",
+    }
+    assert value_item["remark_status"] == "provided"
+    assert value_item["original_remark_text"] == "已处理"
+    assert value_item["remark_review_status"] == "pending_semantic_review"
     assert remark_item["issue_component"] == "abnormal_explanation_issue"
     assert remark_item["review_status"] == "semantic_confirmed"
     assert remark_item["remark_status"] == "provided"
@@ -157,6 +179,93 @@ def test_final_issue_list_splits_value_abnormal_and_missing_explanation():
         "abnormal_explanation_issue": 1,
         "value_abnormal": 1,
     }
+
+
+def test_final_issue_list_marks_empty_range_remark_candidates_as_missing():
+    audit = {
+        "records": [
+            {
+                "working_order_code": "CH2608031785736302900",
+                "station_name": "罗定兴华",
+                "scoring_issues": [
+                    {
+                        "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                        "category": "表单结果合理性",
+                        "severity": "高",
+                        "field": "rf.RF_W_GASEOUSCHECK_NOX.GYCHECKVALUE",
+                        "message": "NOx周检高压电源检查值(670mv，换算为0.67 V)超出ESA品牌正常范围(500-950 V)",
+                        "evidence": (
+                            '{"working_order_code":"CH2608031785736302900",'
+                            '"rf_table":"RF_W_GASEOUSCHECK_NOX","brand":"ESA",'
+                            '"out_of_spec_values":[{"field":"GYCHECKVALUE","label":"高压电源",'
+                            '"raw_value":"670mv","value":0.67,"raw_unit":"mv","unit":"V",'
+                            '"min":500,"max":950,"operator":null}],'
+                            '"handling_record_candidates":{"REMARK":"","PROCESSTYPE":0.0,"GYCHECKROW":""},'
+                            '"needs_semantic_review":true}'
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    item = build_final_issue_list(audit)["items"][0]
+
+    assert item["decision_evidence"]["raw_value"] == "670mv"
+    assert item["decision_evidence"]["normalized_value"] == 0.67
+    assert item["decision_evidence"]["expected_range"] == "500-950 V"
+    assert item["remark_status"] == "missing"
+    assert item["remark_status_label"] == "未填写"
+    assert item["original_remarks"] == []
+    assert item["remark_review_status"] == "missing"
+
+
+def test_final_issue_list_flattens_nested_remark_candidates():
+    audit = {
+        "records": [
+            {
+                "working_order_code": "WO-NESTED-REMARK",
+                "station_name": "测试站",
+                "scoring_issues": [
+                    {
+                        "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                        "category": "表单结果合理性",
+                        "severity": "高",
+                        "field": "rf.RF_W_GASEOUSCHECK_NOX.PMTCHECKVALUE",
+                        "message": "参考PMT信号检查值超出正常范围",
+                        "evidence": (
+                            '{"working_order_code":"WO-NESTED-REMARK",'
+                            '"rf_table":"RF_W_GASEOUSCHECK_NOX","brand":"FPI",'
+                            '"out_of_spec_values":[{"field":"PMTCHECKVALUE","label":"参考PMT信号",'
+                            '"raw_value":"0.002","value":0.002,"raw_unit":"","unit":"V",'
+                            '"min":1.5,"max":4.096,"operator":null}],'
+                            '"handling_record_candidates":{'
+                            '"PM10":["CleaningRemark=PM10颗粒物切割头已清洁","REMARK="],'
+                            '"PM2.5":["CleaningRemark=PM2.5颗粒物切割头已清洁","REMARK="],'
+                            '"PROCESSTYPE":0.0},'
+                            '"needs_semantic_review":true}'
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    item = build_final_issue_list(audit)["items"][0]
+
+    assert item["original_remarks"] == [
+        {
+            "field": "PM10.CleaningRemark",
+            "field_label": "PM10/切割头清洗备注",
+            "value": "PM10颗粒物切割头已清洁",
+        },
+        {
+            "field": "PM2.5.CleaningRemark",
+            "field_label": "PM2.5/切割头清洗备注",
+            "value": "PM2.5颗粒物切割头已清洁",
+        },
+    ]
+    assert item["original_remark_text"] == "PM10颗粒物切割头已清洁\nPM2.5颗粒物切割头已清洁"
 
 
 @pytest.mark.parametrize(

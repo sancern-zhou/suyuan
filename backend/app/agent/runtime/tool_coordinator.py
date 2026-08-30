@@ -86,6 +86,12 @@ class ToolCoordinator:
             }
             if tool_name == "create_drawio_board":
                 normalized["_base_revision"] = int(board_context.get("revision") or 0)
+                normalized["_base_version_id"] = (
+                    board_context.get("working_version_id")
+                    or board_context.get("current_version_id")
+                    or board_context.get("version_id")
+                    or board_context.get("candidate_version_id")
+                )
             elif tool_name == "accept_drawio_board_candidate":
                 normalized["_expected_board_revision"] = int(board_context.get("revision") or 0)
         if self._is_drawio_edit_without_current_xml(tool_name, normalized, state.mode):
@@ -124,10 +130,18 @@ class ToolCoordinator:
             or []
         )
         clean_input = {key: value for key, value in tool_input.items() if key not in {"current_xml", "currentXml"}}
+        design_spec = (
+            clean_input.get("design_spec")
+            or board_context.get("design_spec")
+            or board_context.get("board_design_spec")
+        )
+        theme_tokens = board_context.get("theme_tokens") or board_context.get("board_theme_tokens")
         return {
             **clean_input,
             "current_xml": current_xml,
             "selected_cells": selected_cells,
+            **({"design_spec": design_spec} if isinstance(design_spec, dict) else {}),
+            **({"_board_theme_tokens": theme_tokens} if isinstance(theme_tokens, dict) else {}),
         }
 
     def _is_drawio_edit_without_current_xml(

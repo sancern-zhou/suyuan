@@ -3,21 +3,17 @@ import assert from 'node:assert/strict'
 
 import { AGENT_MODES, AGENT_MODE_IDS, AGENT_SCENES, getAgentMode, selectAgentModes } from './agentModes.js'
 
-test('agent mode catalog exposes dedicated ppt, chart and board modes in product order', () => {
+test('agent mode catalog exposes dedicated knowledge, ppt, chart and board modes in product order', () => {
   assert.deepEqual(AGENT_MODE_IDS, [
     'assistant',
     'ppt',
     'expert',
     'query',
-    'jiangsu_query',
+    'knowledge',
     'report',
     'chart',
     'board',
-    'ops',
-    'smart_inspection',
-    'operations_analysis',
-    'device_control',
-    'station_fault_diagnosis'
+    'ops'
   ])
   assert.deepEqual(AGENT_MODES.map(agent => agent.id), AGENT_MODE_IDS)
 })
@@ -44,7 +40,7 @@ test('agent platform icons use distinct semantic silhouettes', () => {
 })
 
 test('every agent provides complete chat welcome content', () => {
-  assert.equal(AGENT_MODES.length, 13)
+  assert.equal(AGENT_MODES.length, 9)
   for (const agent of AGENT_MODES) {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)
@@ -55,6 +51,7 @@ test('every agent provides complete chat welcome content', () => {
 
 test('agent mode lookup returns matching metadata and null for unsupported modes', () => {
   assert.equal(getAgentMode('query')?.name, '问数生图智能体')
+  assert.equal(getAgentMode('knowledge')?.name, '知识问答智能体')
   assert.equal(getAgentMode('ops')?.welcome.example, '例如："审核这个月1-7日的运维工单"')
   assert.equal(getAgentMode('missing'), null)
 })

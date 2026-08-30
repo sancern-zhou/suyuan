@@ -19,6 +19,7 @@ class BoardCandidateReceipt:
     revision: int
     lifecycle_status: str
     xml_ref: dict[str, Any]
+    parent_version_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,7 @@ class BoardApplicationService:
         quality_report: dict[str, Any],
         screenshot_ref: dict[str, Any] | None,
         summary: str,
+        parent_version_id: str | None = None,
         lifecycle_status: str = "candidate",
     ) -> BoardCandidateReceipt:
         async with self.session_factory() as session:
@@ -118,6 +120,7 @@ class BoardApplicationService:
                 candidate = await domain.create_candidate(
                     board.id,
                     base_revision=base_revision,
+                    parent_version_id=parent_version_id,
                     xml=xml,
                     agent_run_id=agent_run_id,
                     quality_status=quality_status,
@@ -138,7 +141,19 @@ class BoardApplicationService:
                     version_number=int(candidate.version_number),
                     revision=int(board.revision),
                     lifecycle_status=str(candidate.lifecycle_status),
-                    xml_ref=dict(candidate.xml_ref),
+                    xml_ref={
+                        **dict(candidate.xml_ref),
+                        # The persisted local path is for backend consumers;
+                        # browser clients must use the authenticated board API.
+                        "read_url": (
+                            f"/api/boards/{board.id}/versions/{candidate.id}/xml"
+                        ),
+                    },
+                    parent_version_id=(
+                        str(candidate.parent_version_id)
+                        if candidate.parent_version_id
+                        else None
+                    ),
                 )
         return receipt
 
@@ -185,7 +200,10 @@ class BoardApplicationService:
                     candidate_version_id=str(version.id),
                     title=str(board.title),
                     xml=Path(xml_path).read_text(encoding="utf-8"),
-                    xml_ref=dict(version.xml_ref),
+                    xml_ref={
+                        **dict(version.xml_ref),
+                        "read_url": f"/api/boards/{board.id}/versions/{version.id}/xml",
+                    },
                     lifecycle_status=str(version.lifecycle_status),
                     quality_status=str(version.quality_status),
                     quality_report=dict(version.quality_report or {}),
@@ -297,7 +315,10 @@ class BoardApplicationService:
             revision=int(board.revision),
             title=str(board.title),
             lifecycle_status=str(version.lifecycle_status),
-            xml_ref=dict(version.xml_ref),
+            xml_ref={
+                **dict(version.xml_ref),
+                "read_url": f"/api/boards/{board.id}/versions/{version.id}/xml",
+            },
             screenshot_ref=dict(version.screenshot_ref) if version.screenshot_ref else None,
             quality_status=str(version.quality_status),
             quality_report=dict(version.quality_report or {}),

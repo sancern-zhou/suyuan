@@ -520,6 +520,23 @@ class AgentRuntime:
                 state.pending_board_candidate_id = str(candidate_version_id)
             elif candidate_accepted or data.get("lifecycle_status") == "rejected":
                 state.pending_board_candidate_id = None
+            working_version_id = (
+                data.get("working_version_id")
+                or data.get("current_version_id")
+                or data.get("version_id")
+                or candidate_version_id
+                or previous.get("working_version_id")
+                or previous.get("current_version_id")
+            )
+            accepted_version_id = (
+                data.get("accepted_version_id")
+                or previous.get("accepted_version_id")
+                or (
+                    previous.get("current_version_id")
+                    if previous.get("lifecycle_status") != "candidate"
+                    else None
+                )
+            )
             state.board_context = {
                 **previous,
                 "current_xml": xml,
@@ -529,10 +546,15 @@ class AgentRuntime:
                 "title": data.get("title") or previous.get("title"),
                 "revision": data.get("revision", previous.get("revision", 0)),
                 "candidate_version_id": candidate_version_id or previous.get("candidate_version_id"),
-                "current_version_id": data.get("current_version_id") or previous.get("current_version_id"),
+                "current_version_id": working_version_id,
+                "working_version_id": working_version_id,
+                "accepted_version_id": accepted_version_id,
                 "version_id": data.get("version_id") or previous.get("version_id"),
                 "quality_status": data.get("quality_status") or previous.get("quality_status"),
                 "quality_report": data.get("quality_report") or previous.get("quality_report"),
+                "design_spec": data.get("design_spec") or previous.get("design_spec"),
+                "theme_tokens": data.get("theme_tokens") or previous.get("theme_tokens"),
+                "structural_digest": data.get("structural_digest") or previous.get("structural_digest"),
                 "render_status": data.get("render_status") or previous.get("render_status"),
                 "lifecycle_status": data.get("lifecycle_status") or previous.get("lifecycle_status"),
                 "screenshot_ref": data.get("screenshot_ref") or previous.get("screenshot_ref"),
@@ -809,7 +831,7 @@ class AgentRuntime:
 
         async for event in self.planner.think_and_action_streaming(
             query=state.user_query,
-            system_prompt=context_result["system_prompt"],
+            system_prompt=context_result.get("system_prompt_blocks") or context_result["system_prompt"],
             user_conversation=context_result["user_conversation"],
             tools=tool_schemas,
             iteration=state.iteration,
@@ -1022,7 +1044,7 @@ class AgentRuntime:
             )
         result = await self.planner.think_and_action(
             query=state.user_query,
-            system_prompt=context_result["system_prompt"],
+            system_prompt=context_result.get("system_prompt_blocks") or context_result["system_prompt"],
             user_conversation=context_result["user_conversation"],
             tools=tool_schemas,
             iteration=state.iteration,

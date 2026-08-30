@@ -54,6 +54,8 @@ APP_ROLE="${APP_ROLE:-web}"
 export APP_ROLE
 WORKERS="${WORKERS:-4}"
 echo "[INFO] Starting role=${APP_ROLE} with ${WORKERS} worker(s)"
+# Persisted resource paths must remain stable across Git worktrees.
+"${PYTHON_BIN}" -m app.utils.deployment_preflight --env-file .env
 # Prepare the schema exactly once before Uvicorn forks worker processes.
 echo "[INFO] Preparing database schema..."
 "${PYTHON_BIN}" -m app.db.prepare_database

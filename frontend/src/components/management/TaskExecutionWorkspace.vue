@@ -24,8 +24,7 @@
             @click="restore(record)"
           >
             <div class="record-main">
-              <strong>{{ record.task_name || '分析任务' }}</strong>
-              <span class="record-time">{{ formatTime(record.started_at) }}</span>
+              <strong>{{ formatExecutionTitle(record) }}</strong>
               <span :class="['status', `status-${statusMeta(record.status).key}`]">{{ statusMeta(record.status).label }}</span>
             </div>
             <div class="record-meta">
@@ -100,17 +99,35 @@ const groupedExecutions = computed(() => {
   }))
 })
 const statusMeta = status => statusMap[status] || { key: 'unknown', label: '未知' }
-const formatTime = value => value ? new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '时间未知'
+const formatExecutionTitle = (record) => {
+  const taskName = record?.task_name || props.task?.name || '分析任务'
+  const date = record?.started_at ? new Date(record.started_at) : null
+  if (!date || Number.isNaN(date.getTime())) return taskName
+
+  const pad = part => String(part).padStart(2, '0')
+  const executionTime = [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  ].join(' ')
+  return `${executionTime} ${taskName}`
+}
 const formatDuration = seconds => seconds < 60 ? `${Math.round(seconds)}秒` : `${Math.floor(seconds / 60)}分${Math.round(seconds % 60)}秒`
 const restore = record => { if (record.session_id) emit('restore-execution-session', record.session_id) }
 
 const load = async () => {
+  const taskId = props.task?.task_id
+  if (!taskId) {
+    executions.value = []
+    error.value = ''
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
-    executions.value = await store.fetchRecentExecutions(50)
+    executions.value = await store.fetchTaskExecutions(taskId, 50)
   } catch (err) {
-    console.error('Failed to fetch recent task executions:', err)
+    console.error(`Failed to fetch executions for scheduled task ${taskId}:`, err)
     error.value = '分析记录加载失败，请重试'
   } finally {
     loading.value = false
@@ -132,7 +149,7 @@ h2 { margin: 4px 0; font-size: 22px; color: #17223b; }
 .record-card:disabled { opacity: .65; cursor: not-allowed; }
 .record-main, .record-meta, .artifacts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .record-main strong { min-width: 100px; color: #17223b; font-size: 16px; }
-.record-time, .record-meta, .no-artifact { color: #64748b; font-size: 13px; }
+.record-meta, .no-artifact { color: #64748b; font-size: 13px; }
 .status { margin-left: auto; font-size: 13px; font-weight: 600; }
 .status-success { color: #16803c; }.status-failed { color: #c2413b; }.status-running { color: #1976d2; }.status-pending, .status-unknown { color: #64748b; }
 .record-group + .record-group { margin-top: 22px; }

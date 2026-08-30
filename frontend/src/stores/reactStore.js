@@ -10,9 +10,11 @@ import {
   projectConfig,
   resolveProjectDefaultAgentMode
 } from '../config/projectConfig.js'
+import { AGENT_MODE_IDS } from '../config/agentModes.js'
 import {
   commitManualBoardVersion,
   getBoardVersions,
+  loadBoardVersionXml,
   saveBoardDraft
 } from '../api/board.js'
 import {
@@ -53,7 +55,7 @@ import { restoreMapScene } from './reactStoreMapScene.js'
 import { normalizeRestoredMessages } from './sessionContent.js'
 import { mergeMapPrograms } from '../components/queryDashboard/mapProgramMerge.js'
 
-const VALID_MODES = ['assistant', 'ppt', 'expert', 'query', 'jiangsu_query', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'report', 'chart', 'board', 'ops', 'graph']
+const VALID_MODES = [...new Set([...AGENT_MODE_IDS, ...projectConfig.agentModeIds, 'graph'])]
 const DEFAULT_AGENT_MODE = resolveProjectDefaultAgentMode(projectConfig, VALID_MODES)
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 const drawioDraftTimers = new Map()
@@ -171,6 +173,11 @@ const createEmptyDrawioBoardState = () => ({
   versions: [],
   currentVersionId: null,
   baseVersionId: null,
+  acceptedVersionId: null,
+  workingVersionId: null,
+  candidateVersionId: null,
+  draftRevision: 0,
+  draftXmlRef: null,
   selectedCells: [],
   pendingSnapshotAttachment: null,
   revision: 0,
@@ -180,6 +187,9 @@ const createEmptyDrawioBoardState = () => ({
   readOnly: false,
   qualityStatus: null,
   qualityReport: {},
+  designSpec: {},
+  themeTokens: {},
+  structuralDigest: {},
   version: 0,
   dirty: false,
   updatedAt: null
@@ -221,11 +231,10 @@ const getDrawioBoardXmlRef = (payload = {}, result = {}) => {
 
 const readDrawioBoardXmlFromRef = async (xmlRef = {}) => {
   const directUrl = xmlRef.read_url || xmlRef.url || xmlRef.download_url
-  const localPath = xmlRef.local_path || xmlRef.path || xmlRef.file_path
   const normalizedDirectUrl = directUrl?.startsWith('/api/') && API_BASE_URL !== '/api'
     ? `${API_BASE_URL}${directUrl.slice(4)}`
     : directUrl
-  const url = normalizedDirectUrl || (localPath ? `${API_BASE_URL}/file/${encodeURIComponent(localPath)}` : '')
+  const url = normalizedDirectUrl || ''
   if (!url) return ''
   const response = await authFetch(url, { cache: 'no-store' })
   if (!response.ok) {
@@ -273,6 +282,9 @@ const createDrawioBoardVersionRecord = ({
     lifecycleStatus: payload.lifecycle_status || payload.lifecycleStatus || 'accepted',
     qualityStatus: payload.quality_status || payload.qualityStatus || 'pending',
     qualityReport: payload.quality_report || payload.qualityReport || {},
+    designSpec: payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || {},
+    themeTokens: payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || {},
+    structuralDigest: payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || {},
     screenshotUrl: payload.screenshot_ref?.read_url || payload.screenshot_ref?.url || null,
     visibleInHistory: (payload.lifecycle_status || payload.lifecycleStatus || 'accepted') === 'accepted',
     downloadLabel: fileName,
@@ -404,22 +416,7 @@ export const useReactStore = defineStore('react', {
       userIdentifier: null,
 
       // 所有模式的状态（按模式隔离）
-      modeStates: {
-        assistant: createEmptyModeState(),
-        ppt: createEmptyModeState(),
-        expert: createEmptyModeState(),
-        query: createEmptyModeState(),
-        jiangsu_query: createEmptyModeState(),
-        smart_inspection: createEmptyModeState(),
-        operations_analysis: createEmptyModeState(),
-        device_control: createEmptyModeState(),
-        station_fault_diagnosis: createEmptyModeState(),
-        report: createEmptyModeState(),
-        chart: createEmptyModeState(),
-        board: createEmptyModeState(),
-        ops: createEmptyModeState(),
-        graph: createEmptyModeState()
-      },
+      modeStates: Object.fromEntries(VALID_MODES.map(mode => [mode, createEmptyModeState()])),
 
       // 同一模式下的多会话状态，key 为完整 sessionId
       sessionStates: {},
@@ -1540,7 +1537,11 @@ export const useReactStore = defineStore('react', {
 
           const appliedDrawioBoard = this.applyDrawioBoardToolResult(result, targetState)
           if (!appliedDrawioBoard) {
-            this.applyDrawioBoardToolResultFromRef(result, targetState)
+            this.applyDrawioBoardToolResultFromRef(result, targetState).catch(error => {
+              console.warn('[drawio-board] failed to apply streamed board result', {
+                error: error?.message || error
+              })
+            })
           }
 
           break
@@ -2057,8 +2058,23 @@ export const useReactStore = defineStore('react', {
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'currentVersionId')) {
         targetState.board.currentVersionId = null
       }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'acceptedVersionId')) {
+        targetState.board.acceptedVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'workingVersionId')) {
+        targetState.board.workingVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'candidateVersionId')) {
+        targetState.board.candidateVersionId = null
+      }
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'baseVersionId')) {
         targetState.board.baseVersionId = targetState.board.currentVersionId || null
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'draftRevision')) {
+        targetState.board.draftRevision = 0
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'draftXmlRef')) {
+        targetState.board.draftXmlRef = null
       }
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'applyingHistory')) {
         targetState.board.applyingHistory = false
@@ -2086,6 +2102,15 @@ export const useReactStore = defineStore('react', {
       }
       if (!Object.prototype.hasOwnProperty.call(targetState.board, 'qualityReport')) {
         targetState.board.qualityReport = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'designSpec')) {
+        targetState.board.designSpec = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'themeTokens')) {
+        targetState.board.themeTokens = {}
+      }
+      if (!Object.prototype.hasOwnProperty.call(targetState.board, 'structuralDigest')) {
+        targetState.board.structuralDigest = {}
       }
       return targetState.board
     },
@@ -2169,7 +2194,14 @@ export const useReactStore = defineStore('react', {
           board.version = versionRecord?.versionNumber || board.version
           board.qualityStatus = payload.quality_status || 'pending'
           board.qualityReport = payload.quality_report || {}
+          board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
+          board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
+          board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
           board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
+          board.currentVersionId = versionRecord?.version_id || versionRecord?.id || board.currentVersionId
+          board.workingVersionId = board.currentVersionId
+          board.candidateVersionId = board.currentVersionId
+          board.baseVersionId = board.currentVersionId
         }
         targetState.hasResults = true
         return true
@@ -2188,8 +2220,14 @@ export const useReactStore = defineStore('react', {
       board.version = versionRecord?.versionNumber || (Number.isFinite(nextVersion) ? nextVersion : board.version)
       board.revision = Number(payload.revision ?? board.revision ?? 0)
       board.currentVersionSha256 = payload.xml_sha256 || payload.xml_ref?.sha256 || board.currentVersionSha256
+      board.acceptedVersionId = payload.version_id || payload.versionId || board.currentVersionId
+      board.workingVersionId = board.currentVersionId
+      board.candidateVersionId = null
       board.qualityStatus = payload.quality_status || board.qualityStatus || null
       board.qualityReport = payload.quality_report || board.qualityReport || {}
+      board.designSpec = payload.design_spec || payload.designSpec || payload.quality_report?.design_spec || board.designSpec || {}
+      board.themeTokens = payload.theme_tokens || payload.themeTokens || payload.quality_report?.theme_tokens || board.themeTokens || {}
+      board.structuralDigest = payload.structural_digest || payload.structuralDigest || payload.quality_report?.structural_digest || board.structuralDigest || {}
       board.dirty = Boolean(payload.dirty ?? false)
       board.updatedAt = payload.updatedAt || payload.updated_at || result.timestamp || new Date().toISOString()
       targetState.hasResults = true
@@ -2202,8 +2240,22 @@ export const useReactStore = defineStore('react', {
       const payload = getDrawioBoardPayload(result)
       if (getDrawioBoardXml(payload)) return this.applyDrawioBoardToolResult(result, targetState)
 
-      const xmlRef = getDrawioBoardXmlRef(payload, result)
+      let xmlRef = getDrawioBoardXmlRef(payload, result)
       if (!xmlRef) return false
+
+      // Older tool results may only contain board/version identity. Prefer the
+      // authenticated board endpoint and never expose a local filesystem path
+      // to the browser.
+      if (!xmlRef.read_url && !xmlRef.url && !xmlRef.download_url) {
+        const boardId = payload.board_id || payload.active_board_id || payload.activeBoardId
+        const versionId = payload.candidate_version_id || payload.version_id || payload.versionId
+        if (boardId && versionId) {
+          xmlRef = {
+            ...xmlRef,
+            read_url: `/api/boards/${encodeURIComponent(boardId)}/versions/${encodeURIComponent(versionId)}/xml`
+          }
+        }
+      }
 
       try {
         const xml = await readDrawioBoardXmlFromRef(xmlRef)
@@ -2296,10 +2348,81 @@ export const useReactStore = defineStore('react', {
       const board = this.ensureDrawioBoardState(targetState)
       if (!board.activeBoardId) return []
       const response = await getBoardVersions(board.activeBoardId)
-      board.currentVersionId = response.current_version_id || board.currentVersionId
-      board.baseVersionId = board.currentVersionId
+      const previousCurrentVersionId = board.currentVersionId
+      const acceptedVersionId = response.current_version_id || board.acceptedVersionId || board.currentVersionId
+      board.acceptedVersionId = acceptedVersionId || null
       board.revision = Number(response.revision ?? board.revision ?? 0)
-      board.versions = mapServerBoardVersions(response.versions || [], board.currentVersionId)
+      board.versions = mapServerBoardVersions(response.versions || [], acceptedVersionId)
+      const requestedWorkingVersionId = board.workingVersionId || previousCurrentVersionId
+      const requestedWorking = board.versions.find(version => (
+        (version.version_id || version.id) === requestedWorkingVersionId &&
+        ['accepted', 'candidate'].includes(version.lifecycleStatus || version.lifecycle_status)
+      ))
+      const latestCandidate = [...board.versions]
+        .filter(version => (version.lifecycleStatus || version.lifecycle_status) === 'candidate')
+        .sort((a, b) => Number(b.versionNumber || b.version_number || 0) - Number(a.versionNumber || a.version_number || 0))[0]
+      const working = requestedWorking || latestCandidate || board.versions.find(version => (
+        (version.version_id || version.id) === acceptedVersionId
+      ))
+      board.currentVersionId = working?.version_id || working?.id || acceptedVersionId || null
+      board.workingVersionId = board.currentVersionId
+      board.candidateVersionId = (working?.lifecycleStatus || working?.lifecycle_status) === 'candidate'
+        ? board.currentVersionId
+        : null
+      board.baseVersionId = board.currentVersionId
+      board.draftRevision = Number(response.draft_revision ?? board.draftRevision ?? 0)
+      board.draftXmlRef = response.draft_xml_ref || null
+
+      // A browser edit is autosaved as a board draft before the user sends the
+      // next message. Restore that draft on session reopen so the editor shows
+      // the user's last manual layout instead of silently falling back to the
+      // last accepted/agent version.
+      if (board.draftRevision > 0 && board.draftXmlRef) {
+        try {
+          const draftXml = await loadBoardVersionXml(
+            board.activeBoardId,
+            board.currentVersionId || previousCurrentVersionId || '',
+            { xml_ref: board.draftXmlRef }
+          )
+          this.updateDrawioBoardXml(
+            draftXml,
+            { dirty: true, saveDraft: false, updated_at: response.updated_at },
+            targetState
+          )
+          board.syncStatus = 'idle'
+        } catch (error) {
+          console.warn('[drawio-board] failed to restore saved draft', {
+            boardId: board.activeBoardId,
+            error: error?.message || error
+          })
+        }
+      } else if (!board.currentXml && board.currentVersionId) {
+        // A restored session may not carry the board XML in its message
+        // history. Load the current accepted version so the panel is usable
+        // even when there has never been a browser draft.
+        try {
+          const currentVersion = board.versions.find(
+            (version) => (version.versionId || version.id) === board.currentVersionId
+          )
+          const currentXml = await loadBoardVersionXml(
+            board.activeBoardId,
+            board.currentVersionId,
+            currentVersion || {}
+          )
+          this.updateDrawioBoardXml(
+            currentXml,
+            { dirty: false, saveDraft: false, updated_at: response.updated_at },
+            targetState
+          )
+          board.syncStatus = 'idle'
+        } catch (error) {
+          console.warn('[drawio-board] failed to restore current board version', {
+            boardId: board.activeBoardId,
+            versionId: board.currentVersionId,
+            error: error?.message || error
+          })
+        }
+      }
       return board.versions
     },
 
@@ -2450,15 +2573,23 @@ export const useReactStore = defineStore('react', {
       const board = state?.board
       if (!board?.currentXml) return null
 
-      const compactVersionContext = board.currentVersionId && Number.isFinite(Number(board.revision))
+      const workingVersionId = board.workingVersionId || board.currentVersionId
+      const acceptedVersionId = board.acceptedVersionId || board.currentVersionId
+      const compactVersionContext = workingVersionId && Number.isFinite(Number(board.revision))
       if (compactVersionContext) {
         return {
           artifact_kind: 'drawio_board',
           board_id: board.activeBoardId,
-          version_id: board.currentVersionId,
+          version_id: workingVersionId,
+          current_version_id: workingVersionId,
+          working_version_id: workingVersionId,
+          accepted_version_id: acceptedVersionId,
+          candidate_version_id: board.candidateVersionId || null,
           revision: Number(board.revision),
           selected_cells: board.selectedCells || [],
-          title: board.title
+          title: board.title,
+          design_spec: board.designSpec || {},
+          theme_tokens: board.themeTokens || {}
         }
       }
 
@@ -2469,8 +2600,13 @@ export const useReactStore = defineStore('react', {
         title: board.title,
         current_xml: board.currentXml,
         selected_cells: board.selectedCells || [],
+        design_spec: board.designSpec || {},
+        theme_tokens: board.themeTokens || {},
         version: board.version,
-        current_version_id: board.currentVersionId || null,
+        current_version_id: workingVersionId || null,
+        working_version_id: workingVersionId || null,
+        accepted_version_id: acceptedVersionId || null,
+        candidate_version_id: board.candidateVersionId || null,
         base_version_id: board.baseVersionId || board.currentVersionId || null,
         version_files: (board.versions || []).map(version => ({
           version_id: version.version_id || version.id,
@@ -2481,7 +2617,7 @@ export const useReactStore = defineStore('react', {
           format: version.format || 'drawio',
           source: version.source,
           created_at: version.created_at,
-          is_current: (version.version_id || version.id) === board.currentVersionId
+          is_current: (version.version_id || version.id) === workingVersionId
         })),
         dirty: board.dirty,
         updated_at: board.updatedAt

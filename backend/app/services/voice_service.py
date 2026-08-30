@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
+from aiohttp import WSMsgType
 
 from config.settings import settings
 
@@ -218,6 +219,53 @@ async def transcribe_with_mimo(audio_bytes: bytes, mime_type: str, language: str
     payload = build_mimo_asr_payload(data_url, language=language)
     response_json = await _post_mimo(payload, timeout=settings.voice_asr_timeout_seconds)
     return extract_asr_text(response_json)
+
+
+def realtime_asr_ws_url() -> str:
+    """Build the regional DashScope realtime endpoint without exposing credentials."""
+    workspace_id = (settings.voice_realtime_workspace_id or "").strip()
+    if workspace_id:
+        return f"wss://{workspace_id}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"
+    return settings.voice_realtime_ws_url.rstrip("/")
+
+
+def build_realtime_run_task(task_id: str, language: str = "zh") -> Dict[str, Any]:
+    parameters: Dict[str, Any] = {
+        "format": "pcm",
+        "sample_rate": 16000,
+    }
+    if language:
+        parameters["language_hints"] = [language]
+    return {
+        "header": {"action": "run-task", "task_id": task_id, "streaming": "duplex"},
+        "payload": {
+            "task_group": "audio",
+            "task": "asr",
+            "function": "recognition",
+            "model": settings.voice_realtime_model,
+            "parameters": parameters,
+            "input": {},
+        },
+    }
+
+
+def build_realtime_finish_task(task_id: str) -> Dict[str, Any]:
+    return {
+        "header": {"action": "finish-task", "task_id": task_id, "streaming": "duplex"},
+        "payload": {"input": {}},
+    }
+
+
+def realtime_result_text(message: Dict[str, Any]) -> tuple[str, bool] | None:
+    if message.get("header", {}).get("event") != "result-generated":
+        return None
+    sentence = (((message.get("payload") or {}).get("output") or {}).get("sentence") or {})
+    if sentence.get("heartbeat"):
+        return None
+    text = str(sentence.get("text") or "").strip()
+    if not text:
+        return None
+    return text, bool(sentence.get("sentence_end"))
 
 
 async def synthesize_with_mimo(

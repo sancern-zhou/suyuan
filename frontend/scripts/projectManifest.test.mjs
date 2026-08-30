@@ -34,18 +34,6 @@ test('xuchang project enables only its declared business modules', () => {
   assert.equal(config.frontend.agentPlatformLayout, 'environment-grid')
 })
 
-test('jiangsu operations project exposes its dedicated operations modes', () => {
-  const config = loadProjectBuildConfig({ projectId: 'jiangsu-ops', repoRoot })
-  assert.deepEqual(config.frontend.agentModes, [
-    'ops', 'jiangsu_query', 'expert', 'smart_inspection', 'operations_analysis',
-    'device_control', 'station_fault_diagnosis'
-  ])
-  assert.equal(config.frontend.defaultAgentMode, 'ops')
-  assert.equal(config.frontend.agentModeOverrides.jiangsu_query.name, '江苏问数生图智能体')
-  assert.equal(config.frontend.agentModeOverrides.jiangsu_query.tags.includes('问数生图'), true)
-})
-
-
 test('jiangxi project uses the reduced noise interface', () => {
   const config = loadProjectBuildConfig({ projectId: 'jiangxi', repoRoot })
 

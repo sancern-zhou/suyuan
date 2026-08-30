@@ -121,6 +121,14 @@ class BoardVersionService:
         )
         return list(result.scalars().all())
 
+    async def read_version_xml(self, board_id: str, version_id: str) -> str | None:
+        version = await self.get_version(board_id, version_id)
+        return self._read_version_xml(version)
+
+    async def read_draft_xml(self, board_id: str) -> str | None:
+        board = await self.get_board(board_id)
+        return self._read_xml_ref(board.draft_xml_ref)
+
     async def get_latest_restorable_version(self, board: Board) -> BoardVersion | None:
         """Return the latest visible state without promoting a candidate."""
         restorable = [BoardVersion.lifecycle_status == "candidate"]
@@ -210,6 +218,7 @@ class BoardVersionService:
         board_id: str,
         *,
         base_revision: int,
+        parent_version_id: str | None = None,
         xml: str,
         agent_run_id: str,
         quality_status: str = "pending",
@@ -233,6 +242,11 @@ class BoardVersionService:
         if existing is not None:
             return existing
         self._require_revision(board, base_revision)
+        parent_id = parent_version_id or board.current_version_id
+        if parent_id:
+            parent = await self.get_version(board_id, parent_id)
+            if parent.board_id != board_id:
+                raise BoardVersionNotFound(parent_id)
         version = await self._create_version(
             board,
             source="agent",
@@ -243,6 +257,7 @@ class BoardVersionService:
             screenshot_ref=screenshot_ref,
             agent_run_id=agent_run_id,
             summary=summary,
+            parent_version_id=parent_id,
         )
         await self.session.flush()
         return version
@@ -448,7 +463,11 @@ class BoardVersionService:
 
     @staticmethod
     def _read_version_xml(version: BoardVersion) -> str | None:
-        local_path = (version.xml_ref or {}).get("local_path") or (version.xml_ref or {}).get("path")
+        return BoardVersionService._read_xml_ref(version.xml_ref)
+
+    @staticmethod
+    def _read_xml_ref(xml_ref: dict[str, Any] | None) -> str | None:
+        local_path = (xml_ref or {}).get("local_path") or (xml_ref or {}).get("path")
         if not local_path:
             return None
         try:

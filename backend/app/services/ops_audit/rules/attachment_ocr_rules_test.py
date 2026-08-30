@@ -70,6 +70,86 @@ def test_pm_flow_photo_matches_pollutant_and_before_standard_value(monkeypatch):
     assert issues == []
 
 
+def test_o3_transfer_visual_flags_stale_six_point_results(monkeypatch):
+    _enable_flow_visual_rules(monkeypatch, attachment_ocr_rules.O3_TRANSFER_SIX_POINT_RULE_ID)
+
+    def fake_ocr(source, *, provider, task, prompt):
+        assert task == "o3_transfer_six_point_review"
+        assert "六次传递结果" in prompt
+        return {
+            "status": "success",
+            "data": {
+                "is_o3_transfer_record": True,
+                "initial_concentration": 22.1,
+                "initial_concentration_updated": True,
+                "six_results_count": 6,
+                "six_results_refreshed": False,
+                "stale_result_rows": [{"row": 4, "date": "2026-05-07", "reason": "旧批次日期"}],
+                "confidence": 0.96,
+                "reason": "初始浓度为本次新值，但第4行仍保留旧日期。",
+            },
+        }
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_ocr)
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "order": {"WORKINGORDERCODE": "WO-O3-STALE"},
+            "forms": [("RF_HY_O3VALUEPASS", {"WORKINGORDERCODE": "WO-O3-STALE"})],
+            "item": {
+                "filename": "臭氧量值传递截图.jpg",
+                "source_path": "/WebFiles/o3-transfer.jpg",
+                "typecode": "RF_HY_O3VALUEPASS",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].rule_id == attachment_ocr_rules.O3_TRANSFER_SIX_POINT_RULE_ID
+    evidence = json.loads(issues[0].evidence)
+    assert evidence["six_results_count"] == 6
+    assert evidence["needs_manual_review"] is True
+
+
+def test_o3_transfer_candidate_accepts_dynamic_calibrator_screenshot():
+    assert attachment_ocr_rules._is_flow_visual_candidate(
+        {"filename": "O3传递动态校准仪百分比对应浓度.jpg"}
+    ) is True
+    assert attachment_ocr_rules._is_flow_visual_candidate(
+        {"filename": "O3传递浓度数采更改.jpg"}
+    ) is True
+
+
+def test_o3_transfer_six_point_rule_skips_single_point_photos(monkeypatch):
+    _enable_flow_visual_rules(monkeypatch, attachment_ocr_rules.O3_TRANSFER_SIX_POINT_RULE_ID)
+    calls = []
+
+    def fake_ocr(*args, **kwargs):
+        calls.append(kwargs.get("task"))
+        return {"status": "success", "data": {}}
+
+    monkeypatch.setattr(attachment_ocr_rules, "extract_attachment_json", fake_ocr)
+    issues = []
+    attachment_ocr_rules.run_flow_visual_task(
+        {
+            "order": {"WORKINGORDERCODE": "WO-O3-POINT"},
+            "forms": [("RF_HY_O3VALUEPASS", {})],
+            "item": {
+                "filename": "49ips 163ppb实测.jpg",
+                "source_path": "/WebFiles/o3-point.jpg",
+                "typecode": "RF_HY_O3VALUEPASS",
+                "types": ["photo"],
+            },
+        },
+        issues,
+    )
+
+    assert calls == []
+    assert issues == []
+
+
 def test_pm_flow_before_photo_matches_pm25_before_standard_value(monkeypatch):
     def fake_ocr(source, *, provider, task, prompt):
         return {

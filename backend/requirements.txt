@@ -1,6 +1,7 @@
 # Core Framework
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
+websockets==13.1
 sse-starlette==2.4.1
 pydantic==2.12.5
 pydantic-settings==2.6.0
@@ -75,6 +76,7 @@ qdrant-client==1.12.0
 # Embeddings (for vector search)
 sentence-transformers==3.1.1
 jieba>=0.42.1  # Chinese word segmentation for BM25 sparse vectors
+rapidfuzz>=3.14,<4  # Fast deterministic near-duplicate checks for exam generation
 
 # Report Export (PDF/Word generation)
 weasyprint==63.1

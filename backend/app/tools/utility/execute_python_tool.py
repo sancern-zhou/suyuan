@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import structlog
 
+from app.tools.artifact_utils import attach_rendered_qmd_report_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, build_visual_ref, merge_refs
 from app.utils.path_config import (
@@ -129,13 +130,19 @@ class ExecutePythonTool(LLMTool):
             if isinstance(node, ast.Call):
                 func_name = self._call_name(node.func)
                 # Canonical session paths are documented as directly usable by
-                # Python. Discover ordinary open(...) calls as well as the
-                # injected helpers so Bubblewrap can stage the authorized file.
-                if func_name in {"open", "io.open", "get_raw_data", "load_data"}:
-                    if node.args:
-                        file_path = self._literal_or_assigned_string(node.args[0], assigned_strings)
-                        if file_path:
-                            file_paths.append(file_path)
+                # Python. Discover ordinary open(...) calls, the injected
+                # helpers, and pandas-style readers (pd.read_excel, etc.) so
+                # Bubblewrap can stage the authorized file.
+                leaf_name = func_name.rsplit(".", 1)[-1]
+                is_file_reader = (
+                    func_name in {"open", "io.open", "get_raw_data", "load_data"}
+                    or leaf_name.startswith("read_")
+                    or func_name in {"pd.load", "np.load"}
+                )
+                if is_file_reader and node.args:
+                    file_path = self._literal_or_assigned_string(node.args[0], assigned_strings)
+                    if file_path:
+                        file_paths.append(file_path)
 
         return list(dict.fromkeys(file_paths))
 
@@ -162,6 +169,12 @@ class ExecutePythonTool(LLMTool):
             for path in getattr(context, "available_file_paths", []) or []
             if path
         }
+        # Durable catalog inputs (uploads etc.) count as authorized reads too.
+        available_paths.update(
+            str(Path(path).resolve())
+            for path in getattr(context, "authorized_input_paths", []) or []
+            if path
+        )
         requested_paths = []
         for file_path in self._find_data_file_accesses(code):
             resolved = resolve_agent_path(file_path)
@@ -350,29 +363,13 @@ class ExecutePythonTool(LLMTool):
                 # 只处理第一个 office 文件（与 Office 工具行为一致）
                 office_file = office_files[0]
                 office_suffix = Path(office_file).suffix.lower()
-                if office_suffix in {'.xlsx', '.xls'}:
-                    result["data"]["spreadsheet_preview"] = {
-                        "file_type": office_suffix.lstrip("."),
-                        "editable": True,
-                        "size": Path(office_file).stat().st_size,
-                    }
-                    result["data"]["file_path"] = office_file
-                    result["data"]["file_name"] = Path(office_file).name
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成文档：{Path(office_file).name}"
-                    logger.info(
-                        "execute_python_spreadsheet_preview_created",
-                        office_file=office_file,
-                        execution_success=result.get("success", False)
-                    )
-                else:
+                result["data"]["file_path"] = office_file
+                result["data"]["file_name"] = Path(office_file).name
+                if office_suffix != ".pdf":
                     try:
                         from app.services.pdf_converter import pdf_converter
                         pdf_preview = await pdf_converter.convert_to_pdf(office_file)
                         result["data"]["pdf_preview"] = pdf_preview
-                        result["data"]["file_path"] = office_file
-                        result["data"]["file_name"] = Path(office_file).name
-                        # ✅ 只在执行成功时覆盖 summary
                         if result.get("success", False):
                             result["summary"] = f"✅ 工具已执行完成，生成文档：{Path(office_file).name}"
                         logger.info(
@@ -384,10 +381,8 @@ class ExecutePythonTool(LLMTool):
                     except Exception as pdf_error:
                         logger.warning("execute_python_pdf_conversion_failed", error=str(pdf_error))
                         # PDF 转换失败时，仍然返回文件信息
-                    result["data"]["file_path"] = office_file
-                    # ✅ 只在执行成功时覆盖 summary
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
+                elif result.get("success", False):
+                    result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
 
             if final_files and "file_path" not in result["data"]:
                 # ✅ 只在执行成功时覆盖 summary
@@ -645,6 +640,31 @@ class ExecutePythonTool(LLMTool):
                 path for path in final_files
                 if str(Path(path).expanduser().resolve()) not in visual_source_paths
             ]
+            qmd_paths = [
+                path for path in deliverable_files
+                if str(path).lower().endswith(".qmd")
+            ]
+            generic_files = [
+                path for path in deliverable_files
+                if not str(path).lower().endswith(".qmd")
+            ]
+            report_package_resources: List[Dict[str, Any]] = []
+            for qmd_path in qmd_paths:
+                package_data: Dict[str, Any] = {}
+                attached = await asyncio.to_thread(
+                    attach_rendered_qmd_report_resources,
+                    package_data,
+                    qmd_path,
+                    generator=self.name,
+                )
+                if attached:
+                    report_package_resources.extend(package_data.get("resources", []))
+                    continue
+                if package_data.get("preview_error"):
+                    result["data"].setdefault(
+                        "preview_error", package_data["preview_error"]
+                    )
+                generic_files.append(qmd_path)
             pdf_preview = result["data"].get("pdf_preview")
             preview_paths: dict[str, str] = {}
             primary_file_path = result["data"].get("file_path")
@@ -656,10 +676,11 @@ class ExecutePythonTool(LLMTool):
                 preview_paths[primary_file_path] = pdf_preview["pdf_path"]
 
             result["resources"] = generated_file_products(
-                deliverable_files,
+                generic_files,
                 tool_name=self.name,
                 preview_paths=preview_paths,
             )
+            result["resources"].extend(report_package_resources)
             result["resources"].extend(
                 data_file_resource(file_path, tool_name=self.name)
                 for file_path in python_data_paths
@@ -913,7 +934,18 @@ class ExecutePythonTool(LLMTool):
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
         relative_input_mounts: List[Path] = []
-        context_paths = list(getattr(context, "available_file_paths", []) or [])
+        context_paths = list(
+            dict.fromkeys(
+                [
+                    *(
+                        getattr(context, "available_file_paths", []) or []
+                    ),
+                    *(
+                        getattr(context, "authorized_input_paths", []) or []
+                    ),
+                ]
+            )
+        )
         requested_paths = self._find_data_file_accesses(code)
         candidate_paths = list(dict.fromkeys([*context_paths, *requested_paths]))
         try:

@@ -2,8 +2,9 @@
 Shared LLM concurrency and failover helpers.
 
 The policy mirrors OpenClaw's practical shape: classify provider failures,
-fallback only for transient capacity errors, and keep context-overflow errors
-on the compaction path instead of moving them to another model.
+fallback for transient capacity errors and auth rejections (relay gateways
+often return 403 transiently), and keep context-overflow errors on the
+compaction path instead of moving them to another model.
 """
 import asyncio
 import re
@@ -210,7 +211,17 @@ def classify_llm_failure(err: object) -> LLMFailure:
 
 
 def should_fallback(failure: LLMFailure) -> bool:
-    return failure.reason in {"rate_limit", "overloaded", "timeout", "billing", "format", "unknown"}
+    # auth(401/403) 也纳入切换：中转网关（如 doubao.best）的 403 常为临时封禁/IP 风控，
+    # 切到备用 provider 可用性更高；密钥真正配错时备用链会全部失败并抛 LLMFailoverError。
+    return failure.reason in {
+        "rate_limit",
+        "overloaded",
+        "timeout",
+        "billing",
+        "format",
+        "auth",
+        "unknown",
+    }
 
 
 def summarize_attempts(attempts: Iterable[dict]) -> list[dict]:

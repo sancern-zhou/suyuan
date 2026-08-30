@@ -77,8 +77,14 @@ async def test_force_compaction_creates_plain_text_memory_and_keeps_recent_tool_
     assert "Runtime memory summary from earlier turns." in compact_memory[0]["content"]
     assert "Find matching tenders" in compact_memory[0]["content"]
 
-    assert compacted[0]["type"] == "user"
-    assert "东莞市生态环境局" in compacted[0]["content"]
+    assert compacted[0]["type"] == "compact_memory"
+    anchor_messages = [
+        msg for msg in compacted
+        if isinstance(msg.get("content"), str)
+        and msg["content"].startswith(ContextCompressor.ANCHOR_LABEL)
+    ]
+    assert len(anchor_messages) == 1
+    assert "东莞市生态环境局" in anchor_messages[0]["content"]
     assert any(
         isinstance(msg.get("content"), list)
         and any(block.get("type") == "tool_use" for block in msg["content"])
@@ -109,14 +115,87 @@ async def test_compaction_failure_uses_anchor_and_recent_history_not_recent_half
         force_reason="test_failure",
     )
 
-    assert compacted[0]["type"] == "user"
-    assert "东莞市生态环境局" in compacted[0]["content"]
+    assert compacted[0]["type"] == "system"
+    anchor_messages = [
+        msg for msg in compacted
+        if isinstance(msg.get("content"), str)
+        and msg["content"].startswith(ContextCompressor.ANCHOR_LABEL)
+    ]
+    assert len(anchor_messages) == 1
+    assert "东莞市生态环境局" in anchor_messages[0]["content"]
     assert any(
         msg.get("metadata", {}).get("compact_boundary")
         and msg.get("metadata", {}).get("compression_type") == "fallback"
         for msg in compacted
     )
     assert len(compacted) < len(original)
+
+
+def test_extract_user_anchor_normalizes_existing_anchor_prefix():
+    compressor = ContextCompressor(FakeLLMClient())
+
+    anchor = compressor._extract_user_anchor([
+        {
+            "type": "compact_memory",
+            "role": "user",
+            "content": ContextCompressor.COMPACT_MEMORY_PREFIX + "Goal\n- Continue.",
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{ContextCompressor.ANCHOR_PREFIX}"
+                f"{ContextCompressor.ANCHOR_PREFIX}"
+                "原始任务"
+            ),
+        },
+    ])
+
+    assert anchor == [{
+        "type": "user",
+        "role": "user",
+        "content": f"{ContextCompressor.ANCHOR_PREFIX}原始任务",
+    }]
+    assert anchor[0]["content"].count(ContextCompressor.ANCHOR_LABEL) == 1
+
+
+@pytest.mark.asyncio
+async def test_recompaction_outputs_single_canonical_anchor():
+    client = FakeLLMClient("Goal\n- Continue the original task.")
+    compressor = ContextCompressor(client)
+    messages = [
+        {
+            "type": "compact_memory",
+            "role": "user",
+            "content": ContextCompressor.COMPACT_MEMORY_PREFIX + "Goal\n- Previous summary.",
+        },
+        {
+            "type": "user",
+            "role": "user",
+            "content": (
+                f"{ContextCompressor.ANCHOR_PREFIX}"
+                f"{ContextCompressor.ANCHOR_PREFIX}"
+                "原始任务"
+            ),
+        },
+    ]
+    for index in range(8):
+        messages.append({"role": "user", "content": f"继续第 {index} 步"})
+        messages.append({"role": "assistant", "content": f"第 {index} 步完成"})
+
+    compacted = await compressor.compress(
+        messages,
+        force=True,
+        force_reason="test_recompaction",
+    )
+
+    anchor_messages = [
+        msg for msg in compacted
+        if isinstance(msg.get("content"), str)
+        and msg["content"].startswith(ContextCompressor.ANCHOR_LABEL)
+    ]
+    assert len(anchor_messages) == 1
+    assert anchor_messages[0]["content"] == f"{ContextCompressor.ANCHOR_PREFIX}原始任务"
+    assert anchor_messages[0]["content"].count(ContextCompressor.ANCHOR_LABEL) == 1
 
 
 def test_session_memory_preserves_compact_memory_and_content_blocks_after_update(tmp_path):
@@ -780,6 +859,41 @@ def test_tool_result_history_minimalization_preserves_refs_and_resume(monkeypatc
     assert "report_data_ids" not in result
     assert "source_data_ids" not in result
     assert "rows" not in json.dumps(result, ensure_ascii=False)
+
+
+def test_tool_result_history_minimalization_keeps_bounded_data_sample(monkeypatch):
+    monkeypatch.setattr(session_memory, "MAX_TOOL_RESULT_JSON_CHARS", 500)
+
+    records = [{"name": f"区县{index}", "aqi": str(20 + index)} for index in range(50)]
+    result = session_memory._prepare_tool_result_for_history({
+        "success": True,
+        "status": "success",
+        "summary": "生成了大结果",
+        "data": records,
+    })
+
+    assert result["tool_result_truncated"] is True
+    assert result["data_sampled"] is True
+    assert result["data_original_record_count"] == 50
+    sampled = result["data"]
+    assert 1 <= len(sampled) <= 3
+    assert sampled[0]["name"] == "区县0"
+    assert sampled[-1]["name"] == "区县49"
+
+
+def test_tool_result_history_minimalization_skips_oversized_data_sample(monkeypatch):
+    monkeypatch.setattr(session_memory, "MAX_TOOL_RESULT_JSON_CHARS", 500)
+
+    result = session_memory._prepare_tool_result_for_history({
+        "success": True,
+        "status": "success",
+        "summary": "生成了大结果",
+        "data": [{"blob": "x" * 10_000} for _ in range(50)],
+    })
+
+    assert result["tool_result_truncated"] is True
+    assert "data" not in result
+    assert "data_sampled" not in result
 
 
 def test_standardized_legacy_tool_result_survives_history_restore_projection(tmp_path):

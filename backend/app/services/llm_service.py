@@ -37,6 +37,8 @@ from app.services.chat_completions_adapter import (
 
 logger = structlog.get_logger()
 
+SYSTEM_CACHE_CHECKPOINT_KEY = "_suyuan_cache_checkpoint"
+
 _llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
     "llm_request_state",
     default=None,
@@ -647,7 +649,7 @@ class LLMService:
         tools: Optional[List[Dict]],
         max_tokens: Optional[int],
         temperature: float,
-        system: Optional[str],
+        system: Optional[Any],
         streaming: bool = False,
     ) -> Dict[str, Any]:
         """Build provider-specific Anthropic-compatible request parameters.
@@ -779,6 +781,8 @@ class LLMService:
                 model=self.model,
                 reason="Provider does not support cache_control (auto KV cache or not supported)",
             )
+            if "system" in api_params:
+                api_params["system"] = self._strip_system_cache_markers(api_params["system"])
 
         if "thinking" in api_params:
             extra_body = api_params.get("extra_body") or {}
@@ -2778,6 +2782,51 @@ class LLMService:
         ]
         return any(kw in error_msg for kw in keywords)
 
+    @staticmethod
+    def _strip_system_cache_markers(system: Any) -> Any:
+        """Remove internal prompt-cache markers from Anthropic system content."""
+        if not isinstance(system, list):
+            return system
+
+        cleaned = []
+        for block in system:
+            if not isinstance(block, dict):
+                cleaned.append(block)
+                continue
+            item = dict(block)
+            item.pop(SYSTEM_CACHE_CHECKPOINT_KEY, None)
+            item.pop("cache_control", None)
+            cleaned.append(item)
+        return cleaned
+
+    @staticmethod
+    def _apply_system_cache_control(system: Any) -> Any:
+        """Convert the internal stable-prefix marker into Anthropic cache_control."""
+        if not isinstance(system, list) or not system:
+            return system
+
+        cleaned = []
+        explicit_index = None
+        existing_cache_index = None
+        for index, block in enumerate(system):
+            if not isinstance(block, dict):
+                cleaned.append(block)
+                continue
+            item = dict(block)
+            if item.pop(SYSTEM_CACHE_CHECKPOINT_KEY, False):
+                explicit_index = index
+            if item.get("cache_control") and existing_cache_index is None:
+                existing_cache_index = index
+            cleaned.append(item)
+
+        target_index = explicit_index
+        if target_index is None and existing_cache_index is None:
+            target_index = len(cleaned) - 1
+
+        if target_index is not None and isinstance(cleaned[target_index], dict):
+            cleaned[target_index]["cache_control"] = {"type": "ephemeral"}
+        return cleaned
+
     def _add_cache_control(self, api_params: Dict[str, Any]) -> Dict[str, Any]:
         """为支持 Prompt Cache 的 Provider 添加 cache_control 标记
 
@@ -2795,17 +2844,14 @@ class LLMService:
         import copy
         params = copy.deepcopy(api_params)
 
-        # 1. 标记 system 消息为可缓存
-        # 注意：只在 system 已经是列表格式时添加 cache_control
-        # 字符串格式保持不变，避免 API 兼容性问题
+        # 1. 标记 system 消息为可缓存。
+        # context_builder 会用内部字段标记稳定前缀的末尾；这里才转换为
+        # provider 可见的 cache_control，动态尾部保持未缓存。
         if "system" in params and params["system"]:
-            system = params["system"]
-            if isinstance(system, list) and len(system) > 0:
-                # 列表格式：标记最后一个 block
-                if isinstance(system[-1], dict):
-                    system[-1]["cache_control"] = {"type": "ephemeral"}
-                    logger.debug("cache_control_added_to_system_list")
-            # 字符串格式不转换，保持原样
+            before = params["system"]
+            params["system"] = self._apply_system_cache_control(before)
+            if params["system"] is not before:
+                logger.debug("cache_control_added_to_system_list")
 
         # 2. 标记 tools 定义为可缓存
         if "tools" in params and params["tools"]:
@@ -2848,7 +2894,7 @@ class LLMService:
         tools: Optional[List[Dict[str, Any]]],
         max_tokens: Optional[int],
         temperature: float,
-        system: Optional[str],
+        system: Optional[Any],
         stream: bool,
         tool_choice: Optional[Any] = None,
     ) -> Dict[str, Any]:
@@ -2884,7 +2930,7 @@ class LLMService:
         tools: Optional[List[Dict[str, Any]]],
         max_tokens: Optional[int],
         temperature: float,
-        system: Optional[str],
+        system: Optional[Any],
     ) -> Dict[str, Any]:
         url, headers = self._get_request_config()
         payload = self._build_chat_completions_payload(
@@ -2940,7 +2986,7 @@ class LLMService:
         tools: Optional[List[Dict[str, Any]]],
         max_tokens: Optional[int],
         temperature: float,
-        system: Optional[str],
+        system: Optional[Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         url, headers = self._get_request_config()
         payload = self._build_chat_completions_payload(
@@ -2982,7 +3028,7 @@ class LLMService:
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: float = 0.3,
-        system: Optional[str] = None,
+        system: Optional[Any] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,
@@ -3185,7 +3231,7 @@ class LLMService:
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: float = 0.3,
-        system: Optional[str] = None,
+        system: Optional[Any] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
         auto_profile: Optional[str] = None,

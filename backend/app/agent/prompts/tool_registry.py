@@ -140,6 +140,17 @@ QUERY_TOOL_NAMES = [
     "create_report_chart", "execute_echarts_python",
 ]
 
+# ===== 知识问答模式工具 =====
+# 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
+KNOWLEDGE_TOOL_NAMES = [
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "knowledge_graph_query",
+    "read_session_resource",
+    "web_search",
+    "web_fetch",
+]
+
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
@@ -206,14 +217,8 @@ OPS_TOOL_NAMES = [
     "list_skills", "view_skill", "read_file",
 
     # 工单查询
-    "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
+    "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect", "ops_audit_submit_review",
     "knowledge_graph_query", "execute_ops_sql_query",
-
-    # 展示型流程图（已废弃 create_diagram_artifact，使用画板模式替代）
-    "create_report_chart",
-
-    # 报告产物收口
-    "create_report_package", "render_report_package", "validate_report_package",
 
     # 子 Agent 复核
     "call_sub_agent",
@@ -254,6 +259,9 @@ SOCIAL_TOOL_NAMES = [
 
     # 代码执行和模式互调
     "execute_python", "call_sub_agent",
+
+    # 正式报告生成与收口
+    "create_report_chart", "create_report_package", "validate_report_package",
 
     # 网络搜索
     "web_search", "web_fetch",
@@ -346,42 +354,7 @@ ASSISTANT_TOOLS = _build_tool_dict(ASSISTANT_TOOL_NAMES)
 PPT_TOOLS = _build_tool_dict(PPT_TOOL_NAMES)
 EXPERT_TOOLS = _build_tool_dict(EXPERT_TOOL_NAMES)
 QUERY_TOOLS = _build_tool_dict(QUERY_TOOL_NAMES)
-JIANGSU_QUERY_TOOLS = _build_tool_dict([
-    "list_session_resources",
-    "publish_session_file",
-    "jiangsu_fetch_city_data",
-    "jiangsu_fetch_district_data",
-    "jiangsu_fetch_station_data",
-    "jiangsu_query_statistics",
-    "jiangsu_fetch_alarm_records",
-    "create_report_chart",
-])
-SMART_INSPECTION_TOOLS = _build_tool_dict([
-    "jiangsu_fetch_alarm_records",
-])
-OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
-    "jiangsu_fetch_attendance_records",
-    "jiangsu_fetch_station_directory",
-])
-DEVICE_CONTROL_TOOLS = _build_tool_dict([
-    "jiangsu_get_device_control_state",
-    "jiangsu_prepare_device_control",
-    "jiangsu_execute_device_control",
-])
-STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
-    "jiangsu_fetch_station_data",
-    "jiangsu_fetch_alarm_records",
-    "jiangsu_fetch_station_alarm_logs",
-    "jiangsu_fetch_fault_work_orders",
-    "jiangsu_fetch_auto_inspection",
-    "jiangsu_fetch_qc_task_history",
-    "jiangsu_fetch_qc_task_status",
-    "jiangsu_fetch_qc_run_logs",
-    "jiangsu_fetch_qc_monitoring_curve",
-    "knowledge_graph_query",
-])
+KNOWLEDGE_TOOLS = _build_tool_dict(KNOWLEDGE_TOOL_NAMES)
 REPORT_TOOLS = _build_tool_dict(REPORT_TOOL_NAMES)
 CHART_TOOLS = _build_tool_dict(CHART_TOOL_NAMES)
 BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
@@ -400,8 +373,7 @@ ASSISTANT_TOOL_ORDER = ASSISTANT_TOOL_NAMES
 PPT_TOOL_ORDER = PPT_TOOL_NAMES
 EXPERT_TOOL_ORDER = EXPERT_TOOL_NAMES
 QUERY_TOOL_ORDER = QUERY_TOOL_NAMES
-JIANGSU_QUERY_TOOL_ORDER = list(JIANGSU_QUERY_TOOLS)
-SMART_INSPECTION_TOOL_ORDER = list(SMART_INSPECTION_TOOLS)
+KNOWLEDGE_TOOL_ORDER = KNOWLEDGE_TOOL_NAMES
 REPORT_TOOL_ORDER = REPORT_TOOL_NAMES
 CHART_TOOL_ORDER = CHART_TOOL_NAMES
 BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
@@ -427,11 +399,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "ppt": PPT_TOOLS,
         "expert": EXPERT_TOOLS,
         "query": QUERY_TOOLS,
-        "jiangsu_query": JIANGSU_QUERY_TOOLS,
-        "smart_inspection": SMART_INSPECTION_TOOLS,
-        "operations_analysis": OPERATIONS_ANALYSIS_TOOLS,
-        "device_control": DEVICE_CONTROL_TOOLS,
-        "station_fault_diagnosis": STATION_FAULT_DIAGNOSIS_TOOLS,
+        "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,

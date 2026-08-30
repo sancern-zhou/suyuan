@@ -34,6 +34,10 @@ async def run_shutdown(app: FastAPI) -> None:
     app_role = normalize_app_role(settings.app_role)
     logger.info("application_shutting_down", app_role=app_role)
 
+    from app.api.knowledge_graph_routes import stop_graph_build_recovery
+
+    await stop_graph_build_recovery()
+
     await stop_nacos(app)
 
     if starts_background_services(app_role):

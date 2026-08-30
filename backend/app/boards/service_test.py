@@ -15,6 +15,16 @@ class _ExecuteResult:
         return _ScalarList()
 
 
+class _EmptyFirst:
+    def first(self):
+        return None
+
+
+class _ExistingResult:
+    def scalars(self):
+        return _EmptyFirst()
+
+
 class _Session:
     flush_count = 0
 
@@ -100,3 +110,47 @@ async def test_accept_candidate_allows_agent_to_accept_after_failed_or_skipped_r
     assert accepted is version
     assert version.lifecycle_status == "accepted"
     assert board.current_version_id == "candidate-1"
+
+
+@pytest.mark.asyncio
+async def test_create_candidate_keeps_previous_candidate_as_parent(monkeypatch):
+    session = _Session()
+    service = BoardVersionService(session)
+    board = SimpleNamespace(
+        id="board-1",
+        revision=2,
+        current_version_id="accepted-1",
+    )
+    parent = SimpleNamespace(id="candidate-1", board_id="board-1")
+    created = SimpleNamespace(id="candidate-2")
+    captured = {}
+
+    async def execute(statement):
+        return _ExistingResult()
+
+    async def get_board(board_id, *, for_update=False):
+        return board
+
+    async def get_version(board_id, version_id):
+        assert (board_id, version_id) == ("board-1", "candidate-1")
+        return parent
+
+    async def create_version(board, **kwargs):
+        captured.update(kwargs)
+        return created
+
+    monkeypatch.setattr(session, "execute", execute)
+    monkeypatch.setattr(service, "get_board", get_board)
+    monkeypatch.setattr(service, "get_version", get_version)
+    monkeypatch.setattr(service, "_create_version", create_version)
+
+    result = await service.create_candidate(
+        "board-1",
+        base_revision=2,
+        parent_version_id="candidate-1",
+        xml="<mxfile />",
+        agent_run_id="run-1",
+    )
+
+    assert result is created
+    assert captured["parent_version_id"] == "candidate-1"

@@ -138,3 +138,7 @@ class ConversationCatalogService:
         if self.resource_service is not None:
             resources_deleted = await self.resource_service.delete_session_resources(session_id)
         return bool(catalog_deleted or resources_deleted)
+
+    async def rename(self, session_id: str, title: str) -> bool:
+        """Update a conversation title while keeping ownership checks in the route."""
+        return await self.repository.touch(session_id, title=title)

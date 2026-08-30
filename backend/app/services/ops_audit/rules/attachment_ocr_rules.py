@@ -20,12 +20,14 @@ ATTACHMENT_PROFILE = load_attachment_requirements()
 PM_MEMBRANE_VISUAL_RULE_TABLES = {"RF_Q_PM10RUNSTATUSCHECK", "RF_Q_PM25RUNSTATUSCHECK"}
 PM_TEMP_PRESSURE_VISUAL_RULE_TABLES = {"RF_Q_PMPRESSURE"}
 FLOW_PHOTO_WATERMARK_TIME_RULE_ID = "ATTACHMENT_FLOW_PHOTO_WATERMARK_TIME_MISMATCH"
+O3_TRANSFER_SIX_POINT_RULE_ID = "ATTACHMENT_O3_TRANSFER_SIX_POINT_REVIEW"
 FLOW_VISUAL_RULE_TABLES = {
     "RF_TW_PmFlowCalibrate",
     "RF_M_GASEOUSFLOWCHECK",
     "RF_Q_GaseousFlowCheck",
     *PM_MEMBRANE_VISUAL_RULE_TABLES,
     *PM_TEMP_PRESSURE_VISUAL_RULE_TABLES,
+    "RF_HY_O3VALUEPASS",
 }
 OCR_RULE_IDS = {
     "ATTACHMENT_CERT_INCOMPLETE",
@@ -36,6 +38,7 @@ OCR_RULE_IDS = {
     "ATTACHMENT_GAS_FLOW_MEASURED_VALUE_MISMATCH",
     "ATTACHMENT_PM_MEMBRANE_VALUE_MISMATCH",
     "ATTACHMENT_PM_TEMP_PRESSURE_VALUE_MISMATCH",
+    O3_TRANSFER_SIX_POINT_RULE_ID,
     FLOW_PHOTO_WATERMARK_TIME_RULE_ID,
     "RF_REFERENCE_FLOWMETER_CERT_DATE_MISMATCH",
 }
@@ -170,12 +173,91 @@ def _check_flow_visual_values(
             continue
         if table == "RF_TW_PmFlowCalibrate":
             _check_pm_flow_calibration_visual(order, table, form, item, issues)
+        elif table == "RF_HY_O3VALUEPASS":
+            _check_o3_transfer_six_point_visual(order, table, form, item, issues)
         elif table in {"RF_M_GASEOUSFLOWCHECK", "RF_Q_GaseousFlowCheck"}:
             _check_gas_flow_display_visual(order, table, form, item, issues)
         elif table in PM_MEMBRANE_VISUAL_RULE_TABLES:
             _check_pm_membrane_visual(order, table, form, item, issues)
         elif table in PM_TEMP_PRESSURE_VISUAL_RULE_TABLES:
             _check_pm_temp_pressure_visual(order, table, form, item, issues)
+
+
+def _check_o3_transfer_six_point_visual(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    item: dict[str, Any],
+    issues: list[Issue],
+) -> None:
+    """Review O3 transfer screenshots for stale six-point results.
+
+    This is intentionally a manual-review rule: the model must explicitly see
+    an updated initial concentration and stale transfer rows at high
+    confidence before an issue is emitted.
+    """
+
+    if not _flow_visual_rule_enabled(O3_TRANSFER_SIX_POINT_RULE_ID):
+        return
+    filename_text = str(item.get("filename") or "").upper().replace(" ", "")
+    # Individual concentration/zero-point photos are evidence for a single
+    # transfer point, not the six-row transfer summary this rule audits.
+    if any(token in filename_text for token in ("实测", "零点", "流量测", "流量示")):
+        return
+    result = extract_attachment_json(
+        str(item["source_path"]),
+        provider="flow_visual",
+        task="o3_transfer_six_point_review",
+        prompt=(
+            f"附件文件名：{item.get('filename') or ''}。"
+            "请判断这是否为臭氧(O3)校准仪/工作标准量值传递记录或其截图。"
+            "重点读取臭氧发生器初始浓度、六次传递结果行，以及每行的传递日期/结果。"
+            "若图片明确显示本次初始浓度已更新，但六次传递结果仍有旧日期、旧批次或未全部重填，"
+            "将 six_results_refreshed 返回 false；无法从图片确认时返回 null。"
+            "不要根据文件名猜测，不要把看不清的内容判为问题。"
+            "仅输出JSON："
+            "{\"is_o3_transfer_record\":true/false,"
+            "\"initial_concentration\":数值或null,"
+            "\"initial_concentration_updated\":true/false/null,"
+            "\"six_results_count\":整数或null,"
+            "\"six_results_refreshed\":true/false/null,"
+            "\"stale_result_rows\":[{\"row\":整数或null,\"date\":\"原图日期或空\",\"reason\":\"简短原因\"}],"
+            "\"confidence\":0到1,\"reason\":\"简短依据\"}"
+        ),
+    )
+    if result.get("status") != "success":
+        _add_visual_diagnostic_issue(issues, order, table, item, result)
+        return
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    confidence = _float_or_none(data.get("confidence"))
+    if not data.get("is_o3_transfer_record") or confidence is None or confidence < 0.85:
+        return
+    if data.get("initial_concentration_updated") is not True or data.get("six_results_refreshed") is not False:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "attachment_filename": item.get("filename"),
+        "attachment_source": item.get("source_path"),
+        "initial_concentration": data.get("initial_concentration"),
+        "initial_concentration_updated": data.get("initial_concentration_updated"),
+        "six_results_count": data.get("six_results_count"),
+        "six_results_refreshed": data.get("six_results_refreshed"),
+        "stale_result_rows": data.get("stale_result_rows") or [],
+        "vision_confidence": confidence,
+        "vision_reason": data.get("reason"),
+        "needs_manual_review": True,
+    }
+    add_issue(
+        issues,
+        O3_TRANSFER_SIX_POINT_RULE_ID,
+        "附件质量问题",
+        "中",
+        f"attachment.vision.{O3_TRANSFER_SIX_POINT_RULE_ID}",
+        "O3初始浓度更新后，六次传递结果疑似未全部重新更新，需人工复核",
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
 
 
 def _build_reference_flowmeter_certificate_tasks(
@@ -1883,6 +1965,12 @@ def _is_flow_visual_candidate(item: dict[str, Any]) -> bool:
             "仪器流量",
             "仪器显示",
             "仪器测量",
+            "量值传递",
+            "臭氧传递",
+            "臭氧发生器",
+            "工作标准",
+            "动态校准仪",
+            "浓度数采",
         )
     ):
         return True

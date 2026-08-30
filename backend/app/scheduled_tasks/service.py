@@ -387,16 +387,32 @@ class ScheduledTaskService:
         force_retry: bool = False,
         target_task_id: str | None = None,
     ) -> EventDispatchResult:
-        """Match and execute enabled event tasks exactly once per event."""
+        """Match and execute enabled event tasks exactly once per event.
+
+        When ``target_task_id`` is provided (manual execution), the task is
+        matched even if it is currently disabled: an explicit manual trigger
+        should still run.  Automatic dispatch (no target) only matches enabled
+        tasks.
+        """
         event = TaskEvent.model_validate(event)
-        matching_tasks = [
-            task
-            for task in self.task_storage.get_enabled_tasks()
-            if (target_task_id is None or task.task_id == target_task_id)
-            and task.trigger_type == TriggerType.EVENT
-            and task.event_type == event.event_type
-            and event.matches(task.event_filters)
-        ]
+        if target_task_id is not None:
+            target_task = self.task_storage.get(target_task_id)
+            matching_tasks = (
+                [target_task]
+                if target_task is not None
+                and target_task.trigger_type == TriggerType.EVENT
+                and target_task.event_type == event.event_type
+                and event.matches(target_task.event_filters)
+                else []
+            )
+        else:
+            matching_tasks = [
+                task
+                for task in self.task_storage.get_enabled_tasks()
+                if task.trigger_type == TriggerType.EVENT
+                and task.event_type == event.event_type
+                and event.matches(task.event_filters)
+            ]
         result = EventDispatchResult(
             matched_task_ids=[task.task_id for task in matching_tasks]
         )
@@ -414,6 +430,8 @@ class ScheduledTaskService:
                     existing = recovered
             if existing and force_retry and existing.status == "failed":
                 claim = self.claim_storage.retry_failed(task.task_id, event.event_id)
+            elif existing and force_retry and existing.status == "succeeded":
+                claim = self.claim_storage.reopen(task.task_id, event.event_id)
             elif existing:
                 result.duplicate_task_ids.append(task.task_id)
                 continue

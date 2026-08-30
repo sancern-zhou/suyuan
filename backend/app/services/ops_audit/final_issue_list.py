@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from hashlib import sha256
 from typing import Any
 
 from app.services.ops_audit.config import review_stage_for_rule, rules_for_review_stage
 from app.services.ops_audit.field_labels import remark_field_display_name
 from app.services.ops_audit.issue_linking import (
     ABNORMAL_WITHOUT_EXPLANATION_RULE_ID,
-    VALUE_ABNORMAL_RULE_ID,
     is_abnormal_fact_rule,
     issue_link_metadata,
 )
 from app.services.ops_audit.rf_form_names import rf_form_display_name
-
 
 EXCLUDED_RULE_IDS = rules_for_review_stage("excluded")
 
@@ -61,6 +60,7 @@ def build_final_issue_list(
                 seen.add(key)
                 items.append(item)
 
+    _assign_issue_ids(items)
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "purpose": "final_issue_list_for_reporting",
@@ -142,6 +142,8 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
     ):
         if key in evidence_data:
             item[key] = evidence_data[key]
+    _attach_range_decision_evidence(item, evidence_data)
+    _attach_evidence_remarks(item, evidence_data)
     link_metadata = issue_link_metadata(issue, working_order_code=record.get("working_order_code"))
     if link_metadata:
         item.update(link_metadata)
@@ -151,6 +153,115 @@ def _issue_item(record: dict[str, Any], issue: dict[str, Any], stage: str) -> di
             else "rule_detected"
         )
     return item
+
+
+def _attach_range_decision_evidence(
+    item: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    """Expose the range comparison without requiring consumers to parse evidence JSON."""
+
+    values = evidence.get("out_of_spec_values")
+    range_value = values[0] if isinstance(values, list) and values and isinstance(values[0], dict) else {}
+    observed = evidence.get("observed_value")
+    expected = evidence.get("expected_range")
+    if not isinstance(observed, dict) or not isinstance(expected, dict):
+        if not range_value:
+            return
+        observed = {
+            "raw_value": range_value.get("raw_value"),
+            "normalized_value": range_value.get("value"),
+            "raw_unit": range_value.get("raw_unit"),
+            "normalized_unit": range_value.get("unit"),
+            "unit_conversion_applied": _units_differ(range_value.get("raw_unit"), range_value.get("unit")),
+        }
+        expected = {
+            "min": range_value.get("min"),
+            "max": range_value.get("max"),
+            "operator": range_value.get("operator"),
+            "unit": range_value.get("unit"),
+            "text": _range_text(range_value),
+        }
+
+    item["decision_evidence"] = {
+        "brand": evidence.get("brand"),
+        "field": evidence.get("field") or range_value.get("field") or item.get("rf_field"),
+        "field_label": evidence.get("field_label") or range_value.get("label") or item.get("field_label"),
+        "raw_value": observed.get("raw_value"),
+        "normalized_value": observed.get("normalized_value"),
+        "raw_unit": observed.get("raw_unit"),
+        "normalized_unit": observed.get("normalized_unit"),
+        "unit_conversion_applied": bool(observed.get("unit_conversion_applied")),
+        "expected_range": expected.get("text") or _range_text(expected),
+        "expected_min": expected.get("min"),
+        "expected_max": expected.get("max"),
+        "expected_operator": expected.get("operator"),
+        "expected_unit": expected.get("unit"),
+        "comparison_result": "out_of_spec",
+    }
+
+
+def _attach_evidence_remarks(
+    item: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    candidates = None
+    for key in ("handling_record_candidates", "remark_candidates"):
+        if key in evidence:
+            candidates = evidence.get(key)
+            break
+    if candidates is None:
+        return
+
+    entries = _remark_entries(candidates)
+    nonempty_entries = [entry for entry in entries if entry["value"].strip()]
+    item["remark_status"] = "provided" if nonempty_entries else "missing"
+    item["remark_status_label"] = "已填写" if nonempty_entries else "未填写"
+    item["original_remarks"] = [
+        {**entry, "field_label": remark_field_display_name(entry["field"])}
+        for entry in nonempty_entries
+    ]
+    item["original_remark_text"] = "\n".join(entry["value"] for entry in nonempty_entries)
+    if nonempty_entries:
+        item["remark_review_status"] = (
+            "pending_semantic_review"
+            if evidence.get("needs_semantic_review") is True
+            else "not_requested"
+        )
+        item["remark_review_status_label"] = (
+            "内容有效性待语义复核"
+            if evidence.get("needs_semantic_review") is True
+            else "已记录，未要求语义复核"
+        )
+    else:
+        item["remark_review_status"] = "missing"
+        item["remark_review_status_label"] = "未填写备注"
+
+
+def _units_differ(source: Any, target: Any) -> bool:
+    source_text = str(source or "").strip().lower()
+    target_text = str(target or "").strip().lower()
+    return bool(source_text and target_text and source_text != target_text)
+
+
+def _range_text(spec: dict[str, Any]) -> str:
+    operator = str(spec.get("operator") or "").strip()
+    minimum = spec.get("min")
+    maximum = spec.get("max")
+    unit = str(spec.get("unit") or "").strip()
+    if operator in {">", ">="} and minimum is not None and maximum is None:
+        value = f"{operator}{minimum}"
+    elif operator in {"<", "<="} and maximum is not None and minimum is None:
+        value = f"{operator}{maximum}"
+    elif minimum is not None and maximum is not None:
+        value = f"{minimum}-{maximum}"
+    elif minimum is not None:
+        value = f">={minimum}"
+    elif maximum is not None:
+        value = f"<={maximum}"
+    else:
+        value = "未配置"
+    return f"{value} {unit}".strip()
 
 
 def _semantic_item(
@@ -257,28 +368,76 @@ def _attach_original_remarks(
     )
     item["remark_judgment"] = _effective_remark_judgment(judgment_type, nonempty_entries)
     item["remark_judgment_label"] = _remark_judgment_label(item["remark_judgment"])
+    item["remark_status_label"] = "已填写" if nonempty_entries else "未填写"
+    item["remark_review_status"] = "semantic_confirmed"
+    item["remark_review_status_label"] = item["remark_judgment_label"]
 
 
 def _remark_entries(value: Any, *, default_field: str = "remark") -> list[dict[str, str]]:
-    if isinstance(value, dict):
-        candidates = value.items()
-    elif isinstance(value, (list, tuple)):
-        candidates = ((default_field, item) for item in value)
-    elif value is None:
-        candidates = []
-    else:
-        candidates = [(default_field, value)]
-
     entries: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for field, raw_value in candidates:
+
+    def add_entry(field: Any, raw_value: Any) -> None:
+        field_text = str(field or default_field)
+        if _remark_field_tail(field_text).upper() == "PROCESSTYPE":
+            return
         text = str(raw_value or "")
-        key = (str(field or default_field), text)
+        key = (field_text, text)
         if key in seen:
-            continue
+            return
         seen.add(key)
         entries.append({"field": key[0], "value": text})
+
+    def visit(node: Any, field: str) -> None:
+        if isinstance(node, dict):
+            for child_field, child_value in node.items():
+                visit(child_value, _join_remark_field(field, child_field))
+            return
+        if isinstance(node, (list, tuple)):
+            for child in node:
+                if isinstance(child, dict):
+                    visit(child, field)
+                    continue
+                child_field, child_value = _split_embedded_remark_field(child)
+                if child_field:
+                    add_entry(_join_remark_field(field, child_field), child_value)
+                else:
+                    add_entry(field, child_value)
+            return
+        add_entry(field, node)
+
+    if value is not None:
+        visit(value, default_field)
     return entries
+
+
+def _join_remark_field(parent: str, child: Any) -> str:
+    child_text = str(child or "").strip()
+    if not child_text:
+        return parent
+    if not parent or parent == "remark":
+        return child_text
+    return f"{parent}.{child_text}"
+
+
+def _remark_field_tail(field: str) -> str:
+    for separator in (".", "/"):
+        if separator in field:
+            field = field.rsplit(separator, 1)[1]
+    return field
+
+
+def _split_embedded_remark_field(value: Any) -> tuple[str | None, Any]:
+    text = str(value or "")
+    if "=" not in text:
+        return None, value
+    field, content = text.split("=", 1)
+    field = field.strip()
+    if not field:
+        return None, value
+    if not all(char.isalnum() or char == "_" for char in field):
+        return None, value
+    return field, content
 
 
 def _effective_remark_judgment(
@@ -443,6 +602,41 @@ def _item_key(item: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
         str(item.get("field") or ""),
         str(item.get("message") or ""),
     )
+
+
+def issue_id_for_item(item: dict[str, Any]) -> str:
+    """Return a stable identity that distinguishes repeated rules in one order."""
+
+    identity = {
+        "working_order_code": str(item.get("working_order_code") or ""),
+        "rf_table": str(item.get("rf_table") or ""),
+        "rf_record_key": str(item.get("rf_record_key") or ""),
+        "pollutant_type": str(item.get("pollutant_type") or ""),
+        "rule_id": str(item.get("rule_id") or ""),
+        "issue_group_id": str(item.get("issue_group_id") or ""),
+        "issue_component": str(item.get("issue_component") or ""),
+        "field": str(item.get("field") or ""),
+        "message": str(item.get("message") or ""),
+    }
+    payload = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"ops_issue_v1_{sha256(payload.encode('utf-8')).hexdigest()[:24]}"
+
+
+def ensure_issue_ids(issue_list: dict[str, Any]) -> dict[str, Any]:
+    """Add issue IDs in place for current and legacy final issue lists."""
+
+    _assign_issue_ids(issue_list.get("items", []))
+    return issue_list
+
+
+def _assign_issue_ids(items: list[dict[str, Any]]) -> None:
+    seen: set[str] = set()
+    for item in items:
+        issue_id = str(item.get("issue_id") or issue_id_for_item(item))
+        if issue_id in seen:
+            raise ValueError(f"duplicate final issue identity: {issue_id}")
+        seen.add(issue_id)
+        item["issue_id"] = issue_id
 
 
 def _parse_evidence(evidence: Any) -> dict[str, Any]:

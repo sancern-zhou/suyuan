@@ -16,7 +16,7 @@
 
 ## 多轮工作流
 
-1. 读取本文件、`drawio_xml_rules.md` 和 `drawio_edit_policy.md`。
+1. 读取本文件、`drawio_xml_rules.md`、`drawio_edit_policy.md` 和 `drawio_design_system.md`。
 2. 判断任务是新建画板还是编辑现有画板。
 3. 按“专项设计文档路由”读取与任务匹配的设计文档；如果任务只做局部文字、颜色、位置调整，可以不读取专项设计文档。
 4. 新建画板时，调用 `create_drawio_board(operation="create")`，传入完整可渲染 XML。
@@ -25,7 +25,7 @@
 7. 一般情况下，建议调用 `render_drawio_board_candidate` 获取截图并检查布局、文字、连线和整体可读性；是否重试、修改或接受由 Agent 结合当前任务自主决定。
 8. 如果用户选择了画布元素，优先用 `board_context.selected_cells` 解释“这个”“这里”“选中的模块”等指代。
 9. 工具返回失败时，先修正 XML 或 operations，再重试；不要直接向用户输出无法渲染的 XML。截图失败不影响已生成 XML 的前端预览。
-10. `create_drawio_board` 返回 `routing_status=partial` 或 `fallback` 时，候选画板已经成功生成。应继续截图和验收，不要仅因 routing_issues 再次调用 `create_drawio_board`；只有用户明确要求整理连线或截图显示严重不可读时，才做局部编辑。
+10. `create_drawio_board` 返回 `routing_status=partial` 或 `fallback` 时，候选画板仍可继续生成和预览；Agent 应读取路由指标并结合截图决定是否局部疏解或拆图，这些告警不构成系统级阻断。
 
 ## 专项设计文档路由
 
@@ -38,6 +38,11 @@
 5. 平台能力、产品架构、能力地图、治理体系、分层系统：读取 `backend/app/agent/guides/drawio_patterns/layered_system.md`。
 6. 路线图、时间线、里程碑、计划排期：读取 `backend/app/agent/guides/drawio_patterns/timeline.md`。
 7. 方案对比、指标对比、城市对比、工具/策略对比：读取 `backend/app/agent/guides/drawio_patterns/comparison_matrix.md`。
+8. 服务调用、消息交互、鉴权刷新、超时重试：读取 `backend/app/agent/guides/drawio_patterns/sequence.md`。
+9. 跨部门、跨角色、跨系统交接流程：读取 `backend/app/agent/guides/drawio_patterns/swimlane.md`。
+10. 组织层级、岗位归属、责任路由、Agent 升级：读取 `backend/app/agent/guides/drawio_patterns/org_tree.md`。
+11. 告警、工单、任务或对象的状态转换：读取 `backend/app/agent/guides/drawio_patterns/state_machine.md`。
+12. 实体、字段、主外键和数据关系：读取 `backend/app/agent/guides/drawio_patterns/er_model.md`。
 
 如果任务同时命中多个类型，优先选择用户主诉最强的 1 到 2 份专项文档；不要无差别读取全部文档。
 

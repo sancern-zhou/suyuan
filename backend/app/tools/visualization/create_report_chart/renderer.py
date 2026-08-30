@@ -44,7 +44,6 @@ GENERAL_CHART_TYPES = {
     "histogram",
     "correlation_heatmap",
     "boxplot",
-    "table_image",
     "combo",
     "range_line",
     "waterfall",
@@ -58,6 +57,7 @@ SPECIALIZED_CHART_TYPES = {
     "pollutant_wind_rose",
     "pollutant_calendar",
     "generic_pollutant_wind_rose",
+    "wind_timeseries",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 
@@ -239,8 +239,6 @@ def _render_general_chart_figure(
         draw_metadata = _draw_correlation_heatmap(fig, ax, title, data, options)
     elif applied_chart_type == "boxplot":
         draw_metadata = _draw_boxplot(ax, title, data, options)
-    elif applied_chart_type == "table_image":
-        draw_metadata = _draw_table(ax, title, data, options)
     elif applied_chart_type in {"combo", "pareto"}:
         from app.tools.visualization.create_report_chart.renderers.combo import draw_combo, draw_pareto
 
@@ -862,20 +860,6 @@ def _draw_boxplot(ax, title: str, data: Dict[str, Any], options: Dict[str, Any])
         "sample_counts": [len(group_values) for group_values in values],
         "normalized_text": {"title": title, "labels": labels},
     }
-
-
-def _draw_table(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
-    ax.axis("off")
-    columns = data.get("columns") or []
-    rows = data.get("rows") or []
-    if not columns or not rows:
-        raise ChartDataError("table_image 需要非空 columns 和 rows。")
-    ax.set_title(str(normalize_matplotlib_label_text(title)), fontsize=_source_font(15), fontweight="bold", pad=14)
-    table = ax.table(cellText=rows, colLabels=columns, loc="center")
-    table.auto_set_font_size(False)
-    table.set_fontsize(_source_font(9.5))
-    table.scale(1, 1.4)
-    return {"row_count": len(rows), "column_count": len(columns)}
 
 
 def _draw_specialized_placeholder(ax, title: str, chart_type: str, data: Dict[str, Any]) -> None:

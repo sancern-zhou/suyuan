@@ -11,13 +11,9 @@ import structlog
 
 from app.services.html_artifact_service import html_artifact_service
 from app.services.pdf_converter import pdf_converter
-from app.services.report_preview_refresh import (
-    create_report_preview_for_source_qmd_path,
-    refresh_report_preview_for_qmd_path,
-)
 from app.tools.artifact_utils import (
     attach_document_resources,
-    attach_report_package_resources,
+    attach_rendered_qmd_report_resources,
     preview_output_path,
 )
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -27,6 +23,7 @@ from app.utils.path_config import (
     PROJECT_ROOT,
     TEMP_ROOT,
     format_agent_path,
+    get_data_registry,
     get_sessions_dir,
     is_path_within,
     resolve_agent_path,
@@ -63,8 +60,10 @@ class PublishSessionFileTool(LLMTool):
             version="2.0.0",
             requires_context=False,
         )
+        # 持久化目录由部署配置决定，可能位于代码工作树之外（共享数据目录）。
         self.allowed_dirs = [
             PROJECT_ROOT.resolve(),
+            get_data_registry(),
             TEMP_ROOT,
         ]
 
@@ -196,38 +195,7 @@ class PublishSessionFileTool(LLMTool):
             return self._failure(f"登记会话资源失败: {str(exc)[:120]}")
 
     def _attach_rendered_report(self, data: Dict[str, Any], path: Path) -> bool:
-        try:
-            report_preview = (
-                refresh_report_preview_for_source_qmd_path(path)
-                or create_report_preview_for_source_qmd_path(path)
-            )
-        except Exception as exc:
-            data["preview_error"] = str(exc)[:200]
-            logger.warning(
-                "session_report_preview_conversion_failed",
-                path=str(path),
-                error=data["preview_error"],
-            )
-            return False
-        if not isinstance(report_preview, dict) or not report_preview.get("html_preview"):
-            return False
-        html_path = preview_output_path(report_preview.get("html_preview"))
-        if html_path is None:
-            return False
-        report_id = str(report_preview.get("report_id") or path.stem)
-        package_qmd = html_path.parent / "report.qmd"
-        if not package_qmd.is_file():
-            return False
-        data["report_id"] = report_id
-        attach_report_package_resources(
-            data,
-            package_qmd,
-            report_id=report_id,
-            html_path=html_path,
-            generator=TOOL_NAME,
-        )
-        data["resources"][0]["label"] = path.name
-        return True
+        return attach_rendered_qmd_report_resources(data, path, generator=TOOL_NAME)
 
     async def _attach_file_product(
         self,
@@ -236,7 +204,7 @@ class PublishSessionFileTool(LLMTool):
         file_type: str,
     ) -> None:
         preview_path = None
-        if file_type in {"document", "presentation"}:
+        if file_type in {"document", "presentation", "spreadsheet"}:
             try:
                 # Conversion is best effort. Failure must not prevent the user
                 # from downloading the original file.

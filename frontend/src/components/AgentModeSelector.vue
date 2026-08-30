@@ -134,7 +134,7 @@ const props = defineProps({
   modelValue: {
     type: String,
     default: 'assistant',
-    validator: (value) => ['assistant', 'ppt', 'expert', 'query', 'report', 'chart', 'board', 'ops'].includes(value)
+    validator: (value) => ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'].includes(value)
   }
 })
 

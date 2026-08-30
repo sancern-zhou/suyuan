@@ -25,6 +25,7 @@ from app.services.ops_audit.rule_engine import (
     list_rule_catalog as modular_list_rule_catalog,
     run_rule_engine as modular_run_rule_engine,
 )
+from app.services.ops_audit.review_artifacts import apply_review_decisions
 
 logger = structlog.get_logger()
 
@@ -345,6 +346,25 @@ def inspect_ops_audit(
         rule_id=rule_id,
         risk_level=risk_level,
         limit=limit,
+    )
+
+
+def review_ops_audit_issues(
+    final_issue_list_path: Path,
+    decisions: list[dict[str, Any]],
+    *,
+    expected_source_sha256: str,
+    reviewer: dict[str, Any] | None = None,
+    output_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Persist complete review decisions and build the report-only projection."""
+
+    return apply_review_decisions(
+        final_issue_list_path,
+        decisions,
+        expected_source_sha256=expected_source_sha256,
+        reviewer=reviewer,
+        output_dir=output_dir,
     )
 
 

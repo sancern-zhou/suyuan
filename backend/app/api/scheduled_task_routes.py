@@ -128,11 +128,11 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
             not user
             or user.status != "active"
             or not user.social_user_id
-            or not str(user.channel or "").startswith("weixin")
+            or not str(user.channel or "").startswith(("weixin", "app"))
         ):
             raise HTTPException(
                 status_code=400,
-                detail=f"User {user_id} is not an active bound WeChat user",
+                detail=f"User {user_id} is not an active bound WeChat user or App user",
             )
 
 
@@ -459,9 +459,17 @@ async def execute_task_now(task_id: str):
                 target_task_id=task_id,
             )
             if not dispatch.execution_ids:
+                if task_id not in dispatch.matched_task_ids:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Task is not an event task, event type does not match, "
+                            "or the latest event does not satisfy the task filters"
+                        ),
+                    )
                 raise HTTPException(
                     status_code=409,
-                    detail="Event has already been processed and is not retryable",
+                    detail="Event is already being processed, please try again later",
                 )
             execution = service.get_execution(dispatch.execution_ids[0])
         else:

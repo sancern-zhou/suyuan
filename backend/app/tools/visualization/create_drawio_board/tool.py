@@ -6,10 +6,20 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import structlog
 
 from app.boards.application import BoardApplicationService
+from app.boards.design import (
+    BOARD_AUDIENCES,
+    BOARD_CANVAS_PRESETS,
+    BOARD_DETAIL_LEVELS,
+    BOARD_DIAGRAM_TYPES,
+    build_board_structural_digest,
+    normalize_board_design_spec,
+    normalize_board_theme_tokens,
+)
 from app.boards.quality import evaluate_drawio_quality
 from app.db.database import async_session
 from app.tools.base.tool_interface import LLMTool, ToolCategory
@@ -42,10 +52,14 @@ class CreateDrawioBoardTool(LLMTool):
             "before first use, read these guides with read_file: "
             "backend/app/agent/guides/drawio_board_workflow.md, "
             "backend/app/agent/guides/drawio_xml_rules.md, and "
-            "backend/app/agent/guides/drawio_edit_policy.md. "
+            "backend/app/agent/guides/drawio_edit_policy.md, plus "
+            "backend/app/agent/guides/drawio_design_system.md. "
             "You must classify the requested diagram type and read only the one or two matching drawio_patterns guides "
             "routed by drawio_board_workflow.md before calling this tool for a new, structural, or major edit; "
             "never read every pattern guide. Minor text, color, font, size, or position-only edits may skip pattern guides. "
+            "For create or major redesign, provide design_spec with type, story, audience, detail, canvas, and focal cells. "
+            "The board XML and preview resources are registered automatically by this tool; never call "
+            "publish_session_file for the returned local_path. The XML is readable through the authenticated board API. "
         )
         function_schema = {
             "name": name,
@@ -56,6 +70,31 @@ class CreateDrawioBoardTool(LLMTool):
                     "operation": {"type": "string", "enum": ["create", "edit"], "default": "create"},
                     "artifact_id": {"type": "string"},
                     "title": {"type": "string"},
+                    "design_spec": {
+                        "type": "object",
+                        "description": (
+                            "Design contract for a new or substantially redesigned board. Infer clear values from the request; "
+                            "ask only when a material choice cannot be inferred."
+                        ),
+                        "properties": {
+                            "diagram_type": {"type": "string", "enum": sorted(BOARD_DIAGRAM_TYPES)},
+                            "story": {"type": "string", "description": "One sentence naming the board's main story."},
+                            "audience": {"type": "string", "enum": sorted(BOARD_AUDIENCES), "default": "mixed"},
+                            "detail_level": {
+                                "type": "string",
+                                "enum": sorted(BOARD_DETAIL_LEVELS),
+                                "default": "balanced",
+                            },
+                            "canvas_preset": {
+                                "type": "string",
+                                "enum": sorted(BOARD_CANVAS_PRESETS),
+                                "default": "auto",
+                            },
+                            "theme_profile": {"type": "string", "default": "project-default"},
+                            "focus_cell_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                            "split_plan": {"type": "array", "items": {"type": "object"}, "maxItems": 12},
+                        },
+                    },
                     "xml": {
                         "type": "string",
                         "description": (
@@ -233,6 +272,7 @@ class CreateDrawioBoardTool(LLMTool):
         current_xml: Optional[str] = None,
         operations: Optional[List[Dict[str, Any]]] = None,
         selected_cells: Optional[List[Dict[str, Any]]] = None,
+        design_spec: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         safe_artifact_id = str(artifact_id or "").strip()
@@ -362,17 +402,31 @@ class CreateDrawioBoardTool(LLMTool):
                 for cell_id in _changed_cell_ids(before_xml, normalized_xml):
                     if cell_id not in changed_cells:
                         changed_cells.append(cell_id)
+        structural_digest = build_board_structural_digest(
+            normalized_xml,
+            selected_cells=selected_cells,
+        )
+        normalized_design_spec = normalize_board_design_spec(
+            design_spec or kwargs.get("_board_design_spec"),
+            structural_digest=structural_digest,
+        )
+        normalized_theme_tokens = normalize_board_theme_tokens(kwargs.get("_board_theme_tokens"))
         xml_ref = (
             {}
             if session_id and agent_run_id
             else _store_drawio_xml(safe_artifact_id, normalized_xml)
         )
         base_revision = int(kwargs.get("_base_revision") or 0)
+        base_version_id = str(kwargs.get("_base_version_id") or "").strip() or None
         server_board_id = str(kwargs.get("_board_id") or "").strip() or None
         candidate_payload = None
         quality_report = None
         if session_id and agent_run_id:
-            static_report = evaluate_drawio_quality(normalized_xml)
+            static_report = evaluate_drawio_quality(
+                normalized_xml,
+                design_spec=normalized_design_spec,
+                theme_tokens=normalized_theme_tokens,
+            )
             if routing_metrics:
                 static_report["metrics"] = {
                     **static_report.get("metrics", {}),
@@ -411,6 +465,7 @@ class CreateDrawioBoardTool(LLMTool):
                 board_id=server_board_id,
                 title=safe_title,
                 base_revision=base_revision,
+                parent_version_id=base_version_id,
                 agent_run_id=agent_run_id,
                 xml=normalized_xml,
                 quality_status="pending",
@@ -437,6 +492,9 @@ class CreateDrawioBoardTool(LLMTool):
             "xml_length": len(normalized_xml),
             "xml_sha256": xml_ref.get("sha256") or hashlib.sha256(normalized_xml.encode("utf-8")).hexdigest(),
             "xml_ref": xml_ref,
+            "design_spec": normalized_design_spec,
+            "theme_tokens": normalized_theme_tokens,
+            "structural_digest": structural_digest,
         }
         if candidate_payload and quality_report:
             candidate_lifecycle = candidate_payload.get("lifecycle_status") or "candidate"
@@ -502,6 +560,7 @@ class CreateDrawioBoardTool(LLMTool):
         board_id: Optional[str],
         title: str,
         base_revision: int,
+        parent_version_id: Optional[str],
         agent_run_id: str,
         xml: str,
         quality_status: str,
@@ -515,6 +574,7 @@ class CreateDrawioBoardTool(LLMTool):
             board_id=board_id,
             title=title,
             base_revision=base_revision,
+            parent_version_id=parent_version_id,
             agent_run_id=agent_run_id,
             xml=xml,
             quality_status=quality_status,
@@ -640,6 +700,10 @@ def _store_drawio_xml(artifact_id: str, xml: str) -> Dict[str, Any]:
         "artifact_id": artifact_id,
         "local_path": local_path,
         "path": local_path,
+        # Keep the legacy file URL for non-session callers. Session-bound
+        # candidates are enriched with the authenticated board URL by the
+        # application service before they reach the browser.
+        "read_url": f"/api/file/{quote(local_path, safe='')}",
         "mime_type": "application/xml",
         "format": "drawio",
         "size_bytes": len(xml.encode("utf-8")),

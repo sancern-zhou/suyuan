@@ -282,6 +282,23 @@ export function useSessionManagement(store) {
         read_only_on_web: sessionData.read_only_on_web === true
       }
       store.setMessages(messages)
+      const restoredBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
+      if (restoredMode === 'board' && restoredBoard?.board_id &&
+          typeof store.ensureDrawioBoardState === 'function' &&
+          typeof store.loadDrawioBoardVersions === 'function') {
+        const board = store.ensureDrawioBoardState(store.currentState)
+        board.activeBoardId = restoredBoard.board_id
+        board.title = restoredBoard.title || board.title
+        board.acceptedVersionId = restoredBoard.accepted_version_id || restoredBoard.acceptedVersionId || null
+        board.workingVersionId = restoredBoard.working_version_id || restoredBoard.workingVersionId ||
+          restoredBoard.candidate_version_id || restoredBoard.candidateVersionId || null
+        board.candidateVersionId = restoredBoard.candidate_version_id || restoredBoard.candidateVersionId || null
+        try {
+          await store.loadDrawioBoardVersions(store.currentState)
+        } catch (error) {
+          console.warn('[会话恢复] 画板版本和手动草稿恢复失败:', error)
+        }
+      }
       resourceStore.activateSession(sessionId)
       await resourceStore.refreshIfNewer(sessionId, sessionData.resource_version || 0)
       if (requestToken !== restoreRequestToken || resourceStore.activeSessionId !== sessionId) {

@@ -124,6 +124,15 @@ test('primary sidebar actions share one uniform spacing system', async () => {
   assert.match(source, /\.module-group \{[\s\S]*gap: 4px/)
 })
 
+test('primary sidebar collapses to an icon rail on small screens', async () => {
+  const source = await readSource('../AssistantSidebar.vue')
+
+  assert.match(source, /@media \(max-width: 760px\)/)
+  assert.match(source, /\.assistant-sidebar,[\s\S]*\.assistant-sidebar\.collapsed[\s\S]*width: 60px/)
+  assert.match(source, /\.sidebar-header \.header-title-wrapper,[\s\S]*display: none/)
+  assert.match(source, /\.recent-sessions-section,[\s\S]*\.user-identity[\s\S]*display: none/)
+})
+
 test('knowledge management is primary while remaining management entries live in user settings', async () => {
   const source = await readSource('../AssistantSidebar.vue')
   const settingsIds = source.match(/const SETTINGS_MODULE_IDS = Object\.freeze\(\[([\s\S]*?)\]\)/)?.[1] || ''

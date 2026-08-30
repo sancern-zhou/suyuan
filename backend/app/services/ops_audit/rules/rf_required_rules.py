@@ -154,6 +154,8 @@ def _check_pm_tape_usage(
     expected_label = "TEOM滤膜负载及处置情况" if is_teom else "纸带使用量及处置情况"
     instrument_type = "teom_filter" if is_teom else "paper_tape"
     if is_teom:
+        _check_teom_paper_tape_not_applicable(order, table, form, device_model, issues)
+    if is_teom:
         problem_reason = (
             f"DEVICEMODEL={device_model}按TEOM/振荡天平类设备审核，"
             f"应填写{expected_label}；当前{field}为空或为/，"
@@ -198,6 +200,45 @@ def _check_pm_tape_usage(
         "中",
         f"rf.{table}.{field}",
         message,
+        json.dumps(evidence, ensure_ascii=False, default=str),
+    )
+
+
+def _check_teom_paper_tape_not_applicable(
+    order: dict[str, Any],
+    table: str,
+    form: dict[str, Any],
+    device_model: str,
+    issues: list[Issue],
+) -> None:
+    """1405/TEOM instruments do not use the paper-tape field.
+
+    The TEOM filter field is audited separately above.  A substantive paper
+    tape entry is therefore a distinct applicability error; placeholders such
+    as ``/`` and ``无`` are treated as an explicit non-applicable marker.
+    """
+
+    if "TAPEUSAGEDISPOSAL" not in form:
+        return
+    value = _text(form.get("TAPEUSAGEDISPOSAL"))
+    if value.lower() in {"", "/", "-", "无", "不适用", "无需", "无纸带"}:
+        return
+
+    evidence = {
+        "working_order_code": order.get("WORKINGORDERCODE"),
+        "rf_table": table,
+        "device_model": device_model,
+        "field": "TAPEUSAGEDISPOSAL",
+        "value": value,
+        "expected": "1405/TEOM设备不使用纸带，纸带字段应为空、/或明确不适用。",
+    }
+    add_issue(
+        issues,
+        "RF_PM_PAPER_TAPE_NOT_APPLICABLE_FILLED",
+        "规范性问题",
+        "中",
+        f"rf.{table}.TAPEUSAGEDISPOSAL",
+        f"1405/TEOM设备不使用纸带，但纸带字段填写为: {value}",
         json.dumps(evidence, ensure_ascii=False, default=str),
     )
 

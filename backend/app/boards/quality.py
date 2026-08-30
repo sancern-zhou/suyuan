@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from app.boards.design import (
+    DETAIL_BUDGETS,
+    build_board_structural_digest,
+    clean_drawio_label,
+    compact_board_structural_digest,
+    normalize_board_design_spec,
+    normalize_board_theme_tokens,
+)
 from app.utils.path_config import get_data_registry
 
 
@@ -32,9 +40,14 @@ class BoardRenderFailed(RuntimeError):
 def _style_map(style: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for part in str(style or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
         if "=" in part:
             key, value = part.split("=", 1)
             result[key] = value
+        else:
+            result[part] = "1"
     return result
 
 
@@ -59,7 +72,41 @@ def _overlap_ratio(left: dict[str, float], right: dict[str, float]) -> float:
     return intersection / minimum_area if minimum_area > 0 else 0.0
 
 
-def evaluate_drawio_quality(xml: str) -> dict[str, Any]:
+def _hex_rgb(value: str) -> tuple[float, float, float] | None:
+    candidate = str(value or "").strip().lstrip("#")
+    if len(candidate) != 6:
+        return None
+    try:
+        channels = tuple(int(candidate[index:index + 2], 16) / 255 for index in (0, 2, 4))
+    except ValueError:
+        return None
+    return channels[0], channels[1], channels[2]
+
+
+def _contrast_ratio(foreground: str, background: str) -> float | None:
+    foreground_rgb = _hex_rgb(foreground)
+    background_rgb = _hex_rgb(background)
+    if foreground_rgb is None or background_rgb is None:
+        return None
+
+    def luminance(rgb: tuple[float, float, float]) -> float:
+        converted = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4 for channel in rgb]
+        return 0.2126 * converted[0] + 0.7152 * converted[1] + 0.0722 * converted[2]
+
+    left, right = sorted((luminance(foreground_rgb), luminance(background_rgb)), reverse=True)
+    return (left + 0.05) / (right + 0.05)
+
+
+def _is_decision_style(style: dict[str, str]) -> bool:
+    return "rhombus" in style or "rhombus" in str(style.get("shape") or "").lower()
+
+
+def evaluate_drawio_quality(
+    xml: str,
+    *,
+    design_spec: dict[str, Any] | None = None,
+    theme_tokens: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     try:
@@ -74,9 +121,20 @@ def evaluate_drawio_quality(xml: str) -> dict[str, Any]:
 
     cells = [cell for cell in root.iter("mxCell") if cell.attrib.get("id") not in {None, "0", "1"}]
     cell_ids = {cell.attrib["id"] for cell in cells}
+    structural_child_parents = {
+        str(cell.attrib.get("parent"))
+        for cell in cells
+        if cell.attrib.get("vertex") == "1"
+        and cell.attrib.get("parent") in cell_ids
+        and (
+            cell.find("mxGeometry") is None
+            or cell.find("mxGeometry").attrib.get("relative") != "1"
+        )
+    }
     vertices: list[tuple[ET.Element, dict[str, float]]] = []
     edges: list[ET.Element] = []
     connected_ids: set[str] = set()
+    vertex_styles: dict[str, dict[str, str]] = {}
 
     for cell in cells:
         cell_id = cell.attrib["id"]
@@ -91,12 +149,13 @@ def evaluate_drawio_quality(xml: str) -> dict[str, Any]:
             if geometry["width"] <= 0 or geometry["height"] <= 0:
                 errors.append({"code": "invalid_geometry_size", "cell_id": cell_id, "message": "节点宽高必须大于零"})
             vertices.append((cell, geometry))
-            label = str(cell.attrib.get("value") or "").strip()
+            label = clean_drawio_label(cell.attrib.get("value"))
             if not label:
                 warnings.append({"code": "empty_label", "cell_id": cell_id, "message": "节点没有文本"})
             if len(label) > 80:
                 warnings.append({"code": "label_too_long", "cell_id": cell_id, "message": "节点文本可能溢出"})
             style = _style_map(cell.attrib.get("style", ""))
+            vertex_styles[cell_id] = style
             try:
                 if float(style.get("fontSize", "12")) < 10:
                     warnings.append({"code": "font_too_small", "cell_id": cell_id, "message": "字号小于 10px"})
@@ -139,6 +198,132 @@ def evaluate_drawio_quality(xml: str) -> dict[str, Any]:
     else:
         utilization = 0.0
 
+    structural_digest = build_board_structural_digest(xml)
+    normalized_design_spec = normalize_board_design_spec(
+        design_spec,
+        structural_digest=structural_digest,
+    )
+    normalized_theme = normalize_board_theme_tokens(theme_tokens)
+    budget = DETAIL_BUDGETS[normalized_design_spec["detail_level"]]
+    if len(vertices) > budget["nodes"] or len(edges) > budget["edges"]:
+        warnings.append({
+            "code": "complexity_budget_exceeded",
+            "message": (
+                f"{normalized_design_spec['detail_level']} 细节等级建议不超过 "
+                f"{budget['nodes']} 个节点和 {budget['edges']} 条连线"
+            ),
+            "actual": {"nodes": len(vertices), "edges": len(edges)},
+            "budget": budget,
+        })
+    if len(vertices) > DETAIL_BUDGETS["faithful"]["nodes"]:
+        warnings.append({
+            "code": "diagram_split_recommended",
+            "message": "节点超过 20 个，建议拆分为总览画板和分区详情画板",
+        })
+    container_count = int((structural_digest.get("metrics") or {}).get("container_count") or 0)
+    if len(vertices) > 12 and container_count == 0:
+        warnings.append({
+            "code": "large_diagram_needs_zones",
+            "message": "大图缺少分区或容器，建议按阶段、系统或责任域分组",
+        })
+
+    decision_ids = {
+        cell.attrib["id"]
+        for cell, _ in vertices
+        if _is_decision_style(vertex_styles.get(cell.attrib["id"], {}))
+    }
+    unlabeled_decision_edges = [
+        edge.attrib["id"]
+        for edge in edges
+        if edge.attrib.get("source") in decision_ids and not clean_drawio_label(edge.attrib.get("value"))
+    ]
+    if unlabeled_decision_edges:
+        warnings.append({
+            "code": "decision_branch_unlabeled",
+            "cell_ids": unlabeled_decision_edges,
+            "message": "判断节点的所有出口都应标注互斥条件",
+        })
+
+    accent_colors = {
+        normalized_theme["accent"].lower(),
+        normalized_theme["accent_tint"].lower(),
+    }
+    accent_ids: list[str] = []
+    palette: set[str] = set()
+    low_contrast_ids: list[str] = []
+    for cell, _ in vertices:
+        cell_id = cell.attrib["id"]
+        style = vertex_styles.get(cell_id, {})
+        colors = {
+            str(style.get(key) or "").lower()
+            for key in ("fillColor", "strokeColor", "fontColor")
+            if _hex_rgb(str(style.get(key) or "")) is not None
+        }
+        palette.update(colors)
+        if colors & accent_colors:
+            accent_ids.append(cell_id)
+        ratio = _contrast_ratio(style.get("fontColor", ""), style.get("fillColor", ""))
+        if ratio is not None and ratio < 4.5:
+            low_contrast_ids.append(cell_id)
+    if len(accent_ids) > 2:
+        warnings.append({
+            "code": "too_many_focal_nodes",
+            "cell_ids": accent_ids,
+            "message": "强调色节点超过 2 个，视觉焦点不明确",
+        })
+    if len(palette) > 8:
+        warnings.append({
+            "code": "palette_too_complex",
+            "message": "画板使用的显式颜色过多，建议映射到统一主题语义色",
+            "color_count": len(palette),
+        })
+    if low_contrast_ids:
+        warnings.append({
+            "code": "text_contrast_too_low",
+            "cell_ids": low_contrast_ids[:20],
+            "message": "部分节点文字与背景色对比度低于 WCAG AA 4.5:1",
+        })
+
+    off_grid_ids: list[str] = []
+    overflow_ids: list[str] = []
+    vertex_by_id = {cell.attrib["id"]: (cell, geometry) for cell, geometry in vertices}
+    for cell, geometry in vertices:
+        if any(abs(value % 10) > 0.001 for value in geometry.values()):
+            off_grid_ids.append(cell.attrib["id"])
+        parent_id = cell.attrib.get("parent")
+        parent_record = vertex_by_id.get(parent_id or "")
+        if parent_record is None:
+            continue
+        parent_cell, parent_geometry = parent_record
+        parent_style = vertex_styles.get(parent_cell.attrib["id"], {})
+        is_container = (
+            parent_style.get("container") == "1"
+            or "swimlane" in parent_style
+            or "group" in parent_style
+            or parent_cell.attrib["id"] in structural_child_parents
+        )
+        if not is_container:
+            continue
+        if (
+            geometry["x"] < 0
+            or geometry["y"] < 0
+            or geometry["x"] + geometry["width"] > parent_geometry["width"]
+            or geometry["y"] + geometry["height"] > parent_geometry["height"]
+        ):
+            overflow_ids.append(cell.attrib["id"])
+    if vertices and len(off_grid_ids) / len(vertices) > 0.25:
+        warnings.append({
+            "code": "layout_off_grid",
+            "cell_ids": off_grid_ids[:20],
+            "message": "超过四分之一的节点未对齐到 10px 画板网格",
+        })
+    if overflow_ids:
+        warnings.append({
+            "code": "container_child_overflow",
+            "cell_ids": overflow_ids,
+            "message": "容器内子节点超出父容器边界",
+        })
+
     status = "failed" if errors else "warning" if warnings else "passed"
     return {
         "status": status,
@@ -150,7 +335,16 @@ def evaluate_drawio_quality(xml: str) -> dict[str, Any]:
             "overlap_count": overlap_count,
             "orphan_count": len(orphan_ids),
             "canvas_utilization": round(utilization, 4),
+            "accent_node_count": len(accent_ids),
+            "palette_color_count": len(palette),
+            "off_grid_node_count": len(off_grid_ids),
+            "decision_branch_unlabeled_count": len(unlabeled_decision_edges),
+            "container_overflow_count": len(overflow_ids),
+            "complexity_budget": budget,
         },
+        "design_spec": normalized_design_spec,
+        "theme_tokens": normalized_theme,
+        "structural_digest": compact_board_structural_digest(structural_digest),
     }
 
 

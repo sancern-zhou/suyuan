@@ -19,19 +19,22 @@ let graph = null
 let observer = null
 
 function options() {
+  const nodeCount = props.nodes.length
+  const linkDistance = nodeCount > 700 ? 165 : nodeCount > 250 ? 145 : 120
+  const repulsion = nodeCount > 700 ? -420 : nodeCount > 250 ? -340 : -260
   return {
     container: root.value,
     autoFit: 'view',
     data: { nodes: props.nodes, edges: props.edges },
-    layout: { type: 'd3-force', preventOverlap: true, link: { distance: 110 }, manyBody: { strength: -260 } },
+    layout: { type: 'd3-force', preventOverlap: true, nodeSize: 28, link: { distance: linkDistance }, manyBody: { strength: repulsion } },
     node: {
       type: 'circle',
       style: {
         size: datum => Math.min(52, 20 + Math.sqrt(datum.data?.degree || 0) * 6),
         fill: datum => datum.data?.color || '#3996ae',
         stroke: '#fff', lineWidth: 1.5,
-        labelText: datum => datum.data?.label || '',
-        labelPlacement: 'bottom', labelMaxWidth: 140, labelWordWrap: true
+        labelText: datum => datum.data?.displayLabel || datum.data?.label || '',
+        labelPlacement: 'bottom', labelMaxWidth: 120, labelWordWrap: true, labelFontSize: 11
       }
     },
     edge: {
@@ -40,13 +43,14 @@ function options() {
         stroke: datum => datum.data?.color || '#99add1',
         curveOffset: datum => ((datum.data?.parallelIndex || 0) - ((datum.data?.parallelCount || 1) - 1) / 2) * 22,
         endArrow: true,
-        labelText: datum => props.showRelationLabels ? (datum.data?.label || '') : '',
-        labelBackground: true, labelBackgroundFill: '#fff'
+        labelText: datum => props.showRelationLabels ? (datum.data?.displayLabel || datum.data?.label || '') : '',
+        labelMaxWidth: 90, labelWordWrap: true, labelFontSize: 10,
+        labelBackground: true, labelBackgroundFill: '#fff', labelBackgroundOpacity: 0.82
       }
     },
     behaviors: ['drag-element', 'drag-canvas', 'zoom-canvas', 'hover-activate', {
       type: 'click-select', degree: 1, state: 'selected', neighborState: 'active', unselectedState: 'inactive'
-    }]
+    }, { type: 'auto-adapt-label', sortNode: { type: 'degree' }, padding: 4, throttle: 80 }]
   }
 }
 

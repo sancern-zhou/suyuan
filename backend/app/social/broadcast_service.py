@@ -11,6 +11,7 @@ import structlog
 
 from app.social.events import OutboundMessage
 from app.social.broadcast_context import persist_broadcast_context
+from app.social.push_service import get_unified_push_service
 from app.social.message_bus_singleton import get_message_bus
 from app.social.session_mapper import SessionMapper
 from app.utils.path_config import resolve_agent_path
@@ -186,11 +187,20 @@ class SocialBroadcastService:
                             social_user_id=social_user_id,
                             error=context_error,
                         )
+                push_result = None
+                if context_persisted and social_user_id.startswith("app:"):
+                    # Push is best-effort: the durable broadcast inbox remains
+                    # the source of truth if the provider is unavailable.
+                    push_result = await get_unified_push_service().send_broadcast(
+                        social_user_id=social_user_id,
+                        message=message,
+                    )
                 delivery_results.append({
                     "social_user_id": social_user_id,
                     "sent": True,
                     "context_persisted": context_persisted if persist_context else None,
                     "error": context_error,
+                    "push": push_result,
                 })
             except Exception as e:
                 logger.error(

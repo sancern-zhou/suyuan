@@ -50,6 +50,17 @@ class SessionMapper:
         # Lock for thread safety
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _is_persistent_identity(social_user_id: str) -> bool:
+        """Android App identities keep their mapping until explicitly deleted."""
+        return social_user_id.startswith("app:")
+
+    @classmethod
+    def _is_expired(cls, social_user_id: str, last_used: datetime, ttl_hours: int = 24) -> bool:
+        return not cls._is_persistent_identity(social_user_id) and (
+            datetime.now() - last_used >= timedelta(hours=ttl_hours)
+        )
+
     async def load(self) -> None:
         """Load mappings from persistent storage."""
         async with self._lock:
@@ -75,9 +86,9 @@ class SessionMapper:
 
         # Use async session from database
         async with self.db_manager() as session:
-            cutoff = datetime.now() - timedelta(hours=24)
             stmt = select(SocialSessionMapping).where(
-                SocialSessionMapping.last_used > cutoff
+                (SocialSessionMapping.social_user_id.like("app:%"))
+                | (SocialSessionMapping.last_used > datetime.now() - timedelta(hours=24))
             )
 
             result = await session.execute(stmt)
@@ -101,11 +112,9 @@ class SessionMapper:
 
             # Filter expired mappings (older than 24 hours)
             now = datetime.now()
-            cutoff = now - timedelta(hours=24)
-
             for social_user_id, entry in data.items():
                 last_used = datetime.fromisoformat(entry.get('last_used', now.isoformat()))
-                if last_used > cutoff:
+                if not self._is_expired(social_user_id, last_used):
                     self._mappings[social_user_id] = entry['session_id']
                     self._timestamp_cache[social_user_id] = last_used
                     # ✅ 新增：加载偏移量和消息计数
@@ -217,7 +226,7 @@ class SessionMapper:
         # 先检查是否有缓存（不需要锁）
         if social_user_id in self._mappings:
             last_used = self._timestamp_cache.get(social_user_id, datetime.now())
-            if datetime.now() - last_used < timedelta(hours=24):
+            if not self._is_expired(social_user_id, last_used):
                 # 更新时间戳
                 self._timestamp_cache[social_user_id] = datetime.now()
                 # 异步保存（不阻塞）
@@ -263,7 +272,7 @@ class SessionMapper:
                 return None
 
             last_used = self._timestamp_cache.get(social_user_id, datetime.now())
-            if datetime.now() - last_used >= timedelta(hours=24):
+            if self._is_expired(social_user_id, last_used):
                 # Expired mapping
                 del self._mappings[social_user_id]
                 del self._timestamp_cache[social_user_id]
@@ -312,7 +321,7 @@ class SessionMapper:
             expired = [
                 social_user_id
                 for social_user_id, last_used in self._timestamp_cache.items()
-                if last_used < cutoff
+                if not self._is_persistent_identity(social_user_id) and last_used < cutoff
             ]
 
             for social_user_id in expired:

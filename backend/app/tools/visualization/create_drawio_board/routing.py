@@ -340,6 +340,7 @@ def _route_single_edge(
             _is_orthogonal(existing_route)
             and _route_avoids_terminal_interiors(existing_route, source, target)
             and not _route_collisions(existing_route, blocked)
+            and not any(_routes_cross(existing_route, accepted) for accepted in accepted_routes)
         ):
             _write_route(edge, existing_route, ports, cells)
             return existing_route, 0, 0, 0.0, None
@@ -611,6 +612,17 @@ def _is_obstacle(cell: ET.Element, _cells: dict[str, ET.Element]) -> bool:
         and (cell_id.endswith("_bg") or cell_id.endswith("_background"))
     ):
         return False
+    # LLM-produced diagrams often omit ``container=1`` on a large vertex that
+    # owns real child nodes. Treat that parent as a routing frame, not as a
+    # solid obstacle. Decorative badges/labels normally use relative geometry;
+    # keeping those parents as obstacles preserves the ordinary node semantics.
+    if any(
+        child.attrib.get("parent") == cell.attrib.get("id")
+        and child.attrib.get("vertex") == "1"
+        and (child.find("mxGeometry") is None or child.find("mxGeometry").attrib.get("relative") != "1")
+        for child in _cells.values()
+    ):
+        return False
     if "group" in style.flags or style.values.get("container") == "1" or "swimlane" in style.flags:
         return False
     return True
@@ -682,7 +694,9 @@ def _find_route(
                 end,
             ]
         )
-        if not _route_collisions(base, obstacles):
+        if not _route_collisions(base, obstacles) and not any(
+            _routes_cross(base, accepted) for accepted in accepted_routes
+        ):
             return base, (source_side, target_side), False, 0.0
         channel_values = _channel_values(
             start.y,
@@ -718,7 +732,7 @@ def _find_route(
                             _routes_cross(route, accepted) for accepted in accepted_routes
                         )
                         candidates.append(
-                            (offset, len(route), crossings, _route_length(route), route)
+                            (crossings, offset, len(route), _route_length(route), route)
                         )
     else:
         direction = 1 if delta_y >= 0 else -1
@@ -734,7 +748,9 @@ def _find_route(
                 end,
             ]
         )
-        if not _route_collisions(base, obstacles):
+        if not _route_collisions(base, obstacles) and not any(
+            _routes_cross(base, accepted) for accepted in accepted_routes
+        ):
             return base, (source_side, target_side), False, 0.0
         channel_values = _channel_values(
             start.x,
@@ -770,7 +786,7 @@ def _find_route(
                             _routes_cross(route, accepted) for accepted in accepted_routes
                         )
                         candidates.append(
-                            (offset, len(route), crossings, _route_length(route), route)
+                            (crossings, offset, len(route), _route_length(route), route)
                         )
 
     if not candidates:
@@ -786,7 +802,7 @@ def _find_route(
         if alternate is None:
             return None, None, True, 0.0
         return alternate
-    offset, _, _, _, best = min(candidates, key=lambda candidate: candidate[:4])
+    _, offset, _, _, best = min(candidates, key=lambda candidate: candidate[:4])
     return best, (source_side, target_side), True, offset
 
 
@@ -841,9 +857,9 @@ def _find_alternate_port_route(
                             )
                             candidates.append(
                                 (
+                                    crossings,
                                     offset,
                                     len(route),
-                                    crossings,
                                     _route_length(route),
                                     route,
                                     (source_side, target_side),
@@ -889,9 +905,9 @@ def _find_alternate_port_route(
                             )
                             candidates.append(
                                 (
+                                    crossings,
                                     offset,
                                     len(route),
-                                    crossings,
                                     _route_length(route),
                                     route,
                                     (source_side, target_side),
@@ -899,7 +915,7 @@ def _find_alternate_port_route(
                             )
     if not candidates:
         return None
-    offset, _, _, _, route, ports = min(candidates, key=lambda candidate: candidate[:4])
+    _, offset, _, _, route, ports = min(candidates, key=lambda candidate: candidate[:4])
     return route, ports, True, offset
 
 

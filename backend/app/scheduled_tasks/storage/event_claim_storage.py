@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import tempfile
@@ -10,6 +9,12 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, Literal
+
+try:
+    import fcntl  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - exercised on Windows
+    fcntl = None
+    import msvcrt
 
 from pydantic import BaseModel, Field
 
@@ -56,12 +61,25 @@ class EventClaimStorage:
     @contextmanager
     def _locked(self) -> Iterator[None]:
         self.lock_path.touch(exist_ok=True)
-        with self.lock_path.open("r+") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        with self.lock_path.open("a+b") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            else:
+                # msvcrt locks a byte range and requires a byte to exist.
+                lock_file.seek(0, 2)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
             try:
                 yield
             finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                else:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
 
     @staticmethod
     def _read(path: Path) -> EventClaim:
@@ -138,6 +156,22 @@ class EventClaimStorage:
             claim = self._read(path)
             if claim.status != "failed":
                 raise ValueError("Only failed event claims can be retried")
+            claim.status = "claimed"
+            claim.attempt += 1
+            claim.execution_id = None
+            claim.updated_at = datetime.now().astimezone()
+            self._atomic_write(path, claim.model_dump(mode="json"))
+            return claim
+
+    def reopen(self, task_id: str, event_id: str) -> EventClaim:
+        """Re-open a terminal (failed or succeeded) claim for a forced manual run."""
+        path = self._claim_path(task_id, event_id)
+        with self._locked():
+            if not path.exists():
+                raise ValueError(f"Event claim for {task_id}/{event_id} not found")
+            claim = self._read(path)
+            if claim.status not in {"failed", "succeeded"}:
+                raise ValueError("Only failed or succeeded event claims can be reopened")
             claim.status = "claimed"
             claim.attempt += 1
             claim.execution_id = None

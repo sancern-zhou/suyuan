@@ -41,6 +41,7 @@ from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
 from app.db.database import async_session
 from app.services.llm_service import llm_service
+from app.tools import global_tool_registry
 
 logger = structlog.get_logger()
 
@@ -415,7 +416,7 @@ class AgentAnalyzeRequest(BaseModel):
     max_iterations: int = Field(DEFAULT_MAX_ITERATIONS, ge=1, le=MAX_ITERATIONS_CAP, description="最大迭代次数")
     mode: Optional[str] = Field(
         "expert",
-        description="✅ Agent模式：'assistant' - 助手模式（办公任务），'ppt' - 幻灯片模式（可编辑演示文稿），'expert' - 专家模式（数据分析），'query' - 问数模式（数据查询），'report' - 报告模式（报告生成），'chart' - 图表模式（数据可视化），'ops' - 运维管理模式（工单审核、异常分析）"
+        description="✅ Agent模式：'assistant' - 助手模式，'ppt' - 幻灯片模式，'expert' - 专家模式，'query' - 问数模式，'knowledge' - 知识问答模式，'report' - 报告模式，'chart' - 图表模式，'ops' - 运维管理模式"
     )
     user_id: Optional[str] = Field(None, description="""✅ 用户标识（用于跨会话记忆）
 - 如果提供：同一用户在不同session共享记忆
@@ -1585,7 +1586,7 @@ async def list_tools():
     """
     try:
         # 从工具注册表获取详细信息
-        tools_info = multi_expert_agent_instance.executor.tool_registry.get_tools_info()
+        tools_info = global_tool_registry.get_tools_info()
 
         logger.info("agent_tools_listed", count=len(tools_info))
 
@@ -1613,7 +1614,7 @@ async def get_tool_info(tool_name: str):
     """
     try:
         # 从工具注册表获取详细信息
-        info = multi_expert_agent_instance.executor.tool_registry.get_tool_info(tool_name)
+        info = global_tool_registry.get_tool_info(tool_name)
 
         if not info:
             raise HTTPException(
@@ -1650,7 +1651,7 @@ async def update_tool_status(tool_name: str, enabled: bool = Body(..., embed=Tru
         enabled: True=启用, False=禁用
     """
     try:
-        registry = multi_expert_agent_instance.executor.tool_registry
+        registry = global_tool_registry
 
         # 检查工具是否存在
         if not registry.get_tool(tool_name):
@@ -1701,7 +1702,7 @@ async def get_tools_categories():
     获取所有工具类别
     """
     try:
-        registry = multi_expert_agent_instance.executor.tool_registry
+        registry = global_tool_registry
         categories = registry.get_categories()
 
         logger.info("tool_categories_listed", count=len(categories))
