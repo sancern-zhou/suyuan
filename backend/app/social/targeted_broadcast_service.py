@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
 from app.social.broadcast_service import SocialBroadcastService
 from app.social.user_registry import get_social_user_registry
+from app.social.user_registry import SocialUserRecord
+from app.social.app_identity import _accounts
 
 
 class TargetedSocialBroadcastService:
@@ -33,7 +36,27 @@ class TargetedSocialBroadcastService:
             return self._result([], names, "缺少广播内容")
 
         users_by_name: dict[str, list[Any]] = defaultdict(list)
-        for user in await self.user_registry.list_users():
+        users = await self.user_registry.list_users()
+        existing_social_ids = {user.social_user_id for user in users}
+        now = datetime.now().isoformat()
+        for account_id, account in _accounts().items():
+            social_user_id = f"app:android:{account_id}"
+            if social_user_id in existing_social_ids:
+                continue
+            if str(account.get("status", "active")).lower() != "active":
+                continue
+            users.append(SocialUserRecord(
+                id=social_user_id,
+                name=str(account.get("name") or account_id),
+                status="active",
+                social_user_id=social_user_id,
+                channel="app",
+                bot_account="android",
+                sender_id=account_id,
+                created_at=now,
+                updated_at=now,
+            ))
+        for user in users:
             users_by_name[str(user.name)].append(user)
 
         valid: list[tuple[str, Any]] = []
