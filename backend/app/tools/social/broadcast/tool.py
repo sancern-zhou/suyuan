@@ -1,7 +1,7 @@
 """
 广播社交用户工具
 
-用于助手模式中，将 LLM 生成的广播内容投递给明确指定的微信用户。
+用于助手模式中，将 LLM 生成的广播内容投递给明确指定的 App 或微信用户。
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ logger = structlog.get_logger(__name__)
 
 
 class BroadcastSocialUsersTool(LLMTool):
-    """Broadcast a generated message to explicitly named WeChat users."""
+    """Broadcast a generated message to explicitly named App or WeChat users."""
 
     def __init__(self, worker_client=None):
         self.worker_client = worker_client
         function_schema = {
             "name": "broadcast_social_users",
-            "description": "将广播内容发送给明确指定的后台微信用户名称",
+            "description": "将广播内容发送给明确指定的后台 App 或微信用户名称；优先使用 App 用户",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -35,7 +35,7 @@ class BroadcastSocialUsersTool(LLMTool):
                         "type": "array",
                         "items": {"type": "string"},
                         "minItems": 1,
-                        "description": "后台微信用户名称列表，精确匹配且重名时拒绝"
+                        "description": "后台 App 或微信用户名称列表，精确匹配且重名时拒绝；App 用户优先"
                     },
                     "media": {
                         "type": "array",
@@ -50,7 +50,7 @@ class BroadcastSocialUsersTool(LLMTool):
 
         super().__init__(
             name="broadcast_social_users",
-            description="将助手生成的广播内容发送给明确指定的微信用户",
+            description="将助手生成的广播内容发送给明确指定的 App 或微信用户",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.0.0"
