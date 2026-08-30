@@ -363,29 +363,13 @@ class ExecutePythonTool(LLMTool):
                 # 只处理第一个 office 文件（与 Office 工具行为一致）
                 office_file = office_files[0]
                 office_suffix = Path(office_file).suffix.lower()
-                if office_suffix in {'.xlsx', '.xls'}:
-                    result["data"]["spreadsheet_preview"] = {
-                        "file_type": office_suffix.lstrip("."),
-                        "editable": True,
-                        "size": Path(office_file).stat().st_size,
-                    }
-                    result["data"]["file_path"] = office_file
-                    result["data"]["file_name"] = Path(office_file).name
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成文档：{Path(office_file).name}"
-                    logger.info(
-                        "execute_python_spreadsheet_preview_created",
-                        office_file=office_file,
-                        execution_success=result.get("success", False)
-                    )
-                else:
+                result["data"]["file_path"] = office_file
+                result["data"]["file_name"] = Path(office_file).name
+                if office_suffix != ".pdf":
                     try:
                         from app.services.pdf_converter import pdf_converter
                         pdf_preview = await pdf_converter.convert_to_pdf(office_file)
                         result["data"]["pdf_preview"] = pdf_preview
-                        result["data"]["file_path"] = office_file
-                        result["data"]["file_name"] = Path(office_file).name
-                        # ✅ 只在执行成功时覆盖 summary
                         if result.get("success", False):
                             result["summary"] = f"✅ 工具已执行完成，生成文档：{Path(office_file).name}"
                         logger.info(
@@ -397,10 +381,8 @@ class ExecutePythonTool(LLMTool):
                     except Exception as pdf_error:
                         logger.warning("execute_python_pdf_conversion_failed", error=str(pdf_error))
                         # PDF 转换失败时，仍然返回文件信息
-                    result["data"]["file_path"] = office_file
-                    # ✅ 只在执行成功时覆盖 summary
-                    if result.get("success", False):
-                        result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
+                elif result.get("success", False):
+                    result["summary"] = f"✅ 工具已执行完成，生成文件：{Path(office_file).name}"
 
             if final_files and "file_path" not in result["data"]:
                 # ✅ 只在执行成功时覆盖 summary

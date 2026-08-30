@@ -40,6 +40,7 @@ _PUBLIC_EXACT_PATHS = {
     "/expert-deliberation",
 }
 _PUBLIC_STATIC_PREFIXES = ("/assets/", "/static/", "/dist/")
+_APP_GATEWAY_PREFIXES = ("/api/social/app/",)
 _PUBLIC_SHARE_PATTERNS = (re.compile(r"^/session/[^/]+$"),)
 _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
@@ -129,6 +130,10 @@ class GatewayAuthenticationMiddleware:
         if path in _PUBLIC_EXACT_PATHS:
             return True
         if path.startswith(_PUBLIC_STATIC_PREFIXES):
+            return True
+        # App Gateway performs its own HMAC token validation. It must be
+        # reachable without the company gateway's syscode credential.
+        if path.startswith(_APP_GATEWAY_PREFIXES):
             return True
         if self.settings.auth_docs_public and path in _DOCS_PATHS:
             return True

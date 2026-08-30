@@ -95,11 +95,11 @@ def _attachment_renderer(mime_type: str, filename: str) -> str:
     return "file"
 
 
-OFFICE_PDF_PREVIEW_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx"}
+OFFICE_PDF_PREVIEW_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
 
 
 def _office_pdf_preview(file_path: str) -> Path | None:
-    """Render Word/PowerPoint uploads to an isolated PDF preview."""
+    """Render Office uploads to an isolated PDF preview."""
     source = Path(file_path).resolve()
     if source.suffix.lower() not in OFFICE_PDF_PREVIEW_EXTENSIONS:
         return None
@@ -366,7 +366,12 @@ async def upload_chat_file(
             "upload_time": "2024-03-10T12:00:00"
         }
     """
-    await catalog.claim_web_draft(session_id=session_id, user=user, mode=mode)
+    if user.auth_source == "app":
+        # Android App sessions are social-source conversations and are marked
+        # read-only only from the Web surface. App ownership is still checked.
+        await catalog.require_read(session_id, user)
+    else:
+        await catalog.claim_web_draft(session_id=session_id, user=user, mode=mode)
 
     # 添加调试日志
     logger.info("upload_chat_file_called",
@@ -458,6 +463,7 @@ async def upload_chat_file(
         raise HTTPException(status_code=500, detail=f"数据库保存失败: {e}")
 
     resource_ref = None
+    preview_ref = None
     if session_id:
         try:
             group_key = f"upload:{file_id}"
@@ -521,6 +527,10 @@ async def upload_chat_file(
                 (item for item in resource_batch.resources if item.relation == "primary"),
                 None,
             )
+            preview_ref = next(
+                (item for item in resource_batch.resources if item.relation == "preview"),
+                None,
+            )
             if resource_ref is None:
                 raise RuntimeError("uploaded resource missing from resource store result")
         except Exception as exc:
@@ -558,6 +568,13 @@ async def upload_chat_file(
         "mime_type": stored_mime_type,
         "file_size": uploaded_file.file_size,
         "url": file_url,
+        "download_url": file_url,
+        "preview_url": (
+            f"/api/social/app/sessions/{session_id}/resources/{preview_ref.resource_id}/content"
+            if preview_ref is not None and preview_ref.resource_id and session_id
+            else file_url
+        ),
+        "preview_mime_type": "application/pdf" if preview_ref is not None else None,
         "upload_time": uploaded_file.created_at.isoformat(),
         "resource_ref": (
             {

@@ -62,7 +62,8 @@ class TargetedSocialBroadcastService:
                     user_id=user.id,
                 )
                 continue
-            if not str(user.channel or "").startswith("weixin"):
+            channel = str(user.channel or "")
+            if not channel.startswith(("weixin", "app")):
                 rows_by_name[name] = self._failed_row(
                     name,
                     "user is not bound to WeChat",
@@ -89,10 +90,14 @@ class TargetedSocialBroadcastService:
 
         broadcast_result: dict[str, Any] = {}
         if valid:
+            channels = sorted({
+                "app" if str(user.channel or "").startswith("app") else "weixin"
+                for _, user in valid
+            })
             broadcast_result = await self.broadcast_service.broadcast(
                 message=message,
                 media=media or [],
-                channels=["weixin"],
+                channels=channels,
                 target_user_ids=[user.social_user_id for _, user in valid],
                 persist_context=True,
                 context_metadata=context_metadata or {},
