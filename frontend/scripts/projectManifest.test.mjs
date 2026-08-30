@@ -39,7 +39,7 @@ test('jiangxi project uses the reduced noise interface', () => {
 
   assert.equal(config.project, 'jiangxi')
   assert.equal(config.frontend.brandName, '江西省噪声智能分析平台')
-  assert.deepEqual(config.frontend.agentModes, ['query', 'expert', 'report', 'chart'])
+  assert.deepEqual(config.frontend.agentModes, ['query', 'assistant', 'expert', 'report'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
   assert.equal(config.frontend.agentPlatformLayout, 'environment-grid')
 })
