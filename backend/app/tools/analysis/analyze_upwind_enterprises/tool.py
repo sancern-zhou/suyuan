@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.resource_declarations import file_products, resources_for_visuals
 from app.services.external_apis import upwind_api
-from app.models.schemas import WindData
+from app.schemas.upwind import WindData
 from config.settings import settings
 
 logger = structlog.get_logger()
