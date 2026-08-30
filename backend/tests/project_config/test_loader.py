@@ -39,6 +39,7 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.frontend.brand_name == "江西省噪声智能分析平台"
     assert context.manifest.frontend.agent_modes == [
         "query",
+        "assistant",
         "expert",
         "report",
     ]
@@ -51,6 +52,7 @@ def test_jiangxi_project_disables_data_fetchers():
     assert context.manifest.backend.fetchers_enabled is False
     assert context.manifest.backend.gis_tools_enabled is False
     assert context.manifest.backend.mode_prompt_files == {
+        "assistant": "projects/jiangxi/prompts/knowledge_qa.md",
         "query": "projects/jiangxi/prompts/query.md"
     }
     assert context.manifest.backend.tools == [

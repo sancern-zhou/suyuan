@@ -10,10 +10,26 @@ frontend:
     era5HistoricalBackfill: false
   agent_modes:
     - query
+    - assistant
     - expert
     - report
   default_agent_mode: query
   agent_mode_overrides:
+    assistant:
+      name: 声环境知识问答智能体
+      description: 解答声环境标准、监测、评价与噪声治理相关知识问题
+      welcome:
+        description: 面向声环境专业知识问答，结合已授权知识库与必要的网络检索，提供有依据、可追溯的专业解答。
+        features:
+          - 解答声环境质量标准、噪声排放标准与监测规范问题
+          - 说明声环境评价、监测方法、指标口径和适用场景
+          - 检索噪声控制、污染防治与投诉处置相关专业资料
+          - 区分知识库依据与网络资料，明确来源和结论边界
+        example: '例如："声环境功能区的分类和对应噪声限值是什么？"'
+      tags:
+        - 声环境知识
+        - 标准规范
+        - 专业问答
     query:
       name: 智能问数生图智能体
       description: 查询噪声数据、生成图表与统计分析
@@ -45,6 +61,7 @@ frontend:
 backend:
   gis_tools_enabled: false
   mode_prompt_files:
+    assistant: projects/jiangxi/prompts/knowledge_qa.md
     query: projects/jiangxi/prompts/query.md
   tools:
     - query_jiangxi_noise_city
@@ -56,6 +73,10 @@ backend:
     - query_jiangxi_noise_station_compliance
   fetchers_enabled: false
   agent_mode_tools:
+    assistant:
+      - knowledge_qa_workflow
+      - web_search
+      - publish_session_file
     expert:
       - list_session_resources
       - publish_session_file
