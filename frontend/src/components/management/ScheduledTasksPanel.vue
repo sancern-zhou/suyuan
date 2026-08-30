@@ -341,7 +341,7 @@
               <span>接收人（微信 / App，可多选）</span>
               <div class="recipient-list">
                 <label v-for="user in socialUsers" :key="user.id" class="recipient-option">
-                  <input v-model="createForm.target_user_ids" type="checkbox" :value="user.id" />
+                  <input v-model="createForm.target_user_ids" type="checkbox" :value="user.channel === 'app' ? user.social_user_id : user.id" />
                   <span class="recipient-name">{{ user.name }}</span>
                   <span class="recipient-channel">{{ user.channel }}</span>
                 </label>

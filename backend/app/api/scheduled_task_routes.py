@@ -25,6 +25,7 @@ from app.scheduled_tasks.event_catalog import (
     get_event_definitions,
 )
 from app.social.user_registry import get_social_user_registry
+from app.social.app_identity import _accounts
 from app.services.lifecycle_manager import get_tool_registry
 from app.scheduled_tasks.custom_agent import (
     CustomToolValidationError,
@@ -168,6 +169,19 @@ async def _validate_event_task_config(task: ScheduledTask) -> None:
 
     registry = get_social_user_registry()
     for user_id in task.target_user_ids:
+        # App recipients may be represented by their direct social identity,
+        # or by the synthetic id used by the management user list.
+        normalized_user_id = str(user_id)
+        if normalized_user_id.startswith("app-account-"):
+            account_id = normalized_user_id.removeprefix("app-account-")
+            account = _accounts().get(account_id)
+            if account and str(account.get("status", "active")).lower() == "active":
+                normalized_user_id = f"app:android:{account_id}"
+        if normalized_user_id.startswith("app:"):
+            account_id = normalized_user_id.rsplit(":", 1)[-1]
+            account = _accounts().get(account_id)
+            if account and str(account.get("status", "active")).lower() == "active":
+                continue
         user = await registry.get_user(user_id)
         if (
             not user
