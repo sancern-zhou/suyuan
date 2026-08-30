@@ -178,8 +178,31 @@ def _validate_task_skill(task: ScheduledTask) -> None:
         ) from exc
 
 
+def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
+    return bool(user.is_admin) or task.owner_user_id == user.id
+
+
+def _require_task_access(task: ScheduledTask, user: CurrentUser) -> None:
+    if not _can_access_task(task, user):
+        raise HTTPException(status_code=404, detail=f"Task {task.task_id} not found")
+
+
+def _accessible_task_ids(user: CurrentUser) -> set[str] | None:
+    """Return owned task ids for non-admin users; None means unrestricted."""
+    if user.is_admin:
+        return None
+    service = get_scheduled_task_service()
+    return {
+        task.task_id
+        for task in service.list_tasks(enabled_only=False)
+        if _can_access_task(task, user)
+    }
+
+
 @router.get("/event-types", response_model=List[EventDefinition])
-async def list_event_types():
+async def list_event_types(
+    _: CurrentUser = Depends(require_current_user),
+):
     return get_event_definitions()
 
 
@@ -297,12 +320,14 @@ async def create_task(
 
 @router.get("", response_model=List[TaskResponse])
 async def list_tasks(
-    enabled_only: bool = Query(default=False, description="仅显示启用的任务")
+    enabled_only: bool = Query(default=False, description="仅显示启用的任务"),
+    user: CurrentUser = Depends(require_current_user),
 ):
-    """列出所有任务"""
+    """列出所有任务（非管理员仅能看到自己的任务）"""
     try:
         service = get_scheduled_task_service()
         tasks = service.list_tasks(enabled_only=enabled_only)
+        tasks = [task for task in tasks if _can_access_task(task, user)]
 
         # 获取调度器状态
         scheduler_status = service.get_scheduler_status()
@@ -320,12 +345,17 @@ async def list_tasks(
             for task in tasks
         ]
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str):
+async def get_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
     """获取任务详情"""
     try:
         service = get_scheduled_task_service()
@@ -333,6 +363,7 @@ async def get_task(task_id: str):
 
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_access(task, user)
 
         # 获取下次运行时间
         scheduler_status = service.get_scheduler_status()
@@ -367,6 +398,7 @@ async def update_task(
 
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_access(task, user)
 
         updates = request.model_dump(exclude_unset=True)
         if updates.get("execution_mode") != "custom" and "execution_mode" in updates:
@@ -391,10 +423,18 @@ async def update_task(
 
 
 @router.delete("/{task_id}")
-async def delete_task(task_id: str):
+async def delete_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
     """删除任务"""
     try:
         service = get_scheduled_task_service()
+        task = service.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_access(task, user)
+
         success = service.delete_task(task_id)
 
         if not success:
@@ -409,41 +449,61 @@ async def delete_task(task_id: str):
 
 
 @router.post("/{task_id}/enable", response_model=TaskResponse)
-async def enable_task(task_id: str):
+async def enable_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
     """启用任务"""
     try:
         service = get_scheduled_task_service()
+        task = service.get_task(task_id)
+        if task:
+            _require_task_access(task, user)
         task = service.enable_task(task_id)
         return TaskResponse(task=task)
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{task_id}/disable", response_model=TaskResponse)
-async def disable_task(task_id: str):
+async def disable_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
     """禁用任务"""
     try:
         service = get_scheduled_task_service()
+        task = service.get_task(task_id)
+        if task:
+            _require_task_access(task, user)
         task = service.disable_task(task_id)
         return TaskResponse(task=task)
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{task_id}/execute")
-async def execute_task_now(task_id: str):
+async def execute_task_now(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
     """立即执行任务（手动触发）"""
     try:
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_access(task, user)
 
         if task.trigger_type == TriggerType.EVENT:
             event = service.claim_storage.latest_event(task.event_type or "")
@@ -491,22 +551,38 @@ async def execute_task_now(task_id: str):
 
 
 @router.post("/executions/{execution_id}/retry-delivery")
-async def retry_failed_delivery(execution_id: str):
+async def retry_failed_delivery(
+    execution_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
     try:
         service = get_scheduled_task_service()
+        execution = service.get_execution(execution_id)
+        if execution is not None:
+            task = service.get_task(execution.task_id)
+            if task:
+                _require_task_access(task, user)
         return await service.retry_failed_delivery(execution_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
 
 
 @router.get("/{task_id}/executions", response_model=ExecutionListResponse)
 async def get_task_executions(
     task_id: str,
-    limit: int = Query(default=10, ge=1, le=50, description="返回记录数")
+    limit: int = Query(default=10, ge=1, le=50, description="返回记录数"),
+    user: CurrentUser = Depends(require_current_user),
 ):
     """获取任务的执行记录"""
     try:
         service = get_scheduled_task_service()
+        task = service.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        _require_task_access(task, user)
+
         executions = service.list_executions(task_id=task_id, limit=limit)
 
         return ExecutionListResponse(
@@ -514,24 +590,32 @@ async def get_task_executions(
             total=len(executions)
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/executions/recent", response_model=ExecutionListResponse)
 async def get_recent_executions(
-    limit: int = Query(default=20, ge=1, le=50, description="返回记录数")
+    limit: int = Query(default=20, ge=1, le=50, description="返回记录数"),
+    user: CurrentUser = Depends(require_current_user),
 ):
-    """获取最近的执行记录"""
+    """获取最近的执行记录（非管理员仅能看到自己任务的记录）"""
     try:
         service = get_scheduled_task_service()
         executions = service.list_executions(limit=limit)
+        accessible = _accessible_task_ids(user)
+        if accessible is not None:
+            executions = [e for e in executions if e.task_id in accessible]
 
         return ExecutionListResponse(
             executions=executions,
             total=len(executions)
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -539,25 +623,66 @@ async def get_recent_executions(
 @router.get("/statistics/summary", response_model=StatisticsResponse)
 async def get_statistics(
     task_id: Optional[str] = Query(default=None, description="任务ID（可选）"),
-    days: int = Query(default=7, ge=1, le=30, description="统计天数")
+    days: int = Query(default=7, ge=1, le=30, description="统计天数"),
+    user: CurrentUser = Depends(require_current_user),
 ):
-    """获取统计信息"""
+    """获取统计信息（非管理员仅统计自己的任务）"""
     try:
         service = get_scheduled_task_service()
-        stats = service.get_statistics(task_id=task_id, days=days)
+        if task_id:
+            task = service.get_task(task_id)
+            if not task:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            _require_task_access(task, user)
+            stats = service.get_statistics(task_id=task_id, days=days)
+            return StatisticsResponse(**stats)
 
-        return StatisticsResponse(**stats)
+        accessible = _accessible_task_ids(user)
+        if accessible is None:
+            stats = service.get_statistics(task_id=None, days=days)
+            return StatisticsResponse(**stats)
 
+        totals = [service.get_statistics(task_id=tid, days=days) for tid in accessible]
+        total = sum(item["total"] for item in totals)
+        success = sum(item["success"] for item in totals)
+        failed = sum(item["failed"] for item in totals)
+        running = sum(item["running"] for item in totals)
+        durations = [item["avg_duration_seconds"] for item in totals if item["total"]]
+        return StatisticsResponse(
+            total=total,
+            success=success,
+            failed=failed,
+            running=running,
+            success_rate=success / total if total > 0 else 0,
+            avg_duration_seconds=sum(durations) / len(durations) if durations else 0,
+            period_days=days,
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/scheduler/status")
-async def get_scheduler_status():
-    """获取调度器状态"""
+async def get_scheduler_status(
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取调度器状态（非管理员仅能看到自己任务的调度信息）"""
     try:
         service = get_scheduled_task_service()
-        return service.get_scheduler_status()
+        status = service.get_scheduler_status()
+        accessible = _accessible_task_ids(user)
+        if accessible is not None and isinstance(status, dict):
+            scheduled = status.get("scheduled_tasks")
+            if isinstance(scheduled, list):
+                status["scheduled_tasks"] = [
+                    item for item in scheduled
+                    if isinstance(item, dict) and item.get("task_id") in accessible
+                ]
+        return status
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

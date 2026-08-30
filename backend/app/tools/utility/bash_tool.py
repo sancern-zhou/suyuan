@@ -290,6 +290,8 @@ class BashTool(LLMTool):
     ]
 
     # 允许的命令类别（白名单）- 包含 Unix 和 Windows 命令
+    # 注意：python/node/curl/wget 等解释器与网络下载类命令一律不允许，
+    # 代码执行请使用沙箱化的 execute_python，网络请求请使用 web_fetch。
     ALLOWED_CATEGORIES = {
         # 文件操作 - Unix 命令
         "ls", "cd", "pwd", "mkdir", "rmdir", "cp", "mv", "cat", "head", "tail",
@@ -299,7 +301,6 @@ class BashTool(LLMTool):
         "dir", "type", "del", "copy", "move", "findstr", "cls",
 
         # 数据处理
-        "python", "python3", "node", "npm",
         "gdal", "ncdump", "ncview", "cdo", "nco",
 
         # 气象/环境模型
@@ -312,7 +313,6 @@ class BashTool(LLMTool):
         # 系统监控 - Windows 命令
         "systeminfo",  # Windows 系统信息
         "tasklist",    # Windows 进程列表
-        "taskkill",    # Windows 终止进程
         "wmic",        # Windows 管理接口
         "ver",         # Windows 版本
         "hostname",    # 主机名
@@ -321,14 +321,11 @@ class BashTool(LLMTool):
         "whoami",      # 当前用户
         "chkdsk",      # 磁盘检查
 
-        # 网络
-        "curl", "wget", "rsync", "ping",
-
         # 压缩/解压
         "tar", "gzip", "gunzip", "zip", "unzip",
 
         # 其他安全工具
-        "echo", "date", "which", "whereis", "type", "test", "timeout"
+        "echo", "date", "which", "whereis", "type", "test", "timeout", "sleep"
     }
 
     # 管道链路中只允许偏只读/过滤类命令，避免把执行器和写操作串起来。
@@ -722,29 +719,14 @@ class BashTool(LLMTool):
 
         first_command = parts[0]
 
-        # 策略1：PATH中的命令自动允许（优先级最高）
-        if shutil.which(first_command):
-            logger.debug(
-                "command_allowed_via_path",
-                command=first_command,
-                path=shutil.which(first_command)
-            )
-            # PATH中的命令允许，但要检查参数是否安全
-            return self._validate_command_args(parts)
-
-        # 策略2：白名单中的命令允许
+        # 策略1：白名单中的命令允许
         if first_command in self.ALLOWED_CATEGORIES:
             return self._validate_command_args(parts)
 
-        # 策略3：Windows可执行文件允许
-        if any(first_command.endswith(ext) for ext in ['.exe', '.bat', '.cmd', '.ps1']):
-            return self._validate_command_args(parts)
-
-        # 策略4：完整路径的命令
+        # 策略2：完整路径的命令（仅当二进制名在白名单内）
         if first_command.startswith("/") or (len(first_command) > 1 and first_command[1] == ':'):
             binary_name = Path(first_command).name
-            # 检查二进制文件名是否在PATH或白名单中
-            if binary_name in self.ALLOWED_CATEGORIES or shutil.which(binary_name):
+            if binary_name in self.ALLOWED_CATEGORIES:
                 return self._validate_command_args(parts)
             else:
                 return {
@@ -752,7 +734,7 @@ class BashTool(LLMTool):
                     "error": f"命令不在白名单中: {first_command}"
                 }
 
-        # 策略5：其他命令拒绝
+        # 策略3：其他命令拒绝
         return {
             "valid": False,
             "error": f"命令不存在或不在白名单中: {first_command}"

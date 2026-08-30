@@ -34,7 +34,13 @@ from app.services.document_preview_refresh import refresh_preview_for_managed_do
 from app.tools.artifact_utils import attach_mutated_document_resources
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.tools.utility.file_read_state import get_file_read_state
-from app.utils.path_config import BACKEND_ROOT, TEMP_ROOT, is_path_within, resolve_agent_path
+from app.utils.path_config import (
+    BACKEND_ROOT,
+    TEMP_ROOT,
+    is_agent_protected_write_path,
+    is_path_within,
+    resolve_agent_path,
+)
 import structlog
 
 logger = structlog.get_logger()
@@ -564,15 +570,23 @@ format:
             # 安全检查：确保在工作目录或允许的额外路径范围内
             allowed_dirs = [self.allowed_project_dir] + [p.resolve() for p in self.allowed_extra_paths]
 
-            if is_path_within(file_path, allowed_dirs):
-                return file_path
+            if not is_path_within(file_path, allowed_dirs):
+                logger.warning(
+                    "write_file_path_escape",
+                    requested_path=path,
+                    allowed_dirs=[str(d) for d in allowed_dirs]
+                )
+                return None
 
-            logger.warning(
-                "write_file_path_escape",
-                requested_path=path,
-                allowed_dirs=[str(d) for d in allowed_dirs]
-            )
-            return None
+            # 安全检查：禁止写入敏感文件与源码/配置/部署区（防止注入持久化 RCE）
+            if is_agent_protected_write_path(file_path):
+                logger.warning(
+                    "write_file_protected_path",
+                    requested_path=path,
+                )
+                return None
+
+            return file_path
 
         except Exception as e:
             logger.error("write_file_path_resolution_failed", path=path, error=str(e))

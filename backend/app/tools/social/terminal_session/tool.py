@@ -369,7 +369,7 @@ class TerminalSessionTool(LLMTool):
     def __init__(self) -> None:
         function_schema = {
             "name": "terminal_session",
-            "description": "托管长期运行的交互式命令行进程；不是 Claude/Codex 委托工具，外部编程 Agent 用 cli_session。",
+            "description": "托管长期运行的交互式命令行进程（仅限白名单内的只读/工具型命令，不支持 shell、解释器与网络下载）；外部编程 Agent 用 cli_session。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -540,6 +540,16 @@ class TerminalSessionTool(LLMTool):
 
         return self._failed(f"未处理的 action: {action}")
 
+    # 交互式会话只允许只读/工具型命令；解释器（python/node 等）与 shell 一律拒绝，
+    # 需要代码执行时请使用沙箱化的 execute_python 工具。
+    TERMINAL_ALLOWED_COMMANDS = {
+        "ls", "cd", "pwd", "cat", "head", "tail", "grep", "find", "locate",
+        "wc", "sort", "uniq", "cut", "awk", "sed", "df", "du", "free", "top",
+        "ps", "uptime", "date", "echo", "which", "whereis", "whoami",
+        "tar", "gzip", "gunzip", "zip", "unzip", "sleep",
+        "gdal", "ncdump", "ncview", "cdo", "nco", "hyts_std", "wrf",
+    }
+
     def _validate_command(self, command: str) -> Dict[str, Any]:
         stripped = command.strip()
         if not stripped:
@@ -547,10 +557,14 @@ class TerminalSessionTool(LLMTool):
         if any(token in stripped for token in [";", "|", "&", ">", "<", "`", "$(", "${", "\n", "\r"]):
             return {"valid": False, "error": "terminal_session 不支持 shell 元字符、管道、重定向或命令连接符"}
         lowered = stripped.lower()
-        dangerous = ["sudo", "su ", "rm -rf /", "shutdown", "reboot", "mkfs", "format ", "dd if="]
-        for item in dangerous:
+        blocked = [
+            "sudo", "su ", "rm ", "shutdown", "reboot", "mkfs", "format ",
+            "dd ", "chmod", "chown", "bash", "zsh", "sh ", "dash", "ksh",
+            "python", "node", "npm", "perl", "ruby", "php", "curl", "wget",
+        ]
+        for item in blocked:
             if item in lowered:
-                return {"valid": False, "error": f"危险命令被拒绝: {item}"}
+                return {"valid": False, "error": f"命令被拒绝: {item.strip()}"}
         try:
             args = shlex.split(stripped, posix=(os.name != "nt"))
         except ValueError as exc:
@@ -558,22 +572,24 @@ class TerminalSessionTool(LLMTool):
         if not args:
             return {"valid": False, "error": "命令为空"}
         first = args[0]
-        if os.name == "nt":
-            import shutil
-            for candidate in (first, f"{first}.exe", f"{first}.cmd"):
-                resolved = shutil.which(candidate)
-                if resolved:
-                    args[0] = resolved
-                    return {"valid": True, "args": args}
-        else:
-            import shutil
-            resolved = shutil.which(first)
-            if resolved:
-                args[0] = resolved
-                return {"valid": True, "args": args}
+        binary_name = Path(first).name if (first.startswith("/") or "\\" in first) else first
+        if binary_name not in self.TERMINAL_ALLOWED_COMMANDS:
+            return {
+                "valid": False,
+                "error": (
+                    f"命令不在 terminal_session 白名单中: {first}；"
+                    "代码执行请使用 execute_python，网络请求请使用 web_fetch"
+                ),
+            }
+        import shutil
+
+        resolved = shutil.which(binary_name)
+        if resolved:
+            args[0] = resolved
+            return {"valid": True, "args": args}
         if Path(first).is_absolute() and Path(first).exists():
             return {"valid": True, "args": args}
-        return {"valid": False, "error": f"命令不存在或不在 PATH 中: {first}"}
+        return {"valid": False, "error": f"命令不存在: {first}"}
 
     def _with_output_resources(
         self,

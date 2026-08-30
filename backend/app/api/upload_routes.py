@@ -37,11 +37,26 @@ from app.tools.resource_declarations import derivative_file, primary_file
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
 from app.conversations.dependencies import get_conversation_catalog
+from app.conversations.repository import ConversationCatalogRepository
 from app.conversations.service import ConversationCatalogService
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+async def _require_upload_file_access(
+    uploaded_file: UploadedFile, user: CurrentUser
+) -> None:
+    """Restrict upload read/delete to the owning session's owner (or admins)."""
+    if user.is_admin:
+        return
+    session_id = uploaded_file.session_id
+    if not session_id:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    record = await ConversationCatalogRepository().get(session_id)
+    if record is None or record.owner_user_id != user.id:
+        raise HTTPException(status_code=404, detail="文件不存在")
 
 
 def _content_disposition(disposition: str, filename: str) -> str:
@@ -351,7 +366,7 @@ async def upload_chat_file(
             "upload_time": "2024-03-10T12:00:00"
         }
     """
-    if user.auth_source == "app":
+    if getattr(user, "auth_source", None) == "app":
         # Android App sessions are social-source conversations and are marked
         # read-only only from the Web surface. App ownership is still checked.
         await catalog.require_read(session_id, user)
@@ -582,7 +597,11 @@ async def upload_chat_file(
 
 
 @router.get("/{file_id}")
-async def get_uploaded_file(file_id: str, db: AsyncSession = Depends(get_db)):
+async def get_uploaded_file(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+):
     """获取上传的文件
 
     对于图片文件，直接返回图片数据
@@ -603,6 +622,8 @@ async def get_uploaded_file(file_id: str, db: AsyncSession = Depends(get_db)):
     if uploaded_file is None:
         raise HTTPException(status_code=404, detail="文件不存在")
 
+    await _require_upload_file_access(uploaded_file, user)
+
     # 检查文件是否存在
     if not os.path.exists(uploaded_file.file_path):
         raise HTTPException(status_code=404, detail="文件已丢失")
@@ -612,19 +633,29 @@ async def get_uploaded_file(file_id: str, db: AsyncSession = Depends(get_db)):
         return FileResponse(
             uploaded_file.file_path,
             media_type=uploaded_file.mime_type,
-            headers={"Content-Disposition": _content_disposition("inline", uploaded_file.filename)}
+            headers={
+                "Content-Disposition": _content_disposition("inline", uploaded_file.filename),
+                "X-Content-Type-Options": "nosniff",
+            }
         )
 
     # 如果是文档，作为下载返回
     return FileResponse(
         uploaded_file.file_path,
         media_type=uploaded_file.mime_type,
-        headers={"Content-Disposition": _content_disposition("attachment", uploaded_file.filename)}
+        headers={
+            "Content-Disposition": _content_disposition("attachment", uploaded_file.filename),
+            "X-Content-Type-Options": "nosniff",
+        }
     )
 
 
 @router.get("/{file_id}/info")
-async def get_file_info(file_id: str, db: AsyncSession = Depends(get_db)):
+async def get_file_info(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
+):
     """获取文件元信息
 
     Args:
@@ -654,6 +685,8 @@ async def get_file_info(file_id: str, db: AsyncSession = Depends(get_db)):
             "url": f"/api/upload/{file_id}"
         }
 
+    await _require_upload_file_access(uploaded_file, user)
+
     file_exists = os.path.exists(uploaded_file.file_path)
 
     return {
@@ -672,7 +705,7 @@ async def get_file_info(file_id: str, db: AsyncSession = Depends(get_db)):
 async def delete_uploaded_file(
     file_id: str,
     db: AsyncSession = Depends(get_db),
-    _user: CurrentUser = Depends(require_current_user),
+    user: CurrentUser = Depends(require_current_user),
 ):
     """删除上传的文件
 
@@ -690,6 +723,8 @@ async def delete_uploaded_file(
 
     if uploaded_file is None:
         raise HTTPException(status_code=404, detail="文件不存在")
+
+    await _require_upload_file_access(uploaded_file, user)
 
     # 删除物理文件
     file_path = uploaded_file.file_path
@@ -744,9 +779,12 @@ async def list_uploaded_files(
     session_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_current_user),
 ):
     """列出上传的文件
+
+    非管理员必须提供自己拥有的 session_id；管理员可列出全部。
 
     Args:
         session_id: 可选的会话ID筛选
@@ -759,6 +797,13 @@ async def list_uploaded_files(
             "total": 10
         }
     """
+    if not user.is_admin:
+        if not session_id:
+            raise HTTPException(status_code=403, detail="session_id 必填")
+        record = await ConversationCatalogRepository().get(session_id)
+        if record is None or record.owner_user_id != user.id:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
     query = select(UploadedFile)
 
     if session_id:

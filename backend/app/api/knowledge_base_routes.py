@@ -308,6 +308,21 @@ async def upload_document(
     """
     # 个人知识库需要user_id，公共知识库允许匿名上传
 
+    # 检查文件扩展名白名单（防止向解析队列投递任意格式文件）
+    allowed_suffixes = {
+        ".pdf", ".docx", ".xlsx", ".pptx", ".html", ".txt", ".md",
+        ".csv", ".json", ".doc", ".xls", ".ppt",
+    }
+    suffix = Path(file.filename or "upload").suffix.lower()
+    if suffix not in allowed_suffixes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported file type. Allowed: "
+                + ", ".join(sorted(allowed_suffixes))
+            )
+        )
+
     # 检查文件大小
     max_size = int(os.getenv("KNOWLEDGE_BASE_MAX_FILE_SIZE", "50")) * 1024 * 1024
     file.file.seek(0, 2)
@@ -323,7 +338,6 @@ async def upload_document(
     # 保存上传的文件
     storage_dir = get_uploads_dir() / "knowledge_base_staging"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename or "upload").suffix
     tmp_path = str(storage_dir / f"{kb_id}_{uuid4().hex}{suffix}")
     try:
         with open(tmp_path, "wb") as f:

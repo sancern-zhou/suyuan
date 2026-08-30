@@ -62,6 +62,9 @@ class FakeService:
     def get_scheduler_status(self):
         return {"scheduled_tasks": []}
 
+    def get_execution(self, execution_id):
+        return None
+
     async def retry_failed_delivery(self, execution_id):
         self.retry_execution_id = execution_id
         return {

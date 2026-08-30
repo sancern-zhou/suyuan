@@ -269,3 +269,17 @@ backend/backend_data_registry*/
 
 # Vendor SDK clones
 suncere*/
+
+# Secrets / key material (prevent accidental commits)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.htpasswd
+id_rsa*
+id_ed25519*
+*credentials*.json
+*secrets*.yaml
+
