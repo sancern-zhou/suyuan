@@ -3,7 +3,7 @@ Client wrappers for external API services.
 """
 from typing import List, Dict, Any, Optional
 from app.utils.http_client import http_client
-from app.models.schemas import WindData, StationInfo, EnterpriseInfo
+from app.schemas.upwind import WindData
 from config.settings import settings
 from app.config.config_manager import config_manager
 import structlog
