@@ -39,6 +39,7 @@ class TargetedSocialBroadcastService:
         users = await self.user_registry.list_users()
         existing_social_ids = {user.social_user_id for user in users}
         now = datetime.now().isoformat()
+        app_aliases: dict[str, str] = {}
         for account_id, account in _accounts().items():
             social_user_id = f"app:android:{account_id}"
             if social_user_id in existing_social_ids:
@@ -58,6 +59,10 @@ class TargetedSocialBroadcastService:
             ))
         for user in users:
             users_by_name[str(user.name)].append(user)
+            if user.channel == "app" and user.sender_id:
+                app_aliases[str(user.sender_id)] = str(user.name)
+        for alias, display_name in app_aliases.items():
+            users_by_name[alias].extend(users_by_name[display_name])
 
         valid: list[tuple[str, Any]] = []
         rows_by_name: dict[str, dict[str, Any]] = {}
