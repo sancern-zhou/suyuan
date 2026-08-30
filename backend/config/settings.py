@@ -3,7 +3,7 @@ Application settings and configuration management.
 """
 from typing import List, Optional, Dict, Any, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 import yaml
 from pathlib import Path
 
@@ -162,6 +162,47 @@ class Settings(BaseSettings):
     auth_mock_display_name: str = Field(default="本地开发用户")
     auth_mock_role_codes: str = Field(default="")
 
+    # Android App account gateway. Account secrets are provisioned outside the
+    # repository as a JSON object: {"account_id": {"secret": "...", "name": "..."}}.
+    app_auth_secret: str = Field(
+        default="",
+        description="HMAC secret used to sign Android App access tokens",
+    )
+    app_accounts_json: str = Field(
+        default="{}",
+        description="Provisioned Android App accounts as a JSON object",
+    )
+    app_access_token_ttl_seconds: int = Field(
+        default=86400,
+        ge=300,
+        le=2592000,
+        description="Android App access token lifetime",
+    )
+    app_refresh_token_ttl_seconds: int = Field(
+        default=2592000,
+        ge=3600,
+        le=31536000,
+        description="Android App refresh token lifetime",
+    )
+
+    # IDBase OAuth/OIDC integration for the Android App.  The client id and
+    # authenticationMore URL are provisioned per deployment, never in source.
+    company_oidc_issuer: str = Field(default="https://idaut.cnemc.cn")
+    company_oidc_authorization_endpoint: str = Field(
+        default="https://idaut.cnemc.cn/connect/authorize"
+    )
+    company_oidc_token_endpoint: str = Field(
+        default="https://idaut.cnemc.cn/connect/token"
+    )
+    company_oidc_client_id: str = Field(default="")
+    company_oidc_redirect_uri: str = Field(default="com.suyuan.mobile://oauth/callback")
+    company_oidc_scopes: str = Field(default="openid profile roles offline_access")
+    company_oidc_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+    company_authentication_more_url: str = Field(
+        default="",
+        description="Local business endpoint equivalent to api/jwt/oauth/authenticationMore",
+    )
+
     # Gateway routing and trust boundary
     gateway_api_prefix: str = Field(default="/api/suyuan")
     trusted_gateway_networks: str = Field(
@@ -199,6 +240,10 @@ class Settings(BaseSettings):
     @property
     def trusted_gateway_networks_list(self) -> List[str]:
         return self._split_unique_csv(self.trusted_gateway_networks)
+
+    @property
+    def company_oidc_scopes_list(self) -> List[str]:
+        return self._split_unique_csv(self.company_oidc_scopes.replace(" ", ","))
 
     @property
     def nacos_server_addresses_list(self) -> List[str]:
@@ -413,6 +458,30 @@ class Settings(BaseSettings):
     voice_asr_timeout_seconds: float = Field(
         default=30.0,
         description="Timeout in seconds for voice ASR requests"
+    )
+    voice_realtime_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SOCIAL_APP_ASR_API_KEY",
+            "KNOWLEDGE_RERANK_API_KEY",
+            "BAILIAN_API_KEY",
+        ),
+        description="Alibaba Cloud realtime ASR API key (server-side only)",
+    )
+    voice_realtime_model: str = Field(
+        default="qwen-audio-3.0-asr-flash-streaming",
+        validation_alias=AliasChoices("SOCIAL_APP_ASR_MODEL", "BAILIAN_ASR_MODEL"),
+        description="Alibaba Cloud realtime ASR model",
+    )
+    voice_realtime_ws_url: str = Field(
+        default="wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+        validation_alias="SOCIAL_APP_ASR_WS_URL",
+        description="Alibaba Cloud realtime ASR WebSocket endpoint",
+    )
+    voice_realtime_workspace_id: Optional[str] = Field(
+        default=None,
+        validation_alias="BAILIAN_WORKSPACE_ID",
+        description="Optional Beijing Model Studio workspace ID",
     )
     voice_tts_timeout_seconds: float = Field(
         default=45.0,
@@ -826,6 +895,20 @@ class Settings(BaseSettings):
         default="",
         description="Shared token for web-to-worker social account API calls"
     )
+
+    # Unified mobile push service.  The application only deals with provider
+    # neutral device identifiers (CID); vendor-specific offline channels stay
+    # inside the selected push provider.
+    push_provider: str = Field(
+        default="none",
+        description="Unified push provider: none or getui",
+    )
+    push_getui_app_id: str = Field(default="")
+    push_getui_app_key: str = Field(default="")
+    push_getui_master_secret: str = Field(default="")
+    push_getui_base_url: str = Field(default="https://restapi.getui.com/v2")
+    push_timeout_seconds: float = Field(default=15.0, gt=1, le=120)
+    push_offline_ttl_ms: int = Field(default=86400000, ge=0, le=259200000)
 
     @property
     def redis_url(self) -> str:

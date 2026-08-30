@@ -29,6 +29,7 @@ from app.services.report_preview_refresh import (
 from app.services.report_preview_refresh import (
     record_report_update,
 )
+from app.services.pdf_converter import pdf_converter
 from app.tools.artifact_utils import (
     attach_document_resources,
     attach_report_package_resources,
@@ -872,7 +873,7 @@ class RenderReportPackageTool(LLMTool):
                     "report_id": {"type": "string", "description": "报告ID。"},
                     "format": {
                         "type": "string",
-                        "enum": ["html", "docx", "share_html"],
+                        "enum": ["html", "docx", "pdf", "share_html"],
                         "description": "渲染格式。",
                         "default": "html",
                     },
@@ -921,6 +922,31 @@ class RenderReportPackageTool(LLMTool):
                     report_id=safe_id,
                     html_path=report_dir / "report.html",
                     docx_path=path,
+                    generator="render_report_package",
+                )
+            elif format == "pdf":
+                docx_path = quarto_report_renderer.render_docx(safe_id)
+                pdf_result = await pdf_converter.convert_to_pdf(str(docx_path))
+                pdf_path = Path(pdf_result["pdf_path"])
+                report_dir = quarto_report_renderer.get_report_dir(safe_id)
+                stable_pdf_path = report_dir / "report.pdf"
+                shutil.copyfile(pdf_path, stable_pdf_path)
+                qmd_path = report_dir / "report.qmd"
+                data = {
+                    "report_id": safe_id,
+                    "file_path": str(qmd_path),
+                    "path": str(stable_pdf_path),
+                    "file_type": "report",
+                    "generator": "render_report_package",
+                    "pdf_preview": {"pdf_path": str(stable_pdf_path), "pages": pdf_result.get("pages", 0), "size": stable_pdf_path.stat().st_size},
+                }
+                attach_report_package_resources(
+                    data,
+                    qmd_path,
+                    report_id=safe_id,
+                    html_path=report_dir / "report.html",
+                    docx_path=docx_path,
+                    pdf_path=stable_pdf_path,
                     generator="render_report_package",
                 )
             elif format == "share_html":
