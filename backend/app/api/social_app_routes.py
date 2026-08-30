@@ -8,17 +8,19 @@ conversation ownership.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import contextlib
 import json
 import mimetypes
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
+from urllib.parse import quote
 
 import structlog
 from aiohttp import WSMsgType
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -100,32 +102,46 @@ class AppPushDeviceRequest(BaseModel):
     app_id: str | None = Field(default=None, max_length=128)
 
 
-def _broadcast_attachment_payload(item: object) -> dict | None:
+def _broadcast_attachment_payload(item: object, *, message_id: str, index: int) -> dict | None:
     """Project internal broadcast attachment metadata to an App-safe shape."""
     if not isinstance(item, dict):
         return None
     name = str(item.get("filename") or item.get("name") or "附件").strip() or "附件"
     mime_type = str(item.get("mime_type") or item.get("mimeType") or "").strip()
     raw_url = str(item.get("url") or "").strip()
+    raw_path = str(item.get("path") or "").strip()
+    mime_type = mime_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+    file_id = "broadcast-" + hashlib.sha256(f"{message_id}:{index}".encode("utf-8")).hexdigest()[:24]
     payload = {
+        "file_id": file_id,
         "filename": name,
         "name": name,
-        "type": "image" if mime_type.lower().startswith("image/") else "file",
-        "mime_type": mime_type or "application/octet-stream",
+        "type": "image" if mime_type.lower().startswith("image/") else "document",
+        "file_type": "image" if mime_type.lower().startswith("image/") else "document",
+        "mime_type": mime_type,
     }
-    # Only forward URLs, never server filesystem paths.
+    encoded_message_id = quote(message_id, safe="")
+    content_url = f"/api/social/app/broadcasts/{encoded_message_id}/attachments/{index}"
     if raw_url.startswith("/") or raw_url.startswith("https://") or raw_url.startswith("http://"):
         payload["url"] = raw_url
+        payload["download_url"] = raw_url
+    elif raw_path:
+        # Keep server filesystem paths private while exposing an authenticated
+        # content endpoint for the App preview/download flow.
+        payload["url"] = content_url
+        payload["preview_url"] = content_url
+        payload["download_url"] = f"{content_url}?disposition=attachment"
     return payload
 
 
 def _broadcast_payload(item: dict) -> dict:
     data = item.get("data") if isinstance(item.get("data"), dict) else {}
     raw_attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    message_id = str(item.get("id") or "")
     attachments = [
         attachment
-        for raw in raw_attachments
-        if (attachment := _broadcast_attachment_payload(raw)) is not None
+        for index, raw in enumerate(raw_attachments)
+        if (attachment := _broadcast_attachment_payload(raw, message_id=message_id, index=index)) is not None
     ]
     return {
         "message_id": str(item.get("id") or ""),
@@ -425,19 +441,130 @@ async def upload_file(
     )
 
 
+@router.delete("/upload/{file_id}")
+async def delete_app_upload(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Delete an App upload owned by one of the user's social sessions."""
+    result = await db.execute(select(UploadedFile).where(UploadedFile.id == file_id))
+    uploaded_file = result.scalar_one_or_none()
+    if uploaded_file is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if not uploaded_file.session_id:
+        raise HTTPException(status_code=404, detail="附件不属于当前 App 会话")
+    await get_conversation_catalog().require_read(
+        uploaded_file.session_id,
+        identity.as_current_user(),
+    )
+    from app.api.upload_routes import delete_uploaded_file
+
+    return await delete_uploaded_file(
+        file_id,
+        db=db,
+        _user=identity.as_current_user(),
+    )
+
+
 @router.get("/broadcasts")
-async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) -> dict:
+async def app_broadcasts(
+    limit: int = Query(default=30, ge=1, le=100),
+    before: str | None = Query(default=None, max_length=512),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
     """Return the authenticated App account's persistent broadcast inbox."""
     from app.social.broadcast_context import load_broadcast_messages
 
-    messages = [
+    page = [
         _broadcast_payload(item)
-        for item in await load_broadcast_messages(identity.social_user_id)
+        for item in await load_broadcast_messages(
+            identity.social_user_id,
+            limit=limit,
+            before_message_id=before,
+        )
     ]
+    all_messages = await load_broadcast_messages(identity.social_user_id)
+    last_message_id = page[-1]["message_id"] if page else None
+    last_index = next(
+        (
+            index
+            for index, item in enumerate(all_messages)
+            if str(item.get("id") or "") == last_message_id
+        ),
+        -1,
+    )
+    has_more = last_index >= 0 and last_index + 1 < len(all_messages)
+    next_cursor = last_message_id if has_more else None
     return {
-        "messages": messages,
-        "unread_count": sum(1 for item in messages if not item["read"]),
+        "messages": page,
+        "unread_count": sum(1 for item in all_messages if item.get("read") is not True),
+        "next_cursor": next_cursor,
+        "has_more": has_more,
     }
+
+
+@router.delete("/broadcasts/{message_id}")
+async def app_delete_broadcast(
+    message_id: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Delete one broadcast from the authenticated App inbox."""
+    from app.social.broadcast_context import delete_broadcast_message, load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    if not any(str(item.get("id") or "") == message_id for item in messages):
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    deleted = await delete_broadcast_message(identity.social_user_id, message_id)
+    return {"message_id": message_id, "deleted": deleted}
+
+
+@router.get("/broadcasts/{message_id}/attachments/{attachment_index}")
+async def app_broadcast_attachment(
+    message_id: str,
+    attachment_index: int,
+    disposition: Literal["inline", "attachment"] = "inline",
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Serve one persisted broadcast attachment without exposing its path."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    message = next(
+        (
+            item
+            for item in await load_broadcast_messages(identity.social_user_id)
+            if str(item.get("id") or "") == message_id
+        ),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    if attachment_index < 0 or attachment_index >= len(attachments):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    attachment = attachments[attachment_index]
+    if not isinstance(attachment, dict):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    raw_path = str(attachment.get("path") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="broadcast_attachment_unavailable")
+    target = Path(raw_path).expanduser().resolve()
+    registry_root = get_data_registry().expanduser().resolve()
+    try:
+        target.relative_to(registry_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="broadcast_attachment_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="broadcast_attachment_missing")
+    filename = str(attachment.get("filename") or attachment.get("name") or target.name)
+    media_type = str(attachment.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type=disposition,
+    )
 
 
 @router.post("/broadcasts/{message_id}/read")
@@ -579,6 +706,40 @@ async def _persist_app_turn(
     saved = await append_session_transcript_for_mode(session, mode="social")
     if not saved:
         raise RuntimeError("app_transcript_save_failed")
+
+    catalog = get_conversation_catalog()
+    record = await catalog.find(session_id)
+    if record and _is_placeholder_session_title(record.title, session_id):
+        title = _session_title_from_query(query)
+        if title:
+            await catalog.rename(session_id, title)
+
+
+def _is_placeholder_session_title(title: str | None, session_id: str) -> bool:
+    clean_title = str(title or "").strip()
+    return not clean_title or clean_title in {"新对话", "新会话", session_id} or clean_title.startswith("session_")
+
+
+def _session_title_from_query(query: str | None) -> str:
+    clean_query = " ".join(str(query or "").split())
+    if not clean_query:
+        return ""
+    return clean_query[:80] + ("…" if len(clean_query) > 80 else "")
+
+
+async def _app_session_display_title(row) -> str:
+    if not _is_placeholder_session_title(row.title, row.session_id):
+        return _session_title_from_query(row.title)
+    try:
+        from app.agent.session.session_resolver import load_session_for_mode
+
+        session = await load_session_for_mode(row.session_id, mode="social", include_messages=False)
+        title = _session_title_from_query(getattr(session, "query", ""))
+        if title:
+            return title
+    except Exception as exc:
+        logger.debug("app_session_title_lookup_failed", session_id=row.session_id, error=str(exc))
+    return "新对话"
 
 
 async def _sanitize_attachments(
@@ -848,27 +1009,41 @@ async def chat_stream(
 
 
 @router.get("/sessions")
-async def sessions(request: Request, identity: AppIdentity = Depends(require_app_identity)) -> list[dict]:
+async def sessions(
+    request: Request,
+    limit: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=100000),
+    identity: AppIdentity = Depends(require_app_identity),
+) -> list[dict]:
     catalog = get_conversation_catalog()
     try:
-        rows = await catalog.list_visible(identity.as_current_user(), limit=100)
+        rows = await catalog.list_visible(identity.as_current_user(), limit=limit, offset=offset)
     except Exception:
         rows = []
-    rows = [row for row in rows if row.source == ConversationSource.SOCIAL]
+    rows = [
+        row
+        for row in rows
+        if row.source == ConversationSource.SOCIAL
+        and not str(row.session_id).startswith("broadcast_session_")
+    ]
     if rows:
-        return [
-            {
+        result = []
+        for row in rows:
+            result.append({
                 "session_id": row.session_id,
                 "mode": row.mode or "social",
-                "title": row.title or "新对话",
+                "title": await _app_session_display_title(row),
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
-            }
-            for row in rows
-        ]
+            })
+        return result
+    if offset > 0:
+        return []
     mapper = await _loaded_session_mapper(request)
     session_id = await mapper.get_session(identity.social_user_id)
-    return [{"session_id": session_id, "mode": "social", "title": "新对话"}] if session_id else []
+    if session_id and not str(session_id).startswith("broadcast_session_"):
+        return [{"session_id": session_id, "mode": "social", "title": "新对话"}]
+    return []
 
 
 @router.post("/sessions")

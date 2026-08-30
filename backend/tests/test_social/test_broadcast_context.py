@@ -3,6 +3,7 @@ import pytest
 from app.agent.session.models import Session
 from app.social.broadcast_context import (
     broadcast_session_id,
+    delete_broadcast_message,
     load_broadcast_messages,
     mark_broadcast_read,
     persist_broadcast_context,
@@ -177,6 +178,43 @@ async def test_broadcast_uses_dedicated_session_and_read_state(monkeypatch):
     assert messages[0]["read"] is False
     assert await mark_broadcast_read(social_id, messages[0]["id"])
     assert (await load_broadcast_messages(social_id))[0]["read"] is True
+
+
+@pytest.mark.asyncio
+async def test_broadcast_paging_and_delete(monkeypatch):
+    social_id = "app:android:alice"
+    session = Session(
+        session_id=broadcast_session_id(social_id),
+        query="广播消息",
+        conversation_history=[
+            {"id": "message-1", "type": "broadcast", "content": "旧消息 1", "data": {}},
+            {"id": "message-2", "type": "broadcast", "content": "旧消息 2", "data": {}},
+            {"id": "message-3", "type": "broadcast", "content": "最新消息", "data": {}},
+        ],
+    )
+
+    async def fake_load(session_id, *, mode):
+        assert mode == "social"
+        return session
+
+    async def fake_replace(value, *, mode):
+        assert mode == "social"
+        return True
+
+    monkeypatch.setattr("app.social.broadcast_context.load_session_for_mode", fake_load)
+    monkeypatch.setattr("app.social.broadcast_context.replace_session_transcript_for_mode", fake_replace)
+
+    first_page = await load_broadcast_messages(social_id, limit=2)
+    assert [item["id"] for item in first_page] == ["message-3", "message-2"]
+    second_page = await load_broadcast_messages(
+        social_id,
+        limit=2,
+        before_message_id=first_page[-1]["id"],
+    )
+    assert [item["id"] for item in second_page] == ["message-1"]
+
+    assert await delete_broadcast_message(social_id, "message-2") is True
+    assert [item["id"] for item in await load_broadcast_messages(social_id)] == ["message-3", "message-1"]
 
 
 @pytest.mark.asyncio

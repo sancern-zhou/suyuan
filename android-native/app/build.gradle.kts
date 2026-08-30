@@ -33,7 +33,7 @@ android {
     val configuredApiBaseUrl = (project.findProperty("apiBaseUrl") as String?)
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
-        ?: "http://127.0.0.1:8000"
+        ?: "http://219.135.180.51:54333"
     val escapedApiBaseUrl = configuredApiBaseUrl
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")

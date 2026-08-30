@@ -26,8 +26,13 @@ def broadcast_session_id(social_user_id: str) -> str:
     return f"broadcast_session_{digest}"
 
 
-async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
-    """Load the broadcast inbox for one identity, newest message first."""
+async def load_broadcast_messages(
+    social_user_id: str,
+    *,
+    limit: int | None = None,
+    before_message_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load broadcasts newest first, optionally paging towards older messages."""
     session = await load_session_for_mode(
         broadcast_session_id(social_user_id), mode="social"
     )
@@ -37,7 +42,44 @@ async def load_broadcast_messages(social_user_id: str) -> list[dict[str, Any]]:
         item for item in session.conversation_history
         if isinstance(item, dict) and item.get("type") == "broadcast"
     ]
-    return list(reversed(messages))
+    messages = list(reversed(messages))
+    if before_message_id:
+        cursor_index = next(
+            (
+                index
+                for index, item in enumerate(messages)
+                if str(item.get("id") or "") == before_message_id
+            ),
+            None,
+        )
+        if cursor_index is None:
+            return []
+        messages = messages[cursor_index + 1 :]
+    if limit is not None:
+        return messages[:limit]
+    return messages
+
+
+async def delete_broadcast_message(social_user_id: str, message_id: str) -> bool:
+    """Delete one broadcast from the dedicated inbox."""
+    session = await load_session_for_mode(
+        broadcast_session_id(social_user_id), mode="social"
+    )
+    if session is None:
+        return False
+    original_count = len(session.conversation_history)
+    session.conversation_history = [
+        item
+        for item in session.conversation_history
+        if not (
+            isinstance(item, dict)
+            and item.get("type") == "broadcast"
+            and str(item.get("id") or "") == message_id
+        )
+    ]
+    if len(session.conversation_history) == original_count:
+        return False
+    return bool(await replace_session_transcript_for_mode(session, mode="social"))
 
 
 async def mark_broadcast_read(social_user_id: str, message_id: str | None = None) -> bool:

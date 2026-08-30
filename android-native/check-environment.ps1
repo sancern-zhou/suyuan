@@ -2,22 +2,30 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Suyuan Android build environment"
 
-$jdkCandidates = @(@(
+$savedErrorAction = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$jdkCandidates = @(
     $env:JAVA_HOME,
     "C:\Program Files\Eclipse Adoptium\jdk-17.0.16.8-hotspot",
     "C:\Users\$env:USERNAME\AppData\Local\Android\android-studio\jbr"
-) | Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\java.exe")) })
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ "bin\java.exe")) } | Select-Object -Unique
 
-if (-not $jdkCandidates) {
-    Write-Error "JDK 17 not found. Install JDK 17 and set JAVA_HOME."
+$javaHome = $null
+$javaVersion = $null
+foreach ($candidate in $jdkCandidates) {
+    $candidateVersion = (& (Join-Path $candidate "bin\java.exe") -version 2>&1 | Select-Object -First 1).ToString()
+    if ($candidateVersion -match '"(?<major>\d+)' -and [int]$Matches.major -ge 17) {
+        $javaHome = $candidate
+        $javaVersion = $candidateVersion
+        break
+    }
+}
+$ErrorActionPreference = $savedErrorAction
+if (-not $javaHome) {
+    Write-Error "JDK 17 not found. Install JDK 17 and set JAVA_HOME; Java 11 or older is not supported."
 }
 
-$javaHome = $jdkCandidates[0]
-$savedErrorAction = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-$javaVersion = (& (Join-Path $javaHome "bin\java.exe") -version 2>&1 | Select-Object -First 1)
-$ErrorActionPreference = $savedErrorAction
-Write-Host "JDK: $javaHome ($javaVersion)"
+Write-Host "JDK 17: $javaHome ($javaVersion)"
 
 $sdkCandidates = @(@(
     $env:ANDROID_SDK_ROOT,

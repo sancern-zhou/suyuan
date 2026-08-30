@@ -6,14 +6,19 @@
 
 1. 使用 JDK 17 和 Android SDK 34 打开本目录。
 2. 后端配置 `APP_AUTH_SECRET` 与 `APP_ACCOUNTS_JSON`，启动 `D:\溯源\backend`。
-3. USB 真机调试默认访问 `http://127.0.0.1:8000`，配合 `adb reverse tcp:8000 tcp:8000` 使用；不需要电脑有外网端口。模拟器调试时，再以 `-PapiBaseUrl=http://10.0.2.2:8000` 构建。使用 Wi-Fi 真机时，将 API 地址改为局域网 HTTPS 地址。
-4. 执行 `gradlew.bat :app:assembleDebug` 构建调试包；`local.properties` 由本机 Android SDK 自动生成，不提交到版本库。
+3. App 默认访问 `http://219.135.180.51:54333`。如需连接其他环境，可在构建时通过 `-PapiBaseUrl=...` 覆盖。HTTP 地址已在 Android 清单中允许明文访问。
+4. 推荐执行 `.\build-debug.ps1 -Install` 构建并安装调试包。脚本会从 `../backend/.env` 读取 `PUSH_GETUI_APP_ID`，自动传给 Gradle，并固定使用 JDK 17；`local.properties` 由本机 Android SDK 自动生成，不提交到版本库。
 
-USB 联调示例（保持手机 USB 调试和后端进程运行）：
+构建并安装示例：
 
 ```powershell
-adb reverse tcp:8000 tcp:8000
-gradlew.bat :app:assembleDebug
+.\build-debug.ps1 -Install
+```
+
+如需指定 API 地址或设备：
+
+```powershell
+.\build-debug.ps1 -ApiBaseUrl http://219.135.180.51:54333 -Install -DeviceId A43TVB4A25013903
 ```
 
 后端模型配置应使用部署环境中已验证的提供商配置；本次联调使用参考环境文件中的 Doubao 主链路。不要把 API key 写入 Android 工程或提交到版本库。
@@ -24,13 +29,11 @@ gradlew.bat :app:assembleDebug
 后端只配置 `PUSH_PROVIDER=getui`、`PUSH_GETUI_APP_ID`、
 `PUSH_GETUI_APP_KEY` 和 `PUSH_GETUI_MASTER_SECRET`；其中 App Key 和 Master
 Secret 仅放在后端环境变量，不能写入 App 或提交 Git。构建时把同一个 App ID
-传给 Gradle：
+传给 Gradle。推荐使用上面的 `build-debug.ps1`，避免遗漏；不要把真实 App ID
+或其他推送密钥写入 Android 工程或提交 Git。
 
 ```powershell
-.\gradlew.bat :app:assembleDebug `
-  -PgetuiAppId=YOUR_GETUI_APP_ID `
-  -PapiBaseUrl=http://SERVER:8000
-adb install -r .\app\build\outputs\apk\debug\app-debug.apk
+.\build-debug.ps1 -Install
 ```
 
 首次登录并允许 Android 13+ 通知权限后，App 会自动获取 CID 并注册到
@@ -38,6 +41,9 @@ adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 检查广播先写入 App 收件箱、个推返回 `sent`、手机收到系统通知，点击通知后 App
 刷新收件箱。详细的后端环境变量和排查顺序见
 `D:\溯源\backend\docs\android-unified-push.md`。
+
+广播和历史会话列表采用分段加载：首次请求最新 30 条，滚动到列表底部后继续加载更早内容；
+广播详情页的操作菜单支持删除，删除只移除收件箱记录，不会自动删除服务器上的原始附件文件。
 
 构建前可执行 `powershell -ExecutionPolicy Bypass -File .\check-environment.ps1` 检查 JDK 17 和 Android SDK 34。当前开发机已完成 SDK 34 配置，并可构建 Debug APK。
 

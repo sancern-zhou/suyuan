@@ -37,7 +37,12 @@ data class BroadcastMessage(
     val read: Boolean = false,
     val attachments: List<UploadedAttachment> = emptyList(),
 )
-data class BroadcastInbox(val messages: List<BroadcastMessage>, val unreadCount: Int)
+data class BroadcastInbox(
+    val messages: List<BroadcastMessage>,
+    val unreadCount: Int,
+    val nextCursor: String? = null,
+    val hasMore: Boolean = false,
+)
 data class ChatMessage(
     val id: String,
     val kind: String,
@@ -363,9 +368,20 @@ class SocialAppApi(
         }
     }
 
-    suspend fun sessions(token: String): List<SessionInfo> = withContext(Dispatchers.IO) {
+    suspend fun deleteUpload(token: String, fileId: String): Boolean = withContext(Dispatchers.IO) {
         val response = client.newCall(
-            Request.Builder().url(url("/api/social/app/sessions"))
+            Request.Builder().url(url("/api/social/app/upload/${java.net.URLEncoder.encode(fileId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token").delete().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "附件删除失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true)
+        }
+    }
+
+    suspend fun sessions(token: String, limit: Int = 30, offset: Int = 0): List<SessionInfo> = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/sessions?limit=$limit&offset=$offset"))
                 .header("Authorization", "Bearer $token").get().build()
         ).execute()
         response.use {
@@ -454,9 +470,10 @@ class SocialAppApi(
         }
     }
 
-    suspend fun broadcasts(token: String): BroadcastInbox = withContext(Dispatchers.IO) {
+    suspend fun broadcasts(token: String, limit: Int = 30, before: String? = null): BroadcastInbox = withContext(Dispatchers.IO) {
+        val cursor = before?.let { "&before=${java.net.URLEncoder.encode(it, "UTF-8")}" }.orEmpty()
         val response = client.newCall(
-            Request.Builder().url(url("/api/social/app/broadcasts"))
+            Request.Builder().url(url("/api/social/app/broadcasts?limit=$limit$cursor"))
                 .header("Authorization", "Bearer $token").get().build()
         ).execute()
         response.use {
@@ -484,7 +501,12 @@ class SocialAppApi(
                     )
                 }
             }
-            BroadcastInbox(messages, json.optInt("unread_count", messages.count { !it.read }))
+            BroadcastInbox(
+                messages = messages,
+                unreadCount = json.optInt("unread_count", messages.count { !it.read }),
+                nextCursor = json.optString("next_cursor", "").ifBlank { null },
+                hasMore = json.optBoolean("has_more", false),
+            )
         }
     }
 
@@ -509,6 +531,18 @@ class SocialAppApi(
         response.use {
             if (!it.isSuccessful) throw ApiException(it.code, "广播消息已读失败 (${it.code})")
             JSONObject(it.body?.string().orEmpty()).optBoolean("read_all", true)
+        }
+    }
+
+    suspend fun deleteBroadcast(token: String, messageId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(
+            Request.Builder().url(url("/api/social/app/broadcasts/${java.net.URLEncoder.encode(messageId, "UTF-8")}"))
+                .header("Authorization", "Bearer $token")
+                .delete().build()
+        ).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "广播消息删除失败 (${it.code})")
+            JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true)
         }
     }
 

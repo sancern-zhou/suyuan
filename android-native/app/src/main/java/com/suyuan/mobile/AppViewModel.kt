@@ -37,6 +37,8 @@ data class AppUiState(
     val displayName: String = "",
     val sessionId: String? = null,
     val sessions: List<SessionInfo> = emptyList(),
+    val sessionsHasMore: Boolean = false,
+    val sessionsLoadingMore: Boolean = false,
     val draft: String = "",
     val messages: List<ChatMessage> = emptyList(),
     val attachments: List<UploadedAttachment> = emptyList(),
@@ -48,6 +50,9 @@ data class AppUiState(
     val unreadBroadcastCount: Int = 0,
     val broadcastLoading: Boolean = false,
     val broadcastError: String? = null,
+    val broadcastNextCursor: String? = null,
+    val broadcastHasMore: Boolean = false,
+    val broadcastLoadingMore: Boolean = false,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -315,8 +320,19 @@ class AppViewModel(
                     val session = runCatching { org.json.JSONObject(event.data).optString("session_id") }.getOrNull()
                     if (!session.isNullOrBlank() && turnSessionId == null) {
                         turnSessionId = session
+                        val title = sessionTitleFromQuery(turn.query)
+                        val knownSessions = _state.value.sessions.filterNot { it.sessionId == session }
                         if (_state.value.sessionId == null) {
-                            _state.value = _state.value.copy(sessionId = session)
+                            _state.value = _state.value.copy(
+                                sessionId = session,
+                                sessions = listOf(SessionInfo(session, "social", title)) + knownSessions,
+                            )
+                        } else if (title.isNotBlank()) {
+                            _state.value = _state.value.copy(
+                                sessions = _state.value.sessions.map {
+                                    if (it.sessionId == session && isPlaceholderSessionTitle(it.title, session)) it.copy(title = title) else it
+                                },
+                            )
                         }
                     }
                 }
@@ -661,6 +677,23 @@ class AppViewModel(
         }
     }
 
+    fun removeAttachment(attachment: UploadedAttachment) {
+        val current = _state.value
+        _state.value = current.copy(
+            attachments = current.attachments.filterNot { it.fileId == attachment.fileId },
+            attachmentPreviews = current.attachmentPreviews - attachment.fileId,
+        )
+        if (attachment.fileId.isBlank()) return
+        viewModelScope.launch {
+            runCatching { repository.deleteUpload(current.token, attachment.fileId) }
+                .onFailure { failure ->
+                    if (failure is ApiException && failure.statusCode == 401) {
+                        logout("登录已过期，请重新登录")
+                    }
+                }
+        }
+    }
+
     fun logout(message: String? = null) {
         val current = _state.value
         val cid = registeredPushCid
@@ -675,17 +708,25 @@ class AppViewModel(
         _state.value = AppUiState(error = message)
     }
 
-    fun refreshBroadcasts() {
+    fun refreshBroadcasts(reset: Boolean = true) {
         val token = _state.value.token
         if (token.isBlank()) return
+        if (_state.value.broadcastLoading || _state.value.broadcastLoadingMore) return
         viewModelScope.launch {
-            _state.value = _state.value.copy(broadcastLoading = true, broadcastError = null)
-            runCatching { repository.broadcasts(token) }
+            val current = _state.value
+            _state.value = current.copy(
+                broadcastLoading = reset,
+                broadcastError = null,
+            )
+            runCatching { repository.broadcasts(token, limit = BROADCAST_PAGE_SIZE) }
                 .onSuccess { inbox ->
+                    val messages = if (reset) inbox.messages else mergeBroadcastMessages(inbox.messages, current.broadcastMessages)
                     _state.value = _state.value.copy(
-                        broadcastMessages = inbox.messages,
+                        broadcastMessages = messages,
                         unreadBroadcastCount = inbox.unreadCount,
                         broadcastLoading = false,
+                        broadcastNextCursor = if (reset) inbox.nextCursor else current.broadcastNextCursor ?: inbox.nextCursor,
+                        broadcastHasMore = if (reset) inbox.hasMore else current.broadcastHasMore || inbox.hasMore,
                     )
                 }
                 .onFailure { failure ->
@@ -696,7 +737,32 @@ class AppViewModel(
     }
 
     fun openBroadcasts() {
-        refreshBroadcasts()
+        refreshBroadcasts(reset = true)
+    }
+
+    fun loadMoreBroadcasts() {
+        val current = _state.value
+        val token = current.token
+        val cursor = current.broadcastNextCursor
+        if (token.isBlank() || cursor.isNullOrBlank() || !current.broadcastHasMore || current.broadcastLoading || current.broadcastLoadingMore) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(broadcastLoadingMore = true)
+            runCatching { repository.broadcasts(token, limit = BROADCAST_PAGE_SIZE, before = cursor) }
+                .onSuccess { inbox ->
+                    _state.value = _state.value.copy(
+                        broadcastMessages = mergeBroadcastMessages(_state.value.broadcastMessages, inbox.messages),
+                        broadcastNextCursor = inbox.nextCursor,
+                        broadcastHasMore = inbox.hasMore,
+                        broadcastLoadingMore = false,
+                    )
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(broadcastLoadingMore = false, broadcastError = friendlyError(failure))
+                }
+        }
+    }
+
+    fun markAllBroadcastsRead() {
         val unread = _state.value.unreadBroadcastCount
         if (unread == 0) return
         viewModelScope.launch {
@@ -726,15 +792,36 @@ class AppViewModel(
         }
     }
 
+    fun deleteBroadcast(message: BroadcastMessage) {
+        val token = _state.value.token
+        if (token.isBlank()) return
+        viewModelScope.launch {
+            runCatching { repository.deleteBroadcast(token, message.messageId) }
+                .onSuccess {
+                    _state.value = _state.value.copy(
+                        broadcastMessages = _state.value.broadcastMessages.filterNot { it.messageId == message.messageId },
+                        unreadBroadcastCount = if (message.read) _state.value.unreadBroadcastCount else (_state.value.unreadBroadcastCount - 1).coerceAtLeast(0),
+                    )
+                }
+                .onFailure { failure ->
+                    if (failure is ApiException && failure.statusCode == 401) logout("登录已过期，请重新登录")
+                    else _state.value = _state.value.copy(broadcastError = friendlyError(failure))
+                }
+        }
+    }
+
     private fun refreshSessions() {
         val token = _state.value.token
         if (token.isBlank()) return
         viewModelScope.launch {
-            runCatching { repository.sessions(token) }
+            runCatching { repository.sessions(token, limit = SESSION_PAGE_SIZE, offset = 0) }
                 .onSuccess { sessions ->
+                    val conversationSessions = sessions.filterNot {
+                        it.sessionId.startsWith("broadcast_session_")
+                    }
                     val current = _state.value
-                    if (sessions.isEmpty()) {
-                        _state.value = current.copy(sessions = emptyList(), sessionId = null, loading = false)
+                    if (conversationSessions.isEmpty()) {
+                        _state.value = current.copy(sessions = emptyList(), sessionsHasMore = false, sessionId = null, loading = false)
                         return@onSuccess
                     }
 
@@ -744,14 +831,15 @@ class AppViewModel(
                     // on an empty composer while history is available.
                     if (current.messages.isEmpty()) {
                         _state.value = current.copy(
-                            sessions = sessions,
+                            sessions = conversationSessions,
+                            sessionsHasMore = sessions.size >= SESSION_PAGE_SIZE,
                             sessionId = null,
                             loading = true,
                         )
                         var selectedSession: SessionInfo? = null
                         var restoredMessages: List<ChatMessage> = emptyList()
                         var lastFailure: Throwable? = null
-                        for (candidate in sessions) {
+                        for (candidate in conversationSessions) {
                             val result = runCatching { repository.messages(token, candidate.sessionId) }
                             result.onFailure { lastFailure = it }
                             val messages = result.getOrNull().orEmpty()
@@ -761,9 +849,10 @@ class AppViewModel(
                                 break
                             }
                         }
-                        val selected = selectedSession ?: sessions.first()
+                        val selected = selectedSession ?: conversationSessions.first()
                         _state.value = _state.value.copy(
-                            sessions = sessions,
+                            sessions = conversationSessions,
+                            sessionsHasMore = sessions.size >= SESSION_PAGE_SIZE,
                             sessionId = selected.sessionId,
                             messages = restoredMessages,
                             loading = false,
@@ -771,8 +860,9 @@ class AppViewModel(
                         )
                     } else {
                         _state.value = current.copy(
-                            sessions = sessions,
-                            sessionId = current.sessionId ?: sessions.first().sessionId,
+                            sessions = conversationSessions,
+                            sessionsHasMore = sessions.size >= SESSION_PAGE_SIZE,
+                            sessionId = current.sessionId ?: conversationSessions.first().sessionId,
                             loading = false,
                         )
                     }
@@ -781,5 +871,45 @@ class AppViewModel(
         }
     }
 
+    fun loadMoreSessions() {
+        val current = _state.value
+        if (!current.sessionsHasMore || current.sessionsLoadingMore || current.token.isBlank()) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sessionsLoadingMore = true)
+            runCatching { repository.sessions(current.token, limit = SESSION_PAGE_SIZE, offset = current.sessions.size) }
+                .onSuccess { sessions ->
+                    val additional = sessions.filterNot { it.sessionId.startsWith("broadcast_session_") }
+                    val merged = (_state.value.sessions + additional).distinctBy { it.sessionId }
+                    _state.value = _state.value.copy(
+                        sessions = merged,
+                        sessionsHasMore = sessions.size >= SESSION_PAGE_SIZE,
+                        sessionsLoadingMore = false,
+                    )
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(sessionsLoadingMore = false, error = friendlyError(failure))
+                }
+        }
+    }
+
+    private fun mergeBroadcastMessages(first: List<BroadcastMessage>, second: List<BroadcastMessage>): List<BroadcastMessage> {
+        return (first + second).distinctBy { it.messageId }
+    }
+
+    companion object {
+        private const val BROADCAST_PAGE_SIZE = 30
+        private const val SESSION_PAGE_SIZE = 30
+    }
+
     private fun friendlyError(error: Throwable): String = error.message?.ifBlank { "请求失败，请稍后重试" } ?: "请求失败，请稍后重试"
+
+    private fun sessionTitleFromQuery(query: String): String {
+        val cleanQuery = query.trim().replace(Regex("\\s+"), " ")
+        return cleanQuery.take(80) + if (cleanQuery.length > 80) "…" else ""
+    }
+
+    private fun isPlaceholderSessionTitle(title: String, sessionId: String): Boolean {
+        val cleanTitle = title.trim()
+        return cleanTitle.isBlank() || cleanTitle == "新对话" || cleanTitle == "新会话" || cleanTitle == sessionId || cleanTitle.startsWith("session_")
+    }
 }

@@ -20,6 +20,12 @@ import android.webkit.WebView
 import android.widget.Toast
 import java.io.File
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -29,6 +35,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -55,7 +62,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.AnnotatedString
@@ -68,7 +77,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -82,6 +94,7 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
@@ -281,7 +294,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     LaunchedEffect(state.loggedIn) {
         if (state.loggedIn) {
             while (true) {
-                viewModel.refreshBroadcasts()
+                viewModel.refreshBroadcasts(reset = false)
                 delay(30_000L)
             }
         }
@@ -339,7 +352,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         if (showBroadcasts) {
             BroadcastPanel(state, viewModel, onBack = { showBroadcasts = false })
         } else if (showHistory) {
-            HistoryPanel(state, viewModel, onBack = { showHistory = false }, onBroadcasts = { showBroadcasts = true; showHistory = false; viewModel.openBroadcasts() })
+            HistoryPanel(state, viewModel, onBack = { showHistory = false })
         } else Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
             if (state.unreadBroadcastCount > 0) {
                 Surface(
@@ -385,6 +398,12 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     item(key = "thinking-indicator") { ThinkingIndicator() }
                 }
             }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(SuyuanColors.border),
+        )
         val canCancel = state.loading && state.sessionId != null
         if (state.attachments.isNotEmpty()) {
             AttachmentTray(state, viewModel, context)
@@ -393,7 +412,11 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             color = Color.White,
             shape = RoundedCornerShape(22.dp),
             tonalElevation = 1.dp,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).imePadding().navigationBarsPadding(),
+            modifier = Modifier.fillMaxWidth()
+                .border(1.dp, SuyuanColors.border, RoundedCornerShape(22.dp))
+                .padding(vertical = 8.dp)
+                .imePadding()
+                .navigationBarsPadding(),
         ) {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -433,14 +456,14 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 if (!voiceMode) {
                     Box(
                         Modifier.size(30.dp).clip(CircleShape)
-                            .border(1.5.dp, if (recording) SuyuanColors.error else SuyuanColors.secondaryText, CircleShape)
+                            .border(1.5.dp, if (recording) SuyuanColors.error else SuyuanColors.controlIcon, CircleShape)
                             .pointerInteropFilter { handleVoiceEvent(it, toggleOnTap = true) },
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
                         Icon(
                             painterResource(R.drawable.ic_voice_right),
                             contentDescription = if (recording) "松开停止" else "按住切换语音输入",
-                            tint = if (recording) SuyuanColors.error else SuyuanColors.secondaryText,
+                            tint = if (recording) SuyuanColors.error else SuyuanColors.controlIcon,
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -470,11 +493,11 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     )
                     Box(
                         Modifier.size(30.dp).clip(CircleShape)
-                            .border(1.5.dp, SuyuanColors.secondaryText, CircleShape)
+                            .border(1.5.dp, SuyuanColors.controlIcon, CircleShape)
                             .clickable { picker.launch("*/*") },
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
-                        Icon(painterResource(R.drawable.ic_plus), contentDescription = "添加附件", tint = SuyuanColors.secondaryText, modifier = Modifier.size(16.dp))
+                        Icon(painterResource(R.drawable.ic_plus), contentDescription = "添加附件", tint = SuyuanColors.controlIcon, modifier = Modifier.size(16.dp))
                     }
                     if (canCancel || state.draft.isNotBlank()) {
                         val hasDraft = state.draft.isNotBlank()
@@ -486,17 +509,22 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                                 .clickable(enabled = actionEnabled) { if (hasDraft) viewModel.send() else viewModel.cancel() },
                             contentAlignment = androidx.compose.ui.Alignment.Center,
                         ) {
-                            Icon(painterResource(if (hasDraft) R.drawable.ic_arrow_up else R.drawable.ic_stop), contentDescription = if (hasDraft) "发送" else "取消生成", tint = Color.White, modifier = Modifier.size(16.dp))
+                            Icon(
+                                painterResource(if (hasDraft) R.drawable.ic_arrow_up else R.drawable.ic_stop),
+                                contentDescription = if (hasDraft) "发送" else "取消生成",
+                                tint = if (actionEnabled) Color.White else SuyuanColors.controlIcon,
+                                modifier = Modifier.size(16.dp),
+                            )
                         }
                     }
                 } else {
                     Box(
                         Modifier.size(30.dp).clip(CircleShape)
-                            .border(1.5.dp, SuyuanColors.secondaryText, CircleShape)
+                            .border(1.5.dp, SuyuanColors.controlIcon, CircleShape)
                             .clickable(enabled = !recording) { voiceMode = false },
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
-                        Icon(painterResource(R.drawable.ic_keyboard), contentDescription = "切换键盘输入", tint = SuyuanColors.secondaryText, modifier = Modifier.size(16.dp))
+                        Icon(painterResource(R.drawable.ic_keyboard), contentDescription = "切换键盘输入", tint = SuyuanColors.controlIcon, modifier = Modifier.size(16.dp))
                     }
                     Box(
                         Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp))
@@ -509,11 +537,11 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     }
                     Box(
                         Modifier.size(30.dp).clip(CircleShape)
-                            .border(1.5.dp, SuyuanColors.secondaryText, CircleShape)
+                            .border(1.5.dp, SuyuanColors.controlIcon, CircleShape)
                             .clickable { picker.launch("*/*") },
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
-                        Icon(painterResource(R.drawable.ic_plus), contentDescription = "添加附件", tint = SuyuanColors.secondaryText, modifier = Modifier.size(16.dp))
+                        Icon(painterResource(R.drawable.ic_plus), contentDescription = "添加附件", tint = SuyuanColors.controlIcon, modifier = Modifier.size(16.dp))
                     }
                 }
             }
@@ -599,30 +627,20 @@ private fun AppTopBar(
 }
 
 @Composable
-private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, onBroadcasts: () -> Unit) {
+private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
     var actionSession by remember { mutableStateOf<SessionInfo?>(null) }
     var renameSession by remember { mutableStateOf<SessionInfo?>(null) }
     var deleteSession by remember { mutableStateOf<SessionInfo?>(null) }
     var renameTitle by remember { mutableStateOf("") }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
-        item {
-            Surface(
-                color = if (state.unreadBroadcastCount > 0) SuyuanColors.primary.copy(alpha = .08f) else Color.White,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp).clickable(onClick = onBroadcasts),
-            ) {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Icon(painterResource(R.drawable.ic_broadcast), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
-                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                        Text("广播消息", color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        Text(if (state.unreadBroadcastCount > 0) "${state.unreadBroadcastCount} 条未读消息" else "暂无未读消息", color = SuyuanColors.secondaryText, fontSize = 11.sp)
-                    }
-                    if (state.unreadBroadcastCount > 0) {
-                        Text(state.unreadBroadcastCount.toString(), color = Color.White, fontSize = 11.sp, modifier = Modifier.clip(CircleShape).background(SuyuanColors.error).padding(horizontal = 7.dp, vertical = 3.dp))
-                    }
-                }
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState, state.sessions.size, state.sessionsHasMore) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .distinctUntilChanged()
+            .collect { lastIndex ->
+                if (lastIndex >= state.sessions.size - 2) viewModel.loadMoreSessions()
             }
-        }
+    }
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
         items(state.sessions) { session ->
             Surface(
                 color = Color.White,
@@ -633,7 +651,9 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
                     Icon(painterResource(R.drawable.ic_history), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
                     Column(Modifier.padding(start = 12.dp).weight(1f)) {
                         Text(session.title, color = SuyuanColors.text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        Text(session.sessionId, color = SuyuanColors.secondaryText, fontSize = 11.sp, maxLines = 1)
+                        session.updatedAt?.let { updatedAt ->
+                            Text(updatedAt.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp, maxLines = 1)
+                        }
                     }
                     Text(if (session.sessionId == state.sessionId) "当前" else "", color = SuyuanColors.primary, fontSize = 12.sp)
                     IconButton(onClick = { actionSession = session }) {
@@ -645,6 +665,12 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
         if (state.sessions.isEmpty()) {
             item {
                 Text("暂无历史会话", color = SuyuanColors.secondaryText, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp))
+            }
+        } else if (state.sessionsLoadingMore) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                }
             }
         }
     }
@@ -694,6 +720,16 @@ private fun HistoryPanel(state: AppUiState, viewModel: AppViewModel, onBack: () 
 
 @Composable
 private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit) {
+    var expandedMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteMessage by remember { mutableStateOf<BroadcastMessage?>(null) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState, state.broadcastMessages.size, state.broadcastHasMore) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .distinctUntilChanged()
+            .collect { lastIndex ->
+                if (lastIndex >= state.broadcastMessages.size - 2) viewModel.loadMoreBroadcasts()
+            }
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
@@ -704,25 +740,34 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             }
             Text("广播消息", color = SuyuanColors.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             if (state.broadcastMessages.any { !it.read }) {
-                TextButton(onClick = { viewModel.openBroadcasts() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
+                TextButton(onClick = { viewModel.markAllBroadcastsRead() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
             }
         }
         if (state.broadcastLoading && state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
+        } else if (state.broadcastError != null && state.broadcastMessages.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Text(state.broadcastError, color = SuyuanColors.error, fontSize = 14.sp)
+            }
         } else if (state.broadcastMessages.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无广播消息", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
         } else {
             LazyColumn(
-                Modifier.fillMaxSize(),
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 16.dp),
             ) {
                 items(state.broadcastMessages, key = { it.messageId }) { broadcast ->
+                    val expanded = expandedMessageId == broadcast.messageId
                     Surface(
-                        color = Color.White,
+                        color = if (expanded) SuyuanColors.panel else Color.White,
                         shape = RoundedCornerShape(12.dp),
                         tonalElevation = 1.dp,
-                        modifier = Modifier.fillMaxWidth().clickable { viewModel.markBroadcastRead(broadcast) },
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            expandedMessageId = if (expanded) null else broadcast.messageId
+                            viewModel.markBroadcastRead(broadcast)
+                        },
                     ) {
                         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -730,19 +775,61 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
                                 Text(if (broadcast.read) "广播消息" else "广播消息 · 未读", color = if (broadcast.read) SuyuanColors.secondaryText else SuyuanColors.primary, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
                                 Spacer(Modifier.weight(1f))
                                 broadcast.timestamp?.let { Text(it.replace('T', ' ').take(16), color = SuyuanColors.secondaryText, fontSize = 11.sp) }
+                                IconButton(onClick = { deleteMessage = broadcast }) {
+                                    Icon(painterResource(R.drawable.ic_more), contentDescription = "广播消息操作", tint = SuyuanColors.secondaryText)
+                                }
                             }
-                            Text(broadcast.content, color = SuyuanColors.text, fontSize = 15.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 8.dp))
-                            broadcast.attachments.forEach { attachment ->
-                                Row(Modifier.padding(top = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                    Icon(painterResource(if (isImageAttachment(attachment)) R.drawable.ic_file else R.drawable.ic_file), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
-                                    Text(attachment.filename, color = SuyuanColors.secondaryText, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(start = 6.dp))
+                            if (expanded) {
+                                if (broadcast.content.isNotBlank()) {
+                                    MarkdownContent(broadcast.content, SuyuanColors.text)
+                                }
+                                broadcast.attachments.forEach { attachment ->
+                                    AttachmentView(attachment, state, viewModel, LocalContext.current)
+                                }
+                            } else {
+                                Text(
+                                    broadcast.content.replace(Regex("\\s+"), " ").trim(),
+                                    color = SuyuanColors.text,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                                if (broadcast.attachments.isNotEmpty()) {
+                                    Text(
+                                        "附件 ${broadcast.attachments.size} 个",
+                                        color = SuyuanColors.secondaryText,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(top = 6.dp),
+                                    )
                                 }
                             }
                         }
                     }
                 }
+                if (state.broadcastLoadingMore) {
+                    item(key = "broadcast-loading") {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                            CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
             }
         }
+    }
+    deleteMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { deleteMessage = null },
+            title = { Text("删除广播消息") },
+            text = { Text("确定删除这条广播消息吗？删除后无法恢复。") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.deleteBroadcast(message); deleteMessage = null }) {
+                    Text("删除", color = SuyuanColors.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleteMessage = null }) { Text("取消") } },
+        )
     }
 }
 
@@ -780,6 +867,20 @@ private fun ThinkingIndicator() {
 }
 
 @Composable
+private fun StreamingCursor() {
+    val transition = rememberInfiniteTransition()
+    val alpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.12f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 520),
+            repeatMode = RepeatMode.Reverse,
+        ),
+    )
+    Text("|", color = SuyuanColors.primary.copy(alpha = alpha), fontSize = 15.sp)
+}
+
+@Composable
 private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: AppViewModel) {
     val context = LocalContext.current
     val isUser = message.kind == "user"
@@ -800,16 +901,47 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
         Column(messageModifier) {
             when (message.kind) {
                 "thought" -> {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { viewModel.toggleThought(message.id) },
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    val thoughtShape = RoundedCornerShape(10.dp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(thoughtShape)
+                            .background(SuyuanColors.panel.copy(alpha = .72f))
+                            .border(1.dp, SuyuanColors.border, thoughtShape),
                     ) {
-                        Icon(painterResource(if (message.expanded) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right), contentDescription = "展开或收起思考", tint = SuyuanColors.secondaryText, modifier = Modifier.size(18.dp))
-                        Text("思考过程", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp))
-                        if (message.streaming) Text("…", color = SuyuanColors.secondaryText, fontSize = 16.sp)
-                    }
-                    if (message.expanded) {
-                        Text(message.content, color = SuyuanColors.secondaryText, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(start = 22.dp, top = 4.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.toggleThought(message.id) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                painterResource(if (message.expanded) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right),
+                                contentDescription = if (message.expanded) "收起思考过程" else "展开思考过程",
+                                tint = SuyuanColors.secondaryText,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text("思考过程", color = SuyuanColors.secondaryText, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp).weight(1f))
+                            Text(
+                                when {
+                                    message.streaming -> "生成中…"
+                                    message.expanded -> "收起"
+                                    else -> "展开"
+                                },
+                                color = if (message.streaming) SuyuanColors.secondaryText else SuyuanColors.primary,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        if (message.expanded) {
+                            Text(
+                                message.content,
+                                color = SuyuanColors.secondaryText,
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp,
+                                modifier = Modifier.padding(start = 32.dp, end = 10.dp, bottom = 10.dp),
+                            )
+                        }
                     }
                 }
                 "tool" -> {
@@ -822,9 +954,8 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                         MarkdownContent(message.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
                     }
                     if (message.streaming) {
-                        // Keep a lightweight cursor beside the partial answer so users
-                        // can tell that the response is still arriving.
-                        Text("|", color = SuyuanColors.primary, fontSize = 15.sp)
+                        // A blinking cursor keeps the streaming state visible during quiet intervals.
+                        StreamingCursor()
                     }
                     val visibleAttachments = if (message.attachments.any(::isImageAttachment)) {
                         message.attachments.filterNot { it.mimeType.equals("application/json", ignoreCase = true) && !isImageAttachment(it) }
@@ -857,21 +988,68 @@ private fun MarkdownContent(content: String, color: Color) {
 
 @Composable
 private fun MarkdownTable(headers: List<String>, rows: List<List<String>>, color: Color) {
-    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
-        Row {
-            headers.forEach { cell ->
-                Text(cell, color = color, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.widthIn(min = 100.dp, max = 180.dp).border(1.dp, SuyuanColors.border).padding(7.dp))
-            }
+    val columnCount = maxOf(headers.size, rows.maxOfOrNull { it.size } ?: 0)
+    if (columnCount == 0) return
+
+    val normalizedHeaders = List(columnCount) { headers.getOrNull(it).orEmpty() }
+    val normalizedRows = rows.map { row -> List(columnCount) { row.getOrNull(it).orEmpty() } }
+    val columnWidths = remember(normalizedHeaders, normalizedRows) {
+        List(columnCount) { index ->
+            val maxChars = (listOf(normalizedHeaders[index]) + normalizedRows.map { it[index] })
+                .maxOfOrNull(::estimatedTableCellLength)
+                ?: 1
+            ((maxChars * 7) + 28).coerceIn(108, 220).dp
         }
-        rows.forEachIndexed { rowIndex, row ->
-            Row {
-                headers.indices.forEach { index ->
-                    Text(row.getOrNull(index).orEmpty(), color = color, fontSize = 13.sp, modifier = Modifier.widthIn(min = 100.dp, max = 180.dp).border(1.dp, SuyuanColors.border).padding(7.dp))
-                }
-            }
+    }
+    val tableWidth = columnWidths.fold(0.dp) { total, width -> total + width }
+
+    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
+        MarkdownTableRow(normalizedHeaders, columnWidths, tableWidth, color, header = true, rowIndex = 0)
+        normalizedRows.forEachIndexed { rowIndex, row ->
+            MarkdownTableRow(row, columnWidths, tableWidth, color, header = false, rowIndex = rowIndex)
         }
     }
 }
+
+@Composable
+private fun MarkdownTableRow(
+    cells: List<String>,
+    columnWidths: List<androidx.compose.ui.unit.Dp>,
+    tableWidth: androidx.compose.ui.unit.Dp,
+    color: Color,
+    header: Boolean,
+    rowIndex: Int,
+) {
+    Row(Modifier.width(tableWidth).height(IntrinsicSize.Min)) {
+        columnWidths.forEachIndexed { index, width ->
+            val cell = cells.getOrNull(index).orEmpty()
+            Text(
+                text = remember(cell) { markdownToAnnotatedString(cell) },
+                color = color,
+                fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier
+                    .width(width)
+                    .fillMaxHeight()
+                    .background(
+                        when {
+                            header -> SuyuanColors.panel
+                            rowIndex % 2 == 1 -> SuyuanColors.panel.copy(alpha = .42f)
+                            else -> Color.White
+                        }
+                    )
+                    .border(1.dp, SuyuanColors.border)
+                    .padding(horizontal = 9.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+private fun estimatedTableCellLength(value: String): Int = value.lineSequence()
+    .map { line -> line.fold(0) { total, character -> total + if (character.code > 0xFF) 2 else 1 } }
+    .maxOrNull()
+    ?: 1
 
 private fun parseMarkdownBlocks(content: String): List<MarkdownBlock> {
     val lines = content.lines()
@@ -904,7 +1082,7 @@ private fun parseMarkdownBlocks(content: String): List<MarkdownBlock> {
     return blocks
 }
 
-private fun isTableRow(line: String): Boolean = line.count { it == '|' } >= 2
+private fun isTableRow(line: String): Boolean = line.contains('|') && splitTableRow(line).size >= 2
 
 private fun isTableDivider(line: String): Boolean = line.trim().removePrefix("|").removeSuffix("|").split('|').all { cell -> cell.trim().matches(Regex(":?-{3,}:?")) }
 
@@ -941,6 +1119,16 @@ private fun AttachmentTray(state: AppUiState, viewModel: AppViewModel, context: 
                     } else {
                         CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                     }
+                    IconButton(
+                        onClick = { viewModel.removeAttachment(attachment) },
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.TopEnd)
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = .62f)),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_close), contentDescription = "删除附件", tint = Color.White, modifier = Modifier.size(15.dp))
+                    }
                 }
             } else {
                 Surface(
@@ -954,6 +1142,9 @@ private fun AttachmentTray(state: AppUiState, viewModel: AppViewModel, context: 
                     ) {
                         Icon(painterResource(R.drawable.ic_file), contentDescription = attachment.filename, tint = SuyuanColors.primary, modifier = Modifier.size(25.dp))
                         Text(attachment.filename, color = SuyuanColors.text, fontSize = 11.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 7.dp).weight(1f))
+                        IconButton(onClick = { viewModel.removeAttachment(attachment) }, modifier = Modifier.size(28.dp)) {
+                            Icon(painterResource(R.drawable.ic_close), contentDescription = "删除附件", tint = SuyuanColors.secondaryText, modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }
@@ -963,7 +1154,12 @@ private fun AttachmentTray(state: AppUiState, viewModel: AppViewModel, context: 
                 bitmap?.let {
                     Dialog(onDismissRequest = { showViewer = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
                         Box(Modifier.fillMaxSize().background(Color.Black).clickable { showViewer = false }, contentAlignment = androidx.compose.ui.Alignment.Center) {
-                            androidx.compose.foundation.Image(bitmap = it.asImageBitmap(), contentDescription = attachment.filename, modifier = Modifier.fillMaxWidth().padding(18.dp), contentScale = ContentScale.Fit)
+                            ZoomableBitmapPreview(
+                                bitmap = it.asImageBitmap(),
+                                contentDescription = attachment.filename,
+                                backgroundColor = Color.Black,
+                                contentScale = ContentScale.Fit,
+                            )
                         }
                     }
                 }
@@ -996,13 +1192,11 @@ private fun AttachmentView(attachment: UploadedAttachment, state: AppUiState, vi
                 if (showViewer) {
                     Dialog(onDismissRequest = { showViewer = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
                         androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(Color.Black)) {
-                            androidx.compose.foundation.Image(
-                                bitmap = imageBitmap, contentDescription = attachment.filename,
-                                modifier = Modifier.fillMaxSize().padding(18.dp).pointerInput(imageBytes) {
-                                    detectTapGestures(onLongPress = {
-                                        Toast.makeText(context, if (saveImageToGallery(context, imageBytes, attachment.filename)) "图片已保存" else "图片保存失败", Toast.LENGTH_SHORT).show()
-                                    })
-                                }, contentScale = ContentScale.Fit,
+                            ZoomableBitmapPreview(
+                                bitmap = imageBitmap,
+                                contentDescription = attachment.filename,
+                                backgroundColor = Color.Black,
+                                contentScale = ContentScale.Fit,
                             )
                             IconButton(onClick = { showViewer = false }, modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).statusBarsPadding().padding(8.dp)) {
                                 Icon(painterResource(R.drawable.ic_close), contentDescription = "关闭图片预览", tint = Color.White)
@@ -1118,36 +1312,43 @@ private fun DocumentPreviewContent(
     context: android.content.Context,
     showDownload: Boolean = true,
 ) {
-    Column(Modifier.padding(start = 29.dp, top = 6.dp, end = 4.dp)) {
+    Column(Modifier.fillMaxSize()) {
         if (pdfBytes != null) {
             val bitmap = remember(pdfBytes) { renderPdfFirstPage(context, pdfBytes)?.asImageBitmap() }
             if (bitmap != null) {
-                androidx.compose.foundation.Image(
-                    bitmap = bitmap,
-                    contentDescription = attachment.filename,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Fit,
-                )
+                ZoomableBitmapPreview(bitmap, attachment.filename)
             } else {
                 Text("暂时无法渲染此文档", color = SuyuanColors.secondaryText, fontSize = 12.sp)
             }
         } else if (attachment.mimeType.equals("text/html", ignoreCase = true) || attachment.filename.endsWith(".html", true) || attachment.filename.endsWith(".htm", true)) {
             AndroidView(
-                factory = { android.webkit.WebView(it).apply { settings.javaScriptEnabled = false; settings.allowFileAccess = false } },
+                factory = {
+                    android.webkit.WebView(it).apply {
+                        settings.javaScriptEnabled = false
+                        settings.allowFileAccess = false
+                        settings.setSupportZoom(true)
+                        settings.builtInZoomControls = true
+                        settings.displayZoomControls = false
+                        settings.loadWithOverviewMode = true
+                        settings.useWideViewPort = true
+                    }
+                },
                 update = { it.loadDataWithBaseURL(null, text.orEmpty(), "text/html", "UTF-8", null) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 300.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f),
             )
         } else if (!text.isNullOrBlank()) {
             val isMarkdown = attachment.filename.endsWith(".md", true) || attachment.filename.endsWith(".markdown", true)
             if (isMarkdown) {
-                Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp)) {
                     MarkdownContent(text, SuyuanColors.text)
                 }
             } else {
-                Text(text, color = SuyuanColors.text, fontSize = 12.sp, lineHeight = 18.sp, fontFamily = if (attachment.mimeType.contains("json") || attachment.filename.endsWith(".csv", true)) FontFamily.Monospace else FontFamily.Default, modifier = Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()))
+                Text(text, color = SuyuanColors.text, fontSize = 13.sp, lineHeight = 20.sp, fontFamily = if (attachment.mimeType.contains("json") || attachment.filename.endsWith(".csv", true)) FontFamily.Monospace else FontFamily.Default, modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp))
             }
         } else {
-            Text("暂无可用预览", color = SuyuanColors.secondaryText, fontSize = 12.sp)
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Text("暂无可用预览", color = SuyuanColors.secondaryText, fontSize = 12.sp)
+            }
         }
         if (showDownload) {
             TextButton(onClick = {
@@ -1158,6 +1359,57 @@ private fun DocumentPreviewContent(
                 Text("下载")
             }
         }
+    }
+}
+
+@Composable
+private fun ZoomableBitmapPreview(
+    bitmap: ImageBitmap,
+    contentDescription: String,
+    backgroundColor: Color = Color.White,
+    contentScale: ContentScale = ContentScale.FillWidth,
+) {
+    var scale by remember(bitmap) { mutableFloatStateOf(1.08f) }
+    var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
+    var viewport by remember(bitmap) { mutableStateOf(IntSize.Zero) }
+
+    fun bounded(value: Offset, targetScale: Float): Offset {
+        val maxX = (viewport.width * (targetScale - 1f) / 2f + 48f).coerceAtLeast(48f)
+        val maxY = (viewport.height * (targetScale - 1f) / 2f + 48f).coerceAtLeast(48f)
+        return Offset(value.x.coerceIn(-maxX, maxX), value.y.coerceIn(-maxY, maxY))
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+            .onSizeChanged { viewport = it }
+            .pointerInput(bitmap) {
+                detectTransformGestures { centroid, pan, zoom, _ ->
+                    val previousScale = scale
+                    val nextScale = (scale * zoom).coerceIn(1f, 4f)
+                    val scaleChange = nextScale / previousScale
+                    val center = Offset(viewport.width / 2f, viewport.height / 2f)
+                    val nextOffset = offset + pan + (centroid - center) * (1f - scaleChange)
+                    scale = nextScale
+                    offset = bounded(nextOffset, nextScale)
+                }
+            },
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        androidx.compose.foundation.Image(
+            bitmap = bitmap,
+            contentDescription = contentDescription,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+            contentScale = contentScale,
+        )
     }
 }
 
@@ -1202,6 +1454,7 @@ private object SuyuanColors {
     val background = Color.White
     val panel = Color(0xFFF7F7F9)
     val text = Color(0xFF111111)
+    val controlIcon = Color(0xFF3C3C43)
     val secondaryText = Color(0xFF8E8E93)
     val border = Color(0xFFD2D2D7)
     val error = Color(0xFFFF3B30)
