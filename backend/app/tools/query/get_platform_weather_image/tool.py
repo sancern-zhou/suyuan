@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -620,19 +621,25 @@ class GetPlatformWeatherImageTool(LLMTool):
 
     @staticmethod
     def _find_nmc_chart(registry: DataRegistryService, *, date: str | None, time: int | str | None):
-        requested = str(time or "").strip().lower()
-        requested_date = str(date or "").replace("-", "")
+        requested = str(time or "").strip()
+        requested_date = normalize_date(date) if str(date or "").strip() else ""
+        wants_latest = requested.lower() in {"", "latest", "最新", "current", "当前"}
         for entry in registry.list_metadata(schema="nmc_weather_chart"):
             payload = registry.load_dataset(entry.data_id)
             if not isinstance(payload, dict):
                 continue
             display_time = str(payload.get("display_time") or "")
             image_url = str(payload.get("image_url") or "")
-            if requested and requested not in {"latest", "最新", "current", "当前"}:
-                if requested_date and requested_date[-4:] not in display_time.replace("/", ""):
+            if requested_date:
+                timestamp_match = re.search(r"_(\d{8})\d{6,}", image_url)
+                if timestamp_match:
+                    if timestamp_match.group(1) != requested_date:
+                        continue
+                elif requested_date[-4:] not in display_time.replace("/", ""):
                     continue
+            if not wants_latest:
                 normalized_display = display_time.replace("/", "-").replace(" ", "")
-                if requested not in display_time.lower() and requested.replace("/", "-") not in normalized_display:
+                if requested.lower() not in display_time.lower() and requested.replace("/", "-") not in normalized_display:
                     if requested not in image_url:
                         continue
             local_path = str(payload.get("local_path") or "")
@@ -640,14 +647,34 @@ class GetPlatformWeatherImageTool(LLMTool):
                 return entry, payload
         return None
 
+    @staticmethod
+    def _nmc_available_dates(registry: DataRegistryService) -> list[str]:
+        dates: set[str] = set()
+        for entry in registry.list_metadata(schema="nmc_weather_chart"):
+            payload = registry.load_dataset(entry.data_id)
+            if not isinstance(payload, dict):
+                continue
+            match = re.search(r"_(\d{8})\d{6,}", str(payload.get("image_url") or ""))
+            if match:
+                dates.add(match.group(1))
+        return sorted(dates)
+
     def _execute_nmc_weather_chart(self, *, date: str | None, time: int | str | None, download: bool):
         found = self._find_nmc_chart(data_registry, date=date, time=time)
         if not found:
+            available = self._nmc_available_dates(data_registry)
+            if available:
+                error = (
+                    f"未找到 {date or '最新'} 的 NMC 中国地面天气形势图缓存，"
+                    f"已缓存日期范围: {available[0]} ~ {available[-1]}"
+                )
+            else:
+                error = "未找到已抓取的 NMC 中国地面天气形势图"
             return {
                 "success": False, "status": "not_found",
-                "error": "未找到已抓取的 NMC 中国地面天气形势图", "data": None,
+                "error": error, "data": None,
                 "metadata": {"generator": self.name, "product": NMC_WEATHER_CHART_KEY},
-                "summary": "暂无已缓存的 NMC 天气形势图，请先运行 nmc_weather_chart_fetcher。",
+                "summary": f"{error}；nmc_weather_chart_fetcher 仅抓取最新时次，无法回填历史日期。",
             }
 
         entry, payload = found
