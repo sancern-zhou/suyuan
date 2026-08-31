@@ -72,6 +72,30 @@ grep -R "resources?presentation_type=document" dist/assets
 docker exec suyuan-nginx nginx -s reload
 ```
 
+## Android 社交 App 路由
+
+当某个分支需要给 Android App 提供对话、会话和广播收件箱能力时，Nginx 模板必须把下面两条前缀原样转发到后端：
+
+```nginx
+location ^~ /api/social/app/voice/realtime {
+    proxy_pass ${BUSINESS_UPSTREAM};
+}
+
+location ^~ /api/social/app/ {
+    proxy_pass ${BUSINESS_UPSTREAM};
+}
+```
+
+注意 `proxy_pass` 不要再追加 `/api` 或其他路径，否则 App 接口会被改写成错误地址。
+
+许昌等其他分支部署时，只需要替换对应工作树、端口、容器名和后端环境文件，保持这两条路由规则不变。改完后重建或重启对应 Nginx 容器，再用下面三条接口核对：
+
+```bash
+POST /api/social/app/auth/login
+POST /api/social/app/chat/stream
+GET  /api/social/app/push/status
+```
+
 ## 项目选择
 
 后端与前端必须使用来自 `projects/<id>/project.yaml` 的同一项目标识。构建前先校验后端读取结果：

@@ -84,8 +84,8 @@ class DocumentProcessor:
         self._unstructured = None
         self._embedding_model = None
 
-    def _html_table_to_text(self, html: str) -> str:
-        """将HTML表格转换为文本格式"""
+    def _html_table_to_markdown(self, html: str) -> str:
+        """将 HTML 表格转换为 Markdown 表格。"""
         try:
             from bs4 import BeautifulSoup
             
@@ -96,14 +96,22 @@ class DocumentProcessor:
             
             rows = []
             for tr in table.find_all('tr'):
-                cells = []
-                for td in tr.find_all(['td', 'th']):
-                    cell_text = td.get_text(strip=True)
-                    cells.append(cell_text)
+                cells = [td.get_text(" ", strip=True) for td in tr.find_all(['td', 'th'])]
                 if cells:
-                    rows.append(' | '.join(cells))
-            
-            return '\n'.join(rows)
+                    rows.append(cells)
+
+            if not rows:
+                return html
+
+            max_cols = max(len(row) for row in rows)
+            normalized_rows = [row + [" "] * (max_cols - len(row)) for row in rows]
+
+            lines = ["| " + " | ".join(normalized_rows[0]) + " |"]
+            lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+            for row in normalized_rows[1:]:
+                lines.append("| " + " | ".join(row) + " |")
+
+            return "\n".join(lines)
         except Exception as e:
             logger.warning("html_table_parse_failed", error=str(e))
             return html
@@ -503,10 +511,20 @@ class DocumentProcessor:
             if el_type == "Table":
                 text = str(el).strip()
                 # 只保留 pdfplumber 提取的表格（以 "[表格 - 第" 开头）
-                # 过滤掉 unstructured 提取的混乱表格文本
                 if text.startswith("[表格 - 第"):
                     content_parts.append(text)
-                # unstructured 识别的表格跳过
+                    continue
+
+                html = getattr(getattr(el, "metadata", None), "text_as_html", "") or ""
+                if html:
+                    table_text = self._html_table_to_markdown(html).strip()
+                    if table_text:
+                        content_parts.append(f"[表格]\n{table_text}")
+                        continue
+
+                # unstructured 识别的表格仍应保留，宁可保留扁平文本，也不要静默丢失
+                if text:
+                    content_parts.append(f"[表格]\n{text}")
             else:
                 text = str(el).strip()
                 if text:
@@ -769,8 +787,21 @@ class DocumentProcessor:
 
         except Exception as e:
             logger.error("llm_chunk_failed", error=str(e), llm_mode=llm_mode)
-            logger.warning("falling_back_to_sentence_chunking")
-            return self._chunk_sync(content, "sentence", chunk_size, chunk_size // 4)
+            fallback_strategy = self._choose_fallback_chunk_strategy(content)
+            logger.warning(
+                "falling_back_to_deterministic_chunking",
+                fallback_strategy=fallback_strategy,
+            )
+            fallback_chunks = self._chunk_sync(
+                content,
+                fallback_strategy,
+                chunk_size,
+                chunk_size // 4,
+            )
+            return self._split_large_chunks(
+                fallback_chunks,
+                max_size=max(1800, chunk_size),
+            )
 
     async def _llm_chunk_single_pass(
         self,
@@ -1456,8 +1487,12 @@ class DocumentProcessor:
     def _split_large_chunk_content(self, content: str, max_size: int) -> List[str]:
         """确定性拆分单个大chunk，优先保留章节/条款/表格上下文。"""
         lines = [line.rstrip() for line in content.splitlines()]
-        table_lines = [line for line in lines if line.strip().startswith("|") and line.strip().endswith("|")]
-        if len(table_lines) >= 4:
+        if any(line.strip().startswith("[表格") for line in lines):
+            if self._has_table_like_lines(lines):
+                return self._split_markdown_table_chunk(content, max_size=max_size)
+            return [content]
+
+        if self._has_table_like_lines(lines):
             return self._split_markdown_table_chunk(content, max_size=max_size)
 
         normalized = re.sub(
@@ -1489,29 +1524,49 @@ class DocumentProcessor:
         return parts or [content]
 
     def _split_markdown_table_chunk(self, content: str, max_size: int) -> List[str]:
-        """拆长Markdown表格；每段重复表名前缀和表头，保证单块可读。"""
+        """拆长表格；每段重复表名前缀和表头，保证单块可读。"""
         lines = [line.rstrip() for line in content.splitlines() if line.strip()]
-        first_table_idx = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), 0)
-        prefix = "\n".join(lines[:first_table_idx]).strip()
-        table = lines[first_table_idx:]
-        if len(table) < 3:
+        if len(lines) < 2:
             return [content[i:i + max_size] for i in range(0, len(content), max_size)]
 
-        header = table[:2]
-        rows = table[2:]
+        prefix: List[str] = []
+        table_start = 0
+        while table_start < len(lines) and not self._looks_like_table_row(lines[table_start]):
+            prefix.append(lines[table_start])
+            table_start += 1
+
+        table = lines[table_start:]
+        if len(table) < 2:
+            return [content[i:i + max_size] for i in range(0, len(content), max_size)]
+
+        has_explicit_separator = len(table) >= 2 and self._is_table_separator_row(table[1])
+        if has_explicit_separator:
+            header = table[:2]
+            rows = table[2:]
+            build_lines = lambda rows_subset: ([*prefix] if prefix else []) + header + rows_subset
+        else:
+            header_row = table[0]
+            separator_row = self._build_table_separator_row(header_row)
+            rows = table[1:]
+            build_lines = lambda rows_subset: ([*prefix] if prefix else []) + [header_row, separator_row] + rows_subset
+
         parts = []
         current_rows = []
         for row in rows:
-            candidate_lines = ([prefix] if prefix else []) + header + current_rows + [row]
+            candidate_lines = build_lines([*current_rows, row])
             candidate = "\n".join(candidate_lines).strip()
             if len(candidate) <= max_size:
                 current_rows.append(row)
                 continue
             if current_rows:
-                parts.append("\n".join(([prefix] if prefix else []) + header + current_rows).strip())
-            current_rows = [row]
+                parts.append("\n".join(build_lines(current_rows)).strip())
+                current_rows = []
+            if len("\n".join(build_lines([row])).strip()) <= max_size:
+                current_rows = [row]
+            else:
+                parts.append("\n".join(build_lines([row])).strip())
         if current_rows:
-            parts.append("\n".join(([prefix] if prefix else []) + header + current_rows).strip())
+            parts.append("\n".join(build_lines(current_rows)).strip())
         return parts or [content]
 
     def _merge_small_chunks(self, chunks: List[Dict[str, Any]], min_size: int = 150) -> List[Dict[str, Any]]:
@@ -1524,6 +1579,20 @@ class DocumentProcessor:
         
         for chunk in chunks:
             content_len = len(chunk.get("content", ""))
+            is_table_chunk = self._is_table_chunk(chunk)
+
+            if is_table_chunk:
+                if buffer:
+                    if len(buffer.get("content", "")) >= min_size:
+                        merged.append(buffer)
+                    elif merged and not self._is_table_chunk(merged[-1]):
+                        merged[-1]["content"] += "\n\n" + buffer["content"]
+                        merged[-1]["original_content"] = merged[-1]["content"]
+                    else:
+                        merged.append(buffer)
+                    buffer = None
+                merged.append(chunk)
+                continue
             
             if content_len < min_size:
                 if buffer:
@@ -1545,8 +1614,12 @@ class DocumentProcessor:
                         merged.append(buffer)
                     else:
                         # buffer太小，合并到当前chunk
-                        chunk["content"] = buffer["content"] + "\n\n" + chunk["content"]
-                        chunk["original_content"] = chunk["content"]
+                        if merged and not self._is_table_chunk(merged[-1]):
+                            merged[-1]["content"] += "\n\n" + buffer["content"]
+                            merged[-1]["original_content"] = merged[-1]["content"]
+                        else:
+                            chunk["content"] = buffer["content"] + "\n\n" + chunk["content"]
+                            chunk["original_content"] = chunk["content"]
                     buffer = None
                 merged.append(chunk)
         
@@ -1560,6 +1633,63 @@ class DocumentProcessor:
                 merged.append(buffer)
         
         return merged
+
+    def _choose_fallback_chunk_strategy(self, content: str) -> str:
+        """LLM 失败时选择更保守的确定性分块策略。"""
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if not lines:
+            return "sentence"
+
+        has_table_markers = any(
+            line.startswith("[表格") or self._looks_like_table_row(line)
+            for line in lines
+        )
+        has_markdown_headings = any(re.match(r"#{1,6}\s+\S", line) for line in lines[:200])
+        has_structured_numbering = any(
+            re.match(r"(?:第[一二三四五六七八九十百]+[章节条]|[一二三四五六七八九十]+、|\d+(?:\.\d+)*\s+)", line)
+            for line in lines[:200]
+        )
+        if has_table_markers or has_markdown_headings or has_structured_numbering:
+            return "markdown"
+        return "sentence"
+
+    @staticmethod
+    def _is_table_separator_row(line: str) -> bool:
+        cells = [cell.strip().replace(" ", "") for cell in line.strip().strip("|").split("|")]
+        cells = [cell for cell in cells if cell]
+        return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+    @staticmethod
+    def _build_table_separator_row(header_row: str) -> str:
+        columns = [cell.strip() for cell in header_row.strip().strip("|").split("|")]
+        column_count = max(1, len([col for col in columns if col]) or len(columns))
+        return "| " + " | ".join(["---"] * column_count) + " |"
+
+    def _looks_like_table_row(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("[表格"):
+            return False
+        if stripped.startswith("|") and stripped.endswith("|"):
+            return True
+        return "|" in stripped and not self._is_table_separator_row(stripped)
+
+    def _has_table_like_lines(self, lines: List[str]) -> bool:
+        table_like_lines = [line for line in lines if self._looks_like_table_row(line)]
+        if any(line.strip().startswith("[表格") for line in lines):
+            return len(table_like_lines) >= 1
+        return len(table_like_lines) >= 3
+
+    def _is_table_chunk(self, chunk: Dict[str, Any]) -> bool:
+        metadata = chunk.get("metadata") or {}
+        if str(metadata.get("type", "")).lower() == "table":
+            return True
+        content = str(chunk.get("content") or "").strip()
+        if not content:
+            return False
+        if content.startswith("[表格"):
+            return True
+        lines = [line for line in content.splitlines() if line.strip()]
+        return self._has_table_like_lines(lines)
 
     def _split_into_segments(self, content: str, max_chars: int) -> List[str]:
         """将长文档预分割成较小的片段"""
