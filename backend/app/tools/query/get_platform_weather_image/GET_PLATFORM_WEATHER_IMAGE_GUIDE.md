@@ -39,18 +39,19 @@
 | `grapes_gfs_radar_reflectivity` | GRAPES_GFS(雷达组合反射率)预报图 | `2112` | 从 `003` 到 `240`，每3小时一张 |
 | `national_max_temperature_forecast` | 中央气象台全国气温预报图（最高气温） | `2114` | 从 `024` 到 `240`，每24小时一张 |
 | `national_min_temperature_forecast` | 中央气象台全国气温预报图（最低气温） | `2114` | 从 `024` 到 `240`，每24小时一张 |
-| `nmc_surface_weather_chart` | 中国地面天气形势图 | NMC 抓取缓存 | `time` 填 `latest`、`最新`，或页面显示时间如 `08/08 20:00` |
+| `nmc_surface_weather_chart` | 中国地面天气形势图 | NMC 抓取缓存 | `time` 填 `latest`、`最新`，或页面显示时间如 `08/08 20:00`；传 `date` 时只返回该日期的缓存图 |
 
-NMC 天气形势图示例：
+NMC 天气形势图示例（取 2026-08-08 当天最新一张）：
 
 ```json
 {
   "product": "nmc_surface_weather_chart",
+  "date": "20260808",
   "time": "latest"
 }
 ```
 
-该产品读取 `nmc_weather_chart_fetcher` 已缓存的图片，不直接套用环境大数据平台的固定 URL 模板。
+该产品读取 `nmc_weather_chart_fetcher` 已缓存的图片，不直接套用环境大数据平台的固定 URL 模板。抓取器只保存运行以来的最新时次，无法回填历史日期；请求未缓存的日期会返回 `not_found`，`summary` 中会给出当前已缓存的日期范围。
 
 ## 调用示例
 
