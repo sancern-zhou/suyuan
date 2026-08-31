@@ -88,7 +88,6 @@ PyMuPDF==1.26.7  # PDF rendering, font inspection, and OCR preprocessing
 pdfplumber==0.11.9  # PDF text and table extraction
 pdfminer.six==20251230  # Fast PDF text-layer extraction used by Unstructured and pdfplumber
 pdf2image==1.17.0  # PDF page rasterization through Poppler
-pytesseract==0.3.13  # OCR integration through the Tesseract executable
 Pillow==12.0.0  # Image processing for Office, reports, OCR, and visualizations
 unstructured==0.22.32  # Knowledge-base parsing for non-PDF document formats
 unstructured-client==0.32.4  # Keep Unstructured compatible with the pinned HTTP/Pydantic stack

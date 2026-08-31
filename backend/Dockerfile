@@ -22,8 +22,6 @@ RUN apt-get update && apt-get install -y \
     nodejs \
     npm \
     poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-chi-sim \
     unixodbc \
     unixodbc-dev \
     && curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
