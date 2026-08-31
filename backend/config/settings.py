@@ -582,14 +582,15 @@ class Settings(BaseSettings):
     ops_attachment_base_url: Optional[str] = Field(default=None, description="Base URL used to resolve /WebFiles attachments")
     attachment_base_url: Optional[str] = Field(default=None, description="Fallback attachment base URL")
 
-    # 阿里云OCR配置
-    aliyun_ocr_access_key_id: Optional[str] = Field(
+    # 阿里云云市场 OCR 配置
+    aliyun_ocr_app_code: Optional[str] = Field(
         default=None,
-        description="Alibaba Cloud OCR AccessKey ID"
+        description="Alibaba Cloud market OCR AppCode"
     )
-    aliyun_ocr_access_key_secret: Optional[str] = Field(
-        default=None,
-        description="Alibaba Cloud OCR AccessKey Secret"
+    knowledge_base_ocr_min_text_length: int = Field(
+        default=600,
+        ge=0,
+        description="Force OCR when PDF fast-parse text length is below this threshold"
     )
 
     # Redis Configuration

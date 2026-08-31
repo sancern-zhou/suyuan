@@ -459,21 +459,27 @@ def test_ocr_configuration_follows_global_bailian_model(monkeypatch):
     assert ocr_adapter._resolve_bailian_model("flow_visual") == "global-auto-model"
 
 
-def test_visual_runtimes_use_global_bailian_model_only():
-    runtime_files = [
+def test_visual_runtimes_use_expected_ocr_backend():
+    aliyun_runtime_files = [
         "backend/app/knowledge_base/document_processor.py",
-        "backend/app/services/ops_audit/semantic/ocr_adapter.py",
-        "backend/app/tools/utility/analyze_image_tool.py",
         "backend/app/tools/utility/parse_pdf_tool.py",
     ]
+    bailian_runtime_files = [
+        "backend/app/services/ops_audit/semantic/ocr_adapter.py",
+        "backend/app/tools/utility/analyze_image_tool.py",
+    ]
 
-    for relative_path in runtime_files:
+    for relative_path in aliyun_runtime_files:
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "ALIYUN_OCR_APP_CODE" in source or "aliyun_ocr" in source, relative_path
+        assert "KNOWLEDGE_BASE_OCR_PROVIDER" not in source, relative_path
+        assert "KNOWLEDGE_BASE_OCR_MODEL" not in source, relative_path
         assert "bailian_vision_model" not in source, relative_path
         assert "BAILIAN_VISION_MODEL" not in source, relative_path
-        assert (
-            "bailian_model" in source or "use_provider_model" in source
-        ), relative_path
+
+    for relative_path in bailian_runtime_files:
+        source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "bailian_model" in source or "use_provider_model" in source, relative_path
 
 
 def test_obsolete_batch_ozone_report_script_is_removed():
@@ -702,10 +708,8 @@ async def test_document_processor_uses_configured_model_tier(monkeypatch):
 def test_all_qwen_visual_runtimes_are_migrated_to_bailian():
     runtime_files = [
         "backend/app/fetchers/quick_trace/quick_trace_fetcher.py",
-        "backend/app/knowledge_base/document_processor.py",
         "backend/app/services/tenders/llm.py",
         "backend/app/tools/utility/analyze_image_tool.py",
-        "backend/app/tools/utility/parse_pdf_tool.py",
     ]
     for relative_path in runtime_files:
         source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")

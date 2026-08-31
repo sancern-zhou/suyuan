@@ -41,7 +41,7 @@ echo "========================================="
 if [ "$OS" == "linux" ]; then
     echo "安装poppler-utils（Linux）..."
     sudo apt-get update
-    sudo apt-get install -y poppler-utils tesseract-ocr libtesseract-dev
+    sudo apt-get install -y poppler-utils
 
     if [ $? -eq 0 ]; then
         echo "✅ 系统依赖安装成功"
@@ -51,7 +51,7 @@ if [ "$OS" == "linux" ]; then
 
 elif [ "$OS" == "macos" ]; then
     echo "安装poppler（macOS）..."
-    brew install poppler tesseract
+    brew install poppler
 
     if [ $? -eq 0 ]; then
         echo "✅ 系统依赖安装成功"
@@ -62,7 +62,6 @@ elif [ "$OS" == "macos" ]; then
 else
     echo "Windows系统请手动安装："
     echo "1. 下载poppler-windows: https://github.com/oschwartz10612/poppler-windows/releases/"
-    echo "2. 下载Tesseract: https://github.com/UB-Mannheim/tesseract/wiki"
 fi
 
 echo ""

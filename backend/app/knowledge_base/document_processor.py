@@ -19,8 +19,10 @@ import re
 from typing import List, Dict, Any, Optional, Literal
 from pathlib import Path
 from enum import Enum
+import httpx
 import structlog
 from config.settings import settings
+from app.services.aliyun_ocr import call_aliyun_ocr, resolve_aliyun_ocr_app_code
 from app.services.llm_service import llm_service
 
 logger = structlog.get_logger()
@@ -72,15 +74,9 @@ class DocumentProcessor:
         ".rtf": "rtf"
     }
 
-    # Scanned-document OCR is handled by the configured multimodal model.  The
-    # production default is the same vision-capable model used by the main LLM
-    # route; it must not depend on a local Tesseract executable or on the
-    # separate Bailian OCR endpoint.
-    OCR_PROVIDER = os.getenv("KNOWLEDGE_BASE_OCR_PROVIDER", "doubao").strip().lower()
-    OCR_MODEL = os.getenv(
-        "KNOWLEDGE_BASE_OCR_MODEL",
-        getattr(settings, "doubao_model", "gpt-5.6-luna"),
-    ).strip()
+    OCR_PROVIDER = "aliyun_market"
+    OCR_MODEL = "ocrservice/advanced"
+    OCR_FORCE_MIN_TEXT_LENGTH = int(getattr(settings, "knowledge_base_ocr_min_text_length", 600) or 600)
     OCR_MAX_CONCURRENT = int(os.getenv("OCR_MAX_CONCURRENT", "2"))
     OCR_TIMEOUT = int(os.getenv("OCR_TIMEOUT", "120"))
     
@@ -184,7 +180,7 @@ class DocumentProcessor:
             logger.error("pdf_to_images_failed", error=str(e), file_path=file_path)
             raise
 
-    # OCR 提示词（共享多模态模型）
+    # OCR 提示词（保留给回归测试与故障排查，不再直接发送给 OCR 接口）
     OCR_PROMPT_DEFAULT = """完整识别当前页面，并按页面视觉布局恢复可阅读的 Markdown 文本。
 
 内容保真要求：
@@ -203,69 +199,36 @@ class DocumentProcessor:
         image_bytes: bytes,
         page_num: int,
         prompt: str = None,
+        client: httpx.AsyncClient | None = None,
         max_retries: int = 3
     ) -> tuple:
         """
-        调用多模态模型处理单张图片。
-
-        The image is sent through the shared LLM service so the configured
-        provider/model (by default ``doubao/gpt-5.6-luna``) is used.  This is
-        intentionally separate from the legacy Bailian OCR helper: the
-        knowledge-base scan path must use the same multimodal model as the
-        rest of the application.
+        调用阿里云云市场高精版 OCR 处理单张图片。
 
         Args:
             image_bytes: 图片字节数据
             page_num: 页码
-            prompt: 提示词
+            prompt: 保留兼容参数，当前不再发送给 OCR 接口
+            client: 可复用的 HTTP 客户端
             max_retries: 最大重试次数
 
         Returns:
             (page_num, extracted_text)
         """
-        import base64
         import asyncio
-        
-        # 使用默认的 OCR 提示词
-        if prompt is None:
-            prompt = self.OCR_PROMPT_DEFAULT
-        
-        base64_image = base64.b64encode(image_bytes).decode("ascii")
+
+        del prompt
         
         for attempt in range(max_retries):
             try:
-                with llm_service.use_provider_model(self.OCR_PROVIDER, self.OCR_MODEL):
-                    response = await llm_service.chat_anthropic(
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "image",
-                                        "source": {
-                                            "type": "base64",
-                                            "media_type": "image/png",
-                                            "data": base64_image,
-                                        },
-                                    },
-                                    {"type": "text", "text": prompt},
-                                ],
-                            }
-                        ],
-                        max_tokens=7000,
-                        temperature=0.1,
-                        system=(
-                            "你是知识库扫描文档 OCR 与版式恢复助手。以页面图像为唯一依据，完整转写并修复明显的错误断行、"
-                            "表格错位和公式排版；保持所有原文信息、数值和符号不变，禁止总结、改写、删减或猜测。直接输出结果，不要解释。"
-                        ),
-                    )
-                content = "\n".join(
-                    str(getattr(block, "text", ""))
-                    for block in response.get("content", [])
-                    if getattr(block, "type", None) == "text"
-                ).strip()
+                content, _ = await call_aliyun_ocr(
+                    image_bytes,
+                    app_code=resolve_aliyun_ocr_app_code(),
+                    timeout_seconds=self.OCR_TIMEOUT,
+                    client=client,
+                )
                 if not content:
-                    raise RuntimeError("multimodal OCR returned no text")
+                    raise RuntimeError("Aliyun OCR returned no text")
                 content = self._clean_repeated_substrings(content)
                 logger.debug(
                     "ocr_page_success",
@@ -308,7 +271,7 @@ class DocumentProcessor:
 
     async def _process_pdf_with_ocr(self, file_path: str) -> str:
         """
-        使用共享多模态模型处理扫描件 PDF
+        使用阿里云云市场 OCR 处理扫描件 PDF
         
         Args:
             file_path: PDF 文件路径
@@ -328,14 +291,15 @@ class DocumentProcessor:
         
         # 2. 使用信号量限制并发
         semaphore = asyncio.Semaphore(self.OCR_MAX_CONCURRENT)
-        
-        async def process_with_semaphore(page_num: int, img_bytes: bytes):
-            async with semaphore:
-                return await self._call_ocr_api_single(img_bytes, page_num)
-        
-        # 3. 并发调用 OCR
-        tasks = [process_with_semaphore(page_num, img_bytes) for page_num, img_bytes in images]
-        results = await asyncio.gather(*tasks)
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(self.OCR_TIMEOUT)) as client:
+            async def process_with_semaphore(page_num: int, img_bytes: bytes):
+                async with semaphore:
+                    return await self._call_ocr_api_single(img_bytes, page_num, client=client)
+
+            # 3. 并发调用 OCR
+            tasks = [process_with_semaphore(page_num, img_bytes) for page_num, img_bytes in images]
+            results = await asyncio.gather(*tasks)
         
         # 4. 按页码排序合并
         results.sort(key=lambda x: x[0])
@@ -417,14 +381,14 @@ class DocumentProcessor:
         
         file_ext = Path(file_path).suffix.lower()
         
-        # PDF 文件特殊处理：检测扫描件并使用逐页多模态 OCR
+        # PDF 文件特殊处理：检测扫描件并使用逐页阿里云 OCR
         if file_ext == ".pdf":
             # 先尝试 fast 策略提取文本
             content, is_scanned = await asyncio.to_thread(self._try_fast_pdf_parse, file_path)
             
             if is_scanned:
                 logger.info(
-                    "pdf_is_scanned_using_multimodal_ocr",
+                    "pdf_is_scanned_using_aliyun_ocr",
                     file_path=file_path,
                     provider=self.OCR_PROVIDER,
                     model=self.OCR_MODEL,
@@ -458,19 +422,28 @@ class DocumentProcessor:
                     if page_text:
                         content_parts.append(page_text)
 
-            # 检查是否提取到内容
-            text_content = "\n\n".join(content_parts)
-            
-            if not text_content and not tables_text:
-                # 没有文本也没有表格，是扫描件
-                logger.info("pdf_detected_as_scanned", file_path=file_path)
-                return ("", True)
-
             if tables_text:
                 content_parts.extend(tables_text)
 
             content = "\n\n".join(content_parts)
-            
+            normalized_content_length = len(re.sub(r"\s+", "", content))
+
+            if normalized_content_length < self.OCR_FORCE_MIN_TEXT_LENGTH:
+                logger.info(
+                    "pdf_fast_parse_below_ocr_threshold",
+                    file_path=file_path,
+                    content_length=normalized_content_length,
+                    threshold=self.OCR_FORCE_MIN_TEXT_LENGTH,
+                    page_count=page_count,
+                    table_count=len(tables_text),
+                )
+                return ("", True)
+
+            if not content.strip():
+                # 没有文本也没有表格，是扫描件
+                logger.info("pdf_detected_as_scanned", file_path=file_path)
+                return ("", True)
+
             logger.info(
                 "document_parsed",
                 file_path=file_path,
