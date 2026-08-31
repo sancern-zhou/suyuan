@@ -329,6 +329,13 @@ class ChannelManager:
                 if channel:
                     logger.info("Channel found, sending message", channel=msg.channel)
                     await self._send_with_retry(channel, msg)
+                elif msg.channel == "app":
+                    # App 用户的正式投递是广播 inbox + 推送，总线消息仅为
+                    # 遗留发布路径，这里不作为错误处理
+                    logger.info(
+                        "App channel message delivered via broadcast inbox",
+                        chat_id=msg.chat_id,
+                    )
                 else:
                     logger.error("Unknown channel - message not sent",
                                   channel=msg.channel,

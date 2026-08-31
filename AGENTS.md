@@ -1,4 +1,4 @@
- 项目的运行环境是 conda 环境 `backend_py311`（当前服务器为 `/root/miniconda3/envs/backend_py311`，其他部署按实际 conda 路径激活）。
+ 项目的运行环境是 conda 环境 `backend_py311`（当前服务器实际启动路径为 `/root/.codex/miniconda3/envs/backend_py311`，其他部署按实际 conda 路径激活）。
 
 > 注：本文中带「本机」标注的路径/容器名属于当前服务器部署细节，仅作示例；其他部署环境以实际值为准，其余规范与路径均为仓库相对路径，通用适用。
 

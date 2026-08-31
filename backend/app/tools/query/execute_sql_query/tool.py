@@ -36,6 +36,8 @@ MONITORING_SQL_TABLES = [
     'dbo.OpenMeteoAirQualityForecast72h',
     'XuchangNmcHourlyWeatherForecast',
     'dbo.XuchangNmcHourlyWeatherForecast',
+    'XuchangWeatherComDailyForecast',
+    'dbo.XuchangWeatherComDailyForecast',
     'dat_station_day',
     'dat_station_hour',
     'dat_weather_hour',
@@ -60,6 +62,34 @@ MONITORING_SQL_TABLES = [
     'information_schema.tables',
 ]
 
+# 许昌问数只开放当前监测与预报业务需要的表。其他项目继续使用
+# MONITORING_SQL_TABLES，避免项目专用表目录污染共享工具的 schema。
+XUCHANG_MONITORING_SQL_TABLES = [
+    'city_aqi_publish_history',
+    'CityDayAQIPublishHistory',
+    'CityAQIPublishHistory',
+    'CurrentAirQuality',
+    'XuchangNmcHourlyWeatherForecast',
+    'dbo.XuchangNmcHourlyWeatherForecast',
+    'XuchangWeatherComDailyForecast',
+    'dbo.XuchangWeatherComDailyForecast',
+    'dat_station_day',
+    'dat_station_hour',
+    'dat_zhongda_station_minute',
+    'dat_zhongda_station_hour',
+    'dat_zhongda_station_day',
+    'dat_zhongda_city_hour',
+    'dat_zhongda_city_day',
+    'HenanCityAccumulateRanking',
+    'WeatherForecast7Day',
+    'city_168_statistics_new_standard',
+    'city_168_statistics_old_standard',
+    'province_statistics_new_standard',
+    'province_statistics_old_standard',
+    'information_schema.columns',
+    'information_schema.tables',
+]
+
 
 AIR_QUALITY_SCHEMA_GUIDE = (
     "\n\n【高频空气质量表字段契约】"
@@ -76,11 +106,11 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "dat_zhongda_city_day）两个来源时，优先查询中大平台表（dat_zhongda_*）——中大源为审核后数据，"
     "准确性更高。仅当中大表不覆盖所需时间（如城市聚合滞后约1天）或字段缺失时，再用通用发布表补充。"
     "站点5分钟数据（dat_zhongda_station_minute）为中大独有，无此冲突。"
-    "\n【预报数据源优先级】查询未来气象预报（温度、湿度、风向风速、气压、降水概率、天气现象）时，"
-    "优先查询NMC气象预报数据（XuchangNmcHourlyWeatherForecast，中央气象台官方预报，7天×3小时间隔）；"
-    "Open-Meteo预报数据（OpenMeteoAirQualityForecast72h）作为补充，仅当NMC表不覆盖所需时间、"
-    "需要逐1小时更细时间分辨率、或需要空气质量要素（AQI、污染物浓度）时使用——"
-    "注意Open-Meteo表不含温湿风等气象要素，禁止把它当作气象预报来源。"
+    "\n【预报数据源优先级】查询未来逐小时气象预报（温度、湿度、风向风速、气压、降水概率、天气现象）时，"
+    "优先查询NMC逐小时气象预报（XuchangNmcHourlyWeatherForecast，中央气象台官方预报，7天×3小时间隔）；"
+    "中国天气网日预报归入NMC同源数据。"
+    "查询许昌城区1-15日日预报时必须只查询XuchangWeatherComDailyForecast，使用city_code='101180401'，"
+    "该表已经包含温度、天气、风向和风力，不要追加逐小时NMC表、空气质量预报表、execute_python或图表；"
     "\n- CurrentAirQuality（城市当前实况及今明两天预报摘要）："
     "城市字段为CityID，按行政区代码筛选：CityID = '{city_code}'；"
     "没有cityname、Area、CityCode，不得把城市名称写入CityID。"
@@ -175,6 +205,9 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "示例：SELECT TOP 56 forecast_time, temperature, humidity, pressure, wind_direction, "
     "wind_speed, precipitation_probability, weather_text FROM dbo.XuchangNmcHourlyWeatherForecast "
     "WHERE city_code = '{city_code}' AND forecast_time >= '2026-08-30 11:00' ORDER BY forecast_time。"
+    "\n- XuchangWeatherComDailyForecast（中国天气网许昌1-15日日气象预报）："
+    "按city_code='101180401'（许昌城区）筛选，forecast_date为预报日期；字段包括weather_text、temp_max、temp_min、"
+    "wind_direction_day、wind_direction_night、wind_force、source_update_time和fetched_at。"
 )
 
 
@@ -903,7 +936,21 @@ class BaseSQLQueryTool(LLMTool):
 class ExecuteSQLQueryTool(BaseSQLQueryTool):
     """问数/监测数据专用SQL查询工具。"""
 
-    def __init__(self):
+    def __init__(self, project_id: str | None = None):
+        project_id = project_id or ""
+        is_xuchang = project_id == "xuchang"
+        allowed_tables = list(XUCHANG_MONITORING_SQL_TABLES if is_xuchang else MONITORING_SQL_TABLES)
+        if project_id == "xuchang":
+            allowed_tables = [
+                table for table in allowed_tables
+                if table.lower() not in {"openmeteോairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
+            ]
+        if project_id == "xuchang":
+            allowed_tables = [
+                table for table in allowed_tables
+                if table.lower() not in {"openmeteoairqualityforecast72h", "dbo.openmeteoairqualityforecast72h"}
+            ]
+        schema_guide = AIR_QUALITY_SCHEMA_GUIDE
         schema_description = (
             "监测数据SQL Server查询工具。支持二选一：describe_table查看表结构，或sql执行SELECT查询。"
             "高频表优先使用下方已确认的字段契约直接生成SQL；其他表字段不确定时再用describe_table动态查询。"
@@ -914,7 +961,6 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n【XcAiDb数据库-空气质量】"
             "\n- WeatherForecast7Day：7天空气质量预报（全国319城，含MinAqi/MaxAqi/MaxPollution/WeatherCondition/Temperature/WindLevel/WindDirection/TimePoint）"
             "\n- XuchangNmcHourlyWeatherForecast：NMC中央气象台未来7天×3小时间隔气象预报（温/湿/风/气压/降水概率/天气现象，气象预报优先源）"
-            "\n- OpenMeteoAirQualityForecast72h：Open-Meteo未来72小时空气质量预报明细（预报补充源，不含气象要素）"
             "\n- CityDayAQIPublishHistory：城市日空气质量历史数据（次选，优先中大表）"
             "\n- CityAQIPublishHistory：城市小时空气质量历史数据（次选，优先中大表）"
             "\n- CurrentAirQuality：当前空气质量"
@@ -933,14 +979,32 @@ class ExecuteSQLQueryTool(BaseSQLQueryTool):
             "\n- quality_control_records：质控例行检查记录"
             "\n- BSD_STATION：站点信息表（含站点ID/名称/代码/区域/经纬度/地址）"
             "\n- analysis_history：分析历史记录"
-            + AIR_QUALITY_SCHEMA_GUIDE
+            + schema_guide
             + "\n\n提示：使用describe_table可查看白名单表的完整字段结构。运维表单请使用execute_ops_sql_query。"
         )
+        if is_xuchang:
+            schema_description = (
+                schema_description.split("\n\n常用表说明", 1)[0]
+                + "\n\n常用表说明（许昌监测与预报数据）："
+                "\n- WeatherForecast7Day：7天空气质量预报"
+                "\n- XuchangNmcHourlyWeatherForecast：NMC中央气象台未来7天逐3小时气象预报"
+                "\n- XuchangWeatherComDailyForecast：中国天气网许昌城区1-15日日气象预报"
+                "\n- CurrentAirQuality：许昌当前空气质量及今明两天预报摘要"
+                "\n- CityAQIPublishHistory/CityDayAQIPublishHistory：城市小时/日空气质量历史"
+                "\n- dat_zhongda_station_minute/dat_zhongda_station_hour/dat_zhongda_station_day：中大平台站点数据"
+                "\n- dat_zhongda_city_hour/dat_zhongda_city_day：中大平台城市数据"
+                "\n- dat_station_hour/dat_station_day：通用站点数据（中大表缺失时补充）"
+                "\n- HenanCityAccumulateRanking：河南省城市月/年累计空气质量排名"
+                "\n- city_168_statistics_new_standard/city_168_statistics_old_standard：168城市统计"
+                "\n- province_statistics_new_standard/province_statistics_old_standard：省级空气质量统计"
+                + schema_guide
+                + "\n\n提示：使用describe_table可查看白名单表的完整字段结构。"
+            )
         super().__init__(
             tool_name="execute_sql_query",
             tool_description="Execute monitoring SQL queries on SQL Server database or get table structure",
             schema_description=schema_description,
-            allowed_tables=MONITORING_SQL_TABLES,
+            allowed_tables=allowed_tables,
             default_database="XcAiDb",
         )
 

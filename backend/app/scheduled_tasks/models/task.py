@@ -14,6 +14,7 @@ class ScheduleType(str, Enum):
     EVERY_2H = "every_2h"        # 每2小时
     EVERY_30MIN = "every_30min"  # 每30分钟
     MONTHLY_1ST_7AM = "monthly_1st_7am"  # 每月1日早上7点
+    WEEKLY_MONDAY_8AM = "weekly_monday_8am"  # 每周一早上8点
 
     # 灵活类型
     ONCE = "once"                # 一次性任务（需指定run_at）

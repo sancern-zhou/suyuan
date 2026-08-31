@@ -27,6 +27,7 @@ class SimpleScheduler:
         ScheduleType.EVERY_2H: {"hour": "*/2", "minute": 0},   # 每2小时
         ScheduleType.EVERY_30MIN: {"minute": "*/30"},          # 每30分钟
         ScheduleType.MONTHLY_1ST_7AM: {"day": 1, "hour": 7, "minute": 0},  # 每月1日早上7点
+        ScheduleType.WEEKLY_MONDAY_8AM: {"day_of_week": "mon", "hour": 8, "minute": 0},
     }
 
     MAX_CONCURRENT_TASKS = 3  # 最多3个并发任务

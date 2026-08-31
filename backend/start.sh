@@ -12,7 +12,7 @@ echo "=========================================="
 echo ""
 
 # Use the project conda environment.
-CONDA_ENV_PATH="${CONDA_ENV_PATH:-/root/miniconda3/envs/backend_py311}"
+CONDA_ENV_PATH="${CONDA_ENV_PATH:-/root/.codex/miniconda3/envs/backend_py311}"
 PYTHON_BIN="${CONDA_ENV_PATH}/bin/python"
 
 if [ ! -x "${PYTHON_BIN}" ]; then

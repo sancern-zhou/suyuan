@@ -19,16 +19,15 @@ from app.integrations.xcai_station_sql import xcai_connection_string
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 XUCHANG_CITY = "许昌市"
 XUCHANG_CITY_AREA_CODE = "411000"
-XUCHANG_NEARBY_CITIES = ("郑州市", "开封市", "周口市", "漯河市", "平顶山市")
-# 场景一告警只需要许昌气象站的实况，避免无关站点数据放大证据包。
+# 场景一告警只需要许昌本地站点和许昌气象站实况，避免无关区域数据放大证据包。
 NMC_STATIONS = {"ZzMTA": "许昌"}
 POLLUTANT_COLUMNS = {"PM2.5": "pm25", "O3": "o3", "NOX": "no2"}
 AIR_QUALITY_LOOKBACK_HOURS = 12
+OBSERVED_WEATHER_LOOKBACK_HOURS = 3
 CALM_WIND_THRESHOLD_MS = 1.5
-# NMC 城市预报为 3 小时间隔、覆盖未来 7 天；告警时间 ±6h 窗口内必能
-# 找到最近的预报槽位（xuchang_nmc_hourly_forecast_fetcher 每小时刷新）。
+# NMC 城市预报为 3 小时间隔；告警时刻后 3 小时内应能找到最近槽位。
 NMC_FORECAST_TABLE = "XuchangNmcHourlyWeatherForecast"
-NMC_FORECAST_WINDOW_HOURS = 6
+NMC_FORECAST_LOOKAHEAD_HOURS = 3
 
 
 def _event_hour(value: str) -> datetime:
@@ -269,54 +268,6 @@ def _station_5min_indicators(alert: dict[str, Any], rows: list[dict[str, Any]]) 
     }
 
 
-def _regional_indicators(
-    city_rows: list[dict[str, Any]], pollutant: str, event_hour: datetime
-) -> dict[str, Any]:
-    field = POLLUTANT_COLUMNS.get(pollutant)
-    if not field:
-        return {"status": "unavailable", "reason": "unsupported_pollutant"}
-    by_city = {
-        city: _series_by_time((row for row in city_rows if row.get("city") == city), field)
-        for city in (XUCHANG_CITY, *XUCHANG_NEARBY_CITIES)
-    }
-    target = by_city[XUCHANG_CITY]
-    comparisons = []
-    for city in XUCHANG_NEARBY_CITIES:
-        nearby = by_city[city]
-        lag_results = []
-        for nearby_lead_hours in range(-3, 4):
-            pairs = [
-                (target_value, nearby.get(hour - timedelta(hours=nearby_lead_hours)))
-                for hour, target_value in target.items()
-            ]
-            valid = [(left, right) for left, right in pairs if right is not None]
-            correlation = _pearson(
-                [left for left, _ in valid], [right for _, right in valid]
-            )
-            if correlation is not None:
-                lag_results.append({
-                    "nearby_lead_hours": nearby_lead_hours,
-                    "correlation": _rounded(correlation),
-                    "paired_hours": len(valid),
-                })
-        best = max(lag_results, key=lambda item: item["correlation"]) if lag_results else None
-        comparisons.append({
-            "city": city,
-            "current_value": _rounded(nearby.get(event_hour)),
-            "changes": [_change(nearby, event_hour, hours) for hours in (1, 3, 6)],
-            "same_hour_correlation": next(
-                (item["correlation"] for item in lag_results if item["nearby_lead_hours"] == 0), None
-            ),
-            "best_lag_correlation": best,
-        })
-    return {
-        "status": "success" if target else "unavailable",
-        "lag_semantics": "nearby_lead_hours > 0 表示周边城市变化早于许昌",
-        "xuchang_changes": [_change(target, event_hour, hours) for hours in (1, 3, 6)],
-        "nearby_city_comparisons": comparisons,
-    }
-
-
 def _weather_row(record: Any) -> dict[str, Any]:
     fields = (
         "time", "station_id", "station_name", "lat", "lon", "temperature_2m",
@@ -408,9 +359,10 @@ class XuchangStationDeviationEvidenceCollector:
         event_time = _event_time(alert["occurred_at"])
         event_hour = _event_hour(alert["occurred_at"])
         air_start = event_hour - timedelta(hours=AIR_QUALITY_LOOKBACK_HOURS)
+        weather_start = event_time - timedelta(hours=OBSERVED_WEATHER_LOOKBACK_HOURS)
         air_result, observed_result, forecast_result = await asyncio.gather(
             asyncio.to_thread(self._load_air_quality, air_start, event_time),
-            self._load_observed_weather(air_start, event_hour),
+            self._load_observed_weather(weather_start, event_time),
             asyncio.to_thread(self._load_forecast_weather, event_time),
             return_exceptions=True,
         )
@@ -420,8 +372,6 @@ class XuchangStationDeviationEvidenceCollector:
             errors.append({"asset": "air_quality_context", "error": str(air_result)})
             air_quality: dict[str, Any] = {
                 "status": "failed", "window": {"start": air_start.isoformat(), "end": event_hour.isoformat()},
-                "target_city": XUCHANG_CITY, "nearby_cities": list(XUCHANG_NEARBY_CITIES),
-                "target_city_hour_records": [], "nearby_city_hour_records": [],
                 "local_station_hour_records": [], "local_station_5min_records": [],
                 "maintenance_qc_review": None,
             }
@@ -453,10 +403,6 @@ class XuchangStationDeviationEvidenceCollector:
             ),
             "station_5min_process": _station_5min_indicators(
                 alert, air_quality.get("local_station_5min_records", [])
-            ),
-            "regional_comparison": _regional_indicators(
-                [*air_quality.get("target_city_hour_records", []), *air_quality.get("nearby_city_hour_records", [])],
-                str(alert.get("target_pollutant")), event_hour,
             ),
             "calculation_notes": [
                 "NOX事件使用站点NO2小时浓度作为空间异常代理。",
@@ -500,9 +446,6 @@ class XuchangStationDeviationEvidenceCollector:
             "collection": {
                 "status": collection_status,
                 "errors": errors,
-                "excluded_data": {
-                    "city_air_quality_forecast": "not_collected: event scope is station-level source tracing",
-                },
                 "interpretation_contract": (
                     "Agent只读取本证据包开展监测告警通报；确定性指标直接引用computed_indicators，"
                     "mark造成的质控影响必须与污染事实区分。"
@@ -513,25 +456,9 @@ class XuchangStationDeviationEvidenceCollector:
     def _load_air_quality(self, start: datetime, end: datetime) -> dict[str, Any]:
         start_value = start.replace(tzinfo=None)
         end_value = end.replace(tzinfo=None)
-        cities = [XUCHANG_CITY, *XUCHANG_NEARBY_CITIES]
-        placeholders = ",".join("?" for _ in cities)
         connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
         try:
             cursor = connection.cursor()
-            minute_start_value = (end - timedelta(hours=1)).replace(tzinfo=None)
-            cursor.execute(
-                f"""
-                SELECT TimePoint AS time, Area AS city, CityCode AS city_code,
-                       PM2_5 AS pm25, PM10 AS pm10, O3 AS o3, NO2 AS no2,
-                       SO2 AS so2, CO AS co, AQI AS aqi,
-                       PrimaryPollutant AS primary_pollutant, Quality AS quality
-                FROM dbo.CityAQIPublishHistory
-                WHERE Area IN ({placeholders}) AND TimePoint >= ? AND TimePoint <= ?
-                ORDER BY TimePoint, Area
-                """,
-                [*cities, start_value, end_value],
-            )
-            city_rows = _rows(cursor)
             cursor.execute(
                 """
                 SELECT data_time AS time, station_id, name AS station_name,
@@ -543,6 +470,7 @@ class XuchangStationDeviationEvidenceCollector:
                 [XUCHANG_CITY_AREA_CODE, start_value, end_value],
             )
             station_rows = _rows(cursor)
+            minute_start_value = (end - timedelta(hours=1)).replace(tzinfo=None)
             cursor.execute(
                 """
                 SELECT time_point AS time, station_code AS station_id,
@@ -560,19 +488,14 @@ class XuchangStationDeviationEvidenceCollector:
         finally:
             connection.close()
 
-        air_status = "success" if city_rows and (station_rows or station_minute_rows) else "partial" if city_rows or station_rows or station_minute_rows else "empty"
+        air_status = "success" if station_rows or station_minute_rows else "empty"
         return {
             "status": air_status,
-            "source": "XcAiDb.CityAQIPublishHistory + dbo.dat_station_hour + dbo.dat_zhongda_station_minute",
+            "source": "XcAiDb.dbo.dat_station_hour + XcAiDb.dbo.dat_zhongda_station_minute",
             "window": {"start": start.isoformat(), "end": end.isoformat()},
-            "target_city": XUCHANG_CITY,
-            "nearby_cities": list(XUCHANG_NEARBY_CITIES),
-            "target_city_hour_records": [row for row in city_rows if row.get("city") == XUCHANG_CITY],
-            "nearby_city_hour_records": [row for row in city_rows if row.get("city") != XUCHANG_CITY],
             "local_station_hour_records": station_rows,
             "local_station_5min_records": station_minute_rows,
             "record_counts": {
-                "city_hours": len(city_rows),
                 "local_station_hours": len(station_rows),
                 "local_station_5min": len(station_minute_rows),
             },
@@ -602,8 +525,8 @@ class XuchangStationDeviationEvidenceCollector:
     def _load_forecast_weather(self, event_time: datetime) -> dict[str, Any]:
         """Load the NMC hourly forecast row nearest to the alert time."""
         event_value = event_time.replace(tzinfo=None)
-        window_start = event_value - timedelta(hours=NMC_FORECAST_WINDOW_HOURS)
-        window_end = event_value + timedelta(hours=NMC_FORECAST_WINDOW_HOURS)
+        window_start = event_value
+        window_end = event_value + timedelta(hours=NMC_FORECAST_LOOKAHEAD_HOURS)
         connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
         try:
             cursor = connection.cursor()
@@ -616,7 +539,7 @@ class XuchangStationDeviationEvidenceCollector:
                        DATEDIFF(MINUTE, ?, forecast_time) AS offset_minutes
                 FROM dbo.{NMC_FORECAST_TABLE}
                 WHERE forecast_time >= ? AND forecast_time <= ?
-                ORDER BY ABS(DATEDIFF(SECOND, forecast_time, ?))
+                ORDER BY forecast_time ASC
                 """,
                 [event_value, window_start, window_end, event_value],
             )
@@ -629,9 +552,9 @@ class XuchangStationDeviationEvidenceCollector:
             "status": "success" if nearest else "empty",
             "source": f"XcAiDb.dbo.{NMC_FORECAST_TABLE} (NMC 3小时间隔城市预报)",
             "event_time": event_time.isoformat(),
-            "selection": f"告警时间±{NMC_FORECAST_WINDOW_HOURS}h窗口内forecast_time最近的一条预报",
+            "selection": f"告警时间至未来{NMC_FORECAST_LOOKAHEAD_HOURS}h窗口内forecast_time最近的一条预报",
             "nearest_forecast": nearest,
-            "offset_note": "offset_minutes>0 表示预报时段晚于告警时间（未来预报），<0 表示早于告警时间",
+            "offset_note": "仅选择offset_minutes>=0且不超过未来3小时的预报",
             "units": {
                 "temperature": "degC", "humidity": "%", "pressure": "hPa",
                 "wind_speed": "m/s", "wind_direction_degrees": "degree",

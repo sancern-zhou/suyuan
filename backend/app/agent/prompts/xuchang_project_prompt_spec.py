@@ -61,3 +61,12 @@ def test_xuchang_social_tool_whitelist_matches_prompt_intent():
     assert "bash" not in tools
     assert "call_sub_agent" not in tools
     assert "cli_session" not in tools
+
+
+def test_xuchang_forecast_uses_nmc_without_open_meteo_or_weather_forecast_tool():
+    context = load_project_context("xuchang")
+
+    assert "get_weather_forecast" not in context.manifest.backend.agent_mode_tools["expert"]
+    assert "get_weather_forecast" in context.manifest.backend.disabled_tools
+    assert "open_meteo_air_quality_forecast" not in context.manifest.backend.fetchers
+    assert "xuchang_nmc_hourly_forecast_fetcher" in context.manifest.backend.fetchers

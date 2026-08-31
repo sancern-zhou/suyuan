@@ -127,7 +127,9 @@ async def test_collect_combines_source_air_weather_and_precomputed_indicators(mo
     assert station_process["changes"][0]["absolute_change"] == 40.0
     assert station_process["target_peer_hourly_comparison"][-1]["deviation_percent"] == 100.0
     assert station_process["current_pollutant_ratios"]["pm25_pm10"] == 0.625
-    assert result["collection"]["excluded_data"]["city_air_quality_forecast"].startswith("not_collected")
+    assert "regional_comparison" not in result["computed_indicators"]
+    assert "target_city_hour_records" not in result["air_quality_context"]
+    assert "nearby_city_hour_records" not in result["air_quality_context"]
 
 
 @pytest.mark.asyncio
@@ -255,12 +257,12 @@ async def test_collect_loads_nearest_nmc_forecast_row(monkeypatch):
     assert forecast["nearest_forecast"]["weather_text"] == "多云"
     statement = connection.cursor_instance.statements[0]
     assert "FROM dbo.XuchangNmcHourlyWeatherForecast" in statement
-    assert "ORDER BY ABS(DATEDIFF(SECOND, forecast_time, ?))" in statement
+    assert "ORDER BY forecast_time ASC" in statement
     parameters = connection.cursor_instance.parameters[0]
-    # 第一个参数用于 DATEDIFF 计算 offset，其后是 ±6h 窗口边界和排序基准。
+    # 第一个参数用于 DATEDIFF 计算 offset，其后是告警时刻至未来3小时窗口边界。
     assert parameters[0] == datetime(2026, 8, 5, 13, 0)
-    assert parameters[1] == datetime(2026, 8, 5, 7, 0)
-    assert parameters[2] == datetime(2026, 8, 5, 19, 0)
+    assert parameters[1] == datetime(2026, 8, 5, 13, 0)
+    assert parameters[2] == datetime(2026, 8, 5, 16, 0)
     assert parameters[3] == datetime(2026, 8, 5, 13, 0)
     assert connection.closed is True
 

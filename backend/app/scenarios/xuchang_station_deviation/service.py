@@ -23,6 +23,7 @@ import structlog
 
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.utils.path_config import format_agent_path, get_data_registry
+from app.scenarios.xuchang_station_deviation.source_features import calculate_pollutant_source_features
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -240,6 +241,7 @@ class XuchangStationDeviationAlertService:
     def load_station_rows(self, timestamp: datetime) -> tuple[list[dict[str, Any]], dict[str, int]]:
         start = _hour(timestamp) - timedelta(hours=1)
         end = start + timedelta(hours=1)
+        source_start = _hour(timestamp) - timedelta(hours=24)
         expected_hour = self._query(
             """
             SELECT MAX(station_count) AS count FROM (
@@ -259,12 +261,13 @@ class XuchangStationDeviationAlertService:
             WHERE city_area_code = ? AND data_time >= ? AND data_time < ?
             ORDER BY data_time, station_id
             """,
-            [self.config.city_area_code, start.replace(tzinfo=None), end.replace(tzinfo=None)],
+            [self.config.city_area_code, source_start.replace(tzinfo=None), end.replace(tzinfo=None)],
         )
         for row in hour_rows:
             row["data_source"] = "hour"
 
-        # 5-minute observations are queried for the completed five-minute slot.
+        # Keep the current completed slot for detection and retain 24h of
+        # minute history so composition features have enough samples.
         minute_start = timestamp.replace(second=0, microsecond=0)
         minute_start = minute_start.replace(minute=(minute_start.minute // 5) * 5)
         minute_end = minute_start + timedelta(minutes=5)
@@ -295,7 +298,7 @@ class XuchangStationDeviationAlertService:
             WHERE minute_data.area = ? AND minute_data.time_point >= ? AND minute_data.time_point < ?
             ORDER BY minute_data.time_point, minute_data.station_code
             """,
-            [self.config.city, minute_start.replace(tzinfo=None), minute_end.replace(tzinfo=None)],
+            [self.config.city, source_start.replace(tzinfo=None), minute_end.replace(tzinfo=None)],
         )
         for row in minute_rows:
             row["data_source"] = "minute"
@@ -358,14 +361,32 @@ class XuchangStationDeviationAlertService:
         # from the most recently completed hourly record for that hour.
         target_slot = _slot(target_time or datetime.now(TZ_SHANGHAI), "minute")
         rows, expected_station_count = self.load_station_rows(target_slot)
+        target_hour = _hour(target_slot).replace(tzinfo=None)
+        detection_rows = [
+            row for row in rows
+            if (
+                row.get("data_source") == "minute"
+                and _slot(row.get("data_time"), "minute") == target_slot
+            )
+            or (
+                row.get("data_source") == "hour"
+                and _hour(row.get("data_time")) == target_hour - timedelta(hours=1)
+            )
+        ]
         result = detect_station_deviations(
-            rows,
+            detection_rows,
             expected_station_count=expected_station_count.get("hour", 0),
             expected_station_counts=expected_station_count,
             config=self.config,
         )
         events = []
         for alert in result["alerts"]:
+            # Reuse the daily review's composition model. It selects minute
+            # pollutants with the matching hourly PM2.5 value when available.
+            alert["pollutant_source_features"] = calculate_pollutant_source_features(
+                rows,
+                str(alert["station_id"]),
+            )
             path = self._write_event(alert)
             events.append({**alert, "event_json_path": format_agent_path(path)})
         return {

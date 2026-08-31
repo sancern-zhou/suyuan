@@ -1,9 +1,15 @@
 {
   "task_id": "task_xuchang_station_daily_source_report",
   "name": "站点日污染溯源报告",
-    "description": "每日例行生成许昌昨日回顾报告；无小时异常时仅生成气象条件分析和周边城市对比，有小时异常时补充完整告警分析。",
-  "execution_mode": "report",
-  "tool_names": null,
+  "description": "每日读取许昌昨日站点小时污染物证据包，结合中大发布城市小时数据和NMC许昌观测站小时气象，生成可追溯的污染过程回顾报告。",
+  "execution_mode": "custom",
+  "tool_names": [
+    "read_file",
+    "execute_python",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package"
+  ],
   "skill_id": null,
   "knowledge_base_binding": null,
   "trigger_type": "event",
@@ -13,7 +19,7 @@
     "city": "许昌市"
   },
   "report_template_path": "/home/xckj/suyuan/backend/backend_data_registry/uploads/401ecbb4-c402-4f55-b37c-331e7a88b49d.docx",
-  "no_hourly_alert_sections": ["二、气象条件分析", "三、周边城市对比"],
+  "no_hourly_alert_sections": [],
   "target_user_ids": ["app:android:android_demo"],
   "broadcast_enabled": true,
   "enabled": true,
@@ -24,8 +30,8 @@
   "steps": [
     {
       "step_id": "generate_report",
-      "description": "读取场景二证据包并生成站点日污染溯源分析报告",
-      "agent_prompt": "你是许昌场景二昨日污染回顾分析报告 Agent。可信事件 payload 中包含 evidence_package_path；该文件是 Fetcher 已完成数据抓取和确定性计算后形成的唯一证据包。必须按以下要求执行：\n\n1. 使用 read_file 完整读取 evidence_package_path，不重新查询数据库、不重新抓取数据、不重新运行模型，也不得改写证据包。\n2. 仅以证据包中的 target_date、daily_evaluation、station_hourly、hourly_alerts、hourly_checks、pollutant_synchronous_changes、pollutant_change_classifications、pollutant_source_features、peer_station_daily、component_station_evidence、township_and_provincial_transport、trajectory_quality、transport_corridors_by_height、cwt、meteorology 和 data_quality 字段为事实依据。component_station_evidence 和 township_and_provincial_transport 当前可能为 not_available，必须如实说明，不得补写结论。\n3. 多污染物同步变化、单一污染物变化或无法判断，必须直接采用 pollutant_change_classifications 中的程序计算结果；污染物来源类型必须直接采用 pollutant_source_features 中的程序计算结果。该计算先求 PM=PM10-PM2.5，再求 SO2、NO2、CO、PM2.5 和 PM 在总和中的占比，以当前样本与历史均值加一个标准差比较，映射为偏综合型、偏二次型、偏机动车型、偏燃煤型、偏扬尘型或其他类型。样本不足时只能写证据不足。LLM 只解释业务含义，不得自行修改判定。\n4. 先分析污染物小时变化和告警过程，再解释同步变化、来源特征及可能的高湿二次转化；随后分析组分站证据（无数据则明确缺失）；再判断周边城市、省内传输（当前未接入乡镇/省控站时明确证据不足）；之后分析已有气象证据；工地和企业只能作为最后核查层，当前没有企业筛选证据时不得声称存在上风向企业或企业贡献。任何判断都必须区分事实、推断和证据不足，不得写贡献率或责任认定。\n5. 使用 create_report_chart 生成站点小时污染物趋势、小时告警和同城站点日评价对比图；禁止编造缺失的周边城市、组分、乡镇、气象、工地或企业数据。\n6. 按固定结构生成正式报告：一、昨日站点污染过程与小时告警；二、污染物同步变化；三、不同污染物来源典型特征；四、周边区域传输证据；五、气象扩散条件；六、工地与企业末端核查；七、证据缺口与建议。\n7. 使用 create_report_package 创建 report_id={analysis_id}-report 的标准报告包，使用 render_report_package 导出 DOCX，并使用 validate_report_package 对 QMD、HTML、DOCX 和图片引用进行验收。\n8. 必须等待报告生成和验收完成后再结束。最终简要返回报告 ID、分层结论、证据等级、QMD/HTML/DOCX 实际路径和验收结果；失败时返回具体失败阶段和原因。",
+      "description": "读取场景二证据包并生成PM2.5站点日污染溯源分析报告",
+      "agent_prompt": "你是许昌场景二昨日PM2.5污染回顾分析报告 Agent。可信事件 payload 中包含 evidence_package_path；该文件是 Fetcher 已完成数据抓取和确定性计算后形成的唯一证据包。必须按以下要求执行：\n\n1. 使用 read_file 读取 evidence_package_path，不重新查询数据库、不重新抓取数据、不重新运行模型，也不得改写证据包。\n2. 优先直接引用证据包的 report_summary、hourly_alerts、pollutant_change_classifications 和 pollutant_source_features；这些字段由 Fetcher 确定性计算，禁止自行重复计算已存在的统计量。\n3. 本任务只分析 PM2.5 小时告警。优先通过证据包提供的 meteorology_chart_paths（按告警站点分别对应）、regional_city_chart_path 以及无告警时的 city_mean_meteorology_chart_path（全市站点均值气象与PM2.5时序图）分析图表；图表已经是24小时时间轴，全部由 Fetcher 预生成，不得自行调用绘图工具或用 execute_python 重新绘图。\n4. execute_python 保留用于灵活核验，但只能执行单项、定向计算（例如核对某站点某时段的均值或峰值）；不得重复遍历、打印或汇总整个 evidence_package，也不得用它重绘图片。若 report_summary 已提供所需事实，不要再调用 execute_python。\n5. 一个站点无论有几次PM2.5告警，只分析并插入一张该站点独立的风速、风向、湿度、降水（若有）和PM2.5 24小时时序图；多个站点告警时，分别插入并分析各站点图表。没有告警站点时说明无PM2.5告警，不生成站点图，气象条件分析直接引用 city_mean_meteorology_chart_path。\n6. regional_city_hourly 是中大发布城市逐小时数据，meteorology 是 NMC 许昌观测站逐小时数据。没有对应记录时明确写证据不足，不得补写企业、工地、组分站或轨迹结论。\n7. 按固定结构生成正式报告：一、PM2.5站点小时告警；二、各告警站点气象与PM2.5时序分析；三、PM2.5污染特征；四、周边城市小时传输证据；五、证据缺口与建议。\n8. 使用 create_report_package 创建 report_id={analysis_id}-{execution_id}-report，其中 execution_id 必须使用本次任务上下文提供的执行标识；使用 render_report_package 导出 DOCX，并使用 validate_report_package 对 QMD、HTML、DOCX 和图片引用进行验收。\n9. 必须等待报告生成和验收完成后再结束。最终简要返回报告 ID、结论、证据等级、实际路径和验收结果；失败时返回具体失败阶段和原因。",
       "timeout_seconds": 1800,
       "retry_on_failure": true
     }

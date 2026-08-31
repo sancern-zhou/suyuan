@@ -87,12 +87,12 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.backend.fetchers == [
         "nmc_observed_weather",
         "nmc_weather_chart",
-        "open_meteo_air_quality_forecast",
         "xuchang_daily_attainment_forecast_fetcher",
         "xuchang_annual_attainment_forecast_fetcher",
         "xuchang_cnemc_station_hour_fetcher",
         "xuchang_henan_month_year_accumulate_fetcher",
         "xuchang_nmc_hourly_forecast_fetcher",
+        "xuchang_weather_com_daily_forecast_fetcher",
         "xuchang_station_deviation_alert_fetcher",
         "xuchang_station_daily_pollution_fetcher",
         "xuchang_zhongda_station_minute_fetcher",
@@ -105,6 +105,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.backend.disabled_tools == [
         "analyze_city_pollutant_rankings",
         "get_5min_data",
+        "get_weather_forecast",
         "get_observed_meteorology",
         "query_city_standard_report",
         "query_city_standard_yoy_report",

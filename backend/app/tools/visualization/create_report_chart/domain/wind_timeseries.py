@@ -30,6 +30,8 @@ def render_wind_timeseries(
     north_v = np.asarray(prepared["north_v"], dtype=float)
     wind_speeds = np.hypot(east_u, north_v)
     concentrations = np.asarray(prepared["concentrations"], dtype=float)
+    humidity = np.asarray(prepared.get("humidity", [float("nan")] * len(timestamps)), dtype=float)
+    precipitation = np.asarray(prepared.get("precipitation", [float("nan")] * len(timestamps)), dtype=float)
 
     order = np.argsort(np.asarray(timestamps, dtype="datetime64[us]"))
     timestamps = [timestamps[index] for index in order]
@@ -37,6 +39,8 @@ def render_wind_timeseries(
     north_v = north_v[order]
     wind_speeds = wind_speeds[order]
     concentrations = concentrations[order]
+    humidity = humidity[order]
+    precipitation = precipitation[order]
 
     pollutant_name = str(
         normalize_matplotlib_label_text(
@@ -60,22 +64,20 @@ def render_wind_timeseries(
     height = 7.4 if output_context == "word" else 7.0
     if style_profile == "compact":
         height = 6.5
+    include_humidity = bool(options.get("include_humidity", data.get("include_humidity", False))) and np.isfinite(humidity).any()
+    include_precipitation = bool(options.get("include_precipitation", data.get("include_precipitation", False))) and np.isfinite(precipitation).any()
+    panel_count = 3 + int(include_humidity) + int(include_precipitation)
     fig, axes = plt.subplots(
-        4,
+        panel_count,
         1,
         figsize=(8.2, height),
         dpi=180,
         sharex=True,
-        gridspec_kw={"height_ratios": [1.0, 0.9, 0.8, 0.9], "hspace": 0.12},
+        gridspec_kw={"height_ratios": [0.9] * panel_count, "hspace": 0.12},
     )
-    component_ax, vector_ax, speed_ax, pollutant_ax = axes
+    axes = list(np.atleast_1d(axes))
+    vector_ax, speed_ax, pollutant_ax = axes[:3]
     try:
-        component_ax.plot(timestamps, east_u, color="#356AE6", linewidth=0.9, label="东向风分量")
-        component_ax.plot(timestamps, north_v, color="#3E9B50", linewidth=0.9, label="北向风分量")
-        component_ax.axhline(0, color="#9AA0A6", linewidth=0.65)
-        component_ax.set_ylabel(f"东西/南北风分量\n({wind_speed_unit})", fontsize=9)
-        component_ax.legend(loc="best", fontsize=8, frameon=True, ncol=2)
-
         vector_x = [timestamps[index] for index in vector_indices]
         vector_u = east_u[vector_indices]
         vector_v = north_v[vector_indices]
@@ -113,6 +115,19 @@ def render_wind_timeseries(
         )
         pollutant_ax.set_ylabel(pollutant_label, fontsize=9)
         pollutant_ax.set_xlabel("时间", fontsize=9)
+
+        next_axis = 3
+        if include_humidity:
+            humidity_ax = axes[next_axis]
+            humidity_ax.plot(timestamps, humidity, color="#2A9D8F", linewidth=1.0, label="相对湿度")
+            humidity_ax.set_ylim(0, 100)
+            humidity_ax.set_ylabel("湿度\n(%)", fontsize=9)
+            next_axis += 1
+        if include_precipitation:
+            precipitation_ax = axes[next_axis]
+            precipitation_ax.bar(timestamps, precipitation, width=0.025, color="#457B9D", alpha=0.75, label="降水")
+            precipitation_ax.set_ylim(bottom=0)
+            precipitation_ax.set_ylabel("降水\n(mm)", fontsize=9)
 
         for index, ax in enumerate(axes):
             ax.text(
@@ -180,6 +195,8 @@ def _prepare_data(
         )
     timestamps = [_parse_timestamp(value) for value in raw_timestamps]
     concentration_values = _float_array(concentrations, "concentrations", allow_nan=True)
+    humidity_values = data.get("humidity")
+    precipitation_values = data.get("precipitation")
 
     east_values = data.get("east_u") or data.get("east_components") or data.get("u")
     north_values = data.get("north_v") or data.get("north_components") or data.get("v")
@@ -204,6 +221,8 @@ def _prepare_data(
         "concentrations": concentration_values,
         "wind_direction_convention": convention,
         "input_mode": input_mode,
+        "humidity": _optional_float_array(humidity_values, "humidity", len(timestamps)),
+        "precipitation": _optional_float_array(precipitation_values, "precipitation", len(timestamps)),
     }, warnings
 
 
@@ -229,6 +248,8 @@ def _prepare_records(
     east_u: list[float] = []
     north_v: list[float] = []
     concentrations: list[float] = []
+    humidity: list[float] = []
+    precipitation: list[float] = []
     dropped = 0
     for record in records:
         if not isinstance(record, dict):
@@ -282,8 +303,10 @@ def _prepare_records(
                     [speed], [direction], convention
                 )
                 east, north = east_values[0], north_values[0]
-            if not all(math.isfinite(value) for value in (east, north, concentration)):
-                raise ValueError("non-finite value")
+            # Keep a timestamp when pollutant concentration is missing so the
+            # meteorology panels still retain the complete hourly timeline.
+            if not all(math.isfinite(value) for value in (east, north)):
+                raise ValueError("non-finite wind value")
         except (KeyError, TypeError, ValueError):
             dropped += 1
             continue
@@ -291,6 +314,8 @@ def _prepare_records(
         east_u.append(east)
         north_v.append(north)
         concentrations.append(concentration)
+        humidity.append(_optional_record_value(record, ["humidity", "relative_humidity_2m", "relativeHumidity", "湿度"]))
+        precipitation.append(_optional_record_value(record, ["precipitation", "rain1h", "降水"]))
 
     _validate_prepared(timestamps, east_u, north_v, concentrations)
     return {
@@ -300,6 +325,8 @@ def _prepare_records(
         "concentrations": concentrations,
         "wind_direction_convention": convention,
         "input_mode": "records_components" if use_components else "records_speed_direction",
+        "humidity": humidity,
+        "precipitation": precipitation,
     }, dropped
 
 
@@ -367,6 +394,27 @@ def _float_array(values: Any, name: str, allow_nan: bool = False) -> list[float]
             raise ChartDataError(f"wind_timeseries 的 {name} 包含无效数值。")
         converted.append(number)
     return converted
+
+
+def _optional_float_array(values: Any, name: str, length: int) -> list[float]:
+    if values is None:
+        return [float("nan")] * length
+    converted = _float_array(values, name, allow_nan=True)
+    if len(converted) != length:
+        raise ChartDataError(f"wind_timeseries 的 {name} 长度必须与时间一致。")
+    return converted
+
+
+def _optional_record_value(record: dict[str, Any], candidates: Sequence[str]) -> float:
+    for candidate in candidates:
+        value = record.get(candidate)
+        if value is not None:
+            try:
+                number = float(value)
+                return number if math.isfinite(number) else float("nan")
+            except (TypeError, ValueError):
+                return float("nan")
+    return float("nan")
 
 
 def _validate_lengths(*arrays: Sequence[Any]) -> None:

@@ -1,6 +1,9 @@
 from datetime import datetime
 
+import pytest
+
 from app.scenarios.xuchang_station_deviation.service import (
+    XuchangStationDeviationAlertService,
     StationDeviationConfig,
     detect_station_deviations,
 )
@@ -133,3 +136,30 @@ def test_marked_minute_value_is_exempt_from_alert_calculation():
 
     assert result["alerts"] == []
     assert result["checks"][0]["available_station_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_attaches_daily_pollution_source_features(tmp_path):
+    rows = [
+        {**_row("a", 40), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
+         "pm10": 50, "so2": 2, "no2": 10, "co": 0.3},
+        {**_row("b", 10), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
+         "pm10": 20, "so2": 2, "no2": 10, "co": 0.3},
+        {**_row("c", 10), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
+         "pm10": 20, "so2": 2, "no2": 10, "co": 0.3},
+        {**_row("a", 100), "data_source": "hour", "data_time": datetime(2026, 8, 4, 7),
+         "pm10": 120, "so2": 2, "no2": 10, "co": 0.3},
+        {**_row("a", 100), "data_source": "minute", "data_time": datetime(2026, 8, 4, 8, 5),
+         "pm10": 120, "so2": 2, "no2": 10, "co": 0.3},
+    ]
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    service.load_station_rows = lambda timestamp: (rows, {"hour": 3, "minute": 3})
+
+    result = await service.run(datetime(2026, 8, 4, 8, 6))
+
+    alert = next(item for item in result["alerts"] if item["station_id"] == "a")
+    features = alert["pollutant_source_features"]
+    assert features["status"] == "calculated"
+    assert features["sample_count"] == 3
+    assert "classification" in features
+    assert "minute pollutants" in features["granularity"]

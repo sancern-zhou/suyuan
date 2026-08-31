@@ -103,7 +103,7 @@ GET  /api/social/app/push/status
 ```bash
 export PROJECT=default
 cd /home/xckj/suyuan/backend
-conda run -p /root/miniconda3/envs/backend_py311 python -c \
+conda run -p /root/.codex/miniconda3/envs/backend_py311 python -c \
   "from app.project_config.loader import load_project_context; print(load_project_context('$PROJECT').model_dump_json())"
 
 cd /home/xckj/suyuan/frontend
@@ -141,7 +141,7 @@ DATA_REGISTRY_DIR=/home/xckj/suyuan/backend/backend_data_registry_jiangsu_ops
 
 ```bash
 cd /home/xckj/suyuan/backend
-/root/miniconda3/envs/backend_py311/bin/python \
+/root/.codex/miniconda3/envs/backend_py311/bin/python \
   -m app.utils.deployment_preflight --env-file .env
 ```
 
@@ -159,18 +159,18 @@ cd /home/xckj/suyuan/backend
 ```bash
 # 风清气智 8000（backend/.env，默认项目）+ worker（内部端口 8011）
 cd /home/xckj/suyuan/backend && bash restart_server.sh
-nohup setsid /root/miniconda3/envs/backend_py311/bin/python -m app.worker \
+nohup setsid /root/.codex/miniconda3/envs/backend_py311/bin/python -m app.worker \
   > /tmp/backend-worker.log 2>&1 &
 echo $! > /tmp/suyuan_worker.pid
 
 # 江苏运维 8001（backend/.env.jiangsu-ops）+ worker（内部端口 8012）
 cd /home/xckj/suyuan/backend
 export DATABASE_SCHEMA_INIT_ON_STARTUP=false
-nohup setsid /root/miniconda3/envs/backend_py311/bin/python -m uvicorn app.main:app \
+nohup setsid /root/.codex/miniconda3/envs/backend_py311/bin/python -m uvicorn app.main:app \
   --host 0.0.0.0 --port 8001 --workers 1 --env-file .env.jiangsu-ops --no-proxy-headers \
   > /tmp/backend-jiangsu.log 2>&1 &
 echo $! > /tmp/suyuan_backend_jiangsu.pid
-nohup setsid /root/miniconda3/envs/backend_py311/bin/python -m app.worker \
+nohup setsid /root/.codex/miniconda3/envs/backend_py311/bin/python -m app.worker \
   --env-file .env.jiangsu-ops > /tmp/backend-worker-jiangsu.log 2>&1 &
 echo $! > /tmp/suyuan_worker_jiangsu.pid
 ```

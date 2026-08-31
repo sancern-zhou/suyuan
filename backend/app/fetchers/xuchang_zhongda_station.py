@@ -634,7 +634,9 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
             return now - timedelta(minutes=25), now
         if self.data_kind == "hour":
             end = now.replace(minute=0)
-            return end - timedelta(hours=3), end
+            # 日污染回顾在次日读取前一整天原始小时数据；每次小时任务
+            # 回填 26 小时，保证跨日运行和平台延迟不会留下空白日。
+            return end - timedelta(hours=26), end
         end = now.replace(hour=0, minute=0)
         start = end - timedelta(days=settings.zhongda_day_lookback_days)
         return start, end
@@ -649,8 +651,8 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
             params["startTime"] = _fmt_window(start)
             params["endTime"] = _fmt_window(end)
             if self.data_kind == "hour":
-                # 生产口径：审核后（App）+ 实况
-                params["dataSourceType"] = settings.zhongda_data_source_type
+                # 小时数据要求及时性，使用原始口径；审核数据可能滞后。
+                params["dataSourceType"] = settings.zhongda_hour_data_source_type
                 params["hasMark"] = "Yes"
         else:
             params["standard"] = "AQI"

@@ -5,14 +5,14 @@
 首次创建数据表：
 
 ```bash
-conda run -p /root/miniconda3/envs/backend_py311 \
+conda run -p /root/.codex/miniconda3/envs/backend_py311 \
   python -m app.alembic.versions.add_xuchang_permit_license_crawler
 ```
 
 分批抓取列表，例如先抓 2 页：
 
 ```bash
-conda run -p /root/miniconda3/envs/backend_py311 \
+conda run -p /root/.codex/miniconda3/envs/backend_py311 \
   python -m app.fetchers.emission.permit_license_crawler.cli \
   --phase list --start-page 1 --max-pages 2 --resume
 ```
@@ -20,7 +20,7 @@ conda run -p /root/miniconda3/envs/backend_py311 \
 从数据库中的未完成记录选择 3 家，抓取详情和附件：
 
 ```bash
-conda run -p /root/miniconda3/envs/backend_py311 \
+conda run -p /root/.codex/miniconda3/envs/backend_py311 \
   python -m app.fetchers.emission.permit_license_crawler.cli \
   --phase detail --max-licenses 3 --resume
 ```

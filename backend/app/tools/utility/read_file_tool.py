@@ -595,16 +595,16 @@ class ReadFileTool(LLMTool):
         """读取 PDF 文件"""
         try:
             try:
-                import PyPDF2
+                import pypdf
             except ImportError:
                 return {
                     "success": False,
-                    "data": {"error": "PyPDF2 未安装，请运行: pip install PyPDF2"},
+                    "data": {"error": "pypdf 未安装，请运行: pip install pypdf"},
                     "summary": "缺少 PDF 支持库"
                 }
 
             with open(file_path, 'rb') as f:
-                pdf_reader = PyPDF2.PdfReader(f)
+                pdf_reader = pypdf.PdfReader(f)
                 total_pages = len(pdf_reader.pages)
 
                 page_numbers = self._parse_page_range(pages, total_pages)
@@ -717,13 +717,13 @@ class ReadFileTool(LLMTool):
                 normalized = self._normalize_pdf_result(result, file_path, file_size)
                 return normalized
 
-            # 2. parse_pdf 失败，降级到原生 PyPDF2
-            logger.warning("parse_pdf_failed_fallback_to_pypdf2", path=str(file_path))
+            # 2. parse_pdf 失败，降级到原生 pypdf
+            logger.warning("parse_pdf_failed_fallback_to_pypdf", path=str(file_path))
             return await self._read_pdf_fallback(file_path, file_size, pages, enable_preview)
 
         except ImportError:
-            # 3. parse_pdf 不可用，使用原生 PyPDF2
-            logger.warning("parse_pdf_not_available_fallback_to_pypdf2", path=str(file_path))
+            # 3. parse_pdf 不可用，使用原生 pypdf
+            logger.warning("parse_pdf_not_available_fallback_to_pypdf", path=str(file_path))
             return await self._read_pdf_fallback(file_path, file_size, pages, enable_preview)
 
         except Exception as e:
@@ -796,19 +796,19 @@ class ReadFileTool(LLMTool):
         pages: Optional[str] = None,
         enable_preview: bool = True
     ) -> Dict[str, Any]:
-        """使用原生 PyPDF2 降级读取 PDF"""
+        """使用原生 pypdf 降级读取 PDF"""
         try:
-            import PyPDF2
+            import pypdf
         except ImportError:
             return {
                 "success": False,
-                "data": {"error": "PyPDF2 未安装，请运行: pip install PyPDF2"},
+                "data": {"error": "pypdf 未安装，请运行: pip install pypdf"},
                 "summary": "缺少 PDF 支持库"
             }
 
         try:
             with open(file_path, 'rb') as f:
-                pdf_reader = PyPDF2.PdfReader(f)
+                pdf_reader = pypdf.PdfReader(f)
                 total_pages = len(pdf_reader.pages)
 
                 page_numbers = self._parse_page_range(pages, total_pages)
@@ -859,7 +859,7 @@ class ReadFileTool(LLMTool):
                     "summary": f"读取 PDF 成功: {file_path.name} (第 {page_numbers[0]}-{page_numbers[-1]} 页，共 {len(page_numbers)} 页)",
                     "metadata": {
                         "generator": "read_file",
-                        "delegated_to": "pypdf2_fallback"
+                        "delegated_to": "pypdf_fallback"
                     }
                 }
 

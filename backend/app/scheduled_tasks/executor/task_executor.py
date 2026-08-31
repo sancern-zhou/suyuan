@@ -3,6 +3,7 @@
 负责执行任务步骤，与ReAct Agent集成
 """
 import asyncio
+import json
 import structlog
 from datetime import datetime
 from typing import Optional
@@ -19,6 +20,54 @@ from ..storage import TaskStorage, ExecutionStorage
 from ..conversation_persistence import ScheduledTaskConversationPersistence
 
 logger = structlog.get_logger()
+
+# 与 event_bus._sanitize_result 的日志截断上限保持一致量级：事件上下文超限时
+# 仅保留摘要与文件路径字段，完整证据必须通过持久化文件传递。
+EVENT_CONTEXT_MAX_CHARS = 8000
+_COMPACT_VALUE_MAX_CHARS = 200
+_COMPACT_CONTAINER_MAX_CHARS = 400
+
+
+def _is_path_like(value: str) -> bool:
+    return "/" in value or "\\" in value
+
+
+def _compact_value(value):
+    """Shrink one payload entry: keep scalars, paths and short containers."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if len(value) <= _COMPACT_VALUE_MAX_CHARS or _is_path_like(value):
+            return value
+        return value[:_COMPACT_VALUE_MAX_CHARS] + "…<已截断>"
+    if isinstance(value, list):
+        if len(json.dumps(value, ensure_ascii=False, default=str)) <= _COMPACT_CONTAINER_MAX_CHARS:
+            return value
+        return f"<列表共 {len(value)} 项，已省略>"
+    if isinstance(value, dict):
+        if len(json.dumps(value, ensure_ascii=False, default=str)) <= _COMPACT_CONTAINER_MAX_CHARS:
+            return value
+        return {key: _compact_value(item) for key, item in value.items()}
+    return str(value)
+
+
+def _render_event_context(event) -> str:
+    """Render trusted event context, compacting oversized payloads."""
+    data = event.model_dump(mode="json")
+    rendered = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    if len(rendered) <= EVENT_CONTEXT_MAX_CHARS:
+        return f"## 可信事件上下文\n{rendered}"
+    note = (
+        "注意：该事件 payload 过大，以上仅保留摘要、计数与文件路径等关键字段，"
+        "超长字符串与大型列表已省略；完整证据必须通过 payload 中给出的文件路径"
+        "（如 evidence_package_path）读取，不得凭空补写被省略的内容。"
+    )
+    data["payload"] = {key: _compact_value(value) for key, value in data.get("payload", {}).items()}
+    rendered = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    if len(rendered) > EVENT_CONTEXT_MAX_CHARS:
+        data["payload"] = "<payload 过大，已整体省略，请使用事件关联的持久化文件>"
+        rendered = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    return f"## 可信事件上下文\n{rendered}\n\n{note}"
 
 
 def build_runtime_custom_tool_registry(tool_names):
@@ -117,6 +166,7 @@ class ScheduledTaskExecutor:
                         step.agent_prompt,
                         task=task,
                         event=event,
+                        execution_id=execution.execution_id,
                         broadcast_user_names=broadcast_user_names,
                     ),
                 )
@@ -443,13 +493,18 @@ class ScheduledTaskExecutor:
         prompt: str,
         task: ScheduledTask,
         event: TaskEvent | None = None,
+        execution_id: str | None = None,
         broadcast_user_names: list[str] | None = None,
     ) -> str:
         sections = [prompt]
         if event is not None:
+            sections.append(_render_event_context(event))
+        if execution_id:
             sections.append(
-                f"""## 可信事件上下文
-{event.model_dump_json(indent=2)}"""
+                "## 本次执行标识\n"
+                f"execution_id: {execution_id}\n"
+                "本次执行生成的报告包 ID 必须包含此 execution_id；同一事件的重试必须生成独立报告，"
+                "不得覆盖其他执行已经生成的报告文件。"
             )
         if task.broadcast_enabled:
             names = ", ".join(broadcast_user_names or [])
@@ -457,7 +512,7 @@ class ScheduledTaskExecutor:
                 """## 输出与投递约束
 - 完成任务后调用 `broadcast_social_users` 发送结果。
 - 目标微信用户名称：%s
-- `target_user_names` 使用上述名称；生成的附件使用上游工具实际返回的文件路径，禁止自行拼接路径。
+- `target_user_names` 使用上述名称；生成的附件必须使用上游工具返回的最终成品路径（例如 render_report_package 的 `path` 或 resources 中的 DOCX/PDF），禁止把 `report.qmd`/`file_path` 源文件当作正式报告附件，也禁止自行拼接路径。
 - 广播工具执行完成后，正常简要说明执行结果，不需要返回 JSON。""" % names
             )
         return "\n\n".join(sections)

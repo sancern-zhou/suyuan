@@ -30,7 +30,6 @@ backend:
       - get_weather_data
       - get_universal_meteorology
       - get_current_weather
-      - get_weather_forecast
       - get_weather_situation_map
       - get_platform_weather_image
       - get_satellite_data
@@ -89,6 +88,7 @@ backend:
   disabled_tools:
     - analyze_city_pollutant_rankings
     - get_5min_data
+    - get_weather_forecast
     - get_observed_meteorology
     - query_city_standard_report
     - query_city_standard_yoy_report
@@ -102,12 +102,12 @@ backend:
   fetchers:
     - nmc_observed_weather
     - nmc_weather_chart
-    - open_meteo_air_quality_forecast
     - xuchang_daily_attainment_forecast_fetcher
     - xuchang_annual_attainment_forecast_fetcher
     - xuchang_cnemc_station_hour_fetcher
     - xuchang_henan_month_year_accumulate_fetcher
     - xuchang_nmc_hourly_forecast_fetcher
+    - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
     - xuchang_zhongda_station_minute_fetcher
@@ -122,3 +122,4 @@ knowledge:
 scheduled_tasks:
   - task_xuchang_station_deviation_alert
   - task_xuchang_station_daily_source_report
+  - task_xuchang_weekly_weather_situation_report

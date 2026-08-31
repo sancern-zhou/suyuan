@@ -970,15 +970,31 @@ class ExecutePythonTool(LLMTool):
                 mounted_destinations.add(str(session_data_dir))
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
+            # The data registry is the agent's shared read-only data area. It
+            # is mounted at both the canonical host path (for absolute paths)
+            # and the project-relative path used by agent code. Other host
+            # directories remain explicit-input-only mounts below.
+            registry_dir = Path(get_data_registry()).resolve()
+            self._append_bubblewrap_parent_dirs(command, registry_dir)
+            command.extend(["--ro-bind", str(registry_dir), str(registry_dir)])
+            mounted_destinations.add(str(registry_dir))
+            command.extend(["--ro-bind", str(registry_dir), "/sandbox/backend/backend_data_registry"])
+            mounted_destinations.add("/sandbox/backend/backend_data_registry")
+
             # Matplotlib helpers write to the canonical images path inside the
-            # sandbox. Bind a staging directory there, then publish only the
-            # generated files after the subprocess exits successfully.
+            # sandbox. Seed the staging directory with existing registry
+            # images so the writable output mount does not hide prior assets.
             images_dir = Path(get_images_dir()).resolve()
             staged_images_dir = Path(working_dir) / "images_output"
-            staged_images_dir.mkdir(parents=True, exist_ok=True)
+            if images_dir.is_dir():
+                shutil.copytree(images_dir, staged_images_dir, dirs_exist_ok=True)
+            else:
+                staged_images_dir.mkdir(parents=True, exist_ok=True)
             self._append_bubblewrap_parent_dirs(command, images_dir)
             command.extend(["--bind", str(staged_images_dir), str(images_dir)])
             mounted_destinations.add(str(images_dir))
+            command.extend(["--bind", str(staged_images_dir), "/sandbox/backend/backend_data_registry/images"])
+            mounted_destinations.add("/sandbox/backend/backend_data_registry/images")
             sync_dirs.append((staged_images_dir, images_dir, set()))
 
             preferred_font_path = Path(get_font_manager().FONT_FILE_PATHS[0]).resolve()

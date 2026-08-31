@@ -406,6 +406,59 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_path):
+    report = tmp_path / "report.docx"
+    report.write_bytes(b"docx")
+    agent = FakeAgent(report)
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    execution_storage = ExecutionStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="event-task-oversized",
+        name="event task",
+        description="event task",
+        execution_mode="report",
+        trigger_type="event",
+        event_type="xuchang.station_daily_pollution.review_completed",
+        broadcast_enabled=False,
+        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成回顾报告")],
+    )
+    task_storage.create(task)
+    executor = ScheduledTaskExecutor(
+        task_storage=task_storage,
+        execution_storage=execution_storage,
+        agent_factory=lambda: agent,
+        conversation_persistence=RecordingConversationPersistence(),
+    )
+    event = TaskEvent(
+        event_id="xuchang-station-daily-review-20260829",
+        event_type="xuchang.station_daily_pollution.review_completed",
+        attributes={"city": "许昌市", "target_date": "2026-08-29"},
+        payload={
+            "city": "许昌市",
+            "target_date": "2026-08-29",
+            "event_count": 7,
+            "events": [
+                {"station_hourly": [f"row-{index}" for index in range(500)]}
+                for _ in range(7)
+            ],
+            "evidence_package_path": (
+                "backend/backend_data_registry/xuchang_station_daily_reviews/20260829.json"
+            ),
+        },
+    )
+
+    await executor.execute_task(task, event=event)
+
+    prompt = agent.prompts[0]
+    assert "## 可信事件上下文" in prompt
+    assert "event_count" in prompt
+    assert "evidence_package_path" in prompt
+    assert "row-499" not in prompt
+    assert "payload 过大" in prompt
+    assert len(prompt) < 20000
+
+
+@pytest.mark.asyncio
 async def test_executor_appends_broadcast_tool_instruction_to_scheduled_task_prompt(tmp_path):
     report = tmp_path / "report.xlsx"
     report.write_bytes(b"xlsx")

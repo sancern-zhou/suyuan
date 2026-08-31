@@ -1,4 +1,4 @@
-"""Idempotently register project-owned scheduled task definitions."""
+"""Bootstrap project task definitions without overwriting user configuration."""
 
 from __future__ import annotations
 
@@ -13,22 +13,6 @@ from .models import ScheduledTask
 
 logger = structlog.get_logger()
 
-RUNTIME_FIELDS = {
-    "created_at",
-    "updated_at",
-    "last_run_at",
-    "next_run_at",
-    "total_runs",
-    "success_runs",
-    "failed_runs",
-}
-
-
-def _configuration(task: ScheduledTask) -> dict[str, Any]:
-    payload = task.model_dump(mode="json")
-    return {key: value for key, value in payload.items() if key not in RUNTIME_FIELDS | {"enabled"}}
-
-
 def sync_project_scheduled_tasks(
     *,
     project_id: str,
@@ -36,7 +20,7 @@ def sync_project_scheduled_tasks(
     service: Any,
     project_root: Path = PROJECT_ROOT,
 ) -> list[dict[str, str]]:
-    """Create missing project tasks and update definitions without losing runtime state."""
+    """Create missing tasks; the persistent runtime store is the source of truth."""
     results = []
     definition_root = project_root / "projects" / project_id / "scheduled_tasks"
     for task_id in task_ids:
@@ -52,16 +36,6 @@ def sync_project_scheduled_tasks(
         if existing is None:
             service.create_task(definition)
             action = "created"
-        elif _configuration(existing) != _configuration(definition):
-            runtime = {field: getattr(existing, field) for field in RUNTIME_FIELDS}
-            updated = definition.model_copy(
-                update={
-                    **runtime,
-                    "enabled": existing.enabled,
-                }
-            )
-            service.update_task(updated)
-            action = "updated"
         else:
             action = "unchanged"
         results.append({"task_id": task_id, "action": action, "path": str(path)})

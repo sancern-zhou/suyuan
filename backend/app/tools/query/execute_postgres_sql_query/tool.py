@@ -1,4 +1,4 @@
-"""Read-only PostgreSQL/KingbaseES SQL queries for permit-license data."""
+"""Read-only PostgreSQL/KingbaseES SQL queries for permit-license and observed weather data."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import structlog
 from sqlalchemy import text
 
 from app.db.database import engine
+from app.db.weather_database import weather_engine
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.sql_validator import SQLValidator
 
@@ -28,19 +29,28 @@ PERMIT_SQL_TABLES = [
     "permit_documents",
 ]
 
+# 气象观测表位于独立气象库（WEATHER_DATABASE_URL/weather_engine），不在主库。
+# weather_stations 主档表当前仅剩广东遗留站点且无人维护，NMC 站点未登记，故不开放。
+WEATHER_SQL_TABLES = [
+    "observed_weather_data",
+]
+
+ALLOWED_SQL_TABLES = PERMIT_SQL_TABLES + WEATHER_SQL_TABLES
+
 MAX_LIMIT = 1000
 DEFAULT_LIMIT = 50
 
 
 class ExecutePostgresSQLQueryTool(LLMTool):
-    """Execute read-only SQL against the configured PostgreSQL/KingbaseES database."""
+    """Execute read-only SQL against the configured PostgreSQL/KingbaseES databases."""
 
     def __init__(self) -> None:
         schema_description = (
-            "PostgreSQL/KingbaseES 只读 SQL 查询工具。首期仅查询许昌市企业排污许可证数据；"
+            "PostgreSQL/KingbaseES 只读 SQL 查询工具。支持两类数据："
+            "许昌市企业排污许可证数据（主库）和气象站逐小时地面观测数据（独立气象库，"
+            "含定时抓取的中央气象台NMC观测，如许昌站）；"
             "支持 describe_table 查看表结构，或 sql 执行 SELECT/CTE 查询，二者必须二选一。"
-            "仅允许 permit_licenses、permit_license_versions、permit_pollution_details、"
-            "permit_documents 四张业务表；禁止采集运行日志和失败记录。"
+            f"仅允许白名单业务表：{', '.join(ALLOWED_SQL_TABLES)}；禁止采集运行日志和失败记录。"
             "只允许 SELECT，禁止 INSERT/UPDATE/DELETE/DDL、注释和多语句；"
             f"使用 PostgreSQL LIMIT 分页，最大返回 {MAX_LIMIT} 条。"
             "不确定字段时先调用 describe_table，不要查询 information_schema。"
@@ -50,12 +60,25 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             "\n- permit_license_versions：许可证历史/业务版本，以 license_id 关联主表。"
             "\n- permit_pollution_details：大气/水污染物、排放方式和执行标准，以 license_id 关联主表。"
             "\n- permit_documents：已下载的许可证正副本及分页文件，以 license_id 关联主表。"
+            "\n- observed_weather_data：气象站逐小时地面观测数据（NMC定时抓取落库）；"
+            "主键(time, station_id)；站点字段 station_id/station_name（许昌站为 'ZzMTA'/'许昌'，"
+            "许昌下辖长葛='sHlBF'、禹州='HFqwM'，其余站点可用 "
+            "SELECT DISTINCT station_id, station_name FROM observed_weather_data 查询）；"
+            "气象字段：temperature_2m(°C)、relative_humidity_2m(%)、dew_point_2m(°C)、"
+            "wind_speed_10m(km/h)、wind_direction_10m(°，气象来向)、surface_pressure(hPa)、"
+            "precipitation(mm)、cloud_cover(%)、visibility(m)；"
+            "溯源字段 data_source='NMC'、data_quality='good'/'partial'；NULL 表示该小时缺测。"
+            "\n注意：permit_* 表在主库，observed_weather_data 在独立气象库，"
+            "两库不支持跨库 JOIN，混用会直接报错。"
             "\n\n示例："
             "\n- 企业查询：SELECT enterprise_name, permit_number, current_status FROM permit_licenses "
             "WHERE enterprise_name ILIKE '%水泥%' ORDER BY updated_at DESC LIMIT 50"
             "\n- 大气污染物：SELECT l.enterprise_name, p.air_pollutant_types, p.air_emission_standard "
             "FROM permit_licenses l JOIN permit_pollution_details p ON p.license_id = l.id "
             "WHERE l.city_name = '许昌市' LIMIT 50"
+            "\n- 许昌小时观测：SELECT time, temperature_2m, relative_humidity_2m, wind_speed_10m, "
+            "wind_direction_10m, precipitation FROM observed_weather_data "
+            "WHERE station_id = 'ZzMTA' AND time >= '2026-08-30' ORDER BY time LIMIT 48"
         )
         function_schema = {
             "name": "execute_postgres_sql_query",
@@ -65,7 +88,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 "properties": {
                     "describe_table": {
                         "type": "string",
-                        "enum": PERMIT_SQL_TABLES,
+                        "enum": ALLOWED_SQL_TABLES,
                         "description": "查看白名单业务表的字段及一条样例；与 sql 二选一。",
                     },
                     "sql": {
@@ -84,15 +107,15 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         }
         super().__init__(
             name="execute_postgres_sql_query",
-            description="Execute read-only PostgreSQL/KingbaseES permit-license SQL queries",
+            description="Execute read-only PostgreSQL/KingbaseES permit-license and observed-weather SQL queries",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.0.0",
+            version="1.1.0",
             requires_context=True,
         )
         self.sql_validator = SQLValidator(
             max_limit=MAX_LIMIT,
-            allowed_tables=PERMIT_SQL_TABLES,
+            allowed_tables=ALLOWED_SQL_TABLES,
         )
 
     async def execute(
@@ -115,11 +138,11 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         return await self._execute_sql(sql or "", limit, context)
 
     async def _describe_table(self, table_name: str) -> dict[str, Any]:
-        if table_name not in PERMIT_SQL_TABLES:
+        if table_name not in ALLOWED_SQL_TABLES:
             return {
                 "success": False,
                 "data": None,
-                "summary": f"表 '{table_name}' 不在许可证业务表白名单中。可用表: {', '.join(PERMIT_SQL_TABLES)}",
+                "summary": f"表 '{table_name}' 不在白名单中。可用表: {', '.join(ALLOWED_SQL_TABLES)}",
             }
 
         try:
@@ -131,8 +154,11 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                 ORDER BY ordinal_position
                 """,
                 {"table_name": table_name},
+                tables=[table_name],
             )
-            sample_rows = await self._run_query(f"SELECT * FROM {table_name} LIMIT 1")
+            sample_rows = await self._run_query(
+                f"SELECT * FROM {table_name} LIMIT 1", tables=[table_name]
+            )
         except Exception as exc:
             logger.error("postgres_sql_describe_failed", table_name=table_name, error=str(exc))
             return {"success": False, "data": None, "summary": f"查询表结构失败: {exc}"}
@@ -173,14 +199,29 @@ class ExecutePostgresSQLQueryTool(LLMTool):
         if limit_error:
             return {"success": False, "data": [], "summary": limit_error}
 
+        referenced_tables = self.sql_validator.extract_tables(normalized_sql)
+        permit_refs = [t for t in referenced_tables if t in PERMIT_SQL_TABLES]
+        weather_refs = [t for t in referenced_tables if t in WEATHER_SQL_TABLES]
+        if permit_refs and weather_refs:
+            return {
+                "success": False,
+                "data": [],
+                "summary": (
+                    "许可证表与气象表分属不同数据库，不支持跨库 JOIN："
+                    f"{', '.join(permit_refs)}（主库）、{', '.join(weather_refs)}（气象库）。"
+                    "请分开查询后在应用层合并。"
+                ),
+            }
+
         logger.info(
             "postgres_sql_query_start",
             sql_preview=normalized_sql[:200],
             limit=effective_limit,
+            database="weather" if weather_refs else "main",
             session_id=getattr(context, "session_id", "unknown") if context else "unknown",
         )
         try:
-            rows = await self._run_query(safe_sql)
+            rows = await self._run_query(safe_sql, tables=referenced_tables)
         except Exception as exc:
             logger.error("postgres_sql_query_failed", error=str(exc), sql_preview=normalized_sql[:200])
             return {
@@ -219,12 +260,23 @@ class ExecutePostgresSQLQueryTool(LLMTool):
             None,
         )
 
+    @staticmethod
+    def _select_engine(tables: list[str]):
+        """按引用表选择连接：气象表走独立气象库，其余走主库。"""
+        if any(table in WEATHER_SQL_TABLES for table in tables):
+            return weather_engine
+        return engine
+
     async def _run_query(
         self,
         sql: str,
         parameters: Optional[dict[str, Any]] = None,
+        tables: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
-        async with engine.connect() as connection:
+        target_engine = self._select_engine(
+            tables if tables is not None else self.sql_validator.extract_tables(sql)
+        )
+        async with target_engine.connect() as connection:
             result = await connection.execute(text(sql), parameters or {})
             return [self._serialize_row(dict(row)) for row in result.mappings()]
 
@@ -256,7 +308,7 @@ class ExecutePostgresSQLQueryTool(LLMTool):
                     "data_id": data_id,
                     "count": len(rows),
                     "sample_count": len(sample),
-                    "summary": f"查询到 {len(rows)} 条许可证记录，完整结果已保存，当前返回 24 条样例。",
+                    "summary": f"查询到 {len(rows)} 条记录，完整结果已保存，当前返回 24 条样例。",
                     "metadata": {"columns": columns, "externalized": True},
                 }
             except Exception as exc:

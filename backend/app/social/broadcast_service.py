@@ -160,14 +160,17 @@ class SocialBroadcastService:
                 continue
 
             try:
-                outbound_msg = OutboundMessage(
-                    channel=user_info["channel"],
-                    chat_id=user_info["sender_id"],
-                    content=message,
-                    media=normalized_media,
-                    reply_to=user_info["sender_id"]
-                )
-                await self.message_bus.publish_outbound(outbound_msg)
+                # App 用户不走消息总线（ChannelManager 没有 app 通道），投递由
+                # 下方的广播 inbox 持久化 + 统一推送完成
+                if user_info["channel"] != "app":
+                    outbound_msg = OutboundMessage(
+                        channel=user_info["channel"],
+                        chat_id=user_info["sender_id"],
+                        content=message,
+                        media=normalized_media,
+                        reply_to=user_info["sender_id"]
+                    )
+                    await self.message_bus.publish_outbound(outbound_msg)
                 channels_sent.append(social_user_id)
                 context_persisted = False
                 context_error = None

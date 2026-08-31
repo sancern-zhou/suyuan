@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from datetime import date, datetime, time, timedelta
 import json
+import base64
+import inspect
 from pathlib import Path
 from statistics import median
-from statistics import pstdev
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,8 +18,10 @@ import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.integrations.xcai_station_sql import xcai_connection_string
 from app.scenarios.xuchang_transport_escalation import XuchangTransportEscalationService
+from app.scenarios.xuchang_station_deviation.source_features import calculate_pollutant_source_features
+from app.db.repositories.weather_repo import WeatherRepository
 from app.scheduled_tasks.models import TaskEvent
-from app.utils.path_config import format_agent_path, get_data_registry
+from app.utils.path_config import format_agent_path, get_data_registry, get_images_dir
 
 logger = structlog.get_logger()
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -36,6 +39,22 @@ HOURLY_POLLUTANTS = {
     "O3": ("o3", 30.0),
 }
 HOURLY_RELATIVE_THRESHOLD = 0.5
+ALERT_POLLUTANTS = {"PM2.5"}
+TARGET_STATION_CODES = ("1003A", "1005A", "1008A", "1009A", "1011A", "1012A")
+STATION_COORDINATES = {
+    "3337A": (34.036, 113.852),
+    "3338A": (34.0825, 113.8428),
+    "3134A": (34.04, 113.85),
+    "1008A": (34.0443, 113.8611),
+    "1009A": (34.0825, 113.8428),
+    "1005A": (34.0339, 113.8172),
+    "1003A": (34.036, 113.852),
+    "1011A": (34.036, 113.852),
+    "1012A": (34.04, 113.85),
+}
+REGIONAL_COMPARISON_CITIES = {
+    "郑州市", "开封市", "平顶山市", "漯河市", "周口市", "商丘市", "驻马店市",
+}
 
 
 def _number(value: Any) -> float | None:
@@ -52,60 +71,6 @@ def _hour(value: Any) -> datetime | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=TZ_SHANGHAI)
     return value.astimezone(TZ_SHANGHAI).replace(minute=0, second=0, microsecond=0)
-
-
-def calculate_pollutant_source_features(rows: list[dict[str, Any]], station_id: str) -> dict[str, Any]:
-    """Calculate the composition-based source type shown in the business rule image."""
-    samples = []
-    for row in rows:
-        if str(row.get("station_id") or "") != station_id:
-            continue
-        pm10, pm25 = _number(row.get("pm10")), _number(row.get("pm25"))
-        so2, no2, co = (_number(row.get(field)) for field in ("so2", "no2", "co"))
-        if None in (pm10, pm25, so2, no2, co) or pm10 < pm25:
-            continue
-        pm = pm10 - pm25
-        row_sum = so2 + no2 + co + pm25 + pm
-        if row_sum <= 0:
-            continue
-        samples.append({
-            "PM": pm / row_sum,
-            "SO2": so2 / row_sum,
-            "NO2": no2 / row_sum,
-            "CO": co / row_sum,
-            "PM2.5": pm25 / row_sum,
-        })
-    if len(samples) < 2:
-        return {
-            "status": "insufficient_samples",
-            "sample_count": len(samples),
-            "required_samples": 2,
-            "classification": "indeterminate",
-            "reason": "at_least_two_complete_composition_samples_required",
-        }
-    latest = samples[-1]
-    means = {key: sum(item[key] for item in samples) / len(samples) for key in latest}
-    stddevs = {key: pstdev([item[key] for item in samples]) for key in latest}
-    flags = {key: int(latest[key] > means[key] + stddevs[key]) for key in latest}
-    flag_tuple = tuple(flags[key] for key in ("SO2", "NO2", "CO", "PM2.5", "PM"))
-    classifications = {
-        (0, 0, 0, 0, 0): "偏综合型",
-        (0, 0, 0, 1, 0): "偏二次型",
-        (0, 0, 1, 0, 0): "偏机动车型",
-        (1, 0, 0, 0, 0): "偏燃煤型",
-        (0, 0, 0, 0, 1): "偏扬尘型",
-    }
-    return {
-        "status": "calculated",
-        "sample_count": len(samples),
-        "components": {key: round(value, 6) for key, value in latest.items()},
-        "historical_means": {key: round(value, 6) for key, value in means.items()},
-        "historical_standard_deviations": {key: round(value, 6) for key, value in stddevs.items()},
-        "flags": flags,
-        "classification": classifications.get(flag_tuple, "其他类型"),
-        "flag_rule": "current_proportion > historical_mean + historical_standard_deviation",
-        "formula": "ROW_SUM=SO2+NO2+CO+PM2.5+(PM10-PM2.5); PM=PM10-PM2.5",
-    }
 
 
 def _hourly_evidence(rows: list[dict[str, Any]], station_id: str) -> dict[str, Any]:
@@ -129,6 +94,8 @@ def _hourly_evidence(rows: list[dict[str, Any]], station_id: str) -> dict[str, A
             if (timestamp := _hour(row.get("data_time"))) is not None
             and (value := _number(row.get(column))) is not None
         }
+        if pollutant not in ALERT_POLLUTANTS:
+            continue
         for timestamp, hour_rows in sorted(grouped.items()):
             values = [
                 (sid, _number(row.get(column)))
@@ -333,7 +300,7 @@ def evaluate_station_daily_pollution(
                     if str(row.get("station_id")) == station_id
                 ]) / 24, 1.0), 3),
                 "source_granularity": "station_hour",
-                "source_table": "dbo.dat_station_hour",
+                "source_table": "dbo.dat_zhongda_station_hour",
                 "trigger": "confirmed_station_hourly_high_value",
             })
     evaluation_by_station = {item["station_id"]: item for item in evaluations}
@@ -420,6 +387,53 @@ def evaluate_station_daily_pollution(
     return {"target_date": target_date.isoformat(), "evaluations": evaluations, "events": events}
 
 
+def build_report_summary(
+    station_rows: list[dict[str, Any]],
+    regional_rows: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    target_date: date,
+) -> dict[str, Any]:
+    """Precompute compact, deterministic facts used by the report Agent."""
+    pollutants = sorted({str(event.get("target_pollutant")) for event in events})
+    alerts_by_pollutant = {
+        pollutant: sum(1 for event in events if event.get("target_pollutant") == pollutant)
+        for pollutant in pollutants
+    }
+    station_stats: dict[str, dict[str, Any]] = {}
+    for station_id in sorted({str(row.get("station_id")) for row in station_rows if row.get("station_id")}):
+        rows = [row for row in station_rows if str(row.get("station_id")) == station_id]
+        values = [_number(row.get("pm25")) for row in rows]
+        values = [value for value in values if value is not None]
+        if not values:
+            continue
+        station_stats[station_id] = {
+            "station_name": next((row.get("name") or station_id for row in rows), station_id),
+            "hour_count": len(values),
+            "pm25_mean": round(sum(values) / len(values), 3),
+            "pm25_max": round(max(values), 3),
+            "pm25_min": round(min(values), 3),
+        }
+    city_stats: dict[str, dict[str, Any]] = {}
+    for city in sorted({str(row.get("city")) for row in regional_rows if row.get("city")}):
+        values = [_number(row.get("pm25")) for row in regional_rows if str(row.get("city")) == city]
+        values = [value for value in values if value is not None]
+        if values:
+            city_stats[city] = {
+                "hour_count": len(values),
+                "pm25_mean": round(sum(values) / len(values), 3),
+                "pm25_max": round(max(values), 3),
+                "pm25_min": round(min(values), 3),
+            }
+    return {
+        "target_date": target_date.isoformat(),
+        "alert_count": len(events),
+        "alerts_by_pollutant": alerts_by_pollutant,
+        "alert_stations": sorted({str(event.get("station_id")) for event in events}),
+        "station_pm25_statistics": station_stats,
+        "regional_city_pm25_statistics": city_stats,
+    }
+
+
 class XuchangStationDailyPollutionFetcher(DataFetcher):
     """Read yesterday's station-day values and hourly review evidence once."""
 
@@ -447,43 +461,210 @@ class XuchangStationDailyPollutionFetcher(DataFetcher):
             rows = []
             cursor.execute(
                 """
-                SELECT station_id, name, lon, lat, pm25, pm10, o3, no2, so2, co, data_time
-                FROM dbo.dat_station_hour
-                WHERE city_area_code = ? AND data_time >= ? AND data_time < ?
-                ORDER BY station_id, data_time
+                SELECT station_code, station_name, pm25, pm10, o3, no2, so2, co, time_point
+                FROM dbo.dat_zhongda_station_hour
+                WHERE time_point >= ? AND time_point < ?
+                  AND area LIKE N'%许昌%'
+                  AND station_code IN (?, ?, ?, ?, ?, ?)
+                ORDER BY station_code, time_point
                 """,
-                ["411000", start, end],
+                [start, end, *TARGET_STATION_CODES],
             )
-            columns = [column[0] for column in cursor.description]
-            rows.extend(dict(zip(columns, row, strict=True), data_source="hour") for row in cursor.fetchall())
+            rows.extend(
+                {
+                    "station_id": row[0], "name": row[1], "pm25": row[2],
+                    "pm10": row[3], "o3": row[4], "no2": row[5], "so2": row[6],
+                    "co": row[7], "data_time": row[8],
+                    "lat": STATION_COORDINATES.get(str(row[0]), (None, None))[0],
+                    "lon": STATION_COORDINATES.get(str(row[0]), (None, None))[1],
+                    "data_source": "zhongda_raw_hour",
+                }
+                for row in cursor.fetchall()
+            )
             return rows
+        finally:
+            connection.close()
+
+    def load_regional_hourly_rows(self, target_date: date) -> list[dict[str, Any]]:
+        start = datetime.combine(target_date, time.min)
+        end = start + timedelta(days=1)
+        connection = pyodbc.connect(xcai_connection_string(), timeout=30)
+        try:
+            cursor = connection.cursor()
+            city_names = sorted(REGIONAL_COMPARISON_CITIES)
+            placeholders = ", ".join("?" for _ in city_names)
+            cursor.execute(
+                """
+                SELECT Area, CityCode, TimePoint, PM2_5, PM10, O3, NO2, SO2, CO
+                FROM dbo.CityAQIPublishHistory
+                WHERE TimePoint >= ? AND TimePoint < ?
+                  AND Area IN (PLACEHOLDERS)
+                ORDER BY Area, TimePoint
+                """.replace("PLACEHOLDERS", placeholders),
+                [start, end, *city_names],
+            )
+            return [
+                {
+                    "city": row[0], "city_code": row[1], "data_time": row[2],
+                    "pm25": _number(row[3]), "pm10": _number(row[4]), "o3": _number(row[5]), "no2": _number(row[6]),
+                    "so2": _number(row[7]), "co": _number(row[8]), "data_source": "published_city_hour",
+                }
+                for row in cursor.fetchall()
+            ]
         finally:
             connection.close()
 
     async def fetch_and_store(self) -> dict[str, Any]:
         now = self.now_factory()
         target_date = now.astimezone(TZ_SHANGHAI).date() - timedelta(days=1)
-        result = evaluate_station_daily_pollution(self.load_rows(target_date), target_date=target_date)
+        station_rows = self.load_rows(target_date)
+        result = evaluate_station_daily_pollution(station_rows, target_date=target_date)
+        result["station_hourly"] = station_rows
+        result["hourly_alerts"] = result.get("events", [])
+        result["hourly_checks"] = result.get("evaluations", [])
+        regional_rows = self.load_regional_hourly_rows(target_date)
+        result["regional_city_hourly"] = regional_rows
+        result["report_summary"] = build_report_summary(
+            station_rows, regional_rows, result["events"], target_date
+        )
+        result["source_provenance"] = {
+            "station_hourly": "中大源原始站点小时数据（dbo.dat_zhongda_station_hour）",
+            "regional_city_hourly": "城市发布小时数据（dbo.CityAQIPublishHistory）",
+            "meteorology": "NMC许昌观测站（station_id=ZzMTA）",
+        }
+        weather_rows = await WeatherRepository().get_observed_data(
+            "ZzMTA", datetime.combine(target_date, time.min), datetime.combine(target_date, time.max)
+        )
+        result["meteorology"] = [
+            {
+                "time": item.time.isoformat(), "temperature_2m": item.temperature_2m,
+                "relative_humidity_2m": item.relative_humidity_2m,
+                "wind_speed_10m": item.wind_speed_10m,
+                "wind_direction_10m": item.wind_direction_10m,
+                "precipitation": item.precipitation, "data_source": "NMC",
+            }
+            for item in weather_rows
+        ]
+        if result["meteorology"]:
+            from app.tools.visualization.create_report_chart.domain.wind_timeseries import render_wind_timeseries
+
+            def build_chart_rows(values_lookup: Callable[[datetime], list[float]]) -> list[dict[str, Any]]:
+                chart_rows = []
+                for met in result["meteorology"]:
+                    meteorology_time = datetime.fromisoformat(met["time"])
+                    if meteorology_time.tzinfo is not None:
+                        meteorology_time = meteorology_time.astimezone(TZ_SHANGHAI).replace(tzinfo=None)
+                    values = values_lookup(meteorology_time)
+                    chart_rows.append({
+                        "time": meteorology_time,
+                        "concentration": sum(values) / len(values) if values else float("nan"),
+                        "wind_speed_10m": met.get("wind_speed_10m"),
+                        "wind_direction_10m": met.get("wind_direction_10m"),
+                        "humidity": met.get("relative_humidity_2m"),
+                        "precipitation": met.get("precipitation"),
+                    })
+                return chart_rows
+
+            def chart_options(rows: list[dict[str, Any]]) -> dict[str, Any]:
+                return {
+                    "wind_direction_convention": "meteorological_from",
+                    "include_humidity": True,
+                    "include_precipitation": any(
+                        row.get("precipitation") is not None and row["precipitation"] > 0 for row in rows
+                    ),
+                }
+
+            by_time: dict[tuple[str, datetime], list[float]] = {}
+            for row in station_rows:
+                value = _number(row.get("pm25"))
+                if value is not None:
+                    by_time.setdefault((str(row.get("station_id")), row["data_time"]), []).append(value)
+            chart_paths = {}
+            alert_station_ids = sorted({event["station_id"] for event in result["events"]})
+            for station_id in alert_station_ids:
+                chart_rows = build_chart_rows(
+                    lambda timestamp, sid=str(station_id): by_time.get((sid, timestamp), [])
+                )
+                if len(chart_rows) < 2:
+                    continue
+                station_name = next((str(row.get("name") or station_id) for row in station_rows
+                                     if str(row.get("station_id")) == str(station_id)), station_id)
+                image, _, _ = render_wind_timeseries(
+                    title=f"{station_name}（{station_id}）{target_date}气象与PM2.5时序变化",
+                    data={"records": chart_rows, "pollutant_name": "PM2.5", "unit": "μg/m³"},
+                    options=chart_options(chart_rows),
+                    output_context="word", style_profile="report",
+                )
+                safe_station = str(station_id).replace("/", "_")
+                chart_path = get_images_dir() / f"许昌市{safe_station}_气象与PM2_5时序变化_{target_date}.png"
+                chart_path.write_bytes(base64.b64decode(image))
+                chart_paths[str(station_id)] = format_agent_path(chart_path)
+            if chart_paths:
+                result["meteorology_chart_paths"] = chart_paths
+                if len(chart_paths) == 1:
+                    result["meteorology_chart_path"] = next(iter(chart_paths.values()))
+            else:
+                city_by_time: dict[datetime, list[float]] = {}
+                for row in station_rows:
+                    value = _number(row.get("pm25"))
+                    if value is not None:
+                        city_by_time.setdefault(row["data_time"], []).append(value)
+                chart_rows = build_chart_rows(lambda timestamp: city_by_time.get(timestamp, []))
+                has_concentration = any(row["concentration"] == row["concentration"] for row in chart_rows)
+                if len(chart_rows) >= 2 and has_concentration:
+                    image, _, _ = render_wind_timeseries(
+                        title=f"许昌市{target_date}气象与PM2.5时序变化（全市站点均值）",
+                        data={"records": chart_rows, "pollutant_name": "PM2.5", "unit": "μg/m³"},
+                        options=chart_options(chart_rows),
+                        output_context="word", style_profile="report",
+                    )
+                    city_chart_path = get_images_dir() / f"许昌市全市均值_气象与PM2_5时序变化_{target_date}.png"
+                    city_chart_path.write_bytes(base64.b64decode(image))
+                    result["city_mean_meteorology_chart_path"] = format_agent_path(city_chart_path)
+        for event in result["events"]:
+            event["meteorology_evidence"] = {
+                "status": "available" if result["meteorology"] else "not_available",
+                "source": "NMC observed station ZzMTA",
+                "rows": result["meteorology"],
+            }
+            station_chart_path = (result.get("meteorology_chart_paths") or {}).get(str(event["station_id"]))
+            if station_chart_path:
+                event["meteorology_chart_path"] = station_chart_path
+            event["township_and_provincial_transport"] = {
+                "status": "available" if regional_rows else "not_available",
+                "source": "中大发布城市小时数据",
+                "rows": regional_rows,
+            }
         from app.scheduled_tasks import get_scheduled_task_service
 
         task_service = get_scheduled_task_service()
         review_path = get_data_registry() / "xuchang_station_daily_reviews" / f"{target_date:%Y%m%d}.json"
         review_path.parent.mkdir(parents=True, exist_ok=True)
         review_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-        await task_service.publish_event(TaskEvent(
+        # 事件 payload 只携带摘要与证据包路径；全量数据通过持久化文件传递，
+        # 避免执行器把数百 KB 的原始小时数据灌进 Agent 对话上下文。
+        review_payload = {
+            "city": "许昌市",
+            "target_date": result["target_date"],
+            "event_count": len(result["events"]),
+            "alert_stations": sorted({
+                f"{event['station_id']}({event['target_pollutant']})"
+                for event in result["events"]
+            }),
+            "evidence_package_path": format_agent_path(review_path),
+            "template_path": "/home/xckj/suyuan/backend/backend_data_registry/uploads/401ecbb4-c402-4f55-b37c-331e7a88b49d.docx",
+        }
+        review_event = TaskEvent(
             event_id=f"xuchang-station-daily-review-{target_date:%Y%m%d}",
             event_type=DAILY_REVIEW_EVENT_TYPE,
             occurred_at=datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=TZ_SHANGHAI).isoformat(),
             attributes={"city": "许昌市", "target_date": result["target_date"]},
-            payload={
-                "city": "许昌市",
-                "target_date": result["target_date"],
-                "event_count": len(result["events"]),
-                "events": result["events"],
-                "evidence_package_path": format_agent_path(review_path),
-                "template_path": "/home/xckj/suyuan/backend/backend_data_registry/uploads/401ecbb4-c402-4f55-b37c-331e7a88b49d.docx",
-            },
-        ))
+            payload=review_payload,
+        )
+        publish_kwargs = {}
+        if "force_retry" in inspect.signature(task_service.publish_event).parameters:
+            publish_kwargs["force_retry"] = True
+        await task_service.publish_event(review_event, **publish_kwargs)
         if result["events"]:
             for event in result["events"]:
                 ingestion = self.analysis_service.ingest_daily_exceedance(event)

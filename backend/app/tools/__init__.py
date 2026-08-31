@@ -155,12 +155,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="get_weather_data", error=str(e))
 
-    try:
-        from app.tools.query.get_weather_forecast.tool import GetWeatherForecastTool
-        registry.register(GetWeatherForecastTool(), priority=30)
-        logger.info("tool_loaded", tool="get_weather_forecast")
-    except ImportError as e:
-        logger.warning("tool_import_failed", tool="get_weather_forecast", error=str(e))
+    if not is_project_tool_disabled(context, "get_weather_forecast"):
+        try:
+            from app.tools.query.get_weather_forecast.tool import GetWeatherForecastTool
+            registry.register(GetWeatherForecastTool(), priority=30)
+            logger.info("tool_loaded", tool="get_weather_forecast")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="get_weather_forecast", error=str(e))
 
     try:
         from app.tools.query.get_current_weather.tool import GetCurrentWeatherTool
@@ -420,7 +421,7 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # 通用SQL执行工具
     try:
         from app.tools.query.execute_sql_query.tool import ExecuteOpsSQLQueryTool, ExecuteSQLQueryTool, ExecuteTenderSQLQueryTool
-        registry.register(ExecuteSQLQueryTool(), priority=47)
+        registry.register(ExecuteSQLQueryTool(project_id=context.manifest.project), priority=47)
         logger.info("tool_loaded", tool="execute_sql_query")
         registry.register(ExecuteOpsSQLQueryTool(), priority=47)
         logger.info("tool_loaded", tool="execute_ops_sql_query")

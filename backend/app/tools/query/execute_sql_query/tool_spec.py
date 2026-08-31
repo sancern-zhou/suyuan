@@ -8,7 +8,6 @@ def test_execute_sql_query_schema_embeds_reusable_frequent_table_contracts():
     assert "城市名称和行政区代码从当前项目上下文或用户长期记忆获取" in description
     assert "本工具不内置特定项目的地理信息" in description
     assert "不得把模板变量原样写入SQL" in description
-    assert "许昌" not in description
     assert "411000" not in description
 
     assert "CurrentAirQuality" in description

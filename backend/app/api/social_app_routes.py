@@ -100,33 +100,48 @@ class AppPushDeviceRequest(BaseModel):
     app_id: str | None = Field(default=None, max_length=128)
 
 
-def _broadcast_attachment_payload(item: object) -> dict | None:
+def _broadcast_attachment_payload(item: object, *, message_id: str, index: int) -> dict | None:
     """Project internal broadcast attachment metadata to an App-safe shape."""
     if not isinstance(item, dict):
         return None
     name = str(item.get("filename") or item.get("name") or "附件").strip() or "附件"
     mime_type = str(item.get("mime_type") or item.get("mimeType") or "").strip()
+    if not mime_type:
+        mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
     raw_url = str(item.get("url") or "").strip()
     payload = {
         "filename": name,
         "name": name,
         "type": "image" if mime_type.lower().startswith("image/") else "file",
-        "mime_type": mime_type or "application/octet-stream",
+        "mime_type": mime_type,
     }
-    # Only forward URLs, never server filesystem paths.
+    # Only forward URLs, never server filesystem paths; local files are served
+    # through the owner-scoped broadcast attachment content endpoint.
     if raw_url.startswith("/") or raw_url.startswith("https://") or raw_url.startswith("http://"):
         payload["url"] = raw_url
+    elif str(item.get("path") or "").strip():
+        base_url = f"/api/social/app/broadcasts/{message_id}/attachments/{index}"
+        payload["url"] = f"{base_url}/content"
+        payload["download_url"] = f"{base_url}/content"
+        # Office 文件 App 端只能通过 PDF rendition 预览，与聊天附件的
+        # office preview 管线保持一致。
+        if Path(name).suffix.lower() in {
+            ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+        }:
+            payload["preview_url"] = f"{base_url}/preview"
+            payload["preview_mime_type"] = "application/pdf"
     return payload
 
 
 def _broadcast_payload(item: dict) -> dict:
     data = item.get("data") if isinstance(item.get("data"), dict) else {}
     raw_attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
-    attachments = [
-        attachment
-        for raw in raw_attachments
-        if (attachment := _broadcast_attachment_payload(raw)) is not None
-    ]
+    message_id = str(item.get("id") or "")
+    attachments = []
+    for index, raw in enumerate(raw_attachments):
+        attachment = _broadcast_attachment_payload(raw, message_id=message_id, index=index)
+        if attachment is not None:
+            attachments.append(attachment)
     return {
         "message_id": str(item.get("id") or ""),
         "content": str(item.get("content") or ""),
@@ -467,6 +482,108 @@ async def app_mark_all_broadcasts_read(
     return {"read_all": True, "changed": changed}
 
 
+async def _resolve_broadcast_attachment(
+    message_id: str,
+    index: int,
+    identity: AppIdentity,
+) -> Path:
+    """Resolve one broadcast attachment of the caller's inbox to a local file."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    message = next(
+        (item for item in messages if isinstance(item, dict) and str(item.get("id")) == message_id),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    if index < 0 or index >= len(attachments) or not isinstance(attachments[index], dict):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    raw_path = str(attachments[index].get("path") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="broadcast_attachment_content_unavailable")
+    registry_root = get_data_registry().expanduser().resolve()
+    target = Path(raw_path).expanduser().resolve()
+    try:
+        target.relative_to(registry_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="broadcast_attachment_path_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="broadcast_attachment_content_missing")
+    return target
+
+
+async def _broadcast_attachment_name(
+    message_id: str,
+    index: int,
+    identity: AppIdentity,
+) -> str:
+    """Return the stored display name of one broadcast attachment."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    message = next(
+        (item for item in messages if isinstance(item, dict) and str(item.get("id")) == message_id),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    if index < 0 or index >= len(attachments) or not isinstance(attachments[index], dict):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    attachment = attachments[index]
+    target_name = Path(str(attachment.get("path") or "attachment")).name
+    return str(attachment.get("name") or attachment.get("filename") or target_name)
+
+
+@router.get("/broadcasts/{message_id}/attachments/{index}/content")
+async def app_broadcast_attachment_content(
+    message_id: str,
+    index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Stream one broadcast attachment to its owner.
+
+    The persisted attachment keeps the server filesystem path; this endpoint
+    resolves it server-side so the path never reaches the client.
+    """
+    target = await _resolve_broadcast_attachment(message_id, index, identity)
+    filename = await _broadcast_attachment_name(message_id, index, identity)
+    media_type = str(mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    return FileResponse(target, media_type=media_type, filename=filename)
+
+
+@router.get("/broadcasts/{message_id}/attachments/{index}/preview")
+async def app_broadcast_attachment_preview(
+    message_id: str,
+    index: int,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Serve a cached PDF rendition of one broadcast Office attachment.
+
+    Mirrors the chat-upload preview pipeline (LibreOffice -> <file>.preview.pdf)
+    because the Android App renders Office documents via PDF previews only.
+    """
+    import asyncio
+
+    from app.api.upload_routes import _office_pdf_preview
+
+    target = await _resolve_broadcast_attachment(message_id, index, identity)
+    if target.suffix.lower() not in {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}:
+        raise HTTPException(status_code=404, detail="broadcast_preview_not_supported")
+    cached = target.with_suffix(".preview.pdf")
+    if not cached.is_file():
+        preview = await asyncio.to_thread(_office_pdf_preview, str(target))
+        if preview is None:
+            raise HTTPException(status_code=503, detail="broadcast_preview_generation_failed")
+        cached = preview
+    filename = await _broadcast_attachment_name(message_id, index, identity)
+    return FileResponse(cached, media_type="application/pdf", filename=f"{Path(filename).stem}.pdf")
+
+
 def _session_mapper(request: Request) -> SessionMapper:
     mapper = getattr(request.app.state, "session_mapper", None)
     if mapper is None:
@@ -754,6 +871,20 @@ async def _stream_events(
     streamed_answer = ""
     streamed_resources: list[dict] = []
     persisted = False
+    # 与 agent_bridge 处理微信/QQ 入站消息保持一致：为本次 agent 运行设置
+    # social 上下文，使 send_notification 等工具能解析当前发送通道。
+    from app.social.message_bus_singleton import reset_current_context, set_current_context
+
+    social_user_parts = identity.social_user_id.rsplit(":", 2)
+    if len(social_user_parts) == 3:
+        context_channel, context_bot_account, context_chat_id = social_user_parts
+    else:
+        context_channel, context_bot_account, context_chat_id = "app", "android", identity.account_id
+    context_tokens = set_current_context(
+        channel=context_channel,
+        chat_id=context_chat_id,
+        bot_account=context_bot_account,
+    )
     try:
         await cancellation_registry.arm_run_task(session_id, cancel_event)
         async for event in agent.analyze(
@@ -819,6 +950,7 @@ async def _stream_events(
         error = {"type": "fatal_error", "data": {"error": str(exc), "code": "app_agent_failed"}}
         yield f"data: {json.dumps(error, ensure_ascii=False)}\n\n"
     finally:
+        reset_current_context(context_tokens)
         # A disconnected client can cancel the stream before a terminal event.
         # Keep the user message so the session remains auditable and does not
         # appear to have been silently dropped.

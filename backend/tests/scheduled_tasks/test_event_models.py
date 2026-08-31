@@ -146,3 +146,22 @@ def test_scheduler_supports_monthly_first_day_task(tmp_path):
     scheduler._schedule_task(task)
 
     assert scheduler.scheduler.get_job(task.task_id) is not None
+
+
+def test_scheduler_supports_weekly_monday_eight_am_task(tmp_path):
+    storage = TaskStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="weekly-monday-task",
+        name="weekly monday task",
+        description="weekly monday task",
+        schedule_type="weekly_monday_8am",
+        steps=[_step()],
+    )
+    storage.create(task)
+    scheduler = SimpleScheduler(storage)
+
+    scheduler._schedule_task(task)
+
+    job = scheduler.scheduler.get_job(task.task_id)
+    assert job is not None
+    assert "day_of_week='mon'" in str(job.trigger)

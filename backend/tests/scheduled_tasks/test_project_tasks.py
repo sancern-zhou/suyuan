@@ -49,7 +49,7 @@ def test_project_task_sync_creates_then_remains_idempotent(tmp_path):
     assert unchanged[0]["action"] == "unchanged"
 
 
-def test_project_task_sync_updates_prompt_and_preserves_runtime_state(tmp_path):
+def test_project_task_sync_preserves_user_prompt_and_runtime_state(tmp_path):
     storage = TaskStorage(tmp_path / "state")
     existing = _task("旧提示")
     existing.enabled = False
@@ -65,7 +65,7 @@ def test_project_task_sync_updates_prompt_and_preserves_runtime_state(tmp_path):
     )
 
     updated = storage.get("task_report")
-    assert result[0]["action"] == "updated"
-    assert updated.steps[0].agent_prompt == "新提示"
+    assert result[0]["action"] == "unchanged"
+    assert updated.steps[0].agent_prompt == "旧提示"
     assert updated.enabled is False
     assert updated.total_runs == 7

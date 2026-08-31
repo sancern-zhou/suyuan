@@ -108,7 +108,10 @@ class Settings(BaseSettings):
     zhongda_data_table_type: str = Field(default="Act", description="Act=实况；Std=标况")
     zhongda_parameter_type: str = Field(default="gp", description="gp=常规污染物；mp=气象；gh=温室气体")
     zhongda_data_source_type: str = Field(
-        default="App", description="小时/日均数据口径：App=审核后；Src=原始"
+        default="App", description="分钟/日均数据口径：App=审核后；Src=原始"
+    )
+    zhongda_hour_data_source_type: str = Field(
+        default="Src", description="站点小时抓取口径：Src=原始；App=审核后"
     )
     zhongda_data_type_plan: str = Field(
         default="145th", description="评价规划期：135th/145th/155th"

@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONDA_ENV_PATH="${CONDA_ENV_PATH:-/root/miniconda3/envs/backend_py311}"
+CONDA_ENV_PATH="${CONDA_ENV_PATH:-/root/.codex/miniconda3/envs/backend_py311}"
 PYTHON_BIN="${CONDA_ENV_PATH}/bin/python"
 PID_FILE="${BACKEND_PID_FILE:-/tmp/suyuan_backend.pid}"
 

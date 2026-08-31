@@ -49,6 +49,10 @@ class SessionManager:
 
         # 内存缓存：{session_id: Session}
         self.sessions: Dict[str, Session] = {}
+        # 缓存对应的文件签名 {session_id: (mtime_ns, size)}，用于跨进程失效：
+        # worker 进程会写入 broadcast inbox 等会话文件，web 进程读取时必须
+        # 感知文件变化，否则会一直返回过期缓存。
+        self._session_file_sigs: Dict[str, tuple] = {}
 
         logger.info(
             f"SessionManager initialized with storage path: {self.storage_path}, "
@@ -82,6 +86,7 @@ class SessionManager:
                 json.dumps(session_data, indent=2, ensure_ascii=False),
                 encoding='utf-8'
             )
+            self._record_file_signature(session.session_id, session_file)
 
             logger.info(
                 f"Session saved: {session.session_id} "
@@ -114,6 +119,25 @@ class SessionManager:
         """替换 transcript 快照。"""
         return self.save_session(session, update_timestamp=update_timestamp)
 
+    def _record_file_signature(self, session_id: str, session_file: Path) -> None:
+        """记录会话文件的 (mtime_ns, size) 签名，供缓存失效判断。"""
+        try:
+            stat = session_file.stat()
+            self._session_file_sigs[session_id] = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            self._session_file_sigs.pop(session_id, None)
+
+    def _cached_copy_is_stale(self, session_id: str, session_file: Path) -> bool:
+        """磁盘文件是否已被其他进程更新（签名与缓存时不一致）。"""
+        cached_sig = self._session_file_sigs.get(session_id)
+        if cached_sig is None:
+            return True
+        try:
+            stat = session_file.stat()
+        except OSError:
+            return False
+        return (stat.st_mtime_ns, stat.st_size) != cached_sig
+
     def load_session(self, session_id: str) -> Optional[Session]:
         """
         从磁盘加载会话
@@ -124,12 +148,14 @@ class SessionManager:
         Returns:
             会话对象，如果不存在则返回None
         """
-        # 先检查内存缓存
-        if session_id in self.sessions:
-            return self.sessions[session_id]
-
-        # 从磁盘加载
         session_file = self._get_session_file_path(session_id)
+
+        # 先检查内存缓存；文件被其他进程更新时（如 worker 写 broadcast inbox）
+        # 重新加载，避免返回过期内容
+        if session_id in self.sessions:
+            if not self._cached_copy_is_stale(session_id, session_file):
+                return self.sessions[session_id]
+            # 文件有变化，走磁盘重载路径刷新缓存
 
         if not session_file.exists():
             logger.debug(f"Session not found: {session_id}")
@@ -141,6 +167,7 @@ class SessionManager:
 
             # 加载到内存缓存
             self.sessions[session_id] = session
+            self._record_file_signature(session_id, session_file)
 
             logger.info(f"Session loaded: {session_id}")
 
@@ -148,7 +175,8 @@ class SessionManager:
 
         except Exception as e:
             logger.error(f"Failed to load session {session_id}: {e}")
-            return None
+            # 重载失败时回退到缓存副本（若存在），避免把瞬时 IO 问题放大成会话丢失
+            return self.sessions.get(session_id)
 
     def get_session(self, session_id: str) -> Optional[Session]:
         """
@@ -229,6 +257,7 @@ class SessionManager:
             # 从内存删除
             if session_id in self.sessions:
                 del self.sessions[session_id]
+            self._session_file_sigs.pop(session_id, None)
 
             # 从磁盘删除
             session_file = self._get_session_file_path(session_id)
