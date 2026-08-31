@@ -448,3 +448,105 @@ async def test_execute_reads_latest_nmc_surface_weather_chart_from_registry(tmp_
     assert result["data"]["image_url"] == "/api/image/nmc_chart_test"
     assert result["visuals"][0]["type"] == "image"
     assert result["refs"]["data"][0]["data_id"] == entry.data_id
+
+
+def _register_nmc_chart(
+    registry: DataRegistryService,
+    image_cache: ImageCache,
+    tmp_path: Path,
+    *,
+    timestamp: str,
+    display_time: str,
+):
+    source_path = tmp_path / "weather" / f"nmc_weather_chart_{timestamp}.jpg"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"jpeg-bytes")
+    cached = image_cache.save(
+        base64.b64encode(b"jpeg-bytes").decode(), chart_id=f"nmc_chart_{timestamp}"
+    )
+    return registry.register_payload(
+        schema="nmc_weather_chart",
+        version="v1",
+        payload={
+            "product": "中国地面基本天气分析",
+            "display_time": display_time,
+            "image_url": (
+                "https://image.nmc.cn/product/2026/08/31/WESA/"
+                f"SEVP_NMC_WESA_SFER_EGH_ACWP_L00_P9_{timestamp}000.JPG?v=1"
+            ),
+            "local_path": str(source_path),
+            "image": cached,
+        },
+    )
+
+
+def _setup_nmc_registry(tmp_path, monkeypatch):
+    registry = DataRegistryService(base_dir=str(tmp_path / "registry"))
+    image_cache = ImageCache(cache_dir=str(tmp_path / "images"))
+    Path(image_cache.cache_dir).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(weather_image_module, "data_registry", registry)
+    return registry, image_cache
+
+
+@pytest.mark.asyncio
+async def test_execute_nmc_chart_date_with_latest_returns_requested_date_not_newest(tmp_path, monkeypatch):
+    registry, image_cache = _setup_nmc_registry(tmp_path, monkeypatch)
+    entry = _register_nmc_chart(
+        registry, image_cache, tmp_path, timestamp="20260808120000", display_time="08/08 20:00"
+    )
+    _register_nmc_chart(
+        registry, image_cache, tmp_path, timestamp="20260831120000", display_time="08/31 20:00"
+    )
+
+    result = await GetPlatformWeatherImageTool(output_root=tmp_path).execute(
+        product="nmc_surface_weather_chart",
+        date="2026-08-08",
+        time="latest",
+    )
+
+    assert result["success"] is True
+    assert result["data"]["data_id"] == entry.data_id
+    assert result["data"]["time_key"] == "08/08 20:00"
+
+
+@pytest.mark.asyncio
+async def test_execute_nmc_chart_uncached_date_returns_not_found_with_hint(tmp_path, monkeypatch):
+    registry, image_cache = _setup_nmc_registry(tmp_path, monkeypatch)
+    _register_nmc_chart(
+        registry, image_cache, tmp_path, timestamp="20260831120000", display_time="08/31 20:00"
+    )
+
+    result = await GetPlatformWeatherImageTool(output_root=tmp_path).execute(
+        product="nmc_surface_weather_chart",
+        date="20260719",
+        time="latest",
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "not_found"
+    assert "20260719" in result["error"]
+    assert "20260831" in result["error"]
+    assert "无法回填" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_execute_nmc_chart_specific_time_still_filters_within_date(tmp_path, monkeypatch):
+    registry, image_cache = _setup_nmc_registry(tmp_path, monkeypatch)
+    _register_nmc_chart(
+        registry, image_cache, tmp_path, timestamp="20260808120000", display_time="08/08 20:00"
+    )
+
+    matched = await GetPlatformWeatherImageTool(output_root=tmp_path).execute(
+        product="nmc_surface_weather_chart",
+        date="20260808",
+        time="20:00",
+    )
+    assert matched["success"] is True
+
+    missed = await GetPlatformWeatherImageTool(output_root=tmp_path).execute(
+        product="nmc_surface_weather_chart",
+        date="20260808",
+        time="08:00",
+    )
+    assert missed["success"] is False
+    assert missed["status"] == "not_found"

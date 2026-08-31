@@ -365,17 +365,17 @@ class NOAAHysplitAPI:
                         "success": False,
                         "error": error_msg,
                         "job_id": job_id,
-                        "trajectory_image_url": result_url,
+                        "noaa_result_page_url": result_url,
                         "trajectory_image_base64": None,
                         "endpoints_data": [],
                         "model_complete": model_complete,
                         "plot_success": False
                     }
-                
+
                 return {
                     "success": success,
                     "job_id": job_id,
-                    "trajectory_image_url": result_url,  # 保留NOAA结果页面URL
+                    "noaa_result_page_url": result_url,  # NOAA结果页面URL（HTML任务页，不能作为图片嵌入）
                     "trajectory_image_base64": image_data,  # 本地生成的PNG图片
                     "endpoints_data": endpoints_downsampled,  # 抽稀后的轨迹点
                     "model_complete": model_complete,
@@ -544,7 +544,7 @@ class NOAAHysplitAPI:
             "success": False,
             "error": error,
             "job_id": None,
-            "trajectory_image_url": None,
+            "noaa_result_page_url": None,
             "trajectory_image_base64": None,
             "endpoints_data": []
         }
@@ -573,6 +573,7 @@ class NOAAHysplitAPI:
         image_base64 = result.get("trajectory_image_base64")
 
         visuals = []
+        local_image_url = None
 
         # 公共meta信息
         job_id = result.get("job_id")
@@ -593,6 +594,7 @@ class NOAAHysplitAPI:
             image_info = self._save_image_to_cache(image_base64, chart_id)
             image_id = image_info["image_id"]  # 提取image_id字符串
             image_url = image_info["url"]  # 提取URL字符串
+            local_image_url = image_url
 
             logger.info("trajectory_image_saved_to_cache", image_id=image_id, chart_id=chart_id, image_url=image_url)
 
@@ -650,7 +652,8 @@ class NOAAHysplitAPI:
                 "generator": "noaa_hysplit_local_plot",
                 "source": "NOAA HYSPLIT计算 + matplotlib本地绘制",
                 "job_id": result.get("job_id"),
-                "trajectory_image_url": result.get("trajectory_image_url"),
+                "trajectory_image_url": local_image_url,  # 本地缓存图URL，前端可直接展示
+                "noaa_result_page_url": result.get("noaa_result_page_url"),  # NOAA任务页（HTML），不可作图片嵌入
                 **metadata
             }
         }

@@ -368,7 +368,7 @@ async def upload_chat_file(
             "upload_time": "2024-03-10T12:00:00"
         }
     """
-    if user.auth_source == "app":
+    if getattr(user, "auth_source", None) == "app":
         # Android App sessions are social-source conversations and are marked
         # read-only only from the Web surface. App ownership is still checked.
         await catalog.require_read(session_id, user)

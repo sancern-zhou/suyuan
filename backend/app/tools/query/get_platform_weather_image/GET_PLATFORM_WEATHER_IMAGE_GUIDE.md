@@ -15,6 +15,7 @@
 
 - `product`：固定填写 `nmc_surface_weather_chart`。
 - `time`：可省略或填写 `latest`、`最新`；也可填写 fetcher 记录的页面显示时间，如 `08/11 08:00`。
+- 传入 `date` 时，即使 `time=latest` 也只返回该日期的缓存图；未命中时会返回当前缓存日期范围。
 - `date`：可选，格式为 `YYYYMMDD` 或 `YYYY-MM-DD`，与 `time` 一起用于筛选缓存时次。
 - `download`：是否返回前端图片展示信息，默认 `true`。
 
@@ -25,6 +26,7 @@
 ```json
 {
   "product": "nmc_surface_weather_chart",
+  "date": "20260811",
   "time": "latest"
 }
 ```
