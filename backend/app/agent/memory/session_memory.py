@@ -31,6 +31,22 @@ MAX_TOOL_RESULT_STRING_CHARS = 8_000
 # Keep individual model-facing tool results bounded. The full runtime event or
 # materialized resource remains persisted separately for display/download.
 MAX_TOOL_RESULT_JSON_CHARS = 20_000
+# Fresh-result window: tool results produced in the current run are projected
+# to the model verbatim (the tool's own output limits bound them). Only stale
+# turns fall back to the compacted history form. A per-request budget keeps
+# multi-read runs from flooding the context; oldest results downgrade first.
+MAX_FRESH_TOOL_RESULT_CHARS = 120_000
+MAX_FRESH_SINGLE_TOOL_RESULT_CHARS = 120_000
+
+
+def _serialize_tool_result_json(value: Any) -> str:
+    """Near-compact serialization for model-facing tool_result content.
+
+    ``indent=2`` inflates chunk-heavy payloads by 15-30% (newlines plus
+    indentation). Dropping the layout while keeping ``": "`` keeps payloads
+    readable and string-compatible with existing consumers/tests.
+    """
+    return json.dumps(value, ensure_ascii=False, separators=(",", ": "), default=str)
 
 
 def _todo_status_counts(items: Any) -> Dict[str, int]:
@@ -330,6 +346,26 @@ def _tool_result_value_was_truncated(value: Any) -> bool:
     return False
 
 
+def _chunk_map_for_history(data: Any) -> Dict[str, Any]:
+    """Build a bounded chunk index map so the model knows what it is missing."""
+    if not isinstance(data, dict) or not isinstance(data.get("chunks"), list):
+        return {}
+    chunks = [chunk for chunk in data["chunks"] if isinstance(chunk, dict)]
+    entries = []
+    for chunk in chunks:
+        content = str(chunk.get("content") or "")
+        entries.append({
+            "chunk_index": chunk.get("chunk_index"),
+            "chars": len(content),
+            "head": content[:50],
+        })
+    return {
+        "total_chunks": data.get("total_chunks", len(chunks)),
+        "returned_chunk_count": len(chunks),
+        "chunk_map": _sample_sequence(entries, max_items=40),
+    }
+
+
 def _minimal_tool_result(value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict):
         return {
@@ -371,6 +407,13 @@ def _minimal_tool_result(value: Any) -> Dict[str, Any]:
                 minimal["data"] = sample
                 minimal["data_sampled"] = True
                 minimal["data_original_record_count"] = original_count
+    elif isinstance(data, dict) and isinstance(data.get("chunks"), list):
+        # Knowledge-reader style payloads: keep a chunk index map so the model
+        # knows which chunks were dropped and can re-read them precisely.
+        chunk_map = _chunk_map_for_history(data)
+        if chunk_map:
+            minimal["data"] = chunk_map
+            minimal["data_chunk_mapped"] = True
     if "summary" not in minimal:
         minimal["summary"] = _safe_content_preview(value, 2_000)
     minimal["tool_result_truncated"] = True
@@ -396,7 +439,7 @@ def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
         compacted["tool_result_truncated"] = True
         compacted["truncation_reason"] = "tool result fields exceeded per-field history limits"
     try:
-        serialized = json.dumps(compacted, ensure_ascii=False, indent=2, default=str)
+        serialized = _serialize_tool_result_json(compacted)
     except Exception as e:
         logger.warning(
             "tool_result_json_serialize_failed",
@@ -426,7 +469,7 @@ def _prepare_tool_result_for_history(result: Dict[str, Any]) -> Dict[str, Any]:
 
     minimal = _minimal_tool_result(compacted)
     try:
-        serialized = json.dumps(minimal, ensure_ascii=False, indent=2, default=str)
+        serialized = _serialize_tool_result_json(minimal)
     except Exception:
         return {
             "success": bool(result.get("success", False)) if isinstance(result, dict) else True,
@@ -979,7 +1022,7 @@ class SessionMemory:
         """
         history_result = _prepare_tool_result_for_history(result)
         # 序列化瘦身后的结果为 JSON 字符串，避免单条 tool_result 占满上下文
-        result_json = json.dumps(history_result, ensure_ascii=False, indent=2, default=str)
+        result_json = _serialize_tool_result_json(history_result)
 
         # 构建 Anthropic content block 格式
         content_block = {
@@ -989,6 +1032,18 @@ class SessionMemory:
             "tool_use_id": tool_use_id
         }
 
+        data_field = {
+            "tool_use_id": tool_use_id,
+            "tool_name": result.get("metadata", {}).get("generator", "") if isinstance(result, dict) else "",
+            "is_error": is_error,
+            "result": history_result
+        }
+        if isinstance(result, dict) and not _is_todowrite_result(result):
+            # In-memory stash for fresh-result projection; never persisted and
+            # dropped when history is rebuilt (restore/compression) — those
+            # turns then fall back to the compacted form above.
+            data_field["raw_results"] = [{"tool_use_id": tool_use_id, "raw": result}]
+
         self.conversation_history.append(
             ConversationTurn(
                 role="user",  # Anthropic: tool_result 使用 user 角色
@@ -997,14 +1052,7 @@ class SessionMemory:
                 type="tool_result",
                 tool_use_id=tool_use_id,
                 is_error=is_error,
-                # ✅ 修复：data 字段不包含 tool_use_id，因为它已经在 ConversationTurn 属性中
-                # 但需要在 data 中添加 tool_name（从 result.metadata.generator 推断）
-                data={
-                    "tool_use_id": tool_use_id,
-                    "tool_name": result.get("metadata", {}).get("generator", "") if isinstance(result, dict) else "",
-                    "is_error": is_error,
-                    "result": history_result
-                }
+                data=data_field
             )
         )
 
@@ -1105,7 +1153,7 @@ class SessionMemory:
         for te in tool_executions:
             history_result = _prepare_tool_result_for_history(te["result"])
             history_results.append(history_result)
-            result_json = json.dumps(history_result, ensure_ascii=False, indent=2, default=str)
+            result_json = _serialize_tool_result_json(history_result)
             user_content_blocks.append({
                 "type": "tool_result",
                 "content": result_json,
@@ -1125,6 +1173,24 @@ class SessionMemory:
                 "is_error": te.get("is_error", False),
                 "result": history_results[0]
             }
+        else:
+            # 多个工具：使用 results 格式
+            data_field = {
+                "tool_use_id": tool_executions[0]["tool_use_id"],  # 主工具ID
+                "tool_name": tool_executions[0]["tool_name"],
+                "is_error": any(te.get("is_error", False) for te in tool_executions),
+                "results": history_results
+            }
+
+        # Fresh-result stash: verbatim results for current-run projection.
+        # Todowrite keeps its dedicated compaction and is excluded.
+        raw_entries = [
+            {"tool_use_id": te["tool_use_id"], "raw": te["result"]}
+            for te in tool_executions
+            if isinstance(te.get("result"), dict) and not _is_todowrite_result(te["result"])
+        ]
+        if raw_entries:
+            data_field["raw_results"] = raw_entries
         else:
             # 多个工具：使用 results 格式
             data_field = {
@@ -1240,7 +1306,7 @@ class SessionMemory:
             history_result = _prepare_tool_result_for_history(result_dict)
             blocks.append({
                 "type": "tool_result",
-                "content": json.dumps(history_result, ensure_ascii=False, indent=2, default=str),
+                "content": _serialize_tool_result_json(history_result),
                 "is_error": bool(data.get("is_error", False)),
                 "tool_use_id": tool_use_id,
             })
@@ -1526,6 +1592,87 @@ class SessionMemory:
         selected = self.conversation_history[-last_n_turns * 2 :]
         return "\n".join(f"{turn.role}: {turn.content}" for turn in selected)
 
+    @staticmethod
+    def _fresh_window_start_index(turns: List["ConversationTurn"]) -> int:
+        """Index of the last user text turn; tool results after it are 'fresh'.
+
+        Mirrors the drawio compaction boundary: a new user utterance starts a
+        new run, so tool results produced after it belong to the current run
+        and qualify for verbatim projection.
+        """
+        start = 0
+        for index, turn in enumerate(turns):
+            if turn.role == "user" and turn.type != "tool_result":
+                start = index
+        return start
+
+    def _plan_fresh_raw_injection(
+        self,
+        turns: List["ConversationTurn"],
+    ) -> Dict[int, Dict[str, str]]:
+        """Allocate the fresh-result budget, newest turns first.
+
+        Returns a map of turn index -> {tool_use_id: serialized_raw}. Turns or
+        blocks that do not fit the budget keep the compacted content stored in
+        their blocks (oldest results downgrade first).
+        """
+        fresh_start = self._fresh_window_start_index(turns)
+        remaining = MAX_FRESH_TOOL_RESULT_CHARS
+        plan: Dict[int, Dict[str, str]] = {}
+        eligible_blocks = 0
+        injected_blocks = 0
+        injected_chars = 0
+
+        for index in range(len(turns) - 1, fresh_start - 1, -1):
+            turn = turns[index]
+            if turn.type != "tool_result" or not isinstance(turn.content, list):
+                continue
+            raw_entries = (turn.data or {}).get("raw_results")
+            if not isinstance(raw_entries, list) or not raw_entries:
+                continue
+            raw_map = {
+                entry.get("tool_use_id"): entry.get("raw")
+                for entry in raw_entries
+                if isinstance(entry, dict)
+            }
+            turn_plan: Dict[str, str] = {}
+            for block in turn.content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                raw = raw_map.get(block.get("tool_use_id"))
+                if not isinstance(raw, dict):
+                    continue
+                eligible_blocks += 1
+                if len(turn_plan) >= len(raw_map):
+                    continue
+                try:
+                    serialized = _serialize_tool_result_json(raw)
+                except Exception:
+                    continue
+                if len(serialized) > MAX_FRESH_SINGLE_TOOL_RESULT_CHARS:
+                    continue
+                if len(serialized) > remaining:
+                    continue
+                remaining -= len(serialized)
+                injected_chars += len(serialized)
+                injected_blocks += 1
+                turn_plan[block["tool_use_id"]] = serialized
+            if turn_plan:
+                plan[index] = turn_plan
+
+        if eligible_blocks:
+            logger.info(
+                "fresh_tool_result_projection",
+                session_id=self.session_id,
+                fresh_start_index=fresh_start,
+                eligible_blocks=eligible_blocks,
+                injected_blocks=injected_blocks,
+                downgraded_blocks=eligible_blocks - injected_blocks,
+                injected_chars=injected_chars,
+                budget_chars=MAX_FRESH_TOOL_RESULT_CHARS,
+            )
+        return plan
+
     def get_messages_for_llm(self, *, repair_strategy: str = "api_safe") -> List[Dict[str, Any]]:
         """
         Return conversation history in Anthropic Messages API format.
@@ -1553,8 +1700,9 @@ class SessionMemory:
 
         all_turns = self.conversation_history
         messages = []
+        fresh_raw_plan = self._plan_fresh_raw_injection(all_turns)
 
-        for turn in all_turns:
+        for turn_index, turn in enumerate(all_turns):
             # ✅ 如果 content 已经是 Anthropic content blocks 格式，直接使用
             if isinstance(turn.content, list):
                 # 提取 block 类型用于判断 role
@@ -1566,6 +1714,29 @@ class SessionMemory:
 
                 # tool_result blocks 必须放在 user 消息中（Anthropic API 规范）
                 if "tool_result" in content_types:
+                    turn_plan = fresh_raw_plan.get(turn_index)
+                    if turn_plan:
+                        # Fresh run: project verbatim tool results. Blocks are
+                        # copied so the stored (compacted) history stays intact
+                        # and keeps the append-only/cache-friendly invariant.
+                        projected_blocks = []
+                        for block in turn.content:
+                            if (
+                                isinstance(block, dict)
+                                and block.get("type") == "tool_result"
+                                and block.get("tool_use_id") in turn_plan
+                            ):
+                                projected_blocks.append({
+                                    **block,
+                                    "content": turn_plan[block["tool_use_id"]],
+                                })
+                            else:
+                                projected_blocks.append(block)
+                        messages.append({
+                            "role": "user",
+                            "content": projected_blocks
+                        })
+                        continue
                     messages.append({
                         "role": "user",
                         "content": turn.content
