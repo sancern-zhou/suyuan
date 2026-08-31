@@ -387,7 +387,7 @@ async def test_no_valid_recipients_fails_before_agent(
     assert agent_factory.call_count == 0
     assert claim.status == "failed"
     assert execution.status.value == "failed"
-    assert "no active bound WeChat recipients" in execution.error_message
+    assert "no active bound social recipients" in execution.error_message
 
 
 @pytest.mark.asyncio
