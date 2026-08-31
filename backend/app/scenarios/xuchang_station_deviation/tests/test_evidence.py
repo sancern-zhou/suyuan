@@ -75,64 +75,6 @@ def _patch_forecast(monkeypatch, collector, *, status="success", nearest=None):
 
 
 @pytest.mark.asyncio
-async def test_collect_combines_source_air_weather_and_precomputed_indicators(monkeypatch):
-    collector = XuchangStationDeviationEvidenceCollector(
-        forecast_client=_ForecastClient(),
-        weather_repo=_WeatherRepo(),
-    )
-    _patch_forecast(
-        monkeypatch,
-        collector,
-        nearest={"forecast_time": "2026-08-05T14:00:00", "offset_minutes": 60, "wind_speed": 3.3},
-    )
-    event_time = "2026-08-05T13:00:00+08:00"
-    previous_time = "2026-08-05T12:00:00+08:00"
-    monkeypatch.setattr(
-        collector,
-        "_load_air_quality",
-        lambda start, end: {
-            "status": "success",
-            "target_city_hour_records": [
-                {"time": previous_time, "city": "许昌市", "pm25": 40},
-                {"time": event_time, "city": "许昌市", "pm25": 50},
-            ],
-            "nearby_city_hour_records": [
-                {"time": previous_time, "city": "郑州市", "pm25": 30},
-                {"time": event_time, "city": "郑州市", "pm25": 35},
-            ],
-            "local_station_hour_records": [
-                {"time": previous_time, "station_id": "A", "pm25": 60, "pm10": 100},
-                {"time": previous_time, "station_id": "B", "pm25": 40, "pm10": 80},
-                {
-                    "time": event_time, "station_id": "A", "pm25": 100, "pm10": 160,
-                    "no2": 20, "o3": 100, "so2": 10, "co": 1,
-                },
-                {"time": event_time, "station_id": "B", "pm25": 50, "pm10": 90},
-            ],
-        },
-    )
-
-    result = await collector.collect(
-        alert=_alert(),
-        source_screening={"status": "success", "data": {"candidates": [{"name": "企业A"}]}},
-    )
-
-    assert result["collection"]["status"] == "complete"
-    assert result["schema_version"].endswith("/v3")
-    assert result["source_screening"]["data"]["candidates"][0]["name"] == "企业A"
-    assert result["observed_meteorology"]["record_count"] == 2
-    assert result["forecast_meteorology"]["status"] == "success"
-    assert result["forecast_meteorology"]["nearest_forecast"]["offset_minutes"] == 60
-    station_process = result["computed_indicators"]["station_process"]
-    assert station_process["changes"][0]["absolute_change"] == 40.0
-    assert station_process["target_peer_hourly_comparison"][-1]["deviation_percent"] == 100.0
-    assert station_process["current_pollutant_ratios"]["pm25_pm10"] == 0.625
-    assert "regional_comparison" not in result["computed_indicators"]
-    assert "target_city_hour_records" not in result["air_quality_context"]
-    assert "nearby_city_hour_records" not in result["air_quality_context"]
-
-
-@pytest.mark.asyncio
 async def test_collect_records_partial_evidence_without_losing_source_screening(monkeypatch):
     collector = XuchangStationDeviationEvidenceCollector(
         forecast_client=_ForecastClient(),

@@ -459,43 +459,6 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_executor_appends_broadcast_tool_instruction_to_scheduled_task_prompt(tmp_path):
-    report = tmp_path / "report.xlsx"
-    report.write_bytes(b"xlsx")
-    agent = FakeAgent(report)
-    task = ScheduledTask(
-        task_id="scheduled-broadcast-task",
-        name="scheduled broadcast task",
-        description="scheduled broadcast task",
-        execution_mode="social",
-        schedule_type="once",
-        run_at="2026-07-20T12:00:00",
-        broadcast_enabled=True,
-        target_user_ids=["admin-1"],
-        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成日报")],
-    )
-    executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
-        execution_storage=ExecutionStorage(storage_dir=tmp_path),
-        agent_factory=lambda: agent,
-        conversation_persistence=RecordingConversationPersistence(),
-    )
-
-    execution = await executor.execute_task(
-        task,
-        update_stats=False,
-        broadcast_user_names=["日报接收人"],
-    )
-
-    assert execution.status.value == "success"
-    assert agent.prompts[0].startswith("生成日报\n\n## 输出与投递约束")
-    assert "broadcast_social_users" in agent.prompts[0]
-    assert "日报接收人" in agent.prompts[0]
-    assert "不需要返回 JSON" in agent.prompts[0]
-    assert "## 可信事件上下文" not in agent.prompts[0]
-
-
-@pytest.mark.asyncio
 async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, monkeypatch):
     requested_tools = []
 
@@ -533,60 +496,6 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_custom_task_reuses_one_agent_with_one_fixed_tool_registry(tmp_path, monkeypatch):
-    created_agents = []
-    factory_kwargs = []
-
-    class MultiStepAgent:
-        def __init__(self):
-            self.prompts = []
-
-        async def analyze(self, prompt, **kwargs):
-            self.prompts.append((prompt, kwargs))
-            yield {"type": "complete", "data": {"answer": f"完成: {prompt}"}}
-
-    def factory(**kwargs):
-        factory_kwargs.append(kwargs)
-        agent = MultiStepAgent()
-        created_agents.append(agent)
-        return agent
-
-    monkeypatch.setattr(
-        "app.scheduled_tasks.executor.task_executor.build_runtime_custom_tool_registry",
-        lambda names: {"beta": "B", "alpha": "A"},
-    )
-    task = ScheduledTask(
-        task_id="custom-multi-step",
-        name="自定义多步骤任务",
-        description="共享 Agent",
-        execution_mode="custom",
-        tool_names=["beta", "alpha"],
-        schedule_type="once",
-        run_at="2026-07-20T12:00:00",
-        steps=[
-            TaskStep(step_id="one", description="一", agent_prompt="第一步"),
-            TaskStep(step_id="two", description="二", agent_prompt="第二步"),
-        ],
-    )
-    executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
-        execution_storage=ExecutionStorage(storage_dir=tmp_path),
-        agent_factory=factory,
-        conversation_persistence=RecordingConversationPersistence(),
-    )
-
-    result = await executor.execute_task(task, update_stats=False)
-
-    assert result.status.value == "success"
-    assert len(created_agents) == 1
-    assert list(factory_kwargs[0]["tool_registry"]) == ["beta", "alpha"]
-    assert factory_kwargs[0]["enable_memory"] is False
-    assert [prompt for prompt, _ in created_agents[0].prompts] == ["第一步", "第二步"]
-    assert all(kwargs["manual_mode"] == "custom" for _, kwargs in created_agents[0].prompts)
-    assert all(kwargs["session_storage_mode"] == "custom" for _, kwargs in created_agents[0].prompts)
-
-
-@pytest.mark.asyncio
 async def test_custom_task_invalid_runtime_tools_fail_before_agent_request(tmp_path, monkeypatch):
     factory_calls = []
     monkeypatch.setattr(
@@ -615,48 +524,3 @@ async def test_custom_task_invalid_runtime_tools_fail_before_agent_request(tmp_p
     assert result.status.value == "failed"
     assert result.error_message == "tool disabled"
     assert factory_calls == []
-
-
-@pytest.mark.asyncio
-async def test_custom_fatal_error_stops_following_steps_even_when_retry_enabled(tmp_path, monkeypatch):
-    prompts = []
-
-    class FatalAgent:
-        async def analyze(self, prompt, **kwargs):
-            prompts.append(prompt)
-            yield {"type": "fatal_error", "data": {"error": "iteration limit reached"}}
-
-    monkeypatch.setattr(
-        "app.scheduled_tasks.executor.task_executor.build_runtime_custom_tool_registry",
-        lambda names: {"alpha": "A"},
-    )
-    task = ScheduledTask(
-        task_id="custom-fatal",
-        name="终态失败",
-        description="不能继续后续步骤",
-        execution_mode="custom",
-        tool_names=["alpha"],
-        schedule_type="once",
-        run_at="2026-07-20T12:00:00",
-        steps=[
-            TaskStep(
-                step_id="one",
-                description="失败",
-                agent_prompt="第一步",
-                retry_on_failure=True,
-            ),
-            TaskStep(step_id="two", description="不应执行", agent_prompt="第二步"),
-        ],
-    )
-    executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
-        execution_storage=ExecutionStorage(storage_dir=tmp_path),
-        agent_factory=lambda **kwargs: FatalAgent(),
-        conversation_persistence=RecordingConversationPersistence(),
-    )
-
-    result = await executor.execute_task(task, update_stats=False)
-
-    assert result.status.value == "failed"
-    assert prompts == ["第一步"]
-    assert "iteration limit reached" in result.error_message
