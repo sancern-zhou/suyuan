@@ -9,27 +9,32 @@
   "trigger_type": "event",
   "schedule_type": null,
   "event_type": "xuchang.station_deviation.alert_created",
-  "event_filters": {"city": "许昌市"},
-  "target_user_ids": ["app:android:android_demo"],
+  "event_filters": {
+    "city": "许昌市"
+  },
+  "target_user_ids": [
+    "app:android:android_demo"
+  ],
   "broadcast_enabled": true,
   "enabled": true,
   "run_at": null,
   "interval_minutes": null,
   "hour": null,
   "minute": null,
-  "steps": [
-    {
-      "step_id": "monitoring_alert",
-      "description": "读取站点 episode 证据，分析污染组成特征并生成合并通报",
-      "agent_prompt": "你是许昌场景1站点快速污染告警 Agent。事件 payload 中的 evidence_package_path 是本次站点 episode 的唯一事实来源。使用 read_file 完整读取证据包，并仅依据其中数据生成一条简明通报；证据包 alerts 数组中的多个污染物必须合并在同一条站点通报中。\n\n通报只保留以下内容：\n1. 当前空间偏差事实：站点、污染物、数据粒度、告警时间、实测值、周边站点中位数、绝对差、相对偏差。\n2. 时间趋势：PM2.5引用 station_process.changes；其他污染物引用 station_5min_process.target_station_5min_changes；周边站点变化只作补充。\n3. 污染来源特征分析：读取每个告警中的 pollutant_source_features。说明 PM、PM2.5、SO2、NO2、CO 的组成比例及相对历史均值和标准差的异常标记；若 classification 有值，说明其对应的可能来源类型（如偏二次型、偏机动车型、偏燃煤型、偏扬尘型或偏综合型）。该分类仅是基于污染物组成的可能来源指示，不得表述为已经确认的具体排放企业或最终因果结论；status 为 insufficient_samples 时明确说明样本不足，不能进行可靠分类。\n4. 仅当证据包中的 maintenance_qc_review 不为空且包含实际标记时，增加“运维质控影响”小节并列出标记；没有质控标记时完全省略该小节。\n5. 引用 observed_meteorology 中许昌气象站最近几小时的风速、风向、温度、湿度、降水和扩散条件；不要输出其他气象站数据。\n\n不要输出“综合结论”“现场排查建议”或其他建议章节，不要使用未来天气预报。",
-      "timeout_seconds": 300,
-      "retry_on_failure": true
-    }
-  ],
   "created_by": "system",
   "owner_user_id": "system",
   "owner_username": "scheduled-task",
   "owner_display_name": "定时任务",
-  "tags": ["xuchang", "station_deviation", "scenario_1", "fast_alert"],
-  "workspace_entry": {"enabled": true, "title": "站点快速告警"}
+  "tags": [
+    "xuchang",
+    "station_deviation",
+    "scenario_1",
+    "fast_alert"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "站点快速告警"
+  },
+  "prompt": "你是许昌场景1站点快速污染告警 Agent。事件 payload 中的 evidence_package_path 是本次站点 episode 的唯一事实来源。使用 read_file 完整读取证据包，并仅依据其中数据生成一条简明通报；证据包 alerts 数组中的多个污染物必须合并在同一条站点通报中。\n\n通报只保留以下内容：\n1. 当前空间偏差事实：站点、污染物、数据粒度、告警时间、实测值、周边站点中位数、绝对差、相对偏差。\n2. 时间趋势：PM2.5引用 station_process.changes；其他污染物引用 station_5min_process.target_station_5min_changes；周边站点变化只作补充。\n3. 污染来源特征分析：读取每个告警中的 pollutant_source_features。说明 PM、PM2.5、SO2、NO2、CO 的组成比例及相对历史均值和标准差的异常标记；若 classification 有值，说明其对应的可能来源类型（如偏二次型、偏机动车型、偏燃煤型、偏扬尘型或偏综合型）。该分类仅是基于污染物组成的可能来源指示，不得表述为已经确认的具体排放企业或最终因果结论；status 为 insufficient_samples 时明确说明样本不足，不能进行可靠分类。\n4. 仅当证据包中的 maintenance_qc_review 不为空且包含实际标记时，增加“运维质控影响”小节并列出标记；没有质控标记时完全省略该小节。\n5. 引用 observed_meteorology 中许昌气象站最近几小时的风速、风向、温度、湿度、降水和扩散条件；不要输出其他气象站数据。\n\n不要输出“综合结论”“现场排查建议”或其他建议章节，不要使用未来天气预报。",
+  "timeout_seconds": 300
 }

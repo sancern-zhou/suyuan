@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.scheduled_tasks.models import ScheduledTask, TaskStep
+from app.scheduled_tasks.models import ScheduledTask
 
 
 def make_task(**overrides):
@@ -13,7 +13,7 @@ def make_task(**overrides):
         "tool_names": ["read_file", "write_file"],
         "schedule_type": "once",
         "run_at": "2026-07-20T12:00:00",
-        "steps": [TaskStep(step_id="step-1", description="执行", agent_prompt="执行")],
+        "prompt": "执行",
     }
     data.update(overrides)
     return ScheduledTask(**data)

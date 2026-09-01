@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
 
-    from app.scheduled_tasks.models import ScheduledTask, ScheduleType, TaskStep
+    from app.scheduled_tasks.models import ScheduledTask, ScheduleType
     from app.scheduled_tasks.storage import TaskStorage
 
     cities = _parse_cities(args.cities)
@@ -90,15 +90,8 @@ def main() -> int:
         schedule_type=ScheduleType.INTERVAL,
         enabled=bool(args.enabled),
         interval_minutes=args.interval_minutes,
-        steps=[
-            TaskStep(
-                step_id="detect_and_analyze_pollution_process",
-                description="识别城市污染过程并生成自动分析",
-                agent_prompt=prompt,
-                timeout_seconds=1800,
-                retry_on_failure=True,
-            )
-        ],
+        prompt=prompt,
+        timeout_seconds=1800,
         tags=["pollution_event_monitor", "city_process", "auto_analysis"],
     )
     storage.create(task)

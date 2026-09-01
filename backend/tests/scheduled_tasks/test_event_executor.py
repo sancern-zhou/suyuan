@@ -6,7 +6,7 @@ import pytest
 
 from app.scheduled_tasks.event_output import parse_event_task_output
 from app.scheduled_tasks.executor import ScheduledTaskExecutor
-from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskExecution, TaskStep
+from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskExecution
 from app.scheduled_tasks.storage import ExecutionStorage, TaskStorage
 
 
@@ -138,7 +138,7 @@ async def test_executor_uses_web_storage_and_persists_completed_runtime(tmp_path
         execution_mode="social",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step-1", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     execution = TaskExecution(
         execution_id="exec-1",
@@ -155,7 +155,7 @@ async def test_executor_uses_web_storage_and_persists_completed_runtime(tmp_path
         conversation_persistence=persistence,
     )
 
-    await executor._run_agent_step(
+    await executor._run_agent(
         "执行",
         execution.session_id,
         manual_mode="social",
@@ -185,7 +185,7 @@ async def test_executor_injects_task_skill_context(monkeypatch, tmp_path):
         skill_id="sample-skill",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     execution = TaskExecution(
         execution_id="exec-with-skill",
@@ -205,7 +205,7 @@ async def test_executor_injects_task_skill_context(monkeypatch, tmp_path):
         agent_factory=lambda: agent,
     )
 
-    await executor._run_agent_step(
+    await executor._run_agent(
         "执行",
         execution.session_id,
         manual_mode=task.execution_mode,
@@ -228,7 +228,7 @@ async def test_custom_task_injects_skill_without_tool_compatibility_check(monkey
         skill_id="sample-skill",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     execution = TaskExecution(
         execution_id="custom-exec-with-skill",
@@ -248,7 +248,7 @@ async def test_custom_task_injects_skill_without_tool_compatibility_check(monkey
         agent_factory=lambda: agent,
     )
 
-    await executor._run_agent_step(
+    await executor._run_agent(
         "执行",
         execution.session_id,
         manual_mode=task.execution_mode,
@@ -272,41 +272,64 @@ async def test_timeout_still_persists_partial_runtime_before_returning(tmp_path)
         execution_mode="assistant",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(
-            step_id="slow",
-            description="慢步骤",
-            agent_prompt="执行",
-            timeout_seconds=1,
-        )],
+        prompt="执行",
+        timeout_seconds=1,
     )
-    execution = TaskExecution(
-        execution_id="exec-timeout",
-        task_id=task.task_id,
-        task_name=task.name,
-        session_id="scheduled-timeout",
-        status="running",
-        total_steps=1,
-    )
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    task_storage.create(task)
     executor = ScheduledTaskExecutor(
-        task_storage=TaskStorage(storage_dir=tmp_path),
+        task_storage=task_storage,
         execution_storage=ExecutionStorage(storage_dir=tmp_path),
         agent_factory=SlowAgent,
         conversation_persistence=persistence,
     )
 
-    result = await executor._execute_step(
-        task.steps[0],
-        execution,
-        execution.session_id,
-        task.execution_mode,
-        task=task,
-        prompt="执行",
-    )
+    execution = await executor.execute_task(task, update_stats=False)
 
-    assert result.status.value == "timeout"
-    assert len(persistence.calls) == 1
+    assert execution.status.value == "timeout"
+    assert len(persistence.calls) == 2
     assert persistence.calls[0]["execution"] is execution
     assert persistence.calls[0]["display_history"][-1]["type"] == "error"
+
+
+class VerificationFailingPersistence:
+    """Reproduces transcript verification failing under cancellation."""
+
+    async def persist_agent_session(self, **kwargs):
+        raise RuntimeError("scheduled_session_transcript_verification_failed")
+
+    async def publish_conversation(self, **kwargs):
+        return True
+
+    async def ensure_terminal_session(self, **kwargs):
+        return True
+
+
+@pytest.mark.asyncio
+async def test_timeout_not_masked_by_failing_transcript_verification(tmp_path):
+    task = ScheduledTask(
+        task_id="task-timeout-masked",
+        name="超时任务",
+        description="超时任务",
+        execution_mode="assistant",
+        schedule_type="once",
+        run_at="2026-07-17T12:00:00",
+        prompt="执行",
+        timeout_seconds=1,
+    )
+    task_storage = TaskStorage(storage_dir=tmp_path)
+    task_storage.create(task)
+    executor = ScheduledTaskExecutor(
+        task_storage=task_storage,
+        execution_storage=ExecutionStorage(storage_dir=tmp_path),
+        agent_factory=SlowAgent,
+        conversation_persistence=VerificationFailingPersistence(),
+    )
+
+    execution = await executor.execute_task(task, update_stats=False)
+
+    assert execution.status.value == "timeout"
+    assert "Task timeout after" in execution.error_message
 
 
 @pytest.mark.asyncio
@@ -320,7 +343,7 @@ async def test_execution_is_published_only_after_all_steps_finish(tmp_path):
         execution_mode="social",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
     task_storage.create(task)
     executor = ScheduledTaskExecutor(
@@ -346,7 +369,7 @@ async def test_executor_collects_current_runtime_complete_response(tmp_path):
         agent_factory=CurrentRuntimeAgent,
     )
 
-    result = await executor._run_agent_step(
+    result = await executor._run_agent(
         "处理告警",
         "scheduled-task-session",
         manual_mode="assistant",
@@ -373,7 +396,7 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
         event_type="yuncheng.alert.created",
         broadcast_enabled=True,
         target_user_ids=["admin-1"],
-        steps=[TaskStep(step_id="report", description="report", agent_prompt="处理告警")],
+        prompt="处理告警",
     )
     task_storage.create(task)
     executor = ScheduledTaskExecutor(
@@ -420,7 +443,7 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
         trigger_type="event",
         event_type="xuchang.station_daily_pollution.review_completed",
         broadcast_enabled=False,
-        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成回顾报告")],
+        prompt="生成回顾报告",
     )
     task_storage.create(task)
     executor = ScheduledTaskExecutor(
@@ -476,7 +499,7 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
         run_at="2026-07-20T12:00:00",
         broadcast_enabled=True,
         target_user_ids=["admin-1"],
-        steps=[TaskStep(step_id="report", description="report", agent_prompt="生成日报")],
+        prompt="生成日报",
     )
     executor = ScheduledTaskExecutor(
         task_storage=TaskStorage(storage_dir=tmp_path),
@@ -510,7 +533,7 @@ async def test_custom_task_invalid_runtime_tools_fail_before_agent_request(tmp_p
         tool_names=["alpha"],
         schedule_type="once",
         run_at="2026-07-20T12:00:00",
-        steps=[TaskStep(step_id="one", description="一", agent_prompt="执行")],
+        prompt="执行",
     )
     executor = ScheduledTaskExecutor(
         task_storage=TaskStorage(storage_dir=tmp_path),

@@ -1,4 +1,4 @@
-"""Bootstrap project task definitions without overwriting user configuration."""
+"""Bootstrap project task definitions without overwriting runtime configuration."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from .models import ScheduledTask
 
 logger = structlog.get_logger()
 
+
 def sync_project_scheduled_tasks(
     *,
     project_id: str,
@@ -20,7 +21,13 @@ def sync_project_scheduled_tasks(
     service: Any,
     project_root: Path = PROJECT_ROOT,
 ) -> list[dict[str, str]]:
-    """Create missing tasks; the persistent runtime store is the source of truth."""
+    """Create missing tasks; the persistent runtime store is the source of truth.
+
+    Existing tasks are never modified: configuration edited through the UI or
+    API must survive restarts. Seed files only bootstrap tasks that do not
+    exist yet; deploying a seed change requires explicitly updating or
+    recreating the task.
+    """
     results = []
     definition_root = project_root / "projects" / project_id / "scheduled_tasks"
     for task_id in task_ids:

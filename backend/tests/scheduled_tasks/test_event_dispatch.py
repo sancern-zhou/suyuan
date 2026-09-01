@@ -3,7 +3,7 @@ from datetime import timedelta
 
 import pytest
 
-from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskStep
+from app.scheduled_tasks.models import ScheduledTask, TaskEvent
 from app.scheduled_tasks.service import ScheduledTaskService
 from app.scheduled_tasks.storage import (
     EventClaimStorage,
@@ -130,11 +130,8 @@ def event_task():
         event_filters={"city": "运城市"},
         broadcast_enabled=True,
         target_user_ids=["admin-1", "admin-2"],
-        steps=[TaskStep(
-            step_id="report",
-            description="report",
-            agent_prompt="report",
-        )],
+        timeout_seconds=300,
+        prompt="report",
     )
 
 

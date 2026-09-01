@@ -47,6 +47,7 @@ class FakeService:
     def __init__(self):
         self.tasks = {}
         self.retry_execution_id = None
+        self.started_task_ids = []
 
     def create_task(self, task):
         self.tasks[task.task_id] = task
@@ -58,6 +59,9 @@ class FakeService:
     def update_task(self, task):
         self.tasks[task.task_id] = task
         return task
+
+    def start_task_now(self, task_id):
+        self.started_task_ids.append(task_id)
 
     def get_scheduler_status(self):
         return {"scheduled_tasks": []}
@@ -103,13 +107,9 @@ def _event_payload():
         "broadcast_enabled": True,
         "target_user_ids": ["admin-1", "admin-2"],
         "enabled": True,
-        "steps": [{
-            "step_id": "report",
-            "description": "生成运城告警报告",
-            "agent_prompt": "执行运城告警溯源报告任务",
-            "timeout_seconds": 1800,
-            "retry_on_failure": False,
-        }],
+        "prompt": "执行运城告警溯源报告任务",
+        "timeout_seconds": 1800,
+        "prompt": "执行运城告警溯源报告任务",
         "tags": ["yuncheng", "event"],
     }
 
@@ -316,3 +316,49 @@ def test_updating_custom_task_to_existing_mode_clears_tool_names(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["task"]["tool_names"] is None
+
+
+def test_update_ignores_legacy_steps_from_stale_client(monkeypatch):
+    """旧版前端 bundle 回传的 steps 必须被忽略，不得复活步骤包装。"""
+    client, service = _client(monkeypatch)
+    created = client.post("/api/scheduled-tasks", json=_event_payload())
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.put(
+        f"/api/scheduled-tasks/{task_id}",
+        json={
+            "steps": [{
+                "step_id": "step_1",
+                "description": "遗留包装",
+                "agent_prompt": "旧提示词",
+                "timeout_seconds": 600,
+            }],
+        },
+    )
+
+    assert response.status_code == 200
+    updated = service.get_task(task_id)
+    assert "steps" not in updated.model_dump()
+    assert updated.timeout_seconds == 1800
+
+
+def test_execute_now_returns_immediately_without_waiting(monkeypatch):
+    """手动立即执行必须后台运行并立即返回，避免网关 504。"""
+    client, service = _client(monkeypatch)
+    payload = _event_payload()
+    payload.update({
+        "trigger_type": "schedule",
+        "schedule_type": "daily_8am",
+        "event_type": None,
+        "event_filters": {},
+        "broadcast_enabled": False,
+        "target_user_ids": [],
+    })
+    created = client.post("/api/scheduled-tasks", json=payload)
+    task_id = created.json()["task"]["task_id"]
+
+    response = client.post(f"/api/scheduled-tasks/{task_id}/execute")
+
+    assert response.status_code == 202
+    assert response.json()["success"] is True
+    assert service.started_task_ids == [task_id]

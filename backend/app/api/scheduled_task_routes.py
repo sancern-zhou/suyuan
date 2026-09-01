@@ -18,7 +18,7 @@ from app.scheduled_tasks import (
     ScheduleType,
     TriggerType,
 )
-from app.scheduled_tasks.models import TaskStep, WorkspaceEntry
+from app.scheduled_tasks.models import WorkspaceEntry
 from app.scheduled_tasks.event_catalog import (
     EventDefinition,
     get_event_definition,
@@ -59,7 +59,6 @@ class CreateTaskRequest(BaseModel):
     enabled: bool = Field(default=True, description="是否启用")
     prompt: str = Field(..., min_length=1)
     timeout_seconds: int = Field(default=1800, ge=1)
-    steps: Optional[List[TaskStep]] = None
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = None
 
@@ -84,7 +83,6 @@ class UpdateTaskRequest(BaseModel):
     enabled: Optional[bool] = None
     prompt: Optional[str] = Field(default=None, min_length=1)
     timeout_seconds: Optional[int] = Field(default=None, ge=1)
-    steps: Optional[List[TaskStep]] = None
     tags: Optional[List[str]] = None
     workspace_entry: Optional[WorkspaceEntry] = None
 
@@ -334,7 +332,6 @@ async def create_task(
             description=request.description,
             prompt=request.prompt,
             timeout_seconds=request.timeout_seconds,
-            steps=request.steps or [],
             execution_mode=request.execution_mode,
             tool_names=request.tool_names,
             skill_id=request.skill_id,
@@ -470,10 +467,6 @@ async def update_task(
             updates.setdefault("tool_names", None)
         task_data = task.model_dump()
         task_data.update(updates)
-        # Editing the task-level prompt converts legacy step-wrapped tasks to
-        # the single-agent form unless explicit steps were supplied.
-        if "prompt" in updates and "steps" not in updates:
-            task_data["steps"] = []
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
@@ -561,12 +554,12 @@ async def disable_task(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{task_id}/execute")
+@router.post("/{task_id}/execute", status_code=202)
 async def execute_task_now(
     task_id: str,
     user: CurrentUser = Depends(require_current_user),
 ):
-    """立即执行任务（手动触发）"""
+    """立即执行任务（手动触发，后台执行并立即返回）"""
     try:
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
@@ -583,11 +576,11 @@ async def execute_task_now(
                 )
             dispatch = await service.publish_event(
                 event,
-                wait=True,
+                wait=False,
                 force_retry=True,
                 target_task_id=task_id,
             )
-            if not dispatch.execution_ids:
+            if not dispatch.accepted_task_ids:
                 if task_id not in dispatch.matched_task_ids:
                     raise HTTPException(
                         status_code=409,
@@ -600,15 +593,16 @@ async def execute_task_now(
                     status_code=409,
                     detail="Event is already being processed, please try again later",
                 )
-            execution = service.get_execution(dispatch.execution_ids[0])
         else:
-            execution = await service.execute_task_now(task_id)
+            # 同步等待整个 Agent 执行会被网关超时切断（HTTP 504），
+            # 因此在后台启动执行并立即返回，前端通过执行记录查看进度。
+            service.start_task_now(task_id)
 
         return {
             "success": True,
-            "message": f"任务已开始执行",
-            "execution_id": execution.execution_id,
-            "execution": execution
+            "message": "任务已开始执行，请在执行记录中查看进度和结果",
+            "execution_id": None,
+            "execution": None
         }
 
     except ValueError as e:

@@ -120,7 +120,7 @@ class ScheduledTaskExecutor:
             session_id=task_session_id,  # ✅ 保存 session_id
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
-            total_steps=len(task.steps) or 1,
+            total_steps=1,
             scheduled_time=task.next_run_at if event is None else None,
             trigger_type="event" if event else "scheduled",
             event_id=event.event_id if event else None,
@@ -149,30 +149,25 @@ class ScheduledTaskExecutor:
                     enable_memory=False,
                 )
 
-            configured_steps = task.steps
-            prompts = configured_steps or [None]
-            for index, configured_step in enumerate(prompts):
-                execution.current_step_index = index
-                self.execution_storage.update(execution)
-                prompt = self._build_task_prompt(
-                    configured_step.agent_prompt if configured_step else task.prompt,
-                    task=task,
-                    event=event,
-                    execution_id=execution.execution_id,
-                    broadcast_user_names=broadcast_user_names,
-                )
-                result = await asyncio.wait_for(
-                    self._run_agent(
-                        prompt, task_session_id,
-                        manual_mode=task.execution_mode,
-                        task=task, execution=execution, agent=shared_agent,
-                    ),
-                    timeout=(configured_step.timeout_seconds if configured_step else task.timeout_seconds),
-                )
-                execution.steps.append(self._result_to_execution(
-                    result, prompt, configured_step.step_id if configured_step else "task"
-                ))
-                execution.completed_steps += 1
+            # 一个任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
+            # 只受任务级 timeout_seconds 约束。
+            prompt = self._build_task_prompt(
+                task.prompt,
+                task=task,
+                event=event,
+                execution_id=execution.execution_id,
+                broadcast_user_names=broadcast_user_names,
+            )
+            result = await asyncio.wait_for(
+                self._run_agent(
+                    prompt, task_session_id,
+                    manual_mode=task.execution_mode,
+                    task=task, execution=execution, agent=shared_agent,
+                ),
+                timeout=task.timeout_seconds,
+            )
+            execution.steps.append(self._result_to_execution(result, prompt, "task"))
+            execution.completed_steps += 1
             self.execution_storage.update(execution)
 
             # 任务完成
@@ -315,6 +310,7 @@ class ScheduledTaskExecutor:
         }]
 
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
+        analysis_error: BaseException | None = None
         try:
             async for event in agent.analyze(
                 prompt,
@@ -389,10 +385,11 @@ class ScheduledTaskExecutor:
                 elif event_type == "fatal_error":
                     error = event_data.get("error") or event.get("error") or "Agent execution failed"
                     raise RuntimeError(error)
-        except BaseException as analysis_error:
+        except BaseException as error:
+            analysis_error = error
             display_history.append({
                 "type": "error",
-                "content": str(analysis_error) or type(analysis_error).__name__,
+                "content": str(error) or type(error).__name__,
                 "timestamp": datetime.now().isoformat(),
             })
             raise
@@ -407,14 +404,26 @@ class ScheduledTaskExecutor:
                     "timestamp": datetime.now().isoformat(),
                 })
             if task is not None and execution is not None:
-                persisted = await self.conversation_persistence.persist_agent_session(
-                    agent=agent,
-                    task=task,
-                    execution=execution,
-                    display_history=display_history,
-                )
-                if persisted:
-                    self._persisted_execution_ids.add(execution.execution_id)
+                try:
+                    persisted = await self.conversation_persistence.persist_agent_session(
+                        agent=agent,
+                        task=task,
+                        execution=execution,
+                        display_history=display_history,
+                    )
+                except Exception as persist_error:
+                    if analysis_error is None:
+                        raise
+                    # 取消/超时已在向外传播，此时 transcript 校验失败不应掩盖原始错误，
+                    # 否则 wait_for 的 TimeoutError 会被替换成 FAILED 且报错信息失真。
+                    logger.error(
+                        "scheduled_agent_session_persist_failed_after_abort",
+                        execution_id=execution.execution_id,
+                        error=str(persist_error),
+                    )
+                else:
+                    if persisted:
+                        self._persisted_execution_ids.add(execution.execution_id)
 
         return {
             "summary": "\n".join(summary_parts),

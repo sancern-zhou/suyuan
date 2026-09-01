@@ -177,6 +177,14 @@ class ScheduledTaskService:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
+    def start_task_now(self, task_id: str) -> None:
+        """Start a manual execution in the background and return immediately."""
+        task = self.task_storage.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        self._track_event_task(self._execute_scheduled_task(task))
+        logger.info("manual_task_execution_started", task_id=task_id)
+
     def _resume_claimed_event_tasks(self) -> None:
         """Resume events that were queued but not started before a restart."""
         resumed = 0

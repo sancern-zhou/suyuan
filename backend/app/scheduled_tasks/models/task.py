@@ -22,15 +22,6 @@ class ScheduleType(str, Enum):
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
 
 
-class TaskStep(BaseModel):
-    """显式配置的任务步骤，仅由任务创建工具使用。"""
-    step_id: str = Field(..., description="步骤ID")
-    description: str = Field(..., description="步骤描述")
-    agent_prompt: str = Field(..., description="发送给Agent的提示词")
-    timeout_seconds: int = Field(default=300, ge=1, description="步骤超时时间（秒）")
-    retry_on_failure: bool = Field(default=False, description="失败时是否重试")
-
-
 class TriggerType(str, Enum):
     """任务触发方式。"""
 
@@ -82,10 +73,10 @@ class ScheduledTask(BaseModel):
     hour: Optional[int] = Field(default=None, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
     minute: Optional[int] = Field(default=None, description="每天执行的分钟（schedule_type=daily_custom时必填，0-59）")
 
-    # 一个定时任务就是一次完整的 Agent 执行。
-    prompt: Optional[str] = Field(default=None, min_length=1, description="任务提示词")
+    # 一个定时任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
+    # 不存在预配置的多步骤机制（历史 steps 字段已彻底移除）。
+    prompt: str = Field(..., min_length=1, description="任务提示词")
     timeout_seconds: int = Field(default=1800, ge=1, description="任务级总超时时间（秒）")
-    steps: List[TaskStep] = Field(default_factory=list, description="显式配置的步骤")
 
     # 元数据
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
@@ -126,11 +117,7 @@ class ScheduledTask(BaseModel):
 
     @model_validator(mode="after")
     def validate_trigger(self):
-        if not self.prompt and self.steps:
-            self.prompt = self.steps[0].agent_prompt
-        if not self.prompt:
-            raise ValueError("prompt is required when steps are not configured")
-        self.prompt = self.prompt.strip()
+        self.prompt = (self.prompt or "").strip()
         if not self.prompt:
             raise ValueError("prompt is required")
         if self.execution_mode == "custom" and not self.tool_names:
