@@ -59,6 +59,7 @@ SPECIALIZED_CHART_TYPES = {
     "pollutant_calendar",
     "generic_pollutant_wind_rose",
     "wind_timeseries",
+    "weather_timeseries",
     "henan_city_map",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
@@ -354,6 +355,17 @@ def _source_font(final_pt: float) -> float:
     return final_pt * WORD_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
 
 
+def _line_width(options: Dict[str, Any], default: float = 2.0) -> float:
+    value = options.get("line_width", default)
+    try:
+        width = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ChartDataError("line_width 必须是正数。") from exc
+    if not math.isfinite(width) or width <= 0:
+        raise ChartDataError("line_width 必须是正数。")
+    return width
+
+
 def _position_legends_below_plot(fig) -> Dict[str, Any]:
     """Move axes legends into a measured band below the plotting area."""
     legends = []
@@ -532,7 +544,7 @@ def _draw_line(ax, title: str, data: Dict[str, Any], options: Dict[str, Any]) ->
     title = str(normalize_matplotlib_label_text(title))
     positions = list(range(len(x)))
     for index, item in enumerate(series):
-        ax.plot(positions, item["values"], marker="o", linewidth=2, label=item["name"])
+        ax.plot(positions, item["values"], marker="o", linewidth=_line_width(options), label=item["name"])
     tick_metadata = _apply_x_tick_labels(ax, positions, x, options)
     ax.set_title(title, fontsize=_source_font(15), fontweight="bold", pad=14)
     ax.tick_params(axis="both", labelsize=_source_font(10.5))
@@ -589,7 +601,7 @@ def _draw_dual_axis_line(ax, title: str, data: Dict[str, Any], options: Dict[str
         axis_name = str(item.get("axis") or item.get("y_axis") or ("right" if index == 2 else "left")).lower()
         axis_name = "right" if axis_name in {"right", "secondary", "y2"} else "left"
         target_ax = right_ax if axis_name == "right" else ax
-        target_ax.plot(positions, values, marker="o", linewidth=2, label=name)
+        target_ax.plot(positions, values, marker="o", linewidth=_line_width(options), label=name)
         axis_counts[axis_name] += 1
         normalized_series.append({"name": name, "values": values})
     tick_metadata = _apply_x_tick_labels(ax, positions, labels, options)

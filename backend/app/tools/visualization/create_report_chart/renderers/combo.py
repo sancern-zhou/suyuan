@@ -19,6 +19,7 @@ PALETTE = ["#3f7fb5", "#d17a3a", "#4e9a73", "#8a6bb8", "#c6535f", "#6f8798"]
 def draw_combo(ax, title: str, data: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
     from app.tools.visualization.create_report_chart.renderer import (
         _apply_x_tick_labels,
+        _line_width,
         _source_font,
     )
 
@@ -129,7 +130,7 @@ def draw_combo(ax, title: str, data: dict[str, Any], options: dict[str, Any]) ->
                 positions,
                 item["values"],
                 marker="o",
-                linewidth=2.2,
+                linewidth=_line_width(options),
                 label=item["name"],
                 color=item["color"],
                 zorder=4,

@@ -25,6 +25,8 @@ def render_wind_timeseries(
     style_profile: str,
 ) -> tuple[str, dict[str, Any], list[str]]:
     prepared, warnings = _prepare_data(data, options)
+    from app.tools.visualization.create_report_chart.renderer import _line_width
+    line_width = _line_width(options, default=1.0)
     timestamps = prepared["timestamps"]
     east_u = np.asarray(prepared["east_u"], dtype=float)
     north_v = np.asarray(prepared["north_v"], dtype=float)
@@ -102,12 +104,12 @@ def render_wind_timeseries(
         vector_ax.set_yticks([])
         vector_ax.set_ylabel("风向", fontsize=9)
 
-        speed_ax.plot(timestamps, wind_speeds, color="#356AE6", linewidth=1.0)
+        speed_ax.plot(timestamps, wind_speeds, color="#356AE6", linewidth=line_width)
         speed_ax.fill_between(timestamps, 0, wind_speeds, color="#356AE6", alpha=0.10)
         speed_ax.set_ylim(bottom=0)
         speed_ax.set_ylabel(f"风速\n({wind_speed_unit})", fontsize=9)
 
-        pollutant_ax.plot(timestamps, concentrations, color="#A23B72", linewidth=1.15)
+        pollutant_ax.plot(timestamps, concentrations, color="#A23B72", linewidth=line_width)
         pollutant_ax.fill_between(timestamps, 0, concentrations, color="#A23B72", alpha=0.10)
         pollutant_ax.set_ylim(bottom=0)
         pollutant_label = (
@@ -119,7 +121,7 @@ def render_wind_timeseries(
         next_axis = 3
         if include_humidity:
             humidity_ax = axes[next_axis]
-            humidity_ax.plot(timestamps, humidity, color="#2A9D8F", linewidth=1.0, label="相对湿度")
+            humidity_ax.plot(timestamps, humidity, color="#2A9D8F", linewidth=line_width, label="相对湿度")
             humidity_ax.set_ylim(0, 100)
             humidity_ax.set_ylabel("湿度\n(%)", fontsize=9)
             next_axis += 1
