@@ -36,6 +36,26 @@ class WorkspaceEntry(BaseModel):
     title: str = ""
 
 
+class HistoryLearningConfig(BaseModel):
+    """任务级历史执行记忆配置。
+
+    案例库与长期记忆均绑定单个任务，不跨任务共享：
+    - 案例 = 单次执行的回顾性总结（不含面向下次执行的建议）
+    - 长期记忆 = 跨次积累的前瞻性知识（模式规律/经验教训/输出偏好/当前关注）
+    """
+
+    enabled: bool = Field(default=True, description="是否启用历史执行记忆")
+    max_recent_cases: int = Field(
+        default=3, ge=0, le=20, description="执行前注入的最近案例数量"
+    )
+    memory_char_budget: int = Field(
+        default=4000, ge=200, description="长期记忆注入的字符上限"
+    )
+    consolidation_timeout_seconds: int = Field(
+        default=120, ge=1, description="执行后巩固调用的超时时间（秒）"
+    )
+
+
 class ScheduledTask(BaseModel):
     """定时任务"""
     task_id: str = Field(..., description="任务ID")
@@ -98,6 +118,10 @@ class ScheduledTask(BaseModel):
     workspace_entry: Optional[WorkspaceEntry] = Field(
         default=None,
         description="左侧业务入口配置",
+    )
+    history_learning: HistoryLearningConfig = Field(
+        default_factory=HistoryLearningConfig,
+        description="历史执行记忆配置（任务专属案例库 + 长期记忆）",
     )
 
     @field_validator("tool_names")

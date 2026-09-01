@@ -17,7 +17,7 @@ from .models import (
     TaskExecution,
     TriggerType,
 )
-from .storage import EventClaimStorage, TaskStorage, ExecutionStorage
+from .storage import EventClaimStorage, TaskStorage, ExecutionStorage, TaskCaseStorage
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
@@ -259,6 +259,16 @@ class ScheduledTaskService:
 
         # 删除执行记录
         self.execution_storage.delete_by_task(task_id)
+
+        # 删除任务专属历史执行记忆（案例库 + 长期记忆）
+        try:
+            TaskCaseStorage(task_id).delete()
+        except Exception as cleanup_error:  # noqa: BLE001 - 清理失败不阻断任务删除
+            logger.warning(
+                "scheduled_task_history_cleanup_failed",
+                task_id=task_id,
+                error=str(cleanup_error),
+            )
 
         # 删除任务
         success = self.task_storage.delete(task_id)

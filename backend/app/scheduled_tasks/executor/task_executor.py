@@ -17,6 +17,8 @@ from ..models.execution import (
     ExecutionStatus
 )
 from ..storage import TaskStorage, ExecutionStorage
+from ..storage.task_case_storage import TaskCaseStorage
+from ..history_learning import build_history_section, finalize_execution
 from ..conversation_persistence import ScheduledTaskConversationPersistence
 
 logger = structlog.get_logger()
@@ -100,6 +102,17 @@ class ScheduledTaskExecutor:
             conversation_persistence or ScheduledTaskConversationPersistence()
         )
         self._persisted_execution_ids: set[str] = set()
+        self._case_storages: dict[str, TaskCaseStorage] = {}
+
+    def _get_case_storage(self, task: ScheduledTask) -> TaskCaseStorage | None:
+        """任务专属历史记忆存储；任务关闭 history_learning 时返回 None。"""
+        if not task.history_learning.enabled:
+            return None
+        storage = self._case_storages.get(task.task_id)
+        if storage is None:
+            storage = TaskCaseStorage(task.task_id)
+            self._case_storages[task.task_id] = storage
+        return storage
 
     async def execute_task(
         self,
@@ -135,6 +148,14 @@ class ScheduledTaskExecutor:
             f"session_id: {task_session_id}"
         )
 
+        # 历史执行记忆：任务专属案例库 + 长期记忆（不跨任务共享）
+        case_storage = self._get_case_storage(task)
+        history_section = (
+            build_history_section(task, case_storage) if case_storage is not None else None
+        )
+        # 即使执行中途失败/超时，也已收集到部分执行材料，供收尾时入案例库
+        collected: dict = {}
+
         try:
             shared_agent = None
             if task.execution_mode == "custom":
@@ -157,12 +178,14 @@ class ScheduledTaskExecutor:
                 event=event,
                 execution_id=execution.execution_id,
                 broadcast_user_names=broadcast_user_names,
+                history_section=history_section,
             )
             result = await asyncio.wait_for(
                 self._run_agent(
                     prompt, task_session_id,
                     manual_mode=task.execution_mode,
                     task=task, execution=execution, agent=shared_agent,
+                    collected=collected,
                 ),
                 timeout=task.timeout_seconds,
             )
@@ -213,6 +236,25 @@ class ScheduledTaskExecutor:
             finally:
                 self._persisted_execution_ids.discard(execution.execution_id)
 
+            # 历史记忆收尾：案例入库与长期记忆维护完成前，本次执行不算结束；
+            # 收尾自身失败只记录告警，不改变执行结果。
+            if case_storage is not None:
+                try:
+                    await finalize_execution(
+                        task=task,
+                        execution=execution,
+                        event=event,
+                        agent_result=collected,
+                        storage=case_storage,
+                    )
+                except Exception as learn_error:  # noqa: BLE001 - 收尾失败只降级不中断执行
+                    logger.warning(
+                        "scheduled_task_history_finalize_failed",
+                        task_id=task.task_id,
+                        execution_id=execution.execution_id,
+                        error=str(learn_error),
+                    )
+
             # 保存最终状态
             self.execution_storage.update(execution)
 
@@ -253,6 +295,7 @@ class ScheduledTaskExecutor:
         task: ScheduledTask | None = None,
         execution: TaskExecution | None = None,
         agent=None,
+        collected: dict | None = None,
     ) -> dict:
         """
         运行Agent步骤
@@ -403,6 +446,16 @@ class ScheduledTaskExecutor:
                     "data": {"answer": final_answer},
                     "timestamp": datetime.now().isoformat(),
                 })
+            # 中途失败/超时也能保留已收集的执行材料，供历史记忆收尾使用
+            if collected is not None:
+                collected.update({
+                    "summary": final_answer,
+                    "data_ids": list(data_ids),
+                    "visuals": list(visuals),
+                    "thoughts": list(thoughts),
+                    "tool_calls": list(tool_calls),
+                    "iterations": iterations,
+                })
             if task is not None and execution is not None:
                 try:
                     persisted = await self.conversation_persistence.persist_agent_session(
@@ -441,8 +494,11 @@ class ScheduledTaskExecutor:
         event: TaskEvent | None = None,
         execution_id: str | None = None,
         broadcast_user_names: list[str] | None = None,
+        history_section: str | None = None,
     ) -> str:
         sections = [prompt]
+        if history_section:
+            sections.append(history_section)
         if event is not None:
             sections.append(_render_event_context(event))
         if execution_id:
