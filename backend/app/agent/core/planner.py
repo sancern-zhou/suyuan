@@ -528,68 +528,9 @@ class ReActPlanner:
                 error=str(e),
                 error_type=type(e).__name__
             )
-            retry_content = self._base64_retry_content(user_content, attachments)
-            # 降级到非流式
-            logger.info(
-                "anthropic_planner_fallback_to_non_streaming",
-                retry_with_base64=self._is_fetch_url_failure(e) and retry_content is not user_content,
-            )
-            result = await self.think_and_action(
-                query=query,
-                system_prompt=system_prompt,
-                user_conversation=user_conversation,
-                tools=tools,
-                iteration=iteration,
-                mode=mode,
-                conversation_history=conversation_history,
-                user_content=retry_content if self._is_fetch_url_failure(e) else user_content,
-                attachments=attachments,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
-                auto_profile=auto_profile,
-            )
-            yield {
-                "type": "streaming_text",
-                "data": {"chunk": "", "is_complete": True}
-            }
-
-            # ✅ 提取 text_content（用于第二个 thought 事件）
-            text_content = ""
-            for b in current_blocks:
-                if b["type"] == "text":
-                    text_content = b["text"]
-                    break
-
-            yield {
-                "type": "thought",
-                "data": {
-                    "thought": result.get("thought", ""),
-                    "text_content": text_content  # ✅ 添加 text_content 字段
-                }
-            }
-
-            # ✅ 新增：发送真实的 thinking 内容（如果有）
-            raw_thinking_blocks = result.get("raw_thinking_blocks", [])
-            if raw_thinking_blocks:
-                real_thinking = ""
-                for block in raw_thinking_blocks:
-                    if block.get("type") == "thinking":
-                        thinking_content = block.get("thinking", "")
-                        if thinking_content:
-                            real_thinking += thinking_content + "\n"
-
-                if real_thinking.strip():
-                    yield {
-                        "type": "thinking_content",
-                        "data": {
-                            "content": real_thinking.strip()
-                        }
-                    }
-
-            yield {
-                "type": "action",
-                "data": result
-            }
+            # 流式失败后不再降级为非流式重试（会对同一供应商重复等待多次超时），
+            # 直接抛出，由上层 failover / 任务重跑处理。
+            raise
 
     def _parse_anthropic_response(
         self,
