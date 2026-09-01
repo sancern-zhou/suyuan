@@ -31,6 +31,10 @@ class TaskStorage:
         migrated = False
         for task in tasks:
             if task.get("prompt"):
+                # System-created records from the old schema may already have
+                # a prompt while retaining the generated step_1 wrapper.
+                if task.get("created_by") == "system" and task.pop("steps", None) is not None:
+                    migrated = True
                 continue
             steps = task.pop("steps", None) or []
             if not steps:

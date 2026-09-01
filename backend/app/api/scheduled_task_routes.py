@@ -470,6 +470,10 @@ async def update_task(
             updates.setdefault("tool_names", None)
         task_data = task.model_dump()
         task_data.update(updates)
+        # Editing the task-level prompt converts legacy step-wrapped tasks to
+        # the single-agent form unless explicit steps were supplied.
+        if "prompt" in updates and "steps" not in updates:
+            task_data["steps"] = []
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
