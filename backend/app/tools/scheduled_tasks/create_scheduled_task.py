@@ -87,6 +87,7 @@ class CreateScheduledTaskTool(LLMTool):
             task_id = f"task_{uuid.uuid4().hex[:8]}"
 
             # 构建任务对象
+            legacy_steps = task_config.get("steps") or []
             task_kwargs = {
                 "task_id": task_id,
                 "name": task_config["name"],
@@ -94,15 +95,21 @@ class CreateScheduledTaskTool(LLMTool):
                 "execution_mode": task_config.get("execution_mode", "expert"),
                 "schedule_type": ScheduleType(task_config["schedule_type"]),
                 "enabled": True,
+                "prompt": task_config.get("prompt") or (
+                    legacy_steps[0].get("agent_prompt") if legacy_steps else task_config["description"]
+                ),
+                "timeout_seconds": task_config.get("timeout_seconds") or sum(
+                    step.get("timeout_seconds", 300) for step in legacy_steps
+                ) or 1800,
                 "steps": [
                     TaskStep(
-                        step_id=f"step_{i+1}",
-                        description=step["description"],
+                        step_id=f"step_{i + 1}",
+                        description=step.get("description", ""),
                         agent_prompt=step["agent_prompt"],
                         timeout_seconds=step.get("timeout_seconds", 300),
-                        retry_on_failure=step.get("retry_on_failure", False)
+                        retry_on_failure=step.get("retry_on_failure", False),
                     )
-                    for i, step in enumerate(task_config["steps"])
+                    for i, step in enumerate(legacy_steps)
                 ],
                 "tags": task_config.get("tags", [])
             }
@@ -132,13 +139,13 @@ class CreateScheduledTaskTool(LLMTool):
                     "name": created_task.name,
                     "description": created_task.description,
                     "schedule_type": created_task.schedule_type.value,
-                    "steps_count": len(created_task.steps),
+                    "timeout_seconds": created_task.timeout_seconds,
                     "next_run_at": str(created_task.next_run_at) if created_task.next_run_at else None
                 },
                 "summary": (
                     f"已创建定时任务：{created_task.name}\n"
                     f"调度类型：{created_task.schedule_type.value}\n"
-                    f"步骤数量：{len(created_task.steps)}\n"
+                    f"超时时间：{created_task.timeout_seconds}秒\n"
                     f"任务ID：{created_task.task_id}"
                 )
             }
@@ -189,11 +196,8 @@ class CreateScheduledTaskTool(LLMTool):
    - hour: 每天执行的小时（schedule_type=daily_custom时必填，0-23）
    - minute: 每天执行的分钟（schedule_type=daily_custom时必填，0-59）
 
-6. steps: 任务步骤列表，每个步骤包含：
-   - description: 步骤描述
-   - agent_prompt: 发送给Agent的提示词（详细、具体）
-   - timeout_seconds: 超时时间（秒，默认300）
-   - retry_on_failure: 失败时是否重试（默认false）
+6. prompt: 发送给Agent的完整任务提示词（必须包含，详细、具体）
+7. timeout_seconds: 整个任务的总超时时间（秒，默认1800）
 
 7. tags: 标签列表（可选）
 
@@ -314,9 +318,12 @@ class CreateScheduledTaskTool(LLMTool):
             config = json.loads(content)
 
             # 验证必需字段
-            required_fields = ["name", "description", "schedule_type", "steps"]
+            required_fields = ["name", "description", "schedule_type"]
             if not all(field in config for field in required_fields):
                 logger.error(f"Missing required fields in config: {config}")
+                return None
+            if not config.get("prompt") and not config.get("steps"):
+                logger.error(f"Missing prompt or steps in config: {config}")
                 return None
 
             # 验证schedule_type

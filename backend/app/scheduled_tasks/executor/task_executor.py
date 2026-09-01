@@ -120,7 +120,7 @@ class ScheduledTaskExecutor:
             session_id=task_session_id,  # ✅ 保存 session_id
             status=ExecutionStatus.RUNNING,
             started_at=datetime.now(),
-            total_steps=len(task.steps),
+            total_steps=len(task.steps) or 1,
             scheduled_time=task.next_run_at if event is None else None,
             trigger_type="event" if event else "scheduled",
             event_id=event.event_id if event else None,
@@ -149,52 +149,44 @@ class ScheduledTaskExecutor:
                     enable_memory=False,
                 )
 
-            # 顺序执行步骤（所有步骤共享同一个 session_id）
-            for i, step in enumerate(task.steps):
-                execution.current_step_index = i
+            configured_steps = task.steps
+            prompts = configured_steps or [None]
+            for index, configured_step in enumerate(prompts):
+                execution.current_step_index = index
                 self.execution_storage.update(execution)
-
-                # 执行步骤（传入 session_id 以保持上下文连续）
-                step_result = await self._execute_step(
-                    step,
-                    execution,
-                    task_session_id,
-                    task.execution_mode,
+                prompt = self._build_task_prompt(
+                    configured_step.agent_prompt if configured_step else task.prompt,
                     task=task,
-                    agent=shared_agent,
-                    prompt=self._build_task_prompt(
-                        step.agent_prompt,
-                        task=task,
-                        event=event,
-                        execution_id=execution.execution_id,
-                        broadcast_user_names=broadcast_user_names,
-                    ),
+                    event=event,
+                    execution_id=execution.execution_id,
+                    broadcast_user_names=broadcast_user_names,
                 )
-                execution.steps.append(step_result)
-
-                # 更新统计
-                if step_result.status == ExecutionStatus.SUCCESS:
-                    execution.completed_steps += 1
-                elif step_result.status in {ExecutionStatus.FAILED, ExecutionStatus.TIMEOUT}:
-                    execution.failed_steps += 1
-
-                    # 如果步骤失败且不重试，终止任务
-                    if task.execution_mode == "custom" or not step.retry_on_failure:
-                        logger.warning(
-                            f"Step {step.step_id} failed and retry_on_failure=False, "
-                            f"stopping task execution"
-                        )
-                        execution.status = ExecutionStatus.FAILED
-                        execution.error_message = f"Step {step.step_id} failed: {step_result.error_message}"
-                        break
-
-                # 保存中间状态
-                self.execution_storage.update(execution)
+                result = await asyncio.wait_for(
+                    self._run_agent(
+                        prompt, task_session_id,
+                        manual_mode=task.execution_mode,
+                        task=task, execution=execution, agent=shared_agent,
+                    ),
+                    timeout=(configured_step.timeout_seconds if configured_step else task.timeout_seconds),
+                )
+                execution.steps.append(self._result_to_execution(
+                    result, prompt, configured_step.step_id if configured_step else "task"
+                ))
+                execution.completed_steps += 1
+            self.execution_storage.update(execution)
 
             # 任务完成
             if execution.status == ExecutionStatus.RUNNING:
                 execution.status = ExecutionStatus.SUCCESS
 
+        except asyncio.TimeoutError:
+            execution.status = ExecutionStatus.TIMEOUT
+            execution.error_message = f"Task timeout after {task.timeout_seconds}s"
+            logger.error(
+                "scheduled_task_timeout",
+                task_id=task.task_id,
+                timeout_seconds=task.timeout_seconds,
+            )
         except Exception as e:
             logger.error(f"Task execution failed: {e}", exc_info=True)
             execution.status = ExecutionStatus.FAILED
@@ -245,75 +237,20 @@ class ScheduledTaskExecutor:
 
         return execution
 
-    async def _execute_step(
-        self,
-        step,
-        execution: TaskExecution,
-        session_id: str,  # ✅ 接收 session_id 参数
-        manual_mode: str,
-        task: ScheduledTask,
-        prompt: str,
-        agent=None,
-    ) -> StepExecution:
-        """执行单个步骤"""
-        step_exec = StepExecution(
-            step_id=step.step_id,
-            status=ExecutionStatus.RUNNING,
-            started_at=datetime.now(),
-            agent_prompt=prompt
+    def _result_to_execution(self, result: dict, prompt: str, step_id: str = "task") -> StepExecution:
+        return StepExecution(
+            step_id=step_id,
+            status=ExecutionStatus.SUCCESS,
+            agent_prompt=prompt,
+            agent_response=result.get("summary", ""),
+            result_data_ids=result.get("data_ids", []),
+            result_visuals=result.get("visuals", []),
+            agent_thoughts=result.get("thoughts", []),
+            tool_calls=result.get("tool_calls", []),
+            iterations=result.get("iterations", 0),
         )
 
-        logger.info(
-            f"Executing step: {step.step_id} - {step.description}, "
-            f"session_id: {session_id}"
-        )
-
-        try:
-            # 执行步骤（带超时，并传入 session_id）
-            result = await asyncio.wait_for(
-                self._run_agent_step(
-                    prompt,
-                    session_id,
-                    manual_mode=manual_mode,
-                    task=task,
-                    execution=execution,
-                    agent=agent,
-                ),
-                timeout=step.timeout_seconds
-            )
-
-            # 处理结果
-            step_exec.status = ExecutionStatus.SUCCESS
-            step_exec.agent_response = result.get("summary", "")
-            step_exec.result_data_ids = result.get("data_ids", [])
-            step_exec.result_visuals = result.get("visuals", [])
-            step_exec.agent_thoughts = result.get("thoughts", [])
-            step_exec.tool_calls = result.get("tool_calls", [])
-            step_exec.iterations = result.get("iterations", 0)
-
-            logger.info(f"Step {step.step_id} completed successfully")
-
-        except asyncio.TimeoutError:
-            step_exec.status = ExecutionStatus.TIMEOUT
-            step_exec.error_message = f"Step timeout after {step.timeout_seconds}s"
-            step_exec.error_type = "TimeoutError"
-            logger.error(f"Step {step.step_id} timeout")
-
-        except Exception as e:
-            step_exec.status = ExecutionStatus.FAILED
-            step_exec.error_message = str(e)
-            step_exec.error_type = type(e).__name__
-            logger.error(f"Step {step.step_id} failed: {e}", exc_info=True)
-
-        finally:
-            step_exec.completed_at = datetime.now()
-            step_exec.duration_seconds = (
-                step_exec.completed_at - step_exec.started_at
-            ).total_seconds()
-
-        return step_exec
-
-    async def _run_agent_step(
+    async def _run_agent(
         self,
         prompt: str,
         session_id: str,

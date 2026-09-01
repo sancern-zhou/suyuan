@@ -134,18 +134,18 @@ class ScheduledTaskConversationPersistence:
             return True
 
         history: list[dict] = []
-        for step in execution.steps:
-            if step.agent_prompt:
-                history.append({"type": "user", "content": step.agent_prompt})
-            if step.agent_response:
+        if execution.steps:
+            record = execution.steps[-1]
+            history.append({"type": "user", "content": task.prompt})
+            if record.agent_response:
                 history.append({
                     "type": "final",
                     "role": "assistant",
-                    "content": step.agent_response,
-                    "data": {"answer": step.agent_response},
+                    "content": record.agent_response,
+                    "data": {"answer": record.agent_response},
                 })
-            elif step.error_message:
-                history.append({"type": "error", "content": step.error_message})
+            elif record.error_message:
+                history.append({"type": "error", "content": record.error_message})
 
         if not history:
             history = [

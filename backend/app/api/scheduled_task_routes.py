@@ -57,7 +57,9 @@ class CreateTaskRequest(BaseModel):
     broadcast_enabled: bool = False
     target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
-    steps: List[TaskStep] = Field(..., description="任务步骤")
+    prompt: str = Field(..., min_length=1)
+    timeout_seconds: int = Field(default=1800, ge=1)
+    steps: Optional[List[TaskStep]] = None
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = None
 
@@ -80,6 +82,8 @@ class UpdateTaskRequest(BaseModel):
     broadcast_enabled: Optional[bool] = None
     target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
+    prompt: Optional[str] = Field(default=None, min_length=1)
+    timeout_seconds: Optional[int] = Field(default=None, ge=1)
     steps: Optional[List[TaskStep]] = None
     tags: Optional[List[str]] = None
     workspace_entry: Optional[WorkspaceEntry] = None
@@ -328,6 +332,9 @@ async def create_task(
             task_id=task_id,
             name=request.name,
             description=request.description,
+            prompt=request.prompt,
+            timeout_seconds=request.timeout_seconds,
+            steps=request.steps or [],
             execution_mode=request.execution_mode,
             tool_names=request.tool_names,
             skill_id=request.skill_id,
@@ -342,7 +349,6 @@ async def create_task(
             broadcast_enabled=request.broadcast_enabled,
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
-            steps=request.steps,
             tags=request.tags,
             workspace_entry=request.workspace_entry,
             owner_user_id=user.id,

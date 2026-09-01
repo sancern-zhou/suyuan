@@ -367,7 +367,7 @@ class ScheduledTaskService:
                     started_at=now,
                     completed_at=now,
                     duration_seconds=0,
-                    total_steps=len(task.steps),
+                    total_steps=1,
                     trigger_type="scheduled",
                     error_message=str(exc),
                 )
@@ -420,7 +420,7 @@ class ScheduledTaskService:
         for task in matching_tasks:
             existing = self.claim_storage.get(task.task_id, event.event_id)
             if existing and force_retry and existing.status == "running":
-                timeout_seconds = sum(step.timeout_seconds for step in task.steps)
+                timeout_seconds = task.timeout_seconds
                 recovered = self.claim_storage.fail_stale_running(
                     task.task_id,
                     event.event_id,
@@ -467,7 +467,7 @@ class ScheduledTaskService:
             started_at=now,
             completed_at=now,
             duration_seconds=0,
-            total_steps=len(task.steps),
+            total_steps=1,
             trigger_type="event",
             event_id=event.event_id,
             event_type=event.event_type,

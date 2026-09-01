@@ -56,7 +56,7 @@
           <div class="scheduled-task-meta">
             <span v-if="task.trigger_type !== 'event'" class="scheduled-meta-item">⏰ {{ formatScheduledNextRun(task.next_run_at) }}</span>
             <span v-else class="scheduled-meta-item">事件：{{ getEventLabel(task.event_type) }}</span>
-            <span class="scheduled-meta-item">📋 {{ task.steps?.length || 0 }} 个步骤</span>
+            <span class="scheduled-meta-item">⏱ {{ task.timeout_seconds || 1800 }} 秒超时</span>
             <span class="scheduled-meta-item">✅ {{ task.success_runs || 0 }}/{{ task.total_runs || 0 }}</span>
             <span class="scheduled-meta-item">🧠 {{ getExecutionModeLabel(task.execution_mode) }}</span>
             <span v-if="task.skill_id" class="scheduled-meta-item">📘 Skill：{{ task.skill_id }}</span>
@@ -130,7 +130,7 @@
             <span class="execution-duration">{{ formatExecutionDuration(execution.duration_seconds) }}</span>
           </span>
           <span class="execution-history-meta">
-            <span>{{ execution.completed_steps || 0 }}/{{ execution.total_steps || 0 }} 个步骤</span>
+            <span>{{ execution.status || 'pending' }}</span>
             <span>{{ execution.trigger_type === 'event' ? '事件触发' : '定时触发' }}</span>
             <span v-if="execution.session_id">会话 {{ shortSessionId(execution.session_id) }}</span>
             <span v-else>未生成会话</span>
@@ -692,7 +692,7 @@ const openEditDialog = async (task) => {
     ...defaultForm(),
     name: task.name || '',
     description: task.description || '',
-    agent_prompt: task.steps?.[0]?.agent_prompt || task.description || '',
+      agent_prompt: task.prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
     skill_id: task.skill_id || '',
     tool_names: [...(task.tool_names || [])],

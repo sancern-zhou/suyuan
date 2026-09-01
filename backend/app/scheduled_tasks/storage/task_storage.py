@@ -22,6 +22,29 @@ class TaskStorage:
         # 初始化文件
         if not self.tasks_file.exists():
             self._write_tasks([])
+        else:
+            self._migrate_tasks()
+
+    def _migrate_tasks(self) -> None:
+        """一次性将旧步骤定义转换为任务级 prompt。"""
+        tasks = self._read_tasks()
+        migrated = False
+        for task in tasks:
+            if task.get("prompt"):
+                continue
+            steps = task.pop("steps", None) or []
+            if not steps:
+                task["prompt"] = task.get("description", "")
+                task.setdefault("timeout_seconds", 1800)
+            else:
+                task["prompt"] = steps[0].get("agent_prompt") or task.get("description", "")
+                task["timeout_seconds"] = max(
+                    int(task.get("timeout_seconds") or 0),
+                    sum(int(step.get("timeout_seconds") or 300) for step in steps),
+                )
+            migrated = True
+        if migrated:
+            self._write_tasks(tasks)
 
     def _read_tasks(self) -> List[dict]:
         """读取所有任务"""

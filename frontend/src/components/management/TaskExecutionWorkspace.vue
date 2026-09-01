@@ -28,7 +28,7 @@
               <span :class="['status', `status-${statusMeta(record.status).key}`]">{{ statusMeta(record.status).label }}</span>
             </div>
             <div class="record-meta">
-              <span>{{ record.completed_steps || 0 }}/{{ record.total_steps || 0 }} 个步骤</span>
+              <span>{{ record.status || 'pending' }}</span>
               <span v-if="record.duration_seconds">耗时 {{ formatDuration(record.duration_seconds) }}</span>
             </div>
             <div class="artifacts">

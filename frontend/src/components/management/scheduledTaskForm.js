@@ -67,13 +67,8 @@ export const buildTaskPayload = (form) => {
     broadcast_enabled: Boolean(form.broadcast_enabled),
     target_user_ids: form.broadcast_enabled ? [...(form.target_user_ids || [])] : [],
     enabled: Boolean(form.enabled),
-    steps: [{
-      step_id: 'step_1',
-      description: String(form.description || '').trim(),
-      agent_prompt: String(form.agent_prompt || form.description || '').trim(),
-      timeout_seconds: isEvent ? 1800 : 600,
-      retry_on_failure: false
-    }],
+    prompt: String(form.agent_prompt || form.description || '').trim(),
+    timeout_seconds: isEvent ? 1800 : 1800,
     tags: String(form.tagsText || '')
       .split(',')
       .map(tag => tag.trim())

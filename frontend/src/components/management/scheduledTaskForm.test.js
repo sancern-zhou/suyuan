@@ -118,7 +118,8 @@ test('builds an event task with multiple backend user ids', () => {
   assert.equal(payload.schedule_type, null)
   assert.deepEqual(payload.target_user_ids, ['a', 'd'])
   assert.deepEqual(payload.event_filters, { city: '运城市' })
-  assert.equal(payload.steps[0].retry_on_failure, false)
+  assert.equal(payload.prompt, '生成并推送报告')
+  assert.equal(payload.timeout_seconds, 1800)
 })
 
 
