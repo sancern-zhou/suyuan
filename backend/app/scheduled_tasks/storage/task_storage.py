@@ -34,6 +34,7 @@ class TaskStorage:
                 # System-created records from the old schema may already have
                 # a prompt while retaining the generated step_1 wrapper.
                 if task.get("created_by") == "system" and task.pop("steps", None) is not None:
+                    task["timeout_seconds"] = max(int(task.get("timeout_seconds") or 0), 1800)
                     migrated = True
                 continue
             steps = task.pop("steps", None) or []
