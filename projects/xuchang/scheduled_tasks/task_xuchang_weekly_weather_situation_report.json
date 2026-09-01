@@ -1,34 +1,40 @@
 {
   "task_id": "task_xuchang_weekly_weather_situation_report",
   "name": "许昌未来7天天气形势分析报告",
-  "description": "每周一基于中央气象台NMC逐3小时预报生成未来7天天气形势、污染扩散条件、风险和高值时段分析报告。",
+  "description": "每周一基于中央气象台NMC逐3小时预报和中国天气网日预报生成未来7天天气形势、污染扩散条件及不利扩散时段分析报告；气象五要素采用单日双Y轴图，不叠加绘制。",
   "execution_mode": "custom",
   "tool_names": [
     "execute_sql_query",
+    "execute_python",
+    "create_report_chart",
     "create_report_package",
     "render_report_package",
-    "validate_report_package"
+    "validate_report_package",
+    "broadcast_social_users"
   ],
   "skill_id": null,
   "knowledge_base_binding": null,
   "trigger_type": "schedule",
   "schedule_type": "weekly_monday_8am",
-  "target_user_ids": ["app:android:android_demo"],
+  "target_user_ids": [
+    "app:android:android_demo"
+  ],
   "broadcast_enabled": true,
   "enabled": true,
-  "steps": [
-    {
-      "step_id": "generate_report",
-      "description": "查询NMC未来7天逐3小时预报并生成颜色标识的天气形势分析报告",
-      "agent_prompt": "你是许昌市天气形势与污染扩散分析报告 Agent。每周一执行，生成从本次执行日（含）起未来7个自然日的正式报告。\n\n数据与计算要求：\n1. 唯一气象数据源必须是SQL表 dbo.XuchangNmcHourlyWeatherForecast（中央气象台NMC，约3小时间隔）。使用 execute_sql_query 查询最新一次 publish_time 对应的记录，并限制 forecast_time >= 执行日00:00 且 < 执行日+7天00:00；禁止改用Open-Meteo、观测数据或臆测补值。\n2. 查询字段至少包含 forecast_time、weather_text、temperature、humidity、pressure、wind_direction、wind_speed、precipitation_probability、precipitation_text、publish_time。先核对记录覆盖范围和数量；缺测时明确写证据不足。\n3. 基于原始小时记录做确定性汇总：每日温度范围/最高温及时间、风速最小/最大及时间、主导风向、湿度最高及时间、降水概率和天气类型；按 02-08、08-14、14-20、20-次日02 四个时段计算平均风速和最高湿度。\n4. 扩散条件分级严格使用风速：好 >=5 m/s，一般 2-<5 m/s，较差 1.5-<2 m/s，差 <1.5 m/s；一个时段取该时段平均风速分级，日等级取四时段最差等级。风险只描述气象条件支持的风险，不得把天气预报写成污染实测结论。高值时段标记风速低于1.5 m/s、湿度>=85%、降水概率>=60%、最高温>=30℃等条件，并注明触发因子。\n\n报告结构（必须全部包含）：\n一、未来7天空气质量与天气形势预报总览（说明数据发布时间、覆盖范围、总体趋势和证据边界）；\n二、逐日污染扩散条件分析；包含 2.1 逐日各时段扩散条件汇总表、2.2 逐日气象要素详情表、2.3 逐日气象扩散条件分析；\n三、不利扩散时段汇总（按风险排序，包含日期、时段、类型、主导因子、具体表现、持续时长、风险）；\n四、未来7天重点风险与高值时段；\n五、逐小时关键时点数据（每天至少选择风速最低、湿度最高、温度最高或降水概率最高的记录，去重后列出）；\n六、数据质量与分析边界。\n\n表格与颜色要求：\n- 使用 create_report_package 的 report.qmd，所有表格必须是可渲染的HTML表格或带HTML属性的Markdown表格，不能只用纯文本描述。\n- 在QMD中加入一次<style>：.diff-good{background:#C6EFCE;color:#375623}.diff-normal{background:#FFEB9C;color:#9C6500}.diff-poor{background:#FCE4D6;color:#974706}.diff-bad{background:#FFC7CE;color:#9C0006}.risk-high{background:#FFC7CE;color:#9C0006;font-weight:700}.risk-medium{background:#FCE4D6;color:#974706;font-weight:700}.risk-low{background:#FFEB9C;color:#9C6500}.value-high{background:#FFC7CE;color:#9C0006;font-weight:700}.value-watch{background:#FFEB9C;color:#9C6500;font-weight:700}.value-normal{background:#C6EFCE;color:#375623}.\n- 扩散条件单元格必须按上述四级填入对应class；风险列必须按高/中/低填入risk-high/risk-medium/risk-low；高值或需关注的温度、湿度、风速、降水概率单元格填value-high/value-watch/value-normal。表格首行使用深蓝表头 #1F4E79，文字白色。\n- 表格之后保留一行图例，明确绿=好、黄=一般、橙=较差、红=差，并解释风险和高值颜色。\n\n交付要求：\n1. 调用 create_report_package 创建 report_id={task_id}-{execution_id}-report，写入完整 report.qmd；如需图表，只能使用报告包内相对路径，优先不生成无必要图片。\n2. 调用 render_report_package 导出HTML和DOCX，再调用 validate_report_package 验收QMD、HTML、DOCX及资源引用。\n3. 最终返回报告ID、NMC发布时间、实际覆盖起止时间、主要风险、高值时段、报告路径和验收结果。不得省略失败阶段和原因。",
-      "timeout_seconds": 1800,
-      "retry_on_failure": true
-    }
-  ],
   "created_by": "system",
   "owner_user_id": "system",
   "owner_username": "scheduled-task",
   "owner_display_name": "定时任务",
-  "tags": ["xuchang", "nmc", "weather_situation", "weekly_report"],
-  "workspace_entry": {"enabled": true, "title": "未来7天天气形势"}
+  "tags": [
+    "xuchang",
+    "nmc",
+    "weather_situation",
+    "weekly_report"
+  ],
+  "workspace_entry": {
+    "enabled": true,
+    "title": "未来7天天气形势分析"
+  },
+  "prompt": "你是许昌市天气形势与污染扩散分析报告 Agent。每周一执行，生成从本次执行日（含）起未来7个自然日的正式报告。\n\n数据与计算要求：\n1. 气象数据必须同时使用两类SQL数据源：dbo.XuchangNmcHourlyWeatherForecast（中央气象台NMC，约3小时间隔）和 dbo.XuchangWeatherComDailyForecast（中国天气网许昌城区日预报）。NMC用于小时级风向、风速、温度、湿度、降水概率、天气现象和气压时序；中国天气网用于对应日期的日天气、最高/最低温、白天/夜间风向和风力等日尺度信息，禁止仅依赖NMC小时数据自行推导日天气结论。使用 execute_sql_query 查询NMC最新一次 publish_time 对应的记录，以及中国天气网覆盖报告日期的最新日预报（city_code='101180401'）；NMC限制 forecast_time >= 执行日00:00 且 < 执行日+7天00:00，日预报限制 forecast_date 在同一7日范围内。禁止改用Open-Meteo、观测数据或臆测补值。\n2. NMC字段至少包含 forecast_time、weather_text、temperature、humidity、pressure、wind_direction、wind_direction_degrees、wind_speed、precipitation_probability、precipitation_text、publish_time；中国天气网字段至少包含 forecast_date、weather_text、temp_max、temp_min、wind_direction_day、wind_direction_night、wind_force、source_update_time。先核对两源发布时间、记录覆盖范围和数量；任一日期缺测时明确写证据不足，不得用另一源静默补齐。\n3. 当 execute_sql_query 返回完整结果文件或提示结果已外置时，必须使用 execute_python 读取该完整文件并整理为 create_report_chart 可用的 records；不得只使用SQL工具内联展示的样例记录。\n4. 使用 create_report_chart 的 chart_type=weather_timeseries 生成标准化7天气象时序图。records至少包含 forecast_time、wind_speed、wind_direction_degrees、temperature、precipitation_probability、humidity；通过 options.risk_periods传入风险时段及触发因子。该工具生成风向箭头、风速、温度、降水概率、湿度五个对齐面板，并用风险色块标注风险。多线条时按可读性设置 options.line_width（正数，例如0.8-1.2），禁止自行改用未规范的绘图方式。\n5. 扩散条件分级严格使用NMC风速：好 >=5 m/s，一般 2-<5 m/s，较差 1.5-<2 m/s，差 <1.5 m/s；风险只描述气象条件支持的扩散风险，不得把天气预报写成污染实测结论。图表下方每天仅用一段精简文字（建议1-3句）概括中国天气网日预报与NMC小时趋势、扩散等级及主要触发因子，避免重复表格内容。\n\n报告结构（必须全部包含且仅保留以下章节）：\n一、未来7天天气形势预报总览（说明两类数据源、各自发布时间、覆盖范围及总体趋势）；\n二、未来7天气象要素与污染扩散时序分析（插入 create_report_chart 生成的标准化天气时序图；图表下方附每天精简日分析）；\n三、不利扩散时段汇总（只列气象条件支持的风险，按时间先后从上到下排序，不按风险等级重排；包含日期、起止时段、风险类型、主导因子、持续时长和风险等级）；\n四、报告结论（简述总体天气形势、扩散条件变化和需关注时段）。删除“未来7天重点风险与高值时段”“逐小时关键时点数据”“数据质量与分析边界”三个独立章节，相关必要的证据边界仅在第一章用一小段说明。\n\n表格、图表与颜色要求：\n- 使用 create_report_package 的 report.qmd；表格必须是可渲染的HTML表格或带HTML属性的Markdown表格，不能只用纯文本描述。\n- 图表必须来自 create_report_chart(weather_timeseries)，有统一图例、日期/时间轴、单位、风向箭头和风险标注；图表生成的图片使用工具返回的正式资源路径，禁止自行拼接路径。\n- 在QMD中加入一次<style>：.diff-good{background:#C6EFCE;color:#375623}.diff-normal{background:#FFEB9C;color:#9C6500}.diff-poor{background:#FCE4D6;color:#974706}.diff-bad{background:#FFC7CE;color:#9C0006}.risk-high{background:#FFC7CE;color:#9C0006;font-weight:700}.risk-medium{background:#FCE4D6;color:#974706;font-weight:700}.risk-low{background:#FFEB9C;color:#9C6500}.value-high{background:#FFC7CE;color:#9C0006;font-weight:700}.value-watch{background:#FFEB9C;color:#9C6500;font-weight:700}.value-normal{background:#C6EFCE;color:#375623}.\n- 扩散条件单元格按四级填入对应class；风险列按高/中/低填入risk-high/risk-medium/risk-low；表格首行使用深蓝表头 #1F4E79、白色文字。图表风险标注使用同一风险颜色体系。\n- 表格/图表之后保留一行图例，明确绿=好、黄=一般、橙=较差、红=差，并解释风险和高值颜色。\n\n交付要求：\n1. 调用 create_report_package 创建 report_id={task_id}-{execution_id}-report，写入完整 report.qmd，并插入 create_report_chart 返回的正式图片资源。\n2. 调用 render_report_package 导出HTML和DOCX，再调用 validate_report_package 验收QMD、HTML、DOCX及资源引用。\n3. 完成报告后调用 broadcast_social_users 发送摘要和正式DOCX附件。最终返回报告ID、两类数据源的发布时间、实际覆盖起止时间、主要不利扩散时段、报告路径和验收结果。不得省略失败阶段和原因。",
+  "timeout_seconds": 1800
 }
