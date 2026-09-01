@@ -49,18 +49,33 @@
         class="tool-section"
       >
         <header class="section-header">
-          <div class="section-copy">
-            <span class="section-badge">分类</span>
-            <h3>{{ section.title }}</h3>
-            <p>{{ section.description }}</p>
-          </div>
-          <div class="section-meta">
-            <span>{{ section.count }} 个工具</span>
-            <span>{{ section.enabledCount }} 已启用</span>
-          </div>
+          <button
+            type="button"
+            class="section-toggle"
+            :class="{ collapsed: isSectionCollapsed(section.id) }"
+            :aria-expanded="!isSectionCollapsed(section.id)"
+            @click="toggleSection(section.id)"
+          >
+            <div class="section-toggle-main">
+              <div class="section-copy">
+                <span class="section-badge">分类</span>
+                <h3>{{ section.title }}</h3>
+                <p>{{ section.description }}</p>
+              </div>
+              <div class="section-meta">
+                <span>{{ section.count }} 个工具</span>
+                <span>{{ section.enabledCount }} 已启用</span>
+              </div>
+            </div>
+            <span class="section-toggle-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20">
+                <path d="m6 8 4 4 4-4" />
+              </svg>
+            </span>
+          </button>
         </header>
 
-        <div class="tool-grid">
+        <div v-if="!isSectionCollapsed(section.id)" class="tool-grid">
           <article
             v-for="tool in section.tools"
             :key="tool.name"
@@ -71,16 +86,16 @@
             @click="viewToolDetail(tool)"
             @keydown.enter.prevent="viewToolDetail(tool)"
             @keydown.space.prevent="viewToolDetail(tool)"
-          >
-            <div class="tool-card-top">
-              <div class="tool-card-title">
-                <span class="tool-name">{{ tool.name }}</span>
-                <span class="tool-badge" :class="tool.status">
-                  {{ tool.status === 'enabled' ? '已启用' : '已禁用' }}
-                </span>
+            >
+              <div class="tool-card-top">
+                <div class="tool-card-title">
+                  <span class="tool-name">{{ tool.name }}</span>
+                  <span class="tool-badge" :class="tool.status">
+                    {{ tool.status === 'enabled' ? '已启用' : '已禁用' }}
+                  </span>
+                </div>
+              <p class="tool-desc" :title="tool.description">{{ getToolSummary(tool) }}</p>
               </div>
-              <p class="tool-desc">{{ tool.description }}</p>
-            </div>
 
             <div class="tool-meta">
               <span class="tool-chip">{{ getCategoryLabel(tool.category) }}</span>
@@ -228,6 +243,7 @@ const tools = ref([])
 const searchQuery = ref('')
 const showDetailDialog = ref(false)
 const currentTool = ref(null)
+const collapsedSections = ref(new Set())
 
 const categoryMap = {
   query: {
@@ -337,6 +353,18 @@ const summaryCards = computed(() => [
   }
 ])
 
+const isSectionCollapsed = (sectionId) => collapsedSections.value.has(sectionId)
+
+const toggleSection = (sectionId) => {
+  const next = new Set(collapsedSections.value)
+  if (next.has(sectionId)) {
+    next.delete(sectionId)
+  } else {
+    next.add(sectionId)
+  }
+  collapsedSections.value = next
+}
+
 const fetchTools = async () => {
   loading.value = true
   try {
@@ -361,6 +389,13 @@ const getSuccessRate = (statistics = {}) => {
   const success = Number(statistics.success || 0)
   if (!total) return '0.0'
   return ((success / total) * 100).toFixed(1)
+}
+
+const getToolSummary = (tool) => {
+  const raw = String(tool?.description || '').replace(/\s+/g, ' ').trim()
+  if (!raw) return '暂无描述'
+  if (raw.length <= 160) return raw
+  return `${raw.slice(0, 159)}…`
 }
 
 const formatExecutionTime = (value) => {
@@ -547,15 +582,45 @@ onMounted(fetchTools)
 }
 
 .section-header {
+  display: block;
+}
+
+.section-toggle {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid #dde5ec;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.section-toggle:hover,
+.section-toggle:focus-visible {
+  border-color: #1590a0;
+  box-shadow: 0 12px 28px rgba(16, 82, 94, 0.06);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.section-toggle-main {
   display: flex;
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+  min-width: 0;
+  flex: 1;
 }
 
 .section-copy {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .section-badge {
@@ -584,12 +649,39 @@ onMounted(fetchTools)
   align-items: center;
   color: #6d7f8f;
   font-size: 11px;
+  flex: none;
 }
 
 .section-meta span {
   padding: 5px 8px;
   border-radius: 999px;
   background: #edf4f8;
+}
+
+.section-toggle-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 999px;
+  background: #f1f6f9;
+  color: #5c7282;
+}
+
+.section-toggle-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform 0.18s ease;
+}
+
+.section-toggle.collapsed .section-toggle-icon svg {
+  transform: rotate(-90deg);
 }
 
 .tool-grid {
@@ -602,12 +694,13 @@ onMounted(fetchTools)
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-height: 208px;
+  height: 236px;
   padding: 16px;
   border: 1px solid #dce5ec;
   border-radius: 12px;
   background: #fff;
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
@@ -627,6 +720,8 @@ onMounted(fetchTools)
 .tool-card-top {
   display: grid;
   gap: 8px;
+  min-height: 0;
+  flex: 1;
 }
 
 .tool-card-title {
@@ -634,12 +729,17 @@ onMounted(fetchTools)
   justify-content: space-between;
   gap: 10px;
   align-items: flex-start;
+  min-width: 0;
 }
 
 .tool-name {
   font-size: 15px;
   font-weight: 700;
   color: #183241;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-badge {
@@ -665,12 +765,18 @@ onMounted(fetchTools)
   color: #5e7384;
   font-size: 13px;
   line-height: 1.6;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  word-break: break-word;
 }
 
 .tool-meta {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  min-height: 44px;
 }
 
 .tool-chip {
@@ -679,6 +785,10 @@ onMounted(fetchTools)
   background: #f1f6f9;
   color: #5c7282;
   font-size: 11px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-actions {
@@ -686,7 +796,7 @@ onMounted(fetchTools)
   justify-content: space-between;
   gap: 10px;
   align-items: center;
-  margin-top: auto;
+  min-height: 36px;
 }
 
 .btn-toggle,
@@ -704,6 +814,7 @@ onMounted(fetchTools)
   border: 1px solid #d8e1e8;
   background: #fff;
   color: #405868;
+  white-space: nowrap;
 }
 
 .btn-secondary {
@@ -711,6 +822,7 @@ onMounted(fetchTools)
   border: 1px solid #d8e1e8;
   background: #fff;
   color: #405868;
+  white-space: nowrap;
 }
 
 .btn-toggle.enabled {
@@ -726,6 +838,7 @@ onMounted(fetchTools)
   padding: 8px 10px;
   background: transparent;
   color: #0f7b8a;
+  white-space: nowrap;
 }
 
 .btn-link svg {

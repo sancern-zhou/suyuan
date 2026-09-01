@@ -76,9 +76,7 @@ class GatewayAuthenticationMiddleware:
 
         path = scope.get("path", "")
         method = scope.get("method", "")
-        if method == "OPTIONS" or path.startswith(_APP_GATEWAY_PREFIXES) or (
-            method in {"GET", "HEAD"} and self._is_public(path)
-        ):
+        if method == "OPTIONS" or self._is_public(path):
             await self.app(scope, receive, send)
             return
 

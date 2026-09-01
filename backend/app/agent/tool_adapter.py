@@ -233,6 +233,11 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
         # 标准化返回格式（符合UDF v1.0）
         execution_time = (datetime.now() - start_time).total_seconds()
         public_result = _standardize_tool_result(tool_name, result, execution_time)
+        global_tool_registry.record_execution(
+            tool_name,
+            success=bool(public_result.get("success", False)),
+            execution_time=execution_time,
+        )
         public_result = persist_large_inline_data(
             public_result,
             context=execution_context,
@@ -250,6 +255,11 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
             error=str(e),
             execution_time=execution_time,
             exc_info=True
+        )
+        global_tool_registry.record_execution(
+            tool_name,
+            success=False,
+            execution_time=execution_time,
         )
 
         return {
@@ -296,8 +306,6 @@ def _standardize_tool_result(tool_name: str, result: Any, execution_time: float)
 
         if has_core_fields and has_data_field:
             # ✅ 标准格式验证通过
-            global_tool_registry.record_success(tool_name)
-            global_tool_registry._update_execution_time(tool_name, execution_time)
             return result
         else:
             # ❌ 非标准格式，需要转换
@@ -410,6 +418,8 @@ def _convert_to_standard_format(result: Dict[str, Any], tool_name: str, executio
             "resources",
             "refs",
             "llm_resume",
+            "data_ids",
+            "report_data_id",
             "context_refs",
             "content_preview",
             "file_path",

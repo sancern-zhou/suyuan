@@ -61,19 +61,32 @@
           :key="section.id"
           class="skill-section"
         >
-          <header class="section-header">
-            <div class="section-copy">
-              <span class="section-badge">{{ section.badge }}</span>
-              <h3>{{ section.title }}</h3>
-              <p>{{ section.description }}</p>
+          <button
+            type="button"
+            class="section-toggle"
+            :class="{ collapsed: isSectionCollapsed(section.id) }"
+            :aria-expanded="!isSectionCollapsed(section.id)"
+            @click="toggleSection(section.id)"
+          >
+            <div class="section-toggle-main">
+              <div class="section-copy">
+                <span class="section-badge">{{ section.badge }}</span>
+                <h3>{{ section.title }}</h3>
+                <p>{{ section.description }}</p>
+              </div>
+              <div class="section-meta">
+                <span>{{ section.count }} 个技能</span>
+                <span v-if="section.draftCount">{{ section.draftCount }} 个待审核</span>
+              </div>
             </div>
-            <div class="section-meta">
-              <span>{{ section.count }} 个技能</span>
-              <span v-if="section.draftCount">{{ section.draftCount }} 个待审核</span>
-            </div>
-          </header>
+            <span class="section-toggle-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20">
+                <path d="m6 8 4 4 4-4" />
+              </svg>
+            </span>
+          </button>
 
-          <div class="skill-grid">
+          <div v-if="!isSectionCollapsed(section.id)" class="skill-grid">
             <article
               v-for="skill in section.items"
               :key="skill.file || skill.name"
@@ -92,7 +105,7 @@
                     {{ skill.is_draft ? '待审核' : '正式' }}
                   </span>
                 </div>
-                <p class="skill-desc">{{ skill.description }}</p>
+                <p class="skill-desc" :title="skill.description">{{ getSkillSummary(skill) }}</p>
               </div>
 
               <div class="skill-meta">
@@ -202,6 +215,7 @@ const isEditing = ref(false)
 const editedContent = ref('')
 const saving = ref(false)
 const refreshingIndex = ref(false)
+const collapsedSections = ref(new Set())
 
 const skillGroupLabels = {
   root: '根目录技能',
@@ -255,6 +269,18 @@ const getSkillGroupDescription = (groupKey) => {
   return skillGroupDescriptions[groupKey] || '按目录展开的技能文档'
 }
 
+const isSectionCollapsed = (sectionId) => collapsedSections.value.has(sectionId)
+
+const toggleSection = (sectionId) => {
+  const next = new Set(collapsedSections.value)
+  if (next.has(sectionId)) {
+    next.delete(sectionId)
+  } else {
+    next.add(sectionId)
+  }
+  collapsedSections.value = next
+}
+
 const getSkillIdentifier = (skill) => {
   if (skill?.id) return skill.id
 
@@ -266,6 +292,12 @@ const getSkillIdentifier = (skill) => {
     return pathParts[pathParts.length - 2] || fileName.replace(/\.md$/i, '')
   }
   return fileName.replace(/\.md$/i, '')
+}
+
+const getSkillSummary = (skill) => {
+  const description = String(skill?.description || '').replace(/\s+/g, ' ').trim()
+  if (!description) return '暂无技能描述'
+  return description.length > 160 ? `${description.slice(0, 157)}...` : description
 }
 
 const matchesKeyword = (skill) => {
@@ -675,16 +707,42 @@ onMounted(() => {
   gap: 12px;
 }
 
-.section-header {
+.section-toggle {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid #dde5ec;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.section-toggle:hover,
+.section-toggle:focus-visible {
+  border-color: #1590a0;
+  box-shadow: 0 12px 28px rgba(16, 82, 94, 0.06);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.section-toggle-main {
   display: flex;
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+  min-width: 0;
+  flex: 1;
 }
 
 .section-copy {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .section-badge {
@@ -713,12 +771,39 @@ onMounted(() => {
   align-items: center;
   color: #6d7f8f;
   font-size: 11px;
+  flex: none;
 }
 
 .section-meta span {
   padding: 5px 8px;
   border-radius: 999px;
   background: #edf4f8;
+}
+
+.section-toggle-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 999px;
+  background: #f1f6f9;
+  color: #5c7282;
+}
+
+.section-toggle-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform 0.18s ease;
+}
+
+.section-toggle.collapsed .section-toggle-icon svg {
+  transform: rotate(-90deg);
 }
 
 .skill-grid {
@@ -731,12 +816,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-height: 198px;
+  height: 236px;
   padding: 16px;
   border: 1px solid #dce5ec;
   border-radius: 12px;
   background: #fff;
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
@@ -755,6 +841,8 @@ onMounted(() => {
 .skill-card-top {
   display: grid;
   gap: 8px;
+  min-height: 0;
+  flex: 1;
 }
 
 .skill-card-title {
@@ -762,12 +850,17 @@ onMounted(() => {
   justify-content: space-between;
   gap: 10px;
   align-items: flex-start;
+  min-width: 0;
 }
 
 .skill-name {
   font-size: 15px;
   font-weight: 700;
   color: #183241;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skill-badge,
@@ -801,11 +894,15 @@ onMounted(() => {
   color: #5e7384;
   font-size: 13px;
   line-height: 1.6;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .skill-meta {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -815,6 +912,10 @@ onMounted(() => {
   background: #f1f6f9;
   color: #5c7282;
   font-size: 11px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skill-actions {
