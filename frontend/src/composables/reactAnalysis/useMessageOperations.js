@@ -186,13 +186,10 @@ export function useMessageOperations(store) {
       }
 
       if (content) {
-        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
         const link = document.createElement('a')
-        link.href = url
+        link.href = `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`
         link.download = `message_${messageId.substring(0, 8)}.txt`
         link.click()
-        URL.revokeObjectURL(url)
         return true
       }
 

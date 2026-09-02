@@ -2924,20 +2924,10 @@ const copyImageToClipboard = async () => {
     }
 
     // 降级：下载 PNG
-    const base64Data = imageData.split(',')[1]
-    const byteString = atob(base64Data)
-    const ab = new ArrayBuffer(byteString.length)
-    const ia = new Uint8Array(ab)
-    for (let i = 0; i < byteString.length; i++) {
-      ia[i] = byteString.charCodeAt(i)
-    }
-    const blob = new Blob([ab], { type: 'image/png' })
-    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = url
+    link.href = imageData
     link.download = `${props.data?.title || '图表'}_${Date.now()}.png`
     link.click()
-    URL.revokeObjectURL(url)
 
   } catch (error) {
     console.error('[ChartPanel] 复制失败:', error)
@@ -2954,20 +2944,10 @@ const saveImageAsPNG = () => {
     const imageData = contextMenu.value.imageData
     if (!imageData) return
 
-    const base64Data = imageData.split(',')[1]
-    const byteString = atob(base64Data)
-    const ab = new ArrayBuffer(byteString.length)
-    const ia = new Uint8Array(ab)
-    for (let i = 0; i < byteString.length; i++) {
-      ia[i] = byteString.charCodeAt(i)
-    }
-    const blob = new Blob([ab], { type: 'image/png' })
-    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = url
+    link.href = imageData
     link.download = `${props.data?.title || '图表'}_${Date.now()}.png`
     link.click()
-    URL.revokeObjectURL(url)
   } catch (error) {
     console.error('[ChartPanel] 保存图片失败:', error)
   } finally {

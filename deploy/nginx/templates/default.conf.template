@@ -21,11 +21,14 @@ server {
     client_max_body_size 100m;
 
     # 基础安全响应头（SPA 场景；API 响应同样适用）
+    # 注意：CSP 只作用于静态 location（见下方各静态块），不能放在 server 级。
+    # 原因：server 级 add_header 会被 /api/ 代理 location 继承，与后端
+    # session_resource_routes.py 为 HTML 预览下发的 CSP 叠加成双重策略，
+    # 浏览器取交集后内联脚本被拦截（html_artifacts 翻页脚本即由此失效）。
     # script-src 放行高德地图 JSAPI（内部使用 eval 动态加载）
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://webapi.amap.com https://restapi.amap.com https://a.amap.com; connect-src 'self' https: ws: wss:; font-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self';" always;
 
     location ^~ /api/auth/ {
         limit_req zone=auth_limit burst=20 nodelay;
@@ -117,6 +120,7 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'self'; frame-src 'self' https://app.diagrams.net https://embed.diagrams.net; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://webapi.amap.com https://restapi.amap.com https://a.amap.com; connect-src 'self' https: ws: wss:; font-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self';" always;
     }
 
     location ~* \.(?:css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf)$ {
@@ -126,9 +130,15 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'self'; frame-src 'self' https://app.diagrams.net https://embed.diagrams.net; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://webapi.amap.com https://restapi.amap.com https://a.amap.com; connect-src 'self' https: ws: wss:; font-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self';" always;
     }
 
+    # SPA 路由兜底：本块自带 add_header 后不再继承 server 级安全头，需完整声明
     location / {
         try_files $uri $uri/ /index.html;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'self'; frame-src 'self' https://app.diagrams.net https://embed.diagrams.net; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' https://webapi.amap.com https://restapi.amap.com https://a.amap.com; connect-src 'self' https: ws: wss:; font-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self';" always;
     }
 }

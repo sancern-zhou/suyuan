@@ -10,7 +10,7 @@ const resource = {
   download_url: '/api/suyuan/sessions/s/resources/ppt/content?disposition=attachment'
 }
 
-test('downloads a resource through authenticated fetch and a temporary Blob URL', async () => {
+test('downloads a resource through authenticated fetch and a data URL', async () => {
   const calls = []
   const link = {
     click: () => calls.push('click'),
@@ -23,12 +23,13 @@ test('downloads a resource through authenticated fetch and a temporary Blob URL'
     },
     body: { appendChild: value => calls.push(['append', value]) }
   }
-  const urlApi = {
-    createObjectURL: value => {
-      calls.push(['create', value])
-      return 'blob:download'
-    },
-    revokeObjectURL: value => calls.push(['revoke', value])
+  const dataUrl = 'data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,cHB0eA=='
+  const fileReader = class {
+    readAsDataURL(value) {
+      calls.push(['read', value])
+      this.result = dataUrl
+      this.onload()
+    }
   }
   const blob = new Blob(['pptx'], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' })
 
@@ -38,19 +39,18 @@ test('downloads a resource through authenticated fetch and a temporary Blob URL'
       return { ok: true, blob: async () => blob }
     },
     documentRef,
-    urlApi,
+    fileReader,
     schedule: callback => callback()
   })
 
-  assert.equal(link.href, 'blob:download')
+  assert.equal(link.href, dataUrl)
   assert.equal(link.download, 'presentation.pptx')
   assert.deepEqual(calls, [
     ['fetch', resource.download_url],
-    ['create', blob],
+    ['read', blob],
     ['append', link],
     'click',
-    'remove',
-    ['revoke', 'blob:download']
+    'remove'
   ])
 })
 
@@ -68,27 +68,33 @@ test('reports an HTTP failure without creating a download', async () => {
   )
 })
 
-test('revokes the Blob URL when DOM setup fails', async () => {
-  const revoked = []
+test('propagates DOM failures after reading the resource', async () => {
+  const fileReader = class {
+    readAsDataURL() {
+      this.result = 'data:text/plain;base64,cHB0eA=='
+      this.onload()
+    }
+  }
   await assert.rejects(
     downloadResource(resource, {
       fetchImpl: async () => ({ ok: true, blob: async () => new Blob(['pptx']) }),
       documentRef: { createElement: () => { throw new Error('dom unavailable') } },
-      urlApi: {
-        createObjectURL: () => 'blob:failed',
-        revokeObjectURL: value => revoked.push(value)
-      },
+      fileReader,
       schedule: () => assert.fail('must not schedule cleanup')
     }),
     /dom unavailable/
   )
-  assert.deepEqual(revoked, ['blob:failed'])
 })
 
 test('cleans up exactly once when scheduling cleanup fails', async () => {
   let removals = 0
-  const revoked = []
   const link = { click: () => {}, remove: () => { removals += 1 } }
+  const fileReader = class {
+    readAsDataURL() {
+      this.result = 'data:text/plain;base64,cHB0eA=='
+      this.onload()
+    }
+  }
   await assert.rejects(
     downloadResource(resource, {
       fetchImpl: async () => ({ ok: true, blob: async () => new Blob(['pptx']) }),
@@ -96,16 +102,12 @@ test('cleans up exactly once when scheduling cleanup fails', async () => {
         createElement: () => link,
         body: { appendChild: () => {} }
       },
-      urlApi: {
-        createObjectURL: () => 'blob:schedule-failed',
-        revokeObjectURL: value => revoked.push(value)
-      },
+      fileReader,
       schedule: () => { throw new Error('scheduler unavailable') }
     }),
     /scheduler unavailable/
   )
   assert.equal(removals, 1)
-  assert.deepEqual(revoked, ['blob:schedule-failed'])
 })
 
 test('normalizes the resource filename extension', () => {
