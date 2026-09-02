@@ -80,6 +80,13 @@ export const buildTaskPayload = (form) => {
     title: String(form.workspaceEntryTitle || form.name || '').trim()
   }
 
+  payload.history_learning = {
+    ...(form.historyLearningBase || {}),
+    enabled: form.historyLearningEnabled !== false,
+    max_recent_cases: Number(form.historyMaxRecentCases) || 3,
+    memory_char_budget: Number(form.historyMemoryCharBudget) || 4000
+  }
+
   if (payload.execution_mode === 'custom') {
     payload.tool_names = [...new Set(
       (form.tool_names || []).map(name => String(name).trim()).filter(Boolean)

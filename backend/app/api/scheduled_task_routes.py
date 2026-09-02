@@ -18,7 +18,8 @@ from app.scheduled_tasks import (
     ScheduleType,
     TriggerType,
 )
-from app.scheduled_tasks.models import WorkspaceEntry
+from app.scheduled_tasks.models import WorkspaceEntry, HistoryLearningConfig
+from app.scheduled_tasks.storage.task_case_storage import TaskCaseStorage
 from app.scheduled_tasks.event_catalog import (
     EventDefinition,
     get_event_definition,
@@ -61,6 +62,10 @@ class CreateTaskRequest(BaseModel):
     timeout_seconds: int = Field(default=1800, ge=1)
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = None
+    history_learning: Optional[HistoryLearningConfig] = Field(
+        default=None,
+        description="历史执行记忆配置（为空时使用默认配置）",
+    )
 
 
 class UpdateTaskRequest(BaseModel):
@@ -85,6 +90,7 @@ class UpdateTaskRequest(BaseModel):
     timeout_seconds: Optional[int] = Field(default=None, ge=1)
     tags: Optional[List[str]] = None
     workspace_entry: Optional[WorkspaceEntry] = None
+    history_learning: Optional[HistoryLearningConfig] = None
 
 
 class TaskResponse(BaseModel):
@@ -130,6 +136,24 @@ class StatisticsResponse(BaseModel):
     success_rate: float
     avg_duration_seconds: float
     period_days: int
+
+
+class TaskHistoryCasesResponse(BaseModel):
+    """任务历史案例库响应（最新在前）"""
+    cases: List[Dict[str, Any]]
+    total: int
+
+
+class TaskMemoryResponse(BaseModel):
+    """任务专属长期记忆响应"""
+    memory: str
+    meta: Dict[str, Any]
+    case_count: int
+
+
+class UpdateTaskMemoryRequest(BaseModel):
+    """人工编辑长期记忆请求"""
+    content: str = Field(..., min_length=1, description="记忆 Markdown 全文")
 
 
 # ===== API端点 =====
@@ -348,6 +372,7 @@ async def create_task(
             enabled=request.enabled,
             tags=request.tags,
             workspace_entry=request.workspace_entry,
+            history_learning=request.history_learning or HistoryLearningConfig(),
             owner_user_id=user.id,
             owner_username=user.username,
             owner_display_name=user.display_name,
@@ -667,6 +692,82 @@ async def get_task_executions(
             total_pages=math.ceil(total / effective_page_size),
         )
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _get_task_case_storage(task_id: str, user: CurrentUser) -> TaskCaseStorage:
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _require_task_access(task, user)
+    return TaskCaseStorage(task_id)
+
+
+@router.get("/{task_id}/history/cases", response_model=TaskHistoryCasesResponse)
+async def get_task_history_cases(
+    task_id: str,
+    limit: int = Query(default=50, ge=1, le=200, description="返回最近案例数量"),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取任务专属历史案例库（最新在前）"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        cases = storage.recent_cases(limit)
+        cases.reverse()  # recent_cases 返回旧→新，接口统一最新在前
+        return TaskHistoryCasesResponse(cases=cases, total=storage.case_count())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{task_id}/history/memory", response_model=TaskMemoryResponse)
+async def get_task_history_memory(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取任务专属长期记忆与巩固元信息"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        return TaskMemoryResponse(
+            memory=storage.read_memory(),
+            meta=storage.read_meta(),
+            case_count=storage.case_count(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/history/memory", response_model=TaskMemoryResponse)
+async def update_task_history_memory(
+    task_id: str,
+    request: UpdateTaskMemoryRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """人工编辑任务专属长期记忆（用于纠正记忆偏差），版本号递增并标记 manual"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        meta = storage.read_meta()
+        storage.write_memory(
+            request.content,
+            {
+                **meta,
+                "version": int(meta.get("version", 0)) + 1,
+                "last_consolidation_status": "manual",
+                "updated_at": datetime.now().isoformat(),
+            },
+        )
+        return TaskMemoryResponse(
+            memory=storage.read_memory(),
+            meta=storage.read_meta(),
+            case_count=storage.case_count(),
+        )
     except HTTPException:
         raise
     except Exception as e:

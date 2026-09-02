@@ -207,6 +207,64 @@ test('always sends workspace entry state so an existing sidebar entry can be dis
 })
 
 
+test('history learning defaults to enabled with fallback params', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.deepEqual(payload.history_learning, {
+    enabled: true,
+    max_recent_cases: 3,
+    memory_char_budget: 4000
+  })
+})
+
+
+test('history learning can be disabled and params overridden', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true,
+    historyLearningEnabled: false,
+    historyMaxRecentCases: 5,
+    historyMemoryCharBudget: 2000
+  })
+
+  assert.equal(payload.history_learning.enabled, false)
+  assert.equal(payload.history_learning.max_recent_cases, 5)
+  assert.equal(payload.history_learning.memory_char_budget, 2000)
+})
+
+
+test('history learning preserves unexposed subfields from the edited task', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true,
+    historyLearningEnabled: true,
+    historyMaxRecentCases: 7,
+    historyMemoryCharBudget: 3000,
+    historyLearningBase: {
+      enabled: true,
+      max_recent_cases: 3,
+      memory_char_budget: 4000,
+      consolidation_timeout_seconds: 300
+    }
+  })
+
+  assert.equal(payload.history_learning.consolidation_timeout_seconds, 300)
+  assert.equal(payload.history_learning.max_recent_cases, 7)
+})
+
+
 test('event trigger defaults to social execution and broadcasting', () => {
   const form = {
     trigger_type: 'schedule',

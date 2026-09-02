@@ -126,6 +126,47 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       };
     },
 
+    async fetchTaskHistoryCases(taskId, { limit = 50 } = {}) {
+      const params = new URLSearchParams({ limit: String(limit) });
+      const response = await authFetch(`${API_BASE}/${taskId}/history/cases?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch task history cases');
+      const data = await response.json();
+      return {
+        cases: Array.isArray(data?.cases) ? data.cases : [],
+        total: Number(data?.total) || 0
+      };
+    },
+
+    async fetchTaskMemory(taskId) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/memory`);
+      if (!response.ok) throw new Error('Failed to fetch task memory');
+      const data = await response.json();
+      return {
+        memory: String(data?.memory || ''),
+        meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
+        caseCount: Number(data?.case_count) || 0
+      };
+    },
+
+    async updateTaskMemory(taskId, content) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/memory`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ content })
+      });
+      if (!response.ok) {
+        throw new Error(await responseErrorMessage(response, '长期记忆保存失败'));
+      }
+      const data = await response.json();
+      return {
+        memory: String(data?.memory || ''),
+        meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
+        caseCount: Number(data?.case_count) || 0
+      };
+    },
+
     async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {
       const params = new URLSearchParams({
         page: String(page),
