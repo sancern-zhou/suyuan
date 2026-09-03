@@ -441,7 +441,7 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
         description="event task",
         execution_mode="report",
         trigger_type="event",
-        event_type="xuchang.station_daily_pollution.review_completed",
+        event_type="yuncheng.alert.created",
         broadcast_enabled=False,
         prompt="生成回顾报告",
     )
@@ -453,11 +453,11 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
         conversation_persistence=RecordingConversationPersistence(),
     )
     event = TaskEvent(
-        event_id="xuchang-station-daily-review-20260829",
-        event_type="xuchang.station_daily_pollution.review_completed",
-        attributes={"city": "许昌市", "target_date": "2026-08-29"},
+        event_id="yuncheng-station-daily-review-20260829",
+        event_type="yuncheng.alert.created",
+        attributes={"city": "运城市", "target_date": "2026-08-29"},
         payload={
-            "city": "许昌市",
+            "city": "运城市",
             "target_date": "2026-08-29",
             "event_count": 7,
             "events": [
@@ -465,7 +465,7 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
                 for _ in range(7)
             ],
             "evidence_package_path": (
-                "backend/backend_data_registry/xuchang_station_daily_reviews/20260829.json"
+                "backend/backend_data_registry/yuncheng_station_daily_reviews/20260829.json"
             ),
         },
     )

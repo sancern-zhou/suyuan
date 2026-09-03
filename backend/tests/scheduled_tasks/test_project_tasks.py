@@ -23,13 +23,13 @@ def _task(prompt="生成报告"):
         description="报告",
         execution_mode="report",
         trigger_type="event",
-        event_type="xuchang.station_daily_source_analysis.completed",
+        event_type="yuncheng.alert.created",
         prompt=prompt,
     )
 
 
 def _write_definition(root, task):
-    path = root / "projects" / "xuchang" / "scheduled_tasks" / "task_report.json"
+    path = root / "projects" / "demo" / "scheduled_tasks" / "task_report.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(task.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
 
@@ -39,10 +39,10 @@ def test_project_task_sync_creates_then_remains_idempotent(tmp_path):
     service = _Service(TaskStorage(tmp_path / "state"))
 
     created = sync_project_scheduled_tasks(
-        project_id="xuchang", task_ids=["task_report"], service=service, project_root=tmp_path
+        project_id="demo", task_ids=["task_report"], service=service, project_root=tmp_path
     )
     unchanged = sync_project_scheduled_tasks(
-        project_id="xuchang", task_ids=["task_report"], service=service, project_root=tmp_path
+        project_id="demo", task_ids=["task_report"], service=service, project_root=tmp_path
     )
 
     assert created[0]["action"] == "created"
@@ -64,7 +64,7 @@ def test_project_task_sync_never_overwrites_existing_tasks(tmp_path):
     _write_definition(tmp_path, seed)
 
     result = sync_project_scheduled_tasks(
-        project_id="xuchang",
+        project_id="demo",
         task_ids=["task_report"],
         service=_Service(storage),
         project_root=tmp_path,
@@ -95,7 +95,7 @@ def test_project_task_sync_ignores_legacy_steps_in_runtime_store(tmp_path):
     _write_definition(tmp_path, _task("运行时提示"))
 
     result = sync_project_scheduled_tasks(
-        project_id="xuchang",
+        project_id="demo",
         task_ids=["task_report"],
         service=_Service(storage),
         project_root=tmp_path,
