@@ -72,6 +72,8 @@ class ExecutionContext:
         # Durable session inputs (uploads etc.) authorized for sandbox staging.
         # Separate from available_file_paths, which doubles as output declarations.
         self.authorized_input_paths: List[str] = []
+        self.runtime_metadata: Dict[str, Any] = {}
+        self.scheduled_task_context: Optional[Dict[str, Any]] = None
 
         logger.debug(
             "execution_context_created",

@@ -90,6 +90,23 @@ class TaskCaseStorage:
         cases.reverse()
         return cases
 
+    def read_cases(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """读取案例库，按时间正序（旧→新）返回。"""
+        try:
+            lines = self.cases_file.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return []
+        non_empty = [line.strip() for line in lines if line.strip()]
+        if limit is not None and limit > 0:
+            non_empty = non_empty[-limit:]
+        cases: list[dict[str, Any]] = []
+        for line in non_empty:
+            try:
+                cases.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return cases
+
     def case_count(self) -> int:
         try:
             lines = self.cases_file.read_text(encoding="utf-8").splitlines()

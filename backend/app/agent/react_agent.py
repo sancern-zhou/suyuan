@@ -310,6 +310,8 @@ class ReActAgent:
         skip_auto_followup: bool = False,  # 自动复核轮显式跳过再次触发
         cancel_event: Optional[Any] = None,
         session_storage_mode: Optional[str] = None,
+        extra_tool_names: Optional[List[str]] = None,
+        runtime_metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         分析用户查询（主入口）
@@ -333,6 +335,7 @@ class ReActAgent:
             social_user_file_path: 社交模式 USER.md 文件路径（仅social模式使用）
             social_soul_context: 社交模式 soul.md 内容（助理灵魂档案，仅social模式使用）
             social_user_context: 社交模式用户上下文内容（USER.md，仅social模式使用，包含用户档案信息）
+            extra_tool_names: 本次运行临时追加暴露的工具名，不修改模式默认工具白名单
 
         Yields:
             流式事件：
@@ -460,6 +463,7 @@ class ReActAgent:
         )
         run_executor.runtime_mode = manual_mode or "expert"
         run_executor.user_identifier = user_identifier
+        run_executor.runtime_metadata = dict(runtime_metadata or {})
         latest_resource_version: int | None = None
         resource_failures: list[dict[str, Any]] = []
         published_resource_ids: list[str] = []
@@ -509,6 +513,7 @@ class ReActAgent:
                 cancel_event=cancel_event,
                 attachments=runtime_attachments if supports_native_multimodal(manual_mode) else None,
                 auto_profile=auto_profile,
+                extra_tool_names=list(dict.fromkeys(extra_tool_names or [])),
             )
 
             run_executor.configure_resource_tracking(

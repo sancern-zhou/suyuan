@@ -267,6 +267,9 @@ def _validate_task_skill(task: ScheduledTask) -> None:
         ) from exc
 
 
+_SYSTEM_MANAGED_CUSTOM_TASK_TOOLS = {"search_scheduled_task_history"}
+
+
 def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
     return bool(user.is_admin) or task.owner_user_id == user.id
 
@@ -306,7 +309,11 @@ async def list_custom_task_tools(
     return {
         "tools": [
             tool for tool in tools
-            if tool.get("status") == "enabled" and tool.get("name") in authorized
+            if (
+                tool.get("status") == "enabled"
+                and tool.get("name") in authorized
+                and tool.get("name") not in _SYSTEM_MANAGED_CUSTOM_TASK_TOOLS
+            )
         ]
     }
 
