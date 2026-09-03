@@ -459,9 +459,6 @@
                 </span>
                 <span v-if="caseItem.trigger?.type === 'event'" class="history-case-trigger">事件触发</span>
               </div>
-              <p v-if="caseItem.trigger?.context_digest" class="history-case-digest">
-                {{ caseItem.trigger.context_digest }}
-              </p>
               <p class="history-case-brief">
                 {{ caseItem.distilled?.case_brief || caseItem.summary || '（无摘要）' }}
               </p>
@@ -729,17 +726,26 @@ const caseStatusKey = (status) => ({ succeeded: 'success', timeout: 'timeout' }[
 const caseStatusLabel = (status) => ({ succeeded: '成功', failed: '失败', timeout: '超时' }[status] || status || '未知')
 const caseDimensionTags = (caseItem) => {
   const distilled = caseItem?.distilled || {}
+  const trigger = caseItem?.trigger || {}
+  const attributes = trigger.attributes || {}
   const fields = [
     ['cities', '城市'],
     ['stations', '站点'],
-    ['pollutants', '污染物'],
-    ['event_types', '事件类型']
+    ['pollutants', '污染物']
   ]
-  return fields.flatMap(([field, label]) => (
+  const tags = [
+    ['事件类型', trigger.event_type],
+    ['城市', attributes.city || attributes.city_name],
+    ['站点', attributes.station_name || attributes.station_id],
+    ['污染物', attributes.pollutant || attributes.target_pollutant]
+  ]
+    .filter(([, value]) => value != null && value !== '')
+    .map(([label, value]) => ({ label, value }))
+  return tags.concat(fields.flatMap(([field, label]) => (
     Array.isArray(distilled[field])
       ? distilled[field].map(value => ({ label, value }))
       : []
-  ))
+  )))
 }
 const consolidationStatusLabel = (status) => ({
   success: '成功',
@@ -1838,13 +1844,6 @@ const saveTask = async () => {
 .history-case-duration,
 .history-case-trigger {
   white-space: nowrap;
-}
-
-.history-case-digest {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: #856404;
-  word-break: break-all;
 }
 
 .history-case-brief {

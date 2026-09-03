@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -108,10 +109,10 @@ def _score_case(case: dict[str, Any], terms: list[str]) -> tuple[float, list[str
         (7.0, " ".join(str(item) for item in distilled.get("cities") or [])),
         (7.0, " ".join(str(item) for item in distilled.get("stations") or [])),
         (7.0, " ".join(str(item) for item in distilled.get("pollutants") or [])),
-        (7.0, " ".join(str(item) for item in distilled.get("event_types") or [])),
+        (7.0, trigger.get("event_type")),
+        (7.0, json.dumps(trigger.get("attributes") or {}, ensure_ascii=False, default=str)),
         (5.0, distilled.get("case_brief")),
         (4.0, " ".join(str(item) for item in distilled.get("findings") or [])),
-        (3.0, trigger.get("context_digest")),
         (2.0, case.get("summary")),
         (2.0, _outputs_text(case.get("outputs") or [])),
         (1.5, " ".join(str(item) for item in case.get("errors") or [])),
@@ -178,7 +179,6 @@ def _compact_case(
         "cities": (distilled.get("cities") or [])[:10],
         "stations": (distilled.get("stations") or [])[:10],
         "pollutants": (distilled.get("pollutants") or [])[:10],
-        "event_types": (distilled.get("event_types") or [])[:10],
         "outputs": (case.get("outputs") or [])[:5],
         "errors": [str(item)[:200] for item in (case.get("errors") or [])[:3]],
         "score": round(score, 2),
