@@ -6,7 +6,7 @@ from app.conversations.schemas import ConversationSource
 from app.scheduled_tasks.conversation_persistence import (
     ScheduledTaskConversationPersistence,
 )
-from app.scheduled_tasks.models import ScheduledTask, TaskExecution, TaskStep
+from app.scheduled_tasks.models import ScheduledTask, TaskExecution
 
 
 class FakeSessionManager:
@@ -67,7 +67,7 @@ def task():
         owner_user_id="owner-1",
         owner_username="alice",
         owner_display_name="Alice",
-        steps=[TaskStep(step_id="step-1", description="分析", agent_prompt="执行")],
+        prompt="执行",
     )
 
 
@@ -207,7 +207,7 @@ def test_legacy_tasks_default_to_system_ownership_for_future_executions():
         description="旧任务",
         schedule_type="once",
         run_at="2026-07-17T12:00:00",
-        steps=[TaskStep(step_id="step-1", description="执行", agent_prompt="执行")],
+        prompt="执行",
     )
 
     assert legacy.owner_user_id == "system"

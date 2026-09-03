@@ -60,7 +60,7 @@
             <span class="card-description">{{ task.description || '进入任务工作区查看执行情况与产出文件。' }}</span>
             <span class="task-meta">
               <span>{{ formatTaskSchedule(task) }}</span>
-              <span>{{ task.steps?.length || 0 }} 个步骤</span>
+              <span>{{ task.timeout_seconds || 1800 }} 秒超时</span>
             </span>
             <span class="card-action task-action">
               进入工作区
