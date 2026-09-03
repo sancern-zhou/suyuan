@@ -42,6 +42,11 @@ _EVENT_DIMENSION_ATTRIBUTE_KEYS = {
     "stations": ("station_id", "station_name"),
     "pollutants": ("pollutant", "target_pollutant"),
 }
+_EVENT_ATTRIBUTE_ENRICHMENT_KEYS = {
+    key
+    for keys in _EVENT_DIMENSION_ATTRIBUTE_KEYS.values()
+    for key in keys
+}
 
 # 巩固调用输入材料的截断上限
 LLM_SUMMARY_MAX_CHARS = 3000
@@ -177,10 +182,19 @@ def build_case(
     agent_result = agent_result or {}
     trigger = {"type": "schedule"}
     if event is not None:
+        attributes = dict(event.attributes)
+        for key in _EVENT_ATTRIBUTE_ENRICHMENT_KEYS:
+            payload_value = event.payload.get(key)
+            if (
+                attributes.get(key) in (None, "", [])
+                and isinstance(payload_value, (str, int, float))
+                and not isinstance(payload_value, bool)
+            ):
+                attributes[key] = payload_value
         trigger = {
             "type": "event",
             "event_type": event.event_type,
-            "attributes": event.attributes,
+            "attributes": attributes,
         }
     case: dict = {
         "execution_id": execution.execution_id,

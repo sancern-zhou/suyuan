@@ -728,6 +728,11 @@ const caseDimensionTags = (caseItem) => {
   const distilled = caseItem?.distilled || {}
   const trigger = caseItem?.trigger || {}
   const attributes = trigger.attributes || {}
+  const stationName = attributes.station_name
+  const stationId = attributes.station_id
+  const station = stationName && stationId && stationName !== stationId
+    ? `${stationName}（${stationId}）`
+    : (stationName || stationId)
   const fields = [
     ['cities', '城市'],
     ['stations', '站点'],
@@ -736,7 +741,7 @@ const caseDimensionTags = (caseItem) => {
   const tags = [
     ['事件类型', trigger.event_type],
     ['城市', attributes.city || attributes.city_name],
-    ['站点', attributes.station_name || attributes.station_id],
+    ['站点', station],
     ['污染物', attributes.pollutant || attributes.target_pollutant]
   ]
     .filter(([, value]) => value != null && value !== '')

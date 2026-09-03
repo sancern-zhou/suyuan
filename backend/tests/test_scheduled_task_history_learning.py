@@ -58,7 +58,8 @@ def _make_event() -> TaskEvent:
     return TaskEvent(
         event_id="evt_001",
         event_type="station_exceedance_confirmed",
-        attributes={"station_name": "站点A", "pollutant": "PM10"},
+        attributes={"station_id": "1011A", "pollutant": "PM10"},
+        payload={"city": "许昌市", "station_name": "站点A", "details": {"ignored": True}},
     )
 
 
@@ -121,7 +122,13 @@ class TestBuildCase:
         assert case["status"] == "succeeded"
         assert case["trigger"]["type"] == "event"
         assert case["trigger"]["event_type"] == "station_exceedance_confirmed"
-        assert case["trigger"]["attributes"] == {"station_name": "站点A", "pollutant": "PM10"}
+        assert case["trigger"]["attributes"] == {
+            "station_id": "1011A",
+            "station_name": "站点A",
+            "city": "许昌市",
+            "pollutant": "PM10",
+        }
+        assert "details" not in case["trigger"]["attributes"]
         kinds = {(item["kind"], item["ref"]) for item in case["outputs"]}
         assert ("report", "rpt_test_001") in kinds
         assert ("dataset", "dataset:abc123") in kinds
@@ -300,7 +307,7 @@ class TestConsolidationCall:
             )
         )
 
-        assert distilled == {"case_brief": "完成站点分析", "findings": ["PM10 超标"], "cities": ["许昌市"]}
+        assert distilled == {"case_brief": "完成站点分析", "findings": ["PM10 超标"]}
 
     def test_omits_invalid_optional_dimensions(self):
         content = {
