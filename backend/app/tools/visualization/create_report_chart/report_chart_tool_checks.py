@@ -71,6 +71,7 @@ def test_schema_stays_compact_and_points_to_progressive_references():
         "pollutant_calendar",
         "generic_pollutant_wind_rose",
         "wind_timeseries",
+        "weather_timeseries",
         "aqi_calendar",
         "pollutant_wind_rose",
     ]
@@ -127,6 +128,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
         "pollutant_calendar",
         "generic_pollutant_wind_rose",
         "wind_timeseries",
+        "weather_timeseries",
         "aqi_calendar",
         "pollutant_wind_rose",
     }
@@ -140,6 +142,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     pollutant_calendar_text = Path(paths["pollutant_calendar"]).read_text(encoding="utf-8")
     generic_wind_rose_text = Path(paths["generic_pollutant_wind_rose"]).read_text(encoding="utf-8")
     wind_timeseries_text = Path(paths["wind_timeseries"]).read_text(encoding="utf-8")
+    weather_timeseries_text = Path(paths["weather_timeseries"]).read_text(encoding="utf-8")
     index_text = Path(paths["index"]).read_text(encoding="utf-8")
     assert "aqi_calendar" in aqi_calendar_text
     assert "广东省专用" in aqi_calendar_text
@@ -149,6 +152,7 @@ def test_reference_paths_include_specialized_chart_type_documents():
     assert "generic_pollutant_wind_rose" in generic_wind_rose_text
     assert "wind_timeseries" in wind_timeseries_text
     assert "meteorological_from" in wind_timeseries_text
+    assert "weather_timeseries" in weather_timeseries_text
     assert "Supply at least one of `data` or `file_path`" in index_text
     assert "current session" in index_text
     assert "not infer arbitrary record fields" in index_text

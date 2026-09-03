@@ -64,7 +64,14 @@ single-chart specifications selected by the routing table below.
   and use `chart_type: "pollutant_wind_rose"`.
 - Wind direction, wind speed, and one pollutant changing over time: read
   `wind-timeseries.md` and use `chart_type: "wind_timeseries"`.
+- Five-element weather forecast time series (wind arrows, speed, temperature,
+  precipitation probability, humidity): read `weather-timeseries.md` and use
+  `chart_type: "weather_timeseries"`. This type is single-day and must not
+  overlay pollution series or data from different dates.
 
 Use `create_report_chart` for formal report images. Use `execute_python` only
 for upstream data preparation or cases that require arbitrary Python beyond the
 documented chart contracts.
+
+Only pollution-aware chart types may overlay pollutant data on meteorological
+backgrounds. Do not use `weather_timeseries` for such overlays.

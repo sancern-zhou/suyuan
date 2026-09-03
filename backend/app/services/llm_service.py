@@ -3501,6 +3501,10 @@ class LLMService:
                         "error": failure.message,
                     })
                     if failure.reason == "context_overflow" or first_token_received or candidate_emitted:
+                        # 流式中断后生成器内无法安全换候选重放（事件已部分 yield 给上层），
+                        # 这里给当前供应商打 cooldown，让调用方的后续请求直接切换下一候选。
+                        if failure.reason != "context_overflow" and should_fallback(failure):
+                            mark_provider_cooldown(self.provider, failure)
                         logger.error(
                             "llm_anthropic_streaming_failed",
                             provider=self.provider,

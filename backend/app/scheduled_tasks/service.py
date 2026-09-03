@@ -17,7 +17,7 @@ from .models import (
     TaskExecution,
     TriggerType,
 )
-from .storage import EventClaimStorage, TaskStorage, ExecutionStorage
+from .storage import EventClaimStorage, TaskStorage, ExecutionStorage, TaskCaseStorage
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
@@ -177,6 +177,14 @@ class ScheduledTaskService:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
+    def start_task_now(self, task_id: str) -> None:
+        """Start a manual execution in the background and return immediately."""
+        task = self.task_storage.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        self._track_event_task(self._execute_scheduled_task(task))
+        logger.info("manual_task_execution_started", task_id=task_id)
+
     def _resume_claimed_event_tasks(self) -> None:
         """Resume events that were queued but not started before a restart."""
         resumed = 0
@@ -251,6 +259,16 @@ class ScheduledTaskService:
 
         # 删除执行记录
         self.execution_storage.delete_by_task(task_id)
+
+        # 删除任务专属历史执行记忆（案例库 + 长期记忆）
+        try:
+            TaskCaseStorage(task_id).delete()
+        except Exception as cleanup_error:  # noqa: BLE001 - 清理失败不阻断任务删除
+            logger.warning(
+                "scheduled_task_history_cleanup_failed",
+                task_id=task_id,
+                error=str(cleanup_error),
+            )
 
         # 删除任务
         success = self.task_storage.delete(task_id)
@@ -367,7 +385,7 @@ class ScheduledTaskService:
                     started_at=now,
                     completed_at=now,
                     duration_seconds=0,
-                    total_steps=len(task.steps),
+                    total_steps=1,
                     trigger_type="scheduled",
                     error_message=str(exc),
                 )
@@ -420,7 +438,7 @@ class ScheduledTaskService:
         for task in matching_tasks:
             existing = self.claim_storage.get(task.task_id, event.event_id)
             if existing and force_retry and existing.status == "running":
-                timeout_seconds = sum(step.timeout_seconds for step in task.steps)
+                timeout_seconds = task.timeout_seconds
                 recovered = self.claim_storage.fail_stale_running(
                     task.task_id,
                     event.event_id,
@@ -467,7 +485,7 @@ class ScheduledTaskService:
             started_at=now,
             completed_at=now,
             duration_seconds=0,
-            total_steps=len(task.steps),
+            total_steps=1,
             trigger_type="event",
             event_id=event.event_id,
             event_type=event.event_type,
@@ -616,6 +634,24 @@ class ScheduledTaskService:
             return self.execution_storage.list_by_task(task_id, limit=limit)
         else:
             return self.execution_storage.list_recent(limit=limit)
+
+    def list_executions_page(
+        self,
+        task_id: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 10,
+    ):
+        """List a page of executions and the total matching record count."""
+        if task_id:
+            return self.execution_storage.list_by_task_page(
+                task_id,
+                page=page,
+                page_size=page_size,
+            )
+        return self.execution_storage.list_recent_page(
+            page=page,
+            page_size=page_size,
+        )
 
     def get_statistics(self, task_id: Optional[str] = None, days: int = 7):
         """获取统计信息"""

@@ -58,6 +58,7 @@ SPECIALIZED_CHART_TYPES = {
     "pollutant_calendar",
     "generic_pollutant_wind_rose",
     "wind_timeseries",
+    "weather_timeseries",
 }
 CHART_TYPE_ALIASES = {"timeseries": "line"}
 
@@ -356,6 +357,17 @@ def _apply_font_to_figure(fig) -> None:
 
 def _source_font(final_pt: float) -> float:
     return final_pt * WORD_SOURCE_WIDTH_IN / WORD_TARGET_WIDTH_IN
+
+
+def _line_width(options: Dict[str, Any], default: float = 2.0) -> float:
+    value = options.get("line_width", default)
+    try:
+        width = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ChartDataError("line_width 必须是正数。") from exc
+    if not math.isfinite(width) or width <= 0:
+        raise ChartDataError("line_width 必须是正数。")
+    return width
 
 
 def _position_legends_below_plot(fig) -> Dict[str, Any]:

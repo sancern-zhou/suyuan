@@ -2,6 +2,8 @@
 定时任务API路由
 提供RESTful API接口
 """
+import math
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +18,11 @@ from app.scheduled_tasks import (
     ScheduleType,
     TriggerType,
 )
-from app.scheduled_tasks.models import TaskStep, WorkspaceEntry
+from app.scheduled_tasks.models import WorkspaceEntry, HistoryLearningConfig
+from app.scheduled_tasks.storage.task_case_storage import (
+    MemoryVersionConflictError,
+    TaskCaseStorage,
+)
 from app.scheduled_tasks.event_catalog import (
     EventDefinition,
     get_event_definition,
@@ -55,9 +61,14 @@ class CreateTaskRequest(BaseModel):
     broadcast_enabled: bool = False
     target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
-    steps: List[TaskStep] = Field(..., description="任务步骤")
+    prompt: str = Field(..., min_length=1)
+    timeout_seconds: int = Field(default=1800, ge=1)
     tags: List[str] = Field(default_factory=list, description="标签")
     workspace_entry: Optional[WorkspaceEntry] = None
+    history_learning: Optional[HistoryLearningConfig] = Field(
+        default=None,
+        description="历史执行记忆配置（为空时使用默认配置）",
+    )
 
 
 class UpdateTaskRequest(BaseModel):
@@ -78,9 +89,11 @@ class UpdateTaskRequest(BaseModel):
     broadcast_enabled: Optional[bool] = None
     target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
-    steps: Optional[List[TaskStep]] = None
+    prompt: Optional[str] = Field(default=None, min_length=1)
+    timeout_seconds: Optional[int] = Field(default=None, ge=1)
     tags: Optional[List[str]] = None
     workspace_entry: Optional[WorkspaceEntry] = None
+    history_learning: Optional[HistoryLearningConfig] = None
 
 
 class TaskResponse(BaseModel):
@@ -90,10 +103,31 @@ class TaskResponse(BaseModel):
     is_running: bool = False
 
 
+class ExecutionSummary(BaseModel):
+    """列表页所需的轻量执行摘要，不返回 Agent 详细执行日志。"""
+    execution_id: str
+    task_id: str
+    task_name: str
+    session_id: Optional[str] = None
+    status: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    trigger_type: str
+    total_steps: int
+    completed_steps: int
+    failed_steps: int
+    error_message: Optional[str] = None
+    artifacts: List[str] = Field(default_factory=list)
+
+
 class ExecutionListResponse(BaseModel):
     """执行记录列表响应"""
-    executions: List[TaskExecution]
+    executions: List[ExecutionSummary]
     total: int
+    page: int
+    page_size: int
+    total_pages: int
 
 
 class StatisticsResponse(BaseModel):
@@ -107,7 +141,48 @@ class StatisticsResponse(BaseModel):
     period_days: int
 
 
+class TaskHistoryCasesResponse(BaseModel):
+    """任务历史案例库响应（最新在前）"""
+    cases: List[Dict[str, Any]]
+    total: int
+
+
+class TaskMemoryResponse(BaseModel):
+    """任务专属长期记忆响应"""
+    memory: str
+    meta: Dict[str, Any]
+    case_count: int
+
+
+class UpdateTaskMemoryRequest(BaseModel):
+    """人工编辑长期记忆请求"""
+    content: str = Field(..., min_length=1, description="记忆 Markdown 全文")
+    expected_version: int = Field(..., ge=0, description="编辑时读取到的记忆版本")
+
+
 # ===== API端点 =====
+
+
+_ARTIFACT_PATTERN = re.compile(
+    r"(?:[A-Za-z]:)?[^\s\"'`<>]+\.(?:docx|pdf|xlsx?|csv|qmd|md|png|jpg|jpeg)",
+    re.IGNORECASE,
+)
+
+
+def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
+    artifacts: List[str] = []
+    for step in execution.steps:
+        for visual in step.result_visuals:
+            value = visual.get("title") or visual.get("name") or visual.get("file_name")
+            if value:
+                artifacts.append(str(value).replace("\\", "/").rsplit("/", 1)[-1])
+        for value in _ARTIFACT_PATTERN.findall(step.agent_response or ""):
+            artifacts.append(value.replace("\\", "/").rsplit("/", 1)[-1])
+
+    return ExecutionSummary(
+        **execution.model_dump(exclude={"steps", "event_attributes", "delivery_results"}),
+        artifacts=list(dict.fromkeys(filter(None, artifacts))),
+    )
 
 
 async def _validate_event_task_config(task: ScheduledTask) -> None:
@@ -283,6 +358,8 @@ async def create_task(
             task_id=task_id,
             name=request.name,
             description=request.description,
+            prompt=request.prompt,
+            timeout_seconds=request.timeout_seconds,
             execution_mode=request.execution_mode,
             tool_names=request.tool_names,
             skill_id=request.skill_id,
@@ -297,9 +374,9 @@ async def create_task(
             broadcast_enabled=request.broadcast_enabled,
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
-            steps=request.steps,
             tags=request.tags,
             workspace_entry=request.workspace_entry,
+            history_learning=request.history_learning or HistoryLearningConfig(),
             owner_user_id=user.id,
             owner_username=user.username,
             owner_display_name=user.display_name,
@@ -506,12 +583,12 @@ async def disable_task(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{task_id}/execute")
+@router.post("/{task_id}/execute", status_code=202)
 async def execute_task_now(
     task_id: str,
     user: CurrentUser = Depends(require_current_user),
 ):
-    """立即执行任务（手动触发）"""
+    """立即执行任务（手动触发，后台执行并立即返回）"""
     try:
         service = get_scheduled_task_service()
         task = service.get_task(task_id)
@@ -528,11 +605,11 @@ async def execute_task_now(
                 )
             dispatch = await service.publish_event(
                 event,
-                wait=True,
+                wait=False,
                 force_retry=True,
                 target_task_id=task_id,
             )
-            if not dispatch.execution_ids:
+            if not dispatch.accepted_task_ids:
                 if task_id not in dispatch.matched_task_ids:
                     raise HTTPException(
                         status_code=409,
@@ -545,15 +622,16 @@ async def execute_task_now(
                     status_code=409,
                     detail="Event is already being processed, please try again later",
                 )
-            execution = service.get_execution(dispatch.execution_ids[0])
         else:
-            execution = await service.execute_task_now(task_id)
+            # 同步等待整个 Agent 执行会被网关超时切断（HTTP 504），
+            # 因此在后台启动执行并立即返回，前端通过执行记录查看进度。
+            service.start_task_now(task_id)
 
         return {
             "success": True,
-            "message": f"任务已开始执行",
-            "execution_id": execution.execution_id,
-            "execution": execution
+            "message": "任务已开始执行，请在执行记录中查看进度和结果",
+            "execution_id": None,
+            "execution": None
         }
 
     except ValueError as e:
@@ -586,22 +664,36 @@ async def retry_failed_delivery(
 @router.get("/{task_id}/executions", response_model=ExecutionListResponse)
 async def get_task_executions(
     task_id: str,
-    limit: int = Query(default=10, ge=1, le=50, description="返回记录数"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=50, description="每页记录数"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="兼容旧客户端的每页记录数",
+    ),
     user: CurrentUser = Depends(require_current_user),
 ):
     """获取任务的执行记录"""
     try:
         service = get_scheduled_task_service()
+        effective_page_size = limit or page_size
         task = service.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         _require_task_access(task, user)
-
-        executions = service.list_executions(task_id=task_id, limit=limit)
+        executions, total = service.list_executions_page(
+            task_id=task_id,
+            page=page,
+            page_size=effective_page_size,
+        )
 
         return ExecutionListResponse(
-            executions=executions,
-            total=len(executions)
+            executions=[_execution_summary(item) for item in executions],
+            total=total,
+            page=page,
+            page_size=effective_page_size,
+            total_pages=math.ceil(total / effective_page_size),
         )
 
     except HTTPException:
@@ -610,22 +702,119 @@ async def get_task_executions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _get_task_case_storage(task_id: str, user: CurrentUser) -> TaskCaseStorage:
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _require_task_access(task, user)
+    return TaskCaseStorage(task_id)
+
+
+@router.get("/{task_id}/history/cases", response_model=TaskHistoryCasesResponse)
+async def get_task_history_cases(
+    task_id: str,
+    limit: int = Query(default=50, ge=1, le=200, description="返回最近案例数量"),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取任务专属历史案例库（最新在前）"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        cases = storage.recent_cases(limit)
+        cases.reverse()  # recent_cases 返回旧→新，接口统一最新在前
+        return TaskHistoryCasesResponse(cases=cases, total=storage.case_count())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{task_id}/history/memory", response_model=TaskMemoryResponse)
+async def get_task_history_memory(
+    task_id: str,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """获取任务专属长期记忆与巩固元信息"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        return TaskMemoryResponse(
+            memory=storage.read_memory(),
+            meta=storage.read_meta(),
+            case_count=storage.case_count(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/history/memory", response_model=TaskMemoryResponse)
+async def update_task_history_memory(
+    task_id: str,
+    request: UpdateTaskMemoryRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """人工编辑任务专属长期记忆（用于纠正记忆偏差），版本号递增并标记 manual"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        meta = storage.read_meta()
+        storage.write_memory(
+            request.content,
+            {
+                **meta,
+                "version": int(meta.get("version", 0)) + 1,
+                "last_consolidation_status": "manual",
+                "updated_at": datetime.now().isoformat(),
+            },
+            expected_version=request.expected_version,
+        )
+        return TaskMemoryResponse(
+            memory=storage.read_memory(),
+            meta=storage.read_meta(),
+            case_count=storage.case_count(),
+        )
+    except MemoryVersionConflictError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "memory_version_conflict", "message": str(e)},
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/executions/recent", response_model=ExecutionListResponse)
 async def get_recent_executions(
-    limit: int = Query(default=20, ge=1, le=50, description="返回记录数"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=50, description="每页记录数"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=50,
+        description="兼容旧客户端的每页记录数",
+    ),
     user: CurrentUser = Depends(require_current_user),
 ):
     """获取最近的执行记录（非管理员仅能看到自己任务的记录）"""
     try:
         service = get_scheduled_task_service()
-        executions = service.list_executions(limit=limit)
+        effective_page_size = limit or page_size
+        executions, total = service.list_executions_page(
+            page=page,
+            page_size=effective_page_size,
+        )
         accessible = _accessible_task_ids(user)
         if accessible is not None:
             executions = [e for e in executions if e.task_id in accessible]
+            total = len(executions)
 
         return ExecutionListResponse(
-            executions=executions,
-            total=len(executions)
+            executions=[_execution_summary(item) for item in executions],
+            total=total,
+            page=page,
+            page_size=effective_page_size,
+            total_pages=math.ceil(total / effective_page_size),
         )
 
     except HTTPException:

@@ -118,7 +118,8 @@ test('builds an event task with multiple backend user ids', () => {
   assert.equal(payload.schedule_type, null)
   assert.deepEqual(payload.target_user_ids, ['a', 'd'])
   assert.deepEqual(payload.event_filters, { city: '运城市' })
-  assert.equal(payload.steps[0].retry_on_failure, false)
+  assert.equal(payload.prompt, '生成并推送报告')
+  assert.equal(payload.timeout_seconds, 1800)
 })
 
 
@@ -203,6 +204,64 @@ test('always sends workspace entry state so an existing sidebar entry can be dis
 
   assert.deepEqual(enabled.workspace_entry, { enabled: true, title: '告警溯源' })
   assert.deepEqual(disabled.workspace_entry, { enabled: false, title: '告警溯源' })
+})
+
+
+test('history learning defaults to enabled with fallback params', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.deepEqual(payload.history_learning, {
+    enabled: true,
+    max_recent_cases: 3,
+    memory_char_budget: 4000
+  })
+})
+
+
+test('history learning can be disabled and params overridden', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true,
+    historyLearningEnabled: false,
+    historyMaxRecentCases: 5,
+    historyMemoryCharBudget: 2000
+  })
+
+  assert.equal(payload.history_learning.enabled, false)
+  assert.equal(payload.history_learning.max_recent_cases, 5)
+  assert.equal(payload.history_learning.memory_char_budget, 2000)
+})
+
+
+test('history learning preserves unexposed subfields from the edited task', () => {
+  const payload = buildTaskPayload({
+    name: '历史任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true,
+    historyLearningEnabled: true,
+    historyMaxRecentCases: 7,
+    historyMemoryCharBudget: 3000,
+    historyLearningBase: {
+      enabled: true,
+      max_recent_cases: 3,
+      memory_char_budget: 4000,
+      consolidation_timeout_seconds: 300
+    }
+  })
+
+  assert.equal(payload.history_learning.consolidation_timeout_seconds, 300)
+  assert.equal(payload.history_learning.max_recent_cases, 7)
 })
 
 

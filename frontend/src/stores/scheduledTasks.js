@@ -109,18 +109,81 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       }
     },
 
-    async fetchTaskExecutions(taskId, limit = 50) {
-      const response = await authFetch(`${API_BASE}/${taskId}/executions?limit=${limit}`);
+    async fetchTaskExecutions(taskId, { page = 1, pageSize = 10 } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      const response = await authFetch(`${API_BASE}/${taskId}/executions?${params}`);
       if (!response.ok) throw new Error('Failed to fetch task executions');
       const data = await response.json();
-      return Array.isArray(data?.executions) ? data.executions : [];
+      return {
+        executions: Array.isArray(data?.executions) ? data.executions : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
     },
 
-    async fetchRecentExecutions(limit = 50) {
-      const response = await authFetch(`${API_BASE}/executions/recent?limit=${limit}`);
+    async fetchTaskHistoryCases(taskId, { limit = 50 } = {}) {
+      const params = new URLSearchParams({ limit: String(limit) });
+      const response = await authFetch(`${API_BASE}/${taskId}/history/cases?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch task history cases');
+      const data = await response.json();
+      return {
+        cases: Array.isArray(data?.cases) ? data.cases : [],
+        total: Number(data?.total) || 0
+      };
+    },
+
+    async fetchTaskMemory(taskId) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/memory`);
+      if (!response.ok) throw new Error('Failed to fetch task memory');
+      const data = await response.json();
+      return {
+        memory: String(data?.memory || ''),
+        meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
+        caseCount: Number(data?.case_count) || 0
+      };
+    },
+
+    async updateTaskMemory(taskId, content, expectedVersion) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/memory`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ content, expected_version: expectedVersion })
+      });
+      if (!response.ok) {
+        const error = new Error(await responseErrorMessage(response, '长期记忆保存失败'));
+        error.status = response.status;
+        throw error;
+      }
+      const data = await response.json();
+      return {
+        memory: String(data?.memory || ''),
+        meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
+        caseCount: Number(data?.case_count) || 0
+      };
+    },
+
+    async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize)
+      });
+      const response = await authFetch(`${API_BASE}/executions/recent?${params}`);
       if (!response.ok) throw new Error('Failed to fetch recent task executions');
       const data = await response.json();
-      return Array.isArray(data?.executions) ? data.executions : [];
+      return {
+        executions: Array.isArray(data?.executions) ? data.executions : [],
+        total: Number(data?.total) || 0,
+        page: Number(data?.page) || page,
+        pageSize: Number(data?.page_size) || pageSize,
+        totalPages: Number(data?.total_pages) || 0
+      };
     },
 
     async createTask(data) {

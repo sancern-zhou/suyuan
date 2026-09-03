@@ -1,17 +1,15 @@
 """
 测试定时任务上下文连续性
 
-验证多步骤任务能够共享同一个 session_id，实现上下文连续
+验证任务执行使用统一的 session_id，实现上下文连续
 """
 import pytest
 import asyncio
 import tempfile
 import shutil
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
-from pathlib import Path
 
-from app.scheduled_tasks.models import ScheduledTask, TaskStep, ScheduleType
+from app.scheduled_tasks.models import ScheduledTask, ScheduleType
 from app.scheduled_tasks.executor import ScheduledTaskExecutor
 from app.scheduled_tasks.storage import TaskStorage, ExecutionStorage
 
@@ -53,12 +51,12 @@ class MockAgent:
                     "type": "tool_result",
                     "tool_name": "mock_tool",
                     "success": True,
-                    "summary": f"步骤完成，session_id={session_id}"
+                    "summary": f"任务执行，session_id={session_id}"
                 },
                 {"type": "data_saved", "data_id": data_id},
                 {
                     "type": "final_response",
-                    "content": f"已完成步骤，可访问的数据: {self.session_context[session_id]['data_ids']}"
+                    "content": f"已完成任务，可访问的数据: {self.session_context[session_id]['data_ids']}"
                 }
             ]
 
@@ -75,9 +73,8 @@ async def test_scheduled_task_context_continuity():
     测试定时任务的上下文连续性
 
     验证点：
-    1. 整个任务使用统一的 session_id
-    2. 所有步骤共享同一个 session_id
-    3. 后续步骤能访问前面步骤生成的数据
+    1. 整个任务执行使用统一的 session_id
+    2. Agent 收到的提示词包含任务级 prompt
     """
     # 创建临时存储目录
     temp_dir = tempfile.mkdtemp()
@@ -98,32 +95,14 @@ async def test_scheduled_task_context_continuity():
             agent_factory=mock_agent_factory
         )
 
-        # 创建多步骤任务
+        # 一个任务就是一次完整的 Agent 执行，由 Agent 自行规划
         task = ScheduledTask(
             task_id="test_task_001",
             name="测试上下文连续性",
-            description="验证多步骤任务的上下文连续性",
+            description="验证任务执行的上下文连续性",
             schedule_type=ScheduleType.ONCE,
-            steps=[
-                TaskStep(
-                    step_id="step_1",
-                    description="第一步：查询数据",
-                    agent_prompt="查询广州昨天的O3浓度数据",
-                    timeout_seconds=60
-                ),
-                TaskStep(
-                    step_id="step_2",
-                    description="第二步：分析数据",
-                    agent_prompt="基于上一步的数据，分析O3污染趋势",
-                    timeout_seconds=120
-                ),
-                TaskStep(
-                    step_id="step_3",
-                    description="第三步：生成报告",
-                    agent_prompt="基于前面的分析，生成综合报告",
-                    timeout_seconds=180
-                )
-            ]
+            prompt="查询广州昨天的O3浓度数据，分析趋势并生成综合报告",
+            timeout_seconds=360,
         )
 
         # 保存任务到存储（必须先保存，否则 execute_task 会在更新统计时找不到任务）
@@ -134,39 +113,30 @@ async def test_scheduled_task_context_continuity():
 
         # 验证：任务执行成功
         assert execution.status.value == "success", f"任务执行失败: {execution.error_message}"
-        assert execution.completed_steps == 3, f"完成步骤数不正确: {execution.completed_steps}"
+        assert execution.completed_steps == 1, f"完成步骤数不正确: {execution.completed_steps}"
 
         # 验证：任务有 session_id
         assert execution.session_id is not None, "任务未生成 session_id"
         assert execution.session_id.startswith("scheduled_task_"), f"session_id 格式不正确: {execution.session_id}"
 
-        # 验证：所有步骤使用同一个 session_id
-        assert len(mock_agent.analyze_calls) == 3, f"Agent 调用次数不正确: {len(mock_agent.analyze_calls)}"
+        # 验证：执行使用任务级 session_id
+        assert len(mock_agent.analyze_calls) == 1, f"Agent 调用次数不正确: {len(mock_agent.analyze_calls)}"
 
-        session_ids = [call["session_id"] for call in mock_agent.analyze_calls]
-        assert len(set(session_ids)) == 1, f"步骤使用了不同的 session_id: {session_ids}"
-        assert session_ids[0] == execution.session_id, "步骤的 session_id 与任务不一致"
+        call = mock_agent.analyze_calls[0]
+        assert call["session_id"] == execution.session_id, "执行的 session_id 与任务不一致"
 
-        # 验证：上下文连续性（后续步骤能访问前面的数据）
+        # 验证：任务级 prompt 正确传递
+        assert "查询广州昨天的O3浓度数据" in call["prompt"]
+
+        # 验证：执行过程中产生的数据挂在会话上下文
         session_id = execution.session_id
         assert session_id in mock_agent.session_context, "会话上下文未创建"
-
         context_data = mock_agent.session_context[session_id]
-        assert len(context_data["data_ids"]) == 3, f"上下文数据数量不正确: {context_data}"
-
-        # 验证：步骤提示正确传递
-        prompts = [call["prompt"] for call in mock_agent.analyze_calls]
-        assert "查询广州昨天的O3浓度数据" in prompts[0]
-        assert "基于上一步的数据" in prompts[1]
-        assert "基于前面的分析" in prompts[2]
+        assert len(context_data["data_ids"]) == 1, f"上下文数据数量不正确: {context_data}"
 
         print("\n[PASS] 上下文连续性测试通过")
         print(f"   - 任务 session_id: {execution.session_id}")
-        print(f"   - 所有步骤共享同一个 session_id: {session_ids[0]}")
-        print(f"   - 累积的数据 IDs: {context_data['data_ids']}")
-        print(f"   - 步骤调用记录:")
-        for i, call in enumerate(mock_agent.analyze_calls):
-            print(f"     Step {i+1}: session_id={call['session_id'][:30]}..., prompt={call['prompt'][:50]}...")
+        print(f"   - 数据 IDs: {context_data['data_ids']}")
 
     finally:
         # 清理临时目录
@@ -205,14 +175,8 @@ async def test_different_tasks_different_sessions():
             name="任务1",
             description="第一个任务",
             schedule_type=ScheduleType.ONCE,
-            steps=[
-                TaskStep(
-                    step_id="step_1",
-                    description="步骤1",
-                    agent_prompt="执行任务1的步骤",
-                    timeout_seconds=60
-                )
-            ]
+            prompt="执行任务1",
+            timeout_seconds=60,
         )
 
         # 创建第二个任务
@@ -221,14 +185,8 @@ async def test_different_tasks_different_sessions():
             name="任务2",
             description="第二个任务",
             schedule_type=ScheduleType.ONCE,
-            steps=[
-                TaskStep(
-                    step_id="step_1",
-                    description="步骤1",
-                    agent_prompt="执行任务2的步骤",
-                    timeout_seconds=60
-                )
-            ]
+            prompt="执行任务2",
+            timeout_seconds=60,
         )
 
         # 保存任务到存储

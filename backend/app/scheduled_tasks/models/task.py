@@ -13,6 +13,8 @@ class ScheduleType(str, Enum):
     DAILY_8AM = "daily_8am"      # 每天早上8点
     EVERY_2H = "every_2h"        # 每2小时
     EVERY_30MIN = "every_30min"  # 每30分钟
+    MONTHLY_1ST_7AM = "monthly_1st_7am"  # 每月1日早上7点
+    WEEKLY_MONDAY_8AM = "weekly_monday_8am"  # 每周一早上8点
 
     # 灵活类型
     ONCE = "once"                # 一次性任务（需指定run_at）
@@ -27,31 +29,31 @@ class TriggerType(str, Enum):
     EVENT = "event"
 
 
-class TaskStep(BaseModel):
-    """任务步骤"""
-    step_id: str = Field(..., description="步骤ID")
-    description: str = Field(..., description="步骤描述")
-    agent_prompt: str = Field(..., description="发送给Agent的提示词")
-    timeout_seconds: int = Field(default=300, description="超时时间（秒）")
-    retry_on_failure: bool = Field(default=False, description="失败时是否重试")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "step_id": "step_1",
-                "description": "获取昨日O3数据",
-                "agent_prompt": "查询广州昨天的O3浓度数据",
-                "timeout_seconds": 300,
-                "retry_on_failure": False
-            }
-        }
-
-
 class WorkspaceEntry(BaseModel):
     """Optional left-sidebar business entry for a scheduled task."""
 
     enabled: bool = False
     title: str = ""
+
+
+class HistoryLearningConfig(BaseModel):
+    """任务级历史执行记忆配置。
+
+    案例库与长期记忆均绑定单个任务，不跨任务共享：
+    - 案例 = 单次执行的回顾性总结（不含面向下次执行的建议）
+    - 长期记忆 = 跨次积累的前瞻性知识（模式规律/经验教训/输出偏好/当前关注）
+    """
+
+    enabled: bool = Field(default=True, description="是否启用历史执行记忆")
+    max_recent_cases: int = Field(
+        default=3, ge=0, le=20, description="执行前注入的最近案例数量"
+    )
+    memory_char_budget: int = Field(
+        default=4000, ge=200, description="长期记忆注入的字符上限"
+    )
+    consolidation_timeout_seconds: int = Field(
+        default=120, ge=1, description="执行后巩固调用的超时时间（秒）"
+    )
 
 
 class ScheduledTask(BaseModel):
@@ -91,8 +93,10 @@ class ScheduledTask(BaseModel):
     hour: Optional[int] = Field(default=None, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
     minute: Optional[int] = Field(default=None, description="每天执行的分钟（schedule_type=daily_custom时必填，0-59）")
 
-    # 执行步骤
-    steps: List[TaskStep] = Field(..., description="任务步骤列表")
+    # 一个定时任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
+    # 不存在预配置的多步骤机制（历史 steps 字段已彻底移除）。
+    prompt: str = Field(..., min_length=1, description="任务提示词")
+    timeout_seconds: int = Field(default=1800, ge=1, description="任务级总超时时间（秒）")
 
     # 元数据
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
@@ -115,6 +119,10 @@ class ScheduledTask(BaseModel):
         default=None,
         description="左侧业务入口配置",
     )
+    history_learning: HistoryLearningConfig = Field(
+        default_factory=HistoryLearningConfig,
+        description="历史执行记忆配置（任务专属案例库 + 长期记忆）",
+    )
 
     @field_validator("tool_names")
     @classmethod
@@ -133,6 +141,9 @@ class ScheduledTask(BaseModel):
 
     @model_validator(mode="after")
     def validate_trigger(self):
+        self.prompt = (self.prompt or "").strip()
+        if not self.prompt:
+            raise ValueError("prompt is required")
         if self.execution_mode == "custom" and not self.tool_names:
             raise ValueError("tool_names is required for custom mode")
         if self.execution_mode != "custom" and self.tool_names is not None:
@@ -164,20 +175,8 @@ class ScheduledTask(BaseModel):
                 "execution_mode": "expert",
                 "schedule_type": "daily_8am",
                 "enabled": True,
-                "steps": [
-                    {
-                        "step_id": "step_1",
-                        "description": "获取昨日O3数据",
-                        "agent_prompt": "查询广州昨天的O3浓度数据",
-                        "timeout_seconds": 300
-                    },
-                    {
-                        "step_id": "step_2",
-                        "description": "生成分析报告",
-                        "agent_prompt": "基于上一步的数据，生成O3污染分析报告",
-                        "timeout_seconds": 600
-                    }
-                ],
+                "prompt": "查询广州昨天的O3浓度数据并生成污染分析报告",
+                "timeout_seconds": 1800,
                 "tags": ["O3", "广州", "日报"]
             }
         }

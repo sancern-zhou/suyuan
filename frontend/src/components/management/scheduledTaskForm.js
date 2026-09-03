@@ -67,13 +67,8 @@ export const buildTaskPayload = (form) => {
     broadcast_enabled: Boolean(form.broadcast_enabled),
     target_user_ids: form.broadcast_enabled ? [...(form.target_user_ids || [])] : [],
     enabled: Boolean(form.enabled),
-    steps: [{
-      step_id: 'step_1',
-      description: String(form.description || '').trim(),
-      agent_prompt: String(form.agent_prompt || form.description || '').trim(),
-      timeout_seconds: isEvent ? 1800 : 600,
-      retry_on_failure: false
-    }],
+    prompt: String(form.agent_prompt || form.description || '').trim(),
+    timeout_seconds: isEvent ? 1800 : 1800,
     tags: String(form.tagsText || '')
       .split(',')
       .map(tag => tag.trim())
@@ -83,6 +78,13 @@ export const buildTaskPayload = (form) => {
   payload.workspace_entry = {
     enabled: Boolean(form.workspaceEntryEnabled),
     title: String(form.workspaceEntryTitle || form.name || '').trim()
+  }
+
+  payload.history_learning = {
+    ...(form.historyLearningBase || {}),
+    enabled: form.historyLearningEnabled !== false,
+    max_recent_cases: Number(form.historyMaxRecentCases) || 3,
+    memory_char_budget: Number(form.historyMemoryCharBudget) || 4000
   }
 
   if (payload.execution_mode === 'custom') {

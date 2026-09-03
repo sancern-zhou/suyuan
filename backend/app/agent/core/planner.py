@@ -528,8 +528,10 @@ class ReActPlanner:
                 error=str(e),
                 error_type=type(e).__name__
             )
+            # 流式中断后从零发起一次非流式请求实现 failover：
+            # llm_service 已给中断的供应商标记 cooldown，这次请求会跳过它
+            # 直接切换下一个候选供应商，不会重复等待同一供应商的多次超时。
             retry_content = self._base64_retry_content(user_content, attachments)
-            # 降级到非流式
             logger.info(
                 "anthropic_planner_fallback_to_non_streaming",
                 retry_with_base64=self._is_fetch_url_failure(e) and retry_content is not user_content,

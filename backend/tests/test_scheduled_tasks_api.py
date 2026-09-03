@@ -1,119 +1,145 @@
 """
-测试定时任务API和工具
+测试定时任务API和工具（使用隔离存储，不触碰真实数据与真实LLM）
 """
 import asyncio
 import sys
+import tempfile
+import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.scheduled_tasks import (
-    init_service,
-    get_scheduled_task_service,
     ScheduledTask,
-    TaskStep,
-    ScheduleType
+    ScheduleType,
+    ScheduledTaskService,
 )
+from app.scheduled_tasks.storage import TaskStorage, ExecutionStorage, EventClaimStorage
 
 
-async def test_create_scheduled_task_tool():
-    """测试create_scheduled_task工具"""
-    print("\n=== 测试create_scheduled_task工具 ===")
-
-    # 初始化服务（不启动调度器）
+def _make_service(temp_dir):
     def mock_agent_factory():
         class MockAgent:
-            async def analyze(self, prompt):
+            async def analyze(self, prompt, **kwargs):
                 await asyncio.sleep(0.1)
                 yield {"type": "final_response", "content": "完成"}
         return MockAgent()
 
-    init_service(agent_factory=mock_agent_factory)
-
-    # 导入工具
-    from app.tools.scheduled_tasks import create_scheduled_task_tool
-
-    # 测试工具执行
-    result = await create_scheduled_task_tool.execute(
-        user_request="每天早上8点分析广州昨天的O3污染情况"
+    return ScheduledTaskService(
+        agent_factory=mock_agent_factory,
+        task_storage=TaskStorage(storage_dir=temp_dir),
+        execution_storage=ExecutionStorage(storage_dir=temp_dir),
+        claim_storage=EventClaimStorage(storage_dir=temp_dir),
     )
 
-    print(f"工具执行结果:")
-    print(f"  成功: {result.get('success')}")
-    print(f"  摘要: {result.get('summary')}")
-    if result.get('success'):
-        data = result.get('data', {})
-        print(f"  任务ID: {data.get('task_id')}")
-        print(f"  任务名称: {data.get('name')}")
-        print(f"  调度类型: {data.get('schedule_type')}")
-        print(f"  步骤数量: {data.get('steps_count')}")
 
-    # 验证任务已创建
-    service = get_scheduled_task_service()
-    tasks = service.list_tasks()
-    print(f"\n当前任务列表: {len(tasks)} 个任务")
-    for task in tasks:
-        print(f"  - {task.name} ({task.schedule_type})")
+async def test_create_scheduled_task_tool():
+    """测试create_scheduled_task工具：只生成任务级 prompt，不生成 steps"""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        service = _make_service(temp_dir)
 
-    print("[OK] create_scheduled_task工具测试通过")
+        from app.tools.scheduled_tasks import create_scheduled_task_tool
+
+        parsed_config = {
+            "name": "每日O3污染分析",
+            "description": "每天早上8点分析广州昨天的O3污染情况",
+            "execution_mode": "expert",
+            "schedule_type": "daily_8am",
+            "prompt": "查询广州昨天的O3浓度数据并生成分析报告",
+            "timeout_seconds": 1800,
+            "tags": ["O3"],
+        }
+
+        with patch(
+            "app.tools.scheduled_tasks.create_scheduled_task.get_scheduled_task_service",
+            lambda: service,
+        ), patch.object(
+            create_scheduled_task_tool, "_parse_user_request", return_value=parsed_config,
+        ):
+            result = await create_scheduled_task_tool.execute(
+                user_request="每天早上8点分析广州昨天的O3污染情况"
+            )
+
+        assert result["success"] is True, result
+        created = service.get_task(result["data"]["task_id"])
+        assert created.prompt == parsed_config["prompt"]
+        assert created.timeout_seconds == 1800
+        assert not hasattr(created, "steps")
+        print("[OK] create_scheduled_task工具测试通过")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def test_create_scheduled_task_tool_accepts_legacy_steps_config():
+    """LLM 兼容性：返回 steps 配置时只取提示词与超时，不持久化 steps"""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        service = _make_service(temp_dir)
+
+        from app.tools.scheduled_tasks import create_scheduled_task_tool
+
+        legacy_config = {
+            "name": "臭氧报告分析",
+            "description": "分析文档臭氧数据",
+            "execution_mode": "expert",
+            "schedule_type": "once",
+            "run_at": "2026-09-02 10:00:00",
+            "steps": [
+                {
+                    "description": "读取文档",
+                    "agent_prompt": "读取臭氧文档并分析",
+                    "timeout_seconds": 600,
+                }
+            ],
+        }
+
+        with patch(
+            "app.tools.scheduled_tasks.create_scheduled_task.get_scheduled_task_service",
+            lambda: service,
+        ), patch.object(
+            create_scheduled_task_tool, "_parse_user_request", return_value=legacy_config,
+        ):
+            result = await create_scheduled_task_tool.execute(user_request="分析臭氧文档")
+
+        assert result["success"] is True, result
+        created = service.get_task(result["data"]["task_id"])
+        assert created.prompt == "读取臭氧文档并分析"
+        assert created.timeout_seconds == 600
+        assert not hasattr(created, "steps")
+        print("[OK] legacy steps 兼容测试通过")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def test_api_integration():
     """测试API集成"""
-    print("\n=== 测试API集成 ===")
+    temp_dir = tempfile.mkdtemp()
+    try:
+        service = _make_service(temp_dir)
 
-    # 初始化服务
-    def mock_agent_factory():
-        class MockAgent:
-            async def analyze(self, prompt):
-                await asyncio.sleep(0.1)
-                yield {"type": "final_response", "content": "完成"}
-        return MockAgent()
+        # 创建测试任务
+        task = ScheduledTask(
+            task_id="test_api_task",
+            name="API测试任务",
+            description="测试API集成",
+            schedule_type=ScheduleType.EVERY_30MIN,
+            enabled=True,
+            prompt="测试提示词",
+            timeout_seconds=300,
+        )
 
-    init_service(agent_factory=mock_agent_factory)
-    service = get_scheduled_task_service()
+        created_task = service.create_task(task)
+        assert created_task.name == "API测试任务"
 
-    # 创建测试任务
-    task = ScheduledTask(
-        task_id="test_api_task",
-        name="API测试任务",
-        description="测试API集成",
-        schedule_type=ScheduleType.EVERY_30MIN,
-        enabled=True,
-        steps=[
-            TaskStep(
-                step_id="step_1",
-                description="测试步骤",
-                agent_prompt="测试提示词",
-                timeout_seconds=300
-            )
-        ]
-    )
-
-    created_task = service.create_task(task)
-    print(f"[OK] 创建任务: {created_task.name}")
-
-    # 列出任务
-    tasks = service.list_tasks()
-    print(f"[OK] 任务列表: {len(tasks)} 个任务")
-
-    # 获取任务详情
-    retrieved_task = service.get_task(task.task_id)
-    print(f"[OK] 获取任务: {retrieved_task.name}")
-
-    # 禁用任务
-    disabled_task = service.disable_task(task.task_id)
-    print(f"[OK] 禁用任务: {disabled_task.enabled}")
-
-    # 启用任务
-    enabled_task = service.enable_task(task.task_id)
-    print(f"[OK] 启用任务: {enabled_task.enabled}")
-
-    # 删除任务
-    success = service.delete_task(task.task_id)
-    print(f"[OK] 删除任务: {success}")
-
-    print("[OK] API集成测试通过")
+        assert service.get_task(task.task_id).task_id == task.task_id
+        assert service.disable_task(task.task_id).enabled is False
+        assert service.enable_task(task.task_id).enabled is True
+        assert service.delete_task(task.task_id) is True
+        print("[OK] API集成测试通过")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def main():
@@ -123,16 +149,10 @@ async def main():
     print("=" * 60)
 
     try:
-        # 测试create_scheduled_task工具
         await test_create_scheduled_task_tool()
-
-        # 测试API集成
+        await test_create_scheduled_task_tool_accepts_legacy_steps_config()
         await test_api_integration()
-
-        print("\n" + "=" * 60)
-        print("所有测试通过")
-        print("=" * 60)
-
+        print("\n所有测试通过")
     except Exception as e:
         print(f"\n测试失败: {e}")
         import traceback

@@ -240,7 +240,7 @@ class _TaskService:
 
 
 def _task(owner_user_id):
-    from app.scheduled_tasks.models import ScheduledTask, TaskStep
+    from app.scheduled_tasks.models import ScheduledTask
 
     return ScheduledTask(
         task_id="task-1",
@@ -251,7 +251,7 @@ def _task(owner_user_id):
         schedule_type="daily_custom",
         hour=8,
         minute=0,
-        steps=[TaskStep(step_id="s", description="d", agent_prompt="p")],
+        prompt="p",
         owner_user_id=owner_user_id,
         owner_username=owner_user_id,
     )

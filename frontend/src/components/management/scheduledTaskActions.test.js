@@ -66,13 +66,13 @@ test('execute and delete use task_id', async () => {
 })
 
 
-test('loads up to fifty execution records for one task', async () => {
+test('loads the default execution page for one task', async () => {
   const store = fakeStore()
 
   const result = await loadScheduledTaskExecutions(store, { task_id: 'task-1' })
 
   assert.deepEqual(result, [{ execution_id: 'exec-1' }])
-  assert.deepEqual(store.calls, [['fetchTaskExecutions', 'task-1', 50]])
+  assert.deepEqual(store.calls, [['fetchTaskExecutions', 'task-1', {}]])
 })
 
 
