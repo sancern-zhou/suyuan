@@ -231,7 +231,14 @@ class TestConsolidationCall:
     def test_uses_protocol_aware_json_api(self, monkeypatch):
         calls = []
         response = {
-            "case": {"case_brief": "完成站点分析", "findings": ["PM10 超标"]},
+            "case": {
+                "case_brief": "完成站点分析",
+                "findings": ["PM10 超标"],
+                "cities": "许昌市",
+                "stations": ["站点A", "站点A", " 站点B "],
+                "pollutants": ["PM10"],
+                "event_types": ["station_exceedance_confirmed"],
+            },
             "memory": "# 任务记忆：站点污染分析\n## 使命与背景\n分析污染",
         }
 
@@ -255,9 +262,31 @@ class TestConsolidationCall:
         )
 
         assert result[0]["case_brief"] == "完成站点分析"
+        assert result[0]["cities"] == ["许昌市"]
+        assert result[0]["stations"] == ["站点A", "站点B"]
+        assert result[0]["pollutants"] == ["PM10"]
+        assert result[0]["event_types"] == ["station_exceedance_confirmed"]
         assert result[1].startswith("# 任务记忆")
         assert len(calls) == 1
         assert calls[0][1:] == (1, 0.2)
+
+    def test_omits_invalid_optional_dimensions(self):
+        content = {
+            "case": {
+                "case_brief": "完成分析",
+                "findings": [],
+                "cities": None,
+                "stations": [],
+                "pollutants": {"name": "PM10"},
+                "event_types": ["", None, False],
+            },
+            "memory": "# 任务记忆\n## 使命与背景\n测试任务",
+        }
+
+        parsed = history_learning._parse_consolidation_response(content)
+
+        assert parsed is not None
+        assert parsed[0] == {"case_brief": "完成分析", "findings": []}
 
     def test_propagates_last_provider_error_after_retry(self, monkeypatch):
         attempts = 0

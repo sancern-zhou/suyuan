@@ -105,6 +105,10 @@ def _score_case(case: dict[str, Any], terms: list[str]) -> tuple[float, list[str
     distilled = case.get("distilled") if isinstance(case.get("distilled"), dict) else {}
     trigger = case.get("trigger") if isinstance(case.get("trigger"), dict) else {}
     weighted_texts = [
+        (7.0, " ".join(str(item) for item in distilled.get("cities") or [])),
+        (7.0, " ".join(str(item) for item in distilled.get("stations") or [])),
+        (7.0, " ".join(str(item) for item in distilled.get("pollutants") or [])),
+        (7.0, " ".join(str(item) for item in distilled.get("event_types") or [])),
         (5.0, distilled.get("case_brief")),
         (4.0, " ".join(str(item) for item in distilled.get("findings") or [])),
         (3.0, trigger.get("context_digest")),
@@ -171,6 +175,10 @@ def _compact_case(
         "trigger": case.get("trigger") or {},
         "case_brief": str(brief)[:200],
         "findings": [str(item)[:120] for item in (distilled.get("findings") or [])[:5]],
+        "cities": (distilled.get("cities") or [])[:10],
+        "stations": (distilled.get("stations") or [])[:10],
+        "pollutants": (distilled.get("pollutants") or [])[:10],
+        "event_types": (distilled.get("event_types") or [])[:10],
         "outputs": (case.get("outputs") or [])[:5],
         "errors": [str(item)[:200] for item in (case.get("errors") or [])[:3]],
         "score": round(score, 2),
