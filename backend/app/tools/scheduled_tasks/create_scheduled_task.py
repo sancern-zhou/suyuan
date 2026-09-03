@@ -25,15 +25,17 @@ class CreateScheduledTaskTool(LLMTool):
         function_schema = {
             "name": "create_scheduled_task",
             "description": (
-                "通过自然语言创建定时任务。支持6种调度类型：\n"
+                "通过自然语言创建定时任务。支持8种调度类型：\n"
                 "预设类型：\n"
                 "1. daily_8am - 每天早上8点执行\n"
                 "2. every_2h - 每2小时执行一次\n"
-                "3. every_30min - 每30分钟执行一次\n\n"
+                "3. every_30min - 每30分钟执行一次\n"
+                "4. monthly_1st_7am - 每月1日早上7点执行\n"
+                "5. weekly_monday_8am - 每周一早上8点执行\n\n"
                 "灵活类型：\n"
-                "4. once - 一次性任务（指定具体时间执行一次）\n"
-                "5. interval - 自定义间隔（每N分钟执行）\n"
-                "6. daily_custom - 每天自定义时间执行\n\n"
+                "6. once - 一次性任务（指定具体时间执行一次）\n"
+                "7. interval - 自定义间隔（每N分钟执行）\n"
+                "8. daily_custom - 每天自定义时间执行\n\n"
                 "示例：\n"
                 "- '每天早上8点分析广州昨天的O3污染'\n"
                 "- '每2小时检查PM2.5浓度变化'\n"
@@ -85,9 +87,7 @@ class CreateScheduledTaskTool(LLMTool):
             import uuid
             task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-            # 构建任务对象：一个任务就是一次完整的 Agent 执行，由 Agent 自行规划，
-            # 只有任务级 prompt 与总超时；LLM 返回的 steps 仅作兼容输入，不持久化。
-            legacy_steps = task_config.get("steps") or []
+            # 构建任务对象：一个任务就是一次完整的 Agent 执行，由 Agent 自行规划。
             task_kwargs = {
                 "task_id": task_id,
                 "name": task_config["name"],
@@ -95,12 +95,8 @@ class CreateScheduledTaskTool(LLMTool):
                 "execution_mode": task_config.get("execution_mode", "expert"),
                 "schedule_type": ScheduleType(task_config["schedule_type"]),
                 "enabled": True,
-                "prompt": task_config.get("prompt") or (
-                    legacy_steps[0].get("agent_prompt") if legacy_steps else task_config["description"]
-                ),
-                "timeout_seconds": task_config.get("timeout_seconds") or sum(
-                    step.get("timeout_seconds", 300) for step in legacy_steps
-                ) or 1800,
+                "prompt": task_config["prompt"],
+                "timeout_seconds": task_config.get("timeout_seconds") or 1800,
                 "tags": task_config.get("tags", [])
             }
 
@@ -174,6 +170,8 @@ class CreateScheduledTaskTool(LLMTool):
    - "daily_8am": 每天早上8点
    - "every_2h": 每2小时
    - "every_30min": 每30分钟
+   - "monthly_1st_7am": 每月1日早上7点
+   - "weekly_monday_8am": 每周一早上8点
 
    灵活类型：
    - "once": 一次性任务（需额外提供run_at字段，格式："2026-02-13 14:30:00"）
@@ -282,12 +280,12 @@ class CreateScheduledTaskTool(LLMTool):
             if not all(field in config for field in required_fields):
                 logger.error(f"Missing required fields in config: {config}")
                 return None
-            if not config.get("prompt") and not config.get("steps"):
-                logger.error(f"Missing prompt or steps in config: {config}")
+            if not config.get("prompt"):
+                logger.error(f"Missing prompt in config: {config}")
                 return None
 
             # 验证schedule_type
-            valid_schedules = ["daily_8am", "every_2h", "every_30min", "once", "interval", "daily_custom"]
+            valid_schedules = {item.value for item in ScheduleType}
             if config["schedule_type"] not in valid_schedules:
                 logger.error(f"Invalid schedule_type: {config['schedule_type']}")
                 return None

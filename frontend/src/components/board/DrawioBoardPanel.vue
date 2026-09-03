@@ -420,13 +420,10 @@ const sanitizeFileName = (name) => {
 }
 
 const downloadDrawio = () => {
-  const blob = new Blob([getActiveXml()], { type: 'application/xml' })
-  const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
-  link.href = url
+  link.href = `data:application/xml;charset=utf-8,${encodeURIComponent(getActiveXml())}`
   link.download = `${sanitizeFileName(props.title)}.drawio`
   link.click()
-  URL.revokeObjectURL(url)
 }
 
 const downloadDataUrl = (dataUrl, filename) => {

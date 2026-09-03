@@ -75,6 +75,7 @@ class ToolExecutor:
         self.resource_context_builder: Optional[Any] = None
         self.resource_run_id: str = ""
         self.resource_query: str = ""
+        self.runtime_metadata: Dict[str, Any] = {}
         # File inputs from the durable session resource catalog (uploads etc.).
         # Consumed by sandboxed tools as a staging allowlist.
         self.authorized_input_paths: List[str] = []
@@ -244,6 +245,7 @@ class ToolExecutor:
         )
         cloned.runtime_mode = self.runtime_mode
         cloned.user_identifier = self.user_identifier
+        cloned.runtime_metadata = dict(self.runtime_metadata)
         return cloned
 
     def configure_resource_tracking(
@@ -1022,13 +1024,16 @@ class ToolExecutor:
             context.tool_executor = self
             context.runtime_mode = self.runtime_mode
             context.user_identifier = self.user_identifier
+            context.runtime_metadata = dict(self.runtime_metadata)
+            context.scheduled_task_context = self.runtime_metadata.get("scheduled_task")
             context.authorized_input_paths = list(self.authorized_input_paths)
 
             logger.debug(
                 "execution_context_created",
                 session_id=context.session_id,
                 iteration=iteration,
-                has_task_list=self.task_list is not None
+                has_task_list=self.task_list is not None,
+                has_scheduled_task_context=bool(context.scheduled_task_context),
             )
             return context
         except Exception as exc:

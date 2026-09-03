@@ -346,3 +346,53 @@ class TestExecutorIntegration:
         assert {"kind": "report", "ref": "rpt_run_001"} in cases[0]["outputs"]
         assert "使命与背景" in case_storage.read_memory()
         assert task_storage.get(task.task_id).total_runs == 1
+
+    def test_active_history_retrieval_is_schema_only_extra_tool(self, tmp_path, monkeypatch):
+        task = _make_task(
+            history_learning=HistoryLearningConfig(
+                active_retrieval_enabled=True,
+                active_retrieval_max_results=2,
+            )
+        )
+
+        async def fake_consolidation(**kwargs):
+            distilled = {"case_brief": "本次完成站点分析", "findings": ["结论正常"]}
+            return distilled, "# 任务记忆：站点污染分析\n## 使命与背景\n分析污染"
+
+        monkeypatch.setattr(history_learning, "_consolidation_call", fake_consolidation)
+        calls = []
+
+        class CaptureAgent:
+            async def analyze(self, prompt, session_id=None, **kwargs):
+                calls.append({"prompt": prompt, "session_id": session_id, "kwargs": kwargs})
+                yield {"type": "final_response", "content": "本次执行完成"}
+
+        task_storage = TaskStorage(storage_dir=str(tmp_path))
+        task_storage.create(task)
+        execution_storage = ExecutionStorage(storage_dir=str(tmp_path))
+        case_storage = TaskCaseStorage(task.task_id, base_dir=tmp_path / "memory")
+        case_storage.append_case(
+            {
+                "execution_id": "exec_previous",
+                "status": "succeeded",
+                "started_at": "2026-08-31T08:00:00",
+                "distilled": {"case_brief": "旧案例", "findings": []},
+            }
+        )
+        executor = ScheduledTaskExecutor(
+            task_storage=task_storage,
+            execution_storage=execution_storage,
+            agent_factory=lambda **kwargs: CaptureAgent(),
+            conversation_persistence=_StubPersistence(),
+        )
+        executor._case_storages[task.task_id] = case_storage
+
+        execution = asyncio.run(executor.execute_task(task))
+
+        assert execution.status == ExecutionStatus.SUCCESS
+        assert "## 历史案例主动检索" not in calls[0]["prompt"]
+        assert calls[0]["kwargs"]["extra_tool_names"] == ["search_scheduled_task_history"]
+        scheduled_context = calls[0]["kwargs"]["runtime_metadata"]["scheduled_task"]
+        assert scheduled_context["task_id"] == task.task_id
+        assert scheduled_context["execution_id"] == execution.execution_id
+        assert scheduled_context["history_learning"]["active_retrieval_enabled"] is True

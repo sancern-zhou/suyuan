@@ -940,6 +940,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     except ImportError as e:
         logger.warning("tool_import_failed", tool="create_scheduled_task", error=str(e))
 
+    try:
+        from app.tools.scheduled_tasks import search_scheduled_task_history_tool
+        registry.register(
+            search_scheduled_task_history_tool,
+            priority=365,
+            metadata={
+                "data_type": "scheduled_task_history",
+                "requires_handle": False,
+                "supports_batch": False,
+                "system_managed": True,
+            },
+        )
+        logger.info("tool_loaded", tool="search_scheduled_task_history")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="search_scheduled_task_history", error=str(e))
+
     # ========================================
     # Social Mode Tools（社交模式工具 - 呼吸式Agent）
     # ========================================

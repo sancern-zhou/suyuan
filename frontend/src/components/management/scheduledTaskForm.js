@@ -84,7 +84,8 @@ export const buildTaskPayload = (form) => {
     ...(form.historyLearningBase || {}),
     enabled: form.historyLearningEnabled !== false,
     max_recent_cases: Number(form.historyMaxRecentCases) || 3,
-    memory_char_budget: Number(form.historyMemoryCharBudget) || 4000
+    memory_char_budget: Number(form.historyMemoryCharBudget) || 4000,
+    active_retrieval_enabled: Boolean(form.historyActiveRetrievalEnabled)
   }
 
   if (payload.execution_mode === 'custom') {

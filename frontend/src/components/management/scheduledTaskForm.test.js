@@ -219,7 +219,8 @@ test('history learning defaults to enabled with fallback params', () => {
   assert.deepEqual(payload.history_learning, {
     enabled: true,
     max_recent_cases: 3,
-    memory_char_budget: 4000
+    memory_char_budget: 4000,
+    active_retrieval_enabled: false
   })
 })
 
@@ -233,12 +234,14 @@ test('history learning can be disabled and params overridden', () => {
     enabled: true,
     historyLearningEnabled: false,
     historyMaxRecentCases: 5,
-    historyMemoryCharBudget: 2000
+    historyMemoryCharBudget: 2000,
+    historyActiveRetrievalEnabled: true
   })
 
   assert.equal(payload.history_learning.enabled, false)
   assert.equal(payload.history_learning.max_recent_cases, 5)
   assert.equal(payload.history_learning.memory_char_budget, 2000)
+  assert.equal(payload.history_learning.active_retrieval_enabled, true)
 })
 
 
@@ -256,11 +259,13 @@ test('history learning preserves unexposed subfields from the edited task', () =
       enabled: true,
       max_recent_cases: 3,
       memory_char_budget: 4000,
-      consolidation_timeout_seconds: 300
+      consolidation_timeout_seconds: 300,
+      active_retrieval_max_results: 8
     }
   })
 
   assert.equal(payload.history_learning.consolidation_timeout_seconds, 300)
+  assert.equal(payload.history_learning.active_retrieval_max_results, 8)
   assert.equal(payload.history_learning.max_recent_cases, 7)
 })
 

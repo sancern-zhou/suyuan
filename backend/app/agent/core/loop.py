@@ -46,6 +46,7 @@ class ReActLoop:
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
         auto_profile: Optional[str] = None,
+        extra_tool_names: Optional[List[str]] = None,
     ):
         self.memory = memory_manager
         self.planner = llm_planner
@@ -59,6 +60,7 @@ class ReActLoop:
         self.llm_provider = llm_provider
         self.llm_model = llm_model
         self.auto_profile = auto_profile
+        self.extra_tool_names = list(dict.fromkeys(extra_tool_names or []))
 
         self.enable_agent_logging = enable_agent_logging
         self.agent_logger = (
@@ -123,6 +125,7 @@ class ReActLoop:
             runtime_mode=self.current_mode,
             user_identifier=getattr(self.executor, "user_identifier", None),
             board_context=self.context_builder.board_context if self.current_mode == "board" else None,
+            extra_tool_names=self.extra_tool_names,
         ))
 
         async for event in runtime.run(

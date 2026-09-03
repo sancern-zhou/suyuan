@@ -267,8 +267,17 @@ def _validate_task_skill(task: ScheduledTask) -> None:
         ) from exc
 
 
+# Company auth system super-admin account resolved from external user records.
+_SYSTEM_SUPER_ADMIN_USER_IDS = {"1"}
+_SYSTEM_MANAGED_CUSTOM_TASK_TOOLS = {"search_scheduled_task_history"}
+
+
+def _is_scheduled_task_admin(user: CurrentUser) -> bool:
+    return bool(user.is_admin or user.id in _SYSTEM_SUPER_ADMIN_USER_IDS)
+
+
 def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
-    return bool(user.is_admin) or task.owner_user_id == user.id
+    return _is_scheduled_task_admin(user) or task.owner_user_id == user.id
 
 
 def _require_task_access(task: ScheduledTask, user: CurrentUser) -> None:
@@ -278,7 +287,7 @@ def _require_task_access(task: ScheduledTask, user: CurrentUser) -> None:
 
 def _accessible_task_ids(user: CurrentUser) -> set[str] | None:
     """Return owned task ids for non-admin users; None means unrestricted."""
-    if user.is_admin:
+    if _is_scheduled_task_admin(user):
         return None
     service = get_scheduled_task_service()
     return {
@@ -306,7 +315,11 @@ async def list_custom_task_tools(
     return {
         "tools": [
             tool for tool in tools
-            if tool.get("status") == "enabled" and tool.get("name") in authorized
+            if (
+                tool.get("status") == "enabled"
+                and tool.get("name") in authorized
+                and tool.get("name") not in _SYSTEM_MANAGED_CUSTOM_TASK_TOOLS
+            )
         ]
     }
 

@@ -379,8 +379,12 @@
                   <span>记忆字符预算</span>
                   <input v-model.number="createForm.historyMemoryCharBudget" type="number" min="200" step="100" />
                 </label>
+                <label class="switch-field inline-switch form-wide">
+                  <input v-model="createForm.historyActiveRetrievalEnabled" type="checkbox" />
+                  <span>允许 Agent 执行中主动检索历史案例</span>
+                </label>
                 <small class="form-hint">
-                  每次执行后自动沉淀本次案例并更新长期记忆；下次执行注入以上配置的历史记忆，帮助任务感知历史、持续优化输出。
+                  每次执行后自动沉淀本次案例并更新长期记忆；主动检索开启后，任务执行中可按站点、污染物、事件类型或历史结论查找相似案例。
                 </small>
               </div>
             </div>
@@ -626,6 +630,7 @@ const defaultForm = () => ({
   ,historyLearningEnabled: true
   ,historyMaxRecentCases: 3
   ,historyMemoryCharBudget: 4000
+  ,historyActiveRetrievalEnabled: false
   ,historyLearningBase: null
 })
 
@@ -970,6 +975,7 @@ const openEditDialog = async (task) => {
     ,historyLearningEnabled: task.history_learning?.enabled !== false
     ,historyMaxRecentCases: task.history_learning?.max_recent_cases ?? 3
     ,historyMemoryCharBudget: task.history_learning?.memory_char_budget ?? 4000
+    ,historyActiveRetrievalEnabled: Boolean(task.history_learning?.active_retrieval_enabled)
     ,historyLearningBase: task.history_learning || null
   }
   showCreateDialog.value = true
