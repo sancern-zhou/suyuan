@@ -79,18 +79,13 @@ def test_project_task_sync_never_overwrites_existing_tasks(tmp_path):
     assert updated.created_by == "system"
 
 
-def test_project_task_sync_ignores_legacy_steps_in_runtime_store(tmp_path):
-    """历史 steps 字段加载时被忽略，同步与执行都不受影响。"""
+def test_project_task_sync_uses_declared_runtime_fields_only(tmp_path):
+    """运行时存储中的额外字段不会进入任务模型。"""
     storage = TaskStorage(tmp_path / "state")
     storage.create(_task("运行时提示"))
     state_file = tmp_path / "state" / "tasks.json"
     raw = json.loads(state_file.read_text(encoding="utf-8"))
-    raw[0]["steps"] = [{
-        "step_id": "step_1",
-        "description": "遗留包装",
-        "agent_prompt": "旧提示",
-        "timeout_seconds": 600,
-    }]
+    raw[0]["unused_field"] = {"prompt": "旧提示", "timeout_seconds": 600}
     state_file.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
     _write_definition(tmp_path, _task("运行时提示"))
 
@@ -104,4 +99,4 @@ def test_project_task_sync_ignores_legacy_steps_in_runtime_store(tmp_path):
     assert result[0]["action"] == "unchanged"
     loaded = storage.get("task_report")
     assert loaded.prompt == "运行时提示"
-    assert "steps" not in loaded.model_dump()
+    assert "unused_field" not in loaded.model_dump()
