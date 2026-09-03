@@ -56,7 +56,7 @@
           <div class="scheduled-task-meta">
             <span v-if="task.trigger_type !== 'event'" class="scheduled-meta-item">⏰ {{ formatScheduledNextRun(task.next_run_at) }}</span>
             <span v-else class="scheduled-meta-item">事件：{{ getEventLabel(task.event_type) }}</span>
-            <span class="scheduled-meta-item">📋 {{ task.steps?.length || 0 }} 个步骤</span>
+            <span class="scheduled-meta-item">⏱ {{ task.timeout_seconds || 1800 }} 秒超时</span>
             <span class="scheduled-meta-item">✅ {{ task.success_runs || 0 }}/{{ task.total_runs || 0 }}</span>
             <span class="scheduled-meta-item">🧠 {{ getExecutionModeLabel(task.execution_mode) }}</span>
             <span v-if="task.skill_id" class="scheduled-meta-item">📘 Skill：{{ task.skill_id }}</span>
@@ -73,6 +73,7 @@
           <!-- 操作按钮 -->
           <div class="scheduled-task-actions">
             <button
+              v-if="task.trigger_type !== 'event'"
               class="scheduled-btn scheduled-btn-execute"
               @click="$emit('execute-task', task)"
               :disabled="task.executing"
@@ -82,6 +83,9 @@
             </button>
             <button class="scheduled-btn scheduled-btn-secondary" @click="openExecutionHistory(task)">
               执行记录
+            </button>
+            <button class="scheduled-btn scheduled-btn-secondary" @click="openHistoryDialog(task)">
+              历史记忆
             </button>
             <button class="scheduled-btn scheduled-btn-secondary" @click="openEditDialog(task)">
               编辑
@@ -129,7 +133,7 @@
             <span class="execution-duration">{{ formatExecutionDuration(execution.duration_seconds) }}</span>
           </span>
           <span class="execution-history-meta">
-            <span>{{ execution.completed_steps || 0 }}/{{ execution.total_steps || 0 }} 个步骤</span>
+            <span>{{ execution.status || 'pending' }}</span>
             <span>{{ execution.trigger_type === 'event' ? '事件触发' : '定时触发' }}</span>
             <span v-if="execution.session_id">会话 {{ shortSessionId(execution.session_id) }}</span>
             <span v-else>未生成会话</span>
@@ -139,6 +143,28 @@
           </span>
         </button>
       </div>
+      <nav
+        v-if="!executionHistoryLoading && executionHistoryPagination.totalPages > 1"
+        class="execution-history-pagination"
+        aria-label="执行记录分页"
+      >
+        <button
+          type="button"
+          class="panel-btn small"
+          :disabled="executionHistoryPagination.page <= 1"
+          @click="changeExecutionHistoryPage(executionHistoryPagination.page - 1)"
+        >上一页</button>
+        <span>
+          第 {{ executionHistoryPagination.page }} / {{ executionHistoryPagination.totalPages }} 页，
+          共 {{ executionHistoryPagination.total }} 条
+        </span>
+        <button
+          type="button"
+          class="panel-btn small"
+          :disabled="executionHistoryPagination.page >= executionHistoryPagination.totalPages"
+          @click="changeExecutionHistoryPage(executionHistoryPagination.page + 1)"
+        >下一页</button>
+      </nav>
     </div>
 
     <!-- 新建/编辑任务弹窗 -->
@@ -175,11 +201,11 @@
             <label class="form-field">
               <span>执行模式</span>
               <select v-model="createForm.execution_mode" @change="handleExecutionModeChange">
-                <option
-                  v-for="mode in executionModeOptions"
-                  :key="mode.value"
-                  :value="mode.value"
-                >{{ mode.label }}</option>
+                <option value="assistant">assistant</option>
+                <option value="expert">expert</option>
+                <option value="query">query</option>
+                <option value="social">social</option>
+                <option value="custom">custom（自选工具）</option>
               </select>
             </label>
 
@@ -338,6 +364,26 @@
               </label>
               <input v-if="createForm.workspaceEntryEnabled" v-model="createForm.workspaceEntryTitle" type="text" placeholder="例如：告警溯源" />
             </div>
+
+            <div class="form-field form-wide">
+              <label class="switch-field inline-switch">
+                <input v-model="createForm.historyLearningEnabled" type="checkbox" />
+                <span>历史执行记忆（任务专属案例库 + 长期记忆）</span>
+              </label>
+              <div v-if="createForm.historyLearningEnabled" class="history-learning-fields">
+                <label class="form-field">
+                  <span>注入最近案例数</span>
+                  <input v-model.number="createForm.historyMaxRecentCases" type="number" min="0" max="20" />
+                </label>
+                <label class="form-field">
+                  <span>记忆字符预算</span>
+                  <input v-model.number="createForm.historyMemoryCharBudget" type="number" min="200" step="100" />
+                </label>
+                <small class="form-hint">
+                  每次执行后自动沉淀本次案例并更新长期记忆；下次执行注入以上配置的历史记忆，帮助任务感知历史、持续优化输出。
+                </small>
+              </div>
+            </div>
           </div>
 
           <div class="task-preview">
@@ -362,18 +408,117 @@
         </div>
       </div>
     </div>
+
+    <!-- 历史执行记忆弹窗 -->
+    <div v-if="showHistoryDialog" class="modal-backdrop" @click.self="closeHistoryDialog">
+      <div class="modal-panel history-modal">
+        <div class="modal-header">
+          <h4>{{ historyTask?.name }} · 历史执行记忆</h4>
+          <button class="panel-btn small" @click="closeHistoryDialog">关闭</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="history-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              :class="{ active: historyTab === 'cases' }"
+              @click="historyTab = 'cases'"
+            >案例库（{{ historyCasesTotal }}）</button>
+            <button
+              type="button"
+              role="tab"
+              :class="{ active: historyTab === 'memory' }"
+              @click="historyTab = 'memory'"
+            >长期记忆</button>
+          </div>
+
+          <div v-if="historyLoading" class="history-state">加载历史执行记忆...</div>
+          <div v-else-if="historyError" class="history-state error">
+            <p>{{ historyError }}</p>
+            <button class="panel-btn small" @click="loadHistoryData">重试</button>
+          </div>
+
+          <!-- 案例库页签 -->
+          <div v-else-if="historyTab === 'cases'" class="history-cases">
+            <div v-if="historyCases.length === 0" class="history-state">
+              暂无历史案例，任务每次执行后会自动累积。
+            </div>
+            <div v-for="caseItem in historyCases" :key="caseItem.execution_id" class="history-case-card">
+              <div class="history-case-header">
+                <span :class="['execution-status', `status-${caseStatusKey(caseItem.status)}`]">
+                  {{ caseStatusLabel(caseItem.status) }}
+                </span>
+                <span class="history-case-time">{{ formatHistoryTime(caseItem.started_at) }}</span>
+                <span v-if="caseItem.duration_seconds != null" class="history-case-duration">
+                  {{ formatExecutionDuration(caseItem.duration_seconds) }}
+                </span>
+                <span v-if="caseItem.trigger?.type === 'event'" class="history-case-trigger">事件触发</span>
+              </div>
+              <p v-if="caseItem.trigger?.context_digest" class="history-case-digest">
+                {{ caseItem.trigger.context_digest }}
+              </p>
+              <p class="history-case-brief">
+                {{ caseItem.distilled?.case_brief || caseItem.summary || '（无摘要）' }}
+              </p>
+              <ul v-if="caseItem.distilled?.findings?.length" class="history-case-findings">
+                <li v-for="(finding, index) in caseItem.distilled.findings" :key="index">{{ finding }}</li>
+              </ul>
+              <div v-if="caseItem.outputs?.length" class="history-case-outputs">
+                <span v-for="output in caseItem.outputs" :key="`${output.kind}:${output.ref}`" class="history-case-ref">
+                  {{ output.kind }}:{{ output.ref }}
+                </span>
+              </div>
+              <div v-if="caseItem.errors?.length" class="history-case-errors">
+                <p v-for="(error, index) in caseItem.errors" :key="index">{{ error }}</p>
+              </div>
+            </div>
+            <p v-if="historyCasesTotal > historyCases.length" class="history-cases-more">
+              仅显示最近 {{ historyCases.length }} 条，共 {{ historyCasesTotal }} 条
+            </p>
+          </div>
+
+          <!-- 长期记忆页签 -->
+          <div v-else class="history-memory">
+            <div v-if="memoryEditing" class="history-memory-editor">
+              <textarea v-model="memoryDraft" rows="14" placeholder="编辑任务专属长期记忆（Markdown）"></textarea>
+              <div v-if="memoryEditError" class="form-error" role="alert">{{ memoryEditError }}</div>
+              <div class="history-memory-editor-actions">
+                <button class="panel-btn small" @click="cancelMemoryEdit">取消</button>
+                <button class="panel-btn small primary" :disabled="memorySaving" @click="saveMemoryEdit">
+                  {{ memorySaving ? '保存中...' : '保存记忆' }}
+                </button>
+              </div>
+            </div>
+            <template v-else>
+              <div class="history-memory-meta">
+                <span>版本 v{{ historyMemory?.meta?.version ?? 0 }}</span>
+                <span>巩固：{{ consolidationStatusLabel(historyMemory?.meta?.last_consolidation_status) }}</span>
+                <span v-if="historyMemory?.meta?.consolidation_failures > 0" class="history-memory-warn">
+                  巩固失败 {{ historyMemory.meta.consolidation_failures }} 次
+                </span>
+                <span v-if="historyMemory?.meta?.updated_at">更新于 {{ formatHistoryTime(historyMemory.meta.updated_at) }}</span>
+                <button class="panel-btn small" @click="startMemoryEdit">编辑</button>
+              </div>
+              <div v-if="historyMemory?.memory" class="history-memory-content markdown-body" v-html="renderedMemory"></div>
+              <div v-else class="history-state">
+                暂无长期记忆，任务完成首次执行并巩固后会自动生成。
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
+import MarkdownIt from 'markdown-it'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
-import { getAgentMode, selectAgentModes } from '@/config/agentModes.js'
-import { projectConfig } from '@/config/projectConfig.js'
 import {
   applyExecutionMode,
   applyTriggerDefaults,
-  buildExecutionModeOptions,
   buildTaskPayload,
   selectableSocialUsers
 } from './scheduledTaskForm.js'
@@ -423,6 +568,7 @@ const selectedHistoryTask = ref(null)
 const executionHistory = ref([])
 const executionHistoryLoading = ref(false)
 const executionHistoryError = ref('')
+const executionHistoryPagination = ref({ page: 1, pageSize: 10, total: 0, totalPages: 0 })
 
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const socialUsers = computed(() => selectableSocialUsers(scheduledTasksStore.socialUsers))
@@ -430,14 +576,6 @@ const availableSkills = computed(() => scheduledTasksStore.availableSkills)
 const selectedSkill = computed(() => availableSkills.value.find(
   skill => skill.id === createForm.value.skill_id
 ) || null)
-const projectExecutionModes = selectAgentModes(
-  projectConfig.agentModeIds,
-  projectConfig.agentModeOverrides
-)
-const executionModeOptions = computed(() => buildExecutionModeOptions(
-  projectExecutionModes,
-  createForm.value.execution_mode
-))
 const filteredTools = computed(() => {
   const query = createForm.value.toolSearch.trim().toLowerCase()
   return scheduledTasksStore.availableTools.filter(tool => !query || [
@@ -464,7 +602,7 @@ const defaultForm = () => ({
   name: '',
   description: '',
   agent_prompt: '',
-  execution_mode: projectConfig.defaultAgentMode || 'assistant',
+  execution_mode: 'assistant',
   skill_id: '',
   tool_names: [],
   toolSearch: '',
@@ -485,6 +623,10 @@ const defaultForm = () => ({
   tagsText: ''
   ,workspaceEntryEnabled: false
   ,workspaceEntryTitle: ''
+  ,historyLearningEnabled: true
+  ,historyMaxRecentCases: 3
+  ,historyMemoryCharBudget: 4000
+  ,historyLearningBase: null
 })
 
 const createForm = ref(defaultForm())
@@ -500,16 +642,26 @@ const handleExecutionModeChange = async () => {
   }
 }
 
-const refreshExecutionHistory = async () => {
+const refreshExecutionHistory = async (requestedPage = executionHistoryPagination.value.page) => {
   if (!selectedHistoryTask.value) return
+  const page = Number.isInteger(requestedPage)
+    ? requestedPage
+    : executionHistoryPagination.value.page
   executionHistoryLoading.value = true
   executionHistoryError.value = ''
   try {
-    const records = await loadScheduledTaskExecutions(
+    const result = await loadScheduledTaskExecutions(
       scheduledTasksStore,
-      selectedHistoryTask.value
+      selectedHistoryTask.value,
+      { page, pageSize: executionHistoryPagination.value.pageSize }
     )
-    executionHistory.value = sortExecutionsNewestFirst(records)
+    executionHistory.value = sortExecutionsNewestFirst(result.executions)
+    executionHistoryPagination.value = {
+      page: result.page,
+      pageSize: result.pageSize,
+      total: result.total,
+      totalPages: result.totalPages
+    }
   } catch (error) {
     console.error('Failed to fetch task executions:', error)
     executionHistoryError.value = '执行记录加载失败，请重试'
@@ -521,18 +673,149 @@ const refreshExecutionHistory = async () => {
 const openExecutionHistory = async (task) => {
   selectedHistoryTask.value = task
   executionHistory.value = []
-  await refreshExecutionHistory()
+  executionHistoryPagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
+  await refreshExecutionHistory(1)
 }
 
 const closeExecutionHistory = () => {
   selectedHistoryTask.value = null
   executionHistory.value = []
   executionHistoryError.value = ''
+  executionHistoryPagination.value = { page: 1, pageSize: 10, total: 0, totalPages: 0 }
+}
+
+const changeExecutionHistoryPage = page => {
+  if (page < 1 || page > executionHistoryPagination.value.totalPages) return
+  refreshExecutionHistory(page)
 }
 
 const restoreExecutionSession = (execution) => {
   if (!canRestoreExecution(execution)) return
   emit('restore-execution-session', execution.session_id)
+}
+
+// ===== 历史执行记忆弹窗 =====
+const showHistoryDialog = ref(false)
+const historyTask = ref(null)
+const historyTab = ref('cases')
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyCases = ref([])
+const historyCasesTotal = ref(0)
+const historyMemory = ref(null)
+const memoryEditing = ref(false)
+const memoryDraft = ref('')
+const memorySaving = ref(false)
+const memoryEditError = ref('')
+let historyRequestToken = 0
+
+const md = new MarkdownIt({ breaks: true })
+const renderedMemory = computed(() => {
+  const content = historyMemory.value?.memory
+  return content ? md.render(content) : ''
+})
+
+const caseStatusKey = (status) => ({ succeeded: 'success', timeout: 'timeout' }[status] || 'failed')
+const caseStatusLabel = (status) => ({ succeeded: '成功', failed: '失败', timeout: '超时' }[status] || status || '未知')
+const consolidationStatusLabel = (status) => ({
+  success: '成功',
+  failed: '失败',
+  manual: '人工编辑'
+}[status] || '未巩固')
+
+const formatHistoryTime = (timestamp) => {
+  if (!timestamp) return '时间未知'
+  return String(timestamp).slice(0, 19).replace('T', ' ')
+}
+
+const loadHistoryData = async () => {
+  if (!historyTask.value) return
+  const requestToken = ++historyRequestToken
+  const taskId = historyTask.value.task_id
+  historyLoading.value = true
+  historyError.value = ''
+  const [casesResult, memoryResult] = await Promise.allSettled([
+    scheduledTasksStore.fetchTaskHistoryCases(taskId, { limit: 50 }),
+    scheduledTasksStore.fetchTaskMemory(taskId)
+  ])
+  if (requestToken !== historyRequestToken || historyTask.value?.task_id !== taskId) return
+  if (casesResult.status === 'fulfilled') {
+    historyCases.value = casesResult.value.cases
+    historyCasesTotal.value = casesResult.value.total
+  } else {
+    historyCases.value = []
+    historyCasesTotal.value = 0
+  }
+  if (memoryResult.status === 'fulfilled') {
+    historyMemory.value = memoryResult.value
+  } else {
+    historyMemory.value = null
+  }
+  if (casesResult.status === 'rejected' && memoryResult.status === 'rejected') {
+    historyError.value = '历史执行记忆加载失败，请重试'
+  }
+  historyLoading.value = false
+}
+
+const openHistoryDialog = async (task) => {
+  historyTask.value = task
+  historyTab.value = 'cases'
+  historyCases.value = []
+  historyCasesTotal.value = 0
+  historyMemory.value = null
+  memoryEditing.value = false
+  memoryEditError.value = ''
+  showHistoryDialog.value = true
+  await loadHistoryData()
+}
+
+const closeHistoryDialog = () => {
+  historyRequestToken += 1
+  showHistoryDialog.value = false
+  historyTask.value = null
+  historyCases.value = []
+  historyCasesTotal.value = 0
+  historyMemory.value = null
+  historyError.value = ''
+  memoryEditing.value = false
+  memoryEditError.value = ''
+}
+
+const startMemoryEdit = () => {
+  memoryDraft.value = historyMemory.value?.memory || ''
+  memoryEditError.value = ''
+  memoryEditing.value = true
+}
+
+const cancelMemoryEdit = () => {
+  memoryEditing.value = false
+  memoryEditError.value = ''
+}
+
+const saveMemoryEdit = async () => {
+  if (!historyTask.value) return
+  const content = memoryDraft.value.trim()
+  if (!content) {
+    memoryEditError.value = '记忆内容不能为空'
+    return
+  }
+  memorySaving.value = true
+  memoryEditError.value = ''
+  try {
+    historyMemory.value = await scheduledTasksStore.updateTaskMemory(
+      historyTask.value.task_id,
+      content,
+      historyMemory.value?.meta?.version ?? 0
+    )
+    memoryEditing.value = false
+  } catch (error) {
+    console.error('Failed to save task memory:', error)
+    memoryEditError.value = error.status === 409
+      ? '记忆已被其他操作更新，请重新加载后再编辑'
+      : '保存失败：' + (error.message || '未知错误')
+  } finally {
+    memorySaving.value = false
+  }
 }
 
 const formatExecutionTime = (timestamp) => {
@@ -589,10 +872,14 @@ const getEventLabel = (eventType) => eventTypes.value.find(
 )?.label || eventType || '未配置'
 
 const getExecutionModeLabel = (mode) => {
-  if (mode === 'social') return '社交任务'
-  if (mode === 'custom') return '自定义工具模式'
-  const agentMode = getAgentMode(mode, projectConfig.agentModeOverrides)
-  return agentMode?.shortName || agentMode?.name || mode || '默认'
+  const labels = {
+    assistant: '助手模式',
+    expert: '专家模式',
+    query: '问数模式',
+    social: '社交模式',
+    custom: '自定义工具模式'
+  }
+  return labels[mode] || mode || '默认'
 }
 
 const formatScheduledNextRun = (time) => {
@@ -658,7 +945,7 @@ const openEditDialog = async (task) => {
     ...defaultForm(),
     name: task.name || '',
     description: task.description || '',
-    agent_prompt: task.steps?.[0]?.agent_prompt || task.description || '',
+      agent_prompt: task.prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
     skill_id: task.skill_id || '',
     tool_names: [...(task.tool_names || [])],
@@ -680,6 +967,10 @@ const openEditDialog = async (task) => {
     tagsText: (task.tags || []).join(',')
     ,workspaceEntryEnabled: Boolean(task.workspace_entry?.enabled)
     ,workspaceEntryTitle: task.workspace_entry?.title || ''
+    ,historyLearningEnabled: task.history_learning?.enabled !== false
+    ,historyMaxRecentCases: task.history_learning?.max_recent_cases ?? 3
+    ,historyMemoryCharBudget: task.history_learning?.memory_char_budget ?? 4000
+    ,historyLearningBase: task.history_learning || null
   }
   showCreateDialog.value = true
   await loadConfigurationOptions()
@@ -1092,6 +1383,17 @@ const saveTask = async () => {
   gap: 10px;
 }
 
+.execution-history-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .execution-history-item {
   width: 100%;
   padding: 14px 16px;
@@ -1445,5 +1747,204 @@ const saveTask = async () => {
   .modal-actions {
     flex-wrap: wrap;
   }
+}
+
+/* ===== 历史执行记忆弹窗 ===== */
+.history-modal {
+  max-width: 720px;
+}
+
+.history-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 8px;
+}
+
+.history-tabs button {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: #6c757d;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.history-tabs button.active {
+  background: #1976d2;
+  color: white;
+}
+
+.history-state {
+  text-align: center;
+  color: #6c757d;
+  padding: 24px 12px;
+  font-size: 13px;
+}
+
+.history-state.error {
+  color: #c2413b;
+}
+
+.history-cases {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-case-card {
+  border: 1px solid #e3e6ea;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fafbfc;
+}
+
+.history-case-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.history-case-time,
+.history-case-duration,
+.history-case-trigger {
+  white-space: nowrap;
+}
+
+.history-case-digest {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #856404;
+  word-break: break-all;
+}
+
+.history-case-brief {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #333;
+}
+
+.history-case-findings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.history-case-findings li {
+  margin: 2px 0;
+}
+
+.history-case-outputs {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-case-ref {
+  font-size: 11px;
+  font-family: monospace;
+  background: #eef2f7;
+  border: 1px solid #d7dee8;
+  border-radius: 3px;
+  padding: 2px 6px;
+  color: #33517a;
+  word-break: break-all;
+}
+
+.history-case-errors {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #c2413b;
+}
+
+.history-case-errors p {
+  margin: 2px 0;
+  word-break: break-all;
+}
+
+.history-cases-more {
+  text-align: center;
+  font-size: 12px;
+  color: #6c757d;
+  margin: 8px 0 0;
+}
+
+.history-memory-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+
+.history-memory-meta .panel-btn {
+  margin-left: auto;
+}
+
+.history-memory-warn {
+  color: #b45309;
+}
+
+.history-memory-content {
+  border: 1px solid #e3e6ea;
+  border-radius: 6px;
+  background: #fafbfc;
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.history-memory-content :deep(h1) {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.history-memory-content :deep(h2) {
+  font-size: 13px;
+  margin: 10px 0 6px;
+}
+
+.history-memory-content :deep(ul) {
+  padding-left: 18px;
+  margin: 4px 0;
+}
+
+.history-memory-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.history-memory-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.history-learning-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.history-learning-fields .form-hint {
+  grid-column: 1 / -1;
 }
 </style>

@@ -10,7 +10,6 @@ from datetime import datetime
 from app.tools.base import LLMTool, ToolCategory
 from app.scheduled_tasks import (
     ScheduledTask,
-    TaskStep,
     ScheduleType,
     get_scheduled_task_service
 )
@@ -86,7 +85,9 @@ class CreateScheduledTaskTool(LLMTool):
             import uuid
             task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-            # 构建任务对象
+            # 构建任务对象：一个任务就是一次完整的 Agent 执行，由 Agent 自行规划，
+            # 只有任务级 prompt 与总超时；LLM 返回的 steps 仅作兼容输入，不持久化。
+            legacy_steps = task_config.get("steps") or []
             task_kwargs = {
                 "task_id": task_id,
                 "name": task_config["name"],
@@ -94,16 +95,12 @@ class CreateScheduledTaskTool(LLMTool):
                 "execution_mode": task_config.get("execution_mode", "expert"),
                 "schedule_type": ScheduleType(task_config["schedule_type"]),
                 "enabled": True,
-                "steps": [
-                    TaskStep(
-                        step_id=f"step_{i+1}",
-                        description=step["description"],
-                        agent_prompt=step["agent_prompt"],
-                        timeout_seconds=step.get("timeout_seconds", 300),
-                        retry_on_failure=step.get("retry_on_failure", False)
-                    )
-                    for i, step in enumerate(task_config["steps"])
-                ],
+                "prompt": task_config.get("prompt") or (
+                    legacy_steps[0].get("agent_prompt") if legacy_steps else task_config["description"]
+                ),
+                "timeout_seconds": task_config.get("timeout_seconds") or sum(
+                    step.get("timeout_seconds", 300) for step in legacy_steps
+                ) or 1800,
                 "tags": task_config.get("tags", [])
             }
 
@@ -132,13 +129,13 @@ class CreateScheduledTaskTool(LLMTool):
                     "name": created_task.name,
                     "description": created_task.description,
                     "schedule_type": created_task.schedule_type.value,
-                    "steps_count": len(created_task.steps),
+                    "timeout_seconds": created_task.timeout_seconds,
                     "next_run_at": str(created_task.next_run_at) if created_task.next_run_at else None
                 },
                 "summary": (
                     f"已创建定时任务：{created_task.name}\n"
                     f"调度类型：{created_task.schedule_type.value}\n"
-                    f"步骤数量：{len(created_task.steps)}\n"
+                    f"超时时间：{created_task.timeout_seconds}秒\n"
                     f"任务ID：{created_task.task_id}"
                 )
             }
@@ -189,13 +186,10 @@ class CreateScheduledTaskTool(LLMTool):
    - hour: 每天执行的小时（schedule_type=daily_custom时必填，0-23）
    - minute: 每天执行的分钟（schedule_type=daily_custom时必填，0-59）
 
-6. steps: 任务步骤列表，每个步骤包含：
-   - description: 步骤描述
-   - agent_prompt: 发送给Agent的提示词（详细、具体）
-   - timeout_seconds: 超时时间（秒，默认300）
-   - retry_on_failure: 失败时是否重试（默认false）
+6. prompt: 发送给Agent的完整任务提示词（必须包含，详细、具体）
+7. timeout_seconds: 整个任务的总超时时间（秒，默认1800）
 
-7. tags: 标签列表（可选）
+8. tags: 标签列表（可选）
 
 示例1（预设类型）：
 {{
@@ -203,14 +197,8 @@ class CreateScheduledTaskTool(LLMTool):
   "description": "每天早上8点分析广州昨天的O3污染情况",
   "execution_mode": "expert",
   "schedule_type": "daily_8am",
-  "steps": [
-    {{
-      "description": "获取昨日O3数据",
-      "agent_prompt": "查询广州昨天的O3浓度数据，包括小时值和日均值",
-      "timeout_seconds": 300,
-      "retry_on_failure": false
-    }}
-  ],
+  "prompt": "查询广州昨天的O3浓度数据，包括小时值和日均值，并生成污染分析报告",
+  "timeout_seconds": 1800,
   "tags": ["O3", "广州", "日报"]
 }}
 
@@ -221,14 +209,8 @@ class CreateScheduledTaskTool(LLMTool):
   "execution_mode": "expert",
   "schedule_type": "once",
   "run_at": "2026-02-13 14:30:00",
-  "steps": [
-    {{
-      "description": "读取文档表格",
-      "agent_prompt": "读取D:\\\\报告\\\\2025年7月8日臭氧垂直.docx的表格内容并分析",
-      "timeout_seconds": 600,
-      "retry_on_failure": false
-    }}
-  ],
+  "prompt": "读取D:\\\\报告\\\\2025年7月8日臭氧垂直.docx的表格内容并分析",
+  "timeout_seconds": 1800,
   "tags": ["臭氧", "报告"]
 }}
 
@@ -238,14 +220,8 @@ class CreateScheduledTaskTool(LLMTool):
   "description": "每5分钟检查PM2.5浓度",
   "schedule_type": "interval",
   "interval_minutes": 5,
-  "steps": [
-    {{
-      "description": "查询PM2.5数据",
-      "agent_prompt": "查询最新的PM2.5浓度数据",
-      "timeout_seconds": 120,
-      "retry_on_failure": true
-    }}
-  ],
+  "prompt": "查询最新的PM2.5浓度数据并简要分析变化趋势",
+  "timeout_seconds": 600,
   "tags": ["PM2.5", "监测"]
 }}
 
@@ -256,14 +232,8 @@ class CreateScheduledTaskTool(LLMTool):
   "schedule_type": "daily_custom",
   "hour": 15,
   "minute": 30,
-  "steps": [
-    {{
-      "description": "分析污染数据",
-      "agent_prompt": "分析当天的污染情况",
-      "timeout_seconds": 300,
-      "retry_on_failure": false
-    }}
-  ],
+  "prompt": "分析当天的污染情况并给出总结",
+  "timeout_seconds": 1800,
   "tags": ["污染分析"]
 }}
 
@@ -275,14 +245,8 @@ class CreateScheduledTaskTool(LLMTool):
   "schedule_type": "daily_custom",
   "hour": 9,
   "minute": 0,
-  "steps": [
-    {{
-      "description": "生成并广播消息",
-      "agent_prompt": "根据任务描述生成适合广播给社交用户的简短内容，然后调用 broadcast_social_users 工具发送。",
-      "timeout_seconds": 600,
-      "retry_on_failure": false
-    }}
-  ],
+  "prompt": "根据任务描述生成适合广播给社交用户的简短内容，然后调用 broadcast_social_users 工具发送。",
+  "timeout_seconds": 600,
   "tags": ["broadcast", "social"]
 }}
 
@@ -314,9 +278,12 @@ class CreateScheduledTaskTool(LLMTool):
             config = json.loads(content)
 
             # 验证必需字段
-            required_fields = ["name", "description", "schedule_type", "steps"]
+            required_fields = ["name", "description", "schedule_type"]
             if not all(field in config for field in required_fields):
                 logger.error(f"Missing required fields in config: {config}")
+                return None
+            if not config.get("prompt") and not config.get("steps"):
+                logger.error(f"Missing prompt or steps in config: {config}")
                 return None
 
             # 验证schedule_type

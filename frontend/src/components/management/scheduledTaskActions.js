@@ -29,8 +29,8 @@ export const deleteScheduledTask = (store, task) => (
 )
 
 
-export const loadScheduledTaskExecutions = (store, task, limit = 50) => (
-  store.fetchTaskExecutions(requireTaskId(task), limit)
+export const loadScheduledTaskExecutions = (store, task, options = {}) => (
+  store.fetchTaskExecutions(requireTaskId(task), options)
 )
 
 
