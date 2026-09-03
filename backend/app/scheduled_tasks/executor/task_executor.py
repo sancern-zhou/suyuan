@@ -28,6 +28,8 @@ logger = structlog.get_logger()
 EVENT_CONTEXT_MAX_CHARS = 8000
 _COMPACT_VALUE_MAX_CHARS = 200
 _COMPACT_CONTAINER_MAX_CHARS = 400
+SCHEDULED_HISTORY_SEARCH_TOOL = "search_scheduled_task_history"
+SCHEDULED_BROADCAST_TOOL = "broadcast_social_users"
 
 
 def _is_path_like(value: str) -> bool:
@@ -114,6 +116,33 @@ class ScheduledTaskExecutor:
             self._case_storages[task.task_id] = storage
         return storage
 
+    def _runtime_extra_tool_names(self, task: ScheduledTask) -> list[str]:
+        """Tools automatically available only inside this scheduled task run."""
+        names: list[str] = []
+        if task.broadcast_enabled:
+            names.append(SCHEDULED_BROADCAST_TOOL)
+        if (
+            task.history_learning.enabled
+            and task.history_learning.active_retrieval_enabled
+        ):
+            names.append(SCHEDULED_HISTORY_SEARCH_TOOL)
+        return list(dict.fromkeys(names))
+
+    def _runtime_metadata(
+        self,
+        task: ScheduledTask,
+        execution: TaskExecution,
+    ) -> dict:
+        """System-only metadata injected into ExecutionContext for tools."""
+        return {
+            "scheduled_task": {
+                "task_id": task.task_id,
+                "task_name": task.name,
+                "execution_id": execution.execution_id,
+                "history_learning": task.history_learning.model_dump(mode="json"),
+            }
+        }
+
     async def execute_task(
         self,
         task: ScheduledTask,
@@ -153,6 +182,7 @@ class ScheduledTaskExecutor:
         history_section = (
             build_history_section(task, case_storage) if case_storage is not None else None
         )
+        runtime_extra_tool_names = self._runtime_extra_tool_names(task)
         # 即使执行中途失败/超时，也已收集到部分执行材料，供收尾时入案例库
         collected: dict = {}
 
@@ -162,8 +192,9 @@ class ScheduledTaskExecutor:
                 if not self.agent_factory:
                     raise RuntimeError("Agent factory not configured")
                 runtime_tool_names = list(task.tool_names or [])
-                if task.broadcast_enabled and "broadcast_social_users" not in runtime_tool_names:
-                    runtime_tool_names.append("broadcast_social_users")
+                for tool_name in runtime_extra_tool_names:
+                    if tool_name not in runtime_tool_names:
+                        runtime_tool_names.append(tool_name)
                 fixed_tools = build_runtime_custom_tool_registry(runtime_tool_names)
                 shared_agent = self.agent_factory(
                     tool_registry=fixed_tools,
@@ -186,6 +217,8 @@ class ScheduledTaskExecutor:
                     manual_mode=task.execution_mode,
                     task=task, execution=execution, agent=shared_agent,
                     collected=collected,
+                    extra_tool_names=runtime_extra_tool_names,
+                    runtime_metadata=self._runtime_metadata(task, execution),
                 ),
                 timeout=task.timeout_seconds,
             )
@@ -296,6 +329,8 @@ class ScheduledTaskExecutor:
         execution: TaskExecution | None = None,
         agent=None,
         collected: dict | None = None,
+        extra_tool_names: list[str] | None = None,
+        runtime_metadata: dict | None = None,
     ) -> dict:
         """
         运行Agent步骤
@@ -362,6 +397,8 @@ class ScheduledTaskExecutor:
                 session_storage_mode=("custom" if manual_mode == "custom" else "assistant"),
                 selected_skill_context=selected_skill_context,
                 knowledge_base_ids=knowledge_base_ids,
+                extra_tool_names=extra_tool_names or [],
+                runtime_metadata=runtime_metadata or {},
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

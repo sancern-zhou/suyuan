@@ -72,47 +72,6 @@ async def test_create_scheduled_task_tool():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def test_create_scheduled_task_tool_accepts_legacy_steps_config():
-    """LLM 兼容性：返回 steps 配置时只取提示词与超时，不持久化 steps"""
-    temp_dir = tempfile.mkdtemp()
-    try:
-        service = _make_service(temp_dir)
-
-        from app.tools.scheduled_tasks import create_scheduled_task_tool
-
-        legacy_config = {
-            "name": "臭氧报告分析",
-            "description": "分析文档臭氧数据",
-            "execution_mode": "expert",
-            "schedule_type": "once",
-            "run_at": "2026-09-02 10:00:00",
-            "steps": [
-                {
-                    "description": "读取文档",
-                    "agent_prompt": "读取臭氧文档并分析",
-                    "timeout_seconds": 600,
-                }
-            ],
-        }
-
-        with patch(
-            "app.tools.scheduled_tasks.create_scheduled_task.get_scheduled_task_service",
-            lambda: service,
-        ), patch.object(
-            create_scheduled_task_tool, "_parse_user_request", return_value=legacy_config,
-        ):
-            result = await create_scheduled_task_tool.execute(user_request="分析臭氧文档")
-
-        assert result["success"] is True, result
-        created = service.get_task(result["data"]["task_id"])
-        assert created.prompt == "读取臭氧文档并分析"
-        assert created.timeout_seconds == 600
-        assert not hasattr(created, "steps")
-        print("[OK] legacy steps 兼容测试通过")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
 async def test_api_integration():
     """测试API集成"""
     temp_dir = tempfile.mkdtemp()
@@ -150,7 +109,6 @@ async def main():
 
     try:
         await test_create_scheduled_task_tool()
-        await test_create_scheduled_task_tool_accepts_legacy_steps_config()
         await test_api_integration()
         print("\n所有测试通过")
     except Exception as e:

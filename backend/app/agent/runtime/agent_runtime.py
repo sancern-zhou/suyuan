@@ -54,6 +54,7 @@ class AgentRuntimeConfig:
     runtime_mode: Optional[str] = None
     user_identifier: Optional[str] = None
     board_context: Optional[Dict[str, Any]] = None
+    extra_tool_names: Optional[List[str]] = None
 
 
 class AgentRuntime:
@@ -764,13 +765,10 @@ class AgentRuntime:
         from ..core.streaming_tool_executor import StreamingToolExecutor
 
         # 按模式过滤工具 schema（节省 token）
+        allowed_tool_names = self._allowed_tool_names_for_state(state)
         tool_schemas = get_tool_schemas(
             mode=state.mode,
-            allowed_tool_names=(
-                list(self.executor.tool_registry.keys())
-                if state.mode == "custom" and hasattr(self.executor, "tool_registry")
-                else None
-            ),
+            allowed_tool_names=allowed_tool_names,
         )
         suppressed_tool_names = self._tool_names_to_suppress(state)
         state.suppress_tool_names_current_turn = suppressed_tool_names
@@ -950,6 +948,18 @@ class AgentRuntime:
             "planner_result": planner_result,
             "streaming_tool_executor": streaming_tool_executor,
         }
+
+    def _allowed_tool_names_for_state(self, state: RunState) -> Optional[List[str]]:
+        if state.mode == "custom" and hasattr(self.executor, "tool_registry"):
+            return list(self.executor.tool_registry.keys())
+        if not self.config.extra_tool_names:
+            return None
+
+        from app.agent.prompts.tool_registry import get_tools_by_mode
+
+        names = list(get_tools_by_mode(state.mode).keys())
+        names.extend(self.config.extra_tool_names)
+        return list(dict.fromkeys(names))
 
     def _tool_names_to_suppress(self, state: RunState) -> set[str]:
         """Hide housekeeping tools after terminal/no-progress state updates."""

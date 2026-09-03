@@ -54,6 +54,16 @@ class HistoryLearningConfig(BaseModel):
     consolidation_timeout_seconds: int = Field(
         default=120, ge=1, description="执行后巩固调用的超时时间（秒）"
     )
+    active_retrieval_enabled: bool = Field(
+        default=False,
+        description="是否允许 Agent 执行中主动检索任务专属历史案例",
+    )
+    active_retrieval_max_results: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="主动检索单次返回案例数量上限",
+    )
 
 
 class ScheduledTask(BaseModel):

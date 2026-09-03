@@ -56,6 +56,12 @@ class FakeService:
     def get_task(self, task_id):
         return self.tasks.get(task_id)
 
+    def list_tasks(self, enabled_only=False):
+        tasks = list(self.tasks.values())
+        if enabled_only:
+            tasks = [task for task in tasks if task.enabled]
+        return tasks
+
     def update_task(self, task):
         self.tasks[task.task_id] = task
         return task
@@ -78,13 +84,13 @@ class FakeService:
         }
 
 
-def _client(monkeypatch):
+def _client(monkeypatch, user=None):
     service = FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
     monkeypatch.setattr(routes, "get_social_user_registry", lambda: FakeRegistry())
     monkeypatch.setattr(routes, "get_tool_registry", lambda: FakeToolRegistry())
     app = FastAPI()
-    app.dependency_overrides[require_current_user] = lambda: CurrentUser(
+    app.dependency_overrides[require_current_user] = lambda: user or CurrentUser(
         id="creator-1",
         username="creator",
         display_name="任务创建人",
@@ -121,6 +127,37 @@ def test_list_event_types(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()[0]["event_type"] == "yuncheng.alert.created"
+
+
+def test_super_admin_account_can_see_disabled_tasks(monkeypatch):
+    client, service = _client(
+        monkeypatch,
+        user=CurrentUser(
+            id="1",
+            username="ScGuanLy",
+            display_name="超级管理员",
+            is_admin=False,
+            auth_source="company",
+        ),
+    )
+    task = routes.ScheduledTask(
+        task_id="task-1",
+        name="隐藏任务",
+        description="disabled task",
+        prompt="执行隐藏任务",
+        trigger_type="schedule",
+        schedule_type="daily_8am",
+        enabled=False,
+        owner_user_id="someone-else",
+        owner_username="someone-else",
+        owner_display_name="Someone Else",
+    )
+    service.tasks[task.task_id] = task
+
+    response = client.get("/api/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert [item["task"]["task_id"] for item in response.json()] == ["task-1"]
 
 
 def test_create_event_task_with_multiple_users(monkeypatch):
@@ -318,8 +355,8 @@ def test_updating_custom_task_to_existing_mode_clears_tool_names(monkeypatch):
     assert response.json()["task"]["tool_names"] is None
 
 
-def test_update_ignores_legacy_steps_from_stale_client(monkeypatch):
-    """旧版前端 bundle 回传的 steps 必须被忽略，不得复活步骤包装。"""
+def test_update_ignores_unknown_client_fields(monkeypatch):
+    """客户端额外字段不得进入任务模型。"""
     client, service = _client(monkeypatch)
     created = client.post("/api/scheduled-tasks", json=_event_payload())
     task_id = created.json()["task"]["task_id"]
@@ -327,18 +364,13 @@ def test_update_ignores_legacy_steps_from_stale_client(monkeypatch):
     response = client.put(
         f"/api/scheduled-tasks/{task_id}",
         json={
-            "steps": [{
-                "step_id": "step_1",
-                "description": "遗留包装",
-                "agent_prompt": "旧提示词",
-                "timeout_seconds": 600,
-            }],
+            "unused_field": {"prompt": "旧提示词", "timeout_seconds": 600},
         },
     )
 
     assert response.status_code == 200
     updated = service.get_task(task_id)
-    assert "steps" not in updated.model_dump()
+    assert "unused_field" not in updated.model_dump()
     assert updated.timeout_seconds == 1800
 
 
