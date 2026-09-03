@@ -33,6 +33,7 @@ def report_chart_reference_paths() -> Dict[str, str]:
         "pollutant_calendar": str(REFERENCE_DIR / "pollutant-calendar.md"),
         "generic_pollutant_wind_rose": str(REFERENCE_DIR / "generic-pollutant-wind-rose.md"),
         "wind_timeseries": str(REFERENCE_DIR / "wind-timeseries.md"),
+        "weather_timeseries": str(REFERENCE_DIR / "weather-timeseries.md"),
         "aqi_calendar": str(REFERENCE_DIR / "aqi-calendar.md"),
         "pollutant_wind_rose": str(REFERENCE_DIR / "pollutant-wind-rose.md"),
     }
@@ -49,6 +50,8 @@ class CreateReportChartTool(LLMTool):
             "再且仅按选定 chart_type 读取一份对应图型文档；无需另读输入、A4 或布局规范。"
             "必须通过 data 或 file_path 至少提供一种数据输入。"
             "⚠️ **适用范围**：标准报告图表（bar/line/scatter/pie/histogram等）；"
+            "weather_timeseries 仅绘制单日风向、风速、温度、降水概率、湿度五要素，禁止叠加污染物或跨日期叠加；"
+            "仅 wind_timeseries/明确的组合图允许在气象背景上叠加污染物序列。"
             "如需复杂/自定义图表（3D图/多子图/科研图表），请使用 execute_python + matplotlib/seaborn/plotly。"
         )
         function_schema = {
@@ -87,6 +90,7 @@ class CreateReportChartTool(LLMTool):
                             "pollutant_calendar",
                             "generic_pollutant_wind_rose",
                             "wind_timeseries",
+                            "weather_timeseries",
                             "aqi_calendar",
                             "pollutant_wind_rose",
                         ],
@@ -140,6 +144,9 @@ class CreateReportChartTool(LLMTool):
                             "wind_direction_convention（meteorological_from 或 mathematical_to）；"
                             "直接提供 east_u/north_v 时无需该参数。"
                             "reference_lines 示例：[{axis:'y', value:100, label:'参考线'}]。"
+                            "line_width 可传正数控制折线宽度；weather_timeseries 支持 records、"
+                            "areas/risk_periods 及 time_field/wind_speed_field/wind_direction_degrees_field/"
+                            "temperature_field/precipitation_probability_field/humidity_field。"
                             "复杂视觉规则请先读取引用文档。"
                         ),
                     },
