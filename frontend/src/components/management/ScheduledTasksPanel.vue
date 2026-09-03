@@ -465,6 +465,11 @@
               <p class="history-case-brief">
                 {{ caseItem.distilled?.case_brief || caseItem.summary || '（无摘要）' }}
               </p>
+              <div v-if="caseDimensionTags(caseItem).length" class="history-case-dimensions">
+                <span v-for="tag in caseDimensionTags(caseItem)" :key="`${tag.label}:${tag.value}`">
+                  {{ tag.label }}：{{ tag.value }}
+                </span>
+              </div>
               <ul v-if="caseItem.distilled?.findings?.length" class="history-case-findings">
                 <li v-for="(finding, index) in caseItem.distilled.findings" :key="index">{{ finding }}</li>
               </ul>
@@ -722,6 +727,20 @@ const renderedMemory = computed(() => {
 
 const caseStatusKey = (status) => ({ succeeded: 'success', timeout: 'timeout' }[status] || 'failed')
 const caseStatusLabel = (status) => ({ succeeded: '成功', failed: '失败', timeout: '超时' }[status] || status || '未知')
+const caseDimensionTags = (caseItem) => {
+  const distilled = caseItem?.distilled || {}
+  const fields = [
+    ['cities', '城市'],
+    ['stations', '站点'],
+    ['pollutants', '污染物'],
+    ['event_types', '事件类型']
+  ]
+  return fields.flatMap(([field, label]) => (
+    Array.isArray(distilled[field])
+      ? distilled[field].map(value => ({ label, value }))
+      : []
+  ))
+}
 const consolidationStatusLabel = (status) => ({
   success: '成功',
   failed: '失败',
@@ -1832,6 +1851,22 @@ const saveTask = async () => {
   margin: 6px 0 0;
   font-size: 13px;
   color: #333;
+}
+
+.history-case-dimensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.history-case-dimensions span {
+  padding: 2px 6px;
+  border: 1px solid #d7dee8;
+  border-radius: 3px;
+  background: #f4f7f9;
+  color: #3f5268;
+  font-size: 11px;
 }
 
 .history-case-findings {
