@@ -19,7 +19,10 @@ from app.scheduled_tasks import (
     TriggerType,
 )
 from app.scheduled_tasks.models import WorkspaceEntry, HistoryLearningConfig
-from app.scheduled_tasks.storage.task_case_storage import TaskCaseStorage
+from app.scheduled_tasks.storage.task_case_storage import (
+    MemoryVersionConflictError,
+    TaskCaseStorage,
+)
 from app.scheduled_tasks.event_catalog import (
     EventDefinition,
     get_event_definition,
@@ -154,6 +157,7 @@ class TaskMemoryResponse(BaseModel):
 class UpdateTaskMemoryRequest(BaseModel):
     """人工编辑长期记忆请求"""
     content: str = Field(..., min_length=1, description="记忆 Markdown 全文")
+    expected_version: int = Field(..., ge=0, description="编辑时读取到的记忆版本")
 
 
 # ===== API端点 =====
@@ -762,12 +766,18 @@ async def update_task_history_memory(
                 "last_consolidation_status": "manual",
                 "updated_at": datetime.now().isoformat(),
             },
+            expected_version=request.expected_version,
         )
         return TaskMemoryResponse(
             memory=storage.read_memory(),
             meta=storage.read_meta(),
             case_count=storage.case_count(),
         )
+    except MemoryVersionConflictError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "memory_version_conflict", "message": str(e)},
+        ) from e
     except HTTPException:
         raise
     except Exception as e:

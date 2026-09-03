@@ -707,6 +707,7 @@ const memoryEditing = ref(false)
 const memoryDraft = ref('')
 const memorySaving = ref(false)
 const memoryEditError = ref('')
+let historyRequestToken = 0
 
 const md = new MarkdownIt({ breaks: true })
 const renderedMemory = computed(() => {
@@ -729,12 +730,15 @@ const formatHistoryTime = (timestamp) => {
 
 const loadHistoryData = async () => {
   if (!historyTask.value) return
+  const requestToken = ++historyRequestToken
+  const taskId = historyTask.value.task_id
   historyLoading.value = true
   historyError.value = ''
   const [casesResult, memoryResult] = await Promise.allSettled([
-    scheduledTasksStore.fetchTaskHistoryCases(historyTask.value.task_id, { limit: 50 }),
-    scheduledTasksStore.fetchTaskMemory(historyTask.value.task_id)
+    scheduledTasksStore.fetchTaskHistoryCases(taskId, { limit: 50 }),
+    scheduledTasksStore.fetchTaskMemory(taskId)
   ])
+  if (requestToken !== historyRequestToken || historyTask.value?.task_id !== taskId) return
   if (casesResult.status === 'fulfilled') {
     historyCases.value = casesResult.value.cases
     historyCasesTotal.value = casesResult.value.total
@@ -766,6 +770,7 @@ const openHistoryDialog = async (task) => {
 }
 
 const closeHistoryDialog = () => {
+  historyRequestToken += 1
   showHistoryDialog.value = false
   historyTask.value = null
   historyCases.value = []
@@ -799,12 +804,15 @@ const saveMemoryEdit = async () => {
   try {
     historyMemory.value = await scheduledTasksStore.updateTaskMemory(
       historyTask.value.task_id,
-      content
+      content,
+      historyMemory.value?.meta?.version ?? 0
     )
     memoryEditing.value = false
   } catch (error) {
     console.error('Failed to save task memory:', error)
-    memoryEditError.value = '保存失败：' + (error.message || '未知错误')
+    memoryEditError.value = error.status === 409
+      ? '记忆已被其他操作更新，请重新加载后再编辑'
+      : '保存失败：' + (error.message || '未知错误')
   } finally {
     memorySaving.value = false
   }

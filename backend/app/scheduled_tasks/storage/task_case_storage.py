@@ -11,10 +11,17 @@
 """
 import json
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import fcntl
+
 from app.utils.path_config import get_data_registry
+
+
+class MemoryVersionConflictError(RuntimeError):
+    """Raised when a memory update was based on a stale version."""
 
 
 class TaskCaseStorage:
@@ -29,13 +36,24 @@ class TaskCaseStorage:
         self.cases_file = self.task_dir / "cases.jsonl"
         self.memory_file = self.task_dir / "MEMORY.md"
         self.meta_file = self.task_dir / "memory_meta.json"
+        self.lock_file = self.task_dir / ".history.lock"
+
+    @contextmanager
+    def _lock(self):
+        self.task_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.lock_file, "a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def append_case(self, case: dict[str, Any]) -> None:
         """追加一条案例（JSONL），并按需裁剪案例库。"""
-        self.task_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.cases_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(case, ensure_ascii=False, default=str) + "\n")
-        self._prune_cases()
+        with self._lock():
+            with open(self.cases_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(case, ensure_ascii=False, default=str) + "\n")
+            self._prune_cases()
 
     def _prune_cases(self) -> None:
         try:
@@ -85,16 +103,34 @@ class TaskCaseStorage:
         except FileNotFoundError:
             return ""
 
-    def write_memory(self, content: str, meta: dict[str, Any]) -> None:
-        """覆盖写入长期记忆与巩固元信息（原子替换）。"""
-        self.task_dir.mkdir(parents=True, exist_ok=True)
+    def write_memory(
+        self,
+        content: str,
+        meta: dict[str, Any],
+        *,
+        expected_version: int | None = None,
+    ) -> None:
+        """Atomically write memory and metadata, optionally checking its version."""
+        with self._lock():
+            current_meta = self._read_meta_unlocked()
+            current_version = int(current_meta.get("version", 0))
+            if expected_version is not None and current_version != expected_version:
+                raise MemoryVersionConflictError(
+                    f"memory version changed from {expected_version} to {current_version}"
+                )
+            self._write_memory_unlocked(content, meta)
+
+    def _write_memory_unlocked(self, content: str, meta: dict[str, Any]) -> None:
         tmp = self.memory_file.with_suffix(".md.tmp")
         tmp.write_text(content.rstrip() + "\n", encoding="utf-8")
         tmp.replace(self.memory_file)
-        self.write_meta(meta)
+        self._write_meta_unlocked(meta)
 
     def write_meta(self, meta: dict[str, Any]) -> None:
-        self.task_dir.mkdir(parents=True, exist_ok=True)
+        with self._lock():
+            self._write_meta_unlocked(meta)
+
+    def _write_meta_unlocked(self, meta: dict[str, Any]) -> None:
         tmp = self.meta_file.with_suffix(".json.tmp")
         tmp.write_text(
             json.dumps(meta, ensure_ascii=False, indent=2, default=str),
@@ -103,6 +139,9 @@ class TaskCaseStorage:
         tmp.replace(self.meta_file)
 
     def read_meta(self) -> dict[str, Any]:
+        return self._read_meta_unlocked()
+
+    def _read_meta_unlocked(self) -> dict[str, Any]:
         try:
             return json.loads(self.meta_file.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):

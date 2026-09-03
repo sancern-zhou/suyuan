@@ -117,7 +117,7 @@ def test_history_endpoints_roundtrip():
             # 人工编辑记忆：版本递增并标记 manual
             resp = client.put(
                 f"/api/scheduled-tasks/{task.task_id}/history/memory",
-                json={"content": "# 任务记忆：人工修正\n## 当前关注\n站点A"},
+                json={"content": "# 任务记忆：人工修正\n## 当前关注\n站点A", "expected_version": 5},
             )
             assert resp.status_code == 200
             body = resp.json()
@@ -125,10 +125,17 @@ def test_history_endpoints_roundtrip():
             assert body["meta"]["last_consolidation_status"] == "manual"
             assert "人工修正" in body["memory"]
 
+            # 过期版本不得覆盖最新记忆
+            resp = client.put(
+                f"/api/scheduled-tasks/{task.task_id}/history/memory",
+                json={"content": "# 过期编辑", "expected_version": 5},
+            )
+            assert resp.status_code == 409
+
             # 空内容被拒绝
             resp = client.put(
                 f"/api/scheduled-tasks/{task.task_id}/history/memory",
-                json={"content": ""},
+                json={"content": "", "expected_version": 6},
             )
             assert resp.status_code == 422
         print("[OK] 历史记忆端点往返测试通过")
@@ -154,7 +161,7 @@ def test_history_access_control():
                 ("get", f"/api/scheduled-tasks/{task.task_id}/history/memory"),
                 ("put", f"/api/scheduled-tasks/{task.task_id}/history/memory"),
             ]:
-                kwargs = {"json": {"content": "x"}} if method == "put" else {}
+                kwargs = {"json": {"content": "x", "expected_version": 0}} if method == "put" else {}
                 resp = getattr(client, method)(url, **kwargs)
                 assert resp.status_code == 404, (method, resp.status_code)
 

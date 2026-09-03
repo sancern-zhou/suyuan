@@ -17,7 +17,7 @@ import structlog
 from .models.event import TaskEvent
 from .models.execution import ExecutionStatus, TaskExecution
 from .models.task import ScheduledTask
-from .storage.task_case_storage import TaskCaseStorage
+from .storage.task_case_storage import MemoryVersionConflictError, TaskCaseStorage
 
 logger = structlog.get_logger()
 
@@ -236,21 +236,24 @@ def build_history_section(task: ScheduledTask, storage: TaskCaseStorage) -> str 
     return "\n\n".join(parts)
 
 
-def _parse_consolidation_response(content: str) -> tuple[dict, str] | None:
+def _parse_consolidation_response(content: str | dict) -> tuple[dict, str] | None:
     """解析巩固调用输出：{"case": {...}, "memory": "<markdown>"}。"""
-    text = (content or "").strip()
-    if "```" in text:
-        for part in text.split("```"):
-            candidate = part.strip()
-            if candidate.startswith("json"):
-                candidate = candidate[4:].strip()
-            if candidate.startswith("{"):
-                text = candidate
-                break
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
+    if isinstance(content, dict):
+        data = content
+    else:
+        text = (content or "").strip()
+        if "```" in text:
+            for part in text.split("```"):
+                candidate = part.strip()
+                if candidate.startswith("json"):
+                    candidate = candidate[4:].strip()
+                if candidate.startswith("{"):
+                    text = candidate
+                    break
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
     if not isinstance(data, dict):
         return None
     case_part = data.get("case")
@@ -276,7 +279,7 @@ async def _consolidation_call(
     case: dict,
     agent_result: dict,
     memory_budget: int,
-) -> tuple[dict, str] | None:
+) -> tuple[dict, str]:
     """一次 LLM 巩固调用：同时产出蒸馏案例与新版长期记忆；失败重试一次。"""
     from app.services.llm_service import LLMService
 
@@ -297,17 +300,15 @@ async def _consolidation_call(
         memory_budget=memory_budget,
     )
     llm_service = LLMService()
+    llm_service.temperature = 0.2
+    last_error: Exception = RuntimeError("consolidation failed")
     for _attempt in range(2):
         try:
-            response = await llm_service.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=3000,
-            )
+            response = await llm_service.call_llm_with_json_response(prompt, max_retries=1)
             parsed = _parse_consolidation_response(response)
             if parsed is not None:
                 return parsed
-            last_error: Exception = ValueError("consolidation response unparsable")
+            last_error = ValueError("consolidation response schema invalid")
         except Exception as error:  # noqa: BLE001 - 巩固失败必须降级而不是中断收尾
             last_error = error
         logger.warning(
@@ -315,7 +316,7 @@ async def _consolidation_call(
             task_id=task.task_id,
             error=str(last_error),
         )
-    return None
+    raise last_error
 
 
 async def finalize_execution(
@@ -332,13 +333,16 @@ async def finalize_execution(
     """
     config = task.history_learning
     case = build_case(execution=execution, event=event, agent_result=agent_result)
+    base_meta = storage.read_meta()
+    base_version = int(base_meta.get("version", 0))
+    old_memory = storage.read_memory()
     consolidate_error: str | None = None
     outcome: tuple[dict, str] | None = None
     try:
         outcome = await asyncio.wait_for(
             _consolidation_call(
                 task=task,
-                old_memory=storage.read_memory(),
+                old_memory=old_memory,
                 case=case,
                 agent_result=agent_result,
                 memory_budget=config.memory_char_budget,
@@ -355,16 +359,26 @@ async def finalize_execution(
         distilled, memory_md = outcome
         case["distilled"] = distilled
         storage.append_case(case)
-        storage.write_memory(
-            memory_md,
-            {
-                "version": int(meta.get("version", 0)) + 1,
-                "last_execution_id": execution.execution_id,
-                "last_consolidation_status": "success",
-                "consolidation_failures": 0,
-                "updated_at": datetime.now().isoformat(),
-            },
-        )
+        try:
+            storage.write_memory(
+                memory_md,
+                {
+                    "version": base_version + 1,
+                    "last_execution_id": execution.execution_id,
+                    "last_consolidation_status": "success",
+                    "consolidation_failures": 0,
+                    "updated_at": datetime.now().isoformat(),
+                },
+                expected_version=base_version,
+            )
+        except MemoryVersionConflictError:
+            logger.info(
+                "scheduled_task_consolidation_stale_memory",
+                task_id=task.task_id,
+                execution_id=execution.execution_id,
+                expected_version=base_version,
+                current_version=int(storage.read_meta().get("version", 0)),
+            )
     else:
         fallback = str((agent_result or {}).get("summary") or "").strip()
         if fallback:

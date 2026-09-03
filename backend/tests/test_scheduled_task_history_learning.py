@@ -7,11 +7,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.scheduled_tasks import history_learning
 from app.scheduled_tasks.executor.task_executor import ScheduledTaskExecutor
 from app.scheduled_tasks.history_learning import (
+    _consolidation_call,
     build_case,
     build_history_section,
     finalize_execution,
@@ -209,6 +212,7 @@ class TestFinalizeExecution:
         meta = storage.read_meta()
         assert meta["last_consolidation_status"] == "failed"
         assert meta["consolidation_failures"] == 1
+        assert meta["last_consolidation_error"] == "llm down"
 
     def test_timeout_degrades(self, tmp_path, monkeypatch):
         task = _make_task(history_learning=HistoryLearningConfig(consolidation_timeout_seconds=1))
@@ -221,6 +225,65 @@ class TestFinalizeExecution:
         assert "distilled" not in case
         assert storage.case_count() == 1
         assert storage.read_meta()["last_consolidation_status"] == "failed"
+
+
+class TestConsolidationCall:
+    def test_uses_protocol_aware_json_api(self, monkeypatch):
+        calls = []
+        response = {
+            "case": {"case_brief": "完成站点分析", "findings": ["PM10 超标"]},
+            "memory": "# 任务记忆：站点污染分析\n## 使命与背景\n分析污染",
+        }
+
+        class FakeLLMService:
+            temperature = None
+
+            async def call_llm_with_json_response(self, prompt, max_retries=2):
+                calls.append((prompt, max_retries, self.temperature))
+                return response
+
+        monkeypatch.setattr("app.services.llm_service.LLMService", FakeLLMService)
+
+        result = asyncio.run(
+            _consolidation_call(
+                task=_make_task(),
+                old_memory="",
+                case=build_case(_make_execution(), _make_event(), _agent_result()),
+                agent_result=_agent_result(),
+                memory_budget=6000,
+            )
+        )
+
+        assert result[0]["case_brief"] == "完成站点分析"
+        assert result[1].startswith("# 任务记忆")
+        assert len(calls) == 1
+        assert calls[0][1:] == (1, 0.2)
+
+    def test_propagates_last_provider_error_after_retry(self, monkeypatch):
+        attempts = 0
+
+        class FakeLLMService:
+            temperature = None
+
+            async def call_llm_with_json_response(self, prompt, max_retries=2):
+                nonlocal attempts
+                attempts += 1
+                raise RuntimeError("401 Unauthorized")
+
+        monkeypatch.setattr("app.services.llm_service.LLMService", FakeLLMService)
+
+        with pytest.raises(RuntimeError, match="401 Unauthorized"):
+            asyncio.run(
+                _consolidation_call(
+                    task=_make_task(),
+                    old_memory="",
+                    case=build_case(_make_execution(), _make_event(), _agent_result()),
+                    agent_result=_agent_result(),
+                    memory_budget=6000,
+                )
+            )
+
+        assert attempts == 2
 
 
 class _StubAgent:

@@ -148,16 +148,18 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       };
     },
 
-    async updateTaskMemory(taskId, content) {
+    async updateTaskMemory(taskId, content, expectedVersion) {
       const response = await authFetch(`${API_BASE}/${taskId}/history/memory`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ content, expected_version: expectedVersion })
       });
       if (!response.ok) {
-        throw new Error(await responseErrorMessage(response, '长期记忆保存失败'));
+        const error = new Error(await responseErrorMessage(response, '长期记忆保存失败'));
+        error.status = response.status;
+        throw error;
       }
       const data = await response.json();
       return {
