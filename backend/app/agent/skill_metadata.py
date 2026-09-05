@@ -2,6 +2,27 @@
 
 SKILL_METADATA = {
     "air_quality_data_quality_analysis": {"enabled": True, "aliases": [], "required_tools": []},
+    "archify": {
+        "enabled": True,
+        "aliases": [
+            "架构图",
+            "流程图",
+            "时序图",
+            "序列图",
+            "数据流图",
+            "生命周期图",
+            "Mermaid美化",
+            "Mermaid转换",
+        ],
+        "required_tools": [
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_directory",
+            "search_files",
+            "grep",
+        ],
+    },
     "city_pollution_process_analysis": {"enabled": True, "aliases": [], "required_tools": []},
     "fault_work_order_analysis": {
         "enabled": True,

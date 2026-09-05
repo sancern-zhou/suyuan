@@ -18,39 +18,13 @@ from typing import Dict, Iterable, List
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
-    "publish_session_file",
-    # 浏览
-    "list_directory", "search_files", "read_file",
-
-    # Office
-    "manage_editable_ppt", "create_pptx_with_ppt_master", "validate_pptx",
-
-    # 报告/展示产物
-    "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact",
-
-    # 编辑
-    "write_file", "edit_file", "grep",
-
-    # 执行
-    "bash", "create_report_chart", "execute_python",
-    "get_platform_weather_image", "browser",
-
-    # 知识库检索
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
-    # 数据查询
-    "qianlima_realtime_tender", "execute_tender_sql_query",
-
-    # 任务和技能
-    "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
-
-    # 网络和通知
-    "web_search", "web_fetch", "broadcast_social_users",
-
-    # CLI会话管理
-    "cli_session", "terminal_session",
-
-    # 模式互调
+    # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
+    "list_directory", "search_files", "read_file", "write_file", "edit_file", "grep",
+    "create_html_artifact", "create_report_package", "render_report_package", "validate_report_package",
+    # 轻量数据计算与网页检索抓取。
+    "execute_python", "web_search", "web_fetch", "browser",
+    # 任务调度、技能目录和重型工作空间委托。
+    "create_scheduled_task", "wait_task", "list_skills", "view_skill",
     "call_sub_agent",
 ]
 

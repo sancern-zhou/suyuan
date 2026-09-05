@@ -304,6 +304,13 @@ class AgentRuntime:
             self._enforce_custom_tool_terminal_rules(state, action, records)
             for event in tool_events:
                 yield event
+            interaction = self._interaction_from_observation(observation)
+            if interaction is not None:
+                async for event in self._finish_for_interaction(
+                    state, planner_result, interaction
+                ):
+                    yield event
+                return
             async for event in self.observation_processor.process(state, planner_result, action, observation):
                 yield event
             return
@@ -1096,6 +1103,14 @@ class AgentRuntime:
         self.writer.add_iteration(planner_result.thought, action, observation)
         self._enforce_custom_tool_terminal_rules(state, action, records)
 
+        interaction = self._interaction_from_observation(observation)
+        if interaction is not None:
+            async for event in self._finish_for_interaction(
+                state, planner_result, interaction
+            ):
+                yield event
+            return
+
         async for event in self.observation_processor.process(state, planner_result, action, observation):
             yield event
 
@@ -1213,6 +1228,39 @@ class AgentRuntime:
     def _raise_if_cancelled(self) -> None:
         if self.config.cancel_event and self.config.cancel_event.is_set():
             raise AgentRunCancelled("用户已暂停本轮分析")
+
+    @staticmethod
+    def _interaction_from_observation(
+        observation: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(observation, dict):
+            return None
+        metadata = observation.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        interaction = metadata.get("interaction_required")
+        if not isinstance(interaction, dict) or interaction.get("kind") != "approval":
+            return None
+        return interaction
+
+    async def _finish_for_interaction(
+        self,
+        state: RunState,
+        planner_result: PlannerResult,
+        interaction: Dict[str, Any],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """End this run cleanly while the client waits for an approval."""
+        self._ensure_user_message_written(state)
+        state.response_text = "已暂停，等待用户审批后继续。"
+        state.task_completed = True
+        yield self.events.interaction_required(state, interaction)
+        async for event in self.finalizer.complete(
+            state,
+            state.response_text,
+            planner_result=planner_result,
+            thought=planner_result.thought,
+        ):
+            yield event
 
     def _format_observation(self, observation: Dict[str, Any]) -> str:
         import json

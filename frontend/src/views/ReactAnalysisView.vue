@@ -6,6 +6,12 @@
       @restore="handleSessionRestoreAndClosePanel"
     />
 
+    <AgentInteractionDialog
+      :interaction="store.pendingInteraction"
+      @resolve="handleInteractionResolve"
+      @close="handleInteractionClose"
+    />
+
     <!-- 主布局 -->
     <MainLayout
       ref="mainLayoutRef"
@@ -169,6 +175,7 @@ import SessionManagerModal from '@/components/SessionManagerModal.vue'
 import KnowledgeBaseCreateDialog from '@/components/reactAnalysis/dialogs/KnowledgeBaseCreateDialog.vue'
 import KnowledgeBaseEditDialog from '@/components/reactAnalysis/dialogs/KnowledgeBaseEditDialog.vue'
 import KnowledgeBaseChunksDialog from '@/components/reactAnalysis/dialogs/KnowledgeBaseChunksDialog.vue'
+import AgentInteractionDialog from '@/components/reactAnalysis/dialogs/AgentInteractionDialog.vue'
 
 // Stores
 const route = useRoute()
@@ -299,6 +306,18 @@ const agentPlatformError = ref('')
 const showKbCreateDialog = computed(() => dialogs.value.kbCreate)
 const showKbEditDialog = computed(() => dialogs.value.kbEdit)
 const showKbChunksDialog = computed(() => dialogs.value.kbChunks)
+
+const handleInteractionResolve = async (resolution) => {
+  try {
+    await store.resolvePendingInteraction(resolution)
+  } catch (error) {
+    console.error('[agent-interaction] resolution failed:', error)
+  }
+}
+
+const handleInteractionClose = () => {
+  void handleInteractionResolve({ decision: 'reject', response: null })
+}
 
 // ========== 计算属性 ==========
 

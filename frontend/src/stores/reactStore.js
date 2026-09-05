@@ -30,6 +30,7 @@ import {
 } from '../components/board/boardVersionHistory.js'
 import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
 import { autoSaveSession } from '../api/session.js'
+import { resolveAgentInteraction } from '../api/agentInteraction.js'
 import { useSessionResourceStore } from './sessionResourceStore.js'
 import { applyResourceStreamEvent } from '../services/sessionResourceLifecycle.js'
 import {
@@ -334,6 +335,7 @@ const createEmptyModeState = () => ({
   activeRunId: null,
   ignoredRunIds: [],
   pendingPausedRunId: null,
+  workspace: null,
   isAnalyzing: false,
   error: null,
   isInterruption: false,
@@ -423,7 +425,8 @@ export const useReactStore = defineStore('react', {
       activeSessionByMode: {},
 
       // 工具列表（全局共享）
-      availableTools: []
+      availableTools: [],
+      pendingInteraction: null
     }
   },
 
@@ -641,6 +644,19 @@ export const useReactStore = defineStore('react', {
 
       console.log('[switchMode] Switching from', this.currentMode, 'to', newMode)
 
+      if (newMode === 'assistant' && this.currentState?.workspace?.sticky) {
+        const workspaceState = this.currentState
+        workspaceState.mode = 'assistant'
+        workspaceState.workspace = {
+          ...workspaceState.workspace,
+          sticky: false,
+          status: 'released'
+        }
+        if (workspaceState.sessionId) {
+          this.activeSessionByMode.assistant = workspaceState.sessionId
+        }
+      }
+
       // 1. 保存当前模式状态到 localStorage
       this._persistModeState(this.currentMode)
 
@@ -658,6 +674,60 @@ export const useReactStore = defineStore('react', {
       console.log('[switchMode] Old mode running:', this.modeStates[oldMode]?.isAnalyzing)
       console.log('[switchMode] New mode running:', this.modeStates[newMode]?.isAnalyzing)
       console.log('[switchMode] ✅ Multi-mode parallel working enabled')
+    },
+
+    /** Activate a server-authorized persistent specialist workspace. */
+    promoteToWorkspace(promotion = {}) {
+      const { target_mode: targetMode, session_id: sessionId } = promotion
+      if (!VALID_MODES.includes(targetMode) || !sessionId) return false
+
+      const state = this._ensureSessionState(sessionId, targetMode)
+      state.mode = targetMode
+      state.workspace = {
+        type: promotion.workspace_type || targetMode,
+        artifactId: promotion.artifact_id || null,
+        reason: promotion.reason || 'artifact_editing',
+        sticky: true
+      }
+      this.activeSessionByMode[targetMode] = sessionId
+      this.currentMode = targetMode
+      localStorage.setItem('current-mode', targetMode)
+      this._persistModeState(targetMode)
+      return true
+    },
+
+    async resolvePendingInteraction({ decision, response = null } = {}) {
+      const interaction = this.pendingInteraction
+      if (!interaction?.interaction_id || !interaction.session_id) return false
+      const resolution = await resolveAgentInteraction(
+        interaction.session_id,
+        interaction.interaction_id,
+        { decision, response }
+      )
+      this.pendingInteraction = null
+      if (decision === 'approve' && interaction.promotion) {
+        const promoted = this.promoteToWorkspace({
+          ...interaction.promotion,
+          session_id: interaction.session_id
+        })
+        const pendingRequest = resolution?.pending_request || interaction.pending_request
+        if (promoted && pendingRequest?.goal) {
+          const contextSuffix = pendingRequest.context_str
+            ? `\n\n补充上下文：${pendingRequest.context_str}`
+            : ''
+          await this.startAnalysis(
+            `${pendingRequest.goal}${contextSuffix}`,
+            {
+              agentMode: pendingRequest.target_mode || interaction.promotion.target_mode,
+              skillIds: pendingRequest.skill_ids || [],
+              synthetic: true,
+              syntheticMeta: { source: 'workspace_approval_resume' }
+            }
+          )
+        }
+        return promoted
+      }
+      return true
     },
 
     /**
@@ -678,6 +748,7 @@ export const useReactStore = defineStore('react', {
 
       const stateToSave = {
         sessionId: modeState.sessionId,
+        workspace: modeState.workspace,
         isAnalyzing: modeState.isAnalyzing,
         error: modeState.error,
         isInterruption: modeState.isInterruption,
@@ -1411,6 +1482,14 @@ export const useReactStore = defineStore('react', {
       }
 
       switch (type) {
+        case 'workspace_promoted': {
+          this.promoteToWorkspace(data || {})
+          break
+        }
+        case 'interaction_required': {
+          this.pendingInteraction = data || null
+          break
+        }
         case 'start': {
           // 分析开始
           const runId = getEventRunId(event)

@@ -160,6 +160,50 @@ def test_super_admin_account_can_see_disabled_tasks(monkeypatch):
     assert [item["task"]["task_id"] for item in response.json()] == ["task-1"]
 
 
+def test_non_admin_can_see_system_workspace_task(monkeypatch):
+    client, service = _client(
+        monkeypatch,
+        user=CurrentUser(
+            id="viewer-1",
+            username="viewer",
+            display_name="普通用户",
+            is_admin=False,
+            auth_source="company",
+        ),
+    )
+    hidden_task = routes.ScheduledTask(
+        task_id="task-hidden",
+        name="其他用户任务",
+        description="foreign task",
+        prompt="执行其他用户任务",
+        trigger_type="schedule",
+        schedule_type="daily_8am",
+        owner_user_id="someone-else",
+        owner_username="someone-else",
+        owner_display_name="Someone Else",
+    )
+    workspace_task = routes.ScheduledTask(
+        task_id="task-system",
+        name="系统工作区任务",
+        description="system workspace task",
+        prompt="执行系统工作区任务",
+        trigger_type="schedule",
+        schedule_type="daily_8am",
+        created_by="system",
+        owner_user_id="system",
+        owner_username="scheduled-task",
+        owner_display_name="定时任务",
+        workspace_entry=routes.WorkspaceEntry(enabled=True, title="系统工作区任务"),
+    )
+    service.tasks[hidden_task.task_id] = hidden_task
+    service.tasks[workspace_task.task_id] = workspace_task
+
+    response = client.get("/api/scheduled-tasks")
+
+    assert response.status_code == 200
+    assert [item["task"]["task_id"] for item in response.json()] == ["task-system"]
+
+
 def test_create_event_task_with_multiple_users(monkeypatch):
     client, _ = _client(monkeypatch)
 

@@ -98,6 +98,12 @@ export function useSessionRestore(options) {
 
       // 6. 恢复会话状态
       store.setSessionId(sessionData.session_id)
+      if (sessionData.metadata?.pending_interaction) {
+        store.pendingInteraction = {
+          ...sessionData.metadata.pending_interaction,
+          session_id: sessionData.session_id
+        }
+      }
       if (sessionData.state === 'completed') {
         store.setComplete(true)
       }
@@ -160,6 +166,11 @@ export function useSessionRestore(options) {
    * 从会话数据中提取模式
    */
   function extractModeFromSession(sessionData, sessionId) {
+    // A promoted workspace is authoritative for subsequent turns.
+    if (sessionData.metadata?.workspace_mode) {
+      return sessionData.metadata.workspace_mode
+    }
+
     // 优先级：metadata.mode > session_id前缀
     if (sessionData.metadata?.mode) {
       return sessionData.metadata.mode

@@ -20,6 +20,7 @@ class ScheduleType(str, Enum):
     ONCE = "once"                # 一次性任务（需指定run_at）
     INTERVAL = "interval"        # 自定义间隔（需指定interval_minutes）
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
+    WEEKLY_CUSTOM = "weekly_custom"  # 每周自定义时间（需指定day_of_week、hour和minute）
 
 
 class TriggerType(str, Enum):
@@ -73,7 +74,7 @@ class ScheduledTask(BaseModel):
     description: str = Field(..., description="任务描述")
     execution_mode: str = Field(
         default="expert",
-        description="执行模式（assistant/expert/query/social/custom）"
+        description="执行模式（assistant/expert/ops/query/social/custom）"
     )
     tool_names: Optional[List[str]] = Field(
         default=None,
@@ -102,6 +103,10 @@ class ScheduledTask(BaseModel):
     interval_minutes: Optional[int] = Field(default=None, description="自定义间隔分钟数（schedule_type=interval时必填）")
     hour: Optional[int] = Field(default=None, description="每天执行的小时（schedule_type=daily_custom时必填，0-23）")
     minute: Optional[int] = Field(default=None, description="每天执行的分钟（schedule_type=daily_custom时必填，0-59）")
+    day_of_week: Optional[int] = Field(
+        default=None,
+        description="每周执行的星期（schedule_type=weekly_custom时必填，0=周一，6=周日）",
+    )
 
     # 一个定时任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
     # 不存在预配置的多步骤机制（历史 steps 字段已彻底移除）。
@@ -172,6 +177,15 @@ class ScheduledTask(BaseModel):
             raise ValueError("schedule_type is required for schedule tasks")
         if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():
             raise ValueError("event_type is required for event tasks")
+        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type == ScheduleType.WEEKLY_CUSTOM:
+            if self.day_of_week is None or self.hour is None or self.minute is None:
+                raise ValueError("day_of_week, hour and minute are required for weekly_custom schedule")
+            if not 0 <= self.day_of_week <= 6:
+                raise ValueError("day_of_week must be between 0 and 6")
+            if not 0 <= self.hour <= 23:
+                raise ValueError("hour must be between 0 and 23")
+            if not 0 <= self.minute <= 59:
+                raise ValueError("minute must be between 0 and 59")
         if self.broadcast_enabled and not self.target_user_ids:
             raise ValueError("target_user_ids is required when broadcast_enabled=true")
         return self

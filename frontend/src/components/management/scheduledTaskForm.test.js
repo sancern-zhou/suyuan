@@ -145,6 +145,27 @@ test('keeps schedule fields for schedule tasks', () => {
 })
 
 
+test('weekly custom schedule preserves weekday and time fields', () => {
+  const payload = buildTaskPayload({
+    name: '工单周审',
+    description: '审核运维工单',
+    execution_mode: 'ops',
+    trigger_type: 'schedule',
+    schedule_type: 'weekly_custom',
+    day_of_week: 4,
+    hour: 9,
+    minute: 30,
+    enabled: true
+  })
+
+  assert.equal(payload.execution_mode, 'ops')
+  assert.equal(payload.schedule_type, 'weekly_custom')
+  assert.equal(payload.day_of_week, 4)
+  assert.equal(payload.hour, 9)
+  assert.equal(payload.minute, 30)
+})
+
+
 test('schedule and event payloads both preserve selected skill context', () => {
   const schedule = buildTaskPayload({
     name: '定时诊断',

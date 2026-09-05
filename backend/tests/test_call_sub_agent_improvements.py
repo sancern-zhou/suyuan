@@ -10,6 +10,7 @@
 
 import asyncio
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 # 添加项目路径
@@ -38,12 +39,43 @@ def test_function_schema():
     assert "goal" in properties, "应该包含 goal 参数"
     assert "context" in properties, "应该包含 context 参数"
     assert "workspace_path" in properties, "应该包含 workspace_path 参数"
+    assert properties["skill_ids"]["maxItems"] == 1, "skill_ids 应限制为单个技能"
 
     # 检查旧参数是否仍然存在
     assert "task_description" in properties, "应该包含 task_description 参数（向后兼容）"
     assert "context_supplement" in properties, "应该包含 context_supplement 参数（向后兼容）"
 
     print("✅ function_schema 检查通过")
+
+
+def test_workspace_promotion_waits_for_approval_before_starting_child():
+    """持续工作空间请求只生成审批数据，不创建或运行子 Agent。"""
+    tool = CallSubAgentTool()
+    context = SimpleNamespace(session_id="web-session-1", manual_mode="assistant")
+
+    result = asyncio.run(
+        tool.execute(
+            context=context,
+            target_mode="board",
+            goal="绘制系统架构图",
+            context_str="遵循项目架构规范",
+            workspace_path="/tmp/board-workspace",
+            skill_ids=["archify"],
+            promote_to_workspace=True,
+        )
+    )
+
+    assert result["status"] == "pending"
+    assert result["metadata"]["interaction_required"]["kind"] == "approval"
+    pending = result["metadata"]["interaction_required"]["pending_request"]
+    assert pending == {
+        "target_mode": "board",
+        "goal": "绘制系统架构图",
+        "context_str": "遵循项目架构规范",
+        "workspace_path": "/tmp/board-workspace",
+        "session_id": "web-session-1",
+        "skill_ids": ["archify"],
+    }
 
 
 def test_parameter_normalization():
