@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi import FastAPI, Header
 from fastapi.testclient import TestClient
@@ -178,6 +180,27 @@ def test_graph_build_requires_confirmed_scene(graph_api):
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "scene_confirmation_required"
+
+
+@pytest.mark.asyncio
+async def test_graph_build_recovery_uses_database_session_factory(monkeypatch):
+    from app.api import knowledge_graph_routes
+
+    factories = []
+
+    class CancelRecovery:
+        def __init__(self, session_factory):
+            factories.append(session_factory)
+
+        async def recover_expired_tasks(self):
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(knowledge_graph_routes, "GraphBuildService", CancelRecovery)
+
+    with pytest.raises(asyncio.CancelledError):
+        await knowledge_graph_routes._graph_build_recovery_loop()
+
+    assert factories == [knowledge_graph_routes.async_session]
 
 
 def test_graph_snapshot_returns_complete_selected_statuses(graph_api):
