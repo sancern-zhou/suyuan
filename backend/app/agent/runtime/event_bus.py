@@ -155,6 +155,23 @@ class RuntimeEventBus:
             "data": data,
         }
 
+    def interaction_required(
+        self,
+        state: RunState,
+        interaction: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Pause the run while a user-facing interaction is pending."""
+        return {
+            "type": "interaction_required",
+            "stream": "lifecycle",
+            "data": {
+                **interaction,
+                "session_id": state.session_id,
+                "run_id": state.run_id,
+                "timestamp": datetime.now().isoformat(),
+            },
+        }
+
     def agent_finish(self, state: RunState, thought: Any = None) -> Dict[str, Any]:
         return {
             "type": "agent_finish",

@@ -25,10 +25,28 @@ logger = structlog.get_logger()
 CASE_SUMMARY_MAX_CHARS = 600
 FALLBACK_BRIEF_MAX_CHARS = 120
 ERROR_MAX_CHARS = 300
-TRIGGER_DIGEST_MAX_CHARS = 200
 MAX_OUTPUTS = 10
 MAX_ERRORS = 5
 MAX_FINDINGS = 5
+MAX_DIMENSION_VALUES = 10
+MAX_DIMENSION_VALUE_CHARS = 80
+
+_CASE_DIMENSION_FIELDS = ("cities", "stations", "pollutants")
+_CASE_DIMENSION_LABELS = {
+    "cities": "城市",
+    "stations": "站点",
+    "pollutants": "污染物",
+}
+_EVENT_DIMENSION_ATTRIBUTE_KEYS = {
+    "cities": ("city", "city_name"),
+    "stations": ("station_id", "station_name"),
+    "pollutants": ("pollutant", "target_pollutant"),
+}
+_EVENT_ATTRIBUTE_ENRICHMENT_KEYS = {
+    key
+    for keys in _EVENT_DIMENSION_ATTRIBUTE_KEYS.values()
+    for key in keys
+}
 
 # 巩固调用输入材料的截断上限
 LLM_SUMMARY_MAX_CHARS = 3000
@@ -76,7 +94,10 @@ _CONSOLIDATION_PROMPT_TEMPLATE = """你是定时任务的执行记忆巩固器�
 {{
   "case": {{
     "case_brief": "不超过80字：本次做了什么、结论如何",
-    "findings": ["不超过5条，每条不超过60字，仅陈述本次确认的事实发现；无则空数组"]
+    "findings": ["不超过5条，每条不超过60字，仅陈述本次确认的事实发现；无则空数组"],
+    "cities": ["可选：本次案例明确涉及的城市名称"],
+    "stations": ["可选：本次案例明确涉及的站点名称"],
+    "pollutants": ["可选：本次案例明确涉及的污染物标准名称"]
   }},
   "memory": "长期记忆 Markdown 全文（JSON 字符串，保留换行）"
 }}
@@ -92,21 +113,8 @@ memory 必须沿用固定骨架：
 memory 改写规则：
 - 基于当前长期记忆增量改写：仍然有效的保留、本次新发现的合并、已过时的删除；首次执行则初始化「使命与背景」。
 - 「当前关注」只保留仍值得下次跟进的事项（滚动更新，不超过5条）。
+- cities、stations、pollutants 仅从本次执行材料中提取；触发上下文已有对应属性时省略，无法确认时省略或返回空数组，禁止猜测。
 - 只依据给定材料，不编造；总长不超过 {memory_budget} 字符。"""
-
-
-def _trigger_digest(event: TaskEvent | None) -> str | None:
-    """事件触发上下文摘要（调度触发返回 None，时间由 started_at 表达）。"""
-    if event is None:
-        return None
-    parts = [event.event_type]
-    for key, value in event.attributes.items():
-        if isinstance(value, (bool, int, float, str)):
-            parts.append(f"{key}={value}")
-    digest = "; ".join(parts)
-    if len(digest) > TRIGGER_DIGEST_MAX_CHARS:
-        digest = digest[:TRIGGER_DIGEST_MAX_CHARS] + "…"
-    return digest
 
 
 def _extract_outputs(agent_result: dict) -> list[dict]:
@@ -172,10 +180,22 @@ def build_case(
 ) -> dict:
     """确定性提取基础案例（蒸馏字段由收尾流程补充，失败时降级写 summary）。"""
     agent_result = agent_result or {}
-    trigger: dict = {"type": "event" if event is not None else "schedule"}
-    digest = _trigger_digest(event)
-    if digest:
-        trigger["context_digest"] = digest
+    trigger = {"type": "schedule"}
+    if event is not None:
+        attributes = dict(event.attributes)
+        for key in _EVENT_ATTRIBUTE_ENRICHMENT_KEYS:
+            payload_value = event.payload.get(key)
+            if (
+                attributes.get(key) in (None, "", [])
+                and isinstance(payload_value, (str, int, float))
+                and not isinstance(payload_value, bool)
+            ):
+                attributes[key] = payload_value
+        trigger = {
+            "type": "event",
+            "event_type": event.event_type,
+            "attributes": attributes,
+        }
     case: dict = {
         "execution_id": execution.execution_id,
         "status": _STATUS_MAP.get(execution.status, "failed"),
@@ -202,6 +222,18 @@ def _render_case_line(case: dict, index: int) -> str:
         or "无摘要"
     ).strip()
     line = f"- [{index}] {started} {status}｜{brief}"
+    trigger = case.get("trigger") or {}
+    if trigger.get("event_type"):
+        line += f"\n  事件类型: {trigger['event_type']}"
+    if trigger.get("attributes"):
+        line += f"\n  事件属性: {json.dumps(trigger['attributes'], ensure_ascii=False, default=str)}"
+    dimensions = []
+    for field in _CASE_DIMENSION_FIELDS:
+        values = distilled.get(field) or []
+        if values:
+            dimensions.append(f"{_CASE_DIMENSION_LABELS[field]}={','.join(map(str, values))}")
+    if dimensions:
+        line += f"\n  结构化标签: {'；'.join(dimensions)}"
     outputs = case.get("outputs") or []
     if outputs:
         refs = ", ".join(f"{item.get('kind')}:{item.get('ref')}" for item in outputs[:5])
@@ -270,7 +302,36 @@ def _parse_consolidation_response(content: str | dict) -> tuple[dict, str] | Non
     memory = memory.strip()
     if len(memory) < 10:
         return None
-    return {"case_brief": brief[:160], "findings": findings}, memory
+    distilled = {"case_brief": brief[:160], "findings": findings}
+    for field in _CASE_DIMENSION_FIELDS:
+        values = _normalize_dimension_values(case_part.get(field))
+        if values:
+            distilled[field] = values
+    return distilled, memory
+
+
+def _normalize_dimension_values(value) -> list[str]:
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, (list, tuple)):
+        candidates = value
+    else:
+        return []
+
+    values: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not isinstance(candidate, (str, int, float)) or isinstance(candidate, bool):
+            continue
+        normalized = str(candidate).strip()[:MAX_DIMENSION_VALUE_CHARS]
+        dedupe_key = normalized.casefold()
+        if not normalized or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        values.append(normalized)
+        if len(values) >= MAX_DIMENSION_VALUES:
+            break
+    return values
 
 
 async def _consolidation_call(
@@ -307,7 +368,12 @@ async def _consolidation_call(
             response = await llm_service.call_llm_with_json_response(prompt, max_retries=1)
             parsed = _parse_consolidation_response(response)
             if parsed is not None:
-                return parsed
+                distilled, memory = parsed
+                attributes = case.get("trigger", {}).get("attributes") or {}
+                for field, attribute_keys in _EVENT_DIMENSION_ATTRIBUTE_KEYS.items():
+                    if any(attributes.get(key) not in (None, "", []) for key in attribute_keys):
+                        distilled.pop(field, None)
+                return distilled, memory
             last_error = ValueError("consolidation response schema invalid")
         except Exception as error:  # noqa: BLE001 - 巩固失败必须降级而不是中断收尾
             last_error = error

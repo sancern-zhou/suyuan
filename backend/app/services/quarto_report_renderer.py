@@ -468,6 +468,20 @@ class QuartoReportRenderer:
         qmd_for_render = qmd_path
         try:
             qmd_for_render = self._prepare_docx_qmd(report_dir, qmd_path)
+            # Inspect Quarto's resolved document, not tag-like strings in QMD.
+            # This also includes tables emitted by includes and executable cells.
+            from app.services.report.html_docx_bridge import RenderedHtmlReport
+
+            html_source = report_dir / f"report_docx_source_{uuid.uuid4().hex}.html"
+            try:
+                self._run_quarto(report_dir, [
+                    "render", qmd_for_render.name, "--to", "html", "--output", html_source.name,
+                ])
+                html_report = RenderedHtmlReport(html_source)
+                if html_report.tables:
+                    return self._render_docx_from_resolved_html(report_dir, qmd_path, html_report)
+            finally:
+                html_source.unlink(missing_ok=True)
             args = ["render", qmd_for_render.name, "--to", "docx", "--output", "report.docx"]
             if not self._qmd_has_usable_reference_doc(qmd_path):
                 reference_docx = ensure_government_reference_docx()
@@ -489,6 +503,35 @@ class QuartoReportRenderer:
         finally:
             if qmd_for_render != qmd_path:
                 qmd_for_render.unlink(missing_ok=True)
+                generated_assets = report_dir / f"{qmd_for_render.stem}_files"
+                if generated_assets.is_dir():
+                    shutil.rmtree(generated_assets)
+
+    def _render_docx_from_resolved_html(self, report_dir, qmd_path, html_report):
+        source = report_dir / f"report_docx_html_{uuid.uuid4().hex}.html"
+        candidate = report_dir / f"report_docx_candidate_{uuid.uuid4().hex}.docx"
+        try:
+            html_report.prepare(source)
+            args = [
+                "pandoc", source.name, "--from", "html", "--to", "docx",
+                "--output", candidate.name, "--resource-path", str(report_dir),
+            ]
+            # Pandoc's native reference contains its table/character styles.
+            # The government profile is applied below to the complete document.
+            if self._qmd_has_usable_reference_doc(qmd_path):
+                args.extend(["--reference-doc", self._qmd_reference_doc_values(qmd_path)[0]])
+            self._run_quarto(report_dir, args)
+            finalize_government_docx(candidate)
+            html_report.apply_styles(candidate)
+            output = report_dir / "report.docx"
+            candidate.replace(output)
+            logger.info("quarto_docx_html_tables_preserved", path=str(output), tables=len(html_report.tables))
+            return output
+        except ValueError as exc:
+            raise ReportRenderError(str(exc)) from exc
+        finally:
+            source.unlink(missing_ok=True)
+            candidate.unlink(missing_ok=True)
 
     def _render_docx_from_html_fallback(self, report_dir: Path) -> Path:
         """Fallback method: convert HTML to DOCX when Quarto fails to embed images."""

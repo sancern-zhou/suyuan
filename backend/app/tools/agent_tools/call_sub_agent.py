@@ -20,6 +20,12 @@ import uuid
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.agent.session.session_manager import get_session_manager
 from app.agent.session.models import Session
+from app.agent.session.workspace_routing import (
+    build_workspace_approval_request,
+    build_workspace_promotion,
+)
+from app.agent.selection_context import load_skill_selection
+from app.agent.prompts.tool_registry import get_tools_by_mode
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 logger = structlog.get_logger()
@@ -28,7 +34,7 @@ logger = structlog.get_logger()
 session_manager = get_session_manager()
 
 # ⚠️ 支持多种模式：assistant, query, report, social, chart, expert, ops
-AgentMode = Literal["assistant", "query", "report", "social", "chart", "expert", "ops"]
+AgentMode = Literal["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt"]
 
 
 class CallSubAgentTool(LLMTool):
@@ -57,7 +63,7 @@ class CallSubAgentTool(LLMTool):
                 "properties": {
                     "target_mode": {
                         "type": "string",
-                    "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops"],
+                    "enum": ["assistant", "query", "report", "social", "chart", "expert", "ops", "board", "ppt"],
                     "description": "目标 Agent 模式。"
                     },
                     # ✅ 新设计：goal（必需）- 原始任务描述
@@ -69,6 +75,10 @@ class CallSubAgentTool(LLMTool):
                     "context_str": {
                         "type": "string",
                         "description": "补充上下文。"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "补充上下文（兼容旧调用，等同于 context_str）。"
                     },
                     # ✅ 新设计：workspace_path（可选）- 工作目录
                     "workspace_path": {
@@ -84,6 +94,12 @@ class CallSubAgentTool(LLMTool):
                         "type": "string",
                         "description": "向后兼容，等同于context_str"
                     },
+                    "skill_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 1,
+                        "description": "传递给子 Agent 的显式技能 ID，最多一个。"
+                    },
                     "session_id": {
                         "type": "string",
                         "description": "子Agent会话ID；传入则继续指定会话。"
@@ -91,6 +107,10 @@ class CallSubAgentTool(LLMTool):
                     "force_new_session": {
                         "type": "boolean",
                         "description": "是否强制创建新会话。"
+                    },
+                    "promote_to_workspace": {
+                        "type": "boolean",
+                        "description": "任务需要持续多轮编辑时，将子Agent会话升级为当前工作空间。适用于 board、ppt、report。"
                     },
                     "_force_isolated_session": {
                         "type": "boolean",
@@ -123,9 +143,12 @@ class CallSubAgentTool(LLMTool):
         task_description: Optional[str] = None,  # ⚠️ 向后兼容
         context_str: Optional[str] = None,  # ✅ 新参数：补充上下文
         context_supplement: Optional[str] = None,  # ⚠️ 向后兼容
+        context_text: Optional[str] = None,  # ⚠️ 兼容 schema 中的 context 字段
+        skill_ids: Optional[List[str]] = None,
         workspace_path: Optional[str] = None,  # ✅ 新参数：工作目录
         session_id: Optional[str] = None,
         force_new_session: bool = False,
+        promote_to_workspace: bool = False,
         _force_isolated_session: bool = False,  # ⚠️ 内部使用：并发时强制隔离
         **kwargs  # ✅ 捕获额外参数
     ) -> Dict[str, Any]:
@@ -180,7 +203,9 @@ class CallSubAgentTool(LLMTool):
             }
 
         # ✅ 参数标准化：优先使用context_str，其次context_supplement
-        effective_context = context_str or context_supplement
+        effective_context = context_str or context_supplement or context_text
+        if not effective_context and isinstance(kwargs.get("context"), str):
+            effective_context = kwargs["context"]
         effective_workspace = None
         if workspace_path and workspace_path.strip():
             try:
@@ -198,6 +223,83 @@ class CallSubAgentTool(LLMTool):
         try:
             # 获取父Agent模式
             parent_mode = self._get_parent_mode(context)
+            skill_ids = list(dict.fromkeys(skill_ids or []))
+            if len(skill_ids) > 1:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": "skill_ids 最多只能传递一个技能",
+                    "data": {},
+                    "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
+                    "summary": "技能参数无效",
+                }
+            workspace_parent_session_id = (
+                getattr(context, "session_id", None)
+                if promote_to_workspace
+                else None
+            )
+            if promote_to_workspace and not workspace_parent_session_id:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": "持续工作空间必须在已有 Web 会话中创建",
+                    "data": {},
+                    "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
+                    "summary": "缺少父会话上下文",
+                }
+            if promote_to_workspace and target_mode not in {"board", "ppt", "report"}:
+                return {
+                    "status": "failed",
+                    "success": False,
+                    "result": "只有 board、ppt、report 支持持续工作空间升级",
+                    "data": {},
+                    "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
+                    "summary": "不支持的工作空间模式",
+                }
+
+            # Persistent workspaces are deferred until the user approves. No
+            # child session is created and no specialist model/tool is started
+            # on this path.
+            if promote_to_workspace:
+                promotion = build_workspace_promotion(
+                    target_mode=target_mode,
+                    session_id=workspace_parent_session_id,
+                )
+                pending_request = build_workspace_approval_request(
+                    promotion=promotion,
+                    goal=effective_goal,
+                    context_str=effective_context,
+                    workspace_path=effective_workspace,
+                    skill_ids=skill_ids,
+                )
+                return {
+                    "status": "pending",
+                    "success": True,
+                    "result": "等待用户审批后启动持续工作空间",
+                    "data": {},
+                    "metadata": {
+                        "schema_version": "v2.0",
+                        "generator": "call_sub_agent",
+                        "interaction_required": {
+                            "kind": "approval",
+                            "title": "申请进入持续工作空间",
+                            "question": (
+                                f"当前任务需要持续使用{target_mode}模式进行多轮编辑，"
+                                "是否进入该工作空间？"
+                            ),
+                            "actions": ["approve", "reject"],
+                            "promotion": promotion,
+                            "pending_request": pending_request,
+                        },
+                    },
+                    "summary": "已暂停，等待用户审批",
+                }
+            child_session_id = session_id
+            if workspace_parent_session_id:
+                # A promoted workspace keeps the web conversation's identity.
+                # The specialist owns subsequent turns; no second client session
+                # needs to be discovered or synchronized.
+                session_id = workspace_parent_session_id
             should_auto_reuse_session = self._should_auto_reuse_session(
                 target_mode=target_mode,
                 session_id=session_id,
@@ -230,6 +332,26 @@ class CallSubAgentTool(LLMTool):
             if context and hasattr(context, 'tool_executor'):
                 tool_executor = context.tool_executor
 
+            selected_child_skill = None
+            if skill_ids:
+                try:
+                    available_tools = set(get_tools_by_mode(target_mode).keys())
+                    if tool_executor is not None and hasattr(tool_executor, "tool_registry"):
+                        available_tools.update(tool_executor.tool_registry.keys())
+                    selected_child_skill = load_skill_selection(
+                        skill_ids[0],
+                        available_tools=available_tools,
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "result": f"子 Agent 技能不可用: {exc}",
+                        "data": {},
+                        "metadata": {"schema_version": "v2.0", "generator": "call_sub_agent"},
+                        "summary": "子 Agent 技能不可用",
+                    }
+
             # ✅ 不再验证 memory_manager，让子Agent自己创建
 
             # ✅ 1. Session处理：确定session_id和对话历史
@@ -239,6 +361,15 @@ class CallSubAgentTool(LLMTool):
             if session_id:
                 # 明确指定了session_id，继续已有session
                 session = session_manager.get_session(session_id)
+                if not session and workspace_parent_session_id:
+                    session = Session(
+                        session_id=session_id,
+                        query=effective_goal,
+                        parent_mode=parent_mode,
+                        child_mode=target_mode,
+                        is_sub_agent_session=False,
+                    )
+                    session_manager.save_session(session)
                 if not session:
                     return {
                         "status": "failed",
@@ -249,7 +380,7 @@ class CallSubAgentTool(LLMTool):
                         "summary": "Session不存在"
                     }
                 # 验证session匹配
-                if session.child_mode != target_mode:
+                if not workspace_parent_session_id and session.child_mode != target_mode:
                     return {
                         "status": "failed",
                         "success": False,
@@ -304,12 +435,19 @@ class CallSubAgentTool(LLMTool):
             # 3. 构建子 Agent 请求：ReActAgent 会自行构建系统提示，因此把任务、
             # 补充上下文和规范化后的工作目录作为本轮用户请求一起传入。
             parent_resource_lines = await self._collect_parent_resource_lines(context)
+            scheduled_task_context = (
+                getattr(context, "scheduled_task_context", None)
+                if context is not None
+                else None
+            )
             child_request_prompt = self._build_child_request_prompt(
                 goal=effective_goal,
                 context=effective_context,
                 workspace_path=effective_workspace,
                 target_mode=target_mode,
                 parent_resource_lines=parent_resource_lines,
+                scheduled_task_context=scheduled_task_context,
+                skill_id=selected_child_skill.skill_id if selected_child_skill else None,
             )
             logger.debug(
                 "child_request_prompt_built",
@@ -368,7 +506,14 @@ class CallSubAgentTool(LLMTool):
                     manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
                     enhance_with_history=True,  # ✅ 启用记忆增强
                     initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
-                    user_identifier=None  # ⚠️ 使用模式专属记忆（不跨模式共享）
+                    user_identifier=None,  # ⚠️ 使用模式专属记忆（不跨模式共享）
+                    runtime_metadata=dict(getattr(context, "runtime_metadata", {}) or {}),
+                    selected_skill_context=(
+                        selected_child_skill.content if selected_child_skill else None
+                    ),
+                    extra_tool_names=(
+                        selected_child_skill.required_tools if selected_child_skill else None
+                    ),
                 ):
                     result_events.append(event)
 
@@ -391,16 +536,33 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            # Preserve the latest board payload so a promoted workspace can
+            # render immediately after the user approves the handoff.
+            for child_event in reversed(result_events):
+                if child_event.get("type") != "tool_result":
+                    continue
+                child_result = (child_event.get("data") or {}).get("result") or {}
+                child_data = child_result.get("data") if isinstance(child_result, dict) else None
+                child_metadata = child_result.get("metadata") if isinstance(child_result, dict) else None
+                if (
+                    isinstance(child_data, dict)
+                    and isinstance(child_metadata, dict)
+                    and child_metadata.get("generator") == "create_drawio_board"
+                ):
+                    structured_data["artifact_kind"] = "drawio_board"
+                    structured_data["board"] = child_data.get("board") or child_data
+                    break
 
             # ✅ 8. 保存/更新session
-            self._update_session(
-                session_id=session_id,
-                parent_mode=parent_mode,
-                child_mode=target_mode,
-                user_query=effective_goal,  # ✅ 使用effective_goal
-                assistant_answer=final_result["answer"],
-                result_events=result_events
-            )
+            if not workspace_parent_session_id:
+                self._update_session(
+                    session_id=session_id,
+                    parent_mode=parent_mode,
+                    child_mode=target_mode,
+                    user_query=effective_goal,  # ✅ 使用effective_goal
+                    assistant_answer=final_result["answer"],
+                    result_events=result_events
+                )
 
             # ✅ 构建增强的metadata（包含子Agent的思考过程）
             enhanced_metadata = {
@@ -415,6 +577,24 @@ class CallSubAgentTool(LLMTool):
                 "session_id": session_id,
                 "is_new_session": is_new_session
             }
+
+            if promote_to_workspace:
+                try:
+                    enhanced_metadata["workspace_promotion"] = build_workspace_promotion(
+                        target_mode=target_mode,
+                        session_id=session_id,
+                    )
+                    if child_session_id and child_session_id != session_id:
+                        enhanced_metadata["workspace_promotion"]["child_session_id"] = child_session_id
+                except ValueError as exc:
+                    return {
+                        "status": "failed",
+                        "success": False,
+                        "result": str(exc),
+                        "data": structured_data,
+                        "metadata": enhanced_metadata,
+                        "summary": "不支持将该 Agent 升级为持续工作空间",
+                    }
 
             # ✅ 添加思考过程到metadata（父Agent可以使用）
             if "thought" in final_result.get("data", {}):
@@ -500,6 +680,8 @@ class CallSubAgentTool(LLMTool):
         workspace_path: Optional[str] = None,
         target_mode: str = "assistant",
         parent_resource_lines: Optional[List[str]] = None,
+        scheduled_task_context: Optional[Dict[str, Any]] = None,
+        skill_id: Optional[str] = None,
     ) -> str:
         """
         构建子 Agent 本轮请求（分离 goal、补充上下文和工作目录）
@@ -521,6 +703,22 @@ class CallSubAgentTool(LLMTool):
         # 添加补充上下文（如果有）
         if context and context.strip():
             parts.append(f"**补充上下文**:\n{context}\n")
+
+        if skill_id:
+            parts.append(f"**显式技能**：{skill_id}\n")
+
+        if scheduled_task_context:
+            task_name = scheduled_task_context.get("task_name") or scheduled_task_context.get("task_id") or "定时任务"
+            execution_id = scheduled_task_context.get("execution_id") or ""
+            parts.append(
+                "## 后台定时任务执行约束\n"
+                f"- 本次子 Agent 由后台定时任务 `{task_name}` 调用"
+                + (f"，execution_id={execution_id}" if execution_id else "")
+                + "。\n"
+                "- 父任务已经由用户提前配置并确认；不要要求父 Agent 或用户再确认后才继续。\n"
+                "- 需要审核、复核、工具提交或产物落盘时，在本次子 Agent 执行内直接完成并返回结果。\n"
+                "- 如果工具结果要求人工复核，只按工具结果标记 manual_review 并返回，不要等待在线确认。\n"
+            )
 
         # 父会话已登记文件（上传附件等）；子会话无法查询父会话资源目录，
         # 这些真实路径可直接用于 read_file / execute_python（沙箱按白名单挂载）。
@@ -575,6 +773,7 @@ class CallSubAgentTool(LLMTool):
         workspace_path: Optional[str] = None,
         target_mode: str = "assistant",
         parent_resource_lines: Optional[List[str]] = None,
+        scheduled_task_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Backward-compatible alias for the child request prompt builder."""
         return self._build_child_request_prompt(
@@ -583,6 +782,7 @@ class CallSubAgentTool(LLMTool):
             workspace_path=workspace_path,
             target_mode=target_mode,
             parent_resource_lines=parent_resource_lines,
+            scheduled_task_context=scheduled_task_context,
         )
 
     def _extract_final_result(self, events: list) -> Dict:

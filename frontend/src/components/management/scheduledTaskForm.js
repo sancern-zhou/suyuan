@@ -101,6 +101,10 @@ export const buildTaskPayload = (form) => {
   } else if (!isEvent && form.schedule_type === 'daily_custom') {
     payload.hour = Number(form.hour)
     payload.minute = Number(form.minute)
+  } else if (!isEvent && form.schedule_type === 'weekly_custom') {
+    payload.day_of_week = Number(form.day_of_week)
+    payload.hour = Number(form.hour)
+    payload.minute = Number(form.minute)
   }
 
   return payload

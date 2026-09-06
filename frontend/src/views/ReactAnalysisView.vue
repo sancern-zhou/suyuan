@@ -15,6 +15,8 @@
       :agent-platform-error="agentPlatformError"
       :messages="currentModeMessages"
       :pending-steering-inputs="currentModePendingSteeringInputs"
+      :pending-interaction="store.pendingInteraction"
+      :interaction-resolving="interactionResolving"
       :is-analyzing="currentModeIsAnalyzing"
       :input-disabled="inputDisabled"
       :current-message="currentModeCurrentMessage"
@@ -104,6 +106,8 @@
       @new-web-conversation="startNewWebConversation"
       @toggle-viz-panel="toggleVizPanel"
       @preview-message-attachment="openMessageAttachmentPreview"
+      @resolve-interaction="handleInteractionResolve"
+      @close-interaction="handleInteractionClose"
     />
 
     <!-- 知识库创建对话框 -->
@@ -296,11 +300,35 @@ const mainLayoutRef = ref(null)
 const workspace = ref('platform')
 const selectingAgentMode = ref('')
 const agentPlatformError = ref('')
+const resolvingInteractionId = ref(null)
+const interactionResolving = computed(() => (
+  Boolean(store.pendingInteraction?.interaction_id)
+  && resolvingInteractionId.value === store.pendingInteraction.interaction_id
+))
 
 // 对话框状态（从dialogManager获取）
 const showKbCreateDialog = computed(() => dialogs.value.kbCreate)
 const showKbEditDialog = computed(() => dialogs.value.kbEdit)
 const showKbChunksDialog = computed(() => dialogs.value.kbChunks)
+
+const handleInteractionResolve = async (resolution) => {
+  const interactionId = store.pendingInteraction?.interaction_id
+  if (!interactionId || resolvingInteractionId.value === interactionId) return
+  resolvingInteractionId.value = interactionId
+  try {
+    await store.resolvePendingInteraction(resolution)
+  } catch (error) {
+    console.error('[agent-interaction] resolution failed:', error)
+  } finally {
+    if (resolvingInteractionId.value === interactionId) {
+      resolvingInteractionId.value = null
+    }
+  }
+}
+
+const handleInteractionClose = () => {
+  void handleInteractionResolve({ decision: 'reject', response: null })
+}
 
 // ========== 计算属性 ==========
 

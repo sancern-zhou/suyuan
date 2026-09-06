@@ -204,6 +204,7 @@
                 <option value="assistant">assistant</option>
                 <option value="expert">expert</option>
                 <option value="query">query</option>
+                <option value="ops">ops（运维）</option>
                 <option value="social">social</option>
                 <option value="custom">custom（自选工具）</option>
               </select>
@@ -272,9 +273,12 @@
                 <option value="daily_8am">每天 8 点</option>
                 <option value="every_2h">每 2 小时</option>
                 <option value="every_30min">每 30 分钟</option>
+                <option value="monthly_1st_7am">每月 1 日 7 点</option>
+                <option value="weekly_monday_8am">每周一 8 点</option>
                 <option value="once">一次性</option>
                 <option value="interval">自定义间隔</option>
                 <option value="daily_custom">每天自定义时间</option>
+                <option value="weekly_custom">每周自定义时间</option>
               </select>
             </label>
 
@@ -288,12 +292,21 @@
               <input v-model.number="createForm.interval_minutes" type="number" min="1" />
             </label>
 
-            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'daily_custom'">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'weekly_custom'">
+              <span>星期</span>
+              <select v-model.number="createForm.day_of_week">
+                <option v-for="weekday in weekdayOptions" :key="weekday.value" :value="weekday.value">
+                  {{ weekday.label }}
+                </option>
+              </select>
+            </label>
+
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && ['daily_custom', 'weekly_custom'].includes(createForm.schedule_type)">
               <span>小时</span>
               <input v-model.number="createForm.hour" type="number" min="0" max="23" />
             </label>
 
-            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && createForm.schedule_type === 'daily_custom'">
+            <label class="form-field" v-if="createForm.trigger_type === 'schedule' && ['daily_custom', 'weekly_custom'].includes(createForm.schedule_type)">
               <span>分钟</span>
               <input v-model.number="createForm.minute" type="number" min="0" max="59" />
             </label>
@@ -459,12 +472,14 @@
                 </span>
                 <span v-if="caseItem.trigger?.type === 'event'" class="history-case-trigger">事件触发</span>
               </div>
-              <p v-if="caseItem.trigger?.context_digest" class="history-case-digest">
-                {{ caseItem.trigger.context_digest }}
-              </p>
               <p class="history-case-brief">
                 {{ caseItem.distilled?.case_brief || caseItem.summary || '（无摘要）' }}
               </p>
+              <div v-if="caseDimensionTags(caseItem).length" class="history-case-dimensions">
+                <span v-for="tag in caseDimensionTags(caseItem)" :key="`${tag.label}:${tag.value}`">
+                  {{ tag.label }}：{{ tag.value }}
+                </span>
+              </div>
               <ul v-if="caseItem.distilled?.findings?.length" class="history-case-findings">
                 <li v-for="(finding, index) in caseItem.distilled.findings" :key="index">{{ finding }}</li>
               </ul>
@@ -602,6 +617,16 @@ const alertLevelOptions = [
   { label: '高', value: 'high' }
 ]
 
+const weekdayOptions = [
+  { label: '周一', value: 0 },
+  { label: '周二', value: 1 },
+  { label: '周三', value: 2 },
+  { label: '周四', value: 3 },
+  { label: '周五', value: 4 },
+  { label: '周六', value: 5 },
+  { label: '周日', value: 6 }
+]
+
 const defaultForm = () => ({
   name: '',
   description: '',
@@ -621,6 +646,7 @@ const defaultForm = () => ({
   enabled: true,
   hour: 9,
   minute: 0,
+  day_of_week: 4,
   interval_minutes: 30,
   run_at: '',
   channels: ['weixin'],
@@ -722,6 +748,34 @@ const renderedMemory = computed(() => {
 
 const caseStatusKey = (status) => ({ succeeded: 'success', timeout: 'timeout' }[status] || 'failed')
 const caseStatusLabel = (status) => ({ succeeded: '成功', failed: '失败', timeout: '超时' }[status] || status || '未知')
+const caseDimensionTags = (caseItem) => {
+  const distilled = caseItem?.distilled || {}
+  const trigger = caseItem?.trigger || {}
+  const attributes = trigger.attributes || {}
+  const stationName = attributes.station_name
+  const stationId = attributes.station_id
+  const station = stationName && stationId && stationName !== stationId
+    ? `${stationName}（${stationId}）`
+    : (stationName || stationId)
+  const fields = [
+    ['cities', '城市'],
+    ['stations', '站点'],
+    ['pollutants', '污染物']
+  ]
+  const tags = [
+    ['事件类型', trigger.event_type],
+    ['城市', attributes.city || attributes.city_name],
+    ['站点', station],
+    ['污染物', attributes.pollutant || attributes.target_pollutant]
+  ]
+    .filter(([, value]) => value != null && value !== '')
+    .map(([label, value]) => ({ label, value }))
+  return tags.concat(fields.flatMap(([field, label]) => (
+    Array.isArray(distilled[field])
+      ? distilled[field].map(value => ({ label, value }))
+      : []
+  )))
+}
 const consolidationStatusLabel = (status) => ({
   success: '成功',
   failed: '失败',
@@ -855,7 +909,10 @@ const getScheduledTaskLabel = (type) => {
     daily_8am: '每天 8 点',
     every_2h: '每 2 小时',
     every_30min: '每 30 分钟',
+    monthly_1st_7am: '每月 1 日 7 点',
+    weekly_monday_8am: '每周一 8 点',
     daily_custom: '每天自定义',
+    weekly_custom: '每周自定义',
     interval: '自定义间隔',
     once: '一次性',
     daily: '每天',
@@ -881,6 +938,7 @@ const getExecutionModeLabel = (mode) => {
     assistant: '助手模式',
     expert: '专家模式',
     query: '问数模式',
+    ops: '运维模式',
     social: '社交模式',
     custom: '自定义工具模式'
   }
@@ -967,6 +1025,7 @@ const openEditDialog = async (task) => {
     enabled: Boolean(task.enabled),
     hour: task.hour ?? 9,
     minute: task.minute ?? 0,
+    day_of_week: task.day_of_week ?? 4,
     interval_minutes: task.interval_minutes ?? 30,
     run_at: task.run_at || '',
     tagsText: (task.tags || []).join(',')
@@ -1821,17 +1880,26 @@ const saveTask = async () => {
   white-space: nowrap;
 }
 
-.history-case-digest {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: #856404;
-  word-break: break-all;
-}
-
 .history-case-brief {
   margin: 6px 0 0;
   font-size: 13px;
   color: #333;
+}
+
+.history-case-dimensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.history-case-dimensions span {
+  padding: 2px 6px;
+  border: 1px solid #d7dee8;
+  border-radius: 3px;
+  background: #f4f7f9;
+  color: #3f5268;
+  font-size: 11px;
 }
 
 .history-case-findings {

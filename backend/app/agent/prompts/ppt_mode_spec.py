@@ -41,6 +41,7 @@ def test_ppt_mode_prompt_uses_editable_incremental_workflow_by_default():
     prompt = build_react_system_prompt("ppt")
 
     assert "幻灯片智能体" in prompt
+    assert "跳过模式确认" in prompt
     assert "manage_editable_ppt" in prompt
     assert "app/tools/office/editable_ppt/references/index.md" in prompt
     assert "增量" in prompt

@@ -22,14 +22,28 @@ def test_assistant_mode_does_not_expose_diagram_artifact_tool():
     assert "create_diagram_artifact" not in ASSISTANT_TOOL_ORDER
 
 
-def test_weather_image_tool_is_available_in_assistant_and_expert_modes():
-    assert "get_platform_weather_image" in get_tools_by_mode("assistant")
+def test_weather_image_tool_is_reserved_for_expert_mode():
+    assert "get_platform_weather_image" not in get_tools_by_mode("assistant")
     assert "get_platform_weather_image" in get_tools_by_mode("expert")
 
 
-def test_qianlima_realtime_tender_tool_is_available_in_assistant_mode():
-    assert "qianlima_realtime_tender" in get_tools_by_mode("assistant")
-    assert "qianlima_realtime_tender" in ASSISTANT_TOOL_ORDER
+def test_domain_tender_tools_are_reserved_for_specialist_workspaces():
+    assert "qianlima_realtime_tender" not in get_tools_by_mode("assistant")
+    assert "execute_tender_sql_query" not in ASSISTANT_TOOL_ORDER
+
+
+def test_assistant_mode_keeps_lightweight_office_and_web_tools():
+    tools = get_tools_by_mode("assistant")
+
+    assert {
+        "list_directory", "search_files", "read_file", "write_file", "edit_file", "grep",
+        "create_html_artifact", "execute_python", "web_search", "web_fetch", "browser",
+    }.issubset(tools)
+    assert "manage_editable_ppt" not in tools
+    assert "create_report_package" in tools
+    assert "render_report_package" in tools
+    assert "validate_report_package" in tools
+    assert "bash" not in tools
 
 
 def test_ops_mode_exposes_call_sub_agent_for_audit_confirmation_gate():
@@ -100,13 +114,17 @@ def test_assistant_prompt_does_not_describe_task_tools():
     assert "任务清单工具" not in prompt
 
 
-def test_assistant_prompt_distinguishes_freeform_and_template_diagram_references():
-    prompt = build_assistant_prompt(["create_report_chart", "read_file"])
+def test_assistant_prompt_is_a_workspace_router():
+    prompt = build_assistant_prompt(["call_sub_agent"])
 
-    assert "create_report_chart" in prompt
-    assert "diagram_mode" not in prompt
+    assert "call_sub_agent" in prompt
+    assert "target_mode=\"board\"" in prompt
+    assert "promote_to_workspace=true" in prompt
+    assert "只表示本次委托使用的专家执行器" in prompt
+    assert "单轮架构图或流程图可以直接委托" in prompt
+    assert "create_report_chart" not in prompt
+    assert "execute_python" not in prompt
     assert "create_diagram_artifact" not in prompt
-    assert "QMD/Word 正式报告的静态数据图表优先使用 `create_report_chart`" in prompt
 
 
 def test_board_mode_exposes_drawio_board_not_diagram_artifact():

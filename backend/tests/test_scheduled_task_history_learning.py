@@ -58,7 +58,8 @@ def _make_event() -> TaskEvent:
     return TaskEvent(
         event_id="evt_001",
         event_type="station_exceedance_confirmed",
-        attributes={"station_name": "站点A", "pollutant": "PM10"},
+        attributes={"station_id": "1011A", "pollutant": "PM10"},
+        payload={"city": "许昌市", "station_name": "站点A", "details": {"ignored": True}},
     )
 
 
@@ -120,7 +121,14 @@ class TestBuildCase:
         case = build_case(_make_execution(), _make_event(), _agent_result())
         assert case["status"] == "succeeded"
         assert case["trigger"]["type"] == "event"
-        assert "站点A" in case["trigger"]["context_digest"]
+        assert case["trigger"]["event_type"] == "station_exceedance_confirmed"
+        assert case["trigger"]["attributes"] == {
+            "station_id": "1011A",
+            "station_name": "站点A",
+            "city": "许昌市",
+            "pollutant": "PM10",
+        }
+        assert "details" not in case["trigger"]["attributes"]
         kinds = {(item["kind"], item["ref"]) for item in case["outputs"]}
         assert ("report", "rpt_test_001") in kinds
         assert ("dataset", "dataset:abc123") in kinds
@@ -231,7 +239,14 @@ class TestConsolidationCall:
     def test_uses_protocol_aware_json_api(self, monkeypatch):
         calls = []
         response = {
-            "case": {"case_brief": "完成站点分析", "findings": ["PM10 超标"]},
+            "case": {
+                "case_brief": "完成站点分析",
+                "findings": ["PM10 超标"],
+                "cities": "许昌市",
+                "stations": ["站点A", "站点A", " 站点B "],
+                "pollutants": ["PM10"],
+                "event_types": ["station_exceedance_confirmed"],
+            },
             "memory": "# 任务记忆：站点污染分析\n## 使命与背景\n分析污染",
         }
 
@@ -248,16 +263,69 @@ class TestConsolidationCall:
             _consolidation_call(
                 task=_make_task(),
                 old_memory="",
-                case=build_case(_make_execution(), _make_event(), _agent_result()),
+                case=build_case(_make_execution(), None, _agent_result()),
                 agent_result=_agent_result(),
                 memory_budget=6000,
             )
         )
 
         assert result[0]["case_brief"] == "完成站点分析"
+        assert result[0]["cities"] == ["许昌市"]
+        assert result[0]["stations"] == ["站点A", "站点B"]
+        assert result[0]["pollutants"] == ["PM10"]
+        assert "event_types" not in result[0]
         assert result[1].startswith("# 任务记忆")
         assert len(calls) == 1
         assert calls[0][1:] == (1, 0.2)
+
+    def test_event_attributes_replace_redundant_llm_dimensions(self, monkeypatch):
+        response = {
+            "case": {
+                "case_brief": "完成站点分析",
+                "findings": ["PM10 超标"],
+                "cities": ["许昌市"],
+                "stations": ["站点A"],
+                "pollutants": ["PM10"],
+            },
+            "memory": "# 任务记忆：站点污染分析\n## 使命与背景\n分析污染",
+        }
+
+        class FakeLLMService:
+            async def call_llm_with_json_response(self, prompt, max_retries=2):
+                return response
+
+        monkeypatch.setattr("app.services.llm_service.LLMService", FakeLLMService)
+        case = build_case(_make_execution(), _make_event(), _agent_result())
+
+        distilled, _ = asyncio.run(
+            _consolidation_call(
+                task=_make_task(),
+                old_memory="",
+                case=case,
+                agent_result=_agent_result(),
+                memory_budget=6000,
+            )
+        )
+
+        assert distilled == {"case_brief": "完成站点分析", "findings": ["PM10 超标"]}
+
+    def test_omits_invalid_optional_dimensions(self):
+        content = {
+            "case": {
+                "case_brief": "完成分析",
+                "findings": [],
+                "cities": None,
+                "stations": [],
+                "pollutants": {"name": "PM10"},
+                "event_types": ["", None, False],
+            },
+            "memory": "# 任务记忆\n## 使命与背景\n测试任务",
+        }
+
+        parsed = history_learning._parse_consolidation_response(content)
+
+        assert parsed is not None
+        assert parsed[0] == {"case_brief": "完成分析", "findings": []}
 
     def test_propagates_last_provider_error_after_retry(self, monkeypatch):
         attempts = 0

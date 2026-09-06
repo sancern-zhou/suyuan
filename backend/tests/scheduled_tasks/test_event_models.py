@@ -154,3 +154,38 @@ def test_scheduler_supports_weekly_monday_eight_am_task(tmp_path):
     job = scheduler.scheduler.get_job(task.task_id)
     assert job is not None
     assert "day_of_week='mon'" in str(job.trigger)
+
+
+def test_scheduler_supports_weekly_custom_friday_task(tmp_path):
+    storage = TaskStorage(storage_dir=tmp_path)
+    task = ScheduledTask(
+        task_id="weekly-friday-task",
+        name="weekly friday task",
+        description="weekly friday task",
+        schedule_type="weekly_custom",
+        day_of_week=4,
+        hour=9,
+        minute=30,
+        **_task_kwargs(),
+    )
+    storage.create(task)
+    scheduler = SimpleScheduler(storage)
+
+    scheduler._schedule_task(task)
+
+    job = scheduler.scheduler.get_job(task.task_id)
+    assert job is not None
+    assert "day_of_week='4'" in str(job.trigger)
+    assert "hour='9'" in str(job.trigger)
+    assert "minute='30'" in str(job.trigger)
+
+
+def test_weekly_custom_requires_weekday_and_time():
+    with pytest.raises(ValidationError, match="day_of_week, hour and minute are required"):
+        ScheduledTask(
+            task_id="weekly-invalid",
+            name="weekly invalid",
+            description="weekly invalid",
+            schedule_type="weekly_custom",
+            **_task_kwargs(),
+        )

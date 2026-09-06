@@ -534,6 +534,13 @@ class ScheduledTaskExecutor:
         history_section: str | None = None,
     ) -> str:
         sections = [prompt]
+        sections.append(
+            """## 后台定时任务执行约束
+- 本次是后台无人值守的定时任务执行；任务名称、任务描述、执行指令、调度和筛选条件均视为用户已提前配置并确认。
+- 不要以“请确认”“等待用户确认”“确认后继续”等形式中途结束；需要计划、自检或复核时，在本次执行内自行完成后继续下一步。
+- 如果任务流程要求调用子 Agent 审核、复核或生成交接产物，必须在本次执行内直接调用并等待工具返回，不要先向用户展示方案等待确认。
+- 如果工具结果明确存在 manual_review、report_ready=false 或无法自动判断的业务项，按工具结果说明未完成自动出具正式报告的原因并正常交付当前可用产物，不要等待在线确认。"""
+        )
         if history_section:
             sections.append(history_section)
         if event is not None:

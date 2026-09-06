@@ -25,7 +25,7 @@ class CreateScheduledTaskTool(LLMTool):
         function_schema = {
             "name": "create_scheduled_task",
             "description": (
-                "通过自然语言创建定时任务。支持8种调度类型：\n"
+                "通过自然语言创建定时任务。支持9种调度类型：\n"
                 "预设类型：\n"
                 "1. daily_8am - 每天早上8点执行\n"
                 "2. every_2h - 每2小时执行一次\n"
@@ -36,12 +36,14 @@ class CreateScheduledTaskTool(LLMTool):
                 "6. once - 一次性任务（指定具体时间执行一次）\n"
                 "7. interval - 自定义间隔（每N分钟执行）\n"
                 "8. daily_custom - 每天自定义时间执行\n\n"
+                "9. weekly_custom - 每周自定义星期和时间执行\n\n"
                 "示例：\n"
                 "- '每天早上8点分析广州昨天的O3污染'\n"
                 "- '每2小时检查PM2.5浓度变化'\n"
                 "- '1分钟后执行臭氧报告分析'\n"
                 "- '每5分钟更新空气质量数据'\n"
-                "- '每天下午3点半生成污染分析报告'"
+                "- '每天下午3点半生成污染分析报告'\n"
+                "- '每周五上午9点审核上周运维工单'"
             ),
             "parameters": {
                 "type": "object",
@@ -112,6 +114,10 @@ class CreateScheduledTaskTool(LLMTool):
             elif schedule_type == "daily_custom":
                 task_kwargs["hour"] = task_config["hour"]
                 task_kwargs["minute"] = task_config["minute"]
+            elif schedule_type == "weekly_custom":
+                task_kwargs["day_of_week"] = task_config["day_of_week"]
+                task_kwargs["hour"] = task_config["hour"]
+                task_kwargs["minute"] = task_config["minute"]
 
             task = ScheduledTask(**task_kwargs)
 
@@ -162,9 +168,10 @@ class CreateScheduledTaskTool(LLMTool):
 
 1. name: 任务名称（简短，10字以内）
 2. description: 任务描述（详细说明任务目的）
-3. execution_mode: 执行模式，支持 "assistant" 或 "expert"
+3. execution_mode: 执行模式，支持 "assistant"、"expert"、"ops"
    - 广播、通知、社交文案生成任务优先使用 "assistant"
    - 数据分析、专业推理任务优先使用 "expert"
+   - 运维工单审核、运维表单审核、工单复核任务优先使用 "ops"
 4. schedule_type: 调度类型，支持以下类型：
    预设类型：
    - "daily_8am": 每天早上8点
@@ -177,12 +184,14 @@ class CreateScheduledTaskTool(LLMTool):
    - "once": 一次性任务（需额外提供run_at字段，格式："2026-02-13 14:30:00"）
    - "interval": 自定义间隔（需额外提供interval_minutes字段，如5表示每5分钟）
    - "daily_custom": 每天自定义时间（需额外提供hour和minute字段，如hour:9, minute:30表示每天9:30）
+   - "weekly_custom": 每周自定义时间（需额外提供day_of_week、hour和minute字段；day_of_week使用0=周一、1=周二、2=周三、3=周四、4=周五、5=周六、6=周日）
 
 5. 灵活调度参数（根据schedule_type选择）：
    - run_at: 一次性任务的执行时间（schedule_type=once时必填，格式："2026-02-13 14:30:00"）
    - interval_minutes: 间隔分钟数（schedule_type=interval时必填，如5表示每5分钟）
    - hour: 每天执行的小时（schedule_type=daily_custom时必填，0-23）
    - minute: 每天执行的分钟（schedule_type=daily_custom时必填，0-59）
+   - day_of_week: 每周执行的星期（schedule_type=weekly_custom时必填，0=周一，6=周日）
 
 6. prompt: 发送给Agent的完整任务提示词（必须包含，详细、具体）
 7. timeout_seconds: 整个任务的总超时时间（秒，默认1800）
@@ -248,6 +257,20 @@ class CreateScheduledTaskTool(LLMTool):
   "tags": ["broadcast", "social"]
 }}
 
+示例6（每周运维工单审核）：
+{{
+  "name": "工单周审",
+  "description": "每周五上午9点审核运维工单",
+  "execution_mode": "ops",
+  "schedule_type": "weekly_custom",
+  "day_of_week": 4,
+  "hour": 9,
+  "minute": 0,
+  "prompt": "审核运维工单，时间范围按执行指令中配置的起止时间执行；需要生成正式报告时完整完成取数、规则审核、子Agent复核和报告交付。",
+  "timeout_seconds": 1800,
+  "tags": ["运维", "工单审核", "周审"]
+}}
+
 请直接返回JSON，不要包含任何其他文字。"""
 
         try:
@@ -301,6 +324,13 @@ class CreateScheduledTaskTool(LLMTool):
             if schedule_type == "daily_custom" and ("hour" not in config or "minute" not in config):
                 logger.error("schedule_type=daily_custom but hour/minute is missing")
                 return None
+            if schedule_type == "weekly_custom":
+                if "day_of_week" not in config or "hour" not in config or "minute" not in config:
+                    logger.error("schedule_type=weekly_custom but day_of_week/hour/minute is missing")
+                    return None
+                if not 0 <= int(config["day_of_week"]) <= 6:
+                    logger.error("schedule_type=weekly_custom but day_of_week is out of range")
+                    return None
 
             return config
 

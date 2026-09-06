@@ -55,6 +55,11 @@ def _http_scope(path):
     }
 
 
+def test_agent_stream_keeps_uuid_global_for_nested_event_generator():
+    """Existing-session streams must resolve interaction IDs from module scope."""
+    assert "uuid" not in agent.analyze_stream.__code__.co_cellvars
+
+
 def test_report_generation_uses_system_sse_response():
     response = report_generation._stream_template_report_agent(
         template_content="# Template",

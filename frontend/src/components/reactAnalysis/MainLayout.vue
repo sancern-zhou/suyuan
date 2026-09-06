@@ -37,6 +37,8 @@
         :agent-mode="agentMode"
         :messages="messages"
         :pending-steering-inputs="pendingSteeringInputs"
+        :pending-interaction="pendingInteraction"
+        :interaction-resolving="interactionResolving"
         :is-analyzing="isAnalyzing"
         :input-disabled="inputDisabled || conversationReadOnly"
         :read-only="conversationReadOnly"
@@ -66,6 +68,8 @@
         @preview-message-attachment="handleMessageAttachmentPreview"
         @toggle-viz-panel="handleToggleVizPanel"
         @new-web-conversation="$emit('new-web-conversation')"
+        @resolve-interaction="$emit('resolve-interaction', $event)"
+        @close-interaction="$emit('close-interaction')"
       >
         <template #management-panels>
           <!-- 管理面板插槽 -->
@@ -239,6 +243,14 @@ const props = defineProps({
   pendingSteeringInputs: {
     type: Array,
     default: () => []
+  },
+  pendingInteraction: {
+    type: Object,
+    default: null
+  },
+  interactionResolving: {
+    type: Boolean,
+    default: false
   },
   isAnalyzing: {
     type: Boolean,
@@ -450,7 +462,9 @@ const emit = defineEmits([
   'new-web-conversation',
   'select-agent',
   'coordinator-submit',
-  'preview-message-attachment'
+  'preview-message-attachment',
+  'resolve-interaction',
+  'close-interaction'
 ])
 
 const layoutRef = ref(null)
