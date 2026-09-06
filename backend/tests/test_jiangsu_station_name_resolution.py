@@ -134,6 +134,61 @@ async def test_station_tool_resolves_city_and_batches_station_requests(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_station_tool_uses_platform_five_minute_endpoint_and_payload(monkeypatch):
+    tool = JiangsuStationDataTool(base_url="http://example.test", username="user", password="password")
+    requests = []
+
+    async def request(data_kind, payload):
+        requests.append((data_kind, payload))
+        return {"result": [{"stationCode": payload["codes"][0], "timePoint": "2026-08-12 00:00:00"}]}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(
+        data_kind="station_5minute",
+        station_codes=["A"],
+        start_time="2026-08-12 00:00:00",
+        end_time="2026-08-12 00:30:00",
+        data_type=0,
+        pollutant_codes=["PM2_5", "O3", "a0"],
+    )
+
+    assert result["success"] is True
+    assert tool._ENDPOINTS["station_5minute"] == "airdata/AirData/GetAir5MinTransitionDisplayListAsync"
+    assert requests == [
+        (
+            "station_5minute",
+            {
+                "codes": ["A"],
+                "timePoint": ["2026-08-12 00:00:00", "2026-08-12 00:30:00"],
+                "dataType": 0,
+            },
+        )
+    ]
+    assert tool._build_http_payload("station_5minute", requests[0][1]) == {
+        "stationCodes": ["A"],
+        "timePoint": ["2026-08-12 00:00:00", "2026-08-12 00:30:00"],
+        "dataType": 0,
+    }
+
+
+def test_station_tool_does_not_send_frontend_column_filter_to_five_minute_api():
+    tool = JiangsuStationDataTool(base_url="http://example.test", username="user", password="password")
+
+    assert tool._build_http_payload(
+        "station_5minute",
+        {
+            "codes": ["A"],
+            "timePoint": ["2026-08-12 00:00:00", "2026-08-12 00:30:00"],
+            "dataType": 0,
+        },
+    ) == {
+        "stationCodes": ["A"],
+        "timePoint": ["2026-08-12 00:00:00", "2026-08-12 00:30:00"],
+        "dataType": 0,
+    }
+
+
+@pytest.mark.asyncio
 async def test_station_tool_externalizes_large_results_when_agent_context_is_available(monkeypatch):
     tool = JiangsuStationDataTool(base_url="http://example.test", username="user", password="password")
     directory = [

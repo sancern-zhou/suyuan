@@ -70,6 +70,18 @@ def test_yuncheng_event_is_registered():
     assert "city" in definitions["yuncheng.alert.created"].filter_fields
 
 
+def test_jiangsu_work_order_review_event_is_registered():
+    definitions = {item.event_type: item for item in get_event_definitions()}
+
+    event_type = "jiangsu.fault_work_order.review_requested"
+    assert event_type in definitions
+    assert "work_order_code" in definitions[event_type].filter_fields
+    assert "env_category" not in definitions[event_type].filter_fields
+    assert "transmission_category" not in definitions[event_type].filter_fields
+    assert "sop_id" in definitions[event_type].filter_fields
+    assert definitions[event_type].label == "江苏故障工单审核"
+
+
 def _event_task() -> ScheduledTask:
     return ScheduledTask(
         task_id="event",

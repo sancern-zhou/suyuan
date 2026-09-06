@@ -1,0 +1,4 @@
+interface:
+  display_name: "故障工单审核"
+  short_description: "按事件证据包 sop_id 读取 SOP-01/02/03 手册，生成省中心故障工单审核卡片"
+  default_prompt: "Use $fault-work-order-review to audit this Jiangsu fault work-order evidence package and submit a review card."

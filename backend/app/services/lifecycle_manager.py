@@ -46,7 +46,11 @@ from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
+from app.fetchers.jiangsu_fault_work_order_review_event import (
+    JiangsuFaultWorkOrderReviewEventFetcher,
+)
 from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
+from app.fetchers.jiangsu_review_feedback import JiangsuReviewFeedbackFetcher
 from app.project_config.loader import load_project_context
 
 # 导入单一工具注册源
@@ -105,10 +109,13 @@ def _configured_fetchers(project_context):
     # project manifest.  They must never enter the legacy/default deployment
     # through the historical "all fetchers" fallback.
     explicit_project_fetchers = {
+        "jiangsu_review_feedback",
+        "jiangsu_fault_work_order_review_event",
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
     }
     factories = {
+        "jiangsu_review_feedback": JiangsuReviewFeedbackFetcher,
         "era5": ERA5Fetcher,
         "observed_weather": ObservedWeatherFetcher,
         "jining_era5": JiningERA5Fetcher,
@@ -123,6 +130,7 @@ def _configured_fetchers(project_context):
         "tender_information": TenderInformationFetcher,
         "jining_quick_trace": JiningQuickTraceFetcher,
         "yuncheng_trial": YunchengTrialFetcher,
+        "jiangsu_fault_work_order_review_event": JiangsuFaultWorkOrderReviewEventFetcher,
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
         "jiangsu_nmc_observed_weather": JiangsuNMCObservedWeatherFetcher,
         "consultation": ConsultationFileFetcher,

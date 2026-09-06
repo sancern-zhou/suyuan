@@ -82,6 +82,24 @@ test('loadApiMediaObjectUrl preserves an encoded Unicode image ID for the gatewa
   assert.deepEqual(calls, [source])
 })
 
+test('loadApiMediaObjectUrl accepts legacy application image content types', async () => {
+  const created = []
+
+  const url = await loadApiMediaObjectUrl('/api/jiangsu/work-order-reviews/review-1/attachments/1/content', {
+    fetchMedia: async () => new Response(new Blob(['png'], { type: 'application/png' }), {
+      headers: { 'Content-Type': 'application/png' }
+    }),
+    createObjectURL(value) {
+      created.push(value)
+      return 'blob:normalised-png'
+    }
+  })
+
+  assert.equal(url, 'blob:normalised-png')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].type, 'image/png')
+})
+
 test('loadApiMediaObjectUrl rejects HTTP failures before creating an Object URL', async () => {
   await assert.rejects(
     () => loadApiMediaObjectUrl('/api/image/missing', {

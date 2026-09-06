@@ -93,7 +93,7 @@
             <div><span>FOCUS</span><h2>重点关注</h2></div>
             <button type="button" :disabled="loading" @click="loadExecutions">{{ loading ? '更新中…' : '刷新' }}</button>
           </header>
-          <div v-if="loadError" class="load-note">实时任务暂不可用，当前展示场景演示数据。</div>
+          <div v-if="loadError" class="load-note">实时任务暂时不可用，请稍后重试。</div>
           <article
             v-for="item in attentionItems"
             :key="item.id"
@@ -104,7 +104,6 @@
               <span class="severity-label">{{ severityLabel(item.severity) }}</span>
               <span>{{ formatTime(item.occurredAt) }}</span>
               <span class="status-label">{{ statusLabel(item.status) }}</span>
-              <em v-if="!item.live">场景演示</em>
             </div>
             <h3>{{ displayText(item.title) }}</h3>
             <p>{{ displayText(item.summary) }}</p>
@@ -189,17 +188,7 @@ const liveItems = ref([])
 
 const quickPrompts = computed(() => props.coordinator.quickPrompts || [])
 const assistantName = computed(() => props.coordinator.name || '智能助手')
-const demoItems = computed(() => (props.coordinator.demoAttentionItems || [])
-  .map(normalizeAttentionItem)
-  .filter(Boolean))
-const attentionItems = computed(() => {
-  const ids = new Set()
-  return [...liveItems.value, ...demoItems.value].filter(item => {
-    if (!item || ids.has(item.id)) return false
-    ids.add(item.id)
-    return true
-  }).slice(0, 8)
-})
+const attentionItems = computed(() => liveItems.value.slice(0, 8))
 const workspaceBlocks = computed(() => normalizeWorkspaceBlocks(props.coordinator.workspaceBlocks || []))
 const highPriorityCount = computed(() => attentionItems.value.filter(item => ['critical', 'high'].includes(item.severity)).length)
 const reviewCount = computed(() => attentionItems.value.filter(item => item.status === 'awaiting_review').length)
@@ -228,8 +217,8 @@ const loadExecutions = async () => {
   loading.value = true
   loadError.value = ''
   try {
-    const executions = await scheduledTasksStore.fetchRecentExecutions(20)
-    liveItems.value = executions
+    const { executions } = await scheduledTasksStore.fetchRecentExecutions({ pageSize: 20 })
+    liveItems.value = (executions || [])
       .filter(item => allowedTaskIds.has(item.task_id))
       .map(executionToAttentionItem)
       .map(normalizeAttentionItem)

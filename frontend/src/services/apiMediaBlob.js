@@ -3,6 +3,18 @@ import { authFetch } from '../auth/http.js'
 
 const SAME_ORIGIN_API_PREFIX = '/api/'
 const LEGACY_IMAGE_PREFIX = '[IMAGE:'
+const IMAGE_CONTENT_TYPE_ALIASES = {
+  'application/jpg': 'image/jpeg',
+  'application/jpeg': 'image/jpeg',
+  'application/pjpeg': 'image/jpeg',
+  'application/x-jpg': 'image/jpeg',
+  'image/jpg': 'image/jpeg',
+  'image/pjpeg': 'image/jpeg',
+  'application/png': 'image/png',
+  'application/gif': 'image/gif',
+  'application/webp': 'image/webp',
+  'application/bmp': 'image/bmp'
+}
 
 
 function legacyImagePlaceholderPath(source) {
@@ -26,6 +38,13 @@ export function sameOriginApiMediaPath(source) {
 }
 
 
+function normaliseImageContentType(contentType) {
+  const raw = String(contentType || '').split(';', 1)[0].trim().toLowerCase()
+  if (raw.startsWith('image/')) return raw === 'image/jpg' ? 'image/jpeg' : raw
+  return IMAGE_CONTENT_TYPE_ALIASES[raw] || ''
+}
+
+
 export async function loadApiMediaObjectUrl(source, {
   fetchMedia = authFetch,
   createObjectURL = value => URL.createObjectURL(value)
@@ -41,11 +60,16 @@ export async function loadApiMediaObjectUrl(source, {
   }
 
   const contentType = response.headers.get('Content-Type') || ''
-  if (!contentType.toLowerCase().startsWith('image/')) {
+  const imageContentType = normaliseImageContentType(contentType)
+  if (!imageContentType) {
     throw new Error(`Media response is not an image: ${contentType || 'unknown content type'}`)
   }
 
-  return createObjectURL(await response.blob())
+  const blob = await response.blob()
+  const imageBlob = blob.type === imageContentType
+    ? blob
+    : new Blob([blob], { type: imageContentType })
+  return createObjectURL(imageBlob)
 }
 
 

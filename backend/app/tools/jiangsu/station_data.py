@@ -33,7 +33,7 @@ class JiangsuStationDataTool(LLMTool):
     _ENDPOINTS = {
         "station_hour": "airdata/DATStationHour/GetStationHourDataListAsync",
         "station_day": "airdata/DATStationDay/GetStationDayDataListAsync",
-        "station_5minute": "airdata/DATStation5Minute/GetStation5MinuteDataListAsync",
+        "station_5minute": "airdata/AirData/GetAir5MinTransitionDisplayListAsync",
     }
     _DATA_TYPES = {
         0: "原始实况（工况）",
@@ -125,7 +125,7 @@ class JiangsuStationDataTool(LLMTool):
                         "pollutant_codes": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "仅5分钟数据可选，例如 PM2_5、O3、SO2。",
+                            "description": "兼容旧调用保留；station_5minute 不下发 pollutantCodes，PM2.5/PM10 从 pM2_5/pM10 宽表字段读取。",
                         },
                     },
                     "required": ["data_kind", "start_time", "end_time"],
@@ -287,11 +287,6 @@ class JiangsuStationDataTool(LLMTool):
             "dataType": data_type,
             "province_query": self._is_province_query(city_names),
         }
-        if data_kind == "station_5minute" and pollutant_codes:
-            payload["pollutantCodes"] = [
-                item.strip() for item in pollutant_codes if item.strip()
-            ]
-
         records: list[dict[str, Any]] = []
         retry_count = 0
         batch_count = 0
@@ -304,8 +299,6 @@ class JiangsuStationDataTool(LLMTool):
                 "timePoint": payload["timePoint"],
                 "dataType": payload["dataType"],
             }
-            if "pollutantCodes" in payload:
-                request_payload["pollutantCodes"] = payload["pollutantCodes"]
             response, retries = await self._request_with_retry(data_kind or "", request_payload)
             retry_count += retries
             batch_count += 1
@@ -358,7 +351,7 @@ class JiangsuStationDataTool(LLMTool):
         if data_type not in self._DATA_TYPES:
             raise ValueError("data_type 必须为 0、1、2 或 3")
         if pollutant_codes and data_kind != "station_5minute":
-            raise ValueError("pollutant_codes 仅支持 station_5minute")
+            raise ValueError("pollutant_codes 为兼容旧 5 分钟调用保留，不能用于 station_hour 或 station_day")
         if not self.base_url or not self.username or not self.password:
             raise ValueError("未配置江苏省数据接口地址、账号或密码")
 
@@ -406,6 +399,17 @@ class JiangsuStationDataTool(LLMTool):
             raise ValueError(str(result.get("msg") or "江苏接口返回失败"))
         return result
 
+    def _build_http_payload(self, data_kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if data_kind != "station_5minute":
+            return payload
+        # The 5-minute display endpoint returns wide rows; pollutantCodes are
+        # intentionally not forwarded because text aliases can return empty.
+        return {
+            "stationCodes": payload.get("codes") or [],
+            "timePoint": payload.get("timePoint") or [],
+            "dataType": payload.get("dataType"),
+        }
+
     async def _resolve_station_codes(
         self,
         station_codes,
@@ -444,7 +448,10 @@ class JiangsuStationDataTool(LLMTool):
         rows = self._station_directory or []
         effective_type = normalize_station_type(station_type, allow_all=True) or "国控"
         rows, _ = filter_station_rows(rows, effective_type)
-        normalise = lambda value: str(value or "").strip().replace(" ", "").rstrip("省市区县")
+
+        def normalise(value: Any) -> str:
+            return str(value or "").strip().replace(" ", "").rstrip("省市区县")
+
         codes = list(direct)
         for name in station_names or []:
             matches = [str(row["stationCode"]) for row in rows if normalise(row.get("positionName")) == normalise(name)]
@@ -520,6 +527,6 @@ class JiangsuStationDataTool(LLMTool):
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             return await client.post(
                 f"{self.base_url}/{self._ENDPOINTS[data_kind]}",
-                json=payload,
+                json=self._build_http_payload(data_kind, payload),
                 headers={"Authorization": f"Bearer {token}", "SysCode": "SunAirProvince"},
             )

@@ -21,6 +21,7 @@ from app.tools.jiangsu.station_data import JiangsuStationDataTool
 from app.tools.resource_declarations import resources_for_visuals, single_file_product
 from app.utils.path_config import (
     format_agent_path,
+    get_data_registry,
     get_sessions_dir,
     is_path_within,
     resolve_agent_path,
@@ -446,15 +447,18 @@ def _safe_fault_attachment_name(attachment: dict[str, Any], index: int) -> str:
     return f"{Path(safe_name).stem[:180 - len(suffix)]}{suffix}"
 
 
-def _fault_attachment_output_dir(raw_resource_path: str, order_code: str) -> Path:
-    raw_path = resolve_agent_path(raw_resource_path)
-    sessions_dir = get_sessions_dir().resolve()
-    if not raw_path.is_file() or not is_path_within(raw_path, [sessions_dir]):
-        raise ValueError("详单审计资源不在当前会话目录")
+def _fault_attachment_output_dir(raw_resource_path: str | None, order_code: str) -> Path:
     safe_order_code = re.sub(r"[^0-9A-Za-z_-]+", "_", order_code).strip("_") or "fault-order"
-    output_dir = (raw_path.parent / "attachments" / safe_order_code).resolve()
-    if not is_path_within(output_dir, [raw_path.parent]):
-        raise ValueError("附件输出目录无效")
+    if raw_resource_path:
+        raw_path = resolve_agent_path(raw_resource_path)
+        sessions_dir = get_sessions_dir().resolve()
+        if not raw_path.is_file() or not is_path_within(raw_path, [sessions_dir]):
+            raise ValueError("详单审计资源不在当前会话目录")
+        output_dir = (raw_path.parent / "attachments" / safe_order_code).resolve()
+        if not is_path_within(output_dir, [raw_path.parent]):
+            raise ValueError("附件输出目录无效")
+    else:
+        output_dir = (get_data_registry() / "work_order_review_attachments" / safe_order_code).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -487,11 +491,6 @@ async def _download_fault_order_attachments(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     if not attachments:
         return attachments, [], {"downloaded": 0, "failed": 0, "skipped": 0, "bytes": 0}
-    if not raw_resource_path:
-        for attachment in attachments:
-            attachment["download_status"] = "skipped"
-            attachment["download_error"] = "会话上下文不可用，未保存附件"
-        return attachments, [], {"downloaded": 0, "failed": 0, "skipped": len(attachments), "bytes": 0}
 
     try:
         output_dir = _fault_attachment_output_dir(raw_resource_path, order_code)

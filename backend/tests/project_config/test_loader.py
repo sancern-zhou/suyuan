@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import app.tools as tools_module
+from app.agent.selection_context import load_skill_selection
 from app.project_config.loader import ProjectConfigError, load_project_context
 from app.project_config.paths import project_skills_dir
 
@@ -80,16 +81,17 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
     assert context.manifest.frontend.coordinator.name == "苏小环"
     assert context.manifest.frontend.coordinator.default_mode == "ops"
     assert context.manifest.frontend.coordinator.attention_task_ids == [
-        "jiangsu_station_fault_diagnosis"
+        "jiangsu_station_fault_diagnosis",
+        "jiangsu_fault_work_order_review",
     ]
     assert {
         route.mode for route in context.manifest.frontend.coordinator.routes
     } >= {"ops", "jiangsu_query", "station_fault_diagnosis"}
-    assert [
-        item.id for item in context.manifest.frontend.coordinator.demo_attention_items
-    ] == ["demo-station-fault", "demo-personnel-mobility"]
+    assert context.manifest.frontend.coordinator.demo_attention_items == []
     assert context.manifest.backend.fetchers == [
         "jiangsu_station_fault_event",
+        "jiangsu_fault_work_order_review_event",
+        "jiangsu_review_feedback",
         "jiangsu_nmc_observed_weather",
     ]
     assert "execute_sql_query" in context.manifest.backend.agent_mode_tools["jiangsu_query"]
@@ -107,9 +109,35 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         assert "jiangsu_query_operations_graph" in context.manifest.backend.agent_mode_tools[mode]
         assert "knowledge_graph_query" in context.manifest.backend.agent_mode_tools[mode]
     assert "jiangsu_query_operations_graph" in context.manifest.backend.tools
+    assert "jiangsu_submit_fault_work_order_review" in context.manifest.backend.tools
+    assert {
+        "jiangsu_fetch_qc_task_history",
+        "jiangsu_fetch_qc_task_status",
+        "jiangsu_fetch_qc_run_logs",
+        "jiangsu_fetch_qc_monitoring_curve",
+        "jiangsu_submit_fault_work_order_review",
+    } <= set(context.manifest.backend.agent_mode_tools["ops"])
     assert context.manifest.scheduled_tasks_enabled is True
-    assert context.manifest.scheduled_tasks == ["jiangsu_station_fault_diagnosis"]
+    assert context.manifest.scheduled_tasks == [
+        "jiangsu_station_fault_diagnosis",
+        "jiangsu_fault_work_order_review",
+    ]
     assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"
+
+
+def test_jiangsu_fault_work_order_review_skill_is_project_scoped():
+    context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
+
+    selection = load_skill_selection(
+        "fault-work-order-review",
+        skills_dir=project_skills_dir(context),
+    )
+
+    assert selection.skill_id == "fault-work-order-review"
+    assert "payload.evidence_pack_path" in selection.content
+    assert "references/output-contract.md" in selection.content
+    assert "references/sop-01-qc.md" in selection.content
+    assert "references/sop-02-env.md" in selection.content
 
 
 def test_xuchang_project_composes_shared_and_customer_modules():

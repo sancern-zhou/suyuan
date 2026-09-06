@@ -516,6 +516,56 @@ async def test_fault_work_order_detail_locates_downloads_attachments_and_returns
 
 
 @pytest.mark.asyncio
+async def test_fault_work_order_detail_downloads_attachments_without_session_context(monkeypatch, tmp_path):
+    async def fake_get(self, path, params):
+        if path.endswith("GetMtcWorkingOrderPagedListAsync"):
+            return {"success": True, "result": {"items": [
+                {"workingOrderCode": "WO-NO-CONTEXT", "uniqueCode": "U-1"},
+            ], "totalCount": 1}}
+        assert path.endswith("GetWorkingOrderInfoByUniqueCode")
+        return {"success": True, "result": [
+            {
+                "wo": {
+                    "workingOrderCode": "WO-NO-CONTEXT",
+                    "commonFile": [{
+                        "id": 9,
+                        "fileName": "现场照片.jpg",
+                        "filePath": "/NewFiles/Fault/FaultProcess/2026/9/photo.jpg",
+                        "typeCode": "FaultProcess",
+                    }],
+                },
+                "details": [{"processContent": "现场检查"}],
+            },
+        ]}
+
+    async def fake_download_file(self, path, params, *, max_bytes, retry_unauthorized=True):
+        return b"\xff\xd8\xff\xe0JFIF-from-no-context", "image/jpeg"
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.get_data_registry", lambda: tmp_path)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr(
+        "app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.download_file",
+        fake_download_file,
+    )
+
+    result = await JiangsuFaultWorkOrderDetailTool().execute(working_order_code="WO-NO-CONTEXT")
+
+    attachment = result["data"][0]["attachments"][0]
+    saved_path = Path(attachment["local_path"])
+    assert result["success"] is True
+    assert result["metadata"]["raw_resource_saved"] is False
+    assert result["metadata"]["attachments_downloaded"] == 1
+    assert result["metadata"]["attachments_skipped"] == 0
+    assert attachment["download_status"] == "success"
+    assert attachment["content_type"] == "image/jpeg"
+    assert saved_path.is_file()
+    assert saved_path.is_relative_to(tmp_path / "work_order_review_attachments" / "WO-NO-CONTEXT")
+    assert saved_path.read_bytes() == b"\xff\xd8\xff\xe0JFIF-from-no-context"
+    assert "file_path" not in result
+    assert ResourceDeclaration.model_validate(result["resources"][0])
+
+
+@pytest.mark.asyncio
 async def test_fault_work_order_detail_never_substitutes_another_order(monkeypatch):
     async def fake_get(self, path, params):
         if path.endswith("GetMtcWorkingOrderPagedListAsync"):

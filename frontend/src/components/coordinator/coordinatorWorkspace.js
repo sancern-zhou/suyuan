@@ -85,6 +85,7 @@ export function executionToAttentionItem(execution) {
   const candidateStation = text(attributes.station_name)
   const station = isInternalStationCode(candidateStation) ? '' : candidateStation
   const issue = describeAlarmType(attributes.alarm_type, attributes.source_type)
+  const customSummary = text(attributes.summary)
   const running = ['pending', 'running'].includes(execution?.status)
   const failed = ['failed', 'timeout', 'cancelled'].includes(execution?.status)
   return {
@@ -96,7 +97,7 @@ export function executionToAttentionItem(execution) {
       ? '自动分析未完成，需要人工查看任务状态并决定后续处理。'
       : (running
           ? '小值正在收集证据并形成初步判断。'
-          : '小值已完成初步分析，已整理证据、可能原因和处置建议，等待人工审核。'),
+          : (customSummary || '小值已完成初步分析，已整理证据、可能原因和处置建议，等待人工审核。')),
     severity: failed ? 'high' : normalizeExecutionSeverity(attributes.severity),
     status: failed ? 'needs_attention' : (running ? 'analyzing' : 'awaiting_review'),
     station,

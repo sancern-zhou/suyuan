@@ -23,6 +23,18 @@ _EVENT_DEFINITIONS = {
         description="江苏平台告警或监测异常已触发，且诊断证据包已准备完成",
         filter_fields=["source_type", "station_code", "alarm_type", "severity"],
     ),
+    "jiangsu.fault_work_order.review_requested": EventDefinition(
+        event_type="jiangsu.fault_work_order.review_requested",
+        label="江苏故障工单审核",
+        description="江苏故障工单到达省中心审核节点，且 SOP 审核证据包已准备完成",
+        filter_fields=[
+            "work_order_code",
+            "station_code",
+            "current_point",
+            "sop_id",
+            "fault_event_type",
+        ],
+    ),
 }
 
 

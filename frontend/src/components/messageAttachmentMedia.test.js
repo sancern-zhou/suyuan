@@ -77,3 +77,10 @@ test('authenticated image forwards the native click event to modifier consumers'
 
   assert.match(source, /@click="emit\('click', \$event\)"/)
 })
+
+
+test('authenticated image forwards native image load failures', () => {
+  const source = readFileSync(new URL('./AuthenticatedImage.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /@error="emit\('error', \$event\)"/)
+})

@@ -64,3 +64,19 @@ test('demo attention items are normalized without inventing fields', () => {
   assert.equal(item.severity, 'info')
   assert.deepEqual(item.evidence, ['告警记录'])
 })
+
+test('review execution renders producer-provided alarm label and summary', () => {
+  const item = executionToAttentionItem({
+    execution_id: 'exec-3',
+    status: 'success',
+    started_at: '2026-09-03T18:36:39',
+    event_attributes: {
+      station_name: '泗洪监测站',
+      alarm_type: '颗粒物数据偏高',
+      summary: '9月2日泗洪监测站PM2.5数据离群偏高，现场核查'
+    }
+  })
+  assert.equal(item.title, '泗洪监测站 · 颗粒物数据偏高')
+  assert.equal(item.summary, '9月2日泗洪监测站PM2.5数据离群偏高，现场核查')
+  assert.deepEqual(item.evidence, [])
+})

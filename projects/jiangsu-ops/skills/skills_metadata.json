@@ -1,5 +1,25 @@
 {
   "skills": {
+    "fault-work-order-review": {
+      "enabled": true,
+      "aliases": ["故障工单审核", "省中心工单审核", "工单审核闭环"],
+      "required_tools": [
+        "read_file",
+        "jiangsu_submit_fault_work_order_review",
+        "jiangsu_query_statistics",
+        "jiangsu_fetch_alarm_records",
+        "jiangsu_fetch_station_data",
+        "jiangsu_fetch_station_alarm_logs",
+        "jiangsu_fetch_fault_work_order_detail",
+        "jiangsu_fetch_auto_inspection",
+        "jiangsu_fetch_network_inspection_summary",
+        "jiangsu_fetch_station_environment_history",
+        "jiangsu_fetch_qc_task_history",
+        "jiangsu_fetch_qc_task_status",
+        "jiangsu_fetch_qc_run_logs",
+        "jiangsu_fetch_qc_monitoring_curve"
+      ]
+    },
     "ops-work-order-audit": {
       "enabled": true,
       "aliases": ["运维工单审核", "工单审核"],

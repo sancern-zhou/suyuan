@@ -1,5 +1,9 @@
 <template>
-  <div v-if="visible" class="viz-wrapper" :style="panelStyle">
+  <div
+    v-if="visible"
+    :class="['viz-wrapper', { 'full-bleed-resource-panel': fullBleedVisualizationPanel }]"
+    :style="resolvedPanelStyle"
+  >
     <!-- 报告生成专家 -->
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs">
@@ -32,7 +36,7 @@
     <!-- 其他模式：可视化面板 + Office文档预览面板 + 知识溯源面板 -->
     <template v-else>
       <!-- 标签页切换按钮 -->
-      <div v-if="showTabs" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
+      <div v-if="showTabs && !fullBleedVisualizationPanel" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
         <button
           :class="['tab-btn', { active: activeTab === 'visualization' }]"
           role="tab"
@@ -154,6 +158,8 @@ import VisualizationGallery from '@/components/resources/VisualizationGallery.vu
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
+import { visualizationGalleryItems } from '@/services/visualizationGallery.js'
+import { isFaultWorkOrderReviewVisual } from '@/services/visualizationTypes.js'
 
 const props = defineProps({
   visible: {
@@ -225,6 +231,28 @@ const resourceSummary = computed(() => summarizeRightPanelResources(
     ? resourceStore.activeSessionState?.resources || []
     : []
 ))
+const panelResources = computed(() => (
+  resourceStore.activeSessionId === props.sessionId
+    ? resourceStore.activeSessionState?.resources || []
+    : []
+))
+const visualizationItems = computed(() => visualizationGalleryItems(panelResources.value))
+const fullBleedVisualizationPanel = computed(() => (
+  props.activeTab === 'visualization' &&
+  visualizationItems.value.length === 1 &&
+  isFaultWorkOrderReviewVisual(visualizationItems.value[0]?.resource)
+))
+const resolvedPanelStyle = computed(() => ({
+  ...props.panelStyle,
+  ...(fullBleedVisualizationPanel.value
+    ? {
+        overflowY: 'hidden',
+        overflowX: 'hidden',
+        background: 'transparent',
+        borderLeft: '0'
+      }
+    : {})
+}))
 const showBoardTab = computed(() => resourceSummary.value.counts.board > 0)
 const explicitTarget = computed(() => {
   const state = resourceStore.activeSessionState
@@ -288,6 +316,11 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   height: 100%;
   background: #f8fafc;
   border-left: 1px solid #edf1f7;
+}
+
+.viz-wrapper.full-bleed-resource-panel {
+  background: transparent;
+  border-left: 0;
 }
 
 .right-panel-tabs {

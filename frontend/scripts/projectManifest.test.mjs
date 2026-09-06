@@ -38,7 +38,7 @@ test('xuchang project enables only its declared business modules', () => {
 test('jiangsu operations project exposes its dedicated operations modes', () => {
   const config = loadProjectBuildConfig({ projectId: 'jiangsu-ops', repoRoot })
   assert.deepEqual(config.frontend.agentModes, [
-    'ops', 'jiangsu_query', 'knowledge', 'expert', 'smart_inspection', 'operations_analysis',
+    'assistant', 'ops', 'jiangsu_query', 'knowledge', 'expert', 'smart_inspection', 'operations_analysis',
     'device_control', 'station_fault_diagnosis'
   ])
   assert.equal(config.frontend.defaultAgentMode, 'ops')

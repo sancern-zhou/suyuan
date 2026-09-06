@@ -8,6 +8,7 @@ frontend:
   features: {}
   # social 由江苏独立微信渠道驱动，不作为 Web 端手动切换的业务场景。
   agent_modes:
+    - assistant
     - ops
     - jiangsu_query
     - knowledge
@@ -29,6 +30,7 @@ frontend:
     default_mode: ops
     attention_task_ids:
       - jiangsu_station_fault_diagnosis
+      - jiangsu_fault_work_order_review
     quick_prompts:
       - label: 今日运维态势
         prompt: 汇总今天江苏全省的运维态势，重点说明异常站点、待审核事项和需要人工关注的风险。
@@ -101,47 +103,6 @@ frontend:
             value: 人工确认
           - label: 处置结果复查
             value: 持续跟踪
-    # 在没有真实事件执行记录的演示环境中显示；所有条目均在界面明确标记“场景演示”。
-    demo_attention_items:
-      - id: demo-station-fault
-        title: 源创包装厂房（1002A）· 颗粒物数据中断
-        summary: 场景模拟：PM2.5、PM10 同时停止更新，苏小环已组织监测、告警和巡检证据进行初步研判。
-        severity: high
-        status: awaiting_review
-        station: 源创包装厂房
-        occurred_at: 场景时间 09:12
-        diagnosis: 更可能是采集或传输链路异常，尚不能认定为分析仪故障。
-        confidence: medium
-        evidence:
-          - 颗粒物同步断数
-          - 其他气态污染物仍有数据
-          - 尚缺通信日志
-        actions:
-          - label: 补充取证
-            kind: ask
-            prompt: 针对源创包装厂房站点（1002A）颗粒物数据中断场景，补查最近6小时五分钟数据、站房告警和历史工单，并更新证据时间线。
-            mode: station_fault_diagnosis
-          - label: 深入诊断
-            kind: ask
-            prompt: 进入故障诊断流程，分析源创包装厂房站点（1002A）颗粒物数据中断场景并形成处置方案。
-            mode: station_fault_diagnosis
-      - id: demo-personnel-mobility
-        title: 近30日 · 跨市运维轨迹待优化
-        summary: 场景模拟：部分任务存在频繁跨市往返，苏小环建议结合人员技能、属地覆盖和任务时效优化资源调配。
-        severity: medium
-        status: new
-        occurred_at: 场景时间 今天
-        diagnosis: 当前轨迹显示调度半径偏大，重点是优化技能匹配和就近派单，不代表人员规模本身不足。
-        confidence: low
-        evidence:
-          - 模拟任务轨迹
-          - 人员技能标签
-          - 属地站点台账
-        actions:
-          - label: 分析跨市轨迹
-            kind: ask
-            prompt: 分析近30日运维人员任务轨迹，识别频繁跨市往返、属地替代机会和资源调配优化建议，并明确数据为场景模拟。
-            mode: operations_analysis
   agent_mode_overrides:
     knowledge:
       name: 江苏知识问答智能体
@@ -196,6 +157,8 @@ backend:
   # 江苏部署仅启动项目自有抓取器，不加载共享抓取脚本。
   fetchers:
     - jiangsu_station_fault_event
+    - jiangsu_fault_work_order_review_event
+    - jiangsu_review_feedback
     - jiangsu_nmc_observed_weather
   tools:
     - jiangsu_fetch_city_data
@@ -210,6 +173,7 @@ backend:
     - jiangsu_prepare_device_control
     - jiangsu_execute_device_control
     - jiangsu_prepare_fault_work_order
+    - jiangsu_submit_fault_work_order_review
     - jiangsu_fetch_station_alarm_logs
     - jiangsu_fetch_fault_work_orders
     - jiangsu_fetch_fault_work_order_detail
@@ -223,6 +187,27 @@ backend:
   # 江苏项目按模式向工单审核、故障诊断和其他运维智能体暴露经评审的工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   agent_mode_tools:
+    # 通用助手不继承共享默认工具面；仅开放经项目评审的会话资源、文件、
+    # 知识检索、网络补充和成果生成能力，不含 shell、浏览器和子Agent调用。
+    assistant:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - read_file
+      - edit_file
+      - write_file
+      - knowledge_qa_workflow
+      - knowledge_document_reader
+      - web_search
+      - web_fetch
+      - execute_python
+      - create_report_chart
+      - create_report_package
+      - render_report_package
+      - validate_report_package
+      - manage_editable_ppt
+      - create_pptx_with_ppt_master
+      - validate_pptx
     # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
     knowledge:
       - knowledge_qa_workflow
@@ -343,8 +328,15 @@ backend:
       - jiangsu_fetch_station_data
       - jiangsu_query_statistics
       - jiangsu_fetch_alarm_records
+      - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_fault_work_orders
       - jiangsu_fetch_fault_work_order_detail
+      - jiangsu_fetch_station_environment_history
+      - jiangsu_fetch_qc_task_history
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_qc_monitoring_curve
+      - jiangsu_submit_fault_work_order_review
       - jiangsu_query_operations_graph
       - knowledge_graph_query
       - create_report_chart
@@ -406,6 +398,7 @@ backend:
       - knowledge_graph_query
       - jiangsu_prepare_fault_work_order
   mode_prompt_files:
+    assistant: projects/jiangsu-ops/prompts/assistant.md
     knowledge: projects/jiangsu-ops/prompts/knowledge.md
     jiangsu_query: projects/jiangsu-ops/prompts/jiangsu_query.md
     expert: projects/jiangsu-ops/prompts/expert.md
@@ -424,3 +417,4 @@ knowledge:
 scheduled_tasks_enabled: true
 scheduled_tasks:
   - jiangsu_station_fault_diagnosis
+  - jiangsu_fault_work_order_review

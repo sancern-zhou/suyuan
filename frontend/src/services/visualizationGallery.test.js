@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { visualizationGalleryItems } from './visualizationGallery.js'
+import { isFaultWorkOrderReviewVisual } from './visualizationTypes.js'
 
 const visual = (overrides = {}) => ({
   resource_id: 'chart-1', group_id: 'group-1', relation: 'primary', kind: 'visual',
@@ -31,4 +32,10 @@ test('can include an explicitly opened visual attachment', () => {
   const attachment = visual({ resource_id: 'attachment', group_id: 'attachment-group', role: 'attachment' })
   assert.equal(visualizationGalleryItems([attachment]).length, 0)
   assert.equal(visualizationGalleryItems([attachment], 'attachment').length, 1)
+})
+
+test('recognizes fault work order review visuals from resource metadata and specs', () => {
+  assert.equal(isFaultWorkOrderReviewVisual(visual({ metadata: { type: 'fault_work_order_review' } })), true)
+  assert.equal(isFaultWorkOrderReviewVisual({ type: 'fault_work_order_review' }), true)
+  assert.equal(isFaultWorkOrderReviewVisual(visual({ metadata: { type: 'line_chart' } })), false)
 })

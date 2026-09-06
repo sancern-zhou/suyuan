@@ -2,7 +2,7 @@ import { authFetch } from '@/auth/http.js'
 import { connectScheduledTaskWebSocket } from '@/auth/websocket.js'
 import { defineStore } from 'pinia';
 
-const API_BASE = '/api/scheduled-tasks';
+const API_BASE = `${(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')}/scheduled-tasks`;
 
 const responseErrorMessage = async (response, fallback) => {
   const payload = await response.json().catch(() => null)

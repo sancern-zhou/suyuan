@@ -27,8 +27,7 @@ export function createProjectConfig(value) {
         quickPrompts: Object.freeze([...(value.frontend.coordinator.quickPrompts || [])]),
         attentionTaskIds: Object.freeze([...(value.frontend.coordinator.attentionTaskIds || [])]),
         routes: Object.freeze([...(value.frontend.coordinator.routes || [])]),
-        workspaceBlocks: Object.freeze([...(value.frontend.coordinator.workspaceBlocks || [])]),
-        demoAttentionItems: Object.freeze([...(value.frontend.coordinator.demoAttentionItems || [])])
+        workspaceBlocks: Object.freeze([...(value.frontend.coordinator.workspaceBlocks || [])])
       })
     : null
   return Object.freeze({
