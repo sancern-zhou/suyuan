@@ -1037,6 +1037,14 @@ class ValidateReportPackageTool(LLMTool):
             errors.append("缺少 report.html")
         if require_docx and not checks["docx_exists"]:
             errors.append("缺少 report.docx")
+        if checks["html_exists"] and checks["docx_exists"]:
+            from app.services.report.html_docx_bridge import RenderedHtmlReport
+
+            try:
+                report = RenderedHtmlReport(report_dir / "report.html")
+                checks["docx_tables"] = report.validate(report_dir / "report.docx")
+            except (ValueError, OSError) as exc:
+                errors.append(f"DOCX table validation failed: {exc}")
         if checks["image_refs"]["missing"]:
             errors.append(f"图片引用缺失: {', '.join(checks['image_refs']['missing'][:5])}")
         if checks["image_refs"]["api_image_refs"]:

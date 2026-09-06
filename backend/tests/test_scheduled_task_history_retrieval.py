@@ -44,21 +44,30 @@ def test_search_history_cases_scores_structured_fields(tmp_path):
             "started_at": "2026-09-01T08:00:00",
             "trigger": {
                 "type": "event",
-                "context_digest": "station_exceedance_confirmed; station_name=站点A; pollutant=PM10",
+                "event_type": "station_exceedance_confirmed",
+                "attributes": {
+                    "city": "许昌市",
+                    "station_id": "站点A",
+                    "target_pollutant": "PM10",
+                },
             },
             "distilled": {
-                "case_brief": "站点A PM10 超标，扬尘为主因",
-                "findings": ["站点A PM10 超标 1.4 倍", "上风向施工扬尘贡献较高"],
+                "case_brief": "监测异常，扬尘为主因",
+                "findings": ["浓度超标 1.4 倍", "上风向施工扬尘贡献较高"],
             },
             "outputs": [{"kind": "report", "ref": "rpt_pm10"}],
         }
     )
 
-    result = search_history_cases(storage, query="站点A PM10 扬尘", limit=2)
+    result = search_history_cases(storage, query="许昌市 站点A PM10 扬尘", limit=2)
 
     assert result["count"] == 1
     assert result["matches"][0]["execution_id"] == "exec_match"
-    assert result["matches"][0]["case_brief"] == "站点A PM10 超标，扬尘为主因"
+    assert result["matches"][0]["case_brief"] == "监测异常，扬尘为主因"
+    assert result["matches"][0]["trigger"]["attributes"]["city"] == "许昌市"
+    assert result["matches"][0]["trigger"]["attributes"]["station_id"] == "站点A"
+    assert result["matches"][0]["trigger"]["attributes"]["target_pollutant"] == "PM10"
+    assert "许昌市" in result["matches"][0]["matched_terms"]
     assert "PM10" in result["matches"][0]["matched_terms"]
 
 

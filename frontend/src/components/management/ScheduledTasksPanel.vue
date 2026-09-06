@@ -472,12 +472,14 @@
                 </span>
                 <span v-if="caseItem.trigger?.type === 'event'" class="history-case-trigger">事件触发</span>
               </div>
-              <p v-if="caseItem.trigger?.context_digest" class="history-case-digest">
-                {{ caseItem.trigger.context_digest }}
-              </p>
               <p class="history-case-brief">
                 {{ caseItem.distilled?.case_brief || caseItem.summary || '（无摘要）' }}
               </p>
+              <div v-if="caseDimensionTags(caseItem).length" class="history-case-dimensions">
+                <span v-for="tag in caseDimensionTags(caseItem)" :key="`${tag.label}:${tag.value}`">
+                  {{ tag.label }}：{{ tag.value }}
+                </span>
+              </div>
               <ul v-if="caseItem.distilled?.findings?.length" class="history-case-findings">
                 <li v-for="(finding, index) in caseItem.distilled.findings" :key="index">{{ finding }}</li>
               </ul>
@@ -746,6 +748,34 @@ const renderedMemory = computed(() => {
 
 const caseStatusKey = (status) => ({ succeeded: 'success', timeout: 'timeout' }[status] || 'failed')
 const caseStatusLabel = (status) => ({ succeeded: '成功', failed: '失败', timeout: '超时' }[status] || status || '未知')
+const caseDimensionTags = (caseItem) => {
+  const distilled = caseItem?.distilled || {}
+  const trigger = caseItem?.trigger || {}
+  const attributes = trigger.attributes || {}
+  const stationName = attributes.station_name
+  const stationId = attributes.station_id
+  const station = stationName && stationId && stationName !== stationId
+    ? `${stationName}（${stationId}）`
+    : (stationName || stationId)
+  const fields = [
+    ['cities', '城市'],
+    ['stations', '站点'],
+    ['pollutants', '污染物']
+  ]
+  const tags = [
+    ['事件类型', trigger.event_type],
+    ['城市', attributes.city || attributes.city_name],
+    ['站点', station],
+    ['污染物', attributes.pollutant || attributes.target_pollutant]
+  ]
+    .filter(([, value]) => value != null && value !== '')
+    .map(([label, value]) => ({ label, value }))
+  return tags.concat(fields.flatMap(([field, label]) => (
+    Array.isArray(distilled[field])
+      ? distilled[field].map(value => ({ label, value }))
+      : []
+  )))
+}
 const consolidationStatusLabel = (status) => ({
   success: '成功',
   failed: '失败',
@@ -1850,17 +1880,26 @@ const saveTask = async () => {
   white-space: nowrap;
 }
 
-.history-case-digest {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: #856404;
-  word-break: break-all;
-}
-
 .history-case-brief {
   margin: 6px 0 0;
   font-size: 13px;
   color: #333;
+}
+
+.history-case-dimensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.history-case-dimensions span {
+  padding: 2px 6px;
+  border: 1px solid #d7dee8;
+  border-radius: 3px;
+  background: #f4f7f9;
+  color: #3f5268;
+  font-size: 11px;
 }
 
 .history-case-findings {
