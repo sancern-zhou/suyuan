@@ -336,6 +336,7 @@ const createEmptyModeState = () => ({
   ignoredRunIds: [],
   pendingPausedRunId: null,
   workspace: null,
+  pendingInteraction: null,
   isAnalyzing: false,
   error: null,
   isInterruption: false,
@@ -425,8 +426,7 @@ export const useReactStore = defineStore('react', {
       activeSessionByMode: {},
 
       // 工具列表（全局共享）
-      availableTools: [],
-      pendingInteraction: null
+      availableTools: []
     }
   },
 
@@ -438,6 +438,10 @@ export const useReactStore = defineStore('react', {
         return state.sessionStates[activeSessionId]
       }
       return state.modeStates[state.currentMode] || state.modeStates.assistant
+    },
+
+    pendingInteraction() {
+      return this.currentState?.pendingInteraction || null
     },
 
     // ✅ 向后兼容：sessionId
@@ -697,21 +701,26 @@ export const useReactStore = defineStore('react', {
     },
 
     async resolvePendingInteraction({ decision, response = null } = {}) {
-      const interaction = this.pendingInteraction
+      const interactionState = this.currentState
+      const interaction = interactionState?.pendingInteraction
       if (!interaction?.interaction_id || !interaction.session_id) return false
       const resolution = await resolveAgentInteraction(
         interaction.session_id,
         interaction.interaction_id,
         { decision, response }
       )
-      this.pendingInteraction = null
+      interactionState.pendingInteraction = null
       if (decision === 'approve' && interaction.promotion) {
         const promoted = this.promoteToWorkspace({
           ...interaction.promotion,
           session_id: interaction.session_id
         })
         const pendingRequest = resolution?.pending_request || interaction.pending_request
-        if (promoted && pendingRequest?.goal) {
+        if (
+          promoted
+          && pendingRequest?.goal
+          && pendingRequest.resume_after_approval !== false
+        ) {
           const contextSuffix = pendingRequest.context_str
             ? `\n\n补充上下文：${pendingRequest.context_str}`
             : ''
@@ -721,7 +730,8 @@ export const useReactStore = defineStore('react', {
               agentMode: pendingRequest.target_mode || interaction.promotion.target_mode,
               skillIds: pendingRequest.skill_ids || [],
               synthetic: true,
-              syntheticMeta: { source: 'workspace_approval_resume' }
+              syntheticMeta: { source: 'workspace_approval_resume' },
+              queuedAlreadyShown: true
             }
           )
         }
@@ -749,6 +759,7 @@ export const useReactStore = defineStore('react', {
       const stateToSave = {
         sessionId: modeState.sessionId,
         workspace: modeState.workspace,
+        pendingInteraction: modeState.pendingInteraction,
         isAnalyzing: modeState.isAnalyzing,
         error: modeState.error,
         isInterruption: modeState.isInterruption,
@@ -1487,7 +1498,7 @@ export const useReactStore = defineStore('react', {
           break
         }
         case 'interaction_required': {
-          this.pendingInteraction = data || null
+          targetState.pendingInteraction = data || null
           break
         }
         case 'start': {

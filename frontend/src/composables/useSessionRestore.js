@@ -98,12 +98,12 @@ export function useSessionRestore(options) {
 
       // 6. 恢复会话状态
       store.setSessionId(sessionData.session_id)
-      if (sessionData.metadata?.pending_interaction) {
-        store.pendingInteraction = {
+      store.currentState.pendingInteraction = sessionData.metadata?.pending_interaction
+        ? {
           ...sessionData.metadata.pending_interaction,
           session_id: sessionData.session_id
         }
-      }
+        : null
       if (sessionData.state === 'completed') {
         store.setComplete(true)
       }

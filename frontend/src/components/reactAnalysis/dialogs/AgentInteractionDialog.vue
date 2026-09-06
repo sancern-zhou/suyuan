@@ -1,25 +1,28 @@
 <template>
-  <div v-if="interaction" class="interaction-overlay" @click.self="close">
-    <section class="interaction-dialog" role="dialog" aria-modal="true" :aria-labelledby="titleId">
-      <header class="interaction-header">
+  <div v-if="interaction" class="interaction-strip" role="region" :aria-labelledby="titleId">
+    <section class="interaction-content">
+      <div class="interaction-copy">
         <h3 :id="titleId">{{ interaction.title || '需要你的确认' }}</h3>
-        <button class="interaction-close" type="button" aria-label="关闭" @click="close">×</button>
-      </header>
-      <p class="interaction-question">{{ interaction.question }}</p>
+        <p>{{ interaction.question }}</p>
+      </div>
       <textarea
         v-if="interaction.kind === 'question'"
         v-model="response"
         class="interaction-response"
-        rows="4"
+        rows="2"
         placeholder="请输入回复"
+        :disabled="resolving"
       />
-      <footer class="interaction-actions">
-        <button class="interaction-secondary" type="button" @click="resolve('reject')">暂不切换</button>
-        <button class="interaction-primary" type="button" @click="resolve(interaction.kind === 'question' ? 'answer' : 'approve')">
-          {{ interaction.kind === 'question' ? '提交回复' : '进入工作空间' }}
-        </button>
-      </footer>
     </section>
+    <div class="interaction-actions">
+      <button class="interaction-secondary" type="button" :disabled="resolving" @click="resolve('reject')">
+        暂不切换
+      </button>
+      <button class="interaction-primary" type="button" :disabled="resolving" @click="resolve(interaction.kind === 'question' ? 'answer' : 'approve')">
+        {{ resolving ? '处理中…' : (interaction.kind === 'question' ? '提交回复' : '进入工作空间') }}
+      </button>
+      <button class="interaction-close" type="button" aria-label="关闭" :disabled="resolving" @click="close">×</button>
+    </div>
   </div>
 </template>
 
@@ -27,7 +30,8 @@
 import { ref } from 'vue'
 
 defineProps({
-  interaction: { type: Object, default: null }
+  interaction: { type: Object, default: null },
+  resolving: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['resolve', 'close'])
@@ -39,15 +43,22 @@ const close = () => emit('close')
 </script>
 
 <style scoped>
-.interaction-overlay { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 20px; background: rgba(15, 23, 42, .45); }
-.interaction-dialog { width: min(460px, 100%); background: var(--surface, #fff); border: 1px solid var(--border, #dbe2ea); border-radius: 8px; box-shadow: 0 18px 48px rgba(15, 23, 42, .2); }
-.interaction-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 12px; }
-.interaction-header h3 { margin: 0; color: var(--text-primary, #172033); font-size: 17px; }
-.interaction-close { border: 0; background: transparent; color: var(--text-secondary, #64748b); font-size: 22px; cursor: pointer; }
-.interaction-question { margin: 0; padding: 0 20px 16px; color: var(--text-secondary, #475569); line-height: 1.6; }
-.interaction-response { display: block; width: calc(100% - 40px); margin: 0 20px 16px; box-sizing: border-box; resize: vertical; border: 1px solid var(--border, #cbd5e1); border-radius: 6px; padding: 10px; font: inherit; }
-.interaction-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px 18px; border-top: 1px solid var(--border, #e2e8f0); }
-.interaction-actions button { min-height: 36px; border-radius: 6px; padding: 0 14px; cursor: pointer; }
+.interaction-strip { width: min(1200px, calc(100% - 40px)); box-sizing: border-box; flex-shrink: 0; display: flex; align-items: center; gap: 16px; margin: 0 auto; padding: 12px 14px; border: 1px solid #c8d8ed; border-radius: 7px; background: #f4f8fd; box-shadow: 0 -2px 10px rgba(30, 64, 110, .06); }
+.interaction-content { flex: 1; min-width: 0; }
+.interaction-copy { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.interaction-copy h3 { flex: 0 0 auto; margin: 0; color: #20334d; font-size: 14px; line-height: 1.45; }
+.interaction-copy p { min-width: 0; margin: 0; color: #53657c; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.interaction-response { display: block; width: 100%; margin-top: 9px; box-sizing: border-box; resize: vertical; border: 1px solid #b8c8dc; border-radius: 6px; padding: 8px 10px; background: #fff; color: #26384f; font: inherit; font-size: 13px; }
+.interaction-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.interaction-actions button { min-height: 32px; border-radius: 5px; padding: 0 12px; cursor: pointer; white-space: nowrap; }
+.interaction-actions button:disabled { cursor: wait; opacity: .65; }
 .interaction-secondary { border: 1px solid var(--border, #cbd5e1); background: transparent; color: var(--text-primary, #334155); }
 .interaction-primary { border: 1px solid #2563eb; background: #2563eb; color: white; }
+.interaction-close { width: 30px; padding: 0 !important; border: 0; background: transparent; color: #64748b; font-size: 20px; }
+
+@media (max-width: 720px) {
+  .interaction-strip { width: calc(100% - 24px); align-items: stretch; flex-direction: column; gap: 10px; }
+  .interaction-copy { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .interaction-actions { justify-content: flex-end; }
+}
 </style>

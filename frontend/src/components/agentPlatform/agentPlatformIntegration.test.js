@@ -212,3 +212,20 @@ test('conversation workspace no longer exposes inline agent mode switching', asy
     assert.doesNotMatch(source, /update:agentMode|update:agent-mode/)
   }
 })
+
+test('workspace approval stays inline above the composer and scoped to the active session', async () => {
+  const prompt = await readSource('../reactAnalysis/dialogs/AgentInteractionDialog.vue')
+  const chatArea = await readSource('../reactAnalysis/ChatArea.vue')
+  const store = await readSource('../../stores/reactStore.js')
+
+  const promptIndex = chatArea.indexOf('<AgentInteractionDialog')
+  const inputIndex = chatArea.indexOf('<InputBox')
+  assert.ok(promptIndex >= 0)
+  assert.ok(inputIndex > promptIndex)
+  assert.doesNotMatch(prompt, /interaction-overlay|position:\s*fixed|aria-modal/)
+  assert.match(prompt, /class="interaction-strip"/)
+  assert.match(store, /pendingInteraction:\s*null/)
+  assert.match(store, /targetState\.pendingInteraction = data \|\| null/)
+  assert.match(store, /pendingRequest\.resume_after_approval !== false/)
+  assert.match(store, /queuedAlreadyShown:\s*true/)
+})

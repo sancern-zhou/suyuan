@@ -23,6 +23,7 @@ from app.agent.active_contexts import (
 )
 from app.agent.session import Session, get_session_manager
 from app.agent.session.workspace_routing import (
+    bind_workspace_request_to_source_query,
     is_workspace_approval_required,
     is_workspace_promotion,
 )
@@ -861,7 +862,6 @@ async def analyze_stream(
         latest_drawio_board = None
 
         if not actual_session_id:
-            import uuid
             actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
             analyze_kwargs["session_id"] = actual_session_id
 
@@ -1140,6 +1140,10 @@ async def analyze_stream(
                         if event_type == "interaction_required":
                             interaction_data = event.get("data") or {}
                             if is_workspace_approval_required(interaction_data):
+                                pending_request = bind_workspace_request_to_source_query(
+                                    interaction_data["pending_request"],
+                                    original_query,
+                                )
                                 interaction_id = f"interaction_{uuid.uuid4().hex}"
                                 interaction = {
                                     "interaction_id": interaction_id,
@@ -1148,7 +1152,7 @@ async def analyze_stream(
                                     "question": interaction_data.get("question") or "是否继续？",
                                     "actions": interaction_data.get("actions") or ["approve", "reject"],
                                     "promotion": interaction_data["promotion"],
-                                    "pending_request": interaction_data["pending_request"],
+                                    "pending_request": pending_request,
                                 }
                                 session.metadata["workspace"] = interaction["promotion"]
                                 session.metadata["pending_interaction"] = interaction

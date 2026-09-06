@@ -75,6 +75,7 @@ def test_workspace_promotion_waits_for_approval_before_starting_child():
         "workspace_path": "/tmp/board-workspace",
         "session_id": "web-session-1",
         "skill_ids": ["archify"],
+        "resume_after_approval": True,
     }
 
 
