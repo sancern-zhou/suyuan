@@ -558,10 +558,10 @@ class OpsAuditSubmitReviewTool(LLMTool):
                                 "properties": {
                                     "issue_id": {"type": "string"},
                                     "decision": {"type": "string", "enum": ["retain", "exclude", "manual_review"]},
-                                    "reason": {"type": "string", "description": "exclude/manual_review 必填；retain 可简写。"},
+                                    "reason": {"type": "string", "description": "所有决定必填；引用当前工单字段与证据，说明保留、排除或待核验的依据。"},
                                     "evidence_refs": {"type": "array", "items": {"type": "string"}},
                                 },
-                                "required": ["issue_id", "decision"],
+                                "required": ["issue_id", "decision", "reason"],
                             },
                         },
                         "reviewer_name": {"type": "string", "description": "复核者或子Agent标识。"},

@@ -60,6 +60,7 @@ def build_final_issue_list(
                 seen.add(key)
                 items.append(item)
 
+    _apply_semantic_fact_reviews(items, semantic_review_results or {})
     _assign_issue_ids(items)
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -70,7 +71,37 @@ def build_final_issue_list(
         "component_counts": _count_present_by(items, "issue_component"),
         "rule_counts": _count_by(items, "rule_id"),
         "items": items,
+        "pending_semantic_reviews": [
+            {key: result.get(key) for key in ("review_item_id", "working_order_code", "semantic_focus", "conclusion")}
+            for result in (semantic_review_results or {}).get("results", [])
+            if result.get("judgment") == "needs_followup"
+        ],
     }
+
+
+def _apply_semantic_fact_reviews(items: list[dict[str, Any]], results: dict[str, Any]) -> None:
+    """An explained incident remains a fact; disputed applicability needs verification."""
+    for result in results.get("results", []):
+        source = result.get("source_issue") or {}
+        if source.get("rule_id") != ABNORMAL_WITHOUT_EXPLANATION_RULE_ID:
+            continue
+        group = issue_link_metadata(source, working_order_code=result.get("working_order_code"))
+        group_id = group.get("issue_group_id")
+        if not group_id:
+            continue
+        for item in items:
+            if item.get("issue_group_id") != group_id or not is_abnormal_fact_rule(item.get("rule_id")):
+                continue
+            item["remark_review_status"] = result.get("judgment")
+            item["semantic_conclusion"] = result.get("conclusion")
+            item["semantic_remark_review"] = result.get("remark_review")
+            disputed = result.get("abnormal_fact_assessment") == "needs_verification"
+            incomplete = result.get("judgment") == "needs_followup"
+            if disputed or incomplete:
+                item["needs_manual_review"] = True
+                item["review_stage"] = "manual_evidence_review"
+                item["reason"] = result.get("abnormal_fact_reason") or result.get("conclusion")
+                item["review_status"] = "needs_followup"
 
 
 def _should_exclude_issue(issue: dict[str, Any]) -> bool:

@@ -50,7 +50,7 @@ def test_review_requires_complete_coverage(tmp_path: Path) -> None:
     review_input = build_review_input(issue_list)
 
     with pytest.raises(ValueError, match="do not cover all issues"):
-        _apply(tmp_path, issue_list, review_input, [{"issue_id": issue_list["items"][0]["issue_id"], "decision": "retain"}])
+        _apply(tmp_path, issue_list, review_input, [{"issue_id": issue_list["items"][0]["issue_id"], "decision": "retain", "reason": "证据充分"}])
 
 
 def test_review_rejects_changed_source(tmp_path: Path) -> None:

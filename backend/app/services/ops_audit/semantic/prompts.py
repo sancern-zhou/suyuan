@@ -50,11 +50,17 @@ REMARK_BATCH_SEMANTIC_JSON_PROMPT = (
     "应只判断备注或上下文是否合理说明了未提供清洗照片、照片缺失、附件无法上传或其他证据不足的业务原因；"
     "如果没有合理说明，应判为不完整；如果说明合理，应判为完整。"
     "每个输入项必须独立判断，不得用同一工单其他RF表或其他字段的备注替代当前异常项说明。"
+    "完整返回所有review_item_id，不得只返回工单号。备注中的厂家备案/报备参数、设备无该功能、"
+    "无该显示项目等均是相关说明，不得判为unrelated。区分真实异常已有处置说明与规则适用性受到质疑："
+    "已处理、已维修不否定异常事实，abnormal_fact_assessment填unchanged；"
+    "备注提出厂家范围、单位或设备功能与通用规则不符时填needs_verification，并给出abnormal_fact_reason，"
+    "不得仅凭备注宣称设备完全正常，也不得把待核验的适用性问题当成已确认违规。"
     "problem_description 必须具体描述当前review_item_id对应备注的问题，不要输出固定整改建议。"
     "仅输出JSON，不要输出解释。格式为："
     "{\"results\":[{\"review_item_id\":string,\"working_order_code\":string,"
     "\"judgment_type\":\"missing|placeholder|unrelated|contradictory|valid\",\"is_complete\":bool,\"has_cause\":bool,"
-    "\"has_action\":bool,\"has_result\":bool,\"problem_description\":string,\"confidence\":number}]}"
+    "\"has_action\":bool,\"has_result\":bool,\"problem_description\":string,\"confidence\":number,"
+    "\"abnormal_fact_assessment\":\"unchanged|needs_verification\",\"abnormal_fact_reason\":string}]}"
 )
 
 ORDER_DESCRIPTION_SEMANTIC_JSON_PROMPT = (

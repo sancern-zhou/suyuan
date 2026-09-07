@@ -50,6 +50,8 @@ _SEMANTIC_CACHE: dict[str, dict[str, Any]] = {}
 _SEMANTIC_CACHE_LIMIT = 128
 SEMANTIC_LLM_CALL_TIMEOUT_SECONDS = 180
 SEMANTIC_BATCH_TOTAL_TIMEOUT_SECONDS = 240
+SEMANTIC_BATCH_MAX_ITEMS = 8
+SEMANTIC_BATCH_MAX_CHARS = 12000
 
 STATION_MAINTAIN_TYPE_DEFINITIONS = {
     "particle_clock_photo": "颗粒物仪器、监测仪器或仪器显示数据及时间相关现场照片",
@@ -412,7 +414,11 @@ def _review_batch_semantic_tasks(
             (remark_tasks, audit_records, dataset_orders, details_by_code, rf_forms_by_code),
         ),
     ]
-    active_calls = [(task_group, fn, args) for task_group, fn, args in batch_calls if task_group]
+    active_calls = []
+    for task_group, fn, args in batch_calls:
+        for offset in range(0, len(task_group), SEMANTIC_BATCH_MAX_ITEMS):
+            chunk = task_group[offset:offset + SEMANTIC_BATCH_MAX_ITEMS]
+            active_calls.append((chunk, fn, (chunk, *args[1:])))
     if len(active_calls) <= 1:
         for task_group, fn, args in active_calls:
             try:
@@ -458,6 +464,8 @@ def _fallback_semantic_results(
 ) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     reason = "语义复核批次超时，已降级为待人工确认。" if status == "timeout" else "语义复核批次失败，已降级为待人工确认。"
+    if status == "incomplete_response":
+        reason = "模型未返回当前条目的有效独立结论，需重新复核，不能据此认定备注无效。"
     if exc:
         reason = f"{reason} {type(exc).__name__}: {str(exc)[:200]}"
     for task in tasks:
@@ -711,8 +719,8 @@ def _review_remark_tasks_batch(
                 "working_order_code": code,
                 "semantic_focus": task.get("semantic_focus", []),
                 "issue": issue_payload,
-                "text": text,
-                "evidence_summary": task.get("evidence_summary", {}),
+                "order_type": task.get("order_type"),
+                "maintenance_type": task.get("maintenance_type"),
             }
         )
     if not items:
@@ -724,12 +732,28 @@ def _review_remark_tasks_batch(
     )
     parsed_by_item = _batch_results_by_key(raw, "review_item_id")
     parsed_by_code = _batch_results_by_key(raw, "working_order_code")
+    code_counts = {}
+    for item in items:
+        code = item["working_order_code"]
+        code_counts[code] = code_counts.get(code, 0) + 1
     for task in tasks:
         code = str(task.get("working_order_code") or "")
         review_item_id = str(task.get("review_item_id") or code)
         if review_item_id in results:
             continue
-        raw_result = parsed_by_item.get(review_item_id) or parsed_by_code.get(code, {})
+        raw_result = parsed_by_item.get(review_item_id)
+        if not raw_result and code_counts.get(code) == 1:
+            legacy_result = parsed_by_code.get(code, {})
+            if not legacy_result.get("review_item_id"):
+                raw_result = legacy_result
+        if not raw_result or raw_result.get("working_order_code", code) != code or not (
+            raw_result.get("judgment_type") in REMARK_JUDGMENT_TYPES
+            or isinstance(raw_result.get("is_complete"), bool)
+        ):
+            results.update(_fallback_semantic_results(
+                [task], audit_records, dataset_orders, "incomplete_response", None,
+            ))
+            continue
         parsed = _normalize_remark_result(raw_result, remark_text_by_item.get(review_item_id, ""))
         judgment, conclusion, confidence = _judge_semantic_result("remark_semantics", parsed, [], task)
         results[review_item_id] = _build_semantic_task_result(
@@ -743,6 +767,11 @@ def _review_remark_tasks_batch(
             [],
             text_by_code.get(review_item_id, ""),
         )
+        if judgment == "cleared" and raw_result.get("abnormal_fact_assessment") == "needs_verification":
+            results[review_item_id]["abnormal_fact_assessment"] = "needs_verification"
+            results[review_item_id]["abnormal_fact_reason"] = str(
+                raw_result.get("abnormal_fact_reason") or "备注提出当前检查项范围或适用性存在差异，需核验依据。"
+            )
     return results
 
 
@@ -776,7 +805,7 @@ def _deterministic_remark_semantic_result(
         "confidence": 0.9,
         "remark": explanation,
     }
-    return _build_semantic_task_result(
+    result = _build_semantic_task_result(
         task,
         audit_record,
         order,
@@ -787,6 +816,9 @@ def _deterministic_remark_semantic_result(
         [],
         evidence_text or explanation,
     )
+    result["abnormal_fact_assessment"] = "needs_verification"
+    result["abnormal_fact_reason"] = explanation
+    return result
 
 
 def _field_level_range_explanation_for_abnormal_value(task: dict[str, Any]) -> str:
@@ -827,6 +859,7 @@ def _has_range_mismatch_explanation(text: str) -> bool:
             "厂家实际参数",
             "厂家备案参数",
             "厂家备案范围",
+            "厂家报备参数",
             "实际参数范围",
             "厂家参数",
             "参数范围是",
@@ -1212,11 +1245,16 @@ def _batch_results_by_key(raw: dict[str, Any] | None, key: str) -> dict[str, dic
     results = raw.get("results", []) if isinstance(raw, dict) else []
     if not isinstance(results, list):
         return {}
-    return {
-        str(item.get(key)): item
-        for item in results
-        if isinstance(item, dict) and item.get(key) is not None
-    }
+    indexed = {}
+    duplicates = set()
+    for item in results:
+        if not isinstance(item, dict) or item.get(key) is None:
+            continue
+        identity = str(item[key])
+        if identity in indexed:
+            duplicates.add(identity)
+        indexed[identity] = item
+    return {identity: item for identity, item in indexed.items() if identity not in duplicates}
 
 
 def _issue_violations(issue: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1309,6 +1347,7 @@ def _generic_remark_issue_payload(task: dict[str, Any]) -> dict[str, Any]:
         "abnormal_field": evidence.get("abnormal_field"),
         "abnormal_message": evidence.get("abnormal_message"),
         "remark_candidates": evidence.get("remark_candidates") or {},
+        "evidence": evidence,
     }
 
 
@@ -1328,9 +1367,43 @@ def _call_semantic_llm_json(prompt: str, text: str, *, context: dict[str, Any] |
     if not getattr(llm_service, "base_url", "") or not getattr(llm_service, "model", ""):
         return None
 
+    # Split only at item boundaries: slicing serialized JSON loses evidence and identities.
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+        batches = []
+        batch = []
+        size = 0
+        for item in payload["items"]:
+            item_size = len(json.dumps(item, ensure_ascii=False, default=str))
+            if batch and (len(batch) >= SEMANTIC_BATCH_MAX_ITEMS or size + item_size > SEMANTIC_BATCH_MAX_CHARS):
+                batches.append(batch)
+                batch, size = [], 0
+            batch.append(item)
+            size += item_size
+        if batch:
+            batches.append(batch)
+        if len(batches) > 1:
+            merged = []
+            deadline = time.monotonic() + SEMANTIC_BATCH_TOTAL_TIMEOUT_SECONDS
+            # Task batches already share four workers; do not multiply provider concurrency.
+            for batch in batches:
+                if time.monotonic() >= deadline:
+                    break
+                result = _call_semantic_llm_json(
+                    prompt,
+                    json.dumps({**payload, "items": batch}, ensure_ascii=False, default=str),
+                    context=context,
+                )
+                if isinstance(result, dict) and isinstance(result.get("results"), list):
+                    merged.extend(result["results"])
+            return {"results": merged}
+
     user_payload = {
         "prompt": prompt,
-        "text": text[:12000],
+        "text": text,
         "context": context or {},
     }
     full_prompt = (

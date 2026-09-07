@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.services.ops_audit.final_issue_list import ensure_issue_ids
+from app.services.ops_audit.issue_linking import is_abnormal_fact_rule
 
 
 REVIEW_DECISIONS_FILENAME = "latest_finished_work_orders_review_decisions.json"
@@ -43,8 +44,11 @@ def build_review_input(final_issue_list: dict[str, Any]) -> dict[str, Any]:
             "full_coverage_required": True,
             "identity_field": "issue_id",
             "absence_does_not_mean_retain": True,
+            "reason_required_for_all_decisions": True,
+            "linked_explanation_requires_confirmed_fact": True,
         },
         "items": items,
+        "pending_semantic_reviews": final_issue_list.get("pending_semantic_reviews", []),
     }
 
 
@@ -74,6 +78,7 @@ def apply_review_decisions(
     source_by_id = {str(item["issue_id"]): item for item in source_items}
     normalized = _validate_decisions(decisions, source_by_id)
     decision_by_id = {item["issue_id"]: item for item in normalized}
+    _reconcile_linked_decisions(source_items, decision_by_id)
 
     retained: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
@@ -91,6 +96,8 @@ def apply_review_decisions(
     target_dir = (output_dir or source_path.parent).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    pending_semantic_reviews = final_issue_list.get("pending_semantic_reviews", [])
+    report_ready = not manual and not pending_semantic_reviews
     counts = Counter(item["decision"] for item in normalized)
     review_meta = {
         "schema_version": "ops_audit_review_decisions.v1",
@@ -110,7 +117,8 @@ def apply_review_decisions(
         "source": review_meta["source"],
         "reviewer": review_meta["reviewer"],
         "review_complete": True,
-        "report_ready": not manual,
+        "report_ready": report_ready,
+        "pending_semantic_reviews": pending_semantic_reviews,
         "issue_count": len(retained),
         "excluded_count": len(excluded),
         "manual_review_count": len(manual),
@@ -123,7 +131,8 @@ def apply_review_decisions(
         "schema_version": "ops_audit_report_input.v1",
         "generated_at": generated_at,
         "source": review_meta["source"],
-        "report_ready": not manual,
+        "report_ready": report_ready,
+        "pending_semantic_reviews": pending_semantic_reviews,
         "summary": {
             "reviewed_count": len(source_items),
             "retained_count": len(retained),
@@ -143,7 +152,8 @@ def apply_review_decisions(
     return {
         "success": True,
         "review_complete": True,
-        "report_ready": not manual,
+        "report_ready": report_ready,
+        "pending_semantic_review_count": len(pending_semantic_reviews),
         "source_issue_count": len(source_items),
         "retained_count": len(retained),
         "excluded_count": len(excluded),
@@ -172,7 +182,7 @@ def _validate_decisions(
             raise ValueError(f"duplicate review issue_id: {issue_id}")
         if decision not in ALLOWED_DECISIONS:
             raise ValueError(f"invalid decision for {issue_id}: {decision}")
-        if decision != "retain" and not reason:
+        if not reason:
             raise ValueError(f"reason is required for {decision}: {issue_id}")
         seen.add(issue_id)
         normalized.append(
@@ -189,6 +199,39 @@ def _validate_decisions(
         preview = ", ".join(missing[:5])
         raise ValueError(f"review decisions do not cover all issues; missing {len(missing)}: {preview}")
     return normalized
+
+
+def _reconcile_linked_decisions(
+    items: list[dict[str, Any]], decisions: dict[str, dict[str, Any]],
+) -> None:
+    facts_by_group: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        decision = decisions[item["issue_id"]]
+        if item.get("needs_manual_review") and decision["decision"] == "retain" and not decision["evidence_refs"]:
+            decision.update(
+                decision="manual_review",
+                reason=f"待核验项尚无补充证据：{item.get('reason') or item.get('message')}",
+            )
+        if is_abnormal_fact_rule(item.get("rule_id")) and item.get("issue_group_id"):
+            facts_by_group.setdefault(item["issue_group_id"], []).append(item)
+    for item in items:
+        if item.get("rule_id") != "RF_ABNORMAL_VALUE_NO_REMARK":
+            continue
+        facts = facts_by_group.get(item.get("issue_group_id"), [])
+        if not facts:
+            continue
+        fact_decisions = [decisions[fact["issue_id"]] for fact in facts]
+        if any(decision["decision"] == "retain" for decision in fact_decisions):
+            continue
+        decision = decisions[item["issue_id"]]
+        if decision["decision"] == "exclude":
+            continue
+        status = "exclude" if all(d["decision"] == "exclude" for d in fact_decisions) else "manual_review"
+        decision.update(
+            decision=status,
+            reason="关联异常事实已排除，异常说明问题同步排除。" if status == "exclude" else "关联异常事实尚待核验，不能单独确认异常说明问题。",
+            evidence_refs=[fact["issue_id"] for fact in facts],
+        )
 
 
 def _review_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -217,6 +260,11 @@ def _review_item(item: dict[str, Any]) -> dict[str, Any]:
             "original_remark_text",
             "remark_judgment_label",
             "semantic_message",
+            "semantic_conclusion",
+            "semantic_remark_review",
+            "remark_review_status",
+            "needs_manual_review",
+            "decision_evidence",
             "report_classification",
             "reason_code",
             "reason",
