@@ -1,5 +1,7 @@
 <template>
-  <div class="react-message-list" ref="messagesContainer">
+  <div class="message-viewport">
+    <div class="react-message-list" ref="messagesContainer" @scroll.passive="handleUserScroll">
+      <div class="message-list-content" ref="messagesContent" @click.capture="handleContentClick">
     <!-- 欢迎消息 -->
     <div v-if="messages.length === 0 && !hideWelcome" class="welcome-message">
       <h2>{{ welcomeContent.title }}</h2>
@@ -20,7 +22,7 @@
     <div v-if="hasMoreMessages" class="load-more-container">
       <button
         v-if="!loadingMore"
-        @click="emit('load-more')"
+        @click="loadMoreMessages"
         class="load-more-btn"
       >
         加载更早的消息 ({{ totalMessageCount - messages.length }} 条)
@@ -278,6 +280,9 @@
       </div>
     </div></details>
 
+      </div>
+    </div>
+
     <button
       v-if="showScrollToBottom"
       class="scroll-bottom-button"
@@ -440,6 +445,7 @@ const emit = defineEmits(['load-more', 'preview-message-attachment'])
 const sessionResourceStore = useSessionResourceStore()
 
 const messagesContainer = ref(null)
+const messagesContent = ref(null)
 
 // 【新增】处理消息点击（支持所有模式的final消息）
 const handleMessageClick = (message, index) => {
@@ -1017,136 +1023,87 @@ const getUnifiedProcessMessages = (finalMessage, allMessages) => {
   return collectUnifiedProcessMessages(finalMessage, allMessages)
 }
 
-// 【修复】智能滚动控制
-const scrollToBottom = () => {
-  nextTick(() => {
-    if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-      lastScrollTop.value = messagesContainer.value.scrollTop
-    }
-  })
-}
-
-// 判断用户是否在底部（接近底部30px内）
-const isAtBottom = () => {
-  if (!messagesContainer.value) return true
-  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-  return scrollHeight - scrollTop - clientHeight < 30
-}
-
-// 【新增】用户滚动状态追踪
-const userHasScrolled = ref(false)
 const showScrollToBottom = ref(false)
-const scrollTimeout = ref(null)
-const lastScrollTop = ref(0)
-const pendingLoadMoreScrollHeight = ref(null)
-const pendingLoadMoreScrollTop = ref(null)
+let followingBottom = true
+let lastScrollTop = 0
+let pendingHistory = null
+let resizeObserver
 
-// 检测用户是否手动滚动
-const handleUserScroll = (event) => {
-  // 只有当用户向上滚动（查看历史消息）时才标记
-  if (messagesContainer.value) {
-    const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-    const distanceToBottom = scrollHeight - scrollTop - clientHeight
-    const isUserEvent = event?.isTrusted === true
-    const isScrollingUp = scrollTop < lastScrollTop.value
+const updateScrollState = () => {
+  const container = messagesContainer.value
+  if (!container || !container.clientHeight) return
+  showScrollToBottom.value = container.scrollHeight - container.scrollTop - container.clientHeight > 30
+  lastScrollTop = container.scrollTop
+}
 
-    showScrollToBottom.value = distanceToBottom > 120
-
-    // 只有距离底部超过50px时才认为用户在查看历史消息
-    if (isUserEvent && distanceToBottom > 50) {
-      userHasScrolled.value = true
-    }
-
-    // 只有用户真实向上滚动到顶部附近时才分页加载，避免首屏恢复/程序滚动触发。
-    if (
-      isUserEvent &&
-      isScrollingUp &&
-      scrollTop <= 30 &&
-      props.hasMoreMessages &&
-      !props.loadingMore
-    ) {
-      pendingLoadMoreScrollHeight.value = scrollHeight
-      pendingLoadMoreScrollTop.value = scrollTop
-      emit('load-more')
-    }
-
-    lastScrollTop.value = scrollTop
-  }
-
-  // 清除之前的超时
-  if (scrollTimeout.value) {
-    clearTimeout(scrollTimeout.value)
-    scrollTimeout.value = null
-  }
-  // 2秒后重置，让用户在停止滚动后可以恢复自动滚动
-  scrollTimeout.value = setTimeout(() => {
-    userHasScrolled.value = false
-  }, 2000)
-
+// Observe rendered sizes so streaming text, images and composer resizing share one path.
+const syncScroll = () => {
+  const container = messagesContainer.value
+  if (!container || !container.clientHeight) return
+  if (followingBottom && !pendingHistory) container.scrollTop = container.scrollHeight
+  updateScrollState()
 }
 
 const scrollToBottomFromButton = () => {
-  userHasScrolled.value = false
-  showScrollToBottom.value = false
-  scrollToBottom()
+  followingBottom = true
+  pendingHistory = null
+  syncScroll()
 }
 
-// 只在"首次加载"或"用户发送消息"时强制滚动到底部
-// 展开details查看详情时不强制滚动，避免界面跳动
+const loadMoreMessages = () => {
+  const container = messagesContainer.value
+  if (!container || !props.hasMoreMessages || props.loadingMore || pendingHistory) return
+  followingBottom = false
+  pendingHistory = { height: container.scrollHeight, top: container.scrollTop }
+  emit('load-more')
+}
+
+const handleUserScroll = () => {
+  const container = messagesContainer.value
+  if (!container || !container.clientHeight) return
+  const isScrollingUp = container.scrollTop < lastScrollTop
+  const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 30
+  if (atBottom) followingBottom = true
+  else if (isScrollingUp) followingBottom = false
+  if (isScrollingUp && container.scrollTop <= 30) loadMoreMessages()
+  updateScrollState()
+}
+
+const handleContentClick = (event) => {
+  // Expanding a message should keep the clicked section in view.
+  if (event.target.closest('summary, .user-message-expand')) followingBottom = false
+}
+
 watch(
-  () => props.messages.length,
-  (newLength, oldLength) => {
-    // 前置插入更早消息时保持用户当前视口位置，避免内容跳动。
-    if (
-      pendingLoadMoreScrollHeight.value !== null &&
-      oldLength > 0 &&
-      newLength > oldLength &&
-      messagesContainer.value
-    ) {
-      nextTick(() => {
-        const heightDelta = messagesContainer.value.scrollHeight - pendingLoadMoreScrollHeight.value
-        messagesContainer.value.scrollTop = (pendingLoadMoreScrollTop.value || 0) + heightDelta
-        lastScrollTop.value = messagesContainer.value.scrollTop
-        pendingLoadMoreScrollHeight.value = null
-        pendingLoadMoreScrollTop.value = null
-      })
-      return
+  () => [props.messages.length, props.messages[0]?.id],
+  ([length, firstId], [oldLength, oldFirstId]) => {
+    const container = messagesContainer.value
+    if (pendingHistory && firstId !== oldFirstId && length > oldLength && container) {
+      container.scrollTop = pendingHistory.top + container.scrollHeight - pendingHistory.height
+      pendingHistory = null
+      updateScrollState()
+    } else if (oldLength === 0 || (length > oldLength && getMessageType(props.messages[length - 1]) === 'user')) {
+      scrollToBottomFromButton()
     }
-
-    // 如果是首次加载（oldLength为0），滚动到底部
-    if (oldLength === 0 && newLength > 0) {
-      scrollToBottom()
-      return
-    }
-
-    // 如果有新的消息，滚动到底部
-    if (newLength > oldLength) {
-      const lastMessage = props.messages[newLength - 1]
-
-      // 用户发送消息时，总是滚动到底部
-      if (lastMessage.type === 'user') {
-        userHasScrolled.value = false // 重置滚动状态
-        scrollToBottom()
-        return
-      }
-
-      // AI回复时，只有在用户未手动滚动查看历史消息时才自动滚动
-      if (!userHasScrolled.value && isAtBottom()) {
-        scrollToBottom()
-      }
-    }
-  }
+  },
+  { flush: 'post' }
 )
 
-// 监听滚动事件，判断用户是否在查看历史消息
-// mounted时绑定滚动事件
+watch(() => props.loadingMore, (loading) => {
+  if (!loading) pendingHistory = null
+}, { flush: 'post' })
+
+watch(() => props.sessionId, () => {
+  pendingHistory = null
+  followingBottom = true
+  nextTick(syncScroll)
+})
+
 onMounted(() => {
-  if (messagesContainer.value) {
-    lastScrollTop.value = messagesContainer.value.scrollTop
-    messagesContainer.value.addEventListener('scroll', handleUserScroll)
-  }
-  // 监听ESC键关闭图片预览
+  resizeObserver = new ResizeObserver(syncScroll)
+  resizeObserver.observe(messagesContainer.value)
+  resizeObserver.observe(messagesContent.value)
+  syncScroll()
   document.addEventListener('keydown', handleEscKey)
 })
 
@@ -1173,12 +1130,7 @@ watch(
 
 // 清理滚动事件监听
 onBeforeUnmount(() => {
-  if (messagesContainer.value) {
-    messagesContainer.value.removeEventListener('scroll', handleUserScroll)
-  }
-  if (scrollTimeout.value) {
-    clearTimeout(scrollTimeout.value)
-  }
+  resizeObserver?.disconnect()
   if (copiedUserMessageTimer) {
     clearTimeout(copiedUserMessageTimer)
   }
@@ -1398,13 +1350,17 @@ const downloadPreviewedImage = async () => {
 </script>
 
 <style lang="scss" scoped>
-.react-message-list {
+.message-viewport {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.react-message-list {
+  height: 100%;
   overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  overflow-anchor: none;
 
   &::-webkit-scrollbar {
     width: 6px;
@@ -1414,6 +1370,13 @@ const downloadPreviewedImage = async () => {
     background: #d0d0d0;
     border-radius: 3px;
   }
+}
+
+.message-list-content {
+  min-height: 100%;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
 }
 
 // 加载更多按钮
@@ -1520,16 +1483,16 @@ const downloadPreviewedImage = async () => {
 }
 
 .scroll-bottom-button {
-  position: sticky;
+  position: absolute;
   bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 20;
-  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 34px;
   height: 34px;
-  margin-top: -34px;
   border: 1px solid #d8deea;
   border-radius: 999px;
   color: #526173;
@@ -1551,7 +1514,7 @@ const downloadPreviewedImage = async () => {
   &:hover {
     color: #1976D2;
     border-color: #90CAF9;
-    transform: translateY(-1px);
+    transform: translate(-50%, -1px);
   }
 }
 
@@ -2552,7 +2515,7 @@ const downloadPreviewedImage = async () => {
 }
 
 @media (max-width: 768px) {
-  .react-message-list {
+  .message-list-content {
     padding: 14px 12px;
   }
 
