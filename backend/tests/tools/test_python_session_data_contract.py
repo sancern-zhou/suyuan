@@ -19,6 +19,7 @@ def session_context(directory, **kwargs):
 async def test_save_reload_with_read_only_parent_mount(monkeypatch, tmp_path):
     from app.agent.context import data_files
     registry = tmp_path / "registry"
+    (registry / "images").mkdir(parents=True)
     session_dir = registry / "sessions" / "test" / "data"
     session_dir.mkdir(parents=True)
     original = session_dir / "input.json"
