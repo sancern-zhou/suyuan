@@ -1,6 +1,6 @@
 ---
 name: ops-work-order-audit
-description: 审核运维工单并生成可追溯的最终问题清单或正式审核报告。用于指定时间或范围内工单的规则筛查、抽样复核、语义复核、命中解释、问题清单整理和审核报告生成；普通工单查询不使用本技能。
+description: 审核运维工单并生成可追溯的最终问题清单或正式审核报告，正式报告仅输出审核范围和问题工单明细。用于指定时间或范围内工单的规则筛查、抽样复核、语义复核、命中解释、问题清单整理和审核报告生成；普通工单查询不使用本技能。
 ---
 
 # 运维工单审核分析技能
@@ -52,6 +52,8 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 
 用户要求正式报告、QMD 报告或报告包时：
 
+正式报告正文仅包含“审核范围”和“问题工单明细”两个章节，不增加其他章节、附录或独立统计汇总；必要证据随对应问题明细展示。
+
 1. 完整读取 [最终问题复核协议](backend/docs/skills/ops_work_order_audit/references/final-review.md)，按协议驱动子 Agent 对本轮 `review_input.items` 逐条决策并调用 `ops_audit_submit_review` 持久化。
 2. 复核产物就绪后（`report_ready=true`），问题明细只使用 `ops_audit_submit_review` 返回的 `report_input_path`；禁止重新读取原始 `final_issue_list` 拼装问题明细。
 3. 完整读取 [审核报告输出规范](backend/docs/skills/ops_work_order_audit/references/report-format.md)，严格按其中结构和字段约束组织报告。
@@ -65,4 +67,3 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 - 规则目录、审核阶段和排除项以当前工具及配置返回为准，不在技能中复制易过时的规则清单。
 - LLM 缺失、失败或低置信时，将相关项保留为待复核候选，不用关键词兜底生成最终问题。
 - 具体结论必须来自工具结果、结果文件或用户提供的证据；数据缺失时明确说明缺口和影响。
-
