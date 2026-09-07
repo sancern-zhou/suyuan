@@ -55,7 +55,9 @@ class WeatherRepository:
         self,
         lat: float,
         lon: float,
-        data: Dict[str, Any]
+        data: Dict[str, Any],
+        *,
+        preserve_valid: bool = False,
     ) -> int:
         """
         保存 ERA5 数据到数据库
@@ -71,11 +73,26 @@ class WeatherRepository:
         records = self.build_era5_records(lat, lon, data)
         if not records:
             return 0
+        if preserve_valid:
+            import math
+            for record in records:
+                height = record["boundary_layer_height"]
+                if height is not None and (not math.isfinite(height) or height < 0):
+                    record["boundary_layer_height"] = None
         async with weather_async_session() as session:
             stmt = insert(ERA5ReanalysisData).values(records)
+            updates = {key: getattr(stmt.excluded, key) for key in records[0] if key not in {"time", "lat", "lon"}}
+            if preserve_valid:
+                from sqlalchemy import case
+                for key in updates.keys() - {"data_source"}:
+                    updates[key] = case(
+                        (ERA5ReanalysisData.data_source == stmt.excluded.data_source,
+                         func.coalesce(getattr(stmt.excluded, key), getattr(ERA5ReanalysisData, key))),
+                        else_=getattr(stmt.excluded, key),
+                    )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["time", "lat", "lon"],
-                set_={key: getattr(stmt.excluded, key) for key in records[0] if key not in {"time", "lat", "lon"}},
+                set_=updates,
             )
             await session.execute(stmt)
             await session.commit()
