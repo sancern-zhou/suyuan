@@ -17,6 +17,8 @@
 
 ## 气象查询选用
 
+- 许昌与周边城市的历史边界层高度对比，优先一次调用 `get_weather_data(cities=[...])`。河南17个地级市及济源已配置代表点；这是代表点模式值，不是全市平均或站点实测。查询先读库，小范围缺口在线补采，大范围进入后台任务；检查 `metadata.history_backfill.jobs` 和 warnings，任务未完成不能说数据已获取，也不要在同一轮反复轮询。
+- 比较边界层高度时读取 `metadata.comparison_coverage`，优先按 `common_timestamps` 对齐各城市共同有效且来源一致的小时，报告各城市有效小时数和缺失率；缺失不补0。省外城市若未配置，可使用有依据的经纬度查询，不猜坐标。
 - 历史网格数据用 `get_weather_data`；当天、未来或近5天缺口的边界层高度和短波辐射用 `get_weather_forecast`。仅今天用 `forecast_days=1,past_days=0`，昨天至今天用 `forecast_days=1,past_days=1`。不要用历史工具试查未来。
 - 工具时间已带 `+08:00`，不再加8小时；按实际覆盖范围合并去重，保留每条数据来源。Open-Meteo模式数据不能称为纯ERA5或站点实测。风速按返回单位，短波辐射使用小时平均W/m²。
 

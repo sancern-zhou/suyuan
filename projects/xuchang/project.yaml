@@ -101,6 +101,7 @@ backend:
     expert: projects/xuchang/prompts/expert.md
     social: projects/xuchang/prompts/social.md
   fetchers:
+    - city_weather_history
     - nmc_observed_weather
     - nmc_weather_chart
     - xuchang_daily_attainment_forecast_fetcher
@@ -117,6 +118,30 @@ backend:
     - xuchang_zhongda_city_hour_fetcher
     - xuchang_zhongda_city_day_fetcher
     - gems_xuchang_image_fetcher
+  weather_history:
+    bootstrap_days: 90
+    lookback_days: 7
+    online_enabled: true
+    # 代表点沿用现有城市气象站定位；许昌保持既有历史点位。
+    points:
+      - {city: 郑州市, province: 河南省, lat: 34.72, lon: 113.65}
+      - {city: 开封市, province: 河南省, lat: 34.78, lon: 114.30}
+      - {city: 洛阳市, province: 河南省, lat: 34.82, lon: 112.43}
+      - {city: 平顶山市, province: 河南省, lat: 33.74, lon: 113.30}
+      - {city: 安阳市, province: 河南省, lat: 36.05, lon: 114.13}
+      - {city: 鹤壁市, province: 河南省, lat: 35.75, lon: 114.30}
+      - {city: 新乡市, province: 河南省, lat: 35.32, lon: 113.88}
+      - {city: 焦作市, province: 河南省, lat: 35.23, lon: 113.25}
+      - {city: 濮阳市, province: 河南省, lat: 35.76, lon: 115.03}
+      - {city: 许昌市, province: 河南省, lat: 34.036, lon: 113.852}
+      - {city: 漯河市, province: 河南省, lat: 33.58, lon: 114.02}
+      - {city: 三门峡市, province: 河南省, lat: 34.80, lon: 111.20}
+      - {city: 南阳市, province: 河南省, lat: 33.10, lon: 112.48}
+      - {city: 商丘市, province: 河南省, lat: 34.45, lon: 115.65}
+      - {city: 信阳市, province: 河南省, lat: 32.13, lon: 114.05}
+      - {city: 周口市, province: 河南省, lat: 33.63, lon: 114.70}
+      - {city: 驻马店市, province: 河南省, lat: 32.93, lon: 113.92}
+      - {city: 济源市, province: 河南省, lat: 35.08, lon: 112.58}
 knowledge:
   collections:
   - xuchang
