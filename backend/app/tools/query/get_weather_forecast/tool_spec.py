@@ -25,6 +25,8 @@ def _forecast(point_count: int):
         return [value for _ in times]
 
     return {
+        "utc_offset_seconds": 28800,
+        "hourly_units": {"wind_speed_10m": "km/h", "wind_gusts_10m": "km/h"},
         "hourly": {
             "time": times,
             "temperature_2m": values(25.0),
@@ -40,6 +42,7 @@ def _forecast(point_count: int):
             "cloud_cover": values(20),
             "visibility": values(10000.0),
             "boundary_layer_height": values(500.0),
+            "shortwave_radiation": values(375.0),
         },
         "daily": {
             "temperature_2m_max": [30.0],
@@ -80,6 +83,10 @@ def test_weather_forecast_inlines_up_to_24_records_without_persisting():
     assert result["data_structure"]["record_schema"]["measurements"]["wind_speed"] == "number|null"
     assert "file_path" not in result
     assert context.saved == []
+    assert result["data"][0]["timestamp"] == "2026-08-11T00:00:00+08:00"
+    assert result["data"][0]["measurements"]["shortwave_radiation"] == 375
+    assert result["data"][0]["measurements"]["wind_speed"] == 8 / 3.6
+    assert result["metadata"]["units"]["shortwave_radiation"] == "W/m2"
 
 
 def test_weather_forecast_externalizes_more_than_24_records_and_returns_shape():
@@ -99,6 +106,8 @@ def test_weather_forecast_externalizes_more_than_24_records_and_returns_shape():
     assert context.saved[0]["schema"] == "weather"
     assert context.saved[0]["metadata"]["field_mapping_applied"] is True
     assert context.saved[0]["metadata"]["root_type"] == "array"
+    assert context.saved[0]["data"][0]["timestamp"].endswith("+08:00")
+    assert context.saved[0]["data"][0]["measurements"]["shortwave_radiation"] == 375
 
     context_result = shape_data_result_for_context(result)
     assert len(context_result["data"]) == INLINE_RECORD_LIMIT

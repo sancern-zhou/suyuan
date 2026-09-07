@@ -3,15 +3,16 @@ Weather Data Repository
 
 气象数据仓库层，封装数据库操作
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.weather_database import weather_async_session
 from app.db.models import ERA5ReanalysisData, ObservedWeatherData, WeatherStation
+from app.utils.weather_time import OPEN_METEO_SOURCE, open_meteo_time, weather_query_time
 
 logger = structlog.get_logger()
 
@@ -67,12 +68,34 @@ class WeatherRepository:
         Returns:
             int: 保存的记录数
         """
+        records = self.build_era5_records(lat, lon, data)
+        if not records:
+            return 0
+        async with weather_async_session() as session:
+            stmt = insert(ERA5ReanalysisData).values(records)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["time", "lat", "lon"],
+                set_={key: getattr(stmt.excluded, key) for key in records[0] if key not in {"time", "lat", "lon"}},
+            )
+            await session.execute(stmt)
+            await session.commit()
+        logger.info("era5_data_saved", lat=lat, lon=lon, records=len(records))
+        return len(records)
+
+    @staticmethod
+    def build_era5_records(lat: float, lon: float, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse the provider response once for scheduled collection and repairs."""
         hourly = data.get("hourly", {})
         times = hourly.get("time", [])
 
         if not times:
             logger.warning("no_time_data", lat=lat, lon=lon)
-            return 0
+            return []
+
+        units = data.get("hourly_units", {})
+        for field in ("wind_speed_10m", "wind_gusts_10m"):
+            if field in hourly and units.get(field) not in {"km/h", "m/s", "mph", "kn"}:
+                raise ValueError(f"Missing or unsupported Open-Meteo unit for {field}")
 
         records = []
 
@@ -80,10 +103,13 @@ class WeatherRepository:
             # 安全获取值
             def safe_get(key, index):
                 values = hourly.get(key, [])
-                return values[index] if index < len(values) else None
+                value = values[index] if index < len(values) else None
+                if value is not None and key in {"wind_speed_10m", "wind_gusts_10m"}:
+                    value *= {"km/h": 1, "m/s": 3.6, "mph": 1.609344, "kn": 1.852}[units[key]]
+                return value
 
             record = {
-                "time": datetime.fromisoformat(time_str.replace("Z", "+00:00")),
+                "time": open_meteo_time(time_str, data),
                 "lat": lat,
                 "lon": lon,
                 "temperature_2m": safe_get("temperature_2m", i),
@@ -98,37 +124,12 @@ class WeatherRepository:
                 "shortwave_radiation": safe_get("shortwave_radiation", i),
                 "visibility": safe_get("visibility", i),
                 "boundary_layer_height": safe_get("boundary_layer_height", i),
-                "data_source": "ERA5",
+                "data_source": data.get("data_source", OPEN_METEO_SOURCE),
             }
 
             records.append(record)
 
-        # 批量插入，冲突时更新
-        async with weather_async_session() as session:
-            stmt = insert(ERA5ReanalysisData).values(records)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["time", "lat", "lon"],
-                set_={
-                    "temperature_2m": stmt.excluded.temperature_2m,
-                    "relative_humidity_2m": stmt.excluded.relative_humidity_2m,
-                    "dew_point_2m": stmt.excluded.dew_point_2m,
-                    "wind_speed_10m": stmt.excluded.wind_speed_10m,
-                    "wind_direction_10m": stmt.excluded.wind_direction_10m,
-                    "wind_gusts_10m": stmt.excluded.wind_gusts_10m,
-                    "surface_pressure": stmt.excluded.surface_pressure,
-                    "precipitation": stmt.excluded.precipitation,
-                    "cloud_cover": stmt.excluded.cloud_cover,
-                    "shortwave_radiation": stmt.excluded.shortwave_radiation,
-                    "visibility": stmt.excluded.visibility,
-                    "boundary_layer_height": stmt.excluded.boundary_layer_height,
-                }
-            )
-
-            await session.execute(stmt)
-            await session.commit()
-
-        logger.info("era5_data_saved", lat=lat, lon=lon, records=len(records))
-        return len(records)
+        return records
 
     async def era5_data_exists(
         self,
@@ -149,19 +150,20 @@ class WeatherRepository:
         """
         try:
             async with weather_async_session() as session:
-                start_time = datetime.fromisoformat(f"{date}T00:00:00")
-                end_time = datetime.fromisoformat(f"{date}T23:59:59")
+                start_time = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+                end_time = start_time + timedelta(days=1)
 
                 result = await session.execute(
-                    select(ERA5ReanalysisData).where(
+                    select(func.count()).select_from(ERA5ReanalysisData).where(
                         ERA5ReanalysisData.lat == lat,
                         ERA5ReanalysisData.lon == lon,
                         ERA5ReanalysisData.time >= start_time,
-                        ERA5ReanalysisData.time <= end_time
-                    ).limit(1)
+                        ERA5ReanalysisData.time < end_time,
+                        ERA5ReanalysisData.data_source == OPEN_METEO_SOURCE,
+                    )
                 )
 
-                return result.first() is not None
+                return result.scalar_one() == 24
         except Exception as e:
             logger.error("data_exists_check_failed", lat=lat, lon=lon, error=str(e))
             return False
@@ -241,6 +243,8 @@ class WeatherRepository:
         """
         from datetime import datetime as dt
         query_start = dt.now()
+        start_time = weather_query_time(start_time)
+        end_time = weather_query_time(end_time)
 
         logger.info(
             "weather_query_start",
