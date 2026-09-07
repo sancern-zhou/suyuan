@@ -12,6 +12,9 @@ def test_schema_requires_registered_paths_for_cross_tool_data():
 
     assert "artifact_path(filename)" in description
     assert "artifact_path(filename)" in code_description
+    assert "error_code" in description
+    assert "data.data_file_paths" in description
+    assert "success=false" in description
 
 
 def test_artifact_path_helper_rejects_absolute_paths():

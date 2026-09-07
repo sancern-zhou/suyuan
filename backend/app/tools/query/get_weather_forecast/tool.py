@@ -17,7 +17,10 @@ import uuid
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.external_apis.openmeteo_client import OpenMeteoClient
-from app.utils.weather_time import BEIJING, open_meteo_time
+from app.utils.weather_time import (
+    BEIJING, WEATHER_QUERY_GUIDANCE, normalize_weather_record, open_meteo_time,
+    weather_data_structure, weather_output_metadata,
+)
 from app.schemas.unified import (
     UnifiedData,
     DataMetadata,
@@ -48,40 +51,7 @@ def _weather_data_structure(
     externalized: bool,
 ) -> Dict[str, Any]:
     """Describe both the inline preview and persisted weather JSON shape."""
-    return {
-        "root_type": "array",
-        "record_type": "object",
-        "record_count": record_count,
-        "returned_records": returned_records,
-        "data_complete": not externalized,
-        "sample_strategy": "head_tail" if externalized else "complete",
-        "record_schema": {
-            "timestamp": "datetime",
-            "station_name": "string|null",
-            "lat": "number|null",
-            "lon": "number|null",
-            "measurements": {
-                "temperature": "number|null",
-                "humidity": "number|null",
-                "dew_point": "number|null",
-                "wind_speed": "number|null",
-                "wind_direction": "number|null",
-                "wind_gusts": "number|null",
-                "surface_pressure": "number|null",
-                "precipitation": "number|null",
-                "precipitation_probability": "number|null",
-                "weather_code": "integer|null",
-                "cloud_cover": "number|null",
-                "visibility": "number|null",
-                "boundary_layer_height": "number|null",
-                "shortwave_radiation": "number|null",
-            },
-            "metadata": "object|null",
-            "dimensions": "object|null",
-            "original_fields": "object|null",
-        },
-        "file_root_type": "array" if externalized else None,
-    }
+    return weather_data_structure(record_count, returned_records, externalized)
 
 
 def _head_tail_sample(records: list[UnifiedDataRecord]) -> list[UnifiedDataRecord]:
@@ -116,9 +86,7 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
 短波辐射字段为measurements.shortwave_radiation，单位W/m²；不要使用每日累计辐射(MJ/m²)替代。边界层高度字段为measurements.boundary_layer_height，单位m。
 这是模式数据（Open-Meteo Forecast），即便时间已过去也不能称为实测或ERA5再分析；不同来源衔接时按时间去重并保留来源。
 
-支持获取今天和历史数据：
-- 使用 past_days=1 可以获取昨天完整数据 + 今天00:00到当前时刻的数据 + 未来7天预报
-- 适合需要完整当天数据的场景（如污染溯源分析）
+按北京时间日历日返回，包含今天尚未到来的小时；统计“截至某时刻”必须先按截止时间过滤完整数据。
 
 返回约定：
 - 不超过24条时，data包含全部记录，不生成外部数据文件
@@ -166,6 +134,7 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
             }
         }
 
+        function_schema["description"] += WEATHER_QUERY_GUIDANCE
         super().__init__(
             name="get_weather_forecast",
             description="Get weather forecast (real-time API call, UDF v2.0 compliant)",
@@ -334,7 +303,7 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
 
             # 根据 past_days 调整摘要说明
             if past_days > 0:
-                summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。包含过去{past_days}天 + {daily_summary}。包含今天00:00到当前时刻的完整数据及边界层高度，可用于污染溯源分析。"
+                summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。请求过去{past_days}天及从今天起{forecast_days}天的模式数据。{daily_summary}。实际覆盖范围见actual_time_range；截至时刻的统计需先过滤。"
             else:
                 summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。{daily_summary}。包含边界层高度预报数据，可用于污染扩散条件分析。"
 
@@ -342,6 +311,9 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
 
             # Keep small datasets inline. Persist large datasets and return a
             # bounded preview so the model can inspect the shape immediately.
+            records_dicts = [normalize_weather_record(r.model_dump(mode="json")) for r in records]
+            record_metadata = weather_output_metadata(records_dicts)
+            warnings = []
             saved_file_path = None
             externalized = len(records) > INLINE_RECORD_LIMIT
             inline_records = _head_tail_sample(records) if externalized else records
@@ -358,7 +330,6 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
             if context is not None and records and externalized:
                 try:
                     # 转换 UnifiedDataRecord 为字典
-                    records_dicts = [r.model_dump(mode="json") for r in records]
 
                     logger.info(
                         "weather_forecast_calling_save_data",
@@ -379,7 +350,7 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
                             "field_mapping_applied": True,
                             "root_type": "array",
                             "timezone": "Asia/Shanghai",
-                            "units": FORECAST_UNITS,
+                            **record_metadata,
                         }
                     )
                     logger.info(
@@ -389,6 +360,8 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
                     )
                     summary = f"{summary} 文件路径: {saved_file_path}。"
                 except Exception as save_error:
+                    saved_file_path = None
+                    warnings.append({"code": "DATA_SAVE_FAILED", "message": "数据文件保存失败，完整记录已内联返回；不得声称已保存文件。"})
                     externalized = False
                     inline_records = records
                     logger.error(
@@ -417,7 +390,14 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
             )
 
             result_dict = result.model_dump(mode="json")
-            result_dict["metadata"].update({"timezone": "Asia/Shanghai", "units": FORECAST_UNITS, "shortwave_radiation_interval": "preceding_hour_mean"})
+            result_dict["data"] = _head_tail_sample(records_dicts) if externalized else records_dicts
+            result_dict["metadata"].update({**record_metadata, "shortwave_radiation_interval": "preceding_hour_mean"})
+            result_dict["warnings"] = warnings
+            if warnings:
+                result_dict["status"] = "partial"
+                result_dict["summary"] += " 数据文件保存失败，完整记录已内联返回。"
+            if hourly and not records_dicts:
+                result_dict.update(status="empty", success=False, error_code="NO_DATA", summary="上游未返回逐小时气象数据。")
             result_dict.update({
                 "data_complete": not externalized,
                 "record_count": len(records),
@@ -461,7 +441,7 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
             )
 
             # 返回 UDF v2.0 格式的错误响应
-            return UnifiedData(
+            result = UnifiedData(
                 status=DataStatus.FAILED,
                 success=False,
                 error=str(e),
@@ -475,4 +455,6 @@ past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天�
                     source="Open-Meteo Forecast API (failed)"
                 ),
                 summary=f"天气预报查询失败: {str(e)}"
-            ).dict()
+            ).model_dump(mode="json")
+            result["error_code"] = "WEATHER_QUERY_FAILED"
+            return result
