@@ -105,7 +105,6 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.backend.disabled_tools == [
         "analyze_city_pollutant_rankings",
         "get_5min_data",
-        "get_weather_forecast",
         "get_observed_meteorology",
         "query_city_standard_report",
         "query_city_standard_yoy_report",
@@ -115,6 +114,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.scheduled_tasks == [
         "task_xuchang_station_deviation_alert",
         "task_xuchang_station_daily_source_report",
+        "task_xuchang_weekly_weather_situation_report",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]
 

@@ -15,7 +15,7 @@ def test_xuchang_query_and_expert_prompts_include_project_geography_memory():
         assert "`Asia/Shanghai`（UTC+8）" in prompt
         assert "`{city_name}` 替换为 `许昌市`" in prompt
         assert "`{city_code}` 替换为 `411000`" in prompt
-        assert "北纬 `34.04`、东经 `113.85`" in prompt
+        assert "北纬 `34.036`、东经 `113.852`" in prompt
         assert "用户明确指定其他城市或区域时，以用户本次指定为准" in prompt
 
 
@@ -55,6 +55,7 @@ def test_xuchang_social_tool_whitelist_matches_prompt_intent():
 
     assert "execute_sql_query" in tools
     assert "get_weather_data" in tools
+    assert "get_weather_forecast" in tools
     assert "knowledge_qa_workflow" in tools
     assert "schedule_task" in tools
     assert "send_notification" in tools
@@ -63,10 +64,10 @@ def test_xuchang_social_tool_whitelist_matches_prompt_intent():
     assert "cli_session" not in tools
 
 
-def test_xuchang_forecast_uses_nmc_without_open_meteo_or_weather_forecast_tool():
+def test_xuchang_forecast_retains_nmc_and_allows_open_meteo_radiation_supplement():
     context = load_project_context("xuchang")
 
-    assert "get_weather_forecast" not in context.manifest.backend.agent_mode_tools["expert"]
-    assert "get_weather_forecast" in context.manifest.backend.disabled_tools
+    assert "get_weather_forecast" in context.manifest.backend.agent_mode_tools["expert"]
+    assert "get_weather_forecast" not in context.manifest.backend.disabled_tools
     assert "open_meteo_air_quality_forecast" not in context.manifest.backend.fetchers
     assert "xuchang_nmc_hourly_forecast_fetcher" in context.manifest.backend.fetchers

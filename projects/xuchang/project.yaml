@@ -28,6 +28,7 @@ backend:
       - read_session_resource
       - publish_session_file
       - get_weather_data
+      - get_weather_forecast
       - get_universal_meteorology
       - get_current_weather
       - get_weather_situation_map
@@ -77,6 +78,7 @@ backend:
       - execute_postgres_sql_query
       - query_xcai_city_history
       - get_weather_data
+      - get_weather_forecast
       - execute_python
       - create_report_chart
       - knowledge_qa_workflow
@@ -88,7 +90,6 @@ backend:
   disabled_tools:
     - analyze_city_pollutant_rankings
     - get_5min_data
-    - get_weather_forecast
     - get_observed_meteorology
     - query_city_standard_report
     - query_city_standard_yoy_report
