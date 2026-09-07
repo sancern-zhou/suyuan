@@ -8,7 +8,8 @@ LLM可调用的气象数据查询工具
 - 支持ERA5再分析数据
 - 支持观测站数据
 """
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -43,7 +44,7 @@ class GetWeatherDataTool(LLMTool):
             "description": """查询已入库的历史气象网格数据（历史兼容参数data_type="era5"）。
 
 【工具选择】
-1. 历史网格气象、历史边界层高度或短波辐射：用本工具；本工具只读数据库，不实时补采。
+1. 历史网格气象、历史边界层高度或短波辐射：用本工具。配置城市历史采集的项目优先读库，边界层缺失时小范围在线补采，大范围提交后台；检查history_backfill中的进度和警告，排队不代表已获取数据。
 2. 今天（含已过小时）、未来、或历史库未覆盖的近5天边界层高度/短波辐射：直接调用get_weather_forecast。不要向本工具传未来时段试探；纯ERA5有发布延迟，无法提供当天数据。
 3. 跨历史与未来的请求：历史段用本工具，当天及未来段用get_weather_forecast；根据actual_time_range核对缺口，按带时区的timestamp去重，每条保留data_source，不混称为ERA5或实测。
 4. 站点实测（温湿度、风等）：查询observed_weather_data观测表（工具可用时用execute_postgres_sql_query）；站点实测不能替代模式边界层高度/短波辐射，不得从气温风速自行估算缺失字段。
@@ -137,6 +138,8 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         self.requires_context = True
 
         self.repo = WeatherRepository()
+        from app.services.weather_history import configured_history_service
+        self.history = configured_history_service()
 
     async def execute(
         self,
@@ -187,17 +190,20 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             )
 
             requested_cities = self._clean_cities(city=city, cities=cities)
+            backfill = await self._prepare_history(requested_cities, lat, lon, start_dt, end_dt) if data_type == "era5" else None
             if requested_cities:
-                return await self._query_by_cities(
+                result = await self._query_by_cities(
                     context=context,
                     data_type=data_type,
                     cities=requested_cities,
                     start_time=start_dt,
                     end_time=end_dt,
                 )
+                return self._finish_history(result, backfill, requested_cities, start_dt, end_dt)
 
             if data_type == "era5":
-                return await self._query_era5(context, lat, lon, start_dt, end_dt)
+                result = await self._query_era5(context, lat, lon, start_dt, end_dt)
+                return self._finish_history(result, backfill, [], start_dt, end_dt)
             elif data_type == "observed":
                 return await self._query_observed(context, station_id, start_dt, end_dt)
             else:
@@ -234,6 +240,95 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             ).dict()
             result["error_code"] = "WEATHER_QUERY_FAILED"
             return result
+
+    def _resolve_city(self, city):
+        point = self.history.resolve(city) if self.history else None
+        if point is not None:
+            from app.config.weather_targets import WeatherCityTarget
+            return WeatherCityTarget(point.city, point.province, point.lat, point.lon)
+        return resolve_weather_city_target(city)
+
+    async def _prepare_history(self, cities, lat, lon, start, end):
+        if self.history is None or not self.history.config.online_enabled:
+            return None
+        from app.services.weather_history import grid_point, coverage
+        points = []
+        for city in cities:
+            target = self._resolve_city(city)
+            if target is not None and target.era5_point is not None:
+                points.append({"city": target.city, "lat": target.era5_lat, "lon": target.era5_lon})
+        if not cities and lat is not None and lon is not None:
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("Invalid weather coordinates")
+            points.append({"city": "coordinate", "lat": lat, "lon": lon})
+        report = {"jobs": [], "warnings": []}
+        from app.utils.weather_time import BEIJING
+        last = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        last = min(last, datetime.now(BEIJING).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=1))
+        end = min(end, last)
+        if end < start:
+            return report
+        if len(points) > 100 or (end.date() - start.date()).days >= 366:
+            report["warnings"].append({"code": "HISTORY_RANGE_LIMIT", "message": "自动补采最多100个点、366天，请分段查询。"})
+            return report
+        deadline = asyncio.get_running_loop().time() + 20
+        small = len(points) <= 3 and (end.date() - start.date()).days < 7
+        for point in points:
+            grid_lat, grid_lon = grid_point(point["lat"], point["lon"])
+            rows = await self.repo.get_weather_data(grid_lat, grid_lon, start, end)
+            if not coverage(rows, start, end)["missing_hours"]:
+                continue
+            if small and asyncio.get_running_loop().time() < deadline:
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        result = await self.history.repair(grid_lat, grid_lon, start, end)
+                    if not result["missing_hours"]:
+                        continue
+                except Exception as exc:
+                    logger.warning("online_weather_repair_failed", city=point["city"], error=str(exc))
+                    report["warnings"].append({"code": "ONLINE_HISTORY_INCOMPLETE", "message": f'{point["city"]}在线补采未完成，已转后台重试。'})
+            job = self.history.submit([point], start, end)
+            if job:
+                report["jobs"].append({"city": point["city"], **job})
+                report["warnings"].append({"code": "HISTORY_BACKFILL_PENDING" if job["state"] in {"pending", "running"} else "HISTORY_BACKFILL_INCOMPLETE",
+                    "message": f'{point["city"]}边界层高度仍有缺口；补采状态：{job["state"]}。'})
+        return report
+
+    @staticmethod
+    def _finish_history(result, backfill, cities, start, end):
+        if backfill is None:
+            return result
+        from app.services.weather_history import expected_hours, valid_height
+        result.setdefault("metadata", {})["history_backfill"] = backfill
+        result.setdefault("warnings", []).extend(backfill["warnings"])
+        if backfill["jobs"]:
+            result["summary"] += "；补采进度见metadata.history_backfill.jobs，再次查询可检查结果"
+        expected = set(expected_hours(start, end))
+        valid_by_city = {city: {} for city in (cities or ["coordinate"])}
+        for row in result.get("data", []):
+            value = row.get("measurements", {}).get("boundary_layer_height", row.get("boundary_layer_height"))
+            source = row.get("data_source", "legacy_unverified")
+            if valid_height(value) and source != "legacy_unverified":
+                hour = weather_query_time(row["timestamp"])
+                if hour in expected:
+                    key = row.get("city") if cities else "coordinate"
+                    if key in valid_by_city:
+                        valid_by_city[key][hour] = source
+        common = set.intersection(*(set(hours) for hours in valid_by_city.values())) if valid_by_city else set()
+        common = {hour for hour in common if len({hours[hour] for hours in valid_by_city.values()}) == 1}
+        result["metadata"]["comparison_coverage"] = {
+            "variable": "boundary_layer_height", "unit": "m", "spatial_scope": "city_representative_point" if cities else "grid_point",
+            "expected_hours": len(expected), "common_valid_hours": len(common),
+            "common_timestamps": [weather_output_time(hour) for hour in sorted(common)],
+            "cities": {city: {"valid_hours": len(hours), "missing_hours": len(expected) - len(hours),
+                       "missing_rate": (len(expected) - len(hours)) / len(expected) if expected else 0}
+                       for city, hours in valid_by_city.items()},
+        }
+        if len(common) < len(expected):
+            result["warnings"].append({"code": "BOUNDARY_LAYER_COVERAGE_PARTIAL", "message": "边界层对比存在缺失或来源不一致，请使用comparison_coverage中的共同有效小时；城市代表点不等于全市平均。"})
+        if result["warnings"] and result.get("success"):
+            result["status"] = "partial"
+        return result
 
     @staticmethod
     def _clean_cities(
@@ -291,7 +386,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         targets: List[Dict[str, Any]] = []
 
         for requested_city in cities:
-            target = resolve_weather_city_target(requested_city)
+            target = self._resolve_city(requested_city)
             if target is None or target.era5_point is None:
                 unresolved.append(requested_city)
                 continue
