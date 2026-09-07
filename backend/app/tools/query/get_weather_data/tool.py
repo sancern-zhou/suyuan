@@ -350,8 +350,10 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             "status": "partial" if warnings and combined else status,
             "success": bool(combined),
             "warnings": warnings,
-            **({"data_complete": True, "record_count": len(combined), "returned_records": len(combined),
-                "data_structure": weather_data_structure(len(combined), len(combined), False)} if data_type == "era5" else {}),
+            "data_complete": True,
+            "record_count": len(combined),
+            "returned_records": len(combined),
+            "data_structure": weather_data_structure(len(combined), len(combined), False),
             "data": combined,
             "file_path": saved_file_path,
             "metadata": {
@@ -369,8 +371,8 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 "no_data_cities": no_data_cities,
                 "targets": targets,
                 "time_range": {
-                    "start": weather_output_time(start_time) if data_type == "era5" else start_time.isoformat(),
-                    "end": weather_output_time(end_time) if data_type == "era5" else end_time.isoformat(),
+                    "start": weather_output_time(start_time),
+                    "end": weather_output_time(end_time),
                 },
                 **weather_output_metadata(combined),
             },
