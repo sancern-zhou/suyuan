@@ -16,7 +16,10 @@ from app.db.repositories.weather_repo import WeatherRepository
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.data_features_extractor import DataFeaturesExtractor  # 数据特征提取
 from app.utils.data_standardizer import get_data_standardizer  # UDF v2.0 集成
-from app.utils.weather_time import WEATHER_UNITS, weather_output_metadata, weather_output_time, weather_query_time
+from app.utils.weather_time import (
+    WEATHER_UNITS, WEATHER_QUERY_GUIDANCE, normalize_weather_record,
+    weather_data_structure, weather_output_metadata, weather_output_time, weather_query_time,
+)
 
 logger = structlog.get_logger()
 
@@ -109,6 +112,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             }
         }
 
+        function_schema["description"] += WEATHER_QUERY_GUIDANCE
         super().__init__(
             name="get_weather_data",
             description="Query stored historical weather; use get_weather_forecast for today, future and recent gaps",
@@ -203,7 +207,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 exc_info=True
             )
             from app.schemas.unified import UnifiedData, DataType, DataStatus, DataMetadata
-            return UnifiedData(
+            result = UnifiedData(
                 status=DataStatus.FAILED,
                 success=False,
                 error=str(e),
@@ -214,6 +218,8 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 ),
                 summary=f"[ERROR] 气象数据查询失败: {str(e)[:50]}"
             ).dict()
+            result["error_code"] = "WEATHER_QUERY_FAILED"
+            return result
 
     @staticmethod
     def _clean_cities(
@@ -311,11 +317,13 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 enriched["city"] = city
                 combined.append(enriched)
 
+        warnings = []
         saved_file_path = None
         if combined and context is not None:
             try:
                 saved_file_path = context.save_data(data=combined, schema="weather")
             except Exception as exc:
+                warnings.append({"code": "DATA_SAVE_FAILED", "message": "保存失败，完整数据已内联返回；不得声称已保存文件。"})
                 logger.warning("city_weather_data_save_failed", error=str(exc))
 
         if combined:
@@ -339,8 +347,11 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         summary += "；时间已为北京时间（+08:00），勿再加8小时；风速m/s；来源见data_source"
 
         return {
-            "status": status,
+            "status": "partial" if warnings and combined else status,
             "success": bool(combined),
+            "warnings": warnings,
+            **({"data_complete": True, "record_count": len(combined), "returned_records": len(combined),
+                "data_structure": weather_data_structure(len(combined), len(combined), False)} if data_type == "era5" else {}),
             "data": combined,
             "file_path": saved_file_path,
             "metadata": {
@@ -358,8 +369,8 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                 "no_data_cities": no_data_cities,
                 "targets": targets,
                 "time_range": {
-                    "start": start_time.isoformat(),
-                    "end": end_time.isoformat(),
+                    "start": weather_output_time(start_time) if data_type == "era5" else start_time.isoformat(),
+                    "end": weather_output_time(end_time) if data_type == "era5" else end_time.isoformat(),
                 },
                 **weather_output_metadata(combined),
             },
@@ -476,6 +487,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             output["data_source"] = getattr(stored, "data_source", None) or "legacy_unverified"
             output["timezone"] = "Asia/Shanghai"
             output["units"] = WEATHER_UNITS.copy()
+        standardized_records = [normalize_weather_record(record) for record in standardized_records]
 
         logger.info(
             "era5_data_standardized",
@@ -525,6 +537,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
         summary += "；时间已为北京时间（+08:00），勿再加8小时；风速m/s；来源见data_source"
 
         # 【Context-Aware V2】使用 context.save_data() 保存数据
+        warnings = []
         saved_file_path = None  # 初始化变量
         if standardized_records and context is not None:
             try:
@@ -539,6 +552,7 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
                     record_count=len(standardized_records)
                 )
             except Exception as e:
+                warnings.append({"code": "DATA_SAVE_FAILED", "message": "保存失败，完整数据已内联返回；不得声称已保存文件。"})
                 logger.warning(
                     "era5_data_save_failed",
                     error=str(e),
@@ -573,16 +587,22 @@ data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源�
             city=city,
             source="era5_reanalysis",
             time_range={
-                "start": start_time.isoformat(),
-                "end": end_time.isoformat()
+                "start": weather_output_time(start_time),
+                "end": weather_output_time(end_time)
             },
             quality_score=0.9 if standardized_records else 0.0
         )
 
         # 【UDF v2.0】返回标准化数据
         return {
-            "status": "success",
+            "status": ("partial" if warnings else "success") if standardized_records else "empty",
             "success": len(standardized_records) > 0,
+            "warnings": warnings,
+            "error_code": None if standardized_records else "NO_DATA",
+            "data_complete": True,
+            "record_count": len(standardized_records),
+            "returned_records": len(standardized_records),
+            "data_structure": weather_data_structure(len(standardized_records), len(standardized_records), False),
             "data": standardized_records,  # 保留 data 字段供直接访问
             "file_path": final_file_path,
             "metadata": {

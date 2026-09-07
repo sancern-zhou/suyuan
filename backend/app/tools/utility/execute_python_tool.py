@@ -163,15 +163,15 @@ class ExecutePythonTool(LLMTool):
 
     def _build_allowed_data_files_payload(self, code: str, context) -> str:
         """Build a small allowlist; the child loads data instead of embedding it in code."""
-        session_data_dir = Path(context.data_manager.memory.session.data_dir).resolve()
+        session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
         available_paths = {
-            str(Path(path).resolve())
+            str(resolve_agent_path(path))
             for path in getattr(context, "available_file_paths", []) or []
             if path
         }
         # Durable catalog inputs (uploads etc.) count as authorized reads too.
         available_paths.update(
-            str(Path(path).resolve())
+            str(resolve_agent_path(path))
             for path in getattr(context, "authorized_input_paths", []) or []
             if path
         )
@@ -398,9 +398,23 @@ class ExecutePythonTool(LLMTool):
             chart_data = self._extract_chart_paths(result["data"].get("output", ""))
 
             # 检测 Python 中通过 save_data() 保存的会话数据文件。
-            python_data_paths = self._extract_python_data_file_paths(
-                result["data"].get("output", "")
-            )
+            declared_data_paths = result["data"].pop("declared_data_file_paths", None)
+            if declared_data_paths is None:
+                declared_data_paths = self._extract_python_data_file_paths(result["data"].get("output", ""))
+            python_data_paths = []
+            for file_path in declared_data_paths:
+                try:
+                    path = resolve_agent_path(file_path)
+                    session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+                    if session_dir not in path.parents or path.is_symlink():
+                        raise ValueError("Saved data must belong to the current session")
+                    with path.open(encoding="utf-8") as stream:
+                        json.load(stream)
+                    python_data_paths.append(str(path))
+                except (AttributeError, OSError, ValueError, TypeError) as error:
+                    result.update(status="failed", success=False, error_code="DATA_FILE_NOT_AVAILABLE",
+                                  error=f"保存结果未通过文件校验: {error}",
+                                  summary="中间结果文件不可用，不能声称保存成功或继续传递该路径。")
             if python_data_paths:
                 for file_path in python_data_paths:
                     if file_path not in context.available_file_paths:
@@ -693,6 +707,10 @@ class ExecutePythonTool(LLMTool):
             # Only after they are complete do we expose the canonical Agent-facing
             # project-relative paths and the automatic-publication contract.
             self._attach_resume_context(result)
+            if not result.get("success"):
+                result.setdefault("error_code", "PYTHON_EXECUTION_FAILED")
+                result.setdefault("error", result.get("data", {}).get("error") or result.get("summary"))
+                result["next_action"] = "检查error_code和error_details；只可复用已验证的data_file_paths/resources，修复后重试，不能把失败解释为无数据或交付成功。"
             return result
 
         except Exception as e:
@@ -701,6 +719,7 @@ class ExecutePythonTool(LLMTool):
                 "status": "failed",  # ✅ 添加 status 字段
                 "success": False,
                 "error": str(e),
+                "error_code": "PYTHON_EXECUTION_FAILED",
                 "data": {"error": str(e)},
                 "metadata": {
                     "tool_name": "execute_python",
@@ -778,6 +797,7 @@ class ExecutePythonTool(LLMTool):
                 stderr_size=len(stderr or ""),
             )
 
+            declared_data_paths = self._extract_python_data_file_paths(stdout or "")
             output = stdout or ""
             if stderr:
                 output += f"\n错误输出:\n{stderr}"
@@ -792,14 +812,17 @@ class ExecutePythonTool(LLMTool):
                 return {
                     "status": "failed",
                     "success": False,
-                    "data": {"error": error_info["error_message"], "error_details": error_info, "output": output},
+                    "error_code": "PYTHON_EXECUTION_FAILED",
+                    "error": error_info["error_message"],
+                    "data": {"error": error_info["error_message"], "error_details": error_info, "output": output,
+                             "declared_data_file_paths": declared_data_paths},
                     "summary": error_info["summary"]
                 }
 
             return {
                 "status": "success",
                 "success": True,
-                "data": {"output": output},
+                "data": {"output": output, "declared_data_file_paths": declared_data_paths},
                 "summary": "✅ 工具已执行完成，计算任务已完成"
             }
 
@@ -927,7 +950,7 @@ class ExecutePythonTool(LLMTool):
         session_data_dir = None
         if context is not None:
             try:
-                session_data_dir = Path(context.data_manager.memory.session.data_dir).resolve()
+                session_data_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
             except (AttributeError, TypeError):
                 session_data_dir = None
 
@@ -965,8 +988,6 @@ class ExecutePythonTool(LLMTool):
                     shutil.copy2(source_path, staged_path)
                     original_relative_paths.add(str(relative_path))
 
-                self._append_bubblewrap_parent_dirs(command, session_data_dir)
-                command.extend(["--bind", str(staged_session_dir), str(session_data_dir)])
                 mounted_destinations.add(str(session_data_dir))
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
@@ -1047,6 +1068,12 @@ class ExecutePythonTool(LLMTool):
                     self._append_bubblewrap_parent_dirs(command, path.parent)
                 command.extend(["--ro-bind", str(staged_input), destination])
                 mounted_destinations.add(destination)
+
+            # Mount writable session outputs last: a later read-only parent
+            # mount would hide this mount and make save_data() fail with EROFS.
+            if session_data_dir and session_data_dir.is_dir():
+                self._append_bubblewrap_parent_dirs(command, session_data_dir)
+                command.extend(["--bind", str(staged_session_dir), str(session_data_dir)])
         except OSError as error:
             logger.error(
                 "execute_python_sandbox_mount_open_failed",
@@ -1578,9 +1605,11 @@ def artifact_path(filename: str) -> str:
         )
 
         allowed_data_files_payload = self._build_allowed_data_files_payload(code, context)
-        session_data_dir = json.dumps(str(context.data_manager.memory.session.data_dir), ensure_ascii=False)
+        resolved_session_dir = resolve_agent_path(context.data_manager.memory.session.data_dir)
+        resolved_session_dir.mkdir(parents=True, exist_ok=True)
+        session_data_dir = json.dumps(str(resolved_session_dir), ensure_ascii=False)
         session_prefix = json.dumps(
-            str(context.data_manager.memory.session.data_dir), ensure_ascii=False
+            str(resolved_session_dir), ensure_ascii=False
         )
 
         # 构建注入的代码
@@ -1596,7 +1625,10 @@ __ALLOWED_DATA_FILES__ = set(__ALLOWED_DATA_FILES_PAYLOAD__)
 # 获取原始数据（字典列表格式）
 def load_data(file_path: str):
     """读取当前会话中的数据文件。"""
-    resolved_path = str(__DataContextPath(file_path).resolve())
+    input_path = __DataContextPath(file_path)
+    if not input_path.is_absolute():
+        input_path = __DataContextPath(__AGENT_PROJECT_ROOT__) / input_path
+    resolved_path = str(input_path.resolve())
     if resolved_path not in __ALLOWED_DATA_FILES__:
         raise RuntimeError(f"未找到会话数据文件: {file_path}")
     with open(resolved_path, 'r', encoding='utf-8') as data_file:
@@ -1644,6 +1676,7 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
     absolute_path = Path(__SESSION_DATA_DIR__) / filename
     absolute_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
     file_path = __SESSION_PREFIX__ + "/" + filename
+    __ALLOWED_DATA_FILES__.add(str(absolute_path.resolve()))
     print(f"PYTHON_DATA_FILE_SAVED:{file_path}")
     return file_path
 
@@ -1656,6 +1689,7 @@ def save_data(data, schema: str = 'python_result', metadata=None, version: str =
         )
         context_injection_code = context_injection_code.replace("__SESSION_DATA_DIR__", session_data_dir)
         context_injection_code = context_injection_code.replace("__SESSION_PREFIX__", session_prefix)
+        context_injection_code = context_injection_code.replace("__AGENT_PROJECT_ROOT__", repr(str(PROJECT_ROOT)))
 
         # 在代码开头插入上下文代码
         injected_code = context_injection_code + code
@@ -2689,6 +2723,9 @@ def merge_excel_with_charts(file_paths, output_path):
                 "每次调用是独立环境；用 load_data(file_path) 读取会话数据文件，"
                 "跨调用或交给其他工具使用的结构化结果必须调用 save_data(...)，"
                 "并原样复用 save_data 返回的 file_path。"
+                "执行后必须检查success、error_code和data.data_file_paths：只有经过文件校验的路径才可继续传递。"
+                "success=false时不能声称执行或保存成功，也不能把异常解释为查询结果缺失。"
+                "气象数据合并须用带时区的datetime对象作为键；先读取完整file_path，再做去重、截止时间过滤和缺失检查，禁止从首尾样本推断缺失。"
                 "执行环境相互隔离，不得将自行写入、拼接或猜测得到的中间数据路径交给后续工具。"
                 "生成 Excel、Word、PDF 等交付文件必须先调用 artifact_path(filename) 获取输出路径并保存；"
                 "正式报告静态图表优先使用 create_report_chart；流程/架构图使用 call_sub_agent(target_mode='board') 调用画板Agent。"

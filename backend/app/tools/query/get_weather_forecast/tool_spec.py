@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from datetime import datetime, timedelta
 
 from app.agent.context.data_result_policy import shape_data_result_for_context
@@ -108,8 +109,46 @@ def test_weather_forecast_externalizes_more_than_24_records_and_returns_shape():
     assert context.saved[0]["metadata"]["root_type"] == "array"
     assert context.saved[0]["data"][0]["timestamp"].endswith("+08:00")
     assert context.saved[0]["data"][0]["measurements"]["shortwave_radiation"] == 375
+    assert context.saved[0]["data"][0] == result["data"][0]
+    assert result["data"][0]["measurements"]["wind_speed_10m"] == 8 / 3.6
+    assert result["data"][0]["data_source"] == "Open-Meteo Forecast"
 
     context_result = shape_data_result_for_context(result)
     assert len(context_result["data"]) == INLINE_RECORD_LIMIT
     assert context_result["data_structure"] == result["data_structure"]
     assert context_result["data_complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_save_failure_returns_full_data_with_explicit_warning():
+    tool = GetWeatherForecastTool()
+
+    async def fetch(**kwargs):
+        return _forecast(58)
+
+    class FailingContext:
+        def save_data(self, **kwargs):
+            raise OSError("read only")
+
+    tool.client.fetch_forecast = fetch
+    result = await tool.execute(FailingContext(), lat=34, lon=113.75)
+    assert result["success"] is True
+    assert result["status"] == "partial"
+    assert result["warnings"][0]["code"] == "DATA_SAVE_FAILED"
+    assert result["data_complete"] is True
+    assert len(result["data"]) == 58
+    assert not result.get("file_path")
+
+
+@pytest.mark.asyncio
+async def test_upstream_exception_is_not_reported_as_missing_weather():
+    tool = GetWeatherForecastTool()
+
+    async def fetch(**kwargs):
+        raise RuntimeError("upstream unavailable")
+
+    tool.client.fetch_forecast = fetch
+    result = await tool.execute(None, lat=34, lon=113.75)
+    assert result["success"] is False
+    assert result["error_code"] == "WEATHER_QUERY_FAILED"
+    assert "upstream unavailable" in result["error"]
