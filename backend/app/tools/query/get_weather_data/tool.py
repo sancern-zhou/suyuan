@@ -18,6 +18,7 @@ from app.db.repositories.weather_repo import WeatherRepository
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.utils.data_features_extractor import DataFeaturesExtractor  # 数据特征提取
 from app.utils.data_standardizer import get_data_standardizer  # UDF v2.0 集成
+from app.utils.weather_time import WEATHER_UNITS, weather_output_metadata, weather_output_time, weather_query_time
 
 logger = structlog.get_logger()
 
@@ -36,12 +37,27 @@ class GetWeatherDataTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "get_weather_data",
-            "description": """查询历史气象数据（ERA5再分析数据或地面观测站数据）。
+            "description": """查询已入库的历史气象网格数据（历史兼容参数data_type="era5"）。
+
+【工具选择】
+1. 历史网格气象、历史边界层高度或短波辐射：用本工具；本工具只读数据库，不实时补采。
+2. 今天（含已过小时）、未来、或历史库未覆盖的近5天边界层高度/短波辐射：直接调用get_weather_forecast。不要向本工具传未来时段试探；纯ERA5有发布延迟，无法提供当天数据。
+3. 跨历史与未来的请求：历史段用本工具，当天及未来段用get_weather_forecast；根据actual_time_range核对缺口，按带时区的timestamp去重，每条保留data_source，不混称为ERA5或实测。
+4. 站点实测（温湿度、风等）：查询observed_weather_data观测表（工具可用时用execute_postgres_sql_query）；站点实测不能替代模式边界层高度/短波辐射，不得从气温风速自行估算缺失字段。
+5. 仅当用户明确要求纯ERA5时，核对data_source；本工具不能保证纯ERA5。不能因工具名或请求坐标按0.25°对齐，就声称数据来自ERA5网格。
+
+【时间与覆盖】
+输入支持Z或+08:00，无时区按北京时间。输出timestamp已带+08:00，不得再次加减8小时，也不得用日变化拟合时差。
+缺失值必须保留为缺失，不补0、不用短波辐射日累计(MJ/m²)替代小时平均(W/m²)。请求范围不等于实际覆盖范围；有缺口时，仅对近5天调用get_weather_forecast补充，仍缺失则明确说明。
+
+data_type="era5" 是历史兼容名称，不保证纯ERA5模型；数据来源以返回的data_source为准。
+历史网格查询的无时区输入按北京时间解释；输出timestamp带+08:00，禁止再次加8小时。
+网格数据输出风速和阵风统一为m/s，边界层高度为m。实际覆盖范围见actual_time_range，不能将请求范围当作实际范围。
 
 【调用规则 - 严格遵守】
 
 1. data_type="era5"（推荐使用）：
-   - 城市查询：提供 city 或 cities，工具内部解析城市代表点并查询ERA5网格
+   - 城市查询：提供 city 或 cities，工具内部解析城市代表点并查询历史网格
    - 精确查询：提供 lat, lon
    - 无需提供 station_id
 
@@ -69,15 +85,15 @@ class GetWeatherDataTool(LLMTool):
                     "data_type": {
                         "type": "string",
                         "enum": ["era5", "observed"],
-                        "description": "数据类型：era5=ERA5再分析数据(城市或lat/lon) | observed=观测站数据(城市或station_id)"
+                        "description": "era5=历史网格库（兼容名称，实际模型见data_source）；当天/未来用get_weather_forecast。observed=站点实测"
                     },
                     "lat": {
                         "type": "number",
-                        "description": "纬度（ERA5精确查询使用，与lon配套）"
+                        "description": "历史网格查询纬度，与lon配套；有城市名称时优先传city"
                     },
                     "lon": {
                         "type": "number",
-                        "description": "经度（ERA5精确查询使用，与lat配套）"
+                        "description": "历史网格查询经度，与lat配套；请求坐标不保证上游实际模型网格"
                     },
                     "station_id": {
                         "type": "string",
@@ -94,11 +110,11 @@ class GetWeatherDataTool(LLMTool):
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "开始时间，ISO 8601格式，例如：2025-01-01T00:00:00"
+                        "description": "开始时间，ISO 8601格式；无时区按北京时间。例如2025-01-01T00:00:00+08:00"
                     },
                     "end_time": {
                         "type": "string",
-                        "description": "结束时间，ISO 8601格式，例如：2025-01-02T00:00:00"
+                        "description": "结束时间（包含），ISO 8601格式；无时区按北京时间。支持Z或+08:00"
                     }
                 },
                 "required": ["data_type", "start_time", "end_time"]
@@ -107,7 +123,7 @@ class GetWeatherDataTool(LLMTool):
 
         super().__init__(
             name="get_weather_data",
-            description="Query historical weather data (ERA5 reanalysis or observed station data)",
+            description="Query stored historical weather; use get_weather_forecast for today, future and recent gaps",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
             version="1.1.0"
@@ -151,6 +167,11 @@ class GetWeatherDataTool(LLMTool):
             # 解析时间
             start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
             end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            if data_type == "era5":
+                start_dt = weather_query_time(start_dt)
+                end_dt = weather_query_time(end_dt)
+                if end_dt < start_dt:
+                    raise ValueError("end_time must not precede start_time")
 
             logger.info(
                 "weather_query_started",
@@ -433,6 +454,9 @@ class GetWeatherDataTool(LLMTool):
         if no_data_cities:
             summary += f"；无数据城市：{', '.join(no_data_cities)}"
 
+        if data_type == "era5":
+            summary += "；时间已为北京时间（+08:00），勿再加8小时；风速m/s；来源见data_source"
+
         return {
             "status": status,
             "success": bool(combined),
@@ -456,6 +480,7 @@ class GetWeatherDataTool(LLMTool):
                     "start": start_time.isoformat(),
                     "end": end_time.isoformat(),
                 },
+                **(weather_output_metadata(combined) if data_type == "era5" else {}),
             },
             "summary": summary,
         }
@@ -535,9 +560,9 @@ class GetWeatherDataTool(LLMTool):
                 "temperature_2m": record.temperature_2m if record.temperature_2m is not None else math.nan,
                 "relative_humidity_2m": record.relative_humidity_2m if record.relative_humidity_2m is not None else math.nan,
                 "dew_point_2m": record.dew_point_2m if record.dew_point_2m is not None else math.nan,
-                "wind_speed_10m": record.wind_speed_10m if record.wind_speed_10m is not None else math.nan,
+                "wind_speed_10m": record.wind_speed_10m / 3.6 if record.wind_speed_10m is not None else math.nan,
                 "wind_direction_10m": record.wind_direction_10m if record.wind_direction_10m is not None else math.nan,
-                "wind_gusts_10m": record.wind_gusts_10m if record.wind_gusts_10m is not None else math.nan,
+                "wind_gusts_10m": record.wind_gusts_10m / 3.6 if record.wind_gusts_10m is not None else math.nan,
                 "surface_pressure": record.surface_pressure if record.surface_pressure is not None else math.nan,
                 "precipitation": record.precipitation if record.precipitation is not None else math.nan,
                 "cloud_cover": record.cloud_cover if record.cloud_cover is not None else math.nan,
@@ -564,7 +589,7 @@ class GetWeatherDataTool(LLMTool):
         records_dict_list = []
         for record in records:
             record_dict = {
-                "timestamp": record.timestamp,
+                "timestamp": weather_output_time(record.timestamp),
                 "city": city,
                 "lat": record.lat,
                 "lon": record.lon,
@@ -586,6 +611,10 @@ class GetWeatherDataTool(LLMTool):
         # 使用全局数据标准化器标准化数据
         data_standardizer = get_data_standardizer()
         standardized_records = data_standardizer.standardize(records_dict_list)
+        for output, stored in zip(standardized_records, data, strict=True):
+            output["data_source"] = getattr(stored, "data_source", None) or "legacy_unverified"
+            output["timezone"] = "Asia/Shanghai"
+            output["units"] = WEATHER_UNITS.copy()
 
         logger.info(
             "era5_data_standardized",
@@ -593,7 +622,7 @@ class GetWeatherDataTool(LLMTool):
             standardized_count=len(standardized_records)
         )
 
-        summary = f"[OK] 查询到 {len(standardized_records)} 条ERA5气象数据"
+        summary = f"[OK] 查询到 {len(standardized_records)} 条历史网格气象数据"
         if standardized_records:
             summary += f"（网格点 {grid_lat:.2f}, {grid_lon:.2f}，{start_time.date()} 至 {end_time.date()}）"
         else:
@@ -632,6 +661,7 @@ class GetWeatherDataTool(LLMTool):
             quality_suffix = f" (数据质量: 较差，{quality_report.issues[0] if quality_report.issues else ''})"
 
         summary = summary + quality_suffix
+        summary += "；时间已为北京时间（+08:00），勿再加8小时；风速m/s；来源见data_source"
 
         # 【Context-Aware V2】使用 context.save_data() 保存数据
         saved_file_path = None  # 初始化变量
@@ -704,7 +734,8 @@ class GetWeatherDataTool(LLMTool):
                 "field_mapping_info": data_standardizer.get_field_mapping_info(),
                 "data_features": data_features,  # ✅ 数据特征摘要（帮助Agent推荐图表）
                 "quality_report": quality_report.dict(),  # ✅ 【优化3】数据质量报告
-                "sample_record": sample_record  # ✅ 数据样本
+                "sample_record": sample_record,  # ✅ 数据样本
+                **weather_output_metadata(standardized_records),
             },
             "summary": summary
         }
