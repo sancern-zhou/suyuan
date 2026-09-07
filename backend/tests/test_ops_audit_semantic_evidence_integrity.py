@@ -1,5 +1,4 @@
 import json
-import time
 
 import pytest
 
@@ -66,7 +65,6 @@ def test_duplicate_item_response_is_not_silently_overwritten():
 
 def test_batch_timeout_keeps_completed_chunks(monkeypatch):
     monkeypatch.setattr(reviewer, "SEMANTIC_BATCH_MAX_ITEMS", 1)
-    monkeypatch.setattr(reviewer, "SEMANTIC_BATCH_TOTAL_TIMEOUT_SECONDS", 0.05)
     tasks = [_task("FLOW", code="FAST"), _task("FLOW", code="SLOW")]
     for task in tasks:
         task["review_kind"] = "remark_semantics"
@@ -74,7 +72,7 @@ def test_batch_timeout_keeps_completed_chunks(monkeypatch):
     def review(tasks, *args):
         task = tasks[0]
         if task["working_order_code"] == "SLOW":
-            time.sleep(0.1)
+            raise TimeoutError("single model batch timed out")
         return {task["review_item_id"]: {"working_order_code": task["working_order_code"], "judgment": "cleared"}}
 
     monkeypatch.setattr(reviewer, "_review_remark_tasks_batch", review)

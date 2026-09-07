@@ -7,7 +7,6 @@ import json
 import math
 import re
 import threading
-import time
 from concurrent.futures import TimeoutError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -48,8 +47,7 @@ SEMANTIC_REVIEW_RULE_IDS = REMARK_REVIEW_RULE_IDS | ATTACHMENT_REVIEW_RULE_IDS
 SEMANTIC_PROFILES = load_semantic_review_profiles()
 _SEMANTIC_CACHE: dict[str, dict[str, Any]] = {}
 _SEMANTIC_CACHE_LIMIT = 128
-SEMANTIC_LLM_CALL_TIMEOUT_SECONDS = 180
-SEMANTIC_BATCH_TOTAL_TIMEOUT_SECONDS = 240
+SEMANTIC_LLM_CALL_TIMEOUT_SECONDS = 240
 SEMANTIC_BATCH_MAX_ITEMS = 8
 SEMANTIC_BATCH_MAX_CHARS = 12000
 
@@ -424,32 +422,21 @@ def _review_batch_semantic_tasks(
             try:
                 results.update(fn(*args))
             except Exception as exc:
-                results.update(_fallback_semantic_results(task_group, audit_records, dataset_orders, "failed", exc))
+                status = "timeout" if isinstance(exc, TimeoutError) else "failed"
+                results.update(_fallback_semantic_results(task_group, audit_records, dataset_orders, status, exc))
         return results
 
     executor = ThreadPoolExecutor(max_workers=min(4, len(active_calls)), thread_name_prefix="ops-semantic-batch")
     future_to_call = {executor.submit(fn, *args): (task_group, fn.__name__) for task_group, fn, args in active_calls}
-    pending = set(future_to_call)
-    deadline = time.monotonic() + SEMANTIC_BATCH_TOTAL_TIMEOUT_SECONDS
     try:
-        while pending:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                completed = next(as_completed(pending, timeout=remaining))
-            except TimeoutError:
-                break
-            pending.remove(completed)
+        # Each model call owns its timeout; queued batches must not expire while waiting.
+        for completed in as_completed(future_to_call):
             task_group, _name = future_to_call[completed]
             try:
                 results.update(completed.result())
             except Exception as exc:
-                results.update(_fallback_semantic_results(task_group, audit_records, dataset_orders, "failed", exc))
-        for future in pending:
-            future.cancel()
-            task_group, _name = future_to_call[future]
-            results.update(_fallback_semantic_results(task_group, audit_records, dataset_orders, "timeout", None))
+                status = "timeout" if isinstance(exc, TimeoutError) else "failed"
+                results.update(_fallback_semantic_results(task_group, audit_records, dataset_orders, status, exc))
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     return results
@@ -1387,16 +1374,16 @@ def _call_semantic_llm_json(prompt: str, text: str, *, context: dict[str, Any] |
             batches.append(batch)
         if len(batches) > 1:
             merged = []
-            deadline = time.monotonic() + SEMANTIC_BATCH_TOTAL_TIMEOUT_SECONDS
             # Task batches already share four workers; do not multiply provider concurrency.
             for batch in batches:
-                if time.monotonic() >= deadline:
-                    break
-                result = _call_semantic_llm_json(
-                    prompt,
-                    json.dumps({**payload, "items": batch}, ensure_ascii=False, default=str),
-                    context=context,
-                )
+                try:
+                    result = _call_semantic_llm_json(
+                        prompt,
+                        json.dumps({**payload, "items": batch}, ensure_ascii=False, default=str),
+                        context=context,
+                    )
+                except TimeoutError:
+                    continue
                 if isinstance(result, dict) and isinstance(result.get("results"), list):
                     merged.extend(result["results"])
             return {"results": merged}
@@ -1413,6 +1400,8 @@ def _call_semantic_llm_json(prompt: str, text: str, *, context: dict[str, Any] |
     )
     try:
         parsed = _run_async_llm_json(full_prompt)
+    except TimeoutError:
+        raise
     except Exception:
         return None
     return parsed if isinstance(parsed, dict) else None
@@ -1420,7 +1409,7 @@ def _call_semantic_llm_json(prompt: str, text: str, *, context: dict[str, Any] |
 
 def _run_async_llm_json(prompt: str) -> dict[str, Any]:
     async def call() -> dict[str, Any]:
-        service = LLMService()
+        service = LLMService(request_timeout_seconds=SEMANTIC_LLM_CALL_TIMEOUT_SECONDS)
         return await asyncio.wait_for(
             service.call_llm_with_json_response(prompt=prompt, max_retries=1),
             timeout=SEMANTIC_LLM_CALL_TIMEOUT_SECONDS,

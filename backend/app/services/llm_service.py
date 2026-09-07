@@ -1192,7 +1192,13 @@ class LLMService:
         },
     }
 
-    def __init__(self):
+    @property
+    def request_timeout_seconds(self) -> float:
+        override = getattr(self, "_request_timeout_seconds", None)
+        return override if override is not None else float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+
+    def __init__(self, *, request_timeout_seconds: Optional[float] = None):
+        self._request_timeout_seconds = request_timeout_seconds
         # 优先使用 settings 中的配置，确保与 .env 文件一致
         self.provider = settings.llm_provider.lower()
         self.temperature = settings.llm_temperature
@@ -1681,7 +1687,7 @@ class LLMService:
                     )
                     return
 
-                request_timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                request_timeout = self.request_timeout_seconds
                 if self.provider == "mimo":
                     # MiMo's Anthropic-compatible endpoint accepts the SDK's
                     # standard API-key authentication. Passing api_key=None and
@@ -2315,7 +2321,7 @@ class LLMService:
 
         for attempt in range(max_retries):
             try:
-                timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+                timeout = self.request_timeout_seconds
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
@@ -2949,7 +2955,7 @@ class LLMService:
             messages_count=len(payload["messages"]),
             has_tools=bool(payload.get("tools")),
         )
-        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        timeout = self.request_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -3006,7 +3012,7 @@ class LLMService:
             has_tools=bool(payload.get("tools")),
         )
         adapter = ChatCompletionsStreamAdapter(model=self.model)
-        timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+        timeout = self.request_timeout_seconds
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
