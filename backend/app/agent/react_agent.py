@@ -11,11 +11,12 @@ ReAct Agent - 主类
 5. 上下文管理：自动压缩、外部化、RAG增强
 """
 
-from typing import Dict, Any, AsyncGenerator, Optional, Tuple, List
+from typing import TYPE_CHECKING, Dict, Any, AsyncGenerator, Optional, Tuple, List
 from datetime import datetime, timedelta
 import uuid
 import structlog
 import asyncio
+import json
 
 from .memory.hybrid_manager import HybridMemoryManager
 from .core.loop import ReActLoop
@@ -35,9 +36,48 @@ from .selection_context import (
     resource_refs_to_runtime_attachments,
 )
 
+if TYPE_CHECKING:
+    from .memory.unified_memory_manager import UnifiedMemoryManager
+
 logger = structlog.get_logger()
 
 SOCIAL_MEMORY_MODES = {"social", "enforcement_exam"}
+HUMAN_FEEDBACK_DETAILS_MARKER = "本次反馈明细（请据此总结经验）："
+
+
+def _is_human_feedback_resume(user_query: str) -> bool:
+    """Identify the generic UI handoff that should trigger immediate Agent consolidation."""
+
+    return str(user_query or "").lstrip().startswith("【人工反馈续跑】")
+
+
+def _human_feedback_learning_mode(user_query: str, fallback: str) -> str:
+    """Return the producer mode selected for Agent-driven feedback learning."""
+
+    text = str(user_query or "")
+    if not _is_human_feedback_resume(text):
+        return fallback
+    marker_index = text.find(HUMAN_FEEDBACK_DETAILS_MARKER)
+    if marker_index < 0:
+        return fallback
+    payload_text = text[marker_index + len(HUMAN_FEEDBACK_DETAILS_MARKER):].lstrip()
+    try:
+        payload, _end = json.JSONDecoder().raw_decode(payload_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+    learning_mode = payload.get("learning_mode") if isinstance(payload, dict) else None
+    if not isinstance(learning_mode, str) or not learning_mode.strip():
+        return fallback
+    learning_mode = learning_mode.strip()
+    if learning_mode in SOCIAL_MEMORY_MODES or learning_mode == "memory_consolidator":
+        return fallback
+    try:
+        from app.agent.prompts.tool_registry import get_tools_by_mode
+
+        get_tools_by_mode(learning_mode)
+    except (ImportError, ValueError):
+        return fallback
+    return learning_mode
 
 
 class ReActAgent:
@@ -173,11 +213,13 @@ class ReActAgent:
         from app.tools.social.remember_fact.tool import RememberFactTool
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
         from app.tools.social.remove_memory.tool import RemoveMemoryTool
+        from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
 
         current_modes = {
             RememberFactTool._current_mode,
             ReplaceMemoryTool._current_mode,
             RemoveMemoryTool._current_mode,
+            AgentCaseLibraryTool._current_mode,
         }
         has_existing_target_mode = any(
             mode and mode != "memory_consolidator"
@@ -194,6 +236,7 @@ class ReActAgent:
         RememberFactTool.set_memory_context(memory_tool_mode, user_identifier)
         ReplaceMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
         RemoveMemoryTool.set_memory_context(memory_tool_mode, user_identifier)
+        AgentCaseLibraryTool.set_case_context(memory_tool_mode)
         logger.debug(
             "mode_memory_tool_context_set",
             mode=manual_mode,
@@ -847,11 +890,13 @@ class ReActAgent:
             #    此处只为非社交模式触发整合
             if unified_user_id and manual_mode and manual_mode not in SOCIAL_MEMORY_MODES:
                 try:
+                    learning_mode = _human_feedback_learning_mode(user_query, manual_mode)
                     asyncio.create_task(
                         self._background_memory_consolidation(
                             actual_session_id,
                             unified_user_id,
-                            manual_mode
+                            learning_mode,
+                            force=_is_human_feedback_resume(user_query),
                         )
                     )
                 except Exception as e:
@@ -875,9 +920,11 @@ class ReActAgent:
                     from app.tools.social.remember_fact.tool import RememberFactTool
                     from app.tools.social.replace_memory.tool import ReplaceMemoryTool
                     from app.tools.social.remove_memory.tool import RemoveMemoryTool
+                    from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
                     RememberFactTool.clear_memory_context()
                     ReplaceMemoryTool.clear_memory_context()
                     RemoveMemoryTool.clear_memory_context()
+                    AgentCaseLibraryTool.clear_case_context()
                 except Exception as e:
                     logger.warning("failed_to_clear_memory_tool_context", mode=manual_mode, error=str(e))
 
@@ -974,14 +1021,16 @@ class ReActAgent:
         self,
         session_id: str,
         unified_user_id: str,
-        mode: str
+        mode: str,
+        *,
+        force: bool = False,
     ) -> None:
         """
         后台记忆整合任务（不阻塞主对话）
 
         核心特性：
         - 异步执行，不阻塞主对话
-        - 只基于消息数量触发（与上下文压缩完全分离）
+        - 常规按消息数量触发，人工反馈续跑可请求即时整合
         - 使用Agent模式调用工具更新记忆
         - 快照隔离：后台更新不影响当前对话
 
@@ -994,6 +1043,7 @@ class ReActAgent:
         from app.tools.social.remember_fact.tool import RememberFactTool
         from app.tools.social.replace_memory.tool import ReplaceMemoryTool
         from app.tools.social.remove_memory.tool import RemoveMemoryTool
+        from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
 
         try:
             # 1. 获取会话历史
@@ -1009,12 +1059,12 @@ class ReActAgent:
             if not messages:
                 return
 
-            # 2. 检查是否需要整合（只基于消息数量，不检查token）
+            # 2. 常规按消息数量整合；人工反馈续跑需要立即交给整合 Agent，
+            #    由 LLM 决定哪些反馈值得沉淀，不在这里硬编码记忆或案例内容。
             offset = await self.memory_manager.get_consolidation_offset(unified_user_id)
-            new_message_count = len(messages) - offset
+            new_message_count = max(0, len(messages) - offset)
 
-            # ⚠️ 关键：只检查消息数量，与上下文压缩完全分离
-            should_consolidate = new_message_count >= 50
+            should_consolidate = force or new_message_count >= 50
 
             if not should_consolidate:
                 return
@@ -1036,11 +1086,15 @@ class ReActAgent:
             # 计算记忆文件字符数
             current_size = len(existing_memory)
             max_size = 3000  # 与工具中的限制一致
-            size_info = f"（{current_size}/{max_size}字符，使用率{current_size/max_size*100:.1f}%）"
 
             # 4. 构建整合提示词（包含现有记忆、文件路径和字符限制）
+            consolidation_messages = (
+                messages[-10:]
+                if force
+                else messages[offset:]
+            )
             consolidation_prompt = self._build_consolidation_prompt(
-                messages[offset:] if offset > 0 else messages,
+                consolidation_messages,
                 mode,
                 existing_memory,
                 memory_file_path
@@ -1055,6 +1109,7 @@ class ReActAgent:
             RememberFactTool.set_memory_context(mode, user_id)
             ReplaceMemoryTool.set_memory_context(mode, user_id)
             RemoveMemoryTool.set_memory_context(mode, user_id)
+            AgentCaseLibraryTool.set_case_context(mode)
 
             # 6. 创建记忆整合Agent
             from .memory_consolidator_factory import create_memory_consolidator_agent
@@ -1099,6 +1154,7 @@ class ReActAgent:
                 RememberFactTool.clear_memory_context()
                 ReplaceMemoryTool.clear_memory_context()
                 RemoveMemoryTool.clear_memory_context()
+                AgentCaseLibraryTool.clear_case_context()
                 logger.debug("memory_context_cleared")
             except Exception as e:
                 logger.warning("failed_to_clear_memory_context", error=str(e))
@@ -1188,12 +1244,13 @@ class ReActAgent:
             "   - remember_fact: 添加新记忆",
             "   - replace_memory: 替换现有记忆",
             "   - remove_memory: 删除过时记忆",
-            "4. 给出简洁总结（不超过50字）",
+            "4. 对包含 human_feedback 的对话，先检索当前模式案例库；如果反馈形成了可复用判断，使用 agent_case_library 记录案例，案例内容由你依据反馈总结，避免重复记录",
+            "5. 给出简洁总结（不超过50字）",
             "",
             "**⚠️ 记忆管理策略**（基于字符限制）：",
-            f"- 当记忆使用率 < 80%：可以正常添加新记忆",
-            f"- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
-            f"- 当记忆使用率 = 100%：必须先删除才能添加（工具会返回错误）",
+            "- 当记忆使用率 < 80%：可以正常添加新记忆",
+            "- 当记忆使用率 >= 80%：优先删除临时、过时或低优先级的记忆",
+            "- 当记忆使用率 = 100%：必须先删除才能添加（工具会返回错误）",
             "",
             "**注意事项**：",
             "- 避免重复记忆（先检查现有记忆）",
