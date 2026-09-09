@@ -443,7 +443,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
             OpsAuditFetchDatasetTool,
             OpsAuditInspectTool,
             OpsAuditRunRulesTool,
-            OpsAuditSubmitReviewTool,
         )
         registry.register(OpsAuditFetchDatasetTool(), priority=48)
         logger.info("tool_loaded", tool="ops_audit_fetch_dataset")
@@ -451,8 +450,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="ops_audit_run_rules")
         registry.register(OpsAuditInspectTool(), priority=50)
         logger.info("tool_loaded", tool="ops_audit_inspect")
-        registry.register(OpsAuditSubmitReviewTool(), priority=51)
-        logger.info("tool_loaded", tool="ops_audit_submit_review")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="ops_audit_tools", error=str(e))
 
@@ -919,6 +916,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="remove_memory")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="remove_memory", error=str(e))
+
+    try:
+        from app.tools.utility.agent_case_library_tool import AgentCaseLibraryTool
+        registry.register(AgentCaseLibraryTool(), priority=374)
+        logger.info("tool_loaded", tool="agent_case_library")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="agent_case_library", error=str(e))
 
     try:
         from app.tools.social.web_search.tool import WebSearchTool

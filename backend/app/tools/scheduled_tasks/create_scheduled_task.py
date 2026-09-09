@@ -18,6 +18,23 @@ from app.services.llm_service import LLMService
 logger = structlog.get_logger()
 
 
+OPS_WEEKLY_AUDIT_EXECUTION_MODE = "ops"
+
+
+OPS_WEEKLY_AUDIT_TASK_PROMPT = """这是每周运维工单审核定时任务。
+
+【审核窗口配置】
+按执行指令中配置的时间字段、起止时间和工单状态执行；周期周审默认使用技能规定的 weekly_created 窗口。
+
+【执行要求】
+1. 作为当前运维 Agent 直接完整执行任务，不调用 call_sub_agent，不要停在计划确认或等待确认节点。
+2. 严格按 ops_work_order_audit 技能调用 ops_audit_fetch_dataset 取数，并将其返回的 data.dataset_path 原值传给 ops_audit_run_rules；定时执行的审核产物由工具按 execution_id 自动隔离，不要指定 output_dir。
+3. ops_audit_run_rules 会直接生成 final_issue_list_path 和 report_input_path，并返回 report_ready；不得再调用子 Agent 做全量主观审核，也不得调用已移除的 ops_audit_submit_review。
+4. 返回 final_issue_list_path、report_input_path、report_ready、pending_review_count、pending_semantic_review_count 和关键统计。
+5. 如果 report_ready=true，只读取本轮 report_input_path，按审核报告规范生成 QMD 报告包，渲染 HTML/Word，并调用 validate_report_package 验收；不得重新拼装问题明细。
+6. 如果 report_ready=false，交付 report_input_path 中的 pending_review_items、pending_semantic_reviews 及原因，不生成正式报告，也不等待在线确认。"""
+
+
 class CreateScheduledTaskTool(LLMTool):
     """创建定时任务工具"""
 
@@ -171,7 +188,7 @@ class CreateScheduledTaskTool(LLMTool):
 3. execution_mode: 执行模式，支持 "assistant"、"expert"、"ops"
    - 广播、通知、社交文案生成任务优先使用 "assistant"
    - 数据分析、专业推理任务优先使用 "expert"
-   - 运维工单审核、运维表单审核、工单复核任务优先使用 "ops"
+   - 运维工单审核、运维表单审核、工单复核任务优先使用 "ops"，由当前运维 Agent 直接执行，不调用子 Agent
 4. schedule_type: 调度类型，支持以下类型：
    预设类型：
    - "daily_8am": 每天早上8点
@@ -261,12 +278,12 @@ class CreateScheduledTaskTool(LLMTool):
 {{
   "name": "工单周审",
   "description": "每周五上午9点审核运维工单",
-  "execution_mode": "ops",
+  "execution_mode": {json.dumps(OPS_WEEKLY_AUDIT_EXECUTION_MODE)},
   "schedule_type": "weekly_custom",
   "day_of_week": 4,
   "hour": 9,
   "minute": 0,
-  "prompt": "审核运维工单，时间范围按执行指令中配置的起止时间执行；需要生成正式报告时完整完成取数、规则审核、子Agent复核和报告交付。",
+  "prompt": {json.dumps(OPS_WEEKLY_AUDIT_TASK_PROMPT, ensure_ascii=False)},
   "timeout_seconds": 1800,
   "tags": ["运维", "工单审核", "周审"]
 }}

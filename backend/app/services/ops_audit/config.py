@@ -35,6 +35,7 @@ DEFAULT_BRAND_ALIASES = {
 }
 
 DEFAULT_DEVICE_IDENTITY_PROFILES = {
+    "enabled": False,
     "history_limit": 500,
     "recent_per_device_limit": 5,
     "history_rf_tables": [

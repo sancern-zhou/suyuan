@@ -67,6 +67,7 @@ def check_rf_abnormal_remarks(
             abnormal_field=issue.field,
             abnormal_message=issue.message,
             extra_remark_candidates=_trigger_remark_candidates(trigger_evidence),
+            abnormal_evidence=trigger_evidence,
         )
 
     for table, form in form_by_table.items():
@@ -185,6 +186,7 @@ def _check_pm_sample_tube_temperature(
         "working_order_code": order.get("WORKINGORDERCODE"),
         "rf_table": table,
         "field": "AIRTEMPVALUE/AIRTEMPISNORMAL",
+        "device_model": str(form.get("DEVICEMODEL") or "").strip(),
         "temperature_value": value,
         "temperature_status": status,
         "missing": missing,
@@ -210,6 +212,7 @@ def _check_pm_sample_tube_temperature(
         reason_rule_id="RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL",
         abnormal_field=f"rf.{table}.AIRTEMPVALUE/AIRTEMPISNORMAL",
         abnormal_message=abnormal_message,
+        abnormal_evidence=fact_evidence,
     )
 
 
@@ -259,6 +262,10 @@ def _abnormal_result_value_has_context(value: Any) -> bool:
         "已更换",
         "已通知",
         "已报备",
+        "返厂维修",
+        "厂家维修",
+        "送修",
+        "维修中",
     )
     return any(marker in text for marker in context_markers)
 
@@ -274,6 +281,7 @@ def _add_if_no_remark(
     abnormal_field: str,
     abnormal_message: str,
     extra_remark_candidates: dict[str, Any] | None = None,
+    abnormal_evidence: dict[str, Any] | None = None,
 ) -> None:
     key = (table, str(abnormal_field))
     if key in emitted:
@@ -293,6 +301,7 @@ def _add_if_no_remark(
         "reason_rule_id": reason_rule_id,
         "abnormal_field": abnormal_field,
         "abnormal_message": abnormal_message,
+        "abnormal_evidence": abnormal_evidence or {},
         "remark_candidates": remark_candidates,
         "needs_semantic_review": has_remark,
     }

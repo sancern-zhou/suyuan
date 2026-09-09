@@ -8,7 +8,7 @@ import json
 from collections import Counter
 
 from app.services.ops_audit.final_issue_list import build_final_issue_list
-from app.services.ops_audit.review_artifacts import persist_review_input
+from app.services.ops_audit.review_artifacts import persist_report_input
 from app.services.ops_audit.semantic.reviewer import build_semantic_review_results
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
@@ -33,7 +33,7 @@ def main():
         (output / f"latest_finished_work_orders_{name}.json").write_text(
             json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8",
         )
-    persist_review_input(final, output / "latest_finished_work_orders_review_input.json")
+    persist_report_input(final, output / "latest_finished_work_orders_report_input.json")
     summary = {
         "scope": "semantic_replay_only_deterministic_audit_unchanged",
         "output_dir": format_agent_path(output),
@@ -44,7 +44,7 @@ def main():
         "candidate_rule_counts": final["rule_counts"],
         "facts_requiring_verification": sum(bool(i.get("needs_manual_review")) for i in final["items"]),
         "pending_semantic_review_count": len(final["pending_semantic_reviews"]),
-        "final_review_required": True,
+        "final_review_required": False,
     }
     (output / "replay_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False))

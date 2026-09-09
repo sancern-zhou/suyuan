@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app.services.ops_audit.final_issue_list import build_final_issue_list, ensure_issue_ids
-from app.services.ops_audit.review_artifacts import apply_review_decisions, issue_list_sha256
+from app.services.ops_audit.review_artifacts import apply_review_decisions, build_report_input, issue_list_sha256
 from app.services.ops_audit.semantic import reviewer
 from app.services.ops_audit.rules.rf_required_rules import check_rf_required_fields
 
@@ -93,13 +93,72 @@ def _audit(task):
     }]}
 
 
-def test_manufacturer_explanation_reaches_final_fact_as_pending():
+def test_manufacturer_range_covering_value_excludes_configured_range_candidate():
     task = _task(remark="厂家报备参数0.7-1.3")
+    source_evidence = json.loads(task["source_issue"]["evidence"])
+    source_evidence["abnormal_evidence"] = {
+        "observed_value": {"normalized_value": 1.172, "normalized_unit": ""},
+    }
+    task["source_issue"]["evidence"] = json.dumps(source_evidence, ensure_ascii=False)
+    task["evidence_summary"]["sample_issues"] = [task["source_issue"]]
     result = reviewer._deterministic_remark_semantic_result(task, {}, {}, "")
     assert result["judgment"] == "cleared"
+    assert result["abnormal_fact_assessment"] == "not_applicable"
+    final = build_final_issue_list(_audit(task), {"results": [result]})
+    assert final["items"] == []
+    assert final["semantic_excluded_count"] == 1
+
+
+def test_manufacturer_range_not_covering_value_stays_pending():
+    task = _task(remark="厂家报备参数0.7-1.0")
+    source_evidence = json.loads(task["source_issue"]["evidence"])
+    source_evidence["abnormal_evidence"] = {
+        "observed_value": {"normalized_value": 1.172, "normalized_unit": ""},
+    }
+    task["source_issue"]["evidence"] = json.dumps(source_evidence, ensure_ascii=False)
+    task["evidence_summary"]["sample_issues"] = [task["source_issue"]]
+    result = reviewer._deterministic_remark_semantic_result(task, {}, {}, "")
+    assert result["abnormal_fact_assessment"] == "needs_verification"
     final = build_final_issue_list(_audit(task), {"results": [result]})
     assert final["items"][0]["needs_manual_review"] is True
-    assert final["items"][0]["semantic_conclusion"] == result["conclusion"]
+
+
+def test_manufacturer_station_range_variant_covering_value_is_accepted():
+    task = _task(field="CYLLCHECKVALUE", remark="聚光厂家备案总站最新流量参数为400-1200SCCM")
+    source_evidence = json.loads(task["source_issue"]["evidence"])
+    source_evidence["abnormal_evidence"] = {
+        "observed_value": {"normalized_value": 622, "normalized_unit": "SCCM"},
+    }
+    task["source_issue"]["evidence"] = json.dumps(source_evidence, ensure_ascii=False)
+    task["evidence_summary"]["sample_issues"] = [task["source_issue"]]
+    result = reviewer._deterministic_remark_semantic_result(task, {}, {}, "")
+    assert result["abnormal_fact_assessment"] == "not_applicable"
+
+
+def test_th_o3_normal_display_note_excludes_inapplicable_generic_signal_range():
+    task = _task(field="GYCHECKVALUE", remark="参考范围有误，仪器显示正常测量。")
+    source_evidence = json.loads(task["source_issue"]["evidence"])
+    source_evidence["abnormal_evidence"] = {
+        "brand": "TH",
+        "pollutant_type": "O3",
+        "observed_value": {"normalized_value": 568, "normalized_unit": "mV"},
+    }
+    task["source_issue"]["evidence"] = json.dumps(source_evidence, ensure_ascii=False)
+    task["evidence_summary"]["sample_issues"] = [task["source_issue"]]
+    result = reviewer._deterministic_remark_semantic_result(task, {}, {}, "")
+    assert result["abnormal_fact_assessment"] == "not_applicable"
+    assert build_final_issue_list(_audit(task), {"results": [result]})["items"] == []
+
+
+def test_identified_device_without_checked_item_is_not_applicable():
+    task = _task(field="AIRTEMPVALUE/AIRTEMPISNORMAL", remark="METONE设备无采样管温度")
+    source_evidence = json.loads(task["source_issue"]["evidence"])
+    source_evidence["reason_rule_id"] = "RF_PM_SAMPLE_TUBE_TEMP_ABNORMAL"
+    source_evidence["abnormal_evidence"] = {"device_model": "METONE 1020"}
+    task["source_issue"]["evidence"] = json.dumps(source_evidence, ensure_ascii=False)
+    task["evidence_summary"]["sample_issues"] = [task["source_issue"]]
+    result = reviewer._deterministic_remark_semantic_result(task, {}, {}, "")
+    assert result["abnormal_fact_assessment"] == "not_applicable"
 
 
 def test_explained_repair_does_not_erase_real_abnormal_fact():
@@ -110,6 +169,25 @@ def test_explained_repair_does_not_erase_real_abnormal_fact():
     }]})
     assert len(final["items"]) == 1
     assert not final["items"][0].get("needs_manual_review")
+
+
+def test_explicit_non_applicability_removes_linked_fact_and_explanation():
+    task = _task(remark="BAM1020设备无纸带，不适用该字段")
+    task["source_issue"]["evidence"] = json.dumps({
+        "rf_table": "RF_TEST", "reason_rule_id": "RF_RANGE_OUT_OF_SPEC",
+        "abnormal_field": "rf.RF_TEST.TAPE", "device_model": "BAM1020",
+        "remark_candidates": {"TAPEUSAGEDISPOSAL": "BAM1020设备无纸带，不适用该字段"},
+    }, ensure_ascii=False)
+    final = build_final_issue_list(_audit(task), {"results": [{
+        **task, "judgment": "cleared", "can_promote_to_final_issue": False,
+        "source_issue": task["source_issue"], "abnormal_fact_assessment": "not_applicable",
+        "abnormal_fact_reason": "设备型号BAM1020无纸带，该字段不适用。", "conclusion": "字段不适用",
+    }]})
+    assert final["items"] == []
+    assert len(final["semantic_excluded_items"]) == 1
+    report = build_report_input(final)
+    assert report["report_ready"] is True
+    assert report["summary"]["semantic_excluded_count"] == 1
 
 
 @pytest.mark.parametrize("fact_decision,expected", [("exclude", "exclude"), ("manual_review", "manual_review")])

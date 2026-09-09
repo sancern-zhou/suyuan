@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 
 from app.services import ops_work_order_audit_engine
+from app.services.ops_audit.models import Issue
 from app.services.ops_work_order_audit_engine import (
     _fetch_device_history,
     _history_form_seeds,
@@ -96,6 +97,59 @@ def test_audit_dataset_runs_flow_visual_tasks_by_default(monkeypatch):
     audit_dataset({"orders": [{"WORKINGORDERCODE": "WO-VISUAL"}]})
 
     assert calls == {"build": 1, "run": 1}
+
+
+def test_audit_dataset_can_run_visual_rules_only(monkeypatch):
+    calls = {"visual_build": 0, "visual_run": 0}
+
+    def fail_non_visual_rule(*args, **kwargs):
+        raise AssertionError("non-visual rule should not run")
+
+    def fake_build_flow_visual_tasks(*args, **kwargs):
+        calls["visual_build"] += 1
+        return [{"working_order_code": "WO-VISUAL-ONLY"}]
+
+    def fake_run_flow_visual_tasks(tasks, record_issues_by_code):
+        calls["visual_run"] += 1
+        record_issues_by_code["WO-VISUAL-ONLY"].append(
+            Issue(
+                rule_id="ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH",
+                category="附件读数一致性",
+                severity="高",
+                field="attachment.vision.test",
+                message="视觉比对测试问题",
+                evidence="{}",
+            )
+        )
+
+    monkeypatch.setattr(
+        ops_work_order_audit_engine,
+        "check_workflow_completeness",
+        fail_non_visual_rule,
+    )
+    monkeypatch.setattr(
+        ops_work_order_audit_engine,
+        "build_flow_visual_tasks",
+        fake_build_flow_visual_tasks,
+    )
+    monkeypatch.setattr(
+        ops_work_order_audit_engine,
+        "_run_flow_visual_tasks",
+        fake_run_flow_visual_tasks,
+    )
+
+    audit = audit_dataset(
+        {"orders": [{"WORKINGORDERCODE": "WO-VISUAL-ONLY"}]},
+        enable_visual=True,
+        enable_non_visual=False,
+    )
+
+    assert calls == {"visual_build": 1, "visual_run": 1}
+    assert audit["audit_info"]["rule_stage"] == "visual_only"
+    assert audit["audit_info"]["enable_non_visual"] is False
+    assert {
+        issue["rule_id"] for issue in audit["records"][0]["issues"]
+    } == {"ATTACHMENT_GAS_FLOW_DISPLAY_VALUE_MISMATCH"}
 
 
 def test_history_form_seeds_use_target_form_device_identity_and_earliest_time(monkeypatch):
