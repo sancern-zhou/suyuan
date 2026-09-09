@@ -36,7 +36,21 @@ def test_review_remark_semantic_uses_llm_json(monkeypatch):
     assert result["confidence"] == 0.91
 
 
-def test_review_attachment_quality_heuristic_for_cert(monkeypatch):
+def test_review_remark_semantic_unreviewed_without_llm(monkeypatch):
+    reviewer._SEMANTIC_CACHE.clear()
+    monkeypatch.setattr(reviewer.llm_service, "base_url", "https://fake.example.com/v1")
+    monkeypatch.setattr(reviewer.llm_service, "model", "configured-model")
+    monkeypatch.setattr(reviewer, "_call_semantic_llm_json", lambda *args, **kwargs: None)
+
+    result = review_remark_semantic("设备异常，已更换传感器，恢复正常")
+
+    assert result["judgment_type"] == "unreviewed"
+    assert result["is_complete"] is False
+    assert result["confidence"] == 0.0
+    assert "不可用" in result["problem_description"]
+
+
+def test_review_attachment_quality_unreviewed_without_llm(monkeypatch):
     monkeypatch.setattr(reviewer, "extract_attachment_text", lambda *args, **kwargs: {
         "status": "success",
         "text": "封面",
@@ -46,8 +60,10 @@ def test_review_attachment_quality_heuristic_for_cert(monkeypatch):
 
     result = review_attachment_quality("/tmp/cert.pdf", "cert")
 
+    assert result["unreviewed"] is True
     assert result["is_complete"] is False
-    assert any("证书只附封面" in issue for issue in result["issues"])
+    assert result["confidence"] == 0.0
+    assert not any("证书只附封面" in issue for issue in result["issues"])
 
 
 def test_check_photo_watermark_detects_date(monkeypatch):

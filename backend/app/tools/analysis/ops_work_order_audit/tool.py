@@ -15,11 +15,11 @@ from app.services.ops_work_order_audit import (
     fetch_ops_audit_dataset,
     inspect_ops_audit,
     list_ops_audit_rules,
-    review_ops_audit_issues,
     run_ops_audit_rules,
 )
+from app.agent.context.data_files import safe_file_stem
 from app.tools.base.tool_interface import LLMTool, ToolCategory
-from app.utils.path_config import resolve_agent_path
+from app.utils.path_config import get_data_registry, resolve_agent_path
 from app.tools.resource_refs import build_data_file_ref, build_file_ref, merge_refs
 
 logger = structlog.get_logger()
@@ -31,61 +31,33 @@ _OUTPUT_PATH_FIELDS = (
     "semantic_review_tasks_path",
     "semantic_review_results_path",
     "final_issue_list_path",
-    "review_input_path",
-    "review_decisions_path",
-    "reviewed_issue_list_path",
     "report_input_path",
 )
 
 
-def _audit_item_id(item: Dict[str, Any]) -> str:
-    """Stable, non-content-heavy identity used for human-vs-Agent comparison."""
-
-    return "|".join(
-        str(item.get(field) or "")
-        for field in ("working_order_code", "rule_id", "field", "rf_record_key")
-    )
-
-
-def _record_audit_feedback(result: Dict[str, Any], dataset_path: Path) -> str | None:
-    """Create an outcome case when the deterministic audit produces output."""
-
-    try:
-        from config.settings import settings
-
-        # ``ops_audit`` is shared by multiple deployments; only the Jiangsu
-        # project owns this pilot feedback stream.
-        if settings.project_id != "jiangsu-ops":
-            return None
-        from app.services.jiangsu_feedback_loop import (
-            audit_case_id,
-            get_feedback_loop_store,
-        )
-
-        final_items = (result.get("final_issue_list") or {}).get("items") or []
-        run_key = (result.get("final_issue_list") or {}).get("generated_at") or str(
-            result.get("final_issue_list_path") or ""
-        )
-        case_id = audit_case_id(str(dataset_path), run_key)
-        get_feedback_loop_store().agent_recommendation(
-            case_id=case_id,
-            scenario="ops_work_order_audit",
-            source_record_id=str(dataset_path),
-            recommendation_id=str(result.get("final_issue_list_path") or case_id),
-            subject={"dataset_path": str(dataset_path)},
-            payload={
-                "dataset_path": str(dataset_path),
-                "audit_result_path": result.get("audit_result_path"),
-                "final_issue_list_path": result.get("final_issue_list_path"),
-                "ai_item_ids": [_audit_item_id(item) for item in final_items if isinstance(item, dict)],
-                "ai_issue_count": len(final_items),
-            },
-        )
-        return case_id
-    except Exception as exc:
-        # Calibration instrumentation must not fail an otherwise valid audit.
-        logger.warning("jiangsu_audit_feedback_record_failed", error=str(exc))
+def _scheduled_audit_output_dir(context: Any) -> Path | None:
+    scheduled = getattr(context, "scheduled_task_context", None)
+    if not isinstance(scheduled, dict):
         return None
+    task_id = str(scheduled.get("task_id") or "").strip()
+    execution_id = str(scheduled.get("execution_id") or "").strip()
+    if not task_id or not execution_id:
+        return None
+    return (
+        get_data_registry()
+        / "scheduled_tasks"
+        / "executions"
+        / safe_file_stem(task_id)
+        / safe_file_stem(execution_id)
+        / "ops_audit"
+    ).resolve()
+
+
+def _effective_audit_output_dir(context: Any, requested: str | None) -> Path | None:
+    scheduled_dir = _scheduled_audit_output_dir(context)
+    if scheduled_dir is not None:
+        return scheduled_dir
+    return resolve_agent_path(requested) if requested else None
 
 
 def _declared_resource_refs(data: Dict[str, Any]) -> Dict[str, list[Dict[str, Any]]]:
@@ -99,11 +71,13 @@ def _declared_resource_refs(data: Dict[str, Any]) -> Dict[str, list[Dict[str, An
             "role": "output",
         }
         if field == "final_issue_list_path":
-            metadata.update({
-                "logical_key": "ops_audit.final_issue_list",
-                "label": "Final issue list",
-                "importance": "high",
-            })
+            metadata.update(
+                {
+                    "logical_key": "ops_audit.final_issue_list",
+                    "label": "Final issue list",
+                    "importance": "high",
+                }
+            )
         files.append(build_file_ref(path, **metadata))
     data_refs = []
     if isinstance(data.get("file_path"), str) and data["file_path"]:
@@ -135,7 +109,9 @@ def _standard_success(tool_name: str, summary: str, data: Dict[str, Any]) -> Dic
     return result
 
 
-def _standard_failure(tool_name: str, summary: str, error: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _standard_failure(
+    tool_name: str, summary: str, error: str, data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     return {
         "status": "failed",
         "success": False,
@@ -147,7 +123,6 @@ def _standard_failure(tool_name: str, summary: str, error: str, data: Optional[D
             "error": error,
         },
     }
-
 
 
 class OpsAuditFetchDatasetTool(LLMTool):
@@ -164,22 +139,76 @@ class OpsAuditFetchDatasetTool(LLMTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "工单数量，默认200，最大3000。"},
-                        "order_statuses": {"type": "array", "items": {"type": "string"}, "description": "工单状态列表，支持 Finish/Doing/Wait/Invalid，不填默认查所有状态工单。"},
-                        "create_time_start": {"type": "string", "description": "创建时间起始，包含该时间，如 2026-05-22 00:00:00。用户说按创建时间、创建/发起/生成的工单时使用；若同时要求已完成，另传 order_statuses=['Finish']。"},
-                        "create_time_end": {"type": "string", "description": "创建时间结束，不包含该时间，如 2026-06-01 00:00:00。用户说按创建时间、创建/发起/生成的工单时使用；若同时要求已完成，另传 order_statuses=['Finish']。"},
-                        "finish_time_start": {"type": "string", "description": "完成时间起始，包含该时间，如 2026-05-22 00:00:00。仅当用户说这段时间完成/办结/结束的工单时使用；不要仅因用户说已完成工单就使用。"},
-                        "finish_time_end": {"type": "string", "description": "完成时间结束，不包含该时间，如 2026-06-01 00:00:00。仅当用户说这段时间完成/办结/结束的工单时使用；不要仅因用户说已完成工单就使用。"},
-                        "audit_window_preset": {"type": "string", "description": "审核窗口预设：weekly_created 默认按最近周三回看上上周三至上周三创建且已完成工单；none 关闭默认窗口。仅用于周期审核/周审核窗口，不用于用户要求某段时间完成/办结的工单。"},
-                        "evidence_level": {"type": "string", "enum": ["summary", "detail", "raw"], "description": "证据层级：summary 默认，detail 加载结构化明细，raw 仅保存引用。"},
-                        "station_id": {"type": "string", "description": "单个站点ID；如需多个站点使用 station_ids。"},
-                        "station_ids": {"type": "array", "items": {"type": "string"}, "description": "站点ID列表。"},
-                        "order_type": {"type": "string", "description": "单个工单类型，如 Check、Fault；如需多个类型使用 order_types。"},
-                        "order_types": {"type": "array", "items": {"type": "string"}, "description": "工单类型列表。"},
-                        "maintenance_type": {"type": "string", "description": "单个维护类型，如 Week、Month；如需多个类型使用 maintenance_types。"},
-                        "maintenance_types": {"type": "array", "items": {"type": "string"}, "description": "维护类型列表。"},
-                        "working_order_codes": {"type": "array", "items": {"type": "string"}, "description": "指定工单编号列表；用于精确抽取目标工单。"},
-                        "output_dir": {"type": "string", "description": "输出目录；不填使用默认审核运维目录。"},
+                        "limit": {
+                            "type": "integer",
+                            "description": "工单数量，默认200，最大3000。",
+                        },
+                        "order_statuses": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "工单状态列表，支持 Finish/Doing/Wait/Invalid，不填默认查所有状态工单。",
+                        },
+                        "create_time_start": {
+                            "type": "string",
+                            "description": "创建时间起始，包含该时间，如 2026-05-22 00:00:00。用户说按创建时间、创建/发起/生成的工单时使用；若同时要求已完成，另传 order_statuses=['Finish']。",
+                        },
+                        "create_time_end": {
+                            "type": "string",
+                            "description": "创建时间结束，不包含该时间，如 2026-06-01 00:00:00。用户说按创建时间、创建/发起/生成的工单时使用；若同时要求已完成，另传 order_statuses=['Finish']。",
+                        },
+                        "finish_time_start": {
+                            "type": "string",
+                            "description": "完成时间起始，包含该时间，如 2026-05-22 00:00:00。仅当用户说这段时间完成/办结/结束的工单时使用；不要仅因用户说已完成工单就使用。",
+                        },
+                        "finish_time_end": {
+                            "type": "string",
+                            "description": "完成时间结束，不包含该时间，如 2026-06-01 00:00:00。仅当用户说这段时间完成/办结/结束的工单时使用；不要仅因用户说已完成工单就使用。",
+                        },
+                        "audit_window_preset": {
+                            "type": "string",
+                            "description": "审核窗口预设：weekly_created 默认按最近周三回看上上周三至上周三创建且已完成工单；none 关闭默认窗口。仅用于周期审核/周审核窗口，不用于用户要求某段时间完成/办结的工单。",
+                        },
+                        "evidence_level": {
+                            "type": "string",
+                            "enum": ["summary", "detail", "raw"],
+                            "description": "证据层级：summary 默认，detail 加载结构化明细，raw 仅保存引用。",
+                        },
+                        "station_id": {
+                            "type": "string",
+                            "description": "单个站点ID；如需多个站点使用 station_ids。",
+                        },
+                        "station_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "站点ID列表。",
+                        },
+                        "order_type": {
+                            "type": "string",
+                            "description": "单个工单类型，如 Check、Fault；如需多个类型使用 order_types。",
+                        },
+                        "order_types": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "工单类型列表。",
+                        },
+                        "maintenance_type": {
+                            "type": "string",
+                            "description": "单个维护类型，如 Week、Month；如需多个类型使用 maintenance_types。",
+                        },
+                        "maintenance_types": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "维护类型列表。",
+                        },
+                        "working_order_codes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "指定工单编号列表；用于精确抽取目标工单。",
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "输出目录；交互执行不填时使用配置的数据目录，定时执行始终按 execution_id 自动隔离。",
+                        },
                     },
                     "required": [],
                 },
@@ -224,7 +253,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
                     maintenance_types=_merge_single_and_many(maintenance_type, maintenance_types),
                     working_order_codes=_as_list(working_order_codes),
                     evidence_level=evidence_level,
-                    output_dir=resolve_agent_path(output_dir) if output_dir else None,
+                    output_dir=_effective_audit_output_dir(context, output_dir),
                 )
             )
             summary_text = self._summary_text(result)
@@ -255,8 +284,7 @@ class OpsAuditFetchDatasetTool(LLMTool):
                 f"{audit_window.get('create_time_end')}；"
             )
         return (
-            window_text +
-            f"已抽取 {summary.get('order_count', 0)} 条工单，"
+            window_text + f"已抽取 {summary.get('order_count', 0)} 条工单，"
             f"流程 {summary.get('detail_count', 0)} 条，RF记录 {summary.get('rf_record_count', 0)} 条，"
             f"附件 {summary.get('attachment_count', 0)} 条，通用文件 {summary.get('wo_commonfile_count', 0)} 条，"
             f"设备 {summary.get('device_count', 0)} 条，"
@@ -293,6 +321,12 @@ def _context_summary_record(result: Dict[str, Any]) -> Dict[str, Any]:
         "semantic_review_tasks_path": result.get("semantic_review_tasks_path"),
         "semantic_review_results_path": result.get("semantic_review_results_path"),
         "final_issue_list_path": result.get("final_issue_list_path"),
+        "report_input_path": result.get("report_input_path"),
+        "report_ready": result.get("report_ready"),
+        "pending_review_count": result.get("pending_review_count", 0),
+        "report_issue_count": result.get("report_issue_count", 0),
+        "enable_visual": result.get("enable_visual", True),
+        "enable_non_visual": result.get("enable_non_visual", True),
         "classification_counts": result.get("summary", {}).get("audit_level_counts", {}),
         "semantic_candidate_count": result.get("semantic_candidate_count", 0),
         "semantic_review_task_count": result.get("semantic_review_task_count", 0),
@@ -331,6 +365,7 @@ def _run_ops_audit_rules_with_lock(
     output_dir: Optional[Path],
     evidence_level: str,
     enable_visual: bool,
+    enable_non_visual: bool,
 ) -> Dict[str, Any]:
     effective_output_dir = (output_dir or dataset_path.parent).resolve()
     effective_output_dir.mkdir(parents=True, exist_ok=True)
@@ -342,6 +377,7 @@ def _run_ops_audit_rules_with_lock(
             output_dir=output_dir,
             evidence_level=evidence_level,
             enable_visual=enable_visual,
+            enable_non_visual=enable_non_visual,
         )
 
 
@@ -351,23 +387,42 @@ class OpsAuditRunRulesTool(LLMTool):
     def __init__(self) -> None:
         super().__init__(
             name="ops_audit_run_rules",
-            description="Run operations work order audit rules against a fetched dataset and assemble the final issue list.",
+            description="Run selected visual and non-visual operations work order audit rules against a fetched dataset and assemble the final issue list.",
             category=ToolCategory.ANALYSIS,
             function_schema={
                 "name": "ops_audit_run_rules",
-                "description": "基于已抽取数据集执行确定性规则、流量图片视觉比对和备注语义辅助复核，并生成 final_issue_list 供报告消费。",
+                "description": "基于已抽取数据集按开关执行非视觉规则和图片视觉审核，并生成 final_issue_list 供报告消费。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "dataset_path": {"type": "string", "description": "ops_audit_fetch_dataset 返回的数据集JSON路径。"},
-                        "output_dir": {"type": "string", "description": "审核结果输出目录；不填使用数据集所在目录。"},
-                        "evidence_level": {"type": "string", "enum": ["summary", "detail", "raw"], "description": "证据层级：summary 默认，detail 加载结构化明细，raw 仅引用原始证据路径。"},
-                        "enable_visual": {"type": "boolean", "description": "是否执行流量/读数照片视觉识别；默认 true。传 false 时跳过视觉识别，仅执行非视觉规则。", "default": True},
+                        "dataset_path": {
+                            "type": "string",
+                            "description": "ops_audit_fetch_dataset 返回的数据集JSON路径。",
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "审核结果输出目录；不填使用数据集所在目录，定时执行始终按 execution_id 自动隔离。",
+                        },
+                        "evidence_level": {
+                            "type": "string",
+                            "enum": ["summary", "detail", "raw"],
+                            "description": "证据层级：summary 默认，detail 加载结构化明细，raw 仅引用原始证据路径。",
+                        },
+                        "enable_visual": {
+                            "type": "boolean",
+                            "description": "是否执行流量/读数照片视觉识别；默认 true。传 false 时跳过视觉识别，仅执行非视觉规则。",
+                            "default": True,
+                        },
+                        "enable_non_visual": {
+                            "type": "boolean",
+                            "description": "是否执行流程、表单字段、数值、附件清单、XLS及跨工单等非视觉规则；默认 true。传 false 且 enable_visual=true 时仅执行视觉审核。",
+                            "default": True,
+                        },
                     },
                     "required": ["dataset_path"],
                 },
             },
-            version="0.2.0",
+            version="0.3.0",
             requires_context=True,
         )
 
@@ -378,6 +433,7 @@ class OpsAuditRunRulesTool(LLMTool):
         output_dir: Optional[str] = None,
         evidence_level: str = "summary",
         enable_visual: bool = True,
+        enable_non_visual: bool = True,
         **_: Any,
     ) -> Dict[str, Any]:
         if not dataset_path:
@@ -389,17 +445,24 @@ class OpsAuditRunRulesTool(LLMTool):
                     self.name,
                     f"数据集文件不存在：{dataset_path}。请使用 ops_audit_fetch_dataset 返回的 data.dataset_path 原值。",
                     "dataset_path_not_found",
-                    {"dataset_path": dataset_path, "latest_dataset_path": str(_latest_dataset_path()) if _latest_dataset_path() else None},
+                    {
+                        "dataset_path": dataset_path,
+                        "latest_dataset_path": str(_latest_dataset_path())
+                        if _latest_dataset_path()
+                        else None,
+                    },
                 )
             visual_enabled = _coerce_bool(enable_visual, default=True)
+            non_visual_enabled = _coerce_bool(enable_non_visual, default=True)
+            effective_output_dir = _effective_audit_output_dir(context, output_dir)
             result = await asyncio.to_thread(
                 _run_ops_audit_rules_with_lock,
                 resolved_dataset_path,
-                output_dir=resolve_agent_path(output_dir) if output_dir else None,
+                output_dir=effective_output_dir,
                 evidence_level=evidence_level,
                 enable_visual=visual_enabled,
+                enable_non_visual=non_visual_enabled,
             )
-            result["feedback_case_id"] = _record_audit_feedback(result, resolved_dataset_path)
             if context and hasattr(context, "save_data"):
                 result["file_path"] = context.save_data(
                     data=[_context_summary_record(result)],
@@ -417,16 +480,27 @@ class OpsAuditRunRulesTool(LLMTool):
         levels = result.get("summary", {}).get("audit_level_counts", {})
         top_rules = result.get("summary", {}).get("top_rules", [])[:5]
         business = result.get("business_review", {})
-        visual_text = "流量图片视觉比对已执行" if result.get("enable_visual", True) else "流量图片视觉比对已关闭"
+        visual_text = (
+            "图片视觉审核已执行"
+            if result.get("enable_visual", True)
+            else "图片视觉审核已关闭"
+        )
+        non_visual_text = (
+            "非视觉规则已执行"
+            if result.get("enable_non_visual", True)
+            else "非视觉规则已关闭"
+        )
         level_text = "，".join(f"{key}{value}条" for key, value in levels.items())
         rule_text = "，".join(f"{rule_id}({count})" for rule_id, count in top_rules)
         return (
-            f"确定性规则已执行，{visual_text}。分类分布：{level_text}。"
+            f"{non_visual_text}，{visual_text}。分类分布：{level_text}。"
             f"备注语义候选 {result.get('semantic_candidate_count', 0)} 条。"
             f"备注语义复核结果 {result.get('semantic_review_result_count', 0)} 条（仅用于闭环说明辅助定性）。"
             f"备注语义复核任务 {result.get('semantic_review_task_count', 0)} 条。"
             f"最终问题清单 {result.get('final_issue_count', 0)} 条，"
             f"涉及工单 {result.get('final_affected_order_count', 0)} 条。"
+            f"报告问题 {result.get('report_issue_count', 0)} 条，"
+            f"待人工核验 {result.get('pending_review_count', 0)} 条。"
             f"确定问题 {len(business.get('confirmed_issues', []))} 类，"
             f"待确认问题 {len(business.get('candidate_issues', []))} 类。"
             f"跨工单设备一致性问题 {result.get('device_consistency_issue_count', 0)} 条。"
@@ -438,7 +512,9 @@ class OpsAuditRunRulesTool(LLMTool):
             f"semantic_candidates={result.get('semantic_candidates_path')}；"
             f"semantic_tasks={result.get('semantic_review_tasks_path')}；"
             f"semantic_results={result.get('semantic_review_results_path')}；"
-            f"final_issue_list={result.get('final_issue_list_path')}"
+            f"final_issue_list={result.get('final_issue_list_path')}；"
+            f"report_input={result.get('report_input_path')}；"
+            f"report_ready={result.get('report_ready')}"
         )
 
 
@@ -471,14 +547,37 @@ class OpsAuditInspectTool(LLMTool):
                     "properties": {
                         "mode": {
                             "type": "string",
-                        "enum": ["rules", "order", "sample_rule", "risk", "semantic_candidates", "semantic_review_results", "review_samples"],
-                        "description": "查看模式。",
-                    },
-                        "audit_result_path": {"type": "string", "description": "审核结果JSON路径；rules模式不需要。"},
-                        "dataset_path": {"type": "string", "description": "可选：原始数据集JSON路径，用于返回主表/流程/RF证据。"},
-                        "working_order_code": {"type": "string", "description": "order模式使用的工单编号。"},
-                        "rule_id": {"type": "string", "description": "sample_rule模式使用的规则ID。"},
-                        "risk_level": {"type": "string", "description": "risk模式使用的风险等级，如 高风险/需补正。"},
+                            "enum": [
+                                "rules",
+                                "order",
+                                "sample_rule",
+                                "risk",
+                                "semantic_candidates",
+                                "semantic_review_results",
+                                "review_samples",
+                            ],
+                            "description": "查看模式。",
+                        },
+                        "audit_result_path": {
+                            "type": "string",
+                            "description": "审核结果JSON路径；rules模式不需要。",
+                        },
+                        "dataset_path": {
+                            "type": "string",
+                            "description": "可选：原始数据集JSON路径，用于返回主表/流程/RF证据。",
+                        },
+                        "working_order_code": {
+                            "type": "string",
+                            "description": "order模式使用的工单编号。",
+                        },
+                        "rule_id": {
+                            "type": "string",
+                            "description": "sample_rule模式使用的规则ID。",
+                        },
+                        "risk_level": {
+                            "type": "string",
+                            "description": "risk模式使用的风险等级，如 高风险/需补正。",
+                        },
                         "limit": {"type": "integer", "description": "返回条数，默认10，最大50。"},
                     },
                     "required": ["mode"],
@@ -505,7 +604,9 @@ class OpsAuditInspectTool(LLMTool):
                 result = list_ops_audit_rules()
             else:
                 if not audit_result_path:
-                    return _standard_failure(self.name, "该模式需要 audit_result_path。", "missing_audit_result_path")
+                    return _standard_failure(
+                        self.name, "该模式需要 audit_result_path。", "missing_audit_result_path"
+                    )
                 result = inspect_ops_audit(
                     resolve_agent_path(audit_result_path),
                     dataset_path=resolve_agent_path(dataset_path) if dataset_path else None,
@@ -534,81 +635,6 @@ class OpsAuditInspectTool(LLMTool):
         return f"已返回 {result.get('count', 0)} 条 {mode} 检查结果。"
 
 
-class OpsAuditSubmitReviewTool(LLMTool):
-    """Persist a complete child-Agent review and materialize report input."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            name="ops_audit_submit_review",
-            description="提交完整工单问题复核决定，并确定性生成已复核问题清单和精简报告输入。",
-            category=ToolCategory.ANALYSIS,
-            function_schema={
-                "name": "ops_audit_submit_review",
-                "description": "按 issue_id 提交 final_issue_list 的全量复核结果。缺项、重复项、未知ID或源文件已变化时拒绝写入。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "final_issue_list_path": {"type": "string", "description": "本轮规则工具返回的 final_issue_list_path 原值。"},
-                        "expected_source_sha256": {"type": "string", "description": "本轮 review_input.source.sha256 原值。"},
-                        "decisions": {
-                            "type": "array",
-                            "description": "每个 issue_id 必须且只能出现一次。",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "issue_id": {"type": "string"},
-                                    "decision": {"type": "string", "enum": ["retain", "exclude", "manual_review"]},
-                                    "reason": {"type": "string", "description": "exclude/manual_review 必填；retain 可简写。"},
-                                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
-                                },
-                                "required": ["issue_id", "decision"],
-                            },
-                        },
-                        "reviewer_name": {"type": "string", "description": "复核者或子Agent标识。"},
-                        "reviewer_model": {"type": "string", "description": "可选：复核模型标识。"},
-                        "output_dir": {"type": "string", "description": "可选：输出目录，默认与 final_issue_list 同目录。"},
-                    },
-                    "required": ["final_issue_list_path", "expected_source_sha256", "decisions"],
-                },
-            },
-            version="1.0.0",
-            requires_context=True,
-        )
-
-    async def execute(
-        self,
-        context=None,
-        final_issue_list_path: str = "",
-        expected_source_sha256: str = "",
-        decisions: Optional[list[dict[str, Any]]] = None,
-        reviewer_name: Optional[str] = None,
-        reviewer_model: Optional[str] = None,
-        output_dir: Optional[str] = None,
-        **_: Any,
-    ) -> Dict[str, Any]:
-        if not final_issue_list_path:
-            return _standard_failure(self.name, "请提供 final_issue_list_path。", "missing_final_issue_list_path")
-        try:
-            result = await asyncio.to_thread(
-                review_ops_audit_issues,
-                resolve_agent_path(final_issue_list_path),
-                decisions or [],
-                expected_source_sha256=expected_source_sha256,
-                reviewer={"name": reviewer_name or "ops_review_agent", "model": reviewer_model or ""},
-                output_dir=resolve_agent_path(output_dir) if output_dir else None,
-            )
-            summary = (
-                f"复核决定已持久化：保留 {result['retained_count']} 条，"
-                f"排除 {result['excluded_count']} 条，人工复核 {result['manual_review_count']} 条。"
-            )
-            if not result["report_ready"]:
-                summary += "仍有人工复核项，当前报告输入不可作为正式报告依据。"
-            return _standard_success(self.name, summary, result)
-        except Exception as exc:
-            logger.warning("ops_audit_submit_review_failed", error=str(exc))
-            return _standard_failure(self.name, f"工单问题复核提交失败: {str(exc)}", str(exc))
-
-
 async def ops_audit_fetch_dataset(context=None, **kwargs: Any) -> Dict[str, Any]:
     """Function export for callers that invoke the audit tool directly."""
     return await OpsAuditFetchDatasetTool().execute(context=context, **kwargs)
@@ -624,18 +650,11 @@ async def ops_audit_inspect(context=None, **kwargs: Any) -> Dict[str, Any]:
     return await OpsAuditInspectTool().execute(context=context, **kwargs)
 
 
-async def ops_audit_submit_review(context=None, **kwargs: Any) -> Dict[str, Any]:
-    """Function export for callers that invoke the review tool directly."""
-    return await OpsAuditSubmitReviewTool().execute(context=context, **kwargs)
-
-
 __all__ = [
     "OpsAuditFetchDatasetTool",
     "OpsAuditRunRulesTool",
     "OpsAuditInspectTool",
-    "OpsAuditSubmitReviewTool",
     "ops_audit_fetch_dataset",
     "ops_audit_run_rules",
     "ops_audit_inspect",
-    "ops_audit_submit_review",
 ]

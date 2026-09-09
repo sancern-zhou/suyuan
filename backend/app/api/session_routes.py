@@ -109,7 +109,14 @@ def _strip_lazy_artifacts(obj: Any) -> Any:
             if (
                 key in ARTIFACT_KEYS
                 or key in LEGACY_LOCATOR_KEYS
-                or key.endswith("_path")
+            ):
+                continue
+            if key == "human_feedback":
+                # 待确认面板契约需要完整子树（含 report_input_path），不剥离内部定位字段。
+                stripped[key] = value
+                continue
+            if (
+                key.endswith("_path")
                 or key.endswith("_preview")
             ):
                 continue

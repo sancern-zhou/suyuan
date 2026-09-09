@@ -89,9 +89,10 @@ from app.services.ops_audit.scoring import (  # noqa: E402
 from app.services.ops_audit.semantic_candidates import build_semantic_candidates as modular_build_semantic_candidates  # noqa: E402
 from app.services.ops_audit.semantic.reviewer import build_semantic_review_results as modular_build_semantic_review_results  # noqa: E402
 from app.services.ops_audit.semantic.reviewer import build_semantic_review_tasks as modular_build_semantic_review_tasks  # noqa: E402
+from app.utils.path_config import get_memory_dir  # noqa: E402
 
 
-OUTPUT_DIR = BACKEND / "backend_data_registry" / "memory" / "ops" / "audit"
+OUTPUT_DIR = get_memory_dir() / "ops" / "audit"
 logger = logging.getLogger(__name__)
 
 RF_TABLES = [
@@ -1767,6 +1768,7 @@ def audit_dataset(
     dataset: dict[str, Any],
     *,
     enable_visual: bool = True,
+    enable_non_visual: bool = True,
     visual_evidence_dir: Path | None = None,
 ) -> dict[str, Any]:
     visual_evidence_dir = (visual_evidence_dir or (OUTPUT_DIR / "visual_evidence" / "multipoint_curves")).resolve()
@@ -1794,16 +1796,20 @@ def audit_dataset(
                 forms_by_code[code].append((table, form))
     attachments_by_code = _group_records_by_order_code(dataset.get("attachments", []), ["refid", "REFID", "remark", "REMARK"])
     wo_commonfile_by_code = _group_records_by_order_code(dataset.get("wo_commonfile", []), ["REFID", "refid"])
-    all_orders_for_device_consistency, all_forms_by_code = merge_device_history(dataset)
-    current_order_codes = {
-        str(order.get("WORKINGORDERCODE"))
-        for order in dataset.get("orders", [])
-        if order.get("WORKINGORDERCODE")
-    }
-    o3_history_conflicts_by_code = build_o3_upper_standard_history_conflicts(
-        all_forms_by_code,
-        current_order_codes,
-    )
+    all_orders_for_device_consistency: list[dict[str, Any]] = []
+    all_forms_by_code: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    o3_history_conflicts_by_code: dict[str, list[Issue]] = {}
+    if enable_non_visual:
+        all_orders_for_device_consistency, all_forms_by_code = merge_device_history(dataset)
+        current_order_codes = {
+            str(order.get("WORKINGORDERCODE"))
+            for order in dataset.get("orders", [])
+            if order.get("WORKINGORDERCODE")
+        }
+        o3_history_conflicts_by_code = build_o3_upper_standard_history_conflicts(
+            all_forms_by_code,
+            current_order_codes,
+        )
 
     records = []
     record_issues_by_code: dict[str, list[Issue]] = {}
@@ -1819,68 +1825,70 @@ def audit_dataset(
             wo_commonfile_by_code.get(str(code), [])
         )
 
-        check_workflow_completeness(order, details, issues)
-        check_modular_lifecycle_closure(order, details, forms, issues)
-        check_rf_required_fields(order, forms, issues)
-        check_rf_time_ranges(order, forms, issues)
-        check_rf_unit_values(order, forms, issues)
-        check_rf_range_values(order, forms, issues)
-        check_rf_formula_values(order, forms, issues)
-        check_rf_environment_humidity_values(order, forms, issues)
-        check_rf_multipoint_values(
-            order,
-            forms,
-            issues,
-            all_orders=all_orders_for_device_consistency,
-            forms_by_code=all_forms_by_code,
-        )
-        check_rf_pm_pressure_values(order, forms, issues)
-        check_rf_field_positions(order, forms, issues)
-        check_rf_enum_values(order, forms, issues)
-        check_rf_visibility_values(order, forms, issues)
-        check_rf_abnormal_remarks(order, forms, issues)
-        check_rf_calibration_dates(
-            order,
-            forms,
-            issues,
-            all_orders=all_orders_for_device_consistency,
-            forms_by_code=all_forms_by_code,
-        )
+        if enable_non_visual:
+            check_workflow_completeness(order, details, issues)
+            check_modular_lifecycle_closure(order, details, forms, issues)
+            check_rf_required_fields(order, forms, issues)
+            check_rf_time_ranges(order, forms, issues)
+            check_rf_unit_values(order, forms, issues)
+            check_rf_range_values(order, forms, issues)
+            check_rf_formula_values(order, forms, issues)
+            check_rf_environment_humidity_values(order, forms, issues)
+            check_rf_multipoint_values(
+                order,
+                forms,
+                issues,
+                all_orders=all_orders_for_device_consistency,
+                forms_by_code=all_forms_by_code,
+            )
+            check_rf_pm_pressure_values(order, forms, issues)
+            check_rf_field_positions(order, forms, issues)
+            check_rf_enum_values(order, forms, issues)
+            check_rf_visibility_values(order, forms, issues)
+            check_rf_abnormal_remarks(order, forms, issues)
+            check_rf_calibration_dates(
+                order,
+                forms,
+                issues,
+                all_orders=all_orders_for_device_consistency,
+                forms_by_code=all_forms_by_code,
+            )
 
-        check_rf_forms(
-            order,
-            forms,
-            issues,
-            devices_by_id,
-            devices_by_code,
-            attachment_rf_typecodes,
-            attachments_by_code.get(str(code), []) + wo_commonfile_by_code.get(str(code), []),
-        )
-        check_device_identity_consistency(
-            order,
-            forms,
-            all_orders_for_device_consistency,
-            all_forms_by_code,
-            devices_by_id,
-            devices_by_code,
-            issues,
-        )
-        check_attachment_requirements(
-            order,
-            forms,
-            attachments_by_code.get(str(code), []),
-            wo_commonfile_by_code.get(str(code), []),
-            issues,
-        )
-        check_o3_value_pass_xls_values(
-            order,
-            forms,
-            attachments_by_code.get(str(code), []),
-            wo_commonfile_by_code.get(str(code), []),
-            issues,
-            attachment_read_cache=attachment_read_cache,
-        )
-        check_o3_transfer_quality_values(order, forms, issues)
+            check_rf_forms(
+                order,
+                forms,
+                issues,
+                devices_by_id,
+                devices_by_code,
+                attachment_rf_typecodes,
+                attachments_by_code.get(str(code), []) + wo_commonfile_by_code.get(str(code), []),
+            )
+            if DEVICE_IDENTITY_PROFILE.get("enabled", False):
+                check_device_identity_consistency(
+                    order,
+                    forms,
+                    all_orders_for_device_consistency,
+                    all_forms_by_code,
+                    devices_by_id,
+                    devices_by_code,
+                    issues,
+                )
+            check_attachment_requirements(
+                order,
+                forms,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+                issues,
+            )
+            check_o3_value_pass_xls_values(
+                order,
+                forms,
+                attachments_by_code.get(str(code), []),
+                wo_commonfile_by_code.get(str(code), []),
+                issues,
+                attachment_read_cache=attachment_read_cache,
+            )
+            check_o3_transfer_quality_values(order, forms, issues)
         if enable_visual:
             order_flow_tasks = build_flow_visual_tasks(
                 order,
@@ -1991,7 +1999,13 @@ def audit_dataset(
         "audit_info": {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "order_count": len(records),
-            "rule_stage": "deterministic_and_candidate_classification",
+            "rule_stage": (
+                "deterministic_and_candidate_classification"
+                if enable_non_visual
+                else ("visual_only" if enable_visual else "rules_disabled")
+            ),
+            "enable_visual": enable_visual,
+            "enable_non_visual": enable_non_visual,
         },
         "summary": {
             "audit_level_counts": dict(level_counter),

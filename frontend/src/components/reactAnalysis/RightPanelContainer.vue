@@ -8,7 +8,7 @@
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs">
         <button
-          :class="['tab-btn', { active: activeTab !== 'files' }]"
+          :class="['tab-btn', { active: activeTab === 'document' }]"
           @click="handleTabChange('document')"
         >
           <span>报告</span>
@@ -21,6 +21,14 @@
           <span>文件产物</span>
           <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
         </button>
+        <button
+          v-if="feedbackAvailable"
+          :class="['tab-btn', { active: activeTab === 'feedback' }]"
+          @click="handleTabChange('feedback')"
+        >
+          <span>待确认</span>
+          <span class="tab-count">{{ feedbackCount }}</span>
+        </button>
       </div>
       <ResourceProductsPanel
         v-if="activeTab === 'files' && sessionId"
@@ -28,8 +36,16 @@
         @open-resource-tab="handleTabChange"
       />
       <ReportGenerationPanel
-        v-else
+        v-else-if="activeTab !== 'feedback'"
         :assistant-mode="assistantMode"
+      />
+      <HumanFeedbackPanel
+        v-else
+        class="panel-content"
+        :feedback="humanFeedback"
+        :submitting="humanFeedbackSubmitting"
+        :error="humanFeedbackError"
+        @submit="$emit('submit-human-feedback', $event)"
       />
     </template>
 
@@ -98,6 +114,16 @@
           <span v-if="fileProductCount > 0" class="tab-count">{{ fileProductCount }}</span>
         </button>
         <button
+          v-if="feedbackAvailable"
+          :class="['tab-btn', { active: activeTab === 'feedback' }]"
+          role="tab"
+          :aria-selected="activeTab === 'feedback'"
+          @click="handleTabChange('feedback')"
+        >
+          <span>待确认</span>
+          <span class="tab-count">{{ feedbackCount }}</span>
+        </button>
+        <button
           v-if="showBoardTab"
           :class="['tab-btn', { active: activeTab === 'board' }]"
           role="tab"
@@ -144,6 +170,15 @@
         class="panel-content"
         @open-resource-tab="handleTabChange"
       />
+
+      <HumanFeedbackPanel
+        v-if="activeTab === 'feedback'"
+        class="panel-content"
+        :feedback="humanFeedback"
+        :submitting="humanFeedbackSubmitting"
+        :error="humanFeedbackError"
+        @submit="$emit('submit-human-feedback', $event)"
+      />
     </template>
   </div>
 </template>
@@ -155,6 +190,7 @@ import KnowledgeSourcePanel from '@/components/visualization/panels/KnowledgeSou
 import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.vue'
 import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
+import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
@@ -205,6 +241,18 @@ const props = defineProps({
   board: {
     type: Object,
     default: null
+  },
+  humanFeedback: {
+    type: Object,
+    default: null
+  },
+  humanFeedbackSubmitting: {
+    type: Boolean,
+    default: false
+  },
+  humanFeedbackError: {
+    type: String,
+    default: ''
   }
 })
 
@@ -212,7 +260,8 @@ const emit = defineEmits([
   'tab-change',
   'board-xml-change',
   'board-selection-change',
-  'board-snapshot-confirm'
+  'board-snapshot-confirm',
+  'submit-human-feedback'
 ])
 const resourceStore = useSessionResourceStore()
 
@@ -264,7 +313,7 @@ const explicitTarget = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.sessionId || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value
+  return props.sessionId || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -274,16 +323,19 @@ const visualizationAvailable = computed(() => visualizationCount.value > 0 || ex
 const documentAvailable = computed(() => documentCount.value > 0 || explicitTarget.value === 'document')
 
 const knowledgeCount = computed(() => props.knowledgeSources?.length || 0)
+const feedbackCount = computed(() => props.humanFeedback?.items?.length || 0)
+const feedbackAvailable = computed(() => feedbackCount.value > 0)
 
 watch(
-  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value],
-  ([mode, tab, visualizations, documents, knowledge, board]) => {
+  () => [props.assistantMode, props.activeTab, visualizationAvailable.value, documentAvailable.value, knowledgeCount.value, showBoardTab.value, feedbackAvailable.value],
+  ([mode, tab, visualizations, documents, knowledge, board, feedback]) => {
     if (mode === 'report-generation-expert') return
     const unavailable = (
       (tab === 'visualization' && !visualizations)
       || (tab === 'document' && !documents)
       || (tab === 'knowledge' && knowledge === 0)
       || (tab === 'board' && !board)
+      || (tab === 'feedback' && !feedback)
     )
     if (unavailable) emit('tab-change', 'files')
   },

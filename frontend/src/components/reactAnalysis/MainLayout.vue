@@ -180,11 +180,15 @@
         :selected-message-id="selectedMessageId"
         :session-id="sessionId"
         :expert-results="expertResults"
+        :human-feedback="humanFeedback"
+        :human-feedback-submitting="humanFeedbackSubmitting"
+        :human-feedback-error="humanFeedbackError"
         :knowledge-sources="knowledgeSources"
         @tab-change="handleTabChange"
         @board-xml-change="handleBoardXmlChange"
         @board-selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
+        @submit-human-feedback="$emit('submit-human-feedback', $event)"
         />
       </template>
     </div>
@@ -295,6 +299,18 @@ const props = defineProps({
   expertResults: {
     type: Object,
     default: null
+  },
+  humanFeedback: {
+    type: Object,
+    default: null
+  },
+  humanFeedbackSubmitting: {
+    type: Boolean,
+    default: false
+  },
+  humanFeedbackError: {
+    type: String,
+    default: ''
   },
   board: {
     type: Object,
@@ -432,6 +448,7 @@ const emit = defineEmits([
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
+  'submit-human-feedback',
   'chat-area-drag-over',
   'chat-area-drag-leave',
   'chat-area-drop',

@@ -93,6 +93,13 @@ def test_upper_standard_fields_match_abbreviated_date_range_and_model_alias(tmp_
     assert _check(form, [_attachment(path)]) == []
 
 
+def test_upper_standard_49ips_dzaa_model_suffix_matches_base_model(tmp_path):
+    path = tmp_path / "o3-49ips-dzaa.xlsx"
+    _workbook(path, model="49IPS-DZAA")
+
+    assert _check(_form(DELIVER6VALUE="49iPS"), [_attachment(path)]) == []
+
+
 def test_upper_standard_device_number_mismatch_is_deterministic(tmp_path):
     path = tmp_path / "o3.xlsx"
     _workbook(path, serial_number="CM20457343")

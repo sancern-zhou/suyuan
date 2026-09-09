@@ -115,6 +115,8 @@ def run_flow_visual_task(task: dict[str, Any], issues: list[Issue]) -> None:
 
 def _check_certificate(order: dict[str, Any], item: dict[str, Any], issues: list[Issue]) -> None:
     review = review_attachment_quality(str(item["source_path"]), "cert")
+    if review.get("unreviewed"):
+        return
     if review.get("ocr_result", {}).get("status") != "success":
         return
     if review.get("is_complete", True):
@@ -131,6 +133,8 @@ def _check_certificate(order: dict[str, Any], item: dict[str, Any], issues: list
 
 def _check_report(order: dict[str, Any], item: dict[str, Any], issues: list[Issue]) -> None:
     review = review_attachment_quality(str(item["source_path"]), "report")
+    if review.get("unreviewed"):
+        return
     if review.get("ocr_result", {}).get("status") != "success":
         return
     issue_text = " ".join(str(issue) for issue in review.get("issues", []))

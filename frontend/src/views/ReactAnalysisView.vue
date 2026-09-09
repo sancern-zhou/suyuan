@@ -28,6 +28,9 @@
       :loading-more="store.currentState.pagination.loadingMore"
       :session-id="currentModeSessionId"
       :expert-results="currentModeExpertResults"
+      :human-feedback="store.pendingHumanFeedback"
+      :human-feedback-submitting="store.isHumanFeedbackSubmitting"
+      :human-feedback-error="store.humanFeedbackSubmitError"
       :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
@@ -108,6 +111,7 @@
       @preview-message-attachment="openMessageAttachmentPreview"
       @resolve-interaction="handleInteractionResolve"
       @close-interaction="handleInteractionClose"
+      @submit-human-feedback="handleHumanFeedbackSubmit"
     />
 
     <!-- 知识库创建对话框 -->
@@ -328,6 +332,14 @@ const handleInteractionResolve = async (resolution) => {
 
 const handleInteractionClose = () => {
   void handleInteractionResolve({ decision: 'reject', response: null })
+}
+
+const handleHumanFeedbackSubmit = async (payload) => {
+  try {
+    await store.submitHumanFeedback(payload)
+  } catch (error) {
+    console.error('[human-feedback] submission failed:', error)
+  }
 }
 
 // ========== 计算属性 ==========
