@@ -54,39 +54,48 @@
         </div>
       </section>
 
-      <section class="agent-groups" aria-label="专业智能体">
+      <section class="agent-groups" aria-label="智能体类型">
         <header class="section-header">
-          <div><span>PROFESSIONAL</span><h2>专业智能体</h2></div>
+          <div><span>AGENT TYPES</span><h2>按类型选择智能体</h2></div>
         </header>
-        <div class="agent-grid">
-          <button
-            v-for="agent in agents"
-            :key="agent.id"
-            class="agent-card"
-            type="button"
-            :class="{ running: runningModes.includes(agent.id), selecting: selectingMode === agent.id }"
-            :style="{ '--agent-accent': agent.accent }"
-            :disabled="Boolean(selectingMode)"
-            @click="emit('select', agent.id)"
-          >
-            <span class="agent-card-top">
-              <span class="agent-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path v-for="path in agent.iconPaths" :key="path" :d="path" /></svg>
-              </span>
-              <span class="agent-title-wrap">
-                <strong>{{ agent.shortName || agent.name }}</strong>
-                <span v-if="runningModes.includes(agent.id)" class="running-badge"><i aria-hidden="true"></i>运行中</span>
-              </span>
-            </span>
-            <span class="agent-description">{{ agent.description }}</span>
-            <span class="agent-tags" aria-label="能力标签">
-              <span v-for="tag in agent.tags" :key="tag">{{ tag }}</span>
-            </span>
-            <span class="card-action">
-              {{ selectingMode === agent.id ? '正在进入…' : (runningModes.includes(agent.id) ? '查看任务' : '开始使用') }}
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
-            </span>
-          </button>
+        <div class="agent-type-groups">
+          <section v-for="group in agentGroups" :key="group.id" class="agent-type-group" :aria-label="group.name">
+            <header class="agent-type-header">
+              <span class="agent-type-mark" :style="{ '--group-accent': group.accent }"></span>
+              <div><h3>{{ group.name }}</h3><p>{{ group.description }}</p></div>
+              <span class="agent-type-count">{{ group.agents.length }} 个</span>
+            </header>
+            <div class="agent-grid">
+              <button
+                v-for="agent in group.agents"
+                :key="agent.id"
+                class="agent-card"
+                type="button"
+                :class="{ running: runningModes.includes(agent.id), selecting: selectingMode === agent.id }"
+                :style="{ '--agent-accent': agent.accent }"
+                :disabled="Boolean(selectingMode)"
+                @click="emit('select', agent.id)"
+              >
+                <span class="agent-card-top">
+                  <span class="agent-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path v-for="path in agent.iconPaths" :key="path" :d="path" /></svg>
+                  </span>
+                  <span class="agent-title-wrap">
+                    <strong>{{ agent.shortName || agent.name }}</strong>
+                    <span v-if="runningModes.includes(agent.id)" class="running-badge"><i aria-hidden="true"></i>运行中</span>
+                  </span>
+                </span>
+                <span class="agent-description">{{ agent.description }}</span>
+                <span class="agent-tags" aria-label="能力标签">
+                  <span v-for="tag in agent.tags" :key="tag">{{ tag }}</span>
+                </span>
+                <span class="card-action">
+                  {{ selectingMode === agent.id ? '正在进入…' : (runningModes.includes(agent.id) ? '查看任务' : '开始使用') }}
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+                </span>
+              </button>
+            </div>
+          </section>
         </div>
       </section>
     </div>
@@ -95,6 +104,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
+import { AGENT_SCENES } from '@/config/agentModes.js'
 
 const emit = defineEmits(['select', 'select-task', 'restore-session', 'submit', 'switch-view'])
 const query = ref('')
@@ -102,12 +112,37 @@ const query = ref('')
 const props = defineProps({
   coordinator: { type: Object, default: () => ({}) },
   agents: { type: Array, default: () => [] },
+  scenes: { type: Array, default: () => AGENT_SCENES },
   runningModes: { type: Array, default: () => [] },
   selectingMode: { type: String, default: '' },
   scheduledTasks: { type: Array, default: () => [] }
 })
 
 const quickPrompts = computed(() => Array.isArray(props.coordinator?.quickPrompts) ? props.coordinator.quickPrompts : [])
+
+const agentGroups = computed(() => {
+  const assigned = new Set()
+  const groups = props.scenes.map((scene, index) => {
+    const group = {
+      ...scene,
+      accent: scene.accent || ['#2878ff', '#0b9b8a', '#b54738', '#7656e8'][index % 4]
+    }
+    const groupAgents = group.modeIds
+      .map(modeId => props.agents.find(agent => agent.id === modeId))
+      .filter(agent => agent && !assigned.has(agent.id))
+    groupAgents.forEach(agent => assigned.add(agent.id))
+    return { ...group, agents: groupAgents }
+  }).filter(group => group.agents.length)
+  const remaining = props.agents.filter(agent => !assigned.has(agent.id))
+  if (remaining.length) groups.push({
+    id: 'other',
+    name: '其他能力',
+    description: '当前项目提供的其他智能体能力',
+    accent: '#687f8a',
+    agents: remaining
+  })
+  return groups
+})
 
 const submitQuery = () => {
   const value = query.value.trim()
@@ -184,6 +219,14 @@ const submitPrompt = (prompt) => {
 .section-header { justify-content: space-between; margin-bottom: 12px; }
 .section-header span { color: var(--teal-600); font-size: 9px; font-weight: 800; letter-spacing: .14em; }
 .section-header h2 { margin: 1px 0 0; font-size: 18px; letter-spacing: .04em; }
+
+.agent-type-groups { display: grid; gap: 24px; }
+.agent-type-group { min-width: 0; }
+.agent-type-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 0 2px; }
+.agent-type-mark { width: 4px; height: 28px; flex: 0 0 auto; border-radius: 4px; background: var(--group-accent); box-shadow: 0 4px 10px color-mix(in srgb, var(--group-accent) 28%, transparent); }
+.agent-type-header h3 { margin: 0; color: var(--ink); font-size: 15px; letter-spacing: .03em; }
+.agent-type-header p { margin: 3px 0 0; color: var(--faint); font-size: 11px; }
+.agent-type-count { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 700; }
 
 .agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .agent-card {

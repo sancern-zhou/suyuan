@@ -65,6 +65,15 @@ test('agent platform supports project-selected scene, environment grid and coord
   assert.match(source, /class="agent-grid"/)
 })
 
+test('coordinator agent catalog is grouped by capability type', async () => {
+  const source = await readSource('../coordinator/CoordinatorHome.vue')
+
+  assert.match(source, /aria-label="智能体类型"/)
+  assert.match(source, /props\.scenes/)
+  assert.match(source, /agentGroups/)
+  assert.match(source, /v-for="group in agentGroups"/)
+})
+
 test('sidebar navigation omits work resource and system group labels', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 
