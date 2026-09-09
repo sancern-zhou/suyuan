@@ -480,6 +480,15 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="jiangsu_fetch_alarm_records", error=str(e))
 
+    if is_project_tool_enabled(context, "legacy", "jiangsu_smart_event_workspace"):
+        try:
+            from app.tools.jiangsu.smart_event_workspace import JiangsuSmartEventWorkspaceTool
+
+            registry.register(JiangsuSmartEventWorkspaceTool(), priority=51)
+            logger.info("tool_loaded", tool="jiangsu_smart_event_workspace")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="jiangsu_smart_event_workspace", error=str(e))
+
     if any(is_project_tool_enabled(context, "legacy", tool_name) for tool_name in {
         "jiangsu_fetch_attendance_records", "jiangsu_fetch_station_directory",
         "jiangsu_query_operations_graph",

@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.tools.jiangsu.station_type import station_type_from_row
+
 
 def _text(row: dict[str, Any], *keys: str) -> str:
     return next((str(row[key]).strip() for key in keys if row.get(key)), "")
@@ -42,6 +44,12 @@ def select_district_stations(station: dict[str, Any], rows: list[dict[str, Any]]
     for candidate_code, row in directory.items():
         if candidate_code == code:
             continue
+        # Same-district evidence must use the same provincial-control
+        # monitoring population as the fault-work-order workflow.  Unknown
+        # types are excluded so a missing classification cannot silently
+        # broaden the comparison scope.
+        if station_type_from_row(row) != "省控":
+            continue
         candidate_district = _text(row, "districtCode", "areaCode")
         if district_code and candidate_district:
             same_district = district_code == candidate_district
@@ -55,6 +63,7 @@ def select_district_stations(station: dict[str, Any], rows: list[dict[str, Any]]
         neighbors.append({
             "station_code": candidate_code,
             "station_name": _text(row, "positionName", "stationName") or candidate_code,
+            "station_type": "省控",
             "distance_km": distance,
         })
     neighbors.sort(key=lambda item: (item["distance_km"] is None, item["distance_km"] or 0, item["station_code"]))
@@ -65,7 +74,7 @@ def select_district_stations(station: dict[str, Any], rows: list[dict[str, Any]]
         item["is_nearest"] = item["station_code"] == nearest
         if item["distance_km"] is not None:
             item["distance_km"] = round(item["distance_km"], 3)
-    note = "同区站点按直线距离由近到远排列。"
+    note = "同区省控站点按直线距离由近到远排列。"
     if not neighbors:
         note = "目录中未找到其他同区站点。"
     elif not nearest:
@@ -74,6 +83,7 @@ def select_district_stations(station: dict[str, Any], rows: list[dict[str, Any]]
         note = "部分站点缺少经纬度；最近站点仅指可计算距离的同区站点。"
     return {
         "comparison_scope": "same_district", "target_station_code": code,
+        "station_type": "省控",
         "city_name": city_name, "district_name": district_name, "district_code": district_code,
         "comparison_stations": neighbors, "nearest_station_code": nearest,
         "distance_ranking_complete": complete, "selection_note": note,

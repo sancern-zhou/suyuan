@@ -24,6 +24,12 @@ async def start_scheduled_task_service() -> None:
 
         from app.agent.react_agent import create_react_agent
         from app.scheduled_tasks import init_service, start_service
+        from app.scheduled_tasks.event_result_hooks import register_event_result_handler
+        from app.services.jiangsu_smart_event import persist_scheduled_task_result
+
+        # The callback is process-local, so register it in both web and worker
+        # processes before event tasks can execute.
+        register_event_result_handler(persist_scheduled_task_result)
 
         service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
         from app.scheduled_tasks.default_tasks import ensure_project_default_tasks

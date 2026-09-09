@@ -31,9 +31,10 @@
       :human-feedback="store.pendingHumanFeedback"
       :human-feedback-submitting="store.isHumanFeedbackSubmitting"
       :human-feedback-error="store.humanFeedbackSubmitError"
-      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant))"
+      :active-module="workspace === 'platform' ? 'agent-platform' : (workspace === 'forecast' ? 'air-quality-forecast' : (workspace === 'task-center' ? 'task-scheduler-center' : (managementPanel === 'task-workspace' && taskWorkspaceTask ? `task-workspace:${taskWorkspaceTask.task_id}` : activeAssistant)))"
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
+      :smart-event-command="smartEventCommand"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
@@ -101,6 +102,7 @@
       @edit-scheduled-task="editScheduledTask"
       @delete-scheduled-task="deleteScheduledTask"
       @restore-execution-session="handleSessionRestoreAndClosePanel"
+      @open-smart-event-task="handleSmartEventTaskOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
@@ -163,6 +165,8 @@ import {
   isAgentModeRunning,
   resolveAgentSelection
 } from '@/components/agentPlatform/workspacePolicy.js'
+import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
+import { extractSmartEventWorkspaceCommand } from '@/services/jiangsuSmartEventWorkspace.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -187,6 +191,8 @@ const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MOD
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
 const taskWorkspaceTask = ref(null)
+const smartEventCommand = ref(null)
+const lastSmartEventCommandKey = ref('')
 const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
 
 // ========== 使用Composables ==========
@@ -355,6 +361,20 @@ const runningAgentModes = computed(() => (
   AGENT_MODE_IDS.filter(mode => isAgentModeRunning(mode, store))
 ))
 
+watch(currentModeMessages, messages => {
+  const command = extractSmartEventWorkspaceCommand(messages)
+  if (!command) return
+  const commandKey = JSON.stringify(command)
+  if (commandKey === lastSmartEventCommandKey.value) return
+  lastSmartEventCommandKey.value = commandKey
+  smartEventCommand.value = command
+  if (['show_event_list', 'filter_event_list', 'open_event_detail', 'focus_evidence', 'compare_events', 'show_operation_history', 'open_task'].includes(command.type)) {
+    workspace.value = 'chat'
+    showManagementPanel('smart-events')
+    rightPanelVisible.value = false
+  }
+}, { deep: true })
+
 const inputDisabled = computed(() => {
   // 执行中允许用户预编辑下一条消息；发送由 InputBox 的 isAnalyzing 保护阻止。
   return false
@@ -407,7 +427,11 @@ const handleAgentSelect = async (mode) => {
 const handleCoordinatorSubmit = async (payload) => {
   const query = String(payload?.query || '').trim()
   if (!query) return
-  const mode = payload?.mode || defaultAgentMode
+  const mode = payload?.mode || resolveCoordinatorMode(
+    query,
+    projectConfig.coordinator?.routes || [],
+    defaultAgentMode
+  )
   const opened = await handleAgentSelect(mode)
   if (!opened) return
   await handleSend({ query, agentMode: mode })
@@ -468,6 +492,18 @@ const handleAssistantSelect = async (moduleId) => {
   }
 }
 
+const handleSmartEventTaskOpen = async (eventTask) => {
+  const scheduledTaskId = eventTask?.scheduled_task_id
+  if (!scheduledTaskId) return
+  await scheduledTasksStore.fetchTasks()
+  const task = scheduledTasksStore.tasks.find(item => item.task_id === scheduledTaskId)
+  if (!task) return
+  taskWorkspaceTask.value = task
+  workspace.value = 'chat'
+  showManagementPanel('task-workspace')
+  rightPanelVisible.value = false
+}
+
 const handleSidebarAction = async (actionId) => {
   if (typeof actionId === 'object' && actionId?.type === 'task-workspace') {
     await scheduledTasksStore.fetchTasks()
@@ -502,6 +538,15 @@ const handleSidebarAction = async (actionId) => {
     return
   }
 
+  if (actionId === 'task-scheduler-center') {
+    if (!await confirmResourcePreviewLeave()) return
+    if (route.name !== 'analysis') await router.replace({ name: 'analysis' })
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'task-center'
+    return
+  }
+
   workspace.value = 'chat'
   switch (actionId) {
     case 'query-dashboard':
@@ -532,6 +577,9 @@ const handleSidebarAction = async (actionId) => {
       console.log('[ReactAnalysisView] Showing scheduled-tasks panel')
       showManagementPanel('scheduled-tasks')
       await refreshScheduledTasks()
+      break
+    case 'smart-events':
+      showManagementPanel('smart-events')
       break
     case 'session-history':
       console.log('[ReactAnalysisView] Showing session-history panel')

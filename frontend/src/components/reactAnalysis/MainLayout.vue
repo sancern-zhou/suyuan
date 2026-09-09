@@ -31,6 +31,12 @@
         class="forecast-workspace"
         embedded
       />
+      <component
+        :is="TaskSchedulerCenter"
+        v-else-if="workspace === 'task-center' && TaskSchedulerCenter"
+        :running-modes="runningAgentModes"
+        @select-task="handleTaskWorkspaceSelect"
+      />
       <template v-else>
         <div class="conversation-workspace">
           <ChatArea
@@ -121,6 +127,13 @@
             @restore-execution-session="$emit('restore-execution-session', $event)"
           />
 
+          <SmartEventCenterPanel
+            v-else-if="managementPanel === 'smart-events'"
+            :workspace-command="smartEventCommand"
+            @close="$emit('close-management-panel')"
+            @open-task="$emit('open-smart-event-task', $event)"
+          />
+
           <SessionHistoryPanel
             v-else-if="managementPanel === 'session-history'"
             :sessions="sessionHistoryData"
@@ -207,6 +220,7 @@ import KnowledgeBasePanel from '@/components/management/KnowledgeBasePanel.vue'
 import FetchersPanel from '@/components/management/FetchersPanel.vue'
 import ScheduledTasksPanel from '@/components/management/ScheduledTasksPanel.vue'
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
+import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel.vue'
 import SessionHistoryPanel from '@/components/management/SessionHistoryPanel.vue'
 import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue'
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
@@ -218,11 +232,16 @@ const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
   ? defineAsyncComponent(() => import('@/views/AirQualityForecastView.vue'))
   : null
 
+const TaskSchedulerCenter = projectConfig.project === 'jiangsu-ops'
+  ? defineAsyncComponent(() => import('@/components/coordinator/TaskSchedulerCenter.vue'))
+  : null
+
 const auth = useAuthStore()
 
 const props = defineProps({
   taskWorkspaceEntries: { type: Array, default: () => [] },
   taskWorkspaceTask: { type: Object, default: null },
+  smartEventCommand: { type: Object, default: null },
   workspace: {
     type: String,
     default: 'platform'
@@ -471,6 +490,7 @@ const emit = defineEmits([
   'edit-scheduled-task',
   'delete-scheduled-task',
   'restore-execution-session',
+  'open-smart-event-task',
   'refresh-session-history',
   'cleanup-sessions',
   'restore-session',

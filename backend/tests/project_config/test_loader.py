@@ -121,6 +121,10 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
     assert context.manifest.scheduled_tasks == [
         "jiangsu_station_fault_diagnosis",
         "jiangsu_fault_work_order_review",
+        "jiangsu_smart_event_power_alarm",
+        "jiangsu_smart_event_network_alarm",
+        "jiangsu_smart_event_environment_alarm",
+        "jiangsu_smart_event_instrument_alarm",
     ]
     assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"
 

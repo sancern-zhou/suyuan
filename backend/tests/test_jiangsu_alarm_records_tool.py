@@ -70,3 +70,67 @@ async def test_alarm_records_rejects_invalid_time_range_before_request():
     )
     assert result["success"] is False
     assert "start_time 不能晚于 end_time" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_supports_unscoped_upstream_query_and_pagination(monkeypatch):
+    tool = JiangsuAlarmRecordsTool(
+        base_url="http://ops.example/api/operacityproduct",
+        token_url="http://token.example/token",
+        username="user",
+        password="password",
+    )
+    requests = []
+
+    async def get_records(params):
+        requests.append(params)
+        skip = dict(params)["skipCount"]
+        rows = [{"id": skip + index, "stacode": f"S{skip + index}"} for index in range(2 if skip == 0 else 1)]
+        return {"success": True, "result": {"items": rows, "totalCount": 3}}
+
+    monkeypatch.setattr(tool, "_request", get_records)
+    result = await tool.execute(
+        start_time="2026-08-11 15:00:00",
+        end_time="2026-08-12 15:00:00",
+        max_result_count=2,
+        sorting="timePoint",
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["scope_mode"] == "upstream_all_stations"
+    assert result["metadata"]["total_count"] == 3
+    assert len(result["data"]) == 3
+    assert not any(key.startswith("code[") for key, _ in requests[0])
+    assert dict(requests[1])["skipCount"] == 2
+
+
+@pytest.mark.asyncio
+async def test_alarm_records_filters_unscoped_query_to_requested_station_type(monkeypatch):
+    tool = JiangsuAlarmRecordsTool(
+        base_url="http://ops.example/api/operacityproduct",
+        token_url="http://token.example/token",
+        username="user",
+        password="password",
+    )
+    async def resolve_station_type_codes(station_type):
+        assert station_type == "省控"
+        return {"P1"}, True
+
+    async def get_records(params):
+        return {"success": True, "result": {"items": [
+            {"id": 1, "stacode": "P1"}, {"id": 2, "stacode": "N1"},
+        ], "totalCount": 2}}
+
+    monkeypatch.setattr(tool, "_resolve_station_type_codes", resolve_station_type_codes)
+    monkeypatch.setattr(tool, "_request", get_records)
+    result = await tool.execute(
+        station_type="省控",
+        start_time="2026-08-11 15:00:00",
+        end_time="2026-08-12 15:00:00",
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["station_type_filter_applied"] is True
+    assert result["metadata"]["upstream_total_count"] == 2
+    assert result["metadata"]["total_count"] == 1
+    assert result["data"][0]["stacode"] == "P1"

@@ -89,6 +89,32 @@
             <p class="module-title">知识管理</p>
           </div>
         </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('task-scheduler-center') }"
+          type="button"
+          @click="handleModuleSelect('task-scheduler-center')"
+          :title="isCollapsed ? '任务调度中心' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('task-scheduler-center')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">任务调度中心</p>
+          </div>
+        </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('smart-events') }"
+          type="button"
+          @click="handleModuleSelect('smart-events')"
+          :title="isCollapsed ? '智能事件中心' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('scheduled-tasks')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">智能事件中心</p>
+          </div>
+        </button>
       </div>
 
       <div class="module-list">
@@ -379,11 +405,7 @@ const conversationListEmptyText = computed(() => ({
   [CONVERSATION_LIST_VIEW.IM]: '暂无IM对话'
 })[conversationListView.value])
 
-const platformEntryLabel = computed(() => (
-  projectConfig.agentPlatformLayout === 'coordinator'
-    ? `${projectConfig.coordinator?.name || '智能助手'}首页`
-    : '智能体平台'
-))
+const platformEntryLabel = computed(() => '智能体平台')
 
 const allModules = [
   {
@@ -593,11 +615,19 @@ const moduleIcons = {
     </svg>
   `,
   'scheduled-tasks': `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
+    <svg viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="8" />
       <path d="M12 8v4l3 2" />
       <path d="M5 4 3 6" />
       <path d="m19 4 2 2" />
+    </svg>
+  `,
+  'task-scheduler-center': `
+    <svg viewBox="0 0 24 24">
+      <path d="M4 6.5h7v7H4z" />
+      <path d="M13 6.5h7v7h-7z" />
+      <path d="M4 15h7v4H4z" />
+      <path d="M13 15h7v4h-7z" />
     </svg>
   `,
   'social-platform': `

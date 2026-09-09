@@ -166,6 +166,7 @@ backend:
     - jiangsu_fetch_station_data
     - jiangsu_query_statistics
     - jiangsu_fetch_alarm_records
+    - jiangsu_smart_event_workspace
     - jiangsu_fetch_attendance_records
     - jiangsu_fetch_station_directory
     - jiangsu_query_operations_graph
@@ -328,6 +329,7 @@ backend:
       - jiangsu_fetch_station_data
       - jiangsu_query_statistics
       - jiangsu_fetch_alarm_records
+      - jiangsu_smart_event_workspace
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_fault_work_orders
       - jiangsu_fetch_fault_work_order_detail
@@ -352,6 +354,7 @@ backend:
       - jiangsu_query_operations_graph
       - jiangsu_fetch_network_inspection_summary
       - jiangsu_fetch_alarm_records
+      - jiangsu_smart_event_workspace
       - jiangsu_fetch_auto_inspection
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_station_environment_history
@@ -386,6 +389,7 @@ backend:
       - jiangsu_fetch_station_data
       - jiangsu_fetch_station_directory
       - jiangsu_fetch_alarm_records
+      - jiangsu_smart_event_workspace
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_fault_work_orders
       - jiangsu_fetch_fault_work_order_detail
@@ -418,3 +422,7 @@ scheduled_tasks_enabled: true
 scheduled_tasks:
   - jiangsu_station_fault_diagnosis
   - jiangsu_fault_work_order_review
+  - jiangsu_smart_event_power_alarm
+  - jiangsu_smart_event_network_alarm
+  - jiangsu_smart_event_environment_alarm
+  - jiangsu_smart_event_instrument_alarm

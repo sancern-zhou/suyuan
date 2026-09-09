@@ -10,6 +10,7 @@ import { resolveRestoredAgentMode } from '@/components/agentPlatform/restoreMode
 import { filterConversationHistory } from '@/components/conversationListPolicy.js'
 import { AGENT_MODE_IDS } from '@/config/agentModes.js'
 import { projectConfig, resolveProjectDefaultAgentMode } from '@/config/projectConfig.js'
+import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { chooseRestoredResource } from '@/services/sessionResourceLifecycle.js'
 import { confirmResourcePreviewLeave } from '@/services/resourcePreviewLeaveGuard.js'
@@ -135,7 +136,20 @@ export function useSessionManagement(store) {
     if (currentConversationPolicy.value.readOnly) return false
     const query = payload.query
     const knowledgeBaseIds = payload.knowledgeBaseIds || []
-    const agentMode = payload.agentMode || store.agentMode
+    const explicitAgentMode = payload.agentMode
+    let agentMode = explicitAgentMode || store.agentMode
+    // 助手模式是统一入口：当项目声明了自然语言路由规则时，
+    // 将命令交给对应的专业智能体并保留原始问题。
+    if (!explicitAgentMode && agentMode === 'assistant' && projectConfig.coordinator?.routes?.length) {
+      const routedMode = resolveCoordinatorMode(
+        query,
+        projectConfig.coordinator.routes,
+        'assistant'
+      )
+      if (routedMode !== 'assistant' && projectConfig.agentModeIds.includes(routedMode)) {
+        agentMode = routedMode
+      }
+    }
     const skillIds = payload.skillIds || []
     const contextRefs = payload.contextRefs || []
     const activeContexts = Array.isArray(payload.activeContexts) ? payload.activeContexts : null

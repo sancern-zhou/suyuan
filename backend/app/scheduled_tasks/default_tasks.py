@@ -11,6 +11,12 @@ from app.scheduled_tasks.models import ScheduledTask, TriggerType, WorkspaceEntr
 
 JIANGSU_STATION_FAULT_TASK_ID = "jiangsu_station_fault_diagnosis"
 JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID = "jiangsu_fault_work_order_review"
+JIANGSU_SMART_EVENT_TASK_IDS = {
+    "供电报警": "jiangsu_smart_event_power_alarm",
+    "数采网络报警": "jiangsu_smart_event_network_alarm",
+    "站房环境报警": "jiangsu_smart_event_environment_alarm",
+    "仪器报警": "jiangsu_smart_event_instrument_alarm",
+}
 OBSOLETE_PROJECT_DEFAULT_TASK_IDS = {
     "jiangsu_fault_work_order_qc_review",
     "jiangsu_fault_work_order_env_review",
@@ -47,6 +53,46 @@ JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
     "仅做追溯。长期记忆和历史案例只用于形成待核验假设，不能替代本次证据；本次确认的可复用经验由任务历史学习沉淀，不回写固定 SOP。当前阶段禁止自动回写平台工单状态，禁止"
     "自动剔除或修改监测数据。"
 )
+
+
+def _smart_event_task_prompt(clue_type: str) -> str:
+    return (
+        f"完成本次江苏智能事件的 AI 研判，当前线索类型为“{clue_type}”。先阅读事件上下文和告警证据，"
+        "必要时调用江苏只读接口补充站点、告警、巡检或质控证据；结合任务专属案例库和长期记忆形成待核验假设，"
+        "不得把记忆直接当作本次事实。按智能事件类型字典判断最可能的事件类型，给出事件名称、影响判断、"
+        "建议等级、证据链、原因排序、处置建议和需要人工确认的风险。最终回复必须是可直接展示在事件详情中的完整研判结论，"
+        "不得自动关闭告警、修改监测数据或执行设备控制。"
+    )
+
+
+def build_jiangsu_smart_event_task(clue_type: str) -> ScheduledTask:
+    task_id = JIANGSU_SMART_EVENT_TASK_IDS[clue_type]
+    return ScheduledTask(
+        task_id=task_id,
+        name=f"江苏智能事件{clue_type}AI研判",
+        description=f"按{clue_type}线索触发智能事件 AI 研判，并把最终回复回写事件详情。",
+        execution_mode="station_fault_diagnosis",
+        skill_id="station-alarm-diagnosis",
+        knowledge_base_binding="station_fault_diagnosis",
+        history_learning={
+            "enabled": True,
+            "max_recent_cases": 5,
+            "memory_char_budget": 8000,
+            "active_retrieval_enabled": True,
+            "active_retrieval_max_results": 5,
+        },
+        trigger_type=TriggerType.EVENT,
+        event_type=f"jiangsu.smart_event.alarm.{task_id.removeprefix('jiangsu_smart_event_').removesuffix('_alarm')}",
+        enabled=True,
+        prompt=_smart_event_task_prompt(clue_type),
+        timeout_seconds=1200,
+        created_by="project-default",
+        owner_user_id="system",
+        owner_username="smart-event-agent",
+        owner_display_name="智能事件研判智能体",
+        tags=["江苏", "智能事件", clue_type, "事件驱动", "任务专属记忆"],
+        workspace_entry=WorkspaceEntry(enabled=True, title=f"智能事件{clue_type}研判"),
+    )
 
 
 def build_jiangsu_station_fault_task() -> ScheduledTask:
@@ -97,6 +143,10 @@ DEFAULT_TASK_FACTORIES = {
     JIANGSU_STATION_FAULT_TASK_ID: build_jiangsu_station_fault_task,
     JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID: build_jiangsu_fault_work_order_review_task,
 }
+for _clue_type in JIANGSU_SMART_EVENT_TASK_IDS:
+    DEFAULT_TASK_FACTORIES[JIANGSU_SMART_EVENT_TASK_IDS[_clue_type]] = (
+        lambda clue_type=_clue_type: build_jiangsu_smart_event_task(clue_type)
+    )
 
 
 def _raw_task_enabled(service, task_id: str) -> bool | None:

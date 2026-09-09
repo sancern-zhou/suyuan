@@ -5,7 +5,8 @@ from app.tools.jiangsu.review_station_selection import select_district_stations
 
 def row(code, district="D1", lon=120, lat=32, city="C1"):
     return {"stationCode": code, "districtCode": district, "districtName": "同名区",
-            "cityCode": city, "cityName": city, "longitude": lon, "latitude": lat}
+            "cityCode": city, "cityName": city, "longitude": lon, "latitude": lat,
+            "stationTypeName": "省控"}
 
 
 def test_same_district_excludes_closer_outside_stations_and_sorts_all_neighbors():
@@ -43,3 +44,14 @@ def test_name_fallback_requires_both_city_and_district():
         row("same"), row("other", city="C2"),
     ])
     assert selected["station_codes"] == ["same", "absent"]
+
+
+def test_same_district_comparison_excludes_non_provincial_station_types():
+    selected = select_district_stations({"station_code": "target"}, [
+        row("target"),
+        row("national", lon=120.001) | {"stationTypeName": "国控"},
+        row("township", lon=120.002) | {"stationTypeName": "乡镇"},
+        row("provincial", lon=120.003),
+    ])
+    assert [item["station_code"] for item in selected["comparison_stations"]] == ["provincial"]
+    assert all(item["station_type"] == "省控" for item in selected["comparison_stations"])

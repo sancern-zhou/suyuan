@@ -567,7 +567,7 @@ def _same_city_agent_payload(
         "data_kind": value.get("data_kind"),
         "comparison_scope": value.get("comparison_scope") or "same_district",
         **{key: value.get(key) for key in (
-            "district_name", "district_code", "comparison_stations", "nearest_station_code",
+            "district_name", "district_code", "station_type", "comparison_stations", "nearest_station_code",
             "distance_ranking_complete", "selection_note",
         )},
         "target_station_code": value.get("target_station_code") or target_station_code,
@@ -1823,6 +1823,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         elif sop_id == "SOP-02":
             collection_notes.extend([
                 "SOP-02 要求区分有效异常、伪值、缺失和暂时不可见，不得把工单申请区间直接作为剔除区间。",
+                "同区小时对比仅选择站点目录中明确标记为省控的站点。",
                 "同区对比按 comparison_scope、comparison_stations 和 selection_note 核验；距离为直线距离，坐标缺失时不得推断最近站点。",
             ])
         elif sop_id == "SOP-03":
@@ -2198,7 +2199,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                         start_time=query_text,
                         end_time=query_text,
                         data_type=data_type,
-                        station_type="全部",
+                        station_type="省控",
                     ),
                     timeout=EVIDENCE_CALL_TIMEOUT_SECONDS,
                 )

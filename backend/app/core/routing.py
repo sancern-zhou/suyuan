@@ -94,6 +94,12 @@ ROUTER_REGISTRY = [
         description="Jiangsu fault work-order SOP review archive",
         owner="legacy",
     ),
+    RouterSpec(
+        "app.api.jiangsu_smart_event_routes",
+        optional=True,
+        description="Jiangsu smart event center contract",
+        owner="legacy",
+    ),
     # System routes are registered last to preserve app/main.py route ordering.
     RouterSpec("app.api.system", description="System routes", owner="core"),
 ]

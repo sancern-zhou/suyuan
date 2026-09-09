@@ -260,6 +260,7 @@ BOARD_TOOL_NAMES = [
 OPS_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
+    "jiangsu_smart_event_workspace",
     # 技能发现与按需读取
     "list_skills",
     "view_skill",
@@ -477,6 +478,7 @@ JIANGSU_QUERY_TOOLS = _build_tool_dict([
     "execute_python",
 ])
 SMART_INSPECTION_TOOLS = _build_tool_dict([
+    "jiangsu_smart_event_workspace",
     "jiangsu_query_operations_graph",
     "jiangsu_fetch_network_inspection_summary",
     "jiangsu_fetch_alarm_records",
@@ -501,6 +503,7 @@ DEVICE_CONTROL_TOOLS = _build_tool_dict([
     "knowledge_graph_query",
 ])
 STATION_FAULT_DIAGNOSIS_TOOLS = _build_tool_dict([
+    "jiangsu_smart_event_workspace",
     "knowledge_qa_workflow",
     "knowledge_document_reader",
     "jiangsu_fetch_station_data",

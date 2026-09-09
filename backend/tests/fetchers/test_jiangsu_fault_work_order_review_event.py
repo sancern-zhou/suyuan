@@ -230,9 +230,9 @@ class FakeStationDataTool:
 
     async def fetch_station_directory(self):
         return [
-            {"stationCode": "3003A", "positionName": "江阴虹桥邮政", "cityName": "无锡市", "districtName": "江阴市", "districtCode": "320281", "longitude": 120, "latitude": 32},
-            {"stationCode": "3004A", "positionName": "同区对比站", "cityName": "无锡市", "districtName": "江阴市", "districtCode": "320281", "longitude": 120.1, "latitude": 32},
-            {"stationCode": "OTHER", "cityName": "无锡市", "districtName": "其他区", "districtCode": "320282", "longitude": 120.01, "latitude": 32},
+            {"stationCode": "3003A", "positionName": "江阴虹桥邮政", "cityName": "无锡市", "districtName": "江阴市", "districtCode": "320281", "longitude": 120, "latitude": 32, "stationTypeName": "省控"},
+            {"stationCode": "3004A", "positionName": "同区对比站", "cityName": "无锡市", "districtName": "江阴市", "districtCode": "320281", "longitude": 120.1, "latitude": 32, "stationTypeName": "省控"},
+            {"stationCode": "OTHER", "cityName": "无锡市", "districtName": "其他区", "districtCode": "320282", "longitude": 120.01, "latitude": 32, "stationTypeName": "省控"},
         ]
 
     async def fetch_raw_records(self, **kwargs):
@@ -308,7 +308,9 @@ async def test_same_city_monitoring_uses_full_client_when_station_tool_is_proxie
 
     assert result["success"] is True
     assert [item["station_code"] for item in result["comparison_stations"]] == ["3004A"]
+    assert result["station_type"] == "省控"
     assert result["station_hour_raw"]["record_count"] == 2
+    assert all(call["station_type"] == "省控" for call in fetcher.station_data_tool.calls)
 
 
 class FakeCurveTool:
