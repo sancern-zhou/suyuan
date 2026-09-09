@@ -92,7 +92,7 @@
 
 
 
-          <details  class="review-details" @toggle="detailsOpen.quality = $event.target.open">
+          <details v-if="!isSop03" v-show="hasQualityPollutants" class="review-details" @toggle="detailsOpen.quality = $event.target.open">
             <summary>质控/复测曲线<span>详情</span></summary>
         <section v-if="detailsOpen.quality" class="section">
           <h4>{{ qualityModuleLabel }}</h4>
@@ -111,100 +111,7 @@
                 :height="230"
               />
             </div>
-
-            <div class="summary-grid">
-              <div v-for="field in qcSummaryFields" :key="field.label">
-                <span>{{ field.label }}</span>
-                <strong>{{ field.value }}</strong>
-              </div>
-            </div>
-
-            <div class="qc-table">
-              <div class="qc-head">
-                <span>状态</span><span>因子</span><span>类型</span><span>开始</span><span>结束</span><span>目标/读数</span><span>结果</span>
-              </div>
-              <div v-for="row in qcHistoryTableRows" :key="row.key" class="qc-row">
-                <span>{{ row.status }}</span>
-                <strong>{{ row.pollutant }}</strong>
-                <span>{{ row.qcType }}</span>
-                <span>{{ row.start }}</span>
-                <span>{{ row.end }}</span>
-                <span>{{ row.values }}</span>
-                <strong>{{ row.result }}</strong>
-              </div>
-              <div v-if="!qcHistoryTableRows.length" class="empty">未查询到质控或复测任务记录</div>
-            </div>
-
-            <div v-if="qcTaskDetailEntries.length" class="task-detail-stack">
-              <article v-for="task in qcTaskDetailEntries" :key="task.key" class="task-detail-card">
-                <div class="task-detail-head">
-                  <strong>{{ task.title }}</strong>
-                  <span>{{ task.window }}</span>
-                </div>
-                <div class="qc-stage-strip">
-                  <div v-for="stage in task.platformStages" :key="`${task.key}-${stage.name}`" :class="{ filled: stage.value }">
-                    <span>{{ stage.name }}</span>
-                    <strong>{{ stage.value || '-' }}</strong>
-                  </div>
-                </div>
-                <div class="task-detail-meta">
-                  <span>任务窗口：{{ task.curveWindow }}</span>
-                  <span>步骤数：{{ task.stepCount || 0 }}</span>
-                  <span>日志：{{ task.logCount || 0 }} 条</span>
-                  <span>曲线：{{ task.curveCount || 0 }} 条</span>
-                  <span v-if="task.statusText">状态：{{ task.statusText }}</span>
-                  <span v-if="task.statusMessage">说明：{{ task.statusMessage }}</span>
-                </div>
-                <p v-if="task.curveSummary" class="task-note">{{ task.curveSummary }}</p>
-                <p v-if="task.parseError" class="task-note critical">{{ task.parseError }}</p>
-
-                <div class="task-summary-grid">
-                  <div v-for="field in task.historySummary" :key="field[0]">
-                    <span>{{ field[0] }}</span>
-                    <strong>{{ valueText(field[1]) || '-' }}</strong>
-                  </div>
-                </div>
-
-                <div v-if="task.steps.length" class="step-list">
-                  <div v-for="step in task.steps" :key="`${task.key}-${step.index}`" class="step-item">
-                    <div class="step-index">{{ step.index }}</div>
-                    <div class="step-body">
-                      <div class="step-top">
-                        <strong>{{ step.phase || step.label }}</strong>
-                        <span>{{ step.time || '-' }}</span>
-                      </div>
-                      <p>
-                        {{ step.label }}
-                        <template v-if="step.status"> · {{ step.status }}</template>
-                        <template v-if="step.detail"> · {{ step.detail }}</template>
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="task-detail-columns">
-                  <div>
-                    <span>历史详情</span>
-                    <p>{{ compactPreview(task.historyDetail) }}</p>
-                  </div>
-                  <div>
-                    <span>DataValues</span>
-                    <p>{{ compactPreview(task.dataValues) }}</p>
-                  </div>
-                  <div>
-                    <span>ResultValues</span>
-                    <p>{{ compactPreview(task.resultValues) }}</p>
-                  </div>
-                </div>
-
-                <div v-if="task.logs.length" class="task-log-list">
-                  <p v-for="(log, logIndex) in task.logs.slice(0, 6)" :key="`${task.key}-log-${logIndex}`">
-                    {{ compactRow(log) }}
-                  </p>
-                </div>
-                <div v-else class="empty">未查询到质控日志</div>
-              </article>
-            </div>
+            <div v-else class="empty">未查询到期间质控曲线</div>
           </div>
         </section>
           </details>
@@ -259,6 +166,7 @@
                 :unit="entry.unit"
                 :series="entry.series"
                 :mark-areas="markAreasForEntry(entry)"
+                :granularity="entry.granularity"
                 :height="260"
               />
             </div>
@@ -268,12 +176,13 @@
           </details>
 
           <details v-if="!isSop03" class="review-details" @toggle="detailsOpen.same_city = $event.target.open">
-            <summary>同城对比曲线<span>详情</span></summary>
+            <summary>同区对比曲线<span>详情</span></summary>
         <section v-if="detailsOpen.same_city" class="section">
-          <h4>同城小时对比曲线</h4>
-          <div v-if="evidenceLoading" class="empty">正在加载同城对比...</div>
+          <h4>同区小时对比曲线</h4>
+          <p class="hint">{{ districtSelectionNote }}</p>
+          <div v-if="evidenceLoading" class="empty">正在加载同区对比...</div>
           <div v-else-if="evidenceError" class="empty critical">{{ evidenceError }}</div>
-          <div v-else-if="!evidence" class="empty">暂无同城对比数据</div>
+          <div v-else-if="!evidence" class="empty">暂无同区对比数据</div>
           <div v-else class="quality-layout">
             <div class="status-table">
               <div v-for="row in sameCityStatusRows" :key="row.key">
@@ -291,21 +200,22 @@
                 :unit="entry.unit"
                 :series="entry.series"
                 :mark-areas="markAreasForEntry(entry)"
+                :granularity="entry.granularity"
                 :height="280"
               />
             </div>
-            <div v-else class="empty">无可绘制同城小时对比曲线</div>
+            <div v-else class="empty">无可绘制同区小时对比曲线</div>
           </div>
         </section>
           </details>
           <details v-if="isSop02" class="review-details" @toggle="detailsOpen.weather = $event.target.open">
-            <summary>城区气象与污染物时序<span>详情</span></summary>
+            <summary>气象与污染物时序<span>详情</span></summary>
             <section v-if="detailsOpen.weather" class="section">
               <div v-if="evidenceLoading" class="empty">正在加载气象数据...</div>
               <div v-else-if="evidenceError" class="empty critical">{{ evidenceError }}</div>
               <template v-else>
                 <p>{{ cityWeather.city_name }} {{ cityWeather.station_name }} {{ cityWeather.station_code }}</p>
-                <p>{{ cityWeather.message || '暂无城区气象数据' }}</p>
+                <p>{{ cityWeather.message || '暂无气象数据' }}</p>
                 <p v-if="cityWeather.missing_hours?.length">缺测 {{ cityWeather.missing_hours.length }} 小时</p>
                 <p v-if="cityWeather.gaps?.length" class="critical">{{ cityWeather.gaps.length }} 个气象取证时段请求失败</p>
                 <div v-if="cityWeather.start && cityWeather.end" class="chart-stack">
@@ -443,6 +353,7 @@ import { authFetch } from '@/auth/http.js'
 import AuthenticatedImage from '@/components/AuthenticatedImage.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 import ReviewTimeSeriesChart from './ReviewTimeSeriesChart.vue'
+import { finiteObservation, observationValue } from './reviewTimeSeriesData.js'
 import JiangsuWeatherReviewChart from './JiangsuWeatherReviewChart.vue'
 
 const props = defineProps({ data: { type: Object, required: true } })
@@ -633,10 +544,7 @@ const resultSummary = result => {
   if (result.summary) return result.summary
   if (result.record_count !== undefined) return `${result.record_count || 0} 条`
   const raw = result.station_hour_raw || {}
-  const audited = result.station_hour_audited || {}
-  if (raw.record_count !== undefined || audited.record_count !== undefined) {
-    return `原始 ${raw.record_count || 0} 条，审核 ${audited.record_count || 0} 条`
-  }
+  if (raw.record_count !== undefined) return `原始 ${raw.record_count || 0} 条`
   if (result.status) return result.status
   return ''
 }
@@ -710,14 +618,14 @@ const pollutantDisplayOrder = ['PM2.5', 'PM10', 'SO2', 'NO2', 'O3', 'CO', 'NO', 
 const genericValueFields = ['value', 'Value', 'val']
 
 const pollutantFieldCandidates = pollutants => {
-  const keys = [...genericValueFields]
+  const keys = []
   for (const pollutant of pollutants || []) {
     const normalized = String(pollutant).toUpperCase()
     for (const key of pollutantFieldAliases[normalized] || [pollutant]) {
       if (key && !keys.includes(key)) keys.push(key)
     }
   }
-  return keys
+  return [...keys, ...genericValueFields]
 }
 
 const readTimeLabel = row => {
@@ -727,19 +635,7 @@ const readTimeLabel = row => {
   return ''
 }
 
-const numericValue = (row, preferredKeys, allowFallback = true) => {
-  for (const key of preferredKeys) {
-    const value = Number(row?.[key])
-    if (Number.isFinite(value)) return value
-  }
-  if (!allowFallback) return null
-  for (const [key, raw] of Object.entries(row || {})) {
-    if (/id|code|time|rank|mark|status|type|name/i.test(key)) continue
-    const value = Number(raw)
-    if (Number.isFinite(value)) return value
-  }
-  return null
-}
+const numericValue = observationValue
 
 const numberValue = value => {
   const number = Number(value)
@@ -752,7 +648,7 @@ const pointsFromRecords = (records, preferredKeys, allowFallback = false) => {
     if (!row || typeof row !== 'object') continue
     const time = readTimeLabel(row)
     const value = numericValue(row, preferredKeys, allowFallback)
-    if (!time || value === null) continue
+    if (!time) continue
     points.push({ time, value })
   }
   return points
@@ -778,22 +674,24 @@ const buildPollutantSeries = (records, pollutants) => (pollutants || [])
 
 const pollutantHasValues = (records, pollutant) => {
   const fields = pollutantFieldCandidates([pollutant]).filter(key => !genericValueFields.includes(key))
-  return (records || []).some(row => fields.some(key => Number.isFinite(Number(row?.[key]))))
+  return (records || []).some(row => fields.some(key => finiteObservation(row?.[key]) !== null))
 }
 
 const availablePollutantsFromRecords = records => pollutantDisplayOrder
   .filter(pollutant => pollutantHasValues(records, pollutant))
 
-const buildStationComparisonSeries = (records, pollutant, targetStationCode) => {
+const buildStationComparisonSeries = (records, pollutant, targetStationCode, stations = [], rankingComplete = false) => {
+  const stationInfo = new Map(stations.map((item, index) => [item.station_code, { ...item, index }]))
   const groups = new Map()
   const keys = pollutantFieldCandidates([pollutant])
   for (const row of records || []) {
     if (!row || typeof row !== 'object') continue
     const time = readTimeLabel(row)
     const value = numericValue(row, keys, false)
-    if (!time || value === null) continue
+    if (!time) continue
     const code = String(row.code || row.stationCode || row.uniqueCode || row.station_code || '').trim()
     const name = String(row.name || row.stationName || row.station_name || code || '未知站点').trim()
+    if (code !== String(targetStationCode || '').trim() && !stationInfo.has(code)) continue
     const groupKey = code || name
     if (!groups.has(groupKey)) groups.set(groupKey, { code, name, points: [] })
     groups.get(groupKey).points.push({ time, value })
@@ -803,11 +701,14 @@ const buildStationComparisonSeries = (records, pollutant, targetStationCode) => 
     .sort((left, right) => {
       if (left.code === target) return -1
       if (right.code === target) return 1
-      return right.points.length - left.points.length || left.name.localeCompare(right.name)
+      return (stationInfo.get(left.code)?.index ?? Infinity) - (stationInfo.get(right.code)?.index ?? Infinity)
     })
-    .slice(0, 12)
     .map((group, index) => ({
-      name: `${group.name}${group.code === target ? '（本站）' : ''}`,
+      name: group.code === target ? `${group.name}（本站）` : [
+        stationInfo.get(group.code)?.station_name || group.name,
+        stationInfo.get(group.code)?.is_nearest ? (rankingComplete ? '（同区最近）' : '（已知距离最近）') : '',
+        stationInfo.get(group.code)?.distance_km != null ? `${stationInfo.get(group.code).distance_km.toFixed(2)} km` : '距离未知'
+      ].filter(Boolean).join(' '),
       color: group.code === target ? '#ff8a75' : chartColors[(index + 1) % chartColors.length],
       points: group.points
     }))
@@ -1042,8 +943,8 @@ const reviewFactCards = computed(() => {
     },
     {
       key: 'neighbor_comparison',
-      label: '同城对比',
-      summary: shortText(review.value.neighbor_comparison || '', 180) || '暂无同城对比说明',
+      label: '同区对比',
+      summary: shortText(review.value.neighbor_comparison || '', 180) || '暂无同区对比说明',
       detail: ''
     }
   ]
@@ -1123,7 +1024,7 @@ const environmentalEvidenceFields = computed(() => {
     ['站房告警', resultSummary(alarm)],
     ['动环历史', resultSummary(environment)],
     ['自动巡检', resultSummary(inspection)],
-    ['同城对比', resultSummary(sameCity)],
+    ['同区对比', resultSummary(sameCity)],
     ['缺口数量', evidenceGapEntries.value.length ? `${evidenceGapEntries.value.length} 项` : '0 项']
   ]
   return fields
@@ -1227,7 +1128,7 @@ const attachmentRows = computed(() => {
     const key = `${row.id || row.filePath || index}:${contentUrl}`
     const state = attachmentPreviewState[key] || {}
     const isImage = /^image\//i.test(row.content_type || row.media_type || '')
-      || /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(row.fileName || row.filePath || ''))
+      || /\.(png|jpe?g|jfif|gif|webp|bmp)$/i.test(String(row.fileName || row.filePath || ''))
     return {
       key,
       fileName: row.fileName || row.filePath || '-',
@@ -1268,117 +1169,32 @@ const openAttachmentLightbox = row => {
 }
 
 const qualityControl = computed(() => evidence.value?.quality_control || {})
-const qcHistoryRows = computed(() => {
-  const rows = qualityControl.value?.history?.data
-  return Array.isArray(rows) ? rows : []
-})
-const qcRunLogCount = computed(() => {
-  const runLogs = qualityControl.value?.run_logs
-  if (!Array.isArray(runLogs)) return 0
-  return runLogs.reduce((sum, item) => {
-    const rows = item?.result?.data || item?.data
-    return sum + (Array.isArray(rows) ? rows.length : 0)
-  }, 0)
-})
-const qcHistoryTableRows = computed(() => qcHistoryRows.value.map((row, index) => ({
-  key: row.id || row.rId || index,
-  status: row.tStatusStr || row.status || '-',
-  pollutant: row.poll || row.pollutant || '-',
-  qcType: row.qcType || row.qc_type || row.group || '-',
-  start: cleanTime(row.rStartStr || row.rStart || row.sStartStr || row.sStart) || '-',
-  end: cleanTime(row.endTimeStr || row.endTime) || '-',
-  values: `${valueText(row.tValue) || '-'} / ${valueText(row.rValue) || '-'}`,
-  result: row.qcResult || row.qc_result || '-'
-})))
-const qcPlatformStages = (task, history, statusDetail, steps, curveWindow) => {
-  const historyRow = task.history_row || history.history_row || {}
-  const target = firstText(task.t_value, task.tValue, history.t_value, history.tValue, historyRow.tValue)
-  const reading = firstText(task.r_value, task.rValue, history.r_value, history.rValue, historyRow.rValue)
-  const hasReading = target !== '' || reading !== ''
-  const progress = steps.find(step => /进行|稳定|读数|检查/.test(`${step.phase || ''}${step.label || ''}`))
-  return [
-    { name: '质控参数检查', value: cleanTime(firstText(historyRow.sStartStr, historyRow.sStart, task.s_start, history.s_start)) || '已取证' },
-    { name: '开始质控任务', value: cleanTime(firstText(historyRow.rStartStr, historyRow.rStart, task.r_start, history.r_start, curveWindow.start)) },
-    { name: '质控进行中检查', value: progress ? `${progress.phase || progress.label}${progress.status ? ` · ${progress.status}` : ''}` : '' },
-    { name: '稳定后读数', value: hasReading ? `${valueText(target) || '-'} / ${valueText(reading) || '-'}` : '' },
-    { name: '结束质控任务', value: cleanTime(firstText(historyRow.endTimeStr, historyRow.endTime, task.end_time, history.end_time, curveWindow.end)) }
-  ]
-}
-const qcTaskDetailEntries = computed(() => {
-  const tasks = qualityControl.value?.task_details
-  if (!Array.isArray(tasks)) return []
-  return tasks.map((item, index) => {
-    const task = item?.task || {}
-    const history = item?.history || {}
-    const status = item?.status || {}
-    const statusDetail = item?.status_detail || {}
-    const runLog = item?.run_log || {}
-    const curve = item?.curve || {}
-    const curveWindow = item?.curve_window || {}
-    const steps = Array.isArray(statusDetail.steps) ? statusDetail.steps : []
-    const logs = Array.isArray(runLog.data) ? runLog.data : []
-    const historyDetail = statusDetail.history_detail || history.history_detail || history.HistoryDetail || {}
-    const dataValues = history.data_values || history.DataValues || statusDetail.data_values || []
-    const resultValues = history.result_values || history.ResultValues || statusDetail.result_values || []
-    const windowStart = curveWindow.start || task.r_start || history.r_start
-    const windowEnd = curveWindow.end || task.end_time || history.end_time
-    return {
-      key: `qc-task-${index}`,
-      title: [task.qc_type, task.pollutant, task.qc_result || history.qc_result].filter(Boolean).join(' · ') || `质控任务 ${index + 1}`,
-      window: formatRange(windowStart, windowEnd),
-      curveWindow: formatRange(curveWindow.start, curveWindow.end),
-      statusText: statusDetail.status || status.status || '',
-      statusMessage: statusDetail.message || status.summary || '',
-      parseError: statusDetail.parse_error || '',
-      stepCount: statusDetail.step_count || steps.length,
-      steps,
-      logs,
-      logCount: logs.length,
-      curveCount: Array.isArray(curve.data) ? curve.data.length : 0,
-      curveSummary: curve.summary || '',
-      historyDetail,
-      dataValues,
-      resultValues,
-      platformStages: qcPlatformStages(task, history, statusDetail, steps, curveWindow),
-      historySummary: [
-        ['开始时间', task.r_start || history.r_start],
-        ['结束时间', task.end_time || history.end_time],
-        ['质控类型', task.qc_type || history.qc_type],
-        ['污染物', task.pollutant || history.pollutant],
-        ['质控结果', task.qc_result || history.qc_result]
-      ].filter(([, value]) => valueText(value))
-    }
-  })
-})
-const qcSummaryFields = computed(() => {
-  const history = qualityControl.value?.history || {}
-  const curves = qualityControl.value?.monitoring_curves
-  const tasks = qualityControl.value?.task_details
-  return [
-    { label: '历史任务', value: dataStatusText(history) },
-    { label: '任务详情', value: `${Array.isArray(tasks) ? tasks.length : 0} 条` },
-    { label: '运行日志', value: `${qcRunLogCount.value} 条` },
-    { label: '质控曲线', value: `${Array.isArray(curves) ? curves.length : 0} 组` }
-  ]
-})
 
 const selectedPollutants = computed(() => {
   const pollutants = (review.value.pollutants || []).filter(Boolean)
   return pollutants.length ? pollutants : ['PM2.5', 'PM10', 'SO2', 'NO2', 'O3', 'CO']
 })
+const hasQualityPollutants = computed(() => selectedPollutants.value.some(pollutant => !['PM2.5', 'PM10'].includes(normalizePollutant(pollutant))))
 const qcCurveEntries = computed(() => {
   const directCurves = qualityControl.value?.monitoring_curves
   const taskDetails = qualityControl.value?.task_details
   const curves = Array.isArray(directCurves) && directCurves.length
     ? directCurves
     : (Array.isArray(taskDetails) ? taskDetails.map(item => ({ task: item?.task, result: item?.curve, window: item?.curve_window })) : [])
-  return curves.map((item, index) => {
+  return curves.filter(item => !['PM2.5', 'PM10'].includes(normalizePollutant(item?.task?.pollutant || item?.result?.data?.[0]?.poll))).map((item, index) => {
     const task = item?.task || {}
     const result = item?.result || {}
     const window = item?.window || {}
     const records = Array.isArray(result.data) ? result.data : []
     const pollutant = task.pollutant || records[0]?.poll || '目标污染物'
+    const windowStart = Date.parse(String(window.start || '').replace(' ', 'T'))
+    const windowEnd = Date.parse(String(window.end || '').replace(' ', 'T'))
     const points = pointsFromRecords(records, ['dataValue', 'value', ...pollutantFieldCandidates([pollutant])], true)
+      .filter(point => {
+        if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd)) return true
+        const timestamp = Date.parse(String(point.time).replace(' ', 'T'))
+        return Number.isFinite(timestamp) && timestamp >= windowStart && timestamp <= windowEnd
+      })
     const target = numberValue(firstText(task.t_value, task.tValue, task.history_row?.tValue))
     const series = [{
       name: `${pollutant} 分钟浓度`,
@@ -1404,9 +1220,7 @@ const qcCurveEntries = computed(() => {
 })
 const monitoringLabels = {
   station_5minute_raw: '5分钟原始数据',
-  station_5minute_audited: '5分钟审核数据',
   station_hour_raw: '小时原始数据',
-  station_hour_audited: '小时审核数据'
 }
 const monitoringStatusRows = computed(() => {
   const monitoring = evidence.value?.monitoring || {}
@@ -1440,85 +1254,42 @@ const transmissionGapEntries = computed(() => {
 })
 const monitoringEntries = computed(() => {
   const monitoring = evidence.value?.monitoring || {}
-  const fiveMinuteEntries = ['station_5minute_raw', 'station_5minute_audited']
-    .map(key => {
-      const result = monitoring[key] || {}
-      const records = Array.isArray(result.data) ? result.data : []
-      const availablePollutants = key === 'station_5minute_raw' ? availablePollutantsFromRecords(records) : []
-      const pollutants = availablePollutants.length ? availablePollutants : selectedPollutants.value
-      const series = buildPollutantSeries(records, pollutants)
-      const unitSet = Array.from(new Set(series.map(item => item.unit).filter(Boolean)))
-      return {
-        key,
-        title: monitoringLabels[key],
-        granularity: '5min',
-        pollutants: series.map(item => item.name),
-        subtitle: resultSummary(result) || `${records.length} 条`,
-        unit: unitSet.length === 1 ? unitSet[0] : '浓度',
-        series
-      }
-    })
-    .filter(entry => entry.series.length || (monitoring[entry.key]?.record_count || 0) > 0)
-
-  const rawResult = monitoring.station_hour_raw || {}
-  const auditedResult = monitoring.station_hour_audited || {}
-  const rawRecords = Array.isArray(rawResult.data) ? rawResult.data : []
-  const auditedRecords = Array.isArray(auditedResult.data) ? auditedResult.data : []
-  const hourSeries = []
-  const hourPollutants = []
-  selectedPollutants.value.forEach((pollutant, index) => {
-    const color = chartColors[index % chartColors.length]
-    const rawPoints = pointsFromRecords(rawRecords, pollutantFieldCandidates([pollutant]), false)
-    const auditedPoints = pointsFromRecords(auditedRecords, pollutantFieldCandidates([pollutant]), false)
-    if (rawPoints.length || auditedPoints.length) hourPollutants.push(pollutant)
-    if (rawPoints.length) {
-      hourSeries.push({
-        name: `${pollutant} 原始`,
-        color: colorWithAlpha(color, 0.5),
-        unit: pollutantUnit(pollutant),
-        axis: pollutantAxis(pollutant),
-        points: rawPoints
-      })
+  return Object.entries(monitoringLabels).map(([key, title]) => {
+    const result = monitoring[key] || {}
+    const records = Array.isArray(result.data) ? result.data : []
+    const available = key === 'station_5minute_raw' ? availablePollutantsFromRecords(records) : []
+    const series = buildPollutantSeries(records, available.length ? available : selectedPollutants.value)
+    const unitSet = [...new Set(series.map(item => item.unit).filter(Boolean))]
+    return {
+      key, title, granularity: key === 'station_5minute_raw' ? '5min' : 'hour',
+      pollutants: series.map(item => item.name),
+      subtitle: resultSummary(result) || `${records.length} 条`,
+      unit: unitSet.length === 1 ? unitSet[0] : '浓度',
+      series
     }
-    if (auditedPoints.length) {
-      hourSeries.push({
-        name: `${pollutant} 审核`,
-        color,
-        unit: pollutantUnit(pollutant),
-        axis: pollutantAxis(pollutant),
-        points: auditedPoints
-      })
-    }
-  })
-  const rawCount = Number(rawResult.record_count ?? rawRecords.length) || 0
-  const auditedCount = Number(auditedResult.record_count ?? auditedRecords.length) || 0
-  const hourEntry = {
-    key: 'station_hour',
-    title: '小时数据（原始/审核）',
-    granularity: 'hour',
-    pollutants: hourPollutants,
-    subtitle: `原始 ${rawCount} 条，审核 ${auditedCount} 条`,
-    unit: hourPollutants.length === 1 ? pollutantUnit(hourPollutants[0]) : '浓度',
-    series: hourSeries
-  }
-  const hasHourRecords = hourSeries.length || rawCount > 0 || auditedCount > 0
-  return hasHourRecords ? [...fiveMinuteEntries, hourEntry] : fiveMinuteEntries
+  }).filter(entry => entry.series.length || (monitoring[entry.key]?.record_count || 0) > 0)
 })
 const cityWeather = computed(() => evidence.value?.city_weather || {})
 const weatherMonitoringEntries = computed(() => selectedPollutants.value.map(pollutant => ({
-  key: `weather-${pollutant}`, title: `${pollutant} 小时数据与城区气象`,
+  key: `weather-${pollutant}`, title: `${pollutant} 小时数据与气象 · ${cityWeather.value.station_name || '气象站'}`,
   granularity: 'hour', pollutants: [pollutant], unit: pollutantUnit(pollutant),
-  series: ['station_hour_raw', 'station_hour_audited'].map(key => ({
-    name: `${pollutant} ${key.endsWith('_raw') ? '原始' : '审核'}`,
+  series: ['station_hour_raw'].map(key => ({
+    name: `${pollutant} 原始`,
     points: pointsFromRecords(evidence.value?.monitoring?.[key]?.data || [], pollutantFieldCandidates([pollutant]), false)
   }))
 })))
+const districtSelectionNote = computed(() => {
+  const comparison = evidence.value?.same_city_monitoring
+  if (!comparison) return '暂无同区站点对比数据'
+  if (comparison.comparison_scope !== 'same_district') return '此历史工单使用同城取证；重新取证后可显示同区对比。'
+  return [comparison.district_name, comparison.selection_note].filter(Boolean).join(' · ')
+})
 const sameCityLabels = {
-  station_hour_raw: '同城小时原始数据',
-  station_hour_audited: '同城小时审核数据'
+  station_hour_raw: '同区小时原始数据',
 }
 const sameCityStatusRows = computed(() => {
   const comparison = evidence.value?.same_city_monitoring || {}
+  if (comparison.comparison_scope !== 'same_district') return []
   return Object.entries(sameCityLabels).map(([key, label]) => ({
     key,
     label,
@@ -1528,6 +1299,7 @@ const sameCityStatusRows = computed(() => {
 })
 const sameCityMonitoringEntries = computed(() => {
   const comparison = evidence.value?.same_city_monitoring || {}
+  if (comparison.comparison_scope !== 'same_district') return []
   const pollutant = selectedPollutants.value[0] || 'PM2.5'
   const target = comparison.target_station_code || review.value.station?.station_code
   return Object.entries(sameCityLabels)
@@ -1541,7 +1313,7 @@ const sameCityMonitoringEntries = computed(() => {
         pollutants: [pollutant],
         subtitle: resultSummary(result) || `${records.length} 条`,
         unit: pollutantUnit(pollutant),
-        series: buildStationComparisonSeries(records, pollutant, target)
+        series: buildStationComparisonSeries(records, pollutant, target, comparison.comparison_stations || [], comparison.distance_ranking_complete)
       }
     })
     .filter(entry => entry.series.length || (comparison[entry.key.replace('same-city-', '')]?.record_count || 0) > 0)
@@ -1584,7 +1356,6 @@ const sameCityPointCount = computed(() => pointCountForEntries(sameCityMonitorin
 const qcCurvePointCount = computed(() => pointCountForEntries(qcCurveEntries.value))
 const qualityModuleLabel = computed(() => {
   if (isSop02.value) return '质控/复测'
-  if (isSop03.value) return '质控/辅助'
   return '质控信息'
 })
 const notify = (text, tone = 'info') => {
@@ -1827,15 +1598,14 @@ onMounted(async () => {
 .note-list li { overflow-wrap: anywhere; }
 .compact-list { display: grid; gap: 6px; max-height: 160px; overflow: auto; }
 .compact-list p { margin: 0; color: #bfd5e7; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
-.platform-table, .qc-table, .status-table { display: grid; border: 1px solid rgba(125, 174, 220, .22); border-radius: 4px; overflow: hidden; }
+.platform-table, .status-table { display: grid; border: 1px solid rgba(125, 174, 220, .22); border-radius: 4px; overflow: hidden; }
 .flow-head, .flow-row { display: grid; grid-template-columns: 110px 86px 138px minmax(0, 1fr); gap: 8px; align-items: start; padding: 8px 10px; font-size: 12px; }
 .attachment-head, .attachment-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) 90px 100px; gap: 8px; align-items: center; padding: 8px 10px; font-size: 12px; }
-.qc-head, .qc-row { display: grid; grid-template-columns: 78px 54px 100px 126px 126px 92px 64px; gap: 8px; align-items: center; padding: 8px 10px; font-size: 12px; }
-.flow-head, .attachment-head, .qc-head { background: rgba(20, 55, 86, .9); color: #92c5e9; }
-.flow-row, .attachment-row, .qc-row { border-top: 1px solid rgba(125, 174, 220, .16); color: #dceaf6; }
-.flow-row strong, .attachment-row strong, .qc-row strong { color: #fff; overflow-wrap: anywhere; }
+.flow-head, .attachment-head { background: rgba(20, 55, 86, .9); color: #92c5e9; }
+.flow-row, .attachment-row { border-top: 1px solid rgba(125, 174, 220, .16); color: #dceaf6; }
+.flow-row strong, .attachment-row strong { color: #fff; overflow-wrap: anywhere; }
 .flow-row p { min-width: 0; margin: 0; color: #bfd5e7; line-height: 1.55; overflow-wrap: anywhere; }
-.qc-row span, .attachment-row span, .flow-row span { min-width: 0; overflow-wrap: anywhere; }
+.attachment-row span, .flow-row span { min-width: 0; overflow-wrap: anywhere; }
 .attachment-thumb { position: relative; display: block; width: 74px; height: 58px; padding: 0; overflow: hidden; border: 1px solid rgba(125, 174, 220, .24); border-radius: 4px; background: rgba(8, 23, 40, .72); cursor: zoom-in; }
 .attachment-thumb:disabled { cursor: wait; }
 .attachment-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -1849,35 +1619,6 @@ onMounted(async () => {
 .status-table span { color: #93bddb; font-size: 11px; }
 .status-table strong { color: #fff; font-size: 12px; }
 .status-table em { color: #aac5da; font-size: 11px; font-style: normal; line-height: 1.45; overflow-wrap: anywhere; }
-.task-detail-stack { display: grid; gap: 8px; }
-.task-detail-card { display: grid; gap: 10px; padding: 10px; border: 1px solid rgba(125, 174, 220, .22); border-radius: 4px; background: rgba(16, 39, 64, .72); }
-.task-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; min-width: 0; }
-.task-detail-head strong { min-width: 0; color: #f5fbff; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-detail-head span { flex: none; color: #93bddb; font-size: 11px; }
-.qc-stage-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-.qc-stage-strip > div { display: grid; gap: 4px; min-width: 0; padding: 7px 8px; border: 1px solid rgba(125, 174, 220, .18); border-radius: 4px; background: rgba(9, 24, 42, .58); }
-.qc-stage-strip > div.filled { border-color: rgba(95, 210, 138, .28); background: rgba(15, 62, 52, .42); }
-.qc-stage-strip span { color: #93bddb; font-size: 10px; }
-.qc-stage-strip strong { color: #e8f3fb; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
-.task-detail-meta, .task-summary-grid, .task-detail-columns { display: grid; gap: 6px; }
-.task-detail-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); color: #aac5da; font-size: 11px; line-height: 1.5; }
-.task-note { margin: 0; color: #ffd08a; font-size: 11px; line-height: 1.5; }
-.task-note.critical { color: #ffbeb6; }
-.task-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.task-summary-grid > div, .task-detail-columns > div { display: grid; gap: 4px; padding: 8px 9px; border: 1px solid rgba(125, 174, 220, .18); border-radius: 4px; background: rgba(9, 24, 42, .58); }
-.task-summary-grid span, .task-detail-columns span { color: #93bddb; font-size: 11px; }
-.task-summary-grid strong, .task-detail-columns p { margin: 0; color: #e8f3fb; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
-.step-list { display: grid; gap: 6px; max-height: 240px; overflow: auto; padding-right: 2px; }
-.step-item { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start; padding: 8px 9px; border: 1px solid rgba(125, 174, 220, .16); border-radius: 4px; background: rgba(8, 23, 40, .56); }
-.step-index { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(35, 130, 214, .18); color: #8dc9f1; font-size: 11px; font-weight: 700; }
-.step-body { display: grid; gap: 4px; min-width: 0; }
-.step-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
-.step-top strong { min-width: 0; color: #fff; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step-top span { flex: none; color: #93bddb; font-size: 10px; }
-.step-body p { margin: 0; color: #bfd5e7; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.task-detail-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.task-log-list { display: grid; gap: 6px; max-height: 160px; overflow: auto; padding-right: 2px; }
-.task-log-list p { margin: 0; color: #bfd5e7; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
 .gate-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px; }
 .gate-item { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; padding: 10px; border: 1px solid rgba(125, 174, 220, .22); border-radius: 4px; background: rgba(16, 39, 64, .7); }
 .gate-item div { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1911,8 +1652,8 @@ onMounted(async () => {
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(130, 200, 255, .35); outline-offset: 2px; }
 @media (max-width: 860px) {
   .panel-body { grid-template-columns: 1fr; }
-  .overview-grid, .overview-reason, .overview-refs, .overview-exclusions, .overview-issues, .summary-grid, .evidence-columns, .gate-list, .decision-row, .interval-grid, .interval-grid.two, .task-detail-meta, .task-summary-grid, .task-detail-columns, .qc-stage-strip, .status-table, .conclusion-grid { grid-template-columns: 1fr; }
-  .flow-head, .flow-row, .attachment-head, .attachment-row, .qc-head, .qc-row, .impact-head, .impact-row { grid-template-columns: 1fr; }
+  .overview-grid, .overview-reason, .overview-refs, .overview-exclusions, .overview-issues, .summary-grid, .evidence-columns, .gate-list, .decision-row, .interval-grid, .interval-grid.two, .status-table, .conclusion-grid { grid-template-columns: 1fr; }
+  .flow-head, .flow-row, .attachment-head, .attachment-row, .impact-head, .impact-row { grid-template-columns: 1fr; }
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .panel-footer { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 16px; }
   .actions { flex-wrap: nowrap; }

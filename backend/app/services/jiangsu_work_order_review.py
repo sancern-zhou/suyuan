@@ -450,7 +450,7 @@ def load_review_evidence(review_id: str) -> dict[str, Any] | None:
         if not isinstance(raw, dict):
             raise ValueError("同城原始数据资源格式无效")
         # The persisted Agent pack stays compact; the review UI needs actual points.
-        for key in ("station_hour_raw", "station_hour_audited"):
+        for key in ("station_hour_raw",):
             dataset = raw.get(key)
             if not isinstance(dataset, dict) or not isinstance(dataset.get("data"), list):
                 raise ValueError(f"同城原始数据资源缺少 {key} 数据列表")

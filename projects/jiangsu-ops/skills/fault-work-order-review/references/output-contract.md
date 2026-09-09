@@ -71,7 +71,7 @@ SOP-02、SOP-03 同样不提交流程类核验项：SOP-02 使用 E1–E8，E1�
 - `retest`：SOP-01 使用，记录质控复测或校准后验证。
 - `recovery`：SOP-02 使用，记录处置后恢复和稳定验证。
 - `transmission`：SOP-03 使用，记录本地数据、平台接收、补传和时间戳连续性核验摘要。
-- `flag_boundary`：记录状态标识、审核标识或质控标识的起止与核验状态。
+- `flag_boundary`：记录状态标识、审核标识或质控标识的代码、中文含义、起止与核验状态。标识仅用于 M6/E8 的事实一致性核对；标识由设备自动或运维人员手动产生，是被审核对象而非证据，不能用于逻辑一致性分析、故障机理判断或直接证明数据应剔除。逻辑一致性必须依据原始监测数据的实际变化及其他事实材料判断。
 - `review_summary`：一句话用户摘要，必须收敛为“审核结论 + 数据处置 + 核心原因”，不得罗列核验项编号或长证据清单。
 - `scope`：核验项层级，建议核心核验项填 `core`，辅助证据填 `supporting`，反证线索填 `rebuttal`。
 
@@ -98,7 +98,7 @@ SOP-02、SOP-03 同样不提交流程类核验项：SOP-02 使用 E1–E8，E1�
       "data_impact_index": 0,
       "boundary_sources": [
         "station_5minute_raw:首次异常",
-        "station_hour_audited:审核标识",
+        "station_hour_raw:原始数据标识",
         "station_alarm_logs:告警恢复",
         "quality_control.task_details:复测合格"
       ],
@@ -111,7 +111,7 @@ SOP-02、SOP-03 同样不提交流程类核验项：SOP-02 使用 E1–E8，E1�
 }
 ```
 
-每个 `partial_exclude` 或 `exclude` 的 `data_impact` 条目都必须有一个对应的 `exclusion_intervals` 条目；不得写“见工单”“待确认”“故障期间”等模糊边界。系统会展开成完整剔除区间供人工确认，并在本站监测曲线和同城对比曲线上标注该起止时间。同样不得把工单创建时间、故障处理时间、取证窗口起止或工单申请剔除区间直接写成剔除边界。它们只能作为待核验线索。SOP-03 中“离线”“未上传”“无数据”不能直接形成剔除区间；传输中断但本地数据完整且补传成功时应优先判断 `keep`，无测量或本地缺失时应优先判断 `missing_no_delete`。
+每个 `partial_exclude` 或 `exclude` 的 `data_impact` 条目都必须有一个对应的 `exclusion_intervals` 条目；不得写“见工单”“待确认”“故障期间”等模糊边界。系统会展开成完整剔除区间供人工确认，并在本站监测曲线和同区对比曲线上标注该起止时间。同样不得把工单创建时间、故障处理时间、取证窗口起止或工单申请剔除区间直接写成剔除边界。它们只能作为待核验线索。SOP-03 中“离线”“未上传”“无数据”不能直接形成剔除区间；传输中断但本地数据完整且补传成功时应优先判断 `keep`，无测量或本地缺失时应优先判断 `missing_no_delete`。
 
 ## 结论状态
 
@@ -125,11 +125,11 @@ SOP-02、SOP-03 同样不提交流程类核验项：SOP-02 使用 E1–E8，E1�
 
 - `work_order_detail:<工单号>`
 - `monitoring.station_5minute_raw:<时间或字段>`
-- `monitoring.station_hour_audited:<时间或字段>`
+- `monitoring.station_hour_raw:<时间或字段>`
 - `quality_control.task_details:<r_id>`
 - `station_alarm_logs:<告警时间或字段>`
 - `station_environment_history:<时间或字段>`
-- `same_city_monitoring.station_hour_raw:<城市或时间>`
+- `same_city_monitoring.station_hour_raw:<区县、站点或时间>`
 - `transmission.local_data:<时间或字段>`
 - `transmission.platform_receipt:<时间或字段>`
 - `transmission.retransmission:<补传批次或时间>`

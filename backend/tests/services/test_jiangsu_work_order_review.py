@@ -8,7 +8,7 @@ from app.services import jiangsu_work_order_review as review_service
 def test_review_evidence_expands_same_city_resource_without_mutating_agent_pack(tmp_path, monkeypatch):
     raw_path = tmp_path / "same_city.json"
     datasets = {key: {"data": [{"timePoint": "2026-09-06T08:00:00", "nO2": 12}], "record_count": 1}
-                for key in ("station_hour_raw", "station_hour_audited")}
+                for key in ("station_hour_raw",)}
     raw_path.write_text(json.dumps(datasets))
     pack = {"same_city_monitoring": {"raw_resource": {"path": str(raw_path)},
             "station_hour_raw": {"record_count": 1}}}

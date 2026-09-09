@@ -30,6 +30,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuStationEnvironmentHistoryTool,
 )
 from app.tools.jiangsu.result_filter import compact_air_quality_records
+from app.tools.jiangsu.review_station_selection import select_district_stations
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
 from app.utils.path_config import format_agent_path, get_data_registry
 
@@ -45,11 +46,10 @@ POLL_CREATE_LOOKBACK_HOURS = int(
     else os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_LOOKBACK_HOURS", "0")
 )
 MAX_EVENTS_PER_RUN = int(os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_MAX_EVENTS_PER_RUN", "20"))
-MAX_QC_TASK_DETAILS = int(os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_MAX_QC_TASK_DETAILS", "4"))
 EVIDENCE_MAX_RECORDS = int(os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_EVIDENCE_MAX_RECORDS", "500"))
 EVIDENCE_CALL_TIMEOUT_SECONDS = float(os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_CALL_TIMEOUT_SECONDS", "75"))
 EVIDENCE_PACKAGE_TIMEOUT_SECONDS = float(
-    os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_PACKAGE_TIMEOUT_SECONDS", "300")
+    os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_PACKAGE_TIMEOUT_SECONDS", "900")
 )
 EVIDENCE_HOUR_CHUNK_DAYS = int(os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_HOUR_CHUNK_DAYS", "31"))
 EVIDENCE_5MIN_CHUNK_DAYS = int(os.getenv("JIANGSU_FAULT_WORK_ORDER_REVIEW_5MIN_CHUNK_DAYS", "7"))
@@ -222,10 +222,12 @@ def _compact_same_city_monitoring_payload(value: Any) -> Any:
         return _compact_result(value)
     compact: dict[str, Any] = {}
     for key, item in value.items():
-        if key in {"station_hour_raw", "station_hour_audited"} and isinstance(item, dict):
+        if key in {"station_hour_raw"} and isinstance(item, dict):
             records = item.get("data")
             max_records = len(records) if isinstance(records, list) else EVIDENCE_MAX_RECORDS
             compact[key] = _compact_result(item, max_records=max_records)
+        elif key in {"comparison_stations", "station_codes"} and isinstance(item, list):
+            compact[key] = [_compact_value(row) for row in item]
         else:
             compact[key] = _compact_value(item)
     return compact
@@ -235,7 +237,7 @@ def _same_city_raw_record_counts(value: Any) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
     counts: dict[str, int] = {}
-    for key in ("station_hour_raw", "station_hour_audited"):
+    for key in ("station_hour_raw",):
         item = value.get(key)
         if not isinstance(item, dict):
             continue
@@ -414,7 +416,7 @@ def _same_city_dataset_summary(
     target_station_code: str,
 ) -> dict[str, Any]:
     if not isinstance(dataset, dict):
-        return {"success": False, "status": "failed", "summary": "同城数据返回格式异常"}
+        return {"success": False, "status": "failed", "summary": "同区数据返回格式异常"}
     records = dataset.get("data")
     if not isinstance(records, list):
         records = []
@@ -431,7 +433,7 @@ def _same_city_dataset_summary(
         "pollutant_summaries": [],
     }
     if not pollutants:
-        base["summary_note"] = "未从工单文本识别污染物，未生成同城污染物对比摘要。"
+        base["summary_note"] = "未从工单文本识别污染物，未生成同区污染物对比摘要。"
         return base
 
     for pollutant in pollutants:
@@ -563,20 +565,24 @@ def _same_city_agent_payload(
         "success": bool(value.get("success") is True),
         "status": value.get("status"),
         "data_kind": value.get("data_kind"),
-        "comparison_scope": value.get("comparison_scope") or "same_city",
+        "comparison_scope": value.get("comparison_scope") or "same_district",
+        **{key: value.get(key) for key in (
+            "district_name", "district_code", "comparison_stations", "nearest_station_code",
+            "distance_ranking_complete", "selection_note",
+        )},
         "target_station_code": value.get("target_station_code") or target_station_code,
         "city_name": value.get("city_name"),
         "summary_mode": "deterministic_summary_with_raw_resource",
         "pollutants": pollutants,
         "raw_resource": raw_resource,
-        "agent_reading_note": "首轮审核优先阅读本摘要；同城小时全量原始记录已外置，通常无需读取。",
+        "agent_reading_note": "首轮审核优先阅读本摘要；同区小时全量原始记录已外置，通常无需读取。",
         "visualization_hint": {
             "recommended_chart": "target_vs_same_city_hourly_band",
             "series": ["target", "same_city_min", "same_city_median", "same_city_max"],
             "source": "station_hour_raw.pollutant_summaries[].timeline",
         },
     }
-    for key in ("station_hour_raw", "station_hour_audited"):
+    for key in ("station_hour_raw",):
         payload[key] = _same_city_dataset_summary(
             value.get(key),
             pollutants=pollutants,
@@ -773,6 +779,8 @@ def _station_from_order(order: dict[str, Any], detail: dict[str, Any] | None = N
         "unique_code": str(order.get("uniqueCode") or wo.get("uniqueCode") or "").strip(),
         "station_name": str(order.get("stationName") or wo.get("stationName") or "").strip(),
         "city_name": str(order.get("city") or wo.get("city") or wo.get("cityName") or "").strip(),
+        "district_name": str(order.get("districtName") or order.get("district") or wo.get("districtName") or wo.get("district") or "").strip(),
+        "district_code": str(order.get("districtCode") or wo.get("districtCode") or "").strip(),
     }
 
 
@@ -940,25 +948,41 @@ def _find_first(value: Any, keys: set[str]) -> Any:
     return None
 
 
-def _qc_task_refs(qc_history: dict[str, Any]) -> list[dict[str, Any]]:
+def _canonical_pollutant(value: Any) -> str:
+    text = str(value or "").strip().upper().replace(" ", "")
+    for pollutant, aliases in POLLUTANT_ALIASES.items():
+        if text == pollutant.upper().replace(" ", ""):
+            return pollutant
+        if any(text == alias.upper().replace(" ", "") for alias in aliases):
+            return pollutant
+    return text
+
+
+def _qc_task_refs(
+    qc_history: dict[str, Any],
+    *,
+    target_pollutants: list[str] | None = None,
+) -> list[dict[str, Any]]:
     refs: list[dict[str, Any]] = []
+    targets = {_canonical_pollutant(item) for item in target_pollutants or [] if str(item or "").strip()}
     for row in qc_history.get("data") or []:
         if not isinstance(row, dict):
             continue
         r_id = _find_first(row, {"rId", "RId", "rid", "id"})
         r_start = _find_first(row, {"rStart", "RStart", "startTime", "sStart"})
         end_time = _find_first(row, {"endTime", "EndTime", "finishTime", "finish_time"})
-        if not r_id or not r_start:
+        pollutant = str(
+            _find_first(row, {"poll", "Poll", "pollutant", "pollutantCode"})
+            or ""
+        ).strip()
+        if not r_id or not r_start or (targets and _canonical_pollutant(pollutant) not in targets):
             continue
         ref = {
             "r_id": str(r_id).strip(),
             "r_start": str(r_start).strip(),
             "end_time": str(end_time or "").strip(),
             "qc_type": str(_find_first(row, {"qcType", "QCType", "qctype"}) or "").strip(),
-            "pollutant": str(
-                _find_first(row, {"poll", "Poll", "pollutant", "pollutantCode"})
-                or ""
-            ).strip(),
+            "pollutant": pollutant,
             "qc_result": str(_find_first(row, {"qcResult", "QCResult", "result"}) or "").strip(),
             "history_detail": _compact_value(_find_first(row, {"HistoryDetail", "historyDetail"}) or {}),
             "data_values": _compact_value(_find_first(row, {"DataValues", "dataValues"}) or []),
@@ -968,8 +992,6 @@ def _qc_task_refs(qc_history: dict[str, Any]) -> list[dict[str, Any]]:
         identity = f"{ref['r_start']}::{ref['r_id']}"
         if identity not in {f"{item['r_start']}::{item['r_id']}" for item in refs}:
             refs.append(ref)
-        if len(refs) >= MAX_QC_TASK_DETAILS:
-            break
     return refs
 
 
@@ -1219,8 +1241,8 @@ def _sop02_evidence_gaps(
     gaps: list[dict[str, str]] = []
     if not station.get("station_code"):
         gaps.append({"group": "工单详单", "item": "站点编码", "reason": "无法唯一定位本站监测、告警和动环证据。", "role": "core"})
-    if not station.get("city_name"):
-        gaps.append({"group": "邻站/同城站", "item": "城市字段", "reason": "无法自动展开同城站小时数据对比。", "role": "supporting"})
+    if not station.get("district_name") and not same_city_monitoring.get("district_code"):
+        gaps.append({"group": "邻站/同区站", "item": "区县字段", "reason": "无法自动展开同区站小时数据对比。", "role": "supporting"})
     if not pollutants:
         gaps.append({"group": "工单详单", "item": "影响污染物", "reason": "标题、内容和详单中未解析到明确污染物。", "role": "core"})
     if not _has_records(work_order_detail):
@@ -1233,9 +1255,7 @@ def _sop02_evidence_gaps(
         source=monitoring,
         items={
             "station_5minute_raw": "本站 5 分钟原始数据",
-            "station_5minute_audited": "本站 5 分钟审核数据",
             "station_hour_raw": "本站小时原始数据",
-            "station_hour_audited": "本站小时审核数据",
         },
         role="core",
     )
@@ -1244,14 +1264,13 @@ def _sop02_evidence_gaps(
     if not _has_records(environment):
         gaps.append({"group": "动环与供电", "item": "站房动环历史", "reason": "未取得温湿度、电压、电流或采样参数历史曲线。", "role": "core"})
     if not _has_records(same_city_monitoring):
-        gaps.append({"group": "邻站/同城站", "item": "同城小时数据", "reason": "未取得同城站小时对比数据。", "role": "supporting"})
+        gaps.append({"group": "邻站/同区站", "item": "同区小时数据", "reason": "未取得同区站小时对比数据。", "role": "supporting"})
     _append_failed_evidence_gaps(
         gaps,
-        group="邻站/同城站",
+        group="邻站/同区站",
         source=same_city_monitoring,
         items={
-            "station_hour_raw": "同城小时原始数据",
-            "station_hour_audited": "同城小时审核数据",
+            "station_hour_raw": "同区小时原始数据",
         },
         role="supporting",
     )
@@ -1279,7 +1298,7 @@ def _monitoring_continuity_summary(monitoring: dict[str, Any]) -> dict[str, Any]
         return _unavailable_evidence("监测数据格式无效，无法核验平台时间戳连续性。")
     dataset_counts: dict[str, int] = {}
     failed_datasets: list[str] = []
-    for key in ("station_5minute_raw", "station_5minute_audited", "station_hour_raw", "station_hour_audited"):
+    for key in ("station_5minute_raw", "station_hour_raw"):
         item = monitoring.get(key)
         if not isinstance(item, dict):
             dataset_counts[key] = 0
@@ -1293,7 +1312,7 @@ def _monitoring_continuity_summary(monitoring: dict[str, Any]) -> dict[str, Any]
         return {
             "success": False,
             "status": "empty",
-            "summary": "平台 5 分钟/小时原始与审核数据均未返回记录，无法仅凭平台数据判断断点和补传完整性。",
+            "summary": "平台 5 分钟/小时原始数据均未返回记录，无法仅凭平台数据判断断点和补传完整性。",
             "metadata": {"dataset_counts": dataset_counts, "failed_datasets": failed_datasets},
             "data": [],
         }
@@ -1302,7 +1321,7 @@ def _monitoring_continuity_summary(monitoring: dict[str, Any]) -> dict[str, Any]
         "success": not failed_datasets,
         "status": status,
         "summary": (
-            "已固化平台 5 分钟/小时原始与审核数据，可用于人工核验断点、重复和时间戳连续性；"
+            "已固化平台 5 分钟/小时原始数据，可用于人工核验断点、重复和时间戳连续性；"
             "本地缓存、平台接收明细和补传回执仍需单独证据。"
         ),
         "metadata": {"dataset_counts": dataset_counts, "failed_datasets": failed_datasets},
@@ -1334,9 +1353,7 @@ def _sop03_evidence_gaps(
         source=monitoring,
         items={
             "station_5minute_raw": "本站 5 分钟原始数据",
-            "station_5minute_audited": "本站 5 分钟审核数据",
             "station_hour_raw": "本站小时原始数据",
-            "station_hour_audited": "本站小时审核数据",
         },
         role="core",
     )
@@ -1404,6 +1421,63 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         self.qc_status_tool = qc_status_tool or JiangsuQcTaskStatusTool()
         self.qc_run_log_tool = qc_run_log_tool or JiangsuQcRunLogTool()
         self.qc_curve_tool = qc_curve_tool or JiangsuQcMonitoringCurveTool()
+
+    async def _fetch_target_qc_history(
+        self,
+        *,
+        station_code: str,
+        start_time: str,
+        end_time: str,
+        pollutants: list[str],
+    ) -> dict[str, Any]:
+        results = await asyncio.gather(*(
+            self._with_timeout(
+                self.qc_history_tool.execute(
+                    station_codes=[station_code],
+                    start_time=start_time,
+                    end_time=end_time,
+                    pollutant=pollutant,
+                ),
+                f"{pollutant} 质控历史查询",
+            )
+            for pollutant in pollutants
+        ))
+        records: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        failed_pollutants: list[str] = []
+        for pollutant, result in zip(pollutants, results, strict=True):
+            if not isinstance(result, dict) or result.get("success") is not True:
+                failed_pollutants.append(pollutant)
+                continue
+            for row in result.get("data") or []:
+                if not isinstance(row, dict):
+                    continue
+                row_pollutant = _find_first(row, {"poll", "Poll", "pollutant", "pollutantCode"})
+                if _canonical_pollutant(row_pollutant) != _canonical_pollutant(pollutant):
+                    continue
+                r_start = _find_first(row, {"rStart", "RStart", "startTime", "sStart"})
+                r_id = _find_first(row, {"rId", "RId", "rid", "id"})
+                identity = f"{r_start}::{r_id}"
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                records.append(row)
+        success = len(failed_pollutants) < len(pollutants)
+        summary = f"目标污染物质控任务查询完成：返回 {len(records)} 条记录。"
+        if failed_pollutants:
+            summary += f" 查询失败：{'、'.join(failed_pollutants)}。"
+        return {
+            "success": success,
+            "status": "success" if records else ("empty" if success else "failed"),
+            "summary": summary,
+            "metadata": {
+                "target_pollutants": pollutants,
+                "failed_pollutants": failed_pollutants,
+                "record_count": len(records),
+                "time_range": [start_time, end_time],
+            },
+            "data": records,
+        }
 
     async def fetch_and_store(self) -> dict[str, Any]:
         now = self.clock()
@@ -1556,12 +1630,23 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         start_text = _format_time(window_start)
         end_text = _format_time(window_end)
 
-        qc_history, station_alarm, environment, monitoring, same_city_monitoring, city_weather = await asyncio.gather(
-            self._with_timeout(self.qc_history_tool.execute(
-                station_codes=[station_code],
+        qc_enabled = route["sop_id"] != "SOP-03"
+        if not qc_enabled:
+            qc_history_query = self._empty("SOP-03 暂不抓取质控信息")
+        elif not station_code:
+            qc_history_query = self._empty("缺少站点编码，跳过质控历史查询")
+        elif not pollutants:
+            qc_history_query = self._empty("未识别目标污染物，跳过质控历史查询")
+        else:
+            qc_history_query = self._fetch_target_qc_history(
+                station_code=station_code,
                 start_time=start_text,
                 end_time=end_text,
-            ), "质控历史查询") if station_code else self._empty("缺少站点编码，跳过质控历史查询"),
+                pollutants=pollutants,
+            )
+
+        qc_history, station_alarm, environment, monitoring, same_city_monitoring, city_weather = await asyncio.gather(
+            qc_history_query,
             self._with_timeout(
                 self.station_alarm_tool.execute(station_codes=[station_code]),
                 "站房告警查询",
@@ -1578,14 +1663,18 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                 station=station,
                 start_time=start_text,
                 end_time=end_text,
-            ) if route["sop_id"] == "SOP-02" else self._empty("SOP-01 不需要同城站自动对比取证"),
+            ) if route["sop_id"] == "SOP-02" else self._empty("SOP-01 不需要同区站自动对比取证"),
             fetch_city_weather(
                 city_name=station.get("city_name"), start_time=start_text, end_time=end_text,
             ) if route["sop_id"] == "SOP-02" else self._empty("当前 SOP 不需要城市气象取证"),
             return_exceptions=True,
         )
-        compact_qc_history = _compact_result(qc_history)
-        qc_refs = _qc_task_refs(compact_qc_history)
+        qc_history_records = qc_history.get("data") if isinstance(qc_history, dict) else None
+        compact_qc_history = _compact_result(
+            qc_history,
+            max_records=len(qc_history_records) if isinstance(qc_history_records, list) else EVIDENCE_MAX_RECORDS,
+        )
+        qc_refs = _qc_task_refs(compact_qc_history, target_pollutants=pollutants) if qc_enabled else []
         qc_statuses = []
         qc_logs = []
         qc_curves = []
@@ -1664,7 +1753,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                 "path": format_agent_path(same_city_raw_path),
                 "content_type": "application/json",
                 "record_counts": _same_city_raw_record_counts(same_city_monitoring_payload),
-                "summary": "同城小时原始/审核全量记录；首轮审核通常阅读 same_city_monitoring 摘要即可。",
+                "summary": "同区小时原始全量记录；首轮审核通常阅读 same_city_monitoring 摘要即可。",
             }
             raw_resources.append(same_city_raw_resource)
         sop02_evidence_gaps = []
@@ -1720,6 +1809,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         )
         collection_notes = [
             "本证据包由只读接口自动抓取，不修改江苏运维平台工单和监测数据。",
+            "所有 SOP 仅抓取和使用原始监测数据，不补抓审核数据，不将未抓取审核数据作为证据缺口。",
             "涉及数据剔除时必须确认污染物、异常起止时间、边界来源和合理性。",
             "工单创建时间不能直接作为无效开始时间，维修完成时间不能自动作为无效结束时间。",
             "自动巡检快照不纳入本证据包：该接口只返回查询时刻状态，不按证据窗口对齐。",
@@ -1733,7 +1823,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         elif sop_id == "SOP-02":
             collection_notes.extend([
                 "SOP-02 要求区分有效异常、伪值、缺失和暂时不可见，不得把工单申请区间直接作为剔除区间。",
-                "同城小时数据仅作为 same_city 对比证据；未实现精确邻站自动选择时必须在审核结论中说明。",
+                "同区对比按 comparison_scope、comparison_stations 和 selection_note 核验；距离为直线距离，坐标缺失时不得推断最近站点。",
             ])
         elif sop_id == "SOP-03":
             collection_notes.extend([
@@ -1814,11 +1904,11 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                     ],
                     "supporting_evidence": [
                         "设备参数（流量、泵、制冷、切割器/纸带、平台抬放）",
-                        "邻站/同城站",
+                        "邻站/同区站",
                         "附件照片",
                     ],
                     "rebuttal_evidence": [
-                        "同城同步或不同步反证",
+                        "同区同步或不同步反证",
                         "设备参数正常但监测异常",
                     ],
                     "evidence_gaps": sop02_evidence_gaps,
@@ -1997,10 +2087,9 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                 start_time=start_time,
                 end_time=end_time,
                 data_kind=data_kind,
-                data_type=data_type,
+                data_type=0,
             )
             for data_kind in ("station_5minute", "station_hour")
-            for data_type in (0, 1)
         ]
         pairs = await asyncio.gather(*tasks)
         return dict(pairs)
@@ -2012,38 +2101,60 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         start_time: str,
         end_time: str,
     ) -> dict[str, Any]:
-        city_name = str(station.get("city_name") or "").strip()
         station_code = str(station.get("station_code") or "").strip()
-        if not city_name:
+        try:
+            # The worker may inject a restricted/proxied station-data tool which
+            # exposes only ``execute``/raw-record calls.  Directory lookup is a
+            # fetcher-internal operation, so fall back to a local full client
+            # instead of failing the entire same-district comparison with an
+            # AttributeError.
+            directory_fetcher = getattr(self.station_data_tool, "fetch_station_directory", None)
+            if not callable(directory_fetcher):
+                directory_fetcher = JiangsuStationDataTool().fetch_station_directory
+            directory = await asyncio.wait_for(
+                directory_fetcher(), timeout=EVIDENCE_CALL_TIMEOUT_SECONDS,
+            )
+            selection = select_district_stations(station, directory)
+        except Exception as exc:
             return {
                 "success": False,
                 "status": "failed",
-                "summary": "工单详单未返回城市字段，无法自动查询同城站对比。",
+                "summary": f"同区站点选择失败：{exc}",
+                "selection_note": f"同区站点选择失败：{exc}",
+                "comparison_scope": "same_district",
                 "data": {},
                 "metadata": {
-                    "comparison_scope": "same_city",
+                    "comparison_scope": "same_district",
                     "target_station_code": station_code,
-                    "missing_field": "station.city_name",
                 },
             }
+        if not selection["comparison_stations"]:
+            return {"success": True, "status": "empty", **selection}
+        ranked_codes = [
+            item["station_code"] for item in selection["comparison_stations"]
+            if item.get("distance_km") is not None
+        ][:3]
+        fetch_station_codes = ranked_codes + [station_code]
         tasks = [
             self._fetch_same_city_monitoring_dataset(
-                city_name=city_name,
+                city_name=selection["city_name"],
+                # The selection payload retains the complete distance ranking
+                # for audit evidence; network retrieval is bounded to target
+                # plus the three nearest same-district stations.
+                station_codes=fetch_station_codes,
                 target_station_code=station_code,
                 start_time=start_time,
                 end_time=end_time,
                 data_type=data_type,
             )
-            for data_type in (0, 1)
+            for data_type in (0,)
         ]
         pairs = await asyncio.gather(*tasks)
         return {
             "success": any(value.get("success") for _, value in pairs),
             "status": "success" if any(value.get("success") for _, value in pairs) else "failed",
             "data_kind": "station_hour",
-            "comparison_scope": "same_city",
-            "target_station_code": station_code,
-            "city_name": city_name,
+            **selection,
             **dict(pairs),
         }
 
@@ -2051,6 +2162,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         self,
         *,
         city_name: str,
+        station_codes: list[str],
         target_station_code: str,
         start_time: str,
         end_time: str,
@@ -2063,7 +2175,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
             return key, {
                 "success": False,
                 "status": "failed",
-                "summary": "同城站小时数据查询时间解析失败",
+                "summary": "同区站小时数据查询时间解析失败",
                 "data_kind": "station_hour",
                 "data_type": data_type,
                 "record_count": 0,
@@ -2082,7 +2194,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                 chunk_records, payload = await asyncio.wait_for(
                     self.station_data_tool.fetch_raw_records(
                         data_kind="station_hour",
-                        city_names=[city_name],
+                        station_codes=station_codes,
                         start_time=query_text,
                         end_time=query_text,
                         data_type=data_type,
@@ -2090,7 +2202,8 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
                     ),
                     timeout=EVIDENCE_CALL_TIMEOUT_SECONDS,
                 )
-                records.extend(chunk_records)
+                allowed_codes = set(station_codes)
+                records.extend(row for row in chunk_records if _row_station_code(row) in allowed_codes)
                 chunk_results.append({
                     "index": index,
                     "start": query_text,
@@ -2116,14 +2229,14 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
             return key, {
                 "success": False,
                 "status": "failed",
-                "summary": f"江苏同城站小时数据分片查询全部失败：{len(failed_chunks)} 个分片失败。",
+                "summary": f"江苏同区站小时数据分片查询全部失败：{len(failed_chunks)} 个分片失败。",
                 "data_kind": "station_hour",
                 "data_type": data_type,
                 "record_count": 0,
                 "returned_records": 0,
                 "data": [],
                 "metadata": {
-                    "comparison_scope": "same_city",
+                    "comparison_scope": "same_district",
                     "target_station_code": target_station_code,
                     "city_name": city_name,
                     "time_range": [start_time, end_time],
@@ -2146,14 +2259,14 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         payload["status"] = "partial" if failed_chunks else ("success" if records else "empty")
         payload["success"] = succeeded_chunks > 0
         payload["summary"] = (
-            f"江苏同城站小时数据按小时查询完成：{succeeded_chunks}/{len(chunk_results)} 个时间点成功，"
+            f"江苏同区站小时数据按小时查询完成：{succeeded_chunks}/{len(chunk_results)} 个时间点成功，"
             f"返回 {len(records)} 条记录。"
         )
         if failed_chunks:
             payload["summary"] += f"{len(failed_chunks)} 个分片失败，证据包已保留失败原因。"
         payload.setdefault("metadata", {})
         payload["metadata"].update({
-            "comparison_scope": "same_city",
+            "comparison_scope": "same_district",
             "target_station_code": target_station_code,
             "city_name": city_name,
             "time_range": [start_time, end_time],

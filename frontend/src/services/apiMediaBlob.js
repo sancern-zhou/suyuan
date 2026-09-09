@@ -8,7 +8,9 @@ const IMAGE_CONTENT_TYPE_ALIASES = {
   'application/jpeg': 'image/jpeg',
   'application/pjpeg': 'image/jpeg',
   'application/x-jpg': 'image/jpeg',
+  'application/jfif': 'image/jpeg',
   'image/jpg': 'image/jpeg',
+  'image/jfif': 'image/jpeg',
   'image/pjpeg': 'image/jpeg',
   'application/png': 'image/png',
   'application/gif': 'image/gif',
@@ -40,7 +42,7 @@ export function sameOriginApiMediaPath(source) {
 
 function normaliseImageContentType(contentType) {
   const raw = String(contentType || '').split(';', 1)[0].trim().toLowerCase()
-  if (raw.startsWith('image/')) return raw === 'image/jpg' ? 'image/jpeg' : raw
+  if (raw.startsWith('image/')) return ['image/jpg', 'image/jfif'].includes(raw) ? 'image/jpeg' : raw
   return IMAGE_CONTENT_TYPE_ALIASES[raw] || ''
 }
 

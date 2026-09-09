@@ -491,6 +491,13 @@ class JiangsuStationDataTool(LLMTool):
     def _is_province_query(cls, city_names: list[str] | None) -> bool:
         return any(cls._is_province_name(item) for item in city_names or [])
 
+    async def fetch_station_directory(self) -> list[dict[str, Any]]:
+        """Return the cached live directory for bounded background selection."""
+        async with self._station_directory_lock:
+            if self._station_directory is None:
+                self._station_directory = await self._get_station_directory()
+            return [dict(row) for row in self._station_directory]
+
     async def _get_station_directory(self) -> list[dict[str, Any]]:
         token = await self._get_token()
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:

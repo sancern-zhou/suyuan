@@ -60,6 +60,7 @@ test('fault work order attachments use authenticated image loading', async () =>
   assert.match(source, /<AuthenticatedImage/)
   assert.match(source, /@resolved="url => setAttachmentPreviewUrl\(row\.key, url\)"/)
   assert.doesNotMatch(source, /<img :src="row\.contentUrl"/)
+  assert.match(source, /png\|jpe\?g\|jfif\|gif\|webp\|bmp/)
 })
 
 test('fault work order attachment previews open in an in-app lightbox', async () => {
@@ -72,4 +73,29 @@ test('fault work order attachment previews open in an in-app lightbox', async ()
   assert.match(source, /<ImageLightbox/)
   assert.match(source, /@click="openAttachmentLightbox\(row\)"/)
   assert.doesNotMatch(source, /target="_blank"/)
+})
+
+test('SOP-03 does not render the quality-control section', async () => {
+  const source = await readFile(
+    new URL('./FaultWorkOrderReviewPanel.vue', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /<details v-if="!isSop03"[^>]*>[\s\S]*?<summary>质控\/复测曲线/)
+  assert.doesNotMatch(source, /质控\/辅助/)
+})
+
+test('quality-control section renders curves without task detail tables', async () => {
+  const source = await readFile(
+    new URL('./FaultWorkOrderReviewPanel.vue', import.meta.url),
+    'utf8'
+  )
+
+  const qualitySection = source.slice(
+    source.indexOf('<summary>质控/复测曲线'),
+    source.indexOf('</details>', source.indexOf('<summary>质控/复测曲线'))
+  )
+  assert.match(qualitySection, /<ReviewTimeSeriesChart/)
+  assert.match(qualitySection, /未查询到期间质控曲线/)
+  assert.doesNotMatch(qualitySection, /qc-table|qcHistoryTableRows|task-detail-stack|qcTaskDetailEntries|qcSummaryFields/)
 })

@@ -9,9 +9,27 @@ from app.fetchers.jiangsu_fault_work_order_review_event import (
     EVENT_TYPE,
     JiangsuFaultWorkOrderReviewEventFetcher,
     _evidence_window,
+    _qc_task_refs,
 )
 
 NOW = datetime.fromisoformat("2026-09-02T08:30:00+08:00")
+
+
+def test_qc_task_refs_keeps_all_unique_target_pollutant_tasks_in_evidence_window():
+    rows = [
+        {
+            "rId": f"RID-{index}",
+            "rStart": f"2026-09-{4 if index < 4 else 5:02d} {index % 4:02d}:45:00",
+            "endTime": f"2026-09-{4 if index < 4 else 5:02d} {index % 4:02d}:58:00",
+            "poll": "SO2" if index != 4 else "CO",
+        }
+        for index in range(8)
+    ]
+
+    refs = _qc_task_refs({"data": [*rows, rows[-1]]}, target_pollutants=["SO2"])
+
+    assert [ref["r_id"] for ref in refs] == [f"RID-{index}" for index in (0, 1, 2, 3, 5, 6, 7)]
+    assert refs[-1]["r_start"] == "2026-09-05 03:45:00"
 
 
 class FakeWorkOrderTool:
@@ -210,11 +228,18 @@ class FakeStationDataTool:
     def __init__(self):
         self.calls = []
 
+    async def fetch_station_directory(self):
+        return [
+            {"stationCode": "3003A", "positionName": "江阴虹桥邮政", "cityName": "无锡市", "districtName": "江阴市", "districtCode": "320281", "longitude": 120, "latitude": 32},
+            {"stationCode": "3004A", "positionName": "同区对比站", "cityName": "无锡市", "districtName": "江阴市", "districtCode": "320281", "longitude": 120.1, "latitude": 32},
+            {"stationCode": "OTHER", "cityName": "无锡市", "districtName": "其他区", "districtCode": "320282", "longitude": 120.01, "latitude": 32},
+        ]
+
     async def fetch_raw_records(self, **kwargs):
         self.calls.append(kwargs)
         query_time = kwargs.get("start_time")
         data_type = kwargs.get("data_type")
-        if kwargs.get("station_codes"):
+        if len(kwargs.get("station_codes", [])) == 1:
             code = kwargs["station_codes"][0]
             return [{
                 "code": code,
@@ -247,9 +272,43 @@ class FakeStationDataTool:
 class FakeSimpleTool:
     def __init__(self, data=None):
         self.data = data if data is not None else []
+        self.calls = []
 
     async def execute(self, **kwargs):
+        self.calls.append(kwargs)
         return {"success": True, "status": "success", "data": self.data, "summary": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_same_city_monitoring_uses_full_client_when_station_tool_is_proxied(monkeypatch):
+    class RestrictedStationDataTool(FakeStationDataTool):
+        # Mirrors the worker proxy: raw records are available, but internal
+        # directory lookup is not exposed.
+        fetch_station_directory = None
+
+    class DirectoryFallback:
+        async def fetch_station_directory(self):
+            return await FakeStationDataTool().fetch_station_directory()
+
+    monkeypatch.setattr(module, "JiangsuStationDataTool", DirectoryFallback)
+    fetcher = JiangsuFaultWorkOrderReviewEventFetcher(
+        station_data_tool=RestrictedStationDataTool(),
+    )
+
+    result = await fetcher._fetch_same_city_monitoring(
+        station={
+            "station_code": "3003A",
+            "station_name": "江阴虹桥邮政",
+            "city_name": "无锡市",
+            "district_name": "江阴市",
+        },
+        start_time="2026-09-02 00:00:00",
+        end_time="2026-09-02 00:00:00",
+    )
+
+    assert result["success"] is True
+    assert [item["station_code"] for item in result["comparison_stations"]] == ["3004A"]
+    assert result["station_hour_raw"]["record_count"] == 2
 
 
 class FakeCurveTool:
@@ -301,6 +360,22 @@ async def test_fetcher_publishes_qc_review_event_and_evidence_pack(tmp_path, mon
         "ResultValues": [0.9, 1.0],
     }
     curve_tool = FakeCurveTool()
+    qc_history_tool = FakeSimpleTool([{
+        "rId": "RID-1",
+        "rStart": "2026-09-02 00:00:00",
+        "endTime": "2026-09-02 01:05:30",
+        "qcType": "span",
+        "poll": "NO",
+        "qcResult": "合格",
+        "HistoryDetail": {
+            "TargetValue": 0.0,
+            "RelevantValue": -0.75,
+            "Inaccuracy": -0.002,
+            "QCResult": "合格",
+        },
+        "DataValues": [1.2, 1.1, 1.0],
+        "ResultValues": [0.9, 1.0],
+    }])
     fetcher = JiangsuFaultWorkOrderReviewEventFetcher(
         registry_root=tmp_path,
         event_publisher=publish,
@@ -310,22 +385,7 @@ async def test_fetcher_publishes_qc_review_event_and_evidence_pack(tmp_path, mon
         station_data_tool=FakeStationDataTool(),
         station_alarm_tool=FakeSimpleTool(),
         environment_tool=FakeSimpleTool({"tableData": []}),
-        qc_history_tool=FakeSimpleTool([{
-            "rId": "RID-1",
-            "rStart": "2026-09-02 00:00:00",
-            "endTime": "2026-09-02 01:05:30",
-            "qcType": "span",
-            "poll": "NO",
-            "qcResult": "合格",
-            "HistoryDetail": {
-                "TargetValue": 0.0,
-                "RelevantValue": -0.75,
-                "Inaccuracy": -0.002,
-                "QCResult": "合格",
-            },
-            "DataValues": [1.2, 1.1, 1.0],
-            "ResultValues": [0.9, 1.0],
-        }]),
+        qc_history_tool=qc_history_tool,
         qc_status_tool=FakeSimpleTool({"jsonStr": json.dumps(status_payload, ensure_ascii=False)}),
         qc_run_log_tool=FakeSimpleTool([{"step": "span", "result": "failed"}]),
         qc_curve_tool=curve_tool,
@@ -355,6 +415,7 @@ async def test_fetcher_publishes_qc_review_event_and_evidence_pack(tmp_path, mon
     assert fetcher.station_data_tool.calls[0]["start_time"] == "2026-08-31 00:00:00"
     assert fetcher.station_data_tool.calls[0]["end_time"] == "2026-09-02 23:59:59"
     assert evidence["quality_control"]["task_statuses"]
+    assert qc_history_tool.calls[0]["pollutant"] == "NO"
     assert evidence["quality_control"]["task_details"][0]["curve_window"]["start"] == "2026-09-02 00:00:00"
     assert evidence["quality_control"]["task_details"][0]["curve_window"]["end"] == "2026-09-02 01:05:30"
     assert evidence["quality_control"]["task_details"][0]["status_detail"]["step_count"] == 5
@@ -385,6 +446,19 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
     async def publish(event):
         events.append(event)
 
+    qc_history_tool = FakeSimpleTool([{
+        "rId": "RID-PM10",
+        "rStart": "2026-09-03 00:00:00",
+        "endTime": "2026-09-03 01:00:00",
+        "qcType": "span",
+        "poll": "PM10",
+    }, {
+        "rId": "RID-SO2",
+        "rStart": "2026-09-03 02:00:00",
+        "endTime": "2026-09-03 03:00:00",
+        "qcType": "span",
+        "poll": "SO2",
+    }])
     fetcher = JiangsuFaultWorkOrderReviewEventFetcher(
         registry_root=tmp_path,
         event_publisher=publish,
@@ -394,7 +468,7 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
         station_data_tool=station_data_tool,
         station_alarm_tool=FakeSimpleTool([{"alarm": "platform lift"}]),
         environment_tool=FakeSimpleTool({"tableData": [{"StationTemp": 25, "time": "2026-09-03 09:00:00"}]}),
-        qc_history_tool=FakeSimpleTool([]),
+        qc_history_tool=qc_history_tool,
         qc_status_tool=FakeSimpleTool(),
         qc_run_log_tool=FakeSimpleTool(),
         qc_curve_tool=FakeSimpleTool(),
@@ -418,9 +492,13 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
     assert evidence["city_weather"]["data"][0]["temperature"] == 25
     assert evidence["input_profile"] == "agent_slim_v1"
     assert evidence["pollutants_detected_from_text"] == ["PM10"]
+    assert qc_history_tool.calls[0]["pollutant"] == "PM10"
+    assert [row["poll"] for row in evidence["quality_control"]["history"]["data"]] == ["PM10"]
     assert "env_category" not in evidence["environmental_fault"]
     assert evidence["environmental_fault"]["event_type"] == "low"
-    assert evidence["same_city_monitoring"]["comparison_scope"] == "same_city"
+    assert evidence["same_city_monitoring"]["comparison_scope"] == "same_district"
+    assert evidence["same_city_monitoring"]["nearest_station_code"] == "3004A"
+    assert evidence["same_city_monitoring"]["district_name"] == "江阴市"
     assert evidence["same_city_monitoring"]["summary_mode"] == "deterministic_summary_with_raw_resource"
     assert evidence["same_city_monitoring"]["station_hour_raw"]["metadata"]["time_point_count"] == 48
     assert evidence["same_city_monitoring"]["station_hour_raw"]["record_count"] == 96
@@ -446,7 +524,8 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
     ]
     assert five_minute_calls
     assert all("pollutant_codes" not in call for call in five_minute_calls)
-    same_city_calls = [call for call in station_data_tool.calls if call.get("city_names") == ["无锡市"]]
+    assert all(call["data_type"] == 0 and "city_names" not in call for call in station_data_tool.calls)
+    same_city_calls = [call for call in station_data_tool.calls if call.get("station_codes") == ["3004A", "3003A"]]
     assert same_city_calls
     assert len({call["start_time"] for call in same_city_calls}) == 48
     assert same_city_calls[0]["start_time"] == "2026-09-02 00:00:00"
@@ -468,6 +547,13 @@ async def test_fetcher_routes_sop03_transmission_event_and_exposes_missing_evide
     async def publish(event):
         events.append(event)
 
+    qc_history_tool = FakeSimpleTool([{
+        "rId": "SHOULD-NOT-BE-QUERIED",
+        "rStart": "2026-09-03 00:00:00",
+        "endTime": "2026-09-03 01:00:00",
+        "qcType": "span",
+        "poll": "SO2",
+    }])
     fetcher = JiangsuFaultWorkOrderReviewEventFetcher(
         registry_root=tmp_path,
         event_publisher=publish,
@@ -477,7 +563,7 @@ async def test_fetcher_routes_sop03_transmission_event_and_exposes_missing_evide
         station_data_tool=station_data_tool,
         station_alarm_tool=FakeSimpleTool([{"alarm": "通信中断"}]),
         environment_tool=FakeSimpleTool({"tableData": []}),
-        qc_history_tool=FakeSimpleTool([]),
+        qc_history_tool=qc_history_tool,
         qc_status_tool=FakeSimpleTool(),
         qc_run_log_tool=FakeSimpleTool(),
         qc_curve_tool=FakeSimpleTool(),
@@ -502,6 +588,9 @@ async def test_fetcher_routes_sop03_transmission_event_and_exposes_missing_evide
     assert any(gap["item"] == "设备本地数据和缓存状态" for gap in evidence["evidence_gaps"])
     assert any(gap["item"] == "补传起止、成功/失败数量和回执" for gap in evidence["evidence_gaps"])
     assert evidence["same_city_monitoring"] is None
+    assert evidence["quality_control"]["history"]["status"] == "skipped"
+    assert evidence["quality_control"]["task_details"] == []
+    assert qc_history_tool.calls == []
     same_city_calls = [call for call in station_data_tool.calls if call.get("city_names") == ["淮安市"]]
     assert same_city_calls == []
 
@@ -555,7 +644,7 @@ def test_sop02_evidence_gaps_expose_failed_five_minute_when_hour_data_exists():
     )
 
     assert any(gap["item"] == "本站 5 分钟原始数据" for gap in gaps)
-    assert any(gap["item"] == "本站 5 分钟审核数据" for gap in gaps)
+    assert not any("审核数据" in gap["item"] for gap in gaps)
     assert not any(gap["item"] == "本站 5 分钟/小时数据" for gap in gaps)
 
 
@@ -574,6 +663,8 @@ async def test_fetch_monitoring_does_not_filter_five_minute_pm25():
     )
 
     assert result["station_5minute_raw"]["success"] is True
+    assert set(result) == {"station_5minute_raw", "station_hour_raw"}
+    assert all(call["data_type"] == 0 for call in station_data_tool.calls)
     five_minute_calls = [
         call for call in station_data_tool.calls
         if call["data_kind"] == "station_5minute"

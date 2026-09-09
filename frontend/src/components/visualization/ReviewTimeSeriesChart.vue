@@ -37,6 +37,7 @@ import {
 } from 'echarts/components'
 import { LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
+import { finiteObservation, normalizeReviewPoints } from './reviewTimeSeriesData.js'
 
 echarts.use([
   DataZoomComponent,
@@ -52,6 +53,7 @@ const props = defineProps({
   title: { type: String, default: '' },
   subtitle: { type: String, default: '' },
   unit: { type: String, default: '' },
+  granularity: { type: String, default: '' },
   height: { type: Number, default: 260 },
   series: { type: Array, default: () => [] },
   markAreas: { type: Array, default: () => [] }
@@ -87,22 +89,14 @@ const formatFullTime = value => {
 }
 
 const numberText = value => {
-  const number = Number(value)
-  if (!Number.isFinite(number)) return '-'
+  const number = finiteObservation(value)
+  if (number === null) return '-'
   return Math.abs(number) >= 100 ? number.toFixed(0) : number.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
 }
 
 const normalizedSeries = computed(() => props.series
   .map((item, index) => {
-    const points = (Array.isArray(item?.points) ? item.points : [])
-      .map(point => {
-        const time = parseTimeValue(point?.time)
-        const value = Number(point?.value)
-        if (!Number.isFinite(time) || !Number.isFinite(value)) return null
-        return [time, value]
-      })
-      .filter(Boolean)
-      .sort((left, right) => left[0] - right[0])
+    const points = normalizeReviewPoints(item?.points, props.granularity)
     return {
       name: item?.name || `序列 ${index + 1}`,
       color: item?.color || colors[index % colors.length],
@@ -113,7 +107,7 @@ const normalizedSeries = computed(() => props.series
   })
   .filter(item => item.points.length))
 
-const totalPoints = computed(() => normalizedSeries.value.reduce((sum, item) => sum + item.points.length, 0))
+const totalPoints = computed(() => normalizedSeries.value.reduce((sum, item) => sum + item.points.filter(point => point[1] !== null).length, 0))
 const hasData = computed(() => totalPoints.value > 0)
 const summaryText = computed(() => hasData.value ? `${normalizedSeries.value.length} 组 / ${totalPoints.value} 点` : '0 点')
 const hasRightAxis = computed(() => normalizedSeries.value.some(item => item.axis === 'right'))

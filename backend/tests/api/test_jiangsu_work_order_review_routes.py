@@ -13,6 +13,7 @@ from app.services import jiangsu_work_order_review as review_service
     ("file_name", "content_type", "expected_media_type", "image_bytes"),
     [
         ("现场照片.jpg", "application/jpg", "image/jpeg", b"\xff\xd8\xff\xe0fake-image-data"),
+        ("SO2零点处理前.jfif", "application/jfif", "image/jpeg", b"\xff\xd8\xff\xe0JFIFfake-image-data"),
         ("趋势截图.png", "application/png", "image/png", b"\x89PNG\r\n\x1a\nfake-image-data"),
     ],
 )
