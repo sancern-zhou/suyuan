@@ -22,7 +22,7 @@ from decimal import Decimal
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, load_only
-from sqlalchemy import select, update, delete, func, cast, Text, case
+from sqlalchemy import select, update, delete, func, cast, Text, case, JSON
 
 from .models_session import SessionDB, SessionMessageDB
 from .database import engine
@@ -994,6 +994,26 @@ class SessionRepository:
                 tool_name = tool_match.group(1).strip()
                 msg_dict["data"] = {"tool_name": tool_name}
 
+        # ✅ 恢复待确认面板：轻量 tool_result 行只提取 human_feedback 子树，
+        # 组装成与完整 data 相同的嵌套结构供前端会话恢复重放识别。
+        if row.msg_type == "tool_result":
+            human_feedback = getattr(row, "human_feedback", None)
+            if isinstance(human_feedback, str):
+                try:
+                    human_feedback = json.loads(human_feedback)
+                except (TypeError, ValueError):
+                    human_feedback = None
+            if isinstance(human_feedback, dict) and human_feedback:
+                data = msg_dict.get("data") if isinstance(msg_dict.get("data"), dict) else {}
+                result_data = data.get("result") if isinstance(data.get("result"), dict) else {}
+                inner = (
+                    result_data.get("data") if isinstance(result_data.get("data"), dict) else {}
+                )
+                inner["human_feedback"] = human_feedback
+                result_data["data"] = inner
+                data["result"] = result_data
+                msg_dict["data"] = data
+
         return msg_dict
 
     async def get_messages_before(
@@ -1034,6 +1054,8 @@ class SessionRepository:
                 # Keep user/final text complete. Only process messages use a
                 # preview; truncating JSON text can split a \uXXXX escape and
                 # also cuts long final answers shown in restored sessions.
+                # 轻量行不加载完整 data，但待确认面板依赖 tool_result 中的
+                # human_feedback 子树，必须在数据库层单独提取（避免整包 5MB data）。
                 stmt = (
                     select(
                         SessionMessageDB.id,
@@ -1050,6 +1072,21 @@ class SessionRepository:
                             else_=None,
                         ).label("display_content"),
                         func.substring(content_text, 1, 2000).label("content_preview"),
+                        case(
+                            (
+                                SessionMessageDB.msg_type == "tool_result",
+                                cast(
+                                    func.json_extract_path(
+                                        SessionMessageDB.data,
+                                        "result",
+                                        "data",
+                                        "human_feedback",
+                                    ),
+                                    JSON,
+                                ),
+                            ),
+                            else_=None,
+                        ).label("human_feedback"),
                     )
                     .where(SessionMessageDB.session_id == session_id)
                 )
