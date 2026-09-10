@@ -287,3 +287,10 @@ test('event trigger defaults to social execution and broadcasting', () => {
   assert.equal(form.broadcast_enabled, true)
   assert.equal(form.event_type, 'yuncheng.alert.created')
 })
+
+test('task payload preserves each model tier and defaults legacy forms to auto', () => {
+  for (const tier of ['auto', 'flash', 'pro']) {
+    assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
+  }
+  assert.equal(buildTaskPayload({}).model_tier, 'auto')
+})
