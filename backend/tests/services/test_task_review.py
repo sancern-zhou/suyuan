@@ -196,3 +196,23 @@ def test_conditional_analysis_required_only_for_impact():
     assert service.list_reviews() == []
     assert service.submit_review(payload(sections=fields("no")), src)
     assert service.submit_review(payload(sections=fields("yes", "实测依据")), {**src, "execution_id": "exec-2"})
+
+
+@pytest.mark.asyncio
+async def test_adapter_runtime_dependency_is_not_a_review_field(monkeypatch):
+    from app.agent import tool_adapter
+    tool = SubmitTaskReviewTool()
+    monkeypatch.setattr(tool_adapter.global_tool_registry, "get_tool", lambda name: tool)
+    monkeypatch.setattr(tool_adapter.global_tool_registry, "get_tool_data", lambda name: {"tool": tool, "requires_context": True})
+    context = SimpleNamespace(scheduled_task_context=source(), data_manager=object())
+    result = await tool_adapter.call_llm_tool("submit_task_review", context, **payload())
+    assert result["success"] is True, result
+    assert len(service.list_reviews()) == 1
+    # Repeating the same call remains idempotent, even with explicit runtime injection.
+    repeated = await tool_adapter.call_llm_tool("submit_task_review", context, data_context_manager=object(), **payload())
+    assert repeated["success"] is True
+    assert len(service.list_reviews()) == 1
+    assert "data_context_manager" not in service.list_reviews()[0]["submission"]
+    invalid = await tool_adapter.call_llm_tool("submit_task_review", context, unexpected_business_field="bad", **payload())
+    assert invalid["success"] is False
+    assert "unexpected_business_field" in invalid["summary"]

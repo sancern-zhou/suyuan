@@ -12,7 +12,8 @@ class SubmitTaskReviewTool(LLMTool):
                          function_schema={"name": "submit_task_review", "description": description,
                                           "parameters": ReviewSubmission.model_json_schema()})
 
-    async def execute(self, context=None, **kwargs):
+    async def execute(self, context=None, data_context_manager=None, **kwargs):
+        # Runtime dependencies are not fields of the strict review submission schema.
         try:
             source = getattr(context, "scheduled_task_context", None) or {}
             review = submit_review(kwargs, source)
