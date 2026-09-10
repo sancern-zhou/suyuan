@@ -112,3 +112,10 @@ async def test_historical_feedback_is_consumed_without_overwriting_new_result(tm
     assert latest['history'][0]['human_feedback']['status'] == 'completed'
     await task_review_learning.consume_feedback(record['review_id'], task, storage, feedback_id=feedback_id)
     assert len(storage.read_cases()) == 1
+
+
+def test_single_timestamp_impact_is_valid_but_reversed_range_is_rejected():
+    impact = dict(pollutant='SO2', decision='keep', basis='单小时记录', start='2026-09-10T01:00:00+08:00', end='2026-09-10T01:00:00+08:00')
+    assert service.DataImpact.model_validate(impact).start == service.DataImpact.model_validate(impact).end
+    with pytest.raises(ValueError):
+        service.DataImpact.model_validate({**impact, 'end': '2026-09-10T00:00:00+08:00'})

@@ -47,8 +47,8 @@ class DataImpact(ReviewModel):
         if self.start and self.end:
             if self.start.tzinfo is None or self.end.tzinfo is None:
                 raise ValueError("时间区间必须包含时区")
-            if self.start >= self.end:
-                raise ValueError("start 必须早于 end")
+            if self.start > self.end:
+                raise ValueError("start 不能晚于 end")
         if self.decision in {"partial_exclude", "exclude"} and not (
             self.start and self.end and self.boundary_sources
             and self.reasonableness_status and self.reasonableness_basis
