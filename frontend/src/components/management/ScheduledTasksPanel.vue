@@ -226,7 +226,7 @@
                 <label>字段标识<input v-model="rule.field" aria-label="结果字段标识" placeholder="sections.event_type" /></label>
                 <label>展示名称<input v-model="rule.label" aria-label="结果字段名称" placeholder="AI 事件类型" /></label>
                 <label>允许值<input v-model="rule.allowedValuesText" aria-label="结果字段允许值" placeholder="用逗号分隔，留空不限" /></label>
-                <label class="switch-field"><input v-model="rule.required" type="checkbox" />必填</label>
+                <label class="switch-field"><input v-model="rule.required" type="checkbox" />{{ Object.keys(rule.required_when || {}).length ? '条件满足时必填' : '必填' }}</label>
                 <button type="button" @click="createForm.result_requirements.splice(index, 1)">删除</button>
               </div>
               <button type="button" @click="createForm.result_requirements.push({ field: '', label: '', required: true, allowedValuesText: '' })">添加结果字段</button>

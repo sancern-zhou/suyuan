@@ -64,6 +64,7 @@ export const buildTaskPayload = (form) => {
       field: String(rule.field || '').trim(),
       label: String(rule.label || '').trim(),
       required: rule.required !== false,
+      ...(rule.required_when && Object.keys(rule.required_when).length ? { required_when: { ...rule.required_when } } : {}),
       allowed_values: String(rule.allowedValuesText || '').split(/[,，\n]/).map(value => value.trim()).filter(Boolean)
     })),
     skill_id: String(form.skill_id || '').trim() || null,

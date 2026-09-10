@@ -322,3 +322,10 @@ test('task payload preserves tier and serializes editable result requirements', 
   ])
   assert.equal(buildTaskPayload({}).model_tier, 'auto')
 })
+
+
+test('editing a task retains conditional result validation', () => {
+  const result = buildTaskPayload({ result_requirements: [{ field: 'sections.analysis', label: '分析', required: true,
+    required_when: { 'sections.impact': 'yes' }, allowedValuesText: '' }] })
+  assert.deepEqual(result.result_requirements[0].required_when, { 'sections.impact': 'yes' })
+})
