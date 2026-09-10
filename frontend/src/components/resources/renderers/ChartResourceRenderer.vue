@@ -12,6 +12,7 @@
     <StationhouseInspectionPanel v-else-if="spec && isStationhouse" :data="spec" />
     <FaultWorkOrderPanel v-else-if="spec && isFaultWorkOrder" :data="spec" />
     <FaultWorkOrderReviewPanel v-else-if="spec && isFaultWorkOrderReview" :data="spec" />
+    <TaskReviewPanel v-else-if="spec?.type === 'task_review'" :review-id="spec.data.review_id" />
     <ChartPanel v-else-if="spec" :data="spec" />
   </div>
 </template>
@@ -19,6 +20,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { authFetch } from '@/auth/http.js'
+import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 import ChartPanel from '@/components/visualization/ChartPanel.vue'
 import FaultWorkOrderPanel from '@/components/visualization/FaultWorkOrderPanel.vue'
 import FaultWorkOrderReviewPanel from '@/components/visualization/FaultWorkOrderReviewPanel.vue'

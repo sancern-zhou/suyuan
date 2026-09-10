@@ -942,6 +942,9 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     # Scheduled Tasks Tools（定时任务工具）
     # ========================================
 
+    from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
+    registry.register(SubmitTaskReviewTool(), priority=359)
+
     try:
         from app.tools.scheduled_tasks import create_scheduled_task_tool
         registry.register(create_scheduled_task_tool, priority=360)  # 修复: 700->360
