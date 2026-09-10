@@ -172,3 +172,27 @@ def test_archived_review_reopen_policy_is_enforced_under_review_lock(legacy_reco
         # A previously locked record cannot be unlocked by a later caller.
         with pytest.raises(ValueError, match="已归档"):
             service.submit_review(payload(), source("exec-3"))
+
+
+@pytest.mark.parametrize("subject,event", [("wrong", "event-1"), ("event-1", "wrong"), ("event-1", None)])
+def test_bound_subject_rejects_wrong_identity_without_creating_card(subject, event):
+    bound = {**source(), "review_subject_bound": True, "expected_subject_id": "event-1"}
+    with pytest.raises(ValueError, match="业务编号"):
+        service.submit_review({**payload(), "subject_id": subject, "event_id": event}, bound)
+    assert service.list_reviews() == []
+    assert service.submit_review(payload(event_id="event-1"), bound)["subject_id"] == "event-1"
+
+
+def test_conditional_analysis_required_only_for_impact():
+    rules = [{"field": "sections.analysis", "label": "分析", "required_when": {"sections.impact": "yes"}}]
+    src = {**source(), "result_requirements": rules}
+    def fields(impact, analysis=None):
+        result = [{"key": "impact", "label": "影响", "value": impact}]
+        if analysis:
+            result.append({"key": "analysis", "label": "分析", "value": analysis})
+        return [{"title": "结论", "fields": result}]
+    with pytest.raises(ValueError, match="分析"):
+        service.submit_review(payload(sections=fields("yes")), src)
+    assert service.list_reviews() == []
+    assert service.submit_review(payload(sections=fields("no")), src)
+    assert service.submit_review(payload(sections=fields("yes", "实测依据")), {**src, "execution_id": "exec-2"})

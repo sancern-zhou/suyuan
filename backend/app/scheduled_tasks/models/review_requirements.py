@@ -7,6 +7,7 @@ class ResultFieldRequirement(BaseModel):
     field: str = Field(pattern=r"^(title|summary|decision|comment|sections\.[a-z][a-z0-9_]*)$")
     label: str = Field(min_length=1, max_length=120)
     required: bool = True
+    required_when: dict[str, str] = Field(default_factory=dict, description="全部字段匹配时才必填")
     allowed_values: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -46,7 +47,7 @@ def validate_review_result(submission, requirements):
     for rule in rules:
         value = values.get(rule.field)
         if not value:
-            if rule.required:
+            if rule.required and all(values.get(key) == expected for key, expected in rule.required_when.items()):
                 errors.append(f"缺少必填字段 {rule.label}（{rule.field}）")
         elif rule.allowed_values and value not in rule.allowed_values:
             errors.append(f"{rule.label}（{rule.field}）必须是：{'、'.join(rule.allowed_values)}")

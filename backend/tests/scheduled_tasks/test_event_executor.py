@@ -547,3 +547,14 @@ async def test_custom_task_invalid_runtime_tools_fail_before_agent_request(tmp_p
     assert result.status.value == "failed"
     assert result.error_message == "tool disabled"
     assert factory_calls == []
+
+
+def test_review_subject_comes_from_trusted_event_attributes(tmp_path):
+    task = ScheduledTask(task_id="task-42", name="审核", description="审核", prompt="审核", trigger_type="event", event_type="test.review", review_subject_attribute="business_id")
+    execution = TaskExecution(execution_id="exec-42", task_id=task.task_id, task_name=task.name, status="running", total_steps=1, event_attributes={"business_id": "event-42"})
+    executor = ScheduledTaskExecutor(task_storage=TaskStorage(storage_dir=tmp_path), execution_storage=ExecutionStorage(storage_dir=tmp_path))
+    context = executor._runtime_metadata(task, execution)["scheduled_task"]
+    assert context["review_subject_bound"] is True
+    assert context["expected_subject_id"] == "event-42"
+    execution.event_attributes = {}
+    assert executor._runtime_metadata(task, execution)["scheduled_task"]["expected_subject_id"] is None
