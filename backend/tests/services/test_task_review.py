@@ -8,6 +8,7 @@ from app.tools.task_management.submit_task_review import SubmitTaskReviewTool
 @pytest.fixture(autouse=True)
 def registry(tmp_path, monkeypatch):
     monkeypatch.setattr(service, 'get_data_registry', lambda: tmp_path)
+    monkeypatch.setattr('app.tools.resource_declarations.get_data_registry', lambda: tmp_path)
 
 
 def payload(**changes):
@@ -89,3 +90,25 @@ async def test_tool_failure_has_no_card_and_success_has_generic_resource():
     assert result['success']
     assert result['visuals'][0]['type'] == 'task_review'
     assert result['resources']
+
+
+@pytest.mark.asyncio
+async def test_historical_feedback_is_consumed_without_overwriting_new_result(tmp_path, monkeypatch):
+    from app.services import task_review_learning
+    from app.scheduled_tasks.storage.task_case_storage import TaskCaseStorage
+    record = service.submit_review(payload(), source())
+    record = service.decide_review(record['review_id'], human(record), {})
+    feedback_id = record['human_feedback']['feedback_id']
+    reopened = service.submit_review(payload(), source('exec-2'))
+    async def distill(task, memory, review):
+        return {'case_brief': '人工核验完成', 'findings': []}, '# 任务记忆\n人工核验经验'
+    monkeypatch.setattr(task_review_learning, '_distill', distill)
+    task = SimpleNamespace(task_id='task-1', history_learning=SimpleNamespace(consolidation_timeout_seconds=5, memory_char_budget=1000))
+    storage = TaskCaseStorage('task-1', base_dir=tmp_path / 'learning')
+    await task_review_learning.consume_feedback(record['review_id'], task, storage, feedback_id=feedback_id)
+    latest = service.load_review(record['review_id'])
+    assert latest['execution_id'] == 'exec-2'
+    assert latest['status'] == 'pending_review'
+    assert latest['history'][0]['human_feedback']['status'] == 'completed'
+    await task_review_learning.consume_feedback(record['review_id'], task, storage, feedback_id=feedback_id)
+    assert len(storage.read_cases()) == 1
