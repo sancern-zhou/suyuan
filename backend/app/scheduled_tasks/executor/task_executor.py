@@ -211,17 +211,20 @@ class ScheduledTaskExecutor:
                 broadcast_user_names=broadcast_user_names,
                 history_section=history_section,
             )
-            result = await asyncio.wait_for(
-                self._run_agent(
-                    prompt, task_session_id,
-                    manual_mode=task.execution_mode,
-                    task=task, execution=execution, agent=shared_agent,
-                    collected=collected,
-                    extra_tool_names=runtime_extra_tool_names,
-                    runtime_metadata=self._runtime_metadata(task, execution),
-                ),
-                timeout=task.timeout_seconds,
-            )
+            from app.services.llm_service import llm_service
+
+            with llm_service.use_model_tier(task.model_tier):
+                result = await asyncio.wait_for(
+                    self._run_agent(
+                        prompt, task_session_id,
+                        manual_mode=task.execution_mode,
+                        task=task, execution=execution, agent=shared_agent,
+                        collected=collected,
+                        extra_tool_names=runtime_extra_tool_names,
+                        runtime_metadata=self._runtime_metadata(task, execution),
+                    ),
+                    timeout=task.timeout_seconds,
+                )
             execution.steps.append(self._result_to_execution(result, prompt, "task"))
             execution.completed_steps += 1
             self.execution_storage.update(execution)

@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -76,6 +76,7 @@ class ScheduledTask(BaseModel):
         default="expert",
         description="执行模式（assistant/expert/ops/query/social/custom）"
     )
+    model_tier: Literal["auto", "flash", "pro"] = Field(default="auto", description="模型档位")
     tool_names: Optional[List[str]] = Field(
         default=None,
         description="custom 模式固定使用的工具名称列表",

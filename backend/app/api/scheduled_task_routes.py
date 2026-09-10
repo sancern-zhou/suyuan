@@ -5,7 +5,7 @@
 import math
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError
 
@@ -48,6 +48,7 @@ class CreateTaskRequest(BaseModel):
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
     execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/ops/query/social/custom）")
+    model_tier: Literal["auto", "flash", "pro"] = "auto"
     tool_names: Optional[List[str]] = None
     skill_id: Optional[str] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
@@ -78,6 +79,7 @@ class UpdateTaskRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     execution_mode: Optional[str] = None
+    model_tier: Optional[Literal["auto", "flash", "pro"]] = None
     tool_names: Optional[List[str]] = None
     skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
@@ -400,6 +402,7 @@ async def create_task(
             prompt=request.prompt,
             timeout_seconds=request.timeout_seconds,
             execution_mode=request.execution_mode,
+            model_tier=request.model_tier,
             tool_names=request.tool_names,
             skill_id=request.skill_id,
             trigger_type=request.trigger_type,

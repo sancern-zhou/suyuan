@@ -95,6 +95,7 @@ class CreateScheduledTaskTool(LLMTool):
                 "name": task_config["name"],
                 "description": task_config["description"],
                 "execution_mode": task_config.get("execution_mode", "expert"),
+                "model_tier": task_config.get("model_tier", "auto"),
                 "schedule_type": ScheduleType(task_config["schedule_type"]),
                 "enabled": True,
                 "prompt": task_config["prompt"],
@@ -168,6 +169,7 @@ class CreateScheduledTaskTool(LLMTool):
 
 1. name: 任务名称（简短，10字以内）
 2. description: 任务描述（详细说明任务目的）
+模型档位 model_tier: 仅支持 "auto"、"flash"、"pro"；用户未指定时为 "auto"。
 3. execution_mode: 执行模式，支持 "assistant"、"expert"、"ops"
    - 广播、通知、社交文案生成任务优先使用 "assistant"
    - 数据分析、专业推理任务优先使用 "expert"
