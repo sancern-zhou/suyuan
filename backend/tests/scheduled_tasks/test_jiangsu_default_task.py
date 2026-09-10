@@ -152,3 +152,26 @@ def test_unified_work_order_review_task_deletes_obsolete_split_tasks():
     assert "jiangsu_fault_work_order_review" in service.tasks
     assert "jiangsu_fault_work_order_qc_review" not in service.tasks
     assert "jiangsu_fault_work_order_env_review" not in service.tasks
+
+
+def test_default_task_result_requirements_are_task_specific():
+    smart = build_jiangsu_smart_event_task(['仪器故障'])
+    rules = {rule.field: rule for rule in smart.result_requirements}
+    assert rules['sections.event_type'].allowed_values == ['仪器故障']
+    assert rules['sections.suggested_level'].allowed_values == ['P0', 'P1', 'P2', 'P3', '待确认']
+    order = build_jiangsu_fault_work_order_review_task()
+    assert 'sections.work_order_no' in {rule.field for rule in order.result_requirements}
+    station = build_jiangsu_station_fault_task()
+    assert 'sections.verification_standard' in {rule.field for rule in station.result_requirements}
+
+
+def test_operator_result_configuration_is_not_overwritten():
+    service = FakeService()
+    task = build_jiangsu_fault_work_order_review_task()
+    task.created_by = 'user'
+    task.model_tier = 'pro'
+    task.result_requirements = []
+    service.tasks[task.task_id] = task
+    ensure_project_default_tasks(service, [task.task_id])
+    assert service.tasks[task.task_id].model_tier == 'pro'
+    assert service.tasks[task.task_id].result_requirements == []

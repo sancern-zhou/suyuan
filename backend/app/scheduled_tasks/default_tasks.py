@@ -73,6 +73,10 @@ def _smart_event_task_prompt(event_type_dictionary: list[str] | None = None) -> 
     return base
 
 
+def _result_field(field: str, label: str, allowed_values: list[str] | None = None) -> dict:
+    return {"field": field, "label": label, "required": True, "allowed_values": allowed_values or []}
+
+
 def build_jiangsu_smart_event_task(event_type_dictionary: list[str] | None = None) -> ScheduledTask:
     if event_type_dictionary is None:
         try:
@@ -81,7 +85,16 @@ def build_jiangsu_smart_event_task(event_type_dictionary: list[str] | None = Non
             event_type_dictionary = cfg.get("ai_event_type_dictionary") or None
         except Exception:  # noqa: BLE001
             pass
+    from app.services.jiangsu_smart_event import AI_EVENT_TYPES
     return ScheduledTask(
+        result_requirements=[
+            _result_field("title", "事件名称"),
+            _result_field("summary", "研判结论"),
+            _result_field("sections.event_type", "AI 事件类型", event_type_dictionary or list(AI_EVENT_TYPES)),
+            _result_field("sections.suggested_level", "建议等级", ["P0", "P1", "P2", "P3", "待确认"]),
+            _result_field("sections.data_impact", "数据影响", ["有数据影响", "无数据影响", "待确认"]),
+            _result_field("sections.compliance_explanation_result", "合规解释", ["完全解释", "部分解释", "不能解释", "无合规记录"]),
+        ],
         task_id=JIANGSU_SMART_EVENT_TASK_ID,
         name="江苏智能事件AI研判",
         description="按告警线索触发智能事件 AI 研判，由 Agent 完成线索分析并定义最终事件类型。",
@@ -111,6 +124,12 @@ def build_jiangsu_smart_event_task(event_type_dictionary: list[str] | None = Non
 
 def build_jiangsu_station_fault_task() -> ScheduledTask:
     return ScheduledTask(
+        result_requirements=[
+            _result_field("title", "故障标题"),
+            _result_field("summary", "诊断结论"),
+            _result_field("sections.fault_facts", "故障事实"),
+            _result_field("sections.verification_standard", "验证标准"),
+        ],
         task_id=JIANGSU_STATION_FAULT_TASK_ID,
         name="江苏站点告警自动诊断",
         description="收到站点告警或监测异常事件后，调用站点故障诊断 Agent 分析并形成待派单方案。",
@@ -133,6 +152,13 @@ def build_jiangsu_station_fault_task() -> ScheduledTask:
 
 def build_jiangsu_fault_work_order_review_task() -> ScheduledTask:
     return ScheduledTask(
+        result_requirements=[
+            _result_field("title", "审核标题"),
+            _result_field("summary", "审核结论"),
+            _result_field("decision", "审核建议", ["approve", "reject", "needs_evidence"]),
+            _result_field("sections.work_order_no", "工单号"),
+            _result_field("sections.sop_id", "审核 SOP", ["SOP-01", "SOP-02", "SOP-03"]),
+        ],
         task_id=JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID,
         name="江苏故障工单审核",
         description="收到省中心故障工单审核事件后，按证据包 SOP 分支完成审核并形成待人工归档结论。",
@@ -224,7 +250,8 @@ def ensure_project_default_tasks(service, task_ids: Iterable[str]) -> list[str]:
         elif existing.created_by == "project-default":
             desired = factory()
             if (
-                existing.prompt != desired.prompt
+                existing.result_requirements != desired.result_requirements
+                or existing.prompt != desired.prompt
                 or existing.knowledge_base_binding != desired.knowledge_base_binding
                 or existing.skill_id != desired.skill_id
                 or existing.event_type != desired.event_type
@@ -232,5 +259,6 @@ def ensure_project_default_tasks(service, task_ids: Iterable[str]) -> list[str]:
                 or existing.timeout_seconds != desired.timeout_seconds
             ):
                 desired.enabled = existing.enabled
+                desired.model_tier = existing.model_tier
                 service.update_task(desired)
     return created
