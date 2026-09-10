@@ -20,6 +20,9 @@ def test_jiangsu_skill_directory_contains_only_project_skills():
     assert audit_selection.skill_id == "ops-work-order-audit"
     assert "运维工单审核" in audit_selection.content
     assert "references/report-format.md" in audit_selection.content
+    smart_event_selection = load_skill_selection("smart-event-judgment", skills_dir=skills_dir)
+    assert smart_event_selection.skill_id == "smart-event-judgment"
+    assert "最终事件类型" in smart_event_selection.content
     try:
         load_skill_selection("ops_work_order_audit", skills_dir=skills_dir)
     except FileNotFoundError:
@@ -37,10 +40,11 @@ def test_runtime_skill_resolution_uses_the_jiangsu_directory(monkeypatch):
     result = __import__("asyncio").run(tool.execute())
 
     assert result["success"] is True
-    assert result["data"]["count"] == 2
+    assert result["data"]["count"] == 4
     files = {item["file"] for item in result["data"]["skills"]}
     assert any(path.endswith("station-alarm-diagnosis/SKILL.md") for path in files)
     assert any(path.endswith("ops-work-order-audit/SKILL.md") for path in files)
+    assert any(path.endswith("smart-event-judgment/SKILL.md") for path in files)
 
 
 def test_ops_audit_report_reference_preserves_output_contract():

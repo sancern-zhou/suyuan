@@ -23,6 +23,7 @@ class ScheduledTaskConversationPersistence:
         task: ScheduledTask,
         execution: TaskExecution,
         display_history: list[dict],
+        replace_transcript: bool = False,
     ) -> bool:
         export = getattr(agent, "export_runtime_session", None)
         if not callable(export):
@@ -48,23 +49,29 @@ class ScheduledTaskConversationPersistence:
         if existing is not None:
             session.created_at = existing.created_at
             session.conversation_history = list(existing.conversation_history)
-            self.transcript_persistence.append_complete(
-                session,
-                display_history=display_history,
-            )
+            if replace_transcript:
+                self.transcript_persistence.apply_complete(
+                    session,
+                    display_history=display_history,
+                )
+            else:
+                self.transcript_persistence.append_complete(
+                    session,
+                    display_history=display_history,
+                )
         else:
             self.transcript_persistence.apply_complete(
                 session,
                 display_history=display_history,
             )
 
-        replace_transcript = getattr(
+        transcript_writer = getattr(
             self.session_manager,
             "replace_session_transcript",
             None,
         )
-        if callable(replace_transcript):
-            saved = await replace_transcript(session)
+        if callable(transcript_writer):
+            saved = await transcript_writer(session)
         else:
             # Compatibility fallback for lightweight test/custom managers.
             saved = await self.session_manager.save_session(
@@ -81,6 +88,67 @@ class ScheduledTaskConversationPersistence:
         ):
             raise RuntimeError("scheduled_session_transcript_verification_failed")
 
+        return True
+
+    async def create_running_agent_session(
+        self,
+        *,
+        task: ScheduledTask,
+        execution: TaskExecution,
+        display_history: list[dict],
+    ) -> bool:
+        """Create the catalog entry before the Agent emits its first event."""
+        session = Session(
+            session_id=execution.session_id,
+            query=task.description,
+            created_at=execution.started_at,
+            metadata={
+                "mode": task.execution_mode,
+                "scheduled_task_id": task.task_id,
+                "scheduled_execution_id": execution.execution_id,
+                "scheduled_task_name": task.name,
+            },
+        )
+        self.transcript_persistence.apply_complete(
+            session,
+            display_history=display_history,
+        )
+        transcript_writer = getattr(
+            self.session_manager,
+            "replace_session_transcript",
+            None,
+        )
+        if callable(transcript_writer):
+            saved = await transcript_writer(session)
+        else:
+            saved = await self.session_manager.save_session(
+                session,
+                force_full_history_rewrite=True,
+            )
+        if not saved:
+            raise RuntimeError("scheduled_live_session_creation_failed")
+        await self.publish_conversation(task=task, execution=execution)
+        return True
+
+    async def persist_running_agent_session(
+        self,
+        *,
+        agent,
+        task: ScheduledTask,
+        execution: TaskExecution,
+        display_history: list[dict],
+    ) -> bool:
+        """Expose a live scheduled-task transcript before execution is terminal."""
+        saved = await self.persist_agent_session(
+            agent=agent,
+            task=task,
+            execution=execution,
+            display_history=display_history,
+            replace_transcript=True,
+        )
+        if not saved:
+            return False
+        await self.publish_conversation(task=task, execution=execution)
         return True
 
     async def publish_conversation(

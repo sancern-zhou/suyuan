@@ -128,6 +128,73 @@ async def test_persists_runtime_transcript_as_owned_web_conversation():
 
 
 @pytest.mark.asyncio
+async def test_publishes_running_transcript_before_terminal_execution():
+    manager = FakeSessionManager()
+    catalog = FakeCatalog()
+    persistence = ScheduledTaskConversationPersistence(
+        session_manager=manager,
+        catalog=catalog,
+    )
+    execution = TaskExecution(
+        execution_id="exec-running",
+        task_id="task-1",
+        task_name="告警分析",
+        session_id="scheduled-running-session",
+        status="running",
+        total_steps=1,
+    )
+
+    saved = await persistence.persist_running_agent_session(
+        agent=FakeAgent(),
+        task=task(),
+        execution=execution,
+        display_history=[
+            {"type": "user", "content": "执行任务"},
+            {"type": "tool_use", "content": "正在取证"},
+        ],
+    )
+
+    assert saved is True
+    assert manager.existing is not None
+    assert [message["type"] for message in manager.existing.conversation_history] == [
+        "user", "tool_use"
+    ]
+    assert catalog.registrations[0]["session_id"] == "scheduled-running-session"
+
+
+@pytest.mark.asyncio
+async def test_creates_running_session_before_agent_first_event():
+    manager = FakeSessionManager()
+    catalog = FakeCatalog()
+    persistence = ScheduledTaskConversationPersistence(
+        session_manager=manager,
+        catalog=catalog,
+    )
+    execution = TaskExecution(
+        execution_id="exec-running-first-event",
+        task_id="task-1",
+        task_name="告警分析",
+        session_id="scheduled-running-first-event",
+        status="running",
+        total_steps=1,
+    )
+
+    created = await persistence.create_running_agent_session(
+        task=task(),
+        execution=execution,
+        display_history=[{"type": "user", "content": "正在执行"}],
+    )
+
+    assert created is True
+    assert manager.existing is not None
+    assert manager.existing.session_id == "scheduled-running-first-event"
+    assert manager.existing.conversation_history == [
+        {"type": "user", "content": "正在执行"}
+    ]
+    assert catalog.registrations[0]["session_id"] == "scheduled-running-first-event"
+
+
+@pytest.mark.asyncio
 async def test_publication_failure_keeps_verified_session_for_reconciliation():
     class FailingCatalog(FakeCatalog):
         async def register_identity(self, **kwargs):

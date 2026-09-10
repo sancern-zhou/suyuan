@@ -1,67 +1,135 @@
 <template>
-  <section class="smart-event-center">
+  <section class="smart-event-center" :class="{ 'detail-mode': viewMode !== 'list' }">
     <header class="panel-header">
-      <div>
-        <p class="eyebrow">JIANGSU SMART EVENTS</p>
-        <h2>智能事件中心</h2>
-        <p class="description">告警事件统一列表展示，点击“详情”进入事件详情页面。</p>
+      <div class="panel-title">
+        <i class="title-mark"></i>
+        <h2>{{ viewMode === 'list' ? '智能事件中心' : viewMode === 'config' ? '事件中心配置' : '智能事件详情' }}</h2>
       </div>
       <div class="header-actions">
-        <button type="button" :disabled="loading" @click="loadEvents">刷新</button>
-        <button type="button" class="close" @click="$emit('close')">关闭</button>
+        <template v-if="viewMode === 'list'">
+          <button type="button" :disabled="loading" @click="loadEvents"><span class="button-icon">↻</span>刷新</button>
+          <button type="button" class="close" @click="$emit('close')">关闭</button>
+        </template>
+        <button v-else type="button" class="header-back-button" @click="backToList">{{ viewMode === 'config' ? '返回列表' : '返回列表' }}</button>
       </div>
     </header>
 
     <section v-if="viewMode === 'list'" class="event-list-page" aria-label="智能事件列表">
       <div class="list-toolbar">
         <div class="filter-row">
-          <select v-model="statusFilter" aria-label="状态筛选">
-            <option value="">全部状态</option>
-            <option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option>
-          </select>
-          <select v-model="typeFilter" aria-label="事件类型筛选">
-            <option value="">全部事件类型</option>
-            <option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option>
-          </select>
-          <input v-model="keyword" type="search" placeholder="按事件编号、站点、名称检索" @keyup.enter="loadEvents" />
+          <label><span>事件状态</span><select v-model="statusFilter" aria-label="状态筛选"><option value="">全部状态</option><option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选"><option value="">全部事件类型</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label class="keyword-filter"><span>关键词</span><input v-model="keyword" type="search" placeholder="事件编号、站点或事件名称" @keyup.enter="loadEvents" /></label>
+          <button type="button" class="primary-button" :disabled="loading" @click="loadEvents">查询 <i class="search-icon" aria-hidden="true"></i></button>
+          <button type="button" class="secondary-button" :disabled="loading" @click="resetFilters">重置 <span>↻</span></button>
+          <button type="button" class="config-button" :disabled="loading" @click="openConfig">⚙ 设置</button>
         </div>
-        <span>共 {{ filteredEvents.length }} 条</span>
+        <span v-if="actionMessage" class="action-message list-action-message">{{ actionMessage }}</span>
       </div>
       <div class="list-metrics">
-        <div><span>事件总数</span><strong>{{ events.length }}</strong></div>
-        <div><span>待 AI 研判</span><strong>{{ pendingCount }}</strong></div>
-        <div><span>站点数</span><strong>{{ stationCount }}</strong></div>
-        <div><span>最近同步</span><strong>{{ lastSyncTime }}</strong></div>
+        <div class="metric-total"><i></i><span>事件总数</span><strong>{{ events.length }}</strong></div>
+        <div class="metric-pending"><i></i><span>待 AI 研判</span><strong>{{ pendingCount }}</strong></div>
+        <div class="metric-station"><i></i><span>涉及站点</span><strong>{{ stationCount }}</strong></div>
+        <div class="metric-sync"><i></i><span>最近同步</span><strong>{{ syncing ? '同步中…' : lastSyncTime }}</strong></div>
+        <b>共 {{ filteredEvents.length }} 条</b>
       </div>
       <div v-if="loading" class="state">正在加载事件...</div>
       <div v-else-if="error" class="state error">{{ error }}</div>
       <div v-else-if="!filteredEvents.length" class="state">暂无符合条件的智能事件</div>
       <div v-else class="event-table-wrap">
         <table class="event-table">
-          <thead><tr><th>状态</th><th>事件名称</th><th>线索标签</th><th>AI事件类型</th><th>数据影响</th><th>等级</th><th>站点</th><th>时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>序号</th><th>状态</th><th>事件名称</th><th>线索标签</th><th>AI事件类型</th><th>数据影响</th><th>等级</th><th>站点</th><th>发生时间</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="event in filteredEvents" :key="event.event_id" @click="openDetail(event.event_id)">
+            <tr v-for="(event, index) in filteredEvents" :key="event.event_id" @click="openDetail(event.event_id)">
+              <td>{{ index + 1 }}</td>
               <td><span class="table-chip" :class="statusClass(event)">{{ event.event_status || '待研判' }}</span></td>
-              <td><div class="event-name"><strong>{{ event.event_name || event.initial_event_name || '待研判事件' }}</strong><small>{{ event.event_id }}</small></div></td>
-              <td>{{ event.primary_clue_tag || event.source_alarm_rule_type || '告警事件' }}</td>
+              <td><div class="event-name"><strong>{{ event.event_name || event.initial_event_name || '待研判事件' }}</strong><small>{{ event.alarm_content || '暂无具体告警内容' }}</small></div></td>
+              <td class="tag-cell">
+                <div class="tag-chip-wrap">
+                  <span v-for="chip in visibleTagChips(event)" :key="chip.label" class="clue-chip" :class="chip.klass">{{ chip.label }}</span>
+                  <button v-if="hiddenTagCount(event) > 0" type="button" class="tag-more" @click.stop="expandTags(event.event_id)">更多 {{ hiddenTagCount(event) }} 个</button>
+                </div>
+                <span v-if="event.pending_delta" class="delta-flag">新增线索待研判</span>
+              </td>
               <td>{{ event.ai_event_type || event.event_type || '待研判' }}</td>
               <td>{{ event.ai_data_impact || '待确认' }}</td>
               <td>{{ event.ai_suggested_level || '待研判' }}</td>
               <td>{{ event.site_name || event.site_id || '未知站点' }}</td>
               <td>{{ formatTime(event.event_start_time) }}</td>
-              <td><button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">详情</button></td>
+              <td class="operation-cell">
+                <button type="button" class="ai-button" :disabled="event.archived || isAiBusy(event.event_id)" @click.stop="dispatchAiJudgment(event)">
+                  {{ isAiBusy(event.event_id) ? '研判中…' : 'AI研判' }}
+                </button>
+                <button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">详情</button>
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
     </section>
 
+    <section v-else-if="viewMode === 'config'" class="config-page" aria-label="事件中心配置">
+      <div class="config-header">
+        <h3>智能事件中心参数配置</h3>
+        <p>修改后点击保存，参数将在下一次研判或数据检测时生效。</p>
+      </div>
+      <div v-if="configBusy" class="state">正在加载配置...</div>
+      <div v-else-if="configError" class="state error">{{ configError }}</div>
+      <div v-else class="config-body">
+        <div class="config-section">
+          <h4>事件合并</h4>
+          <div class="config-row">
+            <label>同日合并窗口（分钟）<input v-model.number="configDraft.event_merge_window_minutes" type="number" min="0" /></label>
+            <label>证据前扩展（分钟）<input v-model.number="configDraft.event_before_extend_minutes" type="number" min="0" /></label>
+            <label>证据后扩展（分钟）<input v-model.number="configDraft.event_after_extend_minutes" type="number" min="0" /></label>
+          </div>
+        </div>
+        <div class="config-section">
+          <h4>数据检测阈值</h4>
+          <div class="config-row">
+            <label>站点级断数因子数阈值<input v-model.number="configDraft.station_missing_factor_threshold" type="number" min="1" /></label>
+            <label>多仪器断数因子数阈值<input v-model.number="configDraft.multi_instrument_threshold" type="number" min="1" /></label>
+            <label>异常数据变化率阈值（%）<input v-model.number="configDraft.data_anomaly_threshold_pct" type="number" min="1" max="100" /></label>
+            <label>PM 突升阈值（%）<input v-model.number="configDraft.pm_rise_threshold_pct" type="number" min="1" max="100" /></label>
+          </div>
+        </div>
+        <div class="config-section">
+          <h4>视频识别</h4>
+          <div class="config-row">
+            <label>视频标签置信度阈值<input v-model.number="configDraft.video_tag_confidence_threshold" type="number" min="0" max="1" step="0.05" /></label>
+          </div>
+        </div>
+        <div class="config-section">
+          <h4>浓度超限阈值（μg/m³，留空不检测）</h4>
+          <div class="config-row">
+            <label>SO2<input v-model.number="configDraft.pollutant_hour_limits.SO2" type="number" min="0" /></label>
+            <label>NO2<input v-model.number="configDraft.pollutant_hour_limits.NO2" type="number" min="0" /></label>
+            <label>O3<input v-model.number="configDraft.pollutant_hour_limits.O3" type="number" min="0" /></label>
+            <label>PM10<input v-model.number="configDraft.pollutant_hour_limits.PM10" type="number" min="0" /></label>
+            <label>PM2.5<input v-model.number="configDraft.pollutant_hour_limits['PM2.5']" type="number" min="0" /></label>
+            <label>CO<input v-model.number="configDraft.pollutant_hour_limits.CO" type="number" min="0" placeholder="留空不检测" /></label>
+          </div>
+        </div>
+        <div class="config-section">
+          <h4>AI 事件类型字典</h4>
+          <div class="config-row">
+            <label class="full-width-label">每行一个类型，AI 研判时必须从这些类型中选取：</label>
+            <textarea v-model="configDraft._aiDictionaryText" rows="6" class="dictionary-input" @blur="parseDictionaryText"></textarea>
+          </div>
+        </div>
+        <div class="config-actions">
+          <span v-if="configSaveMessage" class="config-save-msg" :class="configSaveOk ? 'ok' : 'err'">{{ configSaveMessage }}</span>
+          <button type="button" class="primary-button" :disabled="configSaving" @click="saveConfig">保存配置</button>
+          <button type="button" class="secondary-button" @click="backToList">返回列表</button>
+        </div>
+      </div>
+    </section>
+
     <section v-else class="event-detail" aria-label="智能事件详情">
-        <div class="detail-toolbar"><button type="button" class="back-button" @click="backToList">← 返回事件列表</button></div>
         <div v-if="detailLoading" class="state">正在加载详情...</div>
         <section v-else-if="workspaceMode === 'compare'" class="compare-view" aria-label="事件对比">
           <header class="detail-header">
-            <div><p class="eyebrow">EVENT COMPARISON</p><h3>事件对比</h3><p>由 Agent 调度的事件横向比较</p></div>
+            <div><h3>事件对比</h3><p>事件横向比较</p></div>
           </header>
           <article v-for="event in compareEvents" :key="event.event_id" class="compare-card">
             <strong>{{ event.event_name || event.initial_event_name }}</strong>
@@ -71,7 +139,7 @@
         </section>
         <section v-else-if="workspaceMode === 'history' && selectedEvent" class="history-view" aria-label="事件操作历史">
           <header class="detail-header">
-            <div><p class="eyebrow">OPERATION HISTORY</p><h3>操作历史</h3><p>{{ selectedEvent.event_name || selectedEvent.initial_event_name }}</p></div>
+            <div><h3>操作历史</h3><p>{{ selectedEvent.event_name || selectedEvent.initial_event_name }}</p></div>
           </header>
           <div v-if="!operationRecords.length" class="state">暂无操作记录</div>
           <ol v-else class="history-list"><li v-for="(record, index) in operationRecords" :key="`${record.created_at || index}`"><strong>{{ record.action || record.operation || '事件操作' }}</strong><span>{{ record.message || record.summary || record.status || '已记录' }}</span><small>{{ formatTime(record.created_at || record.updated_at) }}</small></li></ol>
@@ -80,59 +148,255 @@
         <template v-else>
           <header class="detail-header">
             <div>
-              <p class="eyebrow">EVENT DETAIL</p>
               <h3>{{ selectedEvent.event_name || selectedEvent.initial_event_name }}</h3>
               <p>{{ selectedEvent.site_name || selectedEvent.site_id }} · {{ selectedEvent.event_type }}</p>
             </div>
             <span class="status-badge">{{ selectedEvent.event_status || '未研判' }}</span>
           </header>
-          <dl class="facts">
-            <div><dt>发生时间</dt><dd>{{ formatTime(selectedEvent.event_start_time) }}</dd></div>
-            <div><dt>主要线索</dt><dd>{{ selectedEvent.primary_clue_tag || '待识别' }}</dd></div>
-            <div><dt>AI事件类型</dt><dd>{{ selectedEvent.ai_event_type || '待研判' }}</dd></div>
-            <div><dt>原始告警状态</dt><dd>{{ selectedEvent.source_alarm_state || '未知' }}</dd></div>
-            <div><dt>数据影响</dt><dd>{{ selectedEvent.ai_data_impact || '待确认' }}</dd></div>
-            <div><dt>建议等级</dt><dd>{{ selectedEvent.ai_suggested_level || '待研判' }}</dd></div>
-          </dl>
-          <section class="judgment" aria-label="AI研判结果">
-            <div class="section-title"><strong>AI 研判结果</strong><span>{{ judgment?.status || '尚未完成' }}</span></div>
-            <p v-if="evidenceFocus" class="focus-note">当前证据焦点：{{ evidenceFocus }}</p>
-            <p v-if="judgment?.final_response" class="final-response">{{ judgment.final_response }}</p>
-            <p v-else class="muted">任务完成后，Agent 最终回复会持久化显示在这里。</p>
-          </section>
-          <section v-if="!selectedEvent.archived" class="confirmation" aria-label="人工确认">
-            <div class="section-title"><strong>人工确认</strong><span>确认后才可归档</span></div>
-            <div class="confirmation-grid">
-              <input v-model="judgmentType" aria-label="最终事件类型" placeholder="最终事件类型" />
-              <input v-model="judgmentLevel" aria-label="事件等级" placeholder="等级，例如 P1" />
+          <section class="evidence-detail-board" aria-label="证据明细">
+            <div class="workbench-layout">
+              <aside class="workbench-index" aria-label="证据目录">
+                <div class="workbench-index-title">证据目录</div>
+                <button v-for="section in workbenchSections" :key="section.key" type="button" class="workbench-index-item" :class="{ active: activeEvidenceKey === section.key }" @click="scrollToEvidence(section.key)">
+                  <span>{{ section.index }}. {{ section.label }}</span>
+                  <i class="index-state" :class="sourceStatusClass(section.value)"></i>
+                </button>
+              </aside>
+
+              <main ref="evidenceContent" class="workbench-content" @scroll.passive="updateActiveEvidence">
+                <article v-for="section in workbenchSections" :id="`smart-evidence-${section.key}`" :key="section.key" class="workbench-section">
+                  <header class="workbench-section-header">
+                    <h3>{{ section.index }}. {{ section.label }}</h3>
+                    <span v-if="section.key !== 'event'" class="source-status" :class="sourceStatusClass(section.value)">{{ sourceStatus(section.value) }}</span>
+                  </header>
+
+                  <template v-if="section.key === 'event'">
+                    <div class="event-grid">
+                      <div v-for="fact in eventFacts" :key="fact.label" class="event-grid-item"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>
+                    </div>
+                    <div v-if="detailTagChips.length" class="detail-tag-row" aria-label="线索标签集合">
+                      <span class="detail-tag-title">线索标签</span>
+                      <div class="tag-chip-wrap">
+                        <span v-for="chip in detailTagChips" :key="chip.label" class="clue-chip" :class="chip.klass" :title="chip.source">{{ chip.label }}</span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <section v-else-if="section.key === 'judgment'" class="special-panel judgment" aria-label="AI研判结果">
+                    <p v-if="evidenceFocus" class="focus-note">当前证据焦点：{{ evidenceFocus }}</p>
+                    <template v-if="judgment?.final_response">
+                      <div class="judgment-chips">
+                        <span class="j-chip j-type">{{ aiTypeText }}</span>
+                        <span class="j-chip" :class="dataImpactClass">{{ dataImpactText }}</span>
+                        <span class="j-chip j-level">{{ levelText }}</span>
+                        <span v-if="continuityLabel" class="j-chip j-continuity">{{ continuityLabel }}</span>
+                      </div>
+                      <div v-if="judgmentName" class="judgment-name">{{ judgmentName }}</div>
+                      <p v-if="judgmentSummary" class="j-note">{{ judgmentSummary }}</p>
+                      <div v-if="structuredJudgment.manual_review_suggestion" class="j-block">
+                        <h5>人工复核建议</h5>
+                        <p>{{ structuredJudgment.manual_review_suggestion }}</p>
+                      </div>
+                      <div v-if="disposalSuggestions.length" class="j-block">
+                        <h5>处置建议</h5>
+                        <ul class="j-suggestion-list"><li v-for="(item, index) in disposalSuggestions" :key="index">{{ item }}</li></ul>
+                      </div>
+                      <div v-if="dataAnalysisEntries.length" class="j-block j-data-analysis" aria-label="数据详细分析">
+                        <h5>数据详细分析</h5>
+                        <div v-for="entry in dataAnalysisEntries" :key="entry.key" class="analysis-item">
+                          <strong>{{ entry.label }}</strong>
+                          <p>{{ entry.text }}</p>
+                        </div>
+                      </div>
+                      <div v-if="primaryEvidenceTags.length || supportingEvidenceTags.length" class="j-block">
+                        <h5>研判依据标签</h5>
+                        <div class="tag-chip-wrap">
+                          <span v-for="tag in primaryEvidenceTags" :key="`p-${tag}`" class="clue-chip primary-ev">主要：{{ tag }}</span>
+                          <span v-for="tag in supportingEvidenceTags" :key="`s-${tag}`" class="clue-chip">辅助：{{ tag }}</span>
+                        </div>
+                      </div>
+                      <div v-if="complianceResultText" class="j-block j-compliance">
+                        <h5>合规解释结论</h5>
+                        <p>{{ complianceResultText }}</p>
+                      </div>
+                      <details class="j-collapse">
+                        <summary>研判依据与参数快照</summary>
+                        <p class="final-response">{{ judgment.final_response }}</p>
+                        <dl class="param-snapshot">
+                          <div v-for="item in paramSnapshot" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>
+                        </dl>
+                      </details>
+                    </template>
+                    <p v-else class="muted">当前状态为{{ selectedEvent?.event_status || '未研判' }}：系统已完成线索归并和标签保留，AI 研判完成后将写入事件名称、事件类型、数据影响、事件等级和摘要说明。</p>
+                    <div v-if="!selectedEvent?.archived" class="disposal-actions judgment-actions">
+                      <button type="button" class="disposal-button" :disabled="isAiBusy(String(selectedEvent?.event_id || ''))" @click="dispatchAiJudgment(selectedEvent)">
+                        {{ isAiBusy(String(selectedEvent?.event_id || '')) ? '研判中…' : (judgment?.final_response ? 'AI 重新研判' : '执行 AI 研判') }}
+                      </button>
+                    </div>
+                    <div v-if="selectedEvent?.pending_delta" class="delta-note">本事件在上一轮研判后合并了 {{ (selectedEvent.pending_delta.clue_ids || []).length }} 条新线索，触发 AI 研判将进行增量研判。</div>
+                    <div v-if="judgmentHistory.length" class="judgment-history">
+                      <h4>研判轮次记录（共 {{ judgmentHistory.length + (judgment?.final_response ? 1 : 0) }} 轮）</h4>
+                      <ol>
+                        <li v-for="item in judgmentHistory" :key="`${item.round}-${item.task_id || item.archived_at}`">
+                          <strong>第 {{ item.round }} 轮</strong>
+                          <span>{{ formatTime(item.completed_at || item.archived_at) }}</span>
+                          <p>{{ item.final_response }}</p>
+                        </li>
+                      </ol>
+                    </div>
+                  </section>
+
+                  <section v-else-if="section.key === 'disposal'" v-show="!selectedEvent.archived" class="special-panel confirmation" aria-label="处置操作">
+                    <div class="disposal-actions">
+                      <button type="button" class="disposal-button primary" @click="openDispatchPage">派单处理</button>
+                      <button type="button" class="disposal-button" @click="openFeedbackDialog">事件反馈</button>
+                      <button type="button" class="disposal-button" @click="openArchiveDialog">归档事件</button>
+                    </div>
+                    <div class="operation-history-block" aria-label="操作历史">
+                      <h4>操作历史</h4>
+                      <p v-if="!operationRecords.length" class="source-empty">暂无处置记录</p>
+                      <ol v-else class="operation-list">
+                        <li v-for="(record, index) in operationRecords" :key="record.operation_id || index">
+                          <strong>{{ operationActionLabel(record.action) }}</strong>
+                          <span>{{ record.summary }}</span>
+                          <small>{{ formatTime(record.created_at) }} · {{ record.actor?.username || '系统' }}</small>
+                        </li>
+                      </ol>
+                    </div>
+                  </section>
+
+                  <section v-else-if="section.key === 'tasks'" class="special-panel task-section" aria-label="关联研判任务">
+                    <button v-for="task in tasks" :key="task.task_id" type="button" class="task-card" @click="$emit('open-task', task)">
+                      <span><strong>{{ task.title || 'AI 研判任务' }}</strong><small>{{ task.status || '待执行' }}</small></span>
+                      <span class="task-arrow">进入任务 →</span>
+                    </button>
+                    <p v-if="!tasks.length" class="source-empty">暂无关联研判任务</p>
+                  </section>
+
+                  <template v-else>
+                    <p class="source-summary">{{ section.value?.summary || '尚未抓取该数据源' }}</p>
+                    <div class="source-meta"><span>记录数 {{ sourceRecordCount(section.value) }}</span><span v-if="section.value?.metadata?.time_range">{{ section.value.metadata.time_range.join(' ~ ') }}</span></div>
+
+                    <template v-if="section.key === 'monitoring'">
+                      <div class="monitoring-toolbar">
+                        <div class="monitoring-overview">
+                          <div><span>小时数据</span><strong>{{ hourRecords.length }}</strong><small>条</small></div>
+                          <div><span>五分钟数据</span><strong>{{ monitoringRows(section.value, 'station_5minute').length }}</strong><small>条</small></div>
+                        </div>
+                        <div class="view-toggle" role="group" aria-label="监测数据视图切换">
+                          <button type="button" :class="{ active: monitoringView === 'chart' }" aria-label="六参折线时序图" @click="monitoringView = 'chart'">折线图</button>
+                          <button type="button" :class="{ active: monitoringView === 'table' }" aria-label="小时数据表" @click="monitoringView = 'table'">数据表</button>
+                        </div>
+                      </div>
+                      <div v-if="monitoringView === 'chart'" class="hour-line-chart" aria-label="六参折线时序图">
+                        <div v-if="hourChartOption" ref="hourChartRef" class="chart-canvas"></div>
+                        <p v-else class="source-empty">暂无小时监测数据，无法绘制时序图</p>
+                      </div>
+                      <template v-else>
+                        <div v-for="kind in ['station_hour', 'station_5minute']" :key="kind" class="data-subsection">
+                          <h4>{{ kind === 'station_hour' ? '站点小时数据' : '站点五分钟数据' }}</h4>
+                          <div v-if="monitoringRows(section.value, kind).length" class="source-table-wrap">
+                            <table class="source-table"><thead><tr><th v-for="column in monitoringColumns" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in monitoringRows(section.value, kind).slice(0, 12)" :key="index"><td v-for="column in monitoringColumns" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
+                          </div>
+                          <p v-else class="source-empty">暂无{{ kind === 'station_hour' ? '小时' : '五分钟' }}监测数据</p>
+                        </div>
+                      </template>
+                      <div v-if="deltaChartOption" class="regional-delta-block" aria-label="区域差异柱状图">
+                        <h4>区域差异（本站均值 − 区域均值，事件时段）</h4>
+                        <div ref="deltaChartRef" class="chart-canvas delta-canvas"></div>
+                        <p class="delta-legend">蓝色柱：与周边站点差值；红色柱：与全市其余站点差值。正值表示本站高于区域背景，负值表示低于区域背景。</p>
+                      </div>
+                    </template>
+
+                    <div v-else-if="sourceRows(section).length" class="source-table-wrap">
+                      <table class="source-table"><thead><tr><th v-for="column in sourceColumns(section)" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in sourceRows(section).slice(0, 12)" :key="index"><td v-for="column in sourceColumns(section)" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
+                    </div>
+                    <p v-else class="source-empty">暂无{{ section.label }}数据</p>
+                  </template>
+                </article>
+              </main>
             </div>
-            <textarea v-model="judgmentNote" aria-label="研判说明" rows="3" placeholder="补充研判说明（可选）" />
-            <div class="confirmation-actions">
-              <button type="button" :disabled="confirmationBusy || !judgmentType.trim()" @click="saveJudgment">保存并确认</button>
-              <button type="button" :disabled="confirmationBusy || !selectedEvent.manual_confirmation?.confirmed" @click="archiveSelectedEvent">归档事件</button>
-              <span v-if="actionMessage" class="action-message">{{ actionMessage }}</span>
-            </div>
-          </section>
-          <section class="task-section" aria-label="关联研判任务">
-            <div class="section-title"><strong>关联任务</strong><span>{{ tasks.length }} 个</span></div>
-            <button v-for="task in tasks" :key="task.task_id" type="button" class="task-card" @click="$emit('open-task', task)">
-              <span><strong>{{ task.title || 'AI 研判任务' }}</strong><small>{{ task.status || '待执行' }}</small></span>
-              <span class="task-arrow">进入任务 →</span>
-            </button>
           </section>
         </template>
       </section>
+      <div v-if="dispatchDialogVisible" class="archive-overlay" role="dialog" aria-modal="true" aria-label="工单派发">
+        <div class="archive-dialog dispatch-dialog">
+          <header><strong>工单派发</strong><button type="button" aria-label="关闭工单派发窗口" @click="dispatchDialogVisible = false">×</button></header>
+          <dl class="dispatch-facts">
+            <div><dt>事件名称</dt><dd>{{ selectedEvent?.event_name || selectedEvent?.initial_event_name || '-' }}</dd></div>
+            <div><dt>站点</dt><dd>{{ selectedEvent?.site_name || selectedEvent?.site_id || '-' }}</dd></div>
+            <div><dt>事件等级</dt><dd>{{ selectedEvent?.ai_suggested_level || '待定' }}</dd></div>
+            <div><dt>当前状态</dt><dd>{{ selectedEvent?.event_status || '待研判' }}</dd></div>
+          </dl>
+          <div class="dispatch-form">
+            <label><span>派发工单类型</span><input v-model="dispatchOrder.type" type="text" placeholder="如：现场核查 / 仪器维修" /></label>
+            <label><span>指派人员</span><input v-model="dispatchOrder.assignee" type="text" placeholder="运维处置人员" /></label>
+            <label><span>工单标题</span><input v-model="dispatchOrder.title" type="text" placeholder="请输入工单标题" /></label>
+            <label class="dispatch-description"><span>工单说明</span><textarea v-model="dispatchOrder.description" rows="5" /></label>
+          </div>
+          <div class="confirmation-actions">
+            <button type="button" class="primary-button" :disabled="confirmationBusy || !dispatchOrder.title.trim()" @click="submitDispatchOrder">提交派单</button>
+            <button type="button" class="secondary-button" @click="dispatchDialogVisible = false">取消</button>
+          </div>
+        </div>
+      </div>
+      <div v-if="feedbackDialogVisible" class="archive-overlay" role="dialog" aria-modal="true" aria-label="事件反馈">
+        <div class="archive-dialog">
+          <header><strong>事件反馈</strong><button type="button" aria-label="关闭事件反馈窗口" @click="feedbackDialogVisible = false">×</button></header>
+          <p class="dialog-note">反馈将以增量对话提交给上一轮 AI 研判，研判结论会被更新替换。</p>
+          <label class="dispatch-description"><span>反馈信息</span><textarea v-model="feedbackText" rows="5" placeholder="请输入现场处理结果、核查结论或补充说明" /></label>
+          <label class="dispatch-attachment"><span>附件（仅记录附件名称）</span><input type="file" multiple @change="handleFeedbackAttachments" /></label>
+          <p v-if="feedbackAttachmentNames.length" class="attachment-names">已选择：{{ feedbackAttachmentNames.join('、') }}</p>
+          <div class="confirmation-actions">
+            <button type="button" class="primary-button" :disabled="confirmationBusy || !feedbackText.trim()" @click="submitFeedback">提交反馈</button>
+            <button type="button" class="secondary-button" @click="feedbackDialogVisible = false">取消</button>
+          </div>
+        </div>
+      </div>
+      <div v-if="archiveDialogVisible" class="archive-overlay" role="dialog" aria-modal="true" aria-label="归档事件">
+        <div class="archive-dialog">
+          <header><strong>归档事件</strong><button type="button" aria-label="关闭归档窗口" @click="archiveDialogVisible = false">×</button></header>
+          <p class="dialog-note">默认带入当前研判结论，人工可修改；确认归档后事件锁定。</p>
+          <div class="dispatch-form">
+            <label><span>归档事件类型</span><input v-model="archiveConfirmation.eventType" type="text" placeholder="归档确认的事件类型" /></label>
+            <label><span>归档事件等级</span>
+              <select v-model="archiveConfirmation.level" aria-label="归档事件等级">
+                <option value="">待定</option>
+                <option v-for="level in ['P0', 'P1', 'P2', 'P3']" :key="level" :value="level">{{ level }}</option>
+              </select>
+            </label>
+            <label><span>是否有数据影响</span>
+              <select v-model="archiveConfirmation.dataImpact" aria-label="是否有数据影响">
+                <option v-for="option in ['有数据影响', '无数据影响', '待确认']" :key="option" :value="option">{{ option }}</option>
+              </select>
+            </label>
+            <label><span>归档事件名称</span><input v-model="archiveConfirmation.eventName" type="text" placeholder="归档确认的事件名称" /></label>
+            <label class="dispatch-description"><span>归档反馈（可选）</span><textarea v-model="archiveFeedback" rows="3" placeholder="请输入归档反馈内容" /></label>
+          </div>
+          <div class="confirmation-actions">
+            <button type="button" class="primary-button" :disabled="confirmationBusy" @click="archiveSelectedEvent">确认归档</button>
+            <button type="button" class="secondary-button" @click="archiveDialogVisible = false">取消</button>
+          </div>
+        </div>
+      </div>
   </section>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import * as echarts from 'echarts'
 import {
   archiveJiangsuSmartEvent,
+  dispatchJiangsuSmartEventOrder,
   getJiangsuSmartEvent,
+  getJiangsuSmartEventConfig,
   listJiangsuSmartEventTasks,
   listJiangsuSmartEvents,
+  collectJiangsuSmartEventEvidence,
+  submitJiangsuSmartEventFeedback,
   submitJiangsuSmartEventJudgment,
+  dispatchJiangsuSmartEventAiJudgment,
+  saveJiangsuSmartEventConfig,
 } from '@/services/jiangsuSmartEventsApi.js'
 
 const props = defineProps({
@@ -159,8 +423,179 @@ const judgmentLevel = ref('')
 const judgmentNote = ref('')
 const confirmationBusy = ref(false)
 const actionMessage = ref('')
+const dispatchDialogVisible = ref(false)
+const feedbackDialogVisible = ref(false)
+const feedbackText = ref('')
+const feedbackAttachmentNames = ref([])
+const dispatchOrder = ref({ type: '', assignee: '运维处置人员', title: '', description: '' })
+const archiveConfirmation = ref({ eventType: '', level: '', dataImpact: '待确认', eventName: '' })
+const archiveDialogVisible = ref(false)
+const archiveFeedback = ref('')
 const viewMode = ref(props.initialEventId ? 'detail' : 'list')
+const evidenceBusy = ref(false)
+const aiBusyIds = ref(new Set())
+const activeEvidenceKey = ref('event')
+const evidenceContent = ref(null)
 const judgment = computed(() => selectedEvent.value?.ai_judgment || null)
+const judgmentHistory = computed(() => Array.isArray(selectedEvent.value?.judgment_history) ? selectedEvent.value.judgment_history : [])
+const judgmentRounds = computed(() => judgmentHistory.value.length + (judgment.value?.final_response ? 1 : 0))
+const eventConfig = ref(null)
+
+const structuredJudgment = computed(() => {
+  const raw = selectedEvent.value?.ai_structured_judgment
+  if (raw && typeof raw === 'object' && Object.keys(raw).length) return raw
+  return {
+    event_type: selectedEvent.value?.ai_event_type || '',
+    data_impact: selectedEvent.value?.ai_data_impact || '',
+    suggested_level: selectedEvent.value?.ai_suggested_level || '',
+  }
+})
+const aiTypeText = computed(() => structuredJudgment.value.event_type || selectedEvent.value?.event_type || '待 AI 研判')
+const dataImpactText = computed(() => structuredJudgment.value.data_impact || selectedEvent.value?.ai_data_impact || '待确认')
+const dataImpactClass = computed(() => {
+  if (dataImpactText.value === '有数据影响') return 'impact-yes'
+  if (dataImpactText.value === '无数据影响') return 'impact-no'
+  return 'impact-unknown'
+})
+const levelText = computed(() => structuredJudgment.value.suggested_level || selectedEvent.value?.ai_suggested_level || '待研判')
+const judgmentName = computed(() => selectedEvent.value?.ai_event_name || '')
+const judgmentSummary = computed(() => structuredJudgment.value.diagnosis_note || selectedEvent.value?.ai_diagnosis_note || '')
+const disposalSuggestions = computed(() => Array.isArray(structuredJudgment.value.disposal_suggestions) ? structuredJudgment.value.disposal_suggestions.filter(Boolean) : [])
+const primaryEvidenceTags = computed(() => Array.isArray(structuredJudgment.value.primary_evidence_tags) ? structuredJudgment.value.primary_evidence_tags.filter(Boolean) : [])
+const supportingEvidenceTags = computed(() => Array.isArray(structuredJudgment.value.supporting_evidence_tags) ? structuredJudgment.value.supporting_evidence_tags.filter(Boolean) : [])
+const complianceResultText = computed(() => structuredJudgment.value.compliance_explanation_result || '')
+const continuityLabel = computed(() => {
+  const result = selectedEvent.value?.last_continuity_result
+  if (result === 'same_cause') return '连续性：同一原因延续'
+  if (result === 'new_cause') return '连续性：新事件'
+  return ''
+})
+const DATA_ANALYSIS_LABELS = [
+  { key: 'station_series_analysis', label: '本站点污染物时序变化' },
+  { key: 'regional_comparison_analysis', label: '区域背景对比' },
+  { key: 'data_impact_assessment', label: '数据影响判断' },
+  { key: 'logic_direction_check', label: '事件与数据逻辑方向校验' },
+]
+const dataAnalysisEntries = computed(() => {
+  // V3.0 9.6：数据详细分析仅在有数据影响时展示。
+  if (dataImpactText.value !== '有数据影响') return []
+  const analysis = structuredJudgment.value.data_analysis
+  if (!analysis || typeof analysis !== 'object') return []
+  return DATA_ANALYSIS_LABELS
+    .map(item => ({ ...item, text: String(analysis[item.key] || '').trim() }))
+    .filter(item => item.text)
+})
+const paramSnapshot = computed(() => {
+  const pkg = selectedEvent.value?.evidence_package || {}
+  const windows = pkg.time_windows || {}
+  const policy = pkg.collection_policy || {}
+  const comparison = (pkg.sources || {}).comparison || {}
+  const config = eventConfig.value || {}
+  const items = []
+  if (windows.event?.start) items.push({ label: '事件窗口', value: `${windows.event.start} ~ ${windows.event.end}` })
+  if (windows.query?.start) items.push({ label: '前后分析窗口', value: `${windows.query.start} ~ ${windows.query.end}（前后各扩展 ${policy.event_extension_minutes ?? windows.extension_minutes ?? 30} 分钟）` })
+  if (config.event_merge_window_minutes) items.push({ label: '事件归并窗口', value: `同站点同自然日归并（参考窗口 ${config.event_merge_window_minutes} 分钟）` })
+  if (comparison.comparison_scope) items.push({ label: '对照范围', value: comparison.comparison_scope === 'same_district' ? `同区县省控站点${comparison.station_codes?.length ? `（${comparison.station_codes.length} 个）` : ''}` : comparison.comparison_scope })
+  if (config.station_missing_factor_threshold) items.push({ label: '站点级断数因子数阈值', value: config.station_missing_factor_threshold })
+  if (config.multi_instrument_threshold) items.push({ label: '多仪器断数因子数阈值', value: config.multi_instrument_threshold })
+  if (config.data_anomaly_threshold_pct) items.push({ label: '异常变化率阈值', value: `${config.data_anomaly_threshold_pct}%` })
+  if (config.video_tag_confidence_threshold) items.push({ label: '视频置信度阈值', value: config.video_tag_confidence_threshold })
+  const limits = config.pollutant_hour_limits || {}
+  const limitItems = Object.entries(limits).filter(([, v]) => v != null)
+  if (limitItems.length) items.push({ label: '浓度超限阈值', value: limitItems.map(([k, v]) => `${k}:${v}`).join(' ') })
+  if (policy.compliance_scope) items.push({ label: '合规时间匹配', value: policy.compliance_scope === 'event_natural_day' ? '同站点事件自然日' : policy.compliance_scope })
+  return items
+})
+const loadEventConfig = async () => {
+  try {
+    const payload = await getJiangsuSmartEventConfig()
+    eventConfig.value = payload.config || null
+  } catch (err) {
+    eventConfig.value = null
+  }
+}
+
+const configBusy = ref(false)
+const configError = ref('')
+const configSaving = ref(false)
+const configSaveMessage = ref('')
+const configSaveOk = ref(false)
+const configDraft = ref({
+  event_merge_window_minutes: 60,
+  event_before_extend_minutes: 30,
+  event_after_extend_minutes: 30,
+  station_missing_factor_threshold: 2,
+  multi_instrument_threshold: 2,
+  data_anomaly_threshold_pct: 20,
+  pm_rise_threshold_pct: 20,
+  video_tag_confidence_threshold: 0.7,
+  pollutant_hour_limits: { SO2: 150, NO2: 200, O3: 200, PM10: 150, 'PM2.5': 75, CO: null },
+  ai_event_type_dictionary: [],
+  initial_naming_priority: [],
+  _aiDictionaryText: '',
+})
+
+const openConfig = async () => {
+  viewMode.value = 'config'
+  configBusy.value = true
+  configError.value = ''
+  configSaveMessage.value = ''
+  try {
+    const payload = await getJiangsuSmartEventConfig()
+    const cfg = payload.config || {}
+    const limits = cfg.pollutant_hour_limits || {}
+    configDraft.value = {
+      event_merge_window_minutes: cfg.event_merge_window_minutes ?? 60,
+      event_before_extend_minutes: cfg.event_before_extend_minutes ?? 30,
+      event_after_extend_minutes: cfg.event_after_extend_minutes ?? 30,
+      station_missing_factor_threshold: cfg.station_missing_factor_threshold ?? 2,
+      multi_instrument_threshold: cfg.multi_instrument_threshold ?? 2,
+      data_anomaly_threshold_pct: cfg.data_anomaly_threshold_pct ?? 20,
+      pm_rise_threshold_pct: cfg.pm_rise_threshold_pct ?? 20,
+      video_tag_confidence_threshold: cfg.video_tag_confidence_threshold ?? 0.7,
+      pollutant_hour_limits: {
+        SO2: limits.SO2 ?? 150,
+        NO2: limits.NO2 ?? 200,
+        O3: limits.O3 ?? 200,
+        PM10: limits.PM10 ?? 150,
+        'PM2.5': limits['PM2.5'] ?? 75,
+        CO: limits.CO ?? null,
+      },
+      ai_event_type_dictionary: Array.isArray(cfg.ai_event_type_dictionary) ? [...cfg.ai_event_type_dictionary] : [],
+      initial_naming_priority: Array.isArray(cfg.initial_naming_priority) ? [...cfg.initial_naming_priority] : [],
+      _aiDictionaryText: (cfg.ai_event_type_dictionary || []).join('\n'),
+    }
+  } catch (err) {
+    configError.value = '加载配置失败：' + (err?.message || err)
+  } finally {
+    configBusy.value = false
+  }
+}
+
+const parseDictionaryText = () => {
+  configDraft.value.ai_event_type_dictionary = configDraft.value._aiDictionaryText
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+const saveConfig = async () => {
+  parseDictionaryText()
+  configSaving.value = true
+  configSaveMessage.value = ''
+  try {
+    const { _aiDictionaryText, ...values } = configDraft.value
+    await saveJiangsuSmartEventConfig(values)
+    configSaveMessage.value = '配置已保存'
+    configSaveOk.value = true
+  } catch (err) {
+    configSaveMessage.value = '保存失败：' + (err?.message || err)
+    configSaveOk.value = false
+  } finally {
+    configSaving.value = false
+  }
+}
+const aiDispatchDescription = computed(() => judgment.value?.final_response || selectedEvent.value?.ai_data_impact || selectedEvent.value?.primary_clue_tag || '请根据事件证据完成现场核查与处置。')
 const operationRecords = computed(() => Array.isArray(selectedEvent.value?.operation_records) ? selectedEvent.value.operation_records : [])
 const statusOptions = computed(() => [...new Set(events.value.map(item => item.event_status).filter(Boolean))])
 const typeOptions = computed(() => [...new Set(events.value.map(item => item.ai_event_type || item.event_type).filter(Boolean))])
@@ -178,12 +613,298 @@ const pendingCount = computed(() => events.value.filter(item => !item.ai_judgmen
 const stationCount = computed(() => new Set(events.value.map(item => item.site_id || item.site_name).filter(Boolean)).size)
 const lastSyncTime = computed(() => formatTime(lastSync.value))
 
+const tagSourceClass = source => {
+  const text = String(source || '')
+  if (text.includes('视频')) return 'video'
+  if (text.includes('数据')) return 'data'
+  if (text.includes('断数')) return 'missing'
+  if (text.includes('超限')) return 'exceed'
+  if (text.includes('合规')) return 'compliance'
+  if (text.includes('报警')) return 'alarm'
+  return ''
+}
+const tagChips = event => {
+  const tags = Array.isArray(event?.clue_tags) ? event.clue_tags.filter(Boolean) : []
+  const groups = new Map()
+  for (const tag of tags) {
+    const name = tag.tag_name || tag.tag_display_text || '告警线索'
+    const entry = groups.get(name) || { name, count: 0, source: tag.tag_source || '' }
+    entry.count += 1
+    groups.set(name, entry)
+  }
+  if (!groups.size) {
+    const fallback = event?.primary_clue_tag || event?.source_alarm_rule_type
+    if (fallback) groups.set(fallback, { name: fallback, count: 1, source: '' })
+  }
+  return [...groups.values()].map(entry => ({
+    ...entry,
+    label: entry.count > 1 ? `${entry.name} x${entry.count}` : entry.name,
+    klass: tagSourceClass(entry.source),
+  }))
+}
+const expandedTagIds = ref(new Set())
+const visibleTagChips = event => {
+  const chips = tagChips(event)
+  return expandedTagIds.value.has(String(event.event_id)) ? chips : chips.slice(0, 6)
+}
+const hiddenTagCount = event => {
+  const chips = tagChips(event)
+  return expandedTagIds.value.has(String(event.event_id)) ? 0 : Math.max(0, chips.length - 6)
+}
+const expandTags = id => { expandedTagIds.value = new Set(expandedTagIds.value).add(String(id)) }
+const detailTagChips = computed(() => tagChips(selectedEvent.value))
+const evidenceSourceEntries = computed(() => {
+  const labels = { monitoring: '本站监测数据', station_alarm: '站房设备报警', platform_alarm: '平台报警', acquisition_alarm: '数采报警', environment: '动力环境历史', qc_history: '质控操作记录', compliance: '运维工单检索', comparison: '片区小时对比', weather: '气象时序数据', instrument_status: '仪器状态', door: '门禁记录', video: '视频监控记录' }
+  const packageData = selectedEvent.value?.evidence_package || {}
+  const sources = packageData.sources || {}
+  const gaps = Array.isArray(packageData.gaps) ? packageData.gaps : []
+  const entries = Object.entries(sources).map(([key, value], index) => ({ key, label: labels[key] || key, value, index: index + 1 }))
+  gaps.forEach(gap => {
+    if (!gap?.source || entries.some(entry => entry.key === gap.source)) return
+    entries.push({
+      key: gap.source,
+      label: labels[gap.source] || gap.source,
+      value: { status: gap.status || 'unavailable', summary: gap.reason || '该数据源暂不可用', data: [] }, index: entries.length + 1,
+    })
+  })
+  return entries
+})
+const workbenchSections = computed(() => [
+  { key: 'event', label: '事件基础信息', value: { status: 'success', success: true }, index: 1 },
+  ...evidenceSourceEntries.value.map((entry, index) => ({ ...entry, index: index + 2 })),
+  { key: 'judgment', label: 'AI研判结果', index: evidenceSourceEntries.value.length + 2, value: { status: judgment.value?.final_response ? 'success' : 'empty', success: Boolean(judgment.value?.final_response) } },
+  { key: 'disposal', label: '处置操作', index: evidenceSourceEntries.value.length + 3, value: { status: selectedEvent.value?.archived ? 'success' : 'empty', success: Boolean(selectedEvent.value?.archived) } },
+  { key: 'tasks', label: '关联任务', index: evidenceSourceEntries.value.length + 4, value: { status: tasks.value.length ? 'success' : 'empty', success: tasks.value.length > 0 } },
+])
+const eventFacts = computed(() => [
+  { label: '站点名称', value: selectedEvent.value?.site_name || selectedEvent.value?.site_id || '-' },
+  { label: '发生时间', value: formatTime(selectedEvent.value?.event_start_time) },
+  { label: '事件名称', value: selectedEvent.value?.event_name || selectedEvent.value?.initial_event_name || '-' },
+  { label: '告警类型', value: selectedEvent.value?.source_alarm_rule_type || selectedEvent.value?.primary_clue_tag || '待识别' },
+  { label: '告警内容', value: selectedEvent.value?.alarm_content || '暂无具体告警内容' },
+  { label: '线索数量', value: selectedEvent.value?.clue_count || detailTagChips.value.length || '-' },
+  { label: 'AI事件类型', value: selectedEvent.value?.ai_event_type || '待研判' },
+  { label: '处理状态', value: selectedEvent.value?.event_status || '未研判' },
+  { label: '数据影响', value: selectedEvent.value?.ai_data_impact || '待确认' },
+  { label: '建议等级', value: selectedEvent.value?.ai_suggested_level || '待研判' },
+  { label: '研判轮次', value: judgmentRounds.value || '待研判' },
+])
+const monitoringColumns = [
+  { key: 'timePoint', label: '时间' },
+  { key: 'sO2', label: 'SO₂' },
+  { key: 'nO2', label: 'NO₂' },
+  { key: 'co', label: 'CO' },
+  { key: 'o3', label: 'O₃' },
+  { key: 'pM10', label: 'PM₁₀' },
+  { key: 'pM2_5', label: 'PM₂.₅' },
+  { key: 'temperature', label: '气温' },
+  { key: 'humidity', label: '湿度' },
+  { key: 'windSpeed', label: '风速' },
+]
+const sourceColumnDefinitions = {
+  station_alarm: [
+    { key: 'alarmTime', label: '告警时间' }, { key: 'stationName', label: '站点名称' },
+    { key: 'description', label: '告警信息' }, { key: 'alarmGrade', label: '告警等级' },
+  ],
+  platform_alarm: [
+    { key: 'alarmtime', label: '告警时间' }, { key: 'stationName', label: '站点名称' },
+    { key: 'ddruletype', label: '告警类型' }, { key: 'content', label: '告警信息' },
+  ],
+  acquisition_alarm: [
+    { key: 'lauchTime', label: '告警时间' }, { key: 'stationName', label: '站点名称' },
+    { key: 'typeStr', label: '告警类型' }, { key: 'descriptionDE', label: '告警信息' },
+  ],
+  environment: [
+    { key: 'timePoint', label: '时间' }, { key: 'itemName', label: '监测项' },
+    { key: 'value', label: '监测值' }, { key: 'mark', label: '标识' },
+  ],
+  qc_history: [
+    { key: 'createTime', label: '记录时间' }, { key: 'stationName', label: '站点名称' },
+    { key: 'missionName', label: '质控任务' }, { key: 'result', label: '质控结果' },
+  ],
+  compliance: [
+    { key: 'createTime', label: '创建时间' }, { key: 'orderType', label: '工单类型' },
+    { key: 'orderTitle', label: '工单标题' }, { key: 'workingOrderCode', label: '工单号' },
+    { key: 'orderStatus', label: '工单状态' }, { key: 'handler', label: '处理人' },
+  ],
+  comparison: monitoringColumns,
+  weather: [
+    { key: 'timePoint', label: '时间' }, { key: 'temperature', label: '气温' },
+    { key: 'humidity', label: '湿度' }, { key: 'windSpeed', label: '风速' },
+    { key: 'windDirection', label: '风向' }, { key: 'pressure', label: '气压' },
+  ],
+  instrument_status: [
+    { key: 'timePoint', label: '时间' }, { key: 'statusName', label: '监测项' },
+    { key: 'moniterValue', label: '监测值' }, { key: 'targetUnit', label: '单位' },
+    { key: 'lowLimit', label: '下限' }, { key: 'topLimit', label: '上限' },
+  ],
+  door: [
+    { key: 'eventTime', label: '事件时间' }, { key: 'doorName', label: '门禁点' },
+    { key: 'personName', label: '姓名' }, { key: 'direction', label: '出/入' },
+    { key: 'eventType', label: '事件类型' },
+  ],
+}
+
 const statusClass = event => {
   const status = String(event?.event_status || '')
-  if (status.includes('完成') || status.includes('归档')) return 'success'
-  if (status.includes('处理中') || status.includes('研判')) return 'warning'
+  if (status.includes('完成') || status.includes('归档') || status.includes('已反馈')) return 'success'
+  if (status.includes('处理中') || status.includes('研判') || status.includes('处置中')) return 'warning'
   return 'pending'
 }
+
+const OPERATION_ACTION_LABELS = {
+  dispatch_order: '派单处置',
+  event_feedback: '事件反馈',
+  archive_event: '事件归档',
+  confirm_ai_judgment: '人工确认研判',
+  save_ai_judgment_draft: '保存确认草稿',
+}
+const operationActionLabel = action => OPERATION_ACTION_LABELS[action] || action || '事件操作'
+
+const sourceStatus = source => {
+  if (!source) return '未抓取'
+  if (source.status === 'success') return '已获取'
+  if (source.success === true && !source.status) return '已获取'
+  if (source.status === 'empty') return '无记录'
+  if (source.status === 'unavailable') return '暂不可用'
+  return source.status === 'partial' ? '部分获取' : '获取失败'
+}
+const sourceStatusClass = source => source?.status === 'success' || (source?.success === true && !source?.status) ? 'ok' : source?.status === 'empty' ? 'empty' : 'bad'
+const sourceRecordCount = source => {
+  if (!source) return 0
+  if (source.record_count != null) return source.record_count
+  if (source.data?.station_hour?.record_count != null) return Number(source.data.station_hour.record_count || 0) + Number(source.data.station_5minute?.record_count || 0)
+  return Array.isArray(source.data) ? source.data.length : 0
+}
+const normalizeQcRow = row => ({
+  ...row,
+  missionName: row?.missionName || row?.Mission_Name || row?.rName || row?.taskName || row?.missionGroupName || row?.Mission_Group_Name || row?.poll || '-',
+  result: row?.result || row?.Result || row?.qcResult || '-',
+})
+const sourceRows = section => {
+  const source = section?.value
+  if (!source) return []
+  if (Array.isArray(source.data)) {
+    let rows = source.data.flatMap(row => row?.result?.alarmLogs || row?.alarmLogs || [row])
+    if (section.key === 'qc_history') rows = rows.map(normalizeQcRow)
+    return rows.filter(row => row && typeof row === 'object')
+  }
+  if (source.data && typeof source.data === 'object') {
+    const rows = source.data.tableData || source.data.chartData || source.data.records || source.data.items
+    return Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object') : []
+  }
+  return []
+}
+const sourceColumns = source => {
+  return sourceColumnDefinitions[source?.key] || []
+}
+const monitoringRows = (source, kind) => Array.isArray(source?.data?.[kind]?.data) ? source.data[kind].data : []
+const displayCell = (row, column) => {
+  const value = row?.[column]
+  if (value == null || value === '') return '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value).length > 72 ? `${String(value).slice(0, 72)}…` : String(value)
+}
+
+const monitoringView = ref('chart')
+const hourChartRef = ref(null)
+const deltaChartRef = ref(null)
+let hourChartInstance = null
+let deltaChartInstance = null
+const POLLUTANT_SERIES = [
+  { key: 'pM10', label: 'PM10' },
+  { key: 'pM2_5', label: 'PM2.5' },
+  { key: 'sO2', label: 'SO2' },
+  { key: 'nO2', label: 'NO2' },
+  { key: 'co', label: 'CO' },
+  { key: 'o3', label: 'O3' },
+]
+const recordPollutant = (row, key) => {
+  if (!row) return null
+  for (const candidate of [key, key.toUpperCase(), key.toLowerCase()]) {
+    if (row[candidate] != null && row[candidate] !== '') {
+      const value = Number(row[candidate])
+      return Number.isFinite(value) && value > -900 ? value : null
+    }
+  }
+  return null
+}
+const hourRecords = computed(() => {
+  const data = selectedEvent.value?.evidence_package?.sources?.monitoring?.data?.station_hour?.data
+  return Array.isArray(data) ? data.filter(row => row && typeof row === 'object') : []
+})
+const hourTimes = computed(() => [...new Set(hourRecords.value.map(row => String(row.timePoint || '')).filter(Boolean))].sort())
+const hourChartOption = computed(() => {
+  if (!hourTimes.value.length) return null
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { data: POLLUTANT_SERIES.map(item => item.label), top: 0 },
+    grid: { left: 56, right: 24, top: 36, bottom: 56 },
+    xAxis: { type: 'category', data: hourTimes.value, axisLabel: { formatter: value => String(value).slice(5, 16) } },
+    yAxis: { type: 'value', name: '浓度' },
+    series: POLLUTANT_SERIES.map(item => ({
+      name: item.label,
+      type: 'line',
+      showSymbol: false,
+      connectNulls: true,
+      emphasis: { focus: 'series' },
+      data: hourTimes.value.map(time => {
+        const row = hourRecords.value.find(record => String(record.timePoint) === time)
+        return recordPollutant(row, item.key)
+      }),
+    })),
+  }
+})
+const regionalDeltas = computed(() => {
+  const deltas = selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas
+  return deltas && typeof deltas === 'object' ? deltas : null
+})
+const deltaChartOption = computed(() => {
+  if (!regionalDeltas.value) return null
+  const order = Array.isArray(regionalDeltas.value.pollutant_order) && regionalDeltas.value.pollutant_order.length
+    ? regionalDeltas.value.pollutant_order
+    : POLLUTANT_SERIES.map(item => item.label)
+  const nearby = regionalDeltas.value.nearby_station_delta || {}
+  const city = regionalDeltas.value.same_city_delta || {}
+  const names = order.filter(name => nearby[name] != null || city[name] != null)
+  if (!names.length) return null
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['与周边站点差值', '与全市其余站点差值'], top: 0 },
+    grid: { left: 56, right: 24, top: 36, bottom: 32 },
+    xAxis: { type: 'category', data: names },
+    yAxis: { type: 'value', name: '差值' },
+    series: [
+      { name: '与周边站点差值', type: 'bar', itemStyle: { color: '#1677ff' }, data: names.map(name => nearby[name] ?? null) },
+      { name: '与全市其余站点差值', type: 'bar', itemStyle: { color: '#d4380d' }, data: names.map(name => city[name] ?? null) },
+    ],
+  }
+})
+const ensureChart = (holder, instance, option) => {
+  if (!holder || !option) return null
+  if (instance && (instance.isDisposed() || instance.getDom() !== holder)) {
+    instance.dispose()
+    instance = null
+  }
+  const chart = instance || echarts.init(holder)
+  chart.setOption(option, true)
+  return chart
+}
+const renderCharts = async () => {
+  await nextTick()
+  if (monitoringView.value === 'chart' && hourChartRef.value && hourChartOption.value) {
+    hourChartInstance = ensureChart(hourChartRef.value, hourChartInstance, hourChartOption.value)
+  }
+  if (deltaChartRef.value && deltaChartOption.value) {
+    deltaChartInstance = ensureChart(deltaChartRef.value, deltaChartInstance, deltaChartOption.value)
+  }
+}
+const handleChartResize = () => {
+  hourChartInstance?.resize()
+  deltaChartInstance?.resize()
+}
+watch([hourChartOption, deltaChartOption, monitoringView], () => { renderCharts() })
+onMounted(() => { window.addEventListener('resize', handleChartResize) })
 
 const formatTime = value => {
   if (!value) return '时间未知'
@@ -201,6 +922,7 @@ const selectEvent = async eventId => {
     ])
     selectedEvent.value = detail.event || null
     tasks.value = taskPayload.tasks || []
+    if (eventConfig.value === null) loadEventConfig()
     judgmentType.value = selectedEvent.value?.manual_confirmation?.event_type || selectedEvent.value?.ai_event_type || ''
     judgmentLevel.value = selectedEvent.value?.manual_confirmation?.level || selectedEvent.value?.ai_suggested_level || ''
     judgmentNote.value = selectedEvent.value?.manual_confirmation?.diagnosis_note || ''
@@ -218,10 +940,71 @@ const openDetail = async eventId => {
   await selectEvent(eventId)
 }
 
+const isAiBusy = eventId => aiBusyIds.value.has(String(eventId))
+
+const dispatchAiJudgment = async event => {
+  const eventId = String(event?.event_id || '')
+  if (!eventId || isAiBusy(eventId)) return
+  aiBusyIds.value = new Set(aiBusyIds.value).add(eventId)
+  error.value = ''
+  actionMessage.value = ''
+  try {
+    const payload = await dispatchJiangsuSmartEventAiJudgment(eventId)
+    const updated = payload.event
+    if (updated) {
+      const index = events.value.findIndex(item => String(item.event_id) === eventId)
+      if (index >= 0) events.value.splice(index, 1, updated)
+      if (String(selectedEvent.value?.event_id) === eventId) selectedEvent.value = updated
+    }
+    actionMessage.value = 'AI研判任务已提交，可在任务管理中查看'
+  } catch (err) {
+    actionMessage.value = err?.message || 'AI研判任务提交失败'
+  } finally {
+    const next = new Set(aiBusyIds.value)
+    next.delete(eventId)
+    aiBusyIds.value = next
+  }
+}
+
 const backToList = () => {
   viewMode.value = 'list'
   workspaceMode.value = 'detail'
   error.value = ''
+}
+
+const scrollToEvidence = key => {
+  activeEvidenceKey.value = key
+  const container = evidenceContent.value
+  const target = document.getElementById(`smart-evidence-${key}`)
+  if (container && target) {
+    const containerTop = container.getBoundingClientRect().top
+    const targetTop = target.getBoundingClientRect().top
+    const nextTop = container.scrollTop + targetTop - containerTop
+    container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' })
+  }
+}
+const updateActiveEvidence = () => {
+  const container = evidenceContent.value
+  if (!container) return
+  const sections = [...container.querySelectorAll('.workbench-section')]
+  const containerTop = container.getBoundingClientRect().top
+  const current = sections.filter(section => section.getBoundingClientRect().top <= containerTop + 8).at(-1) || sections[0]
+  if (current?.id) activeEvidenceKey.value = current.id.replace('smart-evidence-', '')
+}
+
+const collectEvidence = async () => {
+  if (!selectedEvent.value || evidenceBusy.value) return
+  evidenceBusy.value = true
+  error.value = ''
+  try {
+    const payload = await collectJiangsuSmartEventEvidence(selectedEvent.value.event_id)
+    selectedEvent.value = payload.event || selectedEvent.value
+    actionMessage.value = `证据包已更新（${payload.collected || 1} 个事件）`
+  } catch (err) {
+    error.value = err?.message || '证据包抓取失败'
+  } finally {
+    evidenceBusy.value = false
+  }
 }
 
 const saveJudgment = async () => {
@@ -244,13 +1027,99 @@ const saveJudgment = async () => {
   }
 }
 
-const archiveSelectedEvent = async () => {
-  if (!selectedEvent.value?.manual_confirmation?.confirmed) return
+const openDispatchPage = () => {
+  actionMessage.value = ''
+  dispatchOrder.value = {
+    type: '',
+    assignee: '运维处置人员',
+    title: `${selectedEvent.value?.site_name || ''}智能事件处置工单`,
+    description: aiDispatchDescription.value,
+  }
+  dispatchDialogVisible.value = true
+}
+
+const submitDispatchOrder = async () => {
+  if (!selectedEvent.value || confirmationBusy.value) return
   confirmationBusy.value = true
   actionMessage.value = ''
   try {
-    const payload = await archiveJiangsuSmartEvent(selectedEvent.value.event_id)
+    const payload = await dispatchJiangsuSmartEventOrder(selectedEvent.value.event_id, {
+      order_type: dispatchOrder.value.type.trim() || null,
+      assignee: dispatchOrder.value.assignee.trim() || null,
+      title: dispatchOrder.value.title.trim(),
+      description: dispatchOrder.value.description.trim() || null,
+    })
     selectedEvent.value = payload.event || selectedEvent.value
+    dispatchDialogVisible.value = false
+    actionMessage.value = '派单已提交，事件进入派单处置中'
+  } catch (err) {
+    actionMessage.value = err?.message || '派单提交失败'
+  } finally {
+    confirmationBusy.value = false
+  }
+}
+
+const openFeedbackDialog = () => {
+  actionMessage.value = ''
+  feedbackText.value = ''
+  feedbackAttachmentNames.value = []
+  feedbackDialogVisible.value = true
+}
+
+const handleFeedbackAttachments = event => {
+  feedbackAttachmentNames.value = [...(event?.target?.files || [])].map(file => file.name)
+}
+
+const submitFeedback = async () => {
+  if (!selectedEvent.value || confirmationBusy.value) return
+  confirmationBusy.value = true
+  actionMessage.value = ''
+  try {
+    const payload = await submitJiangsuSmartEventFeedback(
+      selectedEvent.value.event_id,
+      feedbackText.value.trim(),
+      feedbackAttachmentNames.value,
+    )
+    selectedEvent.value = payload.event || selectedEvent.value
+    feedbackDialogVisible.value = false
+    actionMessage.value = '反馈已提交，AI 增量研判结论将自动更新'
+  } catch (err) {
+    actionMessage.value = err?.message || '反馈提交失败'
+  } finally {
+    confirmationBusy.value = false
+  }
+}
+
+const openArchiveDialog = () => {
+  actionMessage.value = ''
+  const event = selectedEvent.value || {}
+  archiveConfirmation.value = {
+    eventType: event.ai_event_type || event.manual_confirmation?.event_type || '',
+    level: event.ai_suggested_level || event.manual_confirmation?.level || '',
+    dataImpact: event.ai_data_impact || '待确认',
+    eventName: event.ai_event_name || event.event_name || event.initial_event_name || '',
+  }
+  archiveFeedback.value = ''
+  archiveDialogVisible.value = true
+}
+
+const archiveSelectedEvent = async () => {
+  if (!selectedEvent.value) return
+  confirmationBusy.value = true
+  actionMessage.value = ''
+  try {
+    const payload = await archiveJiangsuSmartEvent(
+      selectedEvent.value.event_id,
+      archiveFeedback.value.trim(),
+      {
+        event_type: archiveConfirmation.value.eventType.trim() || null,
+        event_name: archiveConfirmation.value.eventName.trim() || null,
+        level: archiveConfirmation.value.level || null,
+        data_impact: archiveConfirmation.value.dataImpact,
+      },
+    )
+    selectedEvent.value = payload.event || selectedEvent.value
+    archiveDialogVisible.value = false
     actionMessage.value = '事件已归档并锁定'
   } catch (err) {
     actionMessage.value = err?.message || '归档失败'
@@ -274,6 +1143,7 @@ const compare = async eventIds => {
 }
 
 const loadEvents = async () => {
+  stopSyncWatch()
   loading.value = true
   error.value = ''
   try {
@@ -291,12 +1161,73 @@ const loadEvents = async () => {
       evidenceFocus.value = command.focus || 'evidence'
       await openDetail(String(command.event_id))
     }
+    watchBackgroundSync()
   } catch (err) {
     error.value = err?.message || '智能事件加载失败'
   } finally {
     loading.value = false
   }
 }
+
+const resetFilters = () => {
+  statusFilter.value = ''
+  typeFilter.value = ''
+  keyword.value = ''
+  loadEvents()
+}
+
+const SYNC_POLL_INTERVAL_MS = 3000
+const SYNC_POLL_MAX_ATTEMPTS = 20
+let syncPollTimer = null
+let syncPollAttempts = 0
+const syncing = ref(false)
+
+const stopSyncWatch = () => {
+  if (syncPollTimer) { clearTimeout(syncPollTimer); syncPollTimer = null }
+  syncing.value = false
+}
+
+const applySyncedEvents = payload => {
+  const incoming = payload.events || []
+  const known = new Set(events.value.map(item => item.event_id))
+  const hasNewEvents = incoming.some(item => !known.has(item.event_id))
+  if (!hasNewEvents) return
+  events.value = incoming
+}
+
+const pollSyncStatus = async () => {
+  syncPollTimer = null
+  try {
+    const payload = await listJiangsuSmartEvents({ refresh: false })
+    if (payload.source_metadata?.last_sync?.synced_at) lastSync.value = payload.source_metadata.last_sync.synced_at
+    if (!payload.source_metadata?.sync?.in_progress) {
+      applySyncedEvents(payload)
+      syncing.value = false
+      return
+    }
+  } catch (err) {
+    // 轮询失败时保持当前展示，继续等待下一次轮询。
+  }
+  syncPollAttempts += 1
+  if (syncPollAttempts >= SYNC_POLL_MAX_ATTEMPTS) { syncing.value = false; return }
+  syncPollTimer = setTimeout(pollSyncStatus, SYNC_POLL_INTERVAL_MS)
+}
+
+const watchBackgroundSync = () => {
+  stopSyncWatch()
+  syncing.value = true
+  syncPollAttempts = 0
+  pollSyncStatus()
+}
+
+onUnmounted(() => {
+  stopSyncWatch()
+  window.removeEventListener('resize', handleChartResize)
+  hourChartInstance?.dispose()
+  deltaChartInstance?.dispose()
+  hourChartInstance = null
+  deltaChartInstance = null
+})
 
 watch(() => props.initialEventId, value => { if (value && value !== selectedId.value) openDetail(value) })
 watch(() => props.workspaceCommand, command => {
@@ -330,6 +1261,229 @@ loadEvents()
 .panel-header, .detail-header, .section-title, .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .panel-header { margin-bottom: 16px; }.eyebrow { margin: 0 0 5px; color: #2f6bff; font-size: 10px; letter-spacing: .14em; }.panel-header h2, .detail-header h3 { margin: 0; }.description, .detail-header p, .muted { color: #66758a; font-size: 12px; }.header-actions { display: flex; gap: 8px; }.header-actions button, .back-button, .task-card { border: 1px solid #c9d5e3; border-radius: 8px; background: #fff; color: #2f6bff; cursor: pointer; padding: 8px 12px; }.header-actions .close { color: #526171; }
 .event-list-page, .event-detail { min-width: 0; border: 1px solid #dfe7f1; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(25, 42, 70, .04); }.event-list-page { overflow: hidden; }.list-toolbar { padding: 14px 16px; border-bottom: 1px solid #dfe7f1; color: #66758a; font-size: 12px; }.filter-row { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }.filter-row input, .filter-row select { height: 36px; min-width: 150px; border: 1px solid #c9d5e3; border-radius: 8px; padding: 0 10px; background: #fff; }.filter-row input { min-width: 240px; flex: 1; }.list-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px 16px; border-bottom: 1px solid #edf2f7; background: #fbfcfe; }.list-metrics div { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid #dfe7f1; border-radius: 10px; background: #fff; }.list-metrics span { color: #66758a; font-size: 12px; }.list-metrics strong { font-size: 20px; }.event-table-wrap { overflow: auto; }.event-table { width: 100%; min-width: 980px; border-collapse: collapse; table-layout: fixed; }.event-table th, .event-table td { padding: 12px 10px; border-bottom: 1px solid #edf2f7; vertical-align: middle; text-align: left; word-break: break-word; }.event-table th { color: #66758a; background: #fbfcfe; font-size: 12px; }.event-table td { color: #223040; font-size: 13px; }.event-table tbody tr { cursor: pointer; }.event-table tbody tr:hover { background: #f5f9ff; }.event-table th:nth-child(1) { width: 100px; }.event-table th:nth-child(2) { width: 190px; }.event-table th:nth-child(3) { width: 150px; }.event-table th:nth-child(4) { width: 140px; }.event-table th:nth-child(5) { width: 100px; }.event-table th:nth-child(6) { width: 90px; }.event-table th:nth-child(7) { width: 140px; }.event-table th:nth-child(8) { width: 170px; }.event-table th:nth-child(9) { width: 76px; }.event-name { display: grid; gap: 4px; }.event-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.event-name small { color: #66758a; font-size: 11px; }.table-chip { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; }.table-chip.pending { color: #526171; background: #edf2f7; }.table-chip.warning { color: #e07a1e; background: #fff2e2; }.table-chip.success { color: #1f9d65; background: #eaf9f1; }.detail-button { border: 1px solid #2f6bff; border-radius: 7px; color: #2f6bff; background: #fff; padding: 5px 10px; cursor: pointer; }.state { padding: 45px 10px; color: #66758a; text-align: center; }.state.error { color: #bd554c; }
-.event-detail { padding: 20px; }.detail-toolbar { margin-bottom: 14px; }.detail-header { align-items: flex-start; padding-bottom: 16px; border-bottom: 1px solid #edf2f2; }.detail-header h3 { max-width: 600px; font-size: 20px; }.status-badge { color: #e07a1e; padding: 5px 8px; border-radius: 10px; background: #fff2e2; font-size: 11px; }.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }.facts div { padding: 10px; border-radius: 7px; background: #f5f9f9; }.facts dt { color: #80949a; font-size: 10px; }.facts dd { margin: 4px 0 0; color: #34545d; font-size: 12px; }.judgment, .task-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf2f2; }.section-title { color: #42616a; font-size: 12px; }.section-title span { color: #82969c; font-size: 10px; }.final-response { white-space: pre-wrap; line-height: 1.7; color: #334f57; font-size: 13px; }.task-card { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 8px; text-align: left; }.task-card span:first-child { display: grid; gap: 4px; }.task-card small { color: #83969c; }.task-arrow { white-space: nowrap; font-size: 11px; }.confirmation { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf2f2; }.confirmation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }.confirmation input, .confirmation textarea { width: 100%; box-sizing: border-box; border: 1px solid #d9e6e7; border-radius: 6px; padding: 8px 9px; font: inherit; font-size: 12px; }.confirmation textarea { margin-top: 8px; resize: vertical; }.confirmation-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }.confirmation-actions button { border: 1px solid #acd5d4; border-radius: 6px; background: #effafa; color: #286e73; cursor: pointer; padding: 7px 10px; font-size: 11px; }.confirmation-actions button:disabled { cursor: not-allowed; opacity: .5; }.action-message { color: #5d7c82; font-size: 11px; }
+.event-detail { padding: 20px; }.detail-toolbar { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 14px; }.evidence-button { border: 1px solid #2f6bff; border-radius: 8px; color: #2f6bff; background: #fff; padding: 8px 12px; cursor: pointer; }.evidence-button:disabled { opacity: .5; cursor: not-allowed; }.detail-header { align-items: flex-start; padding-bottom: 16px; border-bottom: 1px solid #edf2f2; }.detail-header h3 { max-width: 600px; font-size: 20px; }.status-badge { color: #e07a1e; padding: 5px 8px; border-radius: 10px; background: #fff2e2; font-size: 11px; }.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }.facts div { padding: 10px; border-radius: 7px; background: #f5f9f9; }.facts dt { color: #80949a; font-size: 10px; }.facts dd { margin: 4px 0 0; color: #34545d; font-size: 12px; }.evidence-summary { margin-top: 16px; padding: 14px; border: 1px solid #e4ecf7; border-radius: 10px; background: #fbfdff; }.evidence-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }.evidence-sources span { padding: 4px 8px; border-radius: 999px; background: #eaf1ff; color: #2f6bff; font-size: 11px; }.evidence-gap { color: #bb7b1c; font-size: 12px; }.evidence-detail-board { margin-top: 16px; padding: 14px; border: 1px solid #e4ecf7; border-radius: 10px; background: #fff; }.evidence-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }.evidence-source-card { min-width: 0; padding: 12px; border: 1px solid #e2e9f2; border-radius: 8px; background: #fbfcfe; }.evidence-source-card header, .source-meta, .monitoring-counts { display: flex; align-items: center; justify-content: space-between; gap: 8px; }.evidence-source-card header { color: #34545d; font-size: 12px; }.source-summary, .source-empty { min-height: 30px; margin: 8px 0; color: #66758a; font-size: 11px; line-height: 1.5; }.source-meta, .monitoring-counts { color: #82909f; font-size: 10px; }.source-status { padding: 3px 7px; border-radius: 999px; font-size: 10px; }.source-status.ok { color: #1f8b5b; background: #e8f8ef; }.source-status.empty { color: #8a6b1c; background: #fff5d9; }.source-status.bad { color: #b6534a; background: #ffeded; }.monitoring-counts { margin-top: 8px; color: #2f6bff; }.source-table-wrap { margin-top: 8px; overflow: auto; }.source-table { width: 100%; border-collapse: collapse; font-size: 10px; }.source-table th, .source-table td { max-width: 150px; padding: 5px 6px; border-bottom: 1px solid #e8edf3; text-align: left; vertical-align: top; word-break: break-word; }.source-table th { color: #6b7b8c; background: #f4f7fb; font-weight: 500; }.source-table td { color: #405466; }.judgment, .task-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf2f2; }.section-title { color: #42616a; font-size: 12px; }.section-title span { color: #82969c; font-size: 10px; }.final-response { white-space: pre-wrap; line-height: 1.7; color: #334f57; font-size: 13px; }.task-card { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 8px; text-align: left; }.task-card span:first-child { display: grid; gap: 4px; }.task-card small { color: #83969c; }.task-arrow { white-space: nowrap; font-size: 11px; }.confirmation { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf2f2; }.confirmation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }.confirmation input, .confirmation textarea { width: 100%; box-sizing: border-box; border: 1px solid #d9e6e7; border-radius: 6px; padding: 8px 9px; font: inherit; font-size: 12px; }.confirmation textarea { margin-top: 8px; resize: vertical; }.confirmation-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }.confirmation-actions button { border: 1px solid #acd5d4; border-radius: 6px; background: #effafa; color: #286e73; cursor: pointer; padding: 7px 10px; font-size: 11px; }.confirmation-actions button:disabled { cursor: not-allowed; opacity: .5; }.action-message { color: #5d7c82; font-size: 11px; }
 @media (max-width: 860px) { .smart-event-center { padding: 14px; }.list-toolbar { align-items: stretch; flex-direction: column; }.list-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.facts { grid-template-columns: 1fr; } }
+
+/* Match the legacy AI judgment workbench: fixed index and continuously expanded evidence. */
+.evidence-detail-board { padding: 0; overflow: hidden; border: 1px solid #e5e9ef; border-radius: 4px; }
+.workbench-layout { display: flex; height: min(720px, calc(100vh - 230px)); min-height: 520px; overflow: hidden; background: #fff; }
+.workbench-index { flex: 0 0 190px; height: 100%; box-sizing: border-box; overflow-y: auto; border-right: 1px solid #e5e9ef; background: #f7f9fb; padding: 16px 10px; }
+.workbench-index-title { padding: 0 10px 12px; color: #1f2933; font-size: 15px; font-weight: 600; }
+.workbench-index-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; min-height: 38px; border: 0; border-left: 3px solid transparent; background: transparent; color: #4b5563; cursor: pointer; padding: 8px 8px 8px 10px; text-align: left; font-size: 12px; }
+.workbench-index-item:hover, .workbench-index-item.active { border-left-color: #1677ff; background: #eaf3ff; color: #0958d9; }
+.index-state { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: #c3cad3; }
+.index-state.ok { background: #52c41a; }.index-state.empty { background: #d9a300; }.index-state.bad { background: #d4380d; }
+.workbench-content { flex: 1; min-width: 0; height: 100%; box-sizing: border-box; overflow-y: auto; padding: 16px 20px 28px; scroll-behavior: smooth; }
+.workbench-section { scroll-margin-top: 10px; border-top: 1px solid #dfe5ec; padding: 14px 0 20px; }
+.workbench-section:first-child { border-top: 0; padding-top: 0; }
+.workbench-section-header { display: flex; align-items: center; justify-content: space-between; min-height: 30px; margin-bottom: 10px; }
+.workbench-section-header h3 { margin: 0; color: #1f2933; font-size: 15px; font-weight: 600; }
+.event-grid { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); border-top: 1px solid #e5e9ef; border-left: 1px solid #e5e9ef; }
+.event-grid-item { display: grid; grid-template-columns: 90px minmax(0, 1fr); min-width: 0; border-right: 1px solid #e5e9ef; border-bottom: 1px solid #e5e9ef; }
+.event-grid-item span, .event-grid-item strong { display: flex; align-items: center; min-height: 42px; padding: 8px 10px; box-sizing: border-box; overflow-wrap: anywhere; font-size: 12px; }
+.event-grid-item span { background: #f7f9fb; color: #5f6b7a; font-weight: 400; }.event-grid-item strong { color: #1f2933; font-weight: 400; }
+.source-summary { min-height: 0; margin: 0 0 8px; color: #66758a; font-size: 12px; line-height: 1.6; }
+.source-meta { display: flex; justify-content: space-between; gap: 12px; padding: 0 0 10px; color: #82909f; font-size: 11px; }
+.source-status { padding: 3px 8px; border-radius: 10px; font-size: 10px; }.source-status.ok { color: #1f8b5b; background: #e8f8ef; }.source-status.empty { color: #8a6b1c; background: #fff5d9; }.source-status.bad { color: #b6534a; background: #ffeded; }
+.monitoring-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); gap: 10px; margin-bottom: 14px; }
+.monitoring-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.monitoring-toolbar .monitoring-overview { margin-bottom: 0; }
+.view-toggle { display: flex; flex: 0 0 auto; gap: 6px; }
+.view-toggle button { border: 1px solid #d9d9d9; border-radius: 2px; background: #fff; color: #555; cursor: pointer; padding: 5px 12px; font-size: 12px; }
+.view-toggle button.active { border-color: #1684f8; background: #1684f8; color: #fff; }
+.hour-line-chart { margin-bottom: 16px; }
+.chart-canvas { width: 100%; height: 300px; }
+.regional-delta-block { margin-top: 16px; border-top: 1px dashed #e8e8e8; padding-top: 12px; }
+.regional-delta-block h4 { margin: 0 0 8px; color: #344054; font-size: 13px; font-weight: 600; }
+.delta-canvas { height: 260px; }
+.delta-legend { margin: 8px 0 0; color: #888; font-size: 11px; line-height: 1.6; }
+.monitoring-overview div { display: flex; align-items: baseline; gap: 5px; padding: 11px 12px; border: 1px solid #dfe5ec; border-left: 4px solid #1677ff; background: #f7faff; }
+.monitoring-overview span { flex: 1; color: #5f6b7a; font-size: 12px; }.monitoring-overview strong { color: #0958d9; font-size: 20px; }.monitoring-overview small { color: #82909f; }
+.data-subsection + .data-subsection { margin-top: 16px; }.data-subsection h4 { margin: 0 0 8px; color: #344054; font-size: 13px; font-weight: 600; }
+.source-table-wrap { width: 100%; overflow: auto; border: 1px solid #e5e9ef; }
+.source-table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: auto; }
+.source-table th, .source-table td { padding: 9px 10px; border-right: 1px solid #edf0f3; border-bottom: 1px solid #edf0f3; text-align: left; white-space: nowrap; font-size: 11px; }
+.source-table th { position: sticky; top: 0; color: #5f6b7a; background: #f7f9fb; font-weight: 500; }.source-table td { max-width: 360px; overflow: hidden; color: #344054; text-overflow: ellipsis; }
+.source-table tr:last-child td { border-bottom: 0; }.source-table th:last-child, .source-table td:last-child { border-right: 0; }
+.source-empty { min-height: 88px; display: flex; align-items: center; justify-content: center; margin: 0; color: #8c8c8c; font-size: 12px; }
+@media (max-width: 860px) { .workbench-layout { display: block; height: auto; min-height: 0; }.workbench-index { position: sticky; top: 0; z-index: 2; display: flex; width: 100%; height: auto; overflow-x: auto; border-right: 0; border-bottom: 1px solid #e5e9ef; padding: 8px; }.workbench-index-title { display: none; }.workbench-index-item { flex: 0 0 150px; border-left: 0; border-bottom: 2px solid transparent; }.workbench-index-item:hover, .workbench-index-item.active { border-bottom-color: #1677ff; }.workbench-content { height: 620px; padding: 14px; }.event-grid { grid-template-columns: 1fr; } }
+.operation-cell { display: flex; flex-wrap: wrap; gap: 6px; }.ai-button { border: 1px solid #6b49d6; border-radius: 7px; color: #6b49d6; background: #fff; padding: 5px 10px; cursor: pointer; }.ai-button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* NormCraft operation-page visual system. */
+.smart-event-center { height: 100%; box-sizing: border-box; overflow: auto; padding: 12px; background: #edf1f4; color: #333; }
+.smart-event-center.detail-mode { padding: 0; }
+.smart-event-center.detail-mode { width: calc(100% + 32px); height: calc(100% + 32px); margin: -16px; }
+.panel-header { min-height: 48px; margin: -12px -12px 12px; padding: 0 16px; border-bottom: 1px solid #d9e2eb; background: #fff; }
+.detail-mode .panel-header { margin: 0; }
+.panel-title { display: flex; align-items: center; gap: 8px; }
+.panel-title h2 { margin: 0; color: #333; font-size: 16px; font-weight: 600; letter-spacing: 0; }
+.title-mark { width: 4px; height: 16px; border-radius: 1px; background: #1684f8; }
+.header-actions button, .header-back-button, .back-button, .evidence-button, .primary-button, .secondary-button, .detail-button, .ai-button, .confirmation-actions button { min-height: 30px; box-sizing: border-box; border-radius: 2px; padding: 4px 12px; font-size: 12px; }
+.header-actions button { border-color: #d9d9d9; color: #555; }
+.header-back-button { border: 1px solid #1684f8 !important; background: #1684f8 !important; color: #fff !important; cursor: pointer; }
+.header-actions button:hover, .secondary-button:hover, .back-button:hover { border-color: #1684f8; color: #1684f8; }
+.button-icon { margin-right: 4px; font-size: 14px; }
+.event-list-page, .event-detail { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.detail-mode .event-detail { padding: 0; }
+.list-toolbar { min-height: 60px; box-sizing: border-box; padding: 12px 16px; border: 0; border-radius: 4px; background: #fff; }
+.filter-row { align-items: center; gap: 12px 16px; }
+.filter-row label { display: flex; align-items: center; gap: 8px; color: #555; white-space: nowrap; }
+.filter-row input, .filter-row select { width: 160px; min-width: 0; height: 32px; box-sizing: border-box; border-color: #d9d9d9; border-radius: 2px; padding: 0 10px; color: #333; outline: 0; }
+.filter-row input:focus, .filter-row select:focus { border-color: #1684f8; box-shadow: 0 0 0 2px rgba(22, 132, 248, .12); }
+.filter-row .keyword-filter { flex: 1; min-width: 260px; }
+.filter-row .keyword-filter input { width: auto; min-width: 210px; }
+.primary-button { border: 1px solid #1684f8; background: #1684f8; color: #fff; cursor: pointer; }
+.search-icon { position: relative; display: inline-block; width: 9px; height: 9px; margin-left: 5px; box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 50%; vertical-align: -1px; }
+.search-icon::after { position: absolute; right: -4px; bottom: -2px; width: 4px; height: 1.5px; background: currentColor; content: ''; transform: rotate(45deg); transform-origin: left center; }
+.secondary-button { border: 1px solid #d9d9d9; background: #fff; color: #555; cursor: pointer; }
+.list-metrics { display: flex; align-items: center; gap: 0; margin-top: 10px; padding: 0 16px; border: 0; border-radius: 4px 4px 0 0; background: #fff; }
+.list-metrics div { display: flex; flex: none; grid-template: none; align-items: center; gap: 7px; min-width: 150px; padding: 12px 24px 12px 0; border: 0; border-radius: 0; background: transparent; }
+.list-metrics div i { width: 24px; height: 24px; border-radius: 50%; background: #8c8c8c; box-shadow: inset 0 0 0 7px rgba(255,255,255,.8); }
+.list-metrics .metric-pending i { background: #fa8c16; }.list-metrics .metric-station i { background: #13c2c2; }.list-metrics .metric-sync i { background: #52c41a; }.list-metrics .metric-total i { background: #1684f8; }
+.list-metrics span { color: #666; font-size: 12px; }
+.list-metrics strong { color: #1684f8; font-size: 16px; font-weight: 600; white-space: nowrap; }
+.list-metrics .metric-pending strong { color: #fa8c16; }.list-metrics .metric-station strong { color: #13a8a8; }.list-metrics .metric-sync strong { color: #389e0d; font-size: 12px; }
+.list-metrics > b { margin-left: auto; color: #666; font-size: 12px; font-weight: 400; }
+.event-table-wrap { border-top: 1px solid #e8e8e8; border-radius: 0 0 4px 4px; background: #fff; }
+.event-table { min-width: 1000px; }
+.event-table th, .event-table td { height: 44px; box-sizing: border-box; padding: 8px 10px; border-right: 1px solid #e8e8e8; border-bottom: 1px solid #e8e8e8; text-align: center; font-size: 12px; }
+.event-table th { color: #333; background: #deefff; font-weight: 600; }
+.event-table td { color: #444; }.event-table th:last-child, .event-table td:last-child { border-right: 0; }
+.event-table tbody tr:hover { background: #eaf5ff; }
+.event-table th:nth-child(1) { width: 46px; }.event-table th:nth-child(2) { width: 72px; }.event-table th:nth-child(3) { width: 165px; }.event-table th:nth-child(4) { width: 100px; }.event-table th:nth-child(5) { width: 112px; }.event-table th:nth-child(6) { width: 82px; }.event-table th:nth-child(7) { width: 55px; }.event-table th:nth-child(8) { width: 105px; }.event-table th:nth-child(9) { width: 130px; }.event-table th:nth-child(10) { width: 130px; }
+.event-name { display: block; }.event-name strong { display: block; color: #333; font-weight: 500; }
+.table-chip { border-radius: 2px; padding: 3px 8px; }.table-chip.pending { color: #595959; background: #f0f0f0; }.table-chip.warning { color: #d46b08; background: #fff7e6; }.table-chip.success { color: #389e0d; background: #f6ffed; }
+.operation-cell { justify-content: center; flex-wrap: nowrap; }
+.detail-button { border-color: #1684f8; border-radius: 2px; color: #1684f8; }.ai-button { border-color: #1684f8; border-radius: 2px; background: #1684f8; color: #fff; }
+.detail-toolbar { align-items: center; min-height: 44px; margin: 0; padding: 7px 12px; border-radius: 4px 4px 0 0; background: #fff; }
+.back-button { border-color: transparent; background: transparent; color: #1684f8; padding-left: 0; }
+.evidence-button { border-color: #1684f8; border-radius: 2px; background: #1684f8; color: #fff; }
+.detail-header { margin-top: 1px; padding: 12px 16px; border: 0; background: #fff; }
+.detail-header h3 { font-size: 16px; font-weight: 600; }.detail-header p { margin: 5px 0 0; }
+.status-badge { border-radius: 2px; padding: 4px 9px; color: #d46b08; background: #fff7e6; }
+.evidence-detail-board { margin-top: 10px; border: 0; border-radius: 4px; }
+.workbench-layout { height: min(720px, calc(100vh - 232px)); min-height: 520px; background: #edf1f4; }
+.workbench-index { flex-basis: 196px; padding: 0 8px 12px; border-right: 10px solid #edf1f4; background: #eaf5ff; }
+.workbench-index-title { margin: 0 -8px 8px; padding: 12px 16px; background: #4799e8; color: #fff; font-size: 14px; }
+.workbench-index-item { min-height: 40px; border: 0; border-radius: 0; padding: 8px 10px; color: #3d5366; }
+.workbench-index-item:hover { border: 0; background: #d7ecff; color: #1684f8; }
+.workbench-index-item.active { border: 0; background: #1684f8; color: #fff; }
+.workbench-index-item.active .index-state { border-color: rgba(255,255,255,.7); }
+.index-state { box-sizing: border-box; border: 2px solid #eaf5ff; }
+.workbench-content { padding: 0 0 24px; background: #edf1f4; scroll-padding-top: 0; }
+.workbench-content::after { display: block; height: calc(100% - 54px); content: ''; }
+.workbench-section { margin: 0 0 10px; padding: 0 16px 16px; scroll-margin-top: 0; border: 0; background: #fff; }
+.workbench-section .special-panel { margin: 0; padding: 0; border: 0; background: transparent; }
+.disposal-actions { display: flex; gap: 10px; padding: 6px 0; }
+.disposal-button { min-width: 112px; min-height: 34px; border: 1px solid #1684f8; border-radius: 2px; background: #fff; color: #1684f8; cursor: pointer; font-size: 12px; }
+.disposal-button.primary { background: #1684f8; color: #fff; }
+.action-page-heading { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; color: #333; }.action-page-heading span { color: #888; font-size: 12px; }
+.dispatch-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 0 12px; border-top: 1px solid #d9e2eb; border-left: 1px solid #d9e2eb; }.dispatch-facts div { display: grid; grid-template-columns: 90px minmax(0, 1fr); min-width: 0; border-right: 1px solid #d9e2eb; border-bottom: 1px solid #d9e2eb; }.dispatch-facts dt, .dispatch-facts dd { margin: 0; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }.dispatch-facts dt { background: #f2f8fd; color: #555; }.dispatch-facts dd { color: #333; }
+.dispatch-description { display: block; color: #555; font-size: 12px; }.dispatch-description span { display: block; margin-bottom: 6px; }.dispatch-description textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #d9d9d9; border-radius: 2px; padding: 8px; font: inherit; font-size: 12px; }
+.archive-overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .28); }.archive-dialog { width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 0 20px 18px; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,.18); }.archive-dialog > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin: 0 -20px 16px; padding: 0 20px; border-bottom: 1px solid #e8e8e8; color: #333; }.archive-dialog > header button { border: 0; background: transparent; color: #888; cursor: pointer; font-size: 22px; }
+.dialog-note { margin: -4px 0 12px; color: #888; font-size: 12px; }
+.workbench-section:first-child { padding-top: 0; }
+.workbench-section-header { min-height: 44px; margin: 0 -16px 12px; padding: 0 16px; border-bottom: 1px solid #e8e8e8; }
+.workbench-section-header h3 { color: #333; font-size: 14px; }
+.event-grid { border-color: #d9e2eb; }.event-grid-item { border-color: #d9e2eb; }
+.event-grid-item span { background: #f2f8fd; color: #555; }.event-grid-item strong { color: #333; }
+.source-summary { color: #666; }.source-meta { color: #888; }
+.monitoring-overview div { border: 0; border-left: 3px solid #1684f8; background: #f2f8fd; }
+.monitoring-overview strong { color: #1684f8; }
+.source-table-wrap { border-color: #d9e2eb; }
+.source-table th, .source-table td { height: 38px; box-sizing: border-box; border-color: #e8e8e8; text-align: center; }
+.source-table th { color: #333; background: #deefff; font-weight: 600; }.source-table td { color: #444; }
+.judgment, .confirmation, .task-section { margin-top: 10px; padding: 0 16px 16px; border: 0; border-radius: 4px; background: #fff; }
+.section-title { min-height: 44px; margin: 0 -16px 12px; padding: 0 16px; border-bottom: 1px solid #e8e8e8; }
+.section-title strong { color: #333; font-size: 14px; }.section-title span { color: #888; font-size: 12px; }
+.final-response { color: #444; }.confirmation input, .confirmation textarea { border-color: #d9d9d9; border-radius: 2px; }
+.task-card { border-color: #e8e8e8; border-radius: 2px; color: #333; }
+.tag-cell { text-align: left; }
+.tag-chip-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+.clue-chip { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #d9e2eb; border-radius: 2px; padding: 2px 6px; background: #f2f8fd; color: #3d5366; font-size: 11px; }
+.clue-chip.video { border-color: #d3adf7; background: #f9f0ff; color: #531dab; }
+.clue-chip.data { border-color: #91d5ff; background: #e6f7ff; color: #0958d9; }
+.clue-chip.alarm { border-color: #ffbb96; background: #fff2e8; color: #d4380d; }
+.clue-chip.missing { border-color: #b7eb8f; background: #f6ffed; color: #389e0d; }
+.clue-chip.exceed { border-color: #ffadd2; background: #fff0f6; color: #c41d7f; }
+.clue-chip.compliance { border-color: #ffe58f; background: #fffbe6; color: #d48806; }
+.tag-more { border: 0; background: transparent; color: #1684f8; cursor: pointer; padding: 2px 2px; font-size: 11px; }
+.tag-more:hover { text-decoration: underline; }
+.delta-flag { display: inline-block; margin-top: 4px; border-radius: 2px; padding: 2px 6px; background: #fff7e6; color: #d46b08; font-size: 11px; }
+.detail-tag-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid #e8e8e8; border-radius: 2px; background: #fbfdff; }
+.detail-tag-title { flex: none; color: #555; font-size: 12px; line-height: 22px; }
+.detail-tag-row .tag-chip-wrap { flex: 1; }
+.detail-tag-row .clue-chip { max-width: none; }
+.delta-note { margin-top: 10px; border-left: 3px solid #fa8c16; padding: 8px 10px; background: #fff7e6; color: #d46b08; font-size: 12px; }
+.judgment-history { margin-top: 12px; border-top: 1px dashed #e8e8e8; padding-top: 10px; }
+.judgment-history h4 { margin: 0 0 8px; color: #555; font-size: 12px; font-weight: 600; }
+.judgment-history ol { margin: 0; padding-left: 18px; }
+.judgment-history li { margin-bottom: 8px; color: #666; font-size: 12px; }
+.judgment-history li strong { color: #333; margin-right: 8px; }
+.judgment-history li span { color: #888; font-size: 11px; }
+.judgment-history li p { margin: 4px 0 0; color: #555; line-height: 1.6; overflow-wrap: anywhere; }
+.judgment-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.j-chip { display: inline-block; border-radius: 2px; padding: 4px 10px; font-size: 12px; background: #f0f0f0; color: #595959; }
+.j-chip.j-type { background: #e6f7ff; color: #0958d9; font-weight: 600; }
+.j-chip.impact-yes { background: #fff1f0; color: #cf1322; }
+.j-chip.impact-no { background: #f6ffed; color: #389e0d; }
+.j-chip.impact-unknown { background: #fff7e6; color: #d46b08; }
+.j-chip.j-level { background: #f9f0ff; color: #531dab; font-weight: 600; }
+.j-chip.j-continuity { background: #e6fffb; color: #08979c; }
+.judgment-name { margin-bottom: 8px; color: #262626; font-size: 15px; font-weight: 600; line-height: 1.5; }
+.j-note { margin: 0 0 10px; color: #444; font-size: 12px; line-height: 1.8; }
+.j-block { margin-bottom: 12px; border: 1px solid #eef2f7; border-radius: 2px; padding: 10px 12px; background: #fbfcfe; }
+.j-block h5 { margin: 0 0 6px; color: #344054; font-size: 12px; font-weight: 600; }
+.j-block p { margin: 0; color: #555; font-size: 12px; line-height: 1.7; }
+.j-suggestion-list { margin: 0; padding-left: 18px; color: #555; font-size: 12px; line-height: 1.8; }
+.j-data-analysis { border-left: 3px solid #1684f8; }
+.analysis-item + .analysis-item { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e8e8e8; }
+.analysis-item strong { display: block; margin-bottom: 4px; color: #0958d9; font-size: 12px; }
+.analysis-item p { margin: 0; color: #555; font-size: 12px; line-height: 1.7; }
+.clue-chip.primary-ev { border-color: #91d5ff; background: #e6f7ff; color: #0958d9; }
+.j-compliance { border-left: 3px solid #d48806; }
+.j-collapse { border: 1px dashed #d9d9d9; border-radius: 2px; background: #fff; }
+.j-collapse summary { cursor: pointer; padding: 8px 12px; color: #555; font-size: 12px; user-select: none; }
+.j-collapse summary:hover { color: #1684f8; }
+.j-collapse[open] summary { border-bottom: 1px dashed #e8e8e8; }
+.j-collapse .final-response { margin: 0; padding: 10px 12px; color: #555; font-size: 12px; white-space: pre-wrap; line-height: 1.8; }
+.param-snapshot { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; padding: 0 12px 12px; }
+.param-snapshot div { display: flex; gap: 8px; min-width: 0; padding: 6px 0; border-top: 1px solid #f0f0f0; }
+.param-snapshot dt { flex: none; color: #888; font-size: 12px; }
+.param-snapshot dd { margin: 0; color: #444; font-size: 12px; overflow-wrap: anywhere; }
+.judgment-actions { padding: 4px 0 8px; }
+.operation-history-block { margin-top: 14px; border-top: 1px dashed #e8e8e8; padding-top: 10px; }
+.operation-history-block h4 { margin: 0 0 8px; color: #555; font-size: 12px; font-weight: 600; }
+.operation-list { margin: 0; padding-left: 18px; }
+.operation-list li { margin-bottom: 8px; color: #666; font-size: 12px; }
+.operation-list li strong { display: inline-block; margin-right: 8px; color: #333; }
+.operation-list li span { display: block; color: #555; line-height: 1.6; overflow-wrap: anywhere; }
+.operation-list li small { display: block; margin-top: 2px; color: #999; font-size: 11px; }
+.dispatch-form { display: grid; gap: 10px; margin-bottom: 12px; }
+.dispatch-form label { display: grid; gap: 5px; color: #555; font-size: 12px; }
+.dispatch-form input, .dispatch-form select, .dispatch-form textarea { width: 100%; box-sizing: border-box; border: 1px solid #d9d9d9; border-radius: 2px; padding: 7px 10px; font: inherit; font-size: 12px; color: #333; }
+.dispatch-form input:focus, .dispatch-form select:focus, .dispatch-form textarea:focus { border-color: #1684f8; outline: 0; }
+.dispatch-attachment input { padding: 5px; }
+.attachment-names { margin: -4px 0 10px; color: #888; font-size: 11px; }
+.config-page { padding: 16px; }
+.config-header { margin-bottom: 16px; }
+.config-header h3 { margin: 0 0 4px; color: #333; font-size: 15px; }
+.config-header p { margin: 0; color: #888; font-size: 12px; }
+.config-body { background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; padding: 16px; }
+.config-section { margin-bottom: 18px; }
+.config-section h4 { margin: 0 0 10px; color: #333; font-size: 13px; font-weight: 600; border-bottom: 1px solid #f0f0f0; padding-bottom: 6px; }
+.config-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.config-row label { display: flex; flex-direction: column; gap: 4px; color: #555; font-size: 12px; min-width: 140px; flex: 1; }
+.config-row input, .config-row select { border: 1px solid #d9d9d9; border-radius: 2px; padding: 6px 8px; font-size: 12px; color: #333; width: 100%; box-sizing: border-box; }
+.config-row input:focus { border-color: #1684f8; outline: 0; }
+.full-width-label { width: 100%; flex-basis: 100%; }
+.dictionary-input { width: 100%; box-sizing: border-box; border: 1px solid #d9d9d9; border-radius: 2px; padding: 6px 8px; font-size: 12px; color: #333; font-family: monospace; resize: vertical; }
+.dictionary-input:focus { border-color: #1684f8; outline: 0; }
+.config-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #f0f0f0; }
+.config-save-msg { font-size: 12px; }
+.config-save-msg.ok { color: #389e0d; }
+.config-save-msg.err { color: #cf1322; }
+.config-button { background: none; border: 1px solid #d9d9d9; border-radius: 2px; padding: 4px 10px; cursor: pointer; font-size: 12px; color: #555; }
+.config-button:hover { border-color: #1684f8; color: #1684f8; }
+@media (max-width: 860px) { .smart-event-center { padding: 8px; }.smart-event-center.detail-mode { width: calc(100% + 16px); height: calc(100% + 16px); margin: -8px; }.panel-header { margin: -8px -8px 8px; }.filter-row label, .filter-row .keyword-filter { width: 100%; min-width: 0; }.filter-row input, .filter-row select, .filter-row .keyword-filter input { flex: 1; width: auto; }.list-metrics { flex-wrap: wrap; }.list-metrics div { min-width: 50%; box-sizing: border-box; }.list-metrics > b { width: 100%; padding-bottom: 10px; }.workbench-index { border-right: 0; background: #eaf5ff; }.workbench-content { height: 620px; }.workbench-section { padding-right: 10px; padding-left: 10px; }.workbench-section-header { margin-right: -10px; margin-left: -10px; padding-right: 10px; padding-left: 10px; } }
 </style>

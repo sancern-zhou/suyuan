@@ -14,6 +14,7 @@ import uvicorn
 from app.api.social_account_routes import router as social_account_router
 from app.api.social_account_routes import set_channel_manager_override
 from app.api.fetcher_worker_routes import router as fetcher_worker_router
+from app.api.jiangsu_smart_event_worker_routes import router as jiangsu_smart_event_worker_router
 from app.api.scheduled_task_routes import router as scheduled_task_router
 from app.api.social_broadcast_worker_routes import router as social_broadcast_worker_router
 from app.auth.internal_identity import INTERNAL_USER_HEADER, decode_internal_user
@@ -58,6 +59,8 @@ def create_social_worker_api_app(
             or request.url.path.startswith("/api/scheduled-tasks/")
             or request.url.path == "/api/social/accounts"
             or request.url.path.startswith("/api/social/accounts/")
+            or request.url.path == "/internal/jiangsu/smart-events"
+            or request.url.path.startswith("/internal/jiangsu/smart-events/")
         )
         identity_envelope = (
             request.headers.get(INTERNAL_USER_HEADER) if identity_path else None
@@ -82,6 +85,7 @@ def create_social_worker_api_app(
 
     app.include_router(social_account_router)
     app.include_router(fetcher_worker_router)
+    app.include_router(jiangsu_smart_event_worker_router)
     app.include_router(scheduled_task_router)
     app.include_router(social_broadcast_worker_router)
     return app

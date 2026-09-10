@@ -38,8 +38,24 @@ class SmartEventOperationRequest(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class SmartEventDispatchOrderRequest(BaseModel):
+    order_type: str | None = Field(default=None, max_length=120)
+    assignee: str | None = Field(default=None, max_length=120)
+    title: str = Field(min_length=1, max_length=240)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class SmartEventFeedbackRequest(BaseModel):
+    feedback: str = Field(min_length=1, max_length=8000)
+    attachments: list[str] = Field(default_factory=list)
+
+
 class SmartEventArchiveRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=2000)
+    event_type: str | None = Field(default=None, max_length=120)
+    event_name: str | None = Field(default=None, max_length=240)
+    level: str | None = Field(default=None, max_length=40)
+    data_impact: Any = None
 
 
 def _default_times() -> tuple[str, str]:
@@ -160,6 +176,28 @@ async def get_smart_event(
     return {"event": event}
 
 
+@router.post("/{event_id}/evidence")
+async def collect_smart_event_evidence(
+    event_id: str,
+    user: CurrentUser = Depends(require_current_user),
+) -> dict:
+    """Collect the event-specific evidence package without dispatching AI."""
+    try:
+        result = await JiangsuSmartEventService().collect_event_evidence(event_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
+    return {"status": "collected", **result}
+
+
+@router.post("/evidence/collect")
+async def collect_all_smart_event_evidence(
+    limit: int = Query(default=100, ge=1, le=1000),
+    user: CurrentUser = Depends(require_current_user),
+) -> dict:
+    """Collect packages for all currently uncollected events; AI is untouched."""
+    return {"status": "collected", **await JiangsuSmartEventService().collect_all_event_evidence(limit=limit)}
+
+
 @router.post("/{event_id}/ai-judgments")
 async def submit_smart_event_judgment(
     event_id: str,
@@ -202,6 +240,56 @@ async def record_smart_event_operation(
     return {"operation": record}
 
 
+@router.post("/{event_id}/dispatch-order")
+async def dispatch_smart_event_order(
+    event_id: str,
+    request: SmartEventDispatchOrderRequest,
+    user: CurrentUser = Depends(require_current_user),
+) -> dict:
+    """提交派单处置：事件状态更新为“派单处置中”。"""
+    service = JiangsuSmartEventService()
+    try:
+        event = service.dispatch_order(
+            event_id,
+            title=request.title,
+            order_type=request.order_type,
+            assignee=request.assignee,
+            description=request.description,
+            actor={"user_id": user.id, "username": user.username},
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"event": event}
+
+
+@router.post("/{event_id}/feedback")
+async def submit_smart_event_feedback(
+    event_id: str,
+    request: SmartEventFeedbackRequest,
+    user: CurrentUser = Depends(require_current_user),
+) -> dict:
+    """记录事件反馈，并以增量对话继续上一轮 AI 研判（结论替换）。
+
+    在 Web 进程该请求由 ``JiangsuSmartEventWorkerProxyMiddleware`` 代理到
+    worker 执行，确保反馈触发的增量研判能真正派发。
+    """
+    service = JiangsuSmartEventService()
+    try:
+        result = await service.submit_feedback(
+            event_id,
+            feedback=request.feedback,
+            attachments=request.attachments,
+            actor={"user_id": user.id, "username": user.username},
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "feedback_recorded", **result}
+
+
 @router.post("/{event_id}/archive")
 async def archive_smart_event(
     event_id: str,
@@ -213,6 +301,16 @@ async def archive_smart_event(
         event = service.archive_event(
             event_id,
             comment=request.comment if request else None,
+            confirmation=(
+                {
+                    "event_type": request.event_type,
+                    "event_name": request.event_name,
+                    "level": request.level,
+                    "data_impact": request.data_impact,
+                }
+                if request and any((request.event_type, request.event_name, request.level, request.data_impact is not None))
+                else None
+            ),
             actor={"user_id": user.id, "username": user.username},
         )
     except KeyError as exc:
@@ -230,12 +328,13 @@ async def create_smart_event_task(
 ) -> dict:
     service = JiangsuSmartEventService()
     try:
-        task = service.create_task(
+        result = await service.run_ai_judgment(
             event_id,
             actor={"user_id": user.id, "username": user.username},
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
+    task = result["task"]
     if request and request.conversation_id:
         task["conversation_id"] = request.conversation_id
         store = service._load_store()
@@ -243,5 +342,24 @@ async def create_smart_event_task(
             if item.get("task_id") == task["task_id"]:
                 item["conversation_id"] = request.conversation_id
         service._save_store(store)
-    dispatches = await service._dispatch_pending_tasks(service._load_store())
-    return {"task": service.get_task(task["task_id"]) or task, "dispatches": dispatches}
+    result["task"] = service.get_task(task["task_id"]) or task
+    return result
+
+
+@router.post("/{event_id}/ai-dispatch")
+async def dispatch_smart_event_ai_judgment(
+    event_id: str,
+    user: CurrentUser = Depends(require_current_user),
+) -> dict:
+    """Manually start one event's AI task from the event center."""
+    service = JiangsuSmartEventService()
+    try:
+        return {
+            "status": "dispatched",
+            **await service.run_ai_judgment(
+                event_id,
+                actor={"user_id": user.id, "username": user.username},
+            ),
+        }
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="smart_event_not_found") from exc

@@ -26,6 +26,10 @@ export async function getJiangsuSmartEvent(eventId, params = {}) {
   return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}${queryString(params)}`))
 }
 
+export async function collectJiangsuSmartEventEvidence(eventId) {
+  return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/evidence`, { method: 'POST' }))
+}
+
 export async function getJiangsuSmartEventConfig() {
   return parse(await authFetch(`${BASE}/config/current`))
 }
@@ -58,6 +62,28 @@ export async function createJiangsuSmartEventTask(eventId, conversationId) {
   }))
 }
 
+export async function dispatchJiangsuSmartEventAiJudgment(eventId) {
+  return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/ai-dispatch`, {
+    method: 'POST',
+  }))
+}
+
+export async function dispatchJiangsuSmartEventOrder(eventId, order) {
+  return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/dispatch-order`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(order),
+  }))
+}
+
+export async function submitJiangsuSmartEventFeedback(eventId, feedback, attachments = []) {
+  return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedback, attachments }),
+  }))
+}
+
 export async function submitJiangsuSmartEventJudgment(eventId, judgment) {
   return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/ai-judgments`, {
     method: 'POST',
@@ -74,10 +100,13 @@ export async function recordJiangsuSmartEventOperation(eventId, operation) {
   }))
 }
 
-export async function archiveJiangsuSmartEvent(eventId, comment = '') {
+export async function archiveJiangsuSmartEvent(eventId, comment = '', confirmation = null) {
+  const body = confirmation
+    ? { comment: comment || null, ...confirmation }
+    : { comment: comment || null }
   return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/archive`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(comment ? { comment } : {}),
+    body: JSON.stringify(body),
   }))
 }

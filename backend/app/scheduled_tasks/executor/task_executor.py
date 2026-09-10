@@ -386,6 +386,64 @@ class ScheduledTaskExecutor:
             "content": prompt,
             "timestamp": datetime.now().isoformat(),
         }]
+        live_persistence = getattr(
+            self.conversation_persistence,
+            "persist_running_agent_session",
+            None,
+        )
+
+        create_live_session = getattr(
+            self.conversation_persistence,
+            "create_running_agent_session",
+            None,
+        )
+        if callable(create_live_session) and task is not None and execution is not None:
+            try:
+                await create_live_session(
+                    task=task,
+                    execution=execution,
+                    display_history=display_history,
+                )
+                logger.info(
+                    "scheduled_agent_live_session_created",
+                    execution_id=execution.execution_id,
+                    session_id=session_id,
+                )
+            except Exception as persist_error:  # noqa: BLE001 - visibility must not fail the task
+                logger.warning(
+                    "scheduled_agent_live_session_creation_failed",
+                    execution_id=execution.execution_id,
+                    session_id=session_id,
+                    error=str(persist_error),
+                )
+
+        async def persist_live_transcript() -> None:
+            if (
+                not callable(live_persistence)
+                or task is None
+                or execution is None
+            ):
+                return
+            try:
+                persisted = bool(await live_persistence(
+                    agent=agent,
+                    task=task,
+                    execution=execution,
+                    display_history=display_history,
+                ))
+                if persisted:
+                    logger.info(
+                        "scheduled_agent_live_session_updated",
+                        execution_id=execution.execution_id,
+                        session_id=session_id,
+                    )
+            except Exception as persist_error:  # noqa: BLE001 - live visibility must not fail the task
+                logger.warning(
+                    "scheduled_agent_live_session_publish_failed",
+                    execution_id=execution.execution_id,
+                    session_id=session_id,
+                    error=str(persist_error),
+                )
 
         # ✅ 执行Agent分析，传入 session_id 以复用上下文
         analysis_error: BaseException | None = None
@@ -421,6 +479,11 @@ class ScheduledTaskExecutor:
                         else:
                             frontend_message["content"] = str(result or event.get("summary") or "获得结果")
                     display_history.append(frontend_message)
+                    if event_type == "tool_result":
+                        await persist_live_transcript()
+
+                if event_type in {"complete", "agent_finish", "final_response"}:
+                    await persist_live_transcript()
 
                 # 记录思考过程
                 if event_type == "thought":

@@ -11,6 +11,7 @@ from app.auth.service import AuthenticationService
 from app.auth.share_access import get_share_access_service
 from app.auth.ws_tickets import WebSocketTicketService
 from app.core.fetcher_worker_proxy import FetcherWorkerProxyMiddleware
+from app.core.jiangsu_smart_event_worker_proxy import JiangsuSmartEventWorkerProxyMiddleware
 from app.core.scheduled_task_worker_proxy import ScheduledTaskWorkerProxyMiddleware
 from app.core.social_account_worker_proxy import SocialAccountWorkerProxyMiddleware
 from config.settings import settings
@@ -27,6 +28,12 @@ def configure_middleware(app: FastAPI) -> None:
         worker_base_url=settings.social_worker_internal_url,
         worker_token=settings.social_worker_internal_token,
         scheduled_tasks_enabled=project_context.manifest.scheduled_tasks_enabled,
+    )
+    app.add_middleware(
+        JiangsuSmartEventWorkerProxyMiddleware,
+        app_role=settings.app_role,
+        worker_base_url=settings.social_worker_internal_url,
+        worker_token=settings.social_worker_internal_token,
     )
     app.add_middleware(
         FetcherWorkerProxyMiddleware,

@@ -1,5 +1,6 @@
 from app.scheduled_tasks.default_tasks import (
     build_jiangsu_fault_work_order_review_task,
+    build_jiangsu_smart_event_task,
     build_jiangsu_station_fault_task,
     ensure_project_default_tasks,
 )
@@ -55,6 +56,17 @@ def test_default_task_targets_fault_agent_and_skill():
     assert task.execution_mode == "station_fault_diagnosis"
     assert task.skill_id == "station-alarm-diagnosis"
     assert "jiangsu_prepare_fault_work_order" in task.prompt
+    assert task.workspace_entry.enabled is True
+
+
+def test_smart_event_default_task_uses_unified_judgment_skill():
+    task = build_jiangsu_smart_event_task()
+
+    assert task.task_id == "jiangsu_smart_event_ai_judgment"
+    assert task.event_type == "jiangsu.smart_event.alarm"
+    assert task.skill_id == "smart-event-judgment"
+    assert "最终事件类型" in task.prompt
+    assert "不得调用 jiangsu_prepare_fault_work_order" in task.prompt
     assert task.workspace_entry.enabled is True
 
 

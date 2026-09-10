@@ -49,6 +49,7 @@ from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场�
 from app.fetchers.jiangsu_fault_work_order_review_event import (
     JiangsuFaultWorkOrderReviewEventFetcher,
 )
+from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
 from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
 from app.fetchers.jiangsu_review_feedback import JiangsuReviewFeedbackFetcher
 from app.project_config.loader import load_project_context
@@ -113,6 +114,7 @@ def _configured_fetchers(project_context):
         "jiangsu_fault_work_order_review_event",
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
+        "jiangsu_smart_event_alarm_sync",
     }
     factories = {
         "jiangsu_review_feedback": JiangsuReviewFeedbackFetcher,
@@ -132,6 +134,7 @@ def _configured_fetchers(project_context):
         "yuncheng_trial": YunchengTrialFetcher,
         "jiangsu_fault_work_order_review_event": JiangsuFaultWorkOrderReviewEventFetcher,
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
+        "jiangsu_smart_event_alarm_sync": JiangsuSmartEventAlarmSyncFetcher,
         "jiangsu_nmc_observed_weather": JiangsuNMCObservedWeatherFetcher,
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,

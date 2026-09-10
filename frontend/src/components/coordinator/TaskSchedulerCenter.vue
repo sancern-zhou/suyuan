@@ -131,6 +131,7 @@ const activeTaskType = ref('all')
 
 const schedulerTabs = Object.freeze([
   { id: 'todo', name: '待办任务' },
+  { id: 'event', name: '事件任务' },
   { id: 'scheduled', name: '定时任务' }
 ])
 
