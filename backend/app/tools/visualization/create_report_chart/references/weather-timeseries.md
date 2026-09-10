@@ -4,9 +4,9 @@ Use `chart_type: "weather_timeseries"` for a standardized forecast chart.
 
 Pass `data.records` with `forecast_time`, `wind_speed`,
 `wind_direction_degrees`, `temperature`, `precipitation_probability`, and
-`humidity`. By default records must belong to one natural day. Set
-`options.multi_day=true` to render up to seven consecutive calendar days on one
-continuous time axis in a single image. This does not overlay daily curves.
+`humidity`. The renderer automatically handles one to seven consecutive calendar
+days on one continuous time axis in a single image. No single-day/multi-day
+mode parameter is needed. This does not overlay daily curves.
 Multi-day charts use a wider layout, day boundaries and hour ticks. Gaps longer
 than `options.expected_interval_hours` (default 3, a finite positive number)
 break the curves; missing records are not interpolated. Metadata includes

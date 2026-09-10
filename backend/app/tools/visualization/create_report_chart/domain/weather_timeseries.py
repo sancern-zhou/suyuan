@@ -42,11 +42,7 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
         raise ChartDataError("weather_timeseries 没有可绘制的有效记录。")
     rows.sort(key=lambda row: row[0])
     days = {row[0].date() for row in rows}
-    multi_day = options.get("multi_day") is True
-    if len(days) != 1 and not multi_day:
-        raise ChartDataError(
-            "weather_timeseries 默认绘制一个自然日；连续多日图请设置 options.multi_day=true。"
-        )
+    multi_day = len(days) > 1
     if multi_day and (rows[-1][0].date() - rows[0][0].date()).days >= 7:
         raise ChartDataError("weather_timeseries 多日模式最多覆盖连续7个自然日。")
     valid_point_count = len(rows)
