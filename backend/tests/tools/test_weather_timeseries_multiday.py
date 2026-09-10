@@ -29,7 +29,7 @@ def test_seven_days_produce_one_image_with_all_points(monkeypatch):
         return fig, ax
 
     monkeypatch.setattr(weather.plt, 'subplots', capture)
-    encoded, metadata, _ = render(list(reversed(records())), multi_day=True)
+    encoded, metadata, _ = render(list(reversed(records())))
     assert encoded and len(figures) == 1
     assert metadata['day_count'] == 7 and metadata['valid_point_count'] == 56
     assert metadata['start_time'] == '2026-09-11 02:00:00'
@@ -49,24 +49,22 @@ def test_missing_slot_breaks_curve_without_counting_synthetic_values(monkeypatch
     monkeypatch.setattr(weather.plt, 'close', capture)
     rows = records()
     del rows[8]
-    _, metadata, _ = render(rows, multi_day=True)
+    _, metadata, _ = render(rows)
     assert metadata['gap_count'] == 1 and metadata['valid_point_count'] == 55
     assert np.isnan(lines[0].get_ydata()).sum() == 1
 
 
-def test_single_day_still_works_and_multiday_requires_opt_in():
+def test_single_day_uses_the_same_interface():
     _, metadata, _ = render(records(8))
     assert metadata['day_count'] == 1 and not metadata['multi_day']
-    with pytest.raises(ChartDataError, match='multi_day'):
-        render(records())
 
 
 def test_rejects_span_longer_than_seven_days():
     with pytest.raises(ChartDataError, match='7个自然日'):
-        render(records(57), multi_day=True)
+        render(records(57))
 
 
 @pytest.mark.parametrize('interval', [0, -1, float('nan'), 'invalid'])
 def test_rejects_invalid_sample_interval(interval):
     with pytest.raises(ChartDataError, match='expected_interval_hours'):
-        render(records(), multi_day=True, expected_interval_hours=interval)
+        render(records(), expected_interval_hours=interval)
