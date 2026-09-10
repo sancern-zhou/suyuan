@@ -321,6 +321,7 @@ async def test_terminal_save_does_not_repeat_database_enriched_live_snapshot():
     )
     history = [
         {'type': 'user', 'content': '执行任务', 'timestamp': '2026-09-11T00:41:44.362298'},
+        {'type': 'thought', 'content': '核验证据', 'timestamp': '2026-09-11T00:42:00.000001'},
         {'type': 'tool_result', 'content': '核验完成', 'data': {'result': 'ok'},
          'timestamp': '2026-09-11T00:42:44.362298'},
     ]

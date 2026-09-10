@@ -92,6 +92,7 @@ class ScheduledTaskConversationPersistence:
         """
         if existing is None:
             return display_history
+        display_history = [m for m in display_history if m.get("type") != "thought"]
         history = existing.conversation_history
 
         def key(message):
