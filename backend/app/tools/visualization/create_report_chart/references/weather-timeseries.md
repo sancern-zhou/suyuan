@@ -20,6 +20,9 @@ agent-identified regions. `risk_periods` remains an accepted compatibility alias
 The renderer produces one plot with two y-axes: temperature, humidity, and
 precipitation probability share the left axis; wind speed uses the right axis.
 Wind direction is shown with a true-degree rotated arrow at each observation.
+Arrows are slim, equal-length symbols centered on a fixed horizontal row near
+the top of the plotting area. Their height and length do not encode wind speed
+and do not change with the y-axis scale or line width.
 Input direction follows the meteorological "from" convention (0° north, 90°
 east); the arrow points toward the direction the air moves, i.e. 180° opposite
 the reported source direction. It is not quantized to cardinal directions.
