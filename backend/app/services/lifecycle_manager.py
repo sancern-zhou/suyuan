@@ -51,8 +51,8 @@ from app.fetchers.jiangsu_fault_work_order_review_event import (
 )
 from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
 from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
-from app.fetchers.jiangsu_review_feedback import JiangsuReviewFeedbackFetcher
 from app.project_config.loader import load_project_context
+from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
 
 # 导入单一工具注册源
 from app.tools import global_tool_registry
@@ -110,14 +110,13 @@ def _configured_fetchers(project_context):
     # project manifest.  They must never enter the legacy/default deployment
     # through the historical "all fetchers" fallback.
     explicit_project_fetchers = {
-        "jiangsu_review_feedback",
         "jiangsu_fault_work_order_review_event",
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
     }
     factories = {
-        "jiangsu_review_feedback": JiangsuReviewFeedbackFetcher,
+        "task_review_feedback": TaskReviewFeedbackFetcher,
         "era5": ERA5Fetcher,
         "observed_weather": ObservedWeatherFetcher,
         "jining_era5": JiningERA5Fetcher,
