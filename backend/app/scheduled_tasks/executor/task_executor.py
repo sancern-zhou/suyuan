@@ -142,6 +142,7 @@ class ScheduledTaskExecutor:
                 "history_learning": task.history_learning.model_dump(mode="json"),
                 "result_requirements": [rule.model_dump(mode="json") for rule in task.result_requirements],
                 "model_tier": task.model_tier,
+                "allow_archived_review_reopen": task.allow_archived_review_reopen,
             }
         }
 
