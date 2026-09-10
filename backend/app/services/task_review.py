@@ -152,6 +152,10 @@ def submit_review(payload, source):
     submission = ReviewSubmission.model_validate(payload).model_dump(mode="json")
     if not source.get("task_id") or not source.get("execution_id"):
         raise ValueError("提交审核结果需要真实任务执行上下文")
+    if source.get("review_subject_bound"):
+        expected = source.get("expected_subject_id")
+        if not expected or submission["subject_id"] != expected or submission.get("event_id") != expected:
+            raise ValueError("subject_id 和 event_id 必须匹配本次任务绑定的业务编号")
     from app.scheduled_tasks.models.review_requirements import validate_review_result
     validate_review_result(submission, source.get("result_requirements", []))
     from app.utils.path_config import resolve_agent_path, is_path_within, format_agent_path

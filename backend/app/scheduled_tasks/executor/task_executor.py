@@ -143,6 +143,8 @@ class ScheduledTaskExecutor:
                 "result_requirements": [rule.model_dump(mode="json") for rule in task.result_requirements],
                 "model_tier": task.model_tier,
                 "allow_archived_review_reopen": task.allow_archived_review_reopen,
+                "review_subject_bound": bool(task.review_subject_attribute),
+                "expected_subject_id": (execution.event_attributes or {}).get(task.review_subject_attribute) if task.review_subject_attribute else None,
             }
         }
 

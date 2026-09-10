@@ -6,7 +6,7 @@ from app.tools.resource_declarations import resources_for_visuals
 
 class SubmitTaskReviewTool(LLMTool):
     def __init__(self):
-        description = "提交已完成分析的结构化结论，生成任务调度中心待人工确认或处置卡片。工单、研判、诊断共用此工具；仅在需要人工操作时提交。同一执行同一业务编号仅提交一次；普通回复不会生成待办。"
+        description = "提交已完成分析的结构化结论，生成任务调度中心待人工确认或处置卡片。工单、研判、诊断共用此工具；需要人工确认、处置或归档时均应提交，遵循当前任务的结果要求。同一执行同一业务编号仅提交一次；普通回复不会生成待办。"
         super().__init__(name="submit_task_review", description=description,
                          category=ToolCategory.TASK_MANAGEMENT, requires_context=True,
                          function_schema={"name": "submit_task_review", "description": description,

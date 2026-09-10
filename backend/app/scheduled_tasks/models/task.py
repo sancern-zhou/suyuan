@@ -92,6 +92,7 @@ class ScheduledTask(BaseModel):
 
     model_tier: Literal["auto", "flash", "pro"] = "auto"
     allow_archived_review_reopen: bool = True
+    review_subject_attribute: str | None = None
     result_requirements: list[ResultFieldRequirement] = Field(default_factory=list)
 
     @field_validator("result_requirements")
