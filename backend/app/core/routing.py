@@ -23,6 +23,7 @@ class RouterSpec:
 
 
 ROUTER_REGISTRY = [
+    RouterSpec("app.api.task_review_routes", description="Unified human task review", owner="core"),
     RouterSpec(
         "app.api.project_config_routes",
         description="Project runtime configuration",

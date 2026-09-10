@@ -118,7 +118,7 @@ class ScheduledTaskExecutor:
 
     def _runtime_extra_tool_names(self, task: ScheduledTask) -> list[str]:
         """Tools automatically available only inside this scheduled task run."""
-        names: list[str] = []
+        names: list[str] = ["submit_task_review"]
         if task.broadcast_enabled:
             names.append(SCHEDULED_BROADCAST_TOOL)
         if (
