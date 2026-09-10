@@ -3,7 +3,8 @@
 """
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
+from .review_requirements import ResultFieldRequirement, validate_result_requirements
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -88,6 +89,14 @@ class ScheduledTask(BaseModel):
         default=None,
         description="项目知识库绑定键；由运行时解析为 knowledge_base_ids",
     )
+
+    model_tier: Literal["auto", "flash", "pro"] = "auto"
+    result_requirements: list[ResultFieldRequirement] = Field(default_factory=list)
+
+    @field_validator("result_requirements")
+    @classmethod
+    def validate_requirements(cls, value):
+        return validate_result_requirements(value)
 
     # 触发配置
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")

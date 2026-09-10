@@ -43,11 +43,17 @@ router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
 # ===== 请求/响应模型 =====
 
+from typing import Literal
+from app.scheduled_tasks.models.review_requirements import ResultFieldRequirement
+
+
 class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
     execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/ops/query/social/custom）")
+    model_tier: Literal["auto", "flash", "pro"] = "auto"
+    result_requirements: List[ResultFieldRequirement] = Field(default_factory=list)
     tool_names: Optional[List[str]] = None
     skill_id: Optional[str] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
@@ -77,6 +83,8 @@ class UpdateTaskRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     execution_mode: Optional[str] = None
+    model_tier: Optional[Literal["auto", "flash", "pro"]] = None
+    result_requirements: Optional[List[ResultFieldRequirement]] = None
     tool_names: Optional[List[str]] = None
     skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
@@ -398,6 +406,8 @@ async def create_task(
             prompt=request.prompt,
             timeout_seconds=request.timeout_seconds,
             execution_mode=request.execution_mode,
+            model_tier=request.model_tier,
+            result_requirements=request.result_requirements,
             tool_names=request.tool_names,
             skill_id=request.skill_id,
             trigger_type=request.trigger_type,
@@ -534,6 +544,8 @@ async def update_task(
             updates.setdefault("tool_names", None)
         task_data = task.model_dump()
         task_data.update(updates)
+        if {"model_tier", "result_requirements"} & updates.keys():
+            task_data["created_by"] = "user"
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)

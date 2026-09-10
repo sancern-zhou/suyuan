@@ -119,3 +119,41 @@ def test_single_timestamp_impact_is_valid_but_reversed_range_is_rejected():
     assert service.DataImpact.model_validate(impact).start == service.DataImpact.model_validate(impact).end
     with pytest.raises(ValueError):
         service.DataImpact.model_validate({**impact, 'end': '2026-09-10T00:00:00+08:00'})
+
+
+@pytest.mark.asyncio
+async def test_configured_requirements_block_cards_and_allow_corrected_submission(tmp_path):
+    requirements = [dict(field='sections.event_type', label='事件类型', required=True, allowed_values=['仪器故障']),
+                    dict(field='sections.suggested_level', label='等级', required=True, allowed_values=['P0', 'P1'])]
+    context = SimpleNamespace(scheduled_task_context={**source(), 'result_requirements': requirements})
+    tool = SubmitTaskReviewTool()
+    invalid = await tool.execute(context=context, **payload())
+    assert invalid['success'] is False
+    assert '事件类型' in invalid['summary'] and '等级' in invalid['summary']
+    assert not list(tmp_path.rglob('*.json'))
+    sections = [dict(title='事件结论', fields=[dict(key='event_type', label='类型', value='仪器故障'),
+                                            dict(key='suggested_level', label='等级', value='P9')])]
+    invalid = await tool.execute(context=context, **payload(sections=sections))
+    assert invalid['success'] is False and 'P0' in invalid['summary']
+    assert not list(tmp_path.rglob('*.json'))
+    sections[0]['fields'][1]['value'] = 'P1'
+    valid = await tool.execute(context=context, **payload(sections=sections))
+    assert valid['success'] is True
+    assert len(service.list_reviews()) == 1
+
+
+def test_duplicate_result_keys_rejected_before_write(tmp_path):
+    sections = [dict(title='结论', fields=[dict(key='event_type', label='类型', value=value)])
+                for value in ['仪器故障', '正常']]
+    with pytest.raises(ValueError, match='结果字段重复'):
+        service.submit_review(payload(sections=sections), source())
+    assert not list(tmp_path.rglob('*.json'))
+
+
+def test_optional_requirement_still_rejects_invalid_provided_value():
+    rules = [dict(field='sections.level', label='等级', required=False, allowed_values=['P1'])]
+    service.submit_review(payload(), {**source(), 'result_requirements': rules})
+    with pytest.raises(ValueError, match='等级'):
+        service.submit_review(payload(sections=[dict(title='结论', fields=[dict(key='level', label='等级', value='P9')])]),
+                              {**source('exec-2'), 'result_requirements': rules})
+    assert service.list_reviews()[0]['execution_id'] == 'exec-1'

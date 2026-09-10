@@ -210,6 +210,28 @@
               </select>
             </label>
 
+            <label class="form-field">
+              <span>模型档位</span>
+              <select v-model="createForm.model_tier" aria-label="模型档位">
+                <option value="auto">自动</option>
+                <option value="flash">Flash</option>
+                <option value="pro">Pro</option>
+              </select>
+              <small class="form-hint">自动使用系统路由；Flash 和 Pro 使用对应档位的模型配置。</small>
+            </label>
+            <div class="form-field form-wide">
+              <span>结果字段要求</span>
+              <small class="form-hint">提交待办前校验。通用字段可填 title、summary、decision、comment；详情字段填 sections.event_type 等。字段内容均为文本，允许值留空表示不限。</small>
+              <div v-for="(rule, index) in createForm.result_requirements" :key="index" class="result-requirement-row">
+                <label>字段标识<input v-model="rule.field" aria-label="结果字段标识" placeholder="sections.event_type" /></label>
+                <label>展示名称<input v-model="rule.label" aria-label="结果字段名称" placeholder="AI 事件类型" /></label>
+                <label>允许值<input v-model="rule.allowedValuesText" aria-label="结果字段允许值" placeholder="用逗号分隔，留空不限" /></label>
+                <label class="switch-field"><input v-model="rule.required" type="checkbox" />必填</label>
+                <button type="button" @click="createForm.result_requirements.splice(index, 1)">删除</button>
+              </div>
+              <button type="button" @click="createForm.result_requirements.push({ field: '', label: '', required: true, allowedValuesText: '' })">添加结果字段</button>
+            </div>
+
             <div v-if="createForm.execution_mode === 'custom'" class="form-field form-wide">
               <span>Agent 工具（本次任务所有步骤固定共享）</span>
               <input v-model="createForm.toolSearch" type="search" placeholder="搜索工具名称或说明" />
@@ -632,6 +654,8 @@ const defaultForm = () => ({
   description: '',
   agent_prompt: '',
   execution_mode: 'assistant',
+  model_tier: 'auto',
+  result_requirements: [],
   skill_id: '',
   tool_names: [],
   toolSearch: '',
@@ -1010,6 +1034,8 @@ const openEditDialog = async (task) => {
     description: task.description || '',
       agent_prompt: task.prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
+    model_tier: task.model_tier || 'auto',
+    result_requirements: (task.result_requirements || []).map(rule => ({ ...rule, allowedValuesText: (rule.allowed_values || []).join('，') })),
     skill_id: task.skill_id || '',
     tool_names: [...(task.tool_names || [])],
     trigger_type: task.trigger_type || 'schedule',
@@ -1597,6 +1623,9 @@ const saveTask = async () => {
   gap: 14px;
 }
 
+.result-requirement-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px 0; }
+.result-requirement-row > label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 150px; }
+.result-requirement-row input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

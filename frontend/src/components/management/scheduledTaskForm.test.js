@@ -308,3 +308,17 @@ test('event trigger defaults to social execution and broadcasting', () => {
   assert.equal(form.broadcast_enabled, true)
   assert.equal(form.event_type, 'yuncheng.alert.created')
 })
+
+
+test('task payload preserves tier and serializes editable result requirements', () => {
+  const result = buildTaskPayload({ model_tier: 'pro', result_requirements: [
+    { field: 'sections.suggested_level', label: '等级', required: true, allowedValuesText: 'P0，P1,P2' },
+    { field: 'sections.note', label: '说明', required: false, allowedValuesText: '' }
+  ] })
+  assert.equal(result.model_tier, 'pro')
+  assert.deepEqual(result.result_requirements, [
+    { field: 'sections.suggested_level', label: '等级', required: true, allowed_values: ['P0', 'P1', 'P2'] },
+    { field: 'sections.note', label: '说明', required: false, allowed_values: [] }
+  ])
+  assert.equal(buildTaskPayload({}).model_tier, 'auto')
+})
