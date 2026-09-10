@@ -301,3 +301,44 @@ async def test_creates_terminal_fallback_when_runtime_export_never_started():
         "user", "error"
     ]
     assert await persistence.publish_conversation(task=task(), execution=execution)
+
+
+@pytest.mark.asyncio
+async def test_terminal_save_does_not_repeat_database_enriched_live_snapshot():
+    class DatabaseLikeManager(FakeSessionManager):
+        async def save_session(self, session, **kwargs):
+            await super().save_session(session, **kwargs)
+            for index, message in enumerate(self.existing.conversation_history):
+                message['id'] = f'msg_{len(self.saved)}_{index}'
+                message['role'] = 'user' if message['type'] == 'user' else 'assistant'
+            return True
+
+    manager = DatabaseLikeManager()
+    persistence = ScheduledTaskConversationPersistence(manager, FakeCatalog())
+    execution = TaskExecution(
+        execution_id='exec-1', task_id='task-1', task_name='告警分析',
+        session_id='scheduled-session-1', status='running', total_steps=1,
+    )
+    history = [
+        {'type': 'user', 'content': '执行任务', 'timestamp': '2026-09-11T00:41:44.362298'},
+        {'type': 'tool_result', 'content': '核验完成', 'data': {'result': 'ok'},
+         'timestamp': '2026-09-11T00:42:44.362298'},
+    ]
+    async def persist(messages):
+        await persistence.persist_agent_session(
+            agent=FakeAgent(), task=task(), execution=execution,
+            display_history=messages,
+        )
+
+    await persist(history)
+    complete = history + [
+        {'type': 'final', 'content': '研判完成', 'timestamp': '2026-09-11T00:43:44.362298'}
+    ]
+    await persist(complete)
+    await persist(complete)
+    assert [m['type'] for m in manager.existing.conversation_history] == [
+        'user', 'tool_result', 'final'
+    ]
+    # Identical wording in a later turn is still a real new input.
+    await persist([dict(history[0], timestamp='2026-09-11T01:41:44.362298')])
+    assert len(manager.existing.conversation_history) == 4

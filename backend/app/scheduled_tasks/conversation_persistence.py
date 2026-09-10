@@ -50,7 +50,7 @@ class ScheduledTaskConversationPersistence:
             session.conversation_history = list(existing.conversation_history)
             self.transcript_persistence.append_complete(
                 session,
-                display_history=display_history,
+                display_history=self._unpersisted_history(existing, display_history),
             )
         else:
             self.transcript_persistence.apply_complete(
@@ -82,6 +82,32 @@ class ScheduledTaskConversationPersistence:
             raise RuntimeError("scheduled_session_transcript_verification_failed")
 
         return True
+
+    @staticmethod
+    def _unpersisted_history(existing, display_history: list[dict]) -> list[dict]:
+        """Remove a live snapshot prefix using identity stable across DB reads.
+
+        Database-generated IDs and inferred roles are absent from executor
+        messages. Timestamps distinguish genuinely separate task turns.
+        """
+        if existing is None:
+            return display_history
+        history = existing.conversation_history
+
+        def key(message):
+            return (
+                message.get("type"), message.get("content"),
+                message.get("timestamp"), message.get("data") or None,
+            )
+
+        for size in range(min(len(history), len(display_history)), 0, -1):
+            previous = history[-size:]
+            incoming = display_history[:size]
+            if all(message.get("timestamp") for message in incoming) and all(
+                key(left) == key(right) for left, right in zip(previous, incoming)
+            ):
+                return display_history[size:]
+        return display_history
 
     async def publish_conversation(
         self,
