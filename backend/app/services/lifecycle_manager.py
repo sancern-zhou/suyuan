@@ -44,6 +44,7 @@ from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
 )
 from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
 from app.project_config.loader import load_project_context
+from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
 
 # 导入单一工具注册源
 from app.tools import global_tool_registry
@@ -98,6 +99,7 @@ def _configured_fetchers(project_context):
     """Instantiate only fetchers declared by a project manifest."""
     enabled_modules = project_context.enabled_modules
     factories = {
+        "task_review_feedback": TaskReviewFeedbackFetcher,
         "era5": ERA5Fetcher,
         "observed_weather": ObservedWeatherFetcher,
         "jining_era5": JiningERA5Fetcher,

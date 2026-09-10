@@ -31,7 +31,7 @@ async def _distill(task, memory, review):
     return parsed
 
 
-async def consume_feedback(review_id, task, storage=None):
+async def consume_feedback(review_id, task, storage=None, feedback_id=None):
     from app.services.task_review import review_path
 
     with review_path(review_id).with_suffix('.learning.lock').open('a') as lock:
@@ -39,10 +39,10 @@ async def consume_feedback(review_id, task, storage=None):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
-        await _consume_feedback(review_id, task, storage)
+        await _consume_feedback(review_id, task, storage, feedback_id)
 
 
-async def _consume_feedback(review_id, task, storage=None):
+async def _consume_feedback(review_id, task, storage=None, feedback_id=None):
     from app.services.task_review import load_review, save_review as persist, review_lock
 
     def save_review(value):
@@ -56,6 +56,9 @@ async def _consume_feedback(review_id, task, storage=None):
 
     storage = storage or TaskCaseStorage(task.task_id)
     review = load_review(review_id)
+    if feedback_id:
+        review = next((candidate for candidate in [review, *review.get('history', [])]
+                       if (candidate.get('human_feedback') or {}).get('feedback_id') == feedback_id), None)
     feedback = (review or {}).get('human_feedback') or {}
     if feedback.get('status') == 'completed' or not feedback:
         return
@@ -129,10 +132,11 @@ async def consume_pending_feedback():
         task = TaskStorage().get(review['task_id'])
         if task is None or not task.history_learning.enabled:
             continue
-        feedback = review.get('human_feedback') or {}
-        if feedback.get('status') not in {'pending', 'failed'} or feedback.get('retry_after', '') > now:
-            continue
-        await consume_feedback(review['review_id'], task)
-        processed += 1
-        if processed >= 10:
-            break
+        for candidate in [*review.get('history', []), review]:
+            feedback = candidate.get('human_feedback') or {}
+            if feedback.get('status') not in {'pending', 'failed'} or feedback.get('retry_after', '') > now:
+                continue
+            await consume_feedback(review['review_id'], task, feedback_id=feedback['feedback_id'])
+            processed += 1
+            if processed >= 10:
+                return
