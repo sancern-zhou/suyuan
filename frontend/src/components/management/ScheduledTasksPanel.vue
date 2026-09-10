@@ -209,6 +209,15 @@
               </select>
             </label>
 
+            <label class="form-field">
+              <span>模型档位</span>
+              <select v-model="createForm.model_tier">
+                <option value="auto">自动</option>
+                <option value="flash">flash</option>
+                <option value="pro">pro</option>
+              </select>
+            </label>
+
             <div v-if="createForm.execution_mode === 'custom'" class="form-field form-wide">
               <span>Agent 工具（本次任务所有步骤固定共享）</span>
               <input v-model="createForm.toolSearch" type="search" placeholder="搜索工具名称或说明" />
@@ -609,6 +618,7 @@ const defaultForm = () => ({
   description: '',
   agent_prompt: '',
   execution_mode: 'assistant',
+  model_tier: 'auto',
   skill_id: '',
   tool_names: [],
   toolSearch: '',
@@ -982,6 +992,7 @@ const openEditDialog = async (task) => {
     description: task.description || '',
       agent_prompt: task.prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
+    model_tier: task.model_tier || 'auto',
     skill_id: task.skill_id || '',
     tool_names: [...(task.tool_names || [])],
     trigger_type: task.trigger_type || 'schedule',
