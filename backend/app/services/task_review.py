@@ -63,6 +63,7 @@ class Evidence(ReviewModel):
 
 
 class DetailField(ReviewModel):
+    key: str | None = Field(default=None, description="可选稳定业务字段标识，供来源页面读取")
     label: str = Field(min_length=1)
     value: str = Field(min_length=1)
 
