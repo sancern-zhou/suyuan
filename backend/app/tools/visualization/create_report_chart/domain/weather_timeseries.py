@@ -9,6 +9,8 @@ from typing import Any
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnnotationBbox, DrawingArea
+from matplotlib.patches import FancyArrowPatch
 import numpy as np
 
 from app.tools.visualization.create_report_chart.renderer import _line_width
@@ -83,28 +85,28 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     wind_ax.tick_params(axis="y", labelcolor=colors["speed"])
     ax.set_ylim(0, max(100, float(np.nanmax(np.r_[humidity, precipitation])) * 1.15 if np.isfinite(np.r_[humidity, precipitation]).any() else 100))
     wind_ax.set_ylim(0, max(1, float(np.nanmax(speed)) * 1.25 if np.isfinite(speed).any() else 1))
-    top = ax.get_ylim()[1] * 0.86
     # Meteorological direction is the direction the wind comes *from*.
     # Draw a true-degree arrow pointing toward where it goes; do not quantize
     # to cardinal glyphs, which loses information and is font-dependent.
     for value, timestamp in zip(direction[valid_dir], np.asarray(ts, dtype=object)[valid_dir], strict=True):
         angle = np.deg2rad(float(value) % 360.0 + 180.0)
-        dx = 10.0 * np.sin(angle)
-        dy = 10.0 * np.cos(angle)
-        ax.annotate(
-            "",
-            xy=(timestamp, top),
-            xycoords="data",
-            xytext=(-dx, -dy),
-            textcoords="offset points",
-            arrowprops={
-                "arrowstyle": "-|>",
-                "color": "#B7791F",
-                "lw": max(0.8, width),
-                "mutation_scale": 10,
-            },
-            annotation_clip=False,
-        )
+        dx = 9.0 * np.sin(angle)
+        dy = 9.0 * np.cos(angle)
+        # Center fixed-length arrows on an axes-relative horizontal row.
+        # Drawing in points keeps the direction and slim shape independent of
+        # wind speed, y-axis limits and the chart's time span.
+        drawing = DrawingArea(22, 22, 0, 0)
+        drawing.add_artist(FancyArrowPatch(
+            (11 - dx, 11 - dy), (11 + dx, 11 + dy),
+            arrowstyle="-|>,head_length=3.5,head_width=1.3",
+            mutation_scale=1, linewidth=0.7, color="#B7791F",
+            shrinkA=0, shrinkB=0,
+        ))
+        ax.add_artist(AnnotationBbox(
+            drawing, (mdates.date2num(timestamp), 0.95),
+            xycoords=ax.get_xaxis_transform(), frameon=False,
+            box_alignment=(0.5, 0.5), pad=0, annotation_clip=False,
+        ))
     areas = options.get("areas") or data.get("areas") or options.get("risk_periods") or data.get("risk_periods") or []
     for period in areas:
         try:
