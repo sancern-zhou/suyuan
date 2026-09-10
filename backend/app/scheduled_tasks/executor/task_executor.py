@@ -140,6 +140,8 @@ class ScheduledTaskExecutor:
                 "task_name": task.name,
                 "execution_id": execution.execution_id,
                 "history_learning": task.history_learning.model_dump(mode="json"),
+                "result_requirements": [rule.model_dump(mode="json") for rule in task.result_requirements],
+                "model_tier": task.model_tier,
             }
         }
 
@@ -211,17 +213,19 @@ class ScheduledTaskExecutor:
                 broadcast_user_names=broadcast_user_names,
                 history_section=history_section,
             )
-            result = await asyncio.wait_for(
-                self._run_agent(
-                    prompt, task_session_id,
-                    manual_mode=task.execution_mode,
-                    task=task, execution=execution, agent=shared_agent,
-                    collected=collected,
-                    extra_tool_names=runtime_extra_tool_names,
-                    runtime_metadata=self._runtime_metadata(task, execution),
-                ),
-                timeout=task.timeout_seconds,
-            )
+            from app.services.llm_service import llm_service
+            with llm_service.use_model_tier(task.model_tier):
+                result = await asyncio.wait_for(
+                    self._run_agent(
+                        prompt, task_session_id,
+                        manual_mode=task.execution_mode,
+                        task=task, execution=execution, agent=shared_agent,
+                        collected=collected,
+                        extra_tool_names=runtime_extra_tool_names,
+                        runtime_metadata=self._runtime_metadata(task, execution),
+                    ),
+                    timeout=task.timeout_seconds,
+                )
             execution.steps.append(self._result_to_execution(result, prompt, "task"))
             execution.completed_steps += 1
             self.execution_storage.update(execution)
@@ -606,6 +610,11 @@ class ScheduledTaskExecutor:
 - 如果任务流程要求调用子 Agent 审核、复核或生成交接产物，必须在本次执行内直接调用并等待工具返回，不要先向用户展示方案等待确认。
 - 如果工具结果明确存在 manual_review、report_ready=false 或无法自动判断的业务项，按工具结果说明未完成自动出具正式报告的原因并正常交付当前可用产物，不要等待在线确认。"""
         )
+        if task.result_requirements:
+            import json
+            sections.append("## 结果字段要求\n提交工具前必须满足以下配置。sections.xxx 表示详情区块中 key=xxx 的字段；"
+                            "allowed_values 为空表示自由文本。校验失败请按错误修正并重新提交。\n"
+                            + json.dumps([rule.model_dump(mode="json") for rule in task.result_requirements], ensure_ascii=False))
         if history_section:
             sections.append(history_section)
         if event is not None:

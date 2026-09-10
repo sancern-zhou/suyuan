@@ -59,6 +59,13 @@ export const buildTaskPayload = (form) => {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
     execution_mode: form.execution_mode || 'assistant',
+    model_tier: form.model_tier || 'auto',
+    result_requirements: (form.result_requirements || []).map(rule => ({
+      field: String(rule.field || '').trim(),
+      label: String(rule.label || '').trim(),
+      required: rule.required !== false,
+      allowed_values: String(rule.allowedValuesText || '').split(/[,，\n]/).map(value => value.trim()).filter(Boolean)
+    })),
     skill_id: String(form.skill_id || '').trim() || null,
     trigger_type: isEvent ? 'event' : 'schedule',
     schedule_type: isEvent ? null : form.schedule_type,

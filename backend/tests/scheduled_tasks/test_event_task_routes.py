@@ -438,3 +438,25 @@ def test_execute_now_returns_immediately_without_waiting(monkeypatch):
     assert response.status_code == 202
     assert response.json()["success"] is True
     assert service.started_task_ids == [task_id]
+
+
+def test_task_result_and_model_configuration_create_update(monkeypatch):
+    client, service = _client(monkeypatch)
+    payload = {**_event_payload(), 'model_tier': 'flash', 'result_requirements': [
+        {'field': 'sections.level', 'label': '等级', 'required': True, 'allowed_values': ['P1', 'P2']}
+    ]}
+    created = client.post('/api/scheduled-tasks', json=payload)
+    assert created.status_code == 200, created.text
+    record = created.json()['task']
+    assert record['model_tier'] == 'flash'
+    assert record['result_requirements'] == payload['result_requirements']
+    task_id = record['task_id']
+    service.tasks[task_id].created_by = 'project-default'
+    updated = client.put(f'/api/scheduled-tasks/{task_id}', json={'model_tier': 'pro', 'result_requirements': []})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['task']['model_tier'] == 'pro'
+    assert updated.json()['task']['result_requirements'] == []
+    assert updated.json()['task']['created_by'] == 'user'
+    rejected = client.put(f'/api/scheduled-tasks/{task_id}', json={'model_tier': 'invalid'})
+    assert rejected.status_code == 422
+    assert service.tasks[task_id].model_tier == 'pro'

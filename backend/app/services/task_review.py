@@ -152,6 +152,8 @@ def submit_review(payload, source):
     submission = ReviewSubmission.model_validate(payload).model_dump(mode="json")
     if not source.get("task_id") or not source.get("execution_id"):
         raise ValueError("提交审核结果需要真实任务执行上下文")
+    from app.scheduled_tasks.models.review_requirements import validate_review_result
+    validate_review_result(submission, source.get("result_requirements", []))
     from app.utils.path_config import resolve_agent_path, is_path_within, format_agent_path
     for evidence in submission["evidence"]:
         path = resolve_agent_path(evidence["path"])
