@@ -2,18 +2,11 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-const readSource = () => readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
-
-test('task scheduler center exposes todo and scheduled tabs', async () => {
-  const source = await readSource()
-
-  assert.match(source, /待办任务/)
-  assert.match(source, /定时任务/)
-  assert.match(source, /activeTab = ref\('todo'\)/)
-  assert.match(source, /fetchRecentExecutions\(\{ pageSize: 50 \}\)/)
-  assert.match(source, /listJiangsuSmartEventTasks\(\{ limit: 100 \}\)/)
-  assert.match(source, /execution\.trigger_type === 'scheduled'/)
-  assert.match(source, /executionToAttentionItem\(execution\)/)
-  assert.match(source, /smartEventTasks\.value\.map\(card => toTodoCard/)
-  assert.match(source, /sourceTask: sourceTask/)
+test('all todo categories use submitted generic reviews and the shared detail panel', async () => {
+  const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
+  assert.match(source, /listTaskReviews\(\)/)
+  assert.match(source, /TaskReviewPanel :review-id="selectedReviewId"/)
+  assert.match(source, /task\.category/)
+  assert.match(source, /eventTasks/)
+  assert.doesNotMatch(source, /fetchRecentExecutions|listJiangsuSmartEventTasks|executionToAttentionItem|smartEventTasks/)
 })

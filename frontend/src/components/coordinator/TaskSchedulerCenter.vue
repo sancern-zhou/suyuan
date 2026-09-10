@@ -26,10 +26,10 @@
           :key="tab.id"
           type="button"
           :class="{ active: activeTab === tab.id }"
-          @click="activeTab = tab.id"
+          @click="activeTab = tab.id; activeTaskType = 'all'"
         >
           {{ tab.name }}
-          <span>{{ tab.id === 'todo' ? todoTasks.length : scheduledTasks.length }}</span>
+          <span>{{ tab.id === 'todo' ? todoTasks.length : tab.id === 'event' ? eventTasks.length : scheduledTasks.length }}</span>
         </button>
       </nav>
 
@@ -64,15 +64,15 @@
 
       <section class="task-cards-section" aria-label="任务列表">
         <header class="section-header">
-          <div><span>{{ activeTab === 'todo' ? 'TODO' : 'SCHEDULED' }}</span><h2>{{ activeTaskTypeName }}{{ activeTab === 'todo' ? '待办任务' : '定时任务' }}</h2></div>
+          <div><span>{{ activeTab === 'todo' ? 'TODO' : 'SCHEDULED' }}</span><h2>{{ activeTaskTypeName }}{{ activeTab === 'todo' ? '待办任务' : activeTab === 'event' ? '事件任务' : '定时任务' }}</h2></div>
           <span class="section-count">{{ filteredTasks.length }} TASKS</span>
         </header>
           <div v-if="filteredTasks.length" class="task-cards-grid">
             <article
               v-for="task in filteredTasks"
-            :key="task.task_id || task.executionId"
+            :key="task.cardId || task.task_id || task.executionId"
             class="task-card"
-            :class="{ paused: activeTab === 'scheduled' && !task.enabled }"
+            :class="{ paused: activeTab !== 'todo' && !task.enabled }"
           >
             <span class="task-ambient" aria-hidden="true"></span>
             <span class="task-type-badge">{{ activeTab === 'todo' ? '待处理' : getTaskTypeLabel(task) }}</span>
@@ -84,7 +84,7 @@
                 <strong>{{ activeTab === 'todo' ? task.title : (task.workspace_entry?.title || task.name) }}</strong>
                 <small>{{ activeTab === 'todo' ? task.taskName : task.name }}</small>
               </span>
-              <span v-if="activeTab === 'scheduled'" :class="['task-state', { paused: !task.enabled }]">
+              <span v-if="activeTab !== 'todo'" :class="['task-state', { paused: !task.enabled }]">
                 <i aria-hidden="true"></i>{{ task.enabled ? '已启用' : '已暂停' }}
               </span>
               <span v-else :class="['task-state', `todo-${task.status}`]">
@@ -97,16 +97,22 @@
               <span v-if="activeTab === 'todo'">{{ task.severityLabel }}</span>
               <span v-else>{{ task.timeout_seconds || 1800 }} 秒超时</span>
             </span>
-            <button type="button" class="task-action" @click="emit('select-task', task.sourceTask || task)">
-              {{ activeTab === 'todo' ? '查看执行结果' : '进入工作区' }}
+            <button type="button" class="task-action" @click="activeTab === 'todo' ? selectedReviewId = task.review_id : emit('select-task', task)">
+              {{ activeTab === 'todo' ? '查看研判结果' : '进入工作区' }}
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
             </button>
           </article>
         </div>
         <div v-else class="empty-state">
-          <strong>当前类型下暂无任务</strong>
-          <span>切换其他任务类型，或在定时任务管理中创建新任务。</span>
+          <strong>{{ activeTab === 'todo' ? '暂无待人工确认或处置的事项' : '当前类型下暂无任务' }}</strong>
+          <span>{{ activeTab === 'todo' ? 'AI 研判完成后，需要人工确认或处置的事项将显示在这里。' : '切换其他任务类型，或在定时任务管理中创建新任务。' }}</span>
         </div>
+      </section>
+    </div>
+    <div v-if="selectedReviewId" class="review-overlay" @click.self="selectedReviewId = null">
+      <section class="review-dialog" role="dialog" aria-modal="true" aria-label="待办事项详情">
+        <button class="review-close" type="button" @click="selectedReviewId = null">关闭</button>
+        <TaskReviewPanel :review-id="selectedReviewId" @updated="loadTasks" />
       </section>
     </div>
   </main>
@@ -115,8 +121,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
-import { executionToAttentionItem } from './coordinatorWorkspace.js'
-import { listJiangsuSmartEventTasks } from '@/services/jiangsuSmartEventsApi.js'
+import { listTaskReviews } from '@/services/taskReviewsApi.js'
+import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 
 const props = defineProps({
   runningModes: { type: Array, default: () => [] }
@@ -125,7 +131,6 @@ const emit = defineEmits(['select-task'])
 const scheduledTasksStore = useScheduledTasksStore()
 const loading = ref(false)
 const loadError = ref('')
-const executionLoading = ref(false)
 const activeTab = ref('todo')
 const activeTaskType = ref('all')
 
@@ -136,55 +141,22 @@ const schedulerTabs = Object.freeze([
 ])
 
 const TYPE_ICON_SVG = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>'
-const taskTypes = [
-  { id: 'all', name: '全部任务', icon: '<svg viewBox="0 0 24 24"><path d="M4 6.5h7v7H4z" /><path d="M13 6.5h7v7h-7z" /><path d="M4 15h7v4H4z" /><path d="M13 15h7v4h-7z" /></svg>' },
-  { id: 'smart_event', name: '智能事件', icon: '<svg viewBox="0 0 24 24"><path d="M12 4 5 7l7 3 7-3-7-3Z" /><path d="M5 12l7 3 7-3" /><path d="M5 16.5 12 19.5l7-3" /></svg>' },
-  { id: 'fault', name: '故障诊断', icon: '<svg viewBox="0 0 24 24"><path d="M9 4.5h6l-.7 5.2 3.4 3-1 2.3-3.7-1.6V19l-1 1.5-1-1.5v-5.6l-3.7 1.6-1-2.3 3.4-3L9 4.5Z" /></svg>' },
-  { id: 'work_order', name: '工单审核', icon: '<svg viewBox="0 0 24 24"><path d="M6.5 4.5h11v15h-11z" /><path d="M9.5 9h5" /><path d="M9.5 12.5h5" /><path d="M9.5 16h3" /></svg>' },
-  { id: 'other', name: '其他任务', icon: TYPE_ICON_SVG }
-]
-
-const resolveTaskType = (task) => {
-  const id = String(task?.task_id || '')
-  if (task?.trigger_type === 'event' || id.includes('smart_event')) return 'smart_event'
-  if (id.includes('work_order') || id.includes('review')) return 'work_order'
-  if (id.includes('fault') || id.includes('diagnosis')) return 'fault'
-  return 'other'
-}
+const taskTypes = computed(() => [
+  { id: 'all', name: '全部任务', icon: TYPE_ICON_SVG },
+  ...[...new Set(visibleTasks.value.map(resolveTaskType))].sort().map(category => ({ id: category, name: category, icon: TYPE_ICON_SVG }))
+])
+const resolveTaskType = task => task.category || task.workspace_entry?.title || task.name
 
 const tasks = computed(() => scheduledTasksStore.tasks)
-const completedExecutions = ref([])
-const smartEventTasks = ref([])
-const toTodoCard = (card, execution = null) => {
-  const sourceTask = tasks.value.find(task => task.task_id === (card.scheduled_task_id || execution?.task_id))
-  const attention = execution ? executionToAttentionItem(execution) : null
-  const status = card.status || execution?.status || '待查看'
-  return {
-    ...(attention || {}),
-    task_id: sourceTask?.task_id || card.scheduled_task_id || execution?.task_id || card.task_id,
-    taskName: card.title || card.task_name || execution?.task_name || sourceTask?.name || '待处理任务',
-    trigger_type: sourceTask?.trigger_type || 'event',
-    title: card.title || attention?.title || execution?.task_name || '待处理任务',
-    summary: card.final_response || attention?.summary || '定时任务已完成，请查看执行结果并完成后续处理。',
-    status,
-    occurredAt: card.updated_at || card.created_at || attention?.occurredAt || execution?.completed_at,
-    severity: attention?.severity || (status.includes('失败') ? 'high' : 'medium'),
-    severityLabel: status.includes('失败') ? '需处理' : '待复核',
-    sourceTask: sourceTask || { task_id: card.scheduled_task_id || execution?.task_id, name: card.title || execution?.task_name || '待处理任务' }
-  }
-}
-const todoTasks = computed(() => {
-  const executionById = new Map(completedExecutions.value.map(item => [item.execution_id, item]))
-  const cards = smartEventTasks.value.map(card => toTodoCard(card, executionById.get(card.execution_id)))
-  const linkedExecutionIds = new Set(smartEventTasks.value.map(card => card.execution_id).filter(Boolean))
-  return cards.concat(
-    completedExecutions.value
-      .filter(execution => !linkedExecutionIds.has(execution.execution_id))
-      .map(execution => toTodoCard({}, execution))
-  )
-})
+const reviews = ref([])
+const selectedReviewId = ref(null)
+const todoTasks = computed(() => reviews.value.map(review => ({
+  ...review, cardId: review.review_id, taskName: review.task_name,
+  occurredAt: review.updated_at, severityLabel: review.status === 'in_disposal' ? '待处置' : '待确认'
+})))
 const scheduledTasks = computed(() => tasks.value.filter(task => task?.trigger_type === 'schedule'))
-const visibleTasks = computed(() => activeTab.value === 'todo' ? todoTasks.value : scheduledTasks.value)
+const eventTasks = computed(() => tasks.value.filter(task => task?.trigger_type === 'event'))
+const visibleTasks = computed(() => activeTab.value === 'todo' ? todoTasks.value : activeTab.value === 'event' ? eventTasks.value : scheduledTasks.value)
 const filteredTasks = computed(() => (
   activeTaskType.value === 'all'
     ? visibleTasks.value
@@ -193,7 +165,7 @@ const filteredTasks = computed(() => (
 const enabledTaskCount = computed(() => tasks.value.filter(task => task.enabled).length)
 const pausedTaskCount = computed(() => tasks.value.filter(task => !task.enabled).length)
 const activeTaskTypeName = computed(() => (
-  activeTaskType.value === 'all' ? '' : `${taskTypes.find(type => type.id === activeTaskType.value)?.name || ''}·`
+  activeTaskType.value === 'all' ? '' : `${taskTypes.value.find(type => type.id === activeTaskType.value)?.name || ''}·`
 ))
 
 const getTaskCountByType = typeId => (
@@ -201,11 +173,8 @@ const getTaskCountByType = typeId => (
     ? visibleTasks.value.length
     : visibleTasks.value.filter(task => resolveTaskType(task) === typeId).length
 )
-const getTaskTypeLabel = task => taskTypes.find(type => type.id === resolveTaskType(task))?.name || '其他任务'
-const formatTodoStatus = status => ({
-  success: '待复核', failed: '需处理', timeout: '需处理', cancelled: '已取消',
-  '已完成': '待复核', '执行失败': '需处理', '执行中': '处理中', '待执行': '待执行', '待调度': '待调度'
-}[status] || '待查看')
+const getTaskTypeLabel = task => taskTypes.value.find(type => type.id === resolveTaskType(task))?.name || '其他任务'
+const formatTodoStatus = status => ({ pending_review: '待人工确认', in_disposal: '待处置' }[status])
 const formatTodoTime = value => {
   if (!value) return '完成时间未知'
   const date = new Date(value)
@@ -230,30 +199,25 @@ const formatTaskSchedule = (task) => {
 
 const loadTasks = async () => {
   loading.value = true
-  executionLoading.value = true
   loadError.value = ''
   try {
-    const [, executionResult, eventTaskResult] = await Promise.allSettled([
+    const [, reviewPayload] = await Promise.all([
       scheduledTasksStore.fetchTasks(),
-      scheduledTasksStore.fetchRecentExecutions({ pageSize: 50 }),
-      listJiangsuSmartEventTasks({ limit: 100 })
+      listTaskReviews()
     ])
-    const executions = executionResult.status === 'fulfilled' ? executionResult.value : { executions: [] }
-    const eventTaskPayload = eventTaskResult.status === 'fulfilled' ? eventTaskResult.value : { tasks: [] }
-    smartEventTasks.value = Array.isArray(eventTaskPayload?.tasks) ? eventTaskPayload.tasks : []
-    completedExecutions.value = executions.executions.filter(execution => (
-      execution.trigger_type === 'scheduled'
-      && (Boolean(execution.completed_at) || ['success', 'failed', 'timeout', 'cancelled'].includes(execution.status))
-    ))
-    if (executionResult.status === 'rejected' && eventTaskResult.status === 'rejected') {
-      throw executionResult.reason || eventTaskResult.reason
+    const loaded = [...reviewPayload.reviews]
+    while (loaded.length < reviewPayload.total) {
+      const page = await listTaskReviews(loaded.length)
+      if (!page.reviews.length) break
+      loaded.push(...page.reviews)
     }
+    reviews.value = [...new Map(loaded.map(review => [review.review_id, review])).values()]
+    if (!taskTypes.value.some(type => type.id === activeTaskType.value)) activeTaskType.value = 'all'
   } catch (error) {
     console.error('[TaskSchedulerCenter] Failed to load scheduled tasks:', error)
     loadError.value = '任务或执行结果暂时不可用，请稍后重试。'
   } finally {
     loading.value = false
-    executionLoading.value = false
   }
 }
 
@@ -261,6 +225,9 @@ onMounted(loadTasks)
 </script>
 
 <style scoped>
+.review-overlay { position:fixed; inset:0; z-index:1000; background:#122f4266; display:grid; place-items:center; padding:24px; }
+.review-dialog { width:min(1000px,100%); height:90vh; background:white; border-radius:12px; display:flex; flex-direction:column; overflow:hidden; }
+.review-close { align-self:flex-end; margin:8px 16px; padding:6px 16px; cursor:pointer; }
 .task-scheduler-center {
   --ink: #0a2531;
   --muted: #5b7684;
