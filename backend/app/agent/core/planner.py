@@ -104,6 +104,30 @@ class ReActPlanner:
         return conversation_history
 
     @staticmethod
+    def _build_messages(
+        conversation_history: List[Dict[str, Any]],
+        user_content: Any,
+    ) -> List[Dict[str, Any]]:
+        """Append real input while keeping tool continuations at tool_result."""
+        messages = list(conversation_history)
+        if isinstance(user_content, str):
+            if not user_content.strip():
+                return messages
+        elif isinstance(user_content, list):
+            # Image/document-only input is meaningful even without any text.
+            user_content = [
+                block for block in user_content
+                if not (
+                    isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and not str(block.get("text") or "").strip()
+                )
+            ]
+        if user_content:
+            messages.append({"role": "user", "content": user_content})
+        return messages
+
+    @staticmethod
     def _is_fetch_url_failure(exc: Exception) -> bool:
         return is_media_fetch_failure_message(str(exc))
 
@@ -166,9 +190,10 @@ class ReActPlanner:
         conversation_history = self._fix_missing_tool_results(conversation_history)
 
         # 构建 messages（Anthropic API 不接受 system 在 messages 中）
-        messages = conversation_history + [
-            {"role": "user", "content": user_content if user_content is not None else user_conversation}
-        ]
+        messages = self._build_messages(
+            conversation_history,
+            user_content if user_content is not None else user_conversation,
+        )
 
         # 转换工具为 Anthropic 格式
         anthropic_tools = [
@@ -198,9 +223,7 @@ class ReActPlanner:
                 model=llm_model,
                 error=str(exc)[:300],
             )
-            retry_messages = conversation_history + [
-                {"role": "user", "content": retry_content}
-            ]
+            retry_messages = self._build_messages(conversation_history, retry_content)
             llm_response = await self.llm_service.chat_anthropic(
                 messages=retry_messages,
                 tools=anthropic_tools,
@@ -254,9 +277,10 @@ class ReActPlanner:
 
         conversation_history = self._fix_missing_tool_results(conversation_history)
 
-        messages = conversation_history + [
-            {"role": "user", "content": user_content if user_content is not None else user_conversation}
-        ]
+        messages = self._build_messages(
+            conversation_history,
+            user_content if user_content is not None else user_conversation,
+        )
 
         # 转换工具为 Anthropic 格式
         anthropic_tools = [
