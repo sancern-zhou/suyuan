@@ -2,10 +2,16 @@
 
 Use `chart_type: "weather_timeseries"` for a standardized forecast chart.
 
-Pass `data.records` for **one natural day only** with `forecast_time`, `wind_speed`,
+Pass `data.records` with `forecast_time`, `wind_speed`,
 `wind_direction_degrees`, `temperature`, `precipitation_probability`, and
-`humidity`. The renderer rejects records spanning multiple dates; call it once
-per day for a seven-day report. Field names can be overridden in `options`.
+`humidity`. By default records must belong to one natural day. Set
+`options.multi_day=true` to render up to seven consecutive calendar days on one
+continuous time axis in a single image. This does not overlay daily curves.
+Multi-day charts use a wider layout, day boundaries and hour ticks. Gaps longer
+than `options.expected_interval_hours` (default 3, a finite positive number)
+break the curves; missing records are not interpolated. Metadata includes
+`multi_day`, `day_count`, `gap_count`, and the original `valid_point_count`.
+Field names can be overridden in `options`.
 
 Optional `areas` contains objects with `start`, `end`, `name`, `color`, `alpha`,
 and optional `level` (`high`/`medium`/`low`). Use it for risk periods or other
