@@ -333,7 +333,7 @@ class FakeCurveTool:
 @pytest.mark.asyncio
 async def test_fetcher_publishes_qc_review_event_and_evidence_pack(tmp_path, monkeypatch):
     events = []
-    monkeypatch.setattr(module, "has_active_review", lambda code: False)
+    monkeypatch.setattr(module, "has_active_review", lambda task_id, code: False)
     monkeypatch.setattr(
         JiangsuFaultWorkOrderReviewEventFetcher,
         "_ensure_feedback_case",
@@ -438,7 +438,7 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
 
     monkeypatch.setattr(module, "fetch_city_weather", weather)
     station_data_tool = FakeStationDataTool()
-    monkeypatch.setattr(module, "has_active_review", lambda code: False)
+    monkeypatch.setattr(module, "has_active_review", lambda task_id, code: False)
     monkeypatch.setattr(
         JiangsuFaultWorkOrderReviewEventFetcher,
         "_ensure_feedback_case",
@@ -485,7 +485,7 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
     assert events[0].event_type == EVENT_TYPE
     assert events[0].attributes["sop_id"] == "SOP-02"
     assert "env_category" not in events[0].attributes
-    assert events[0].payload["review_submit_tool"] == "jiangsu_submit_fault_work_order_review"
+    assert events[0].payload["review_submit_tool"] == "submit_task_review"
     evidence_path = Path(events[0].payload["evidence_pack_path"])
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert evidence["sop_id"] == "SOP-02"
@@ -539,7 +539,7 @@ async def test_fetcher_routes_sop02_data_anomaly_event_and_slims_same_city_serie
 async def test_fetcher_routes_sop03_transmission_event_and_exposes_missing_evidence(tmp_path, monkeypatch):
     events = []
     station_data_tool = FakeStationDataTool()
-    monkeypatch.setattr(module, "has_active_review", lambda code: False)
+    monkeypatch.setattr(module, "has_active_review", lambda task_id, code: False)
     monkeypatch.setattr(
         JiangsuFaultWorkOrderReviewEventFetcher,
         "_ensure_feedback_case",

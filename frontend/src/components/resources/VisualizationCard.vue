@@ -33,7 +33,7 @@
 import { computed, defineAsyncComponent, onErrorCaptured, ref, watch } from 'vue'
 import { RESOURCE_RENDERERS, rendererKey } from '@/services/resourceRendererRegistry.js'
 import { downloadResource, formatName } from '@/services/resourceDownloads.js'
-import { isFaultWorkOrderReviewVisual } from '@/services/visualizationTypes.js'
+import { isTaskReviewVisual } from '@/services/visualizationTypes.js'
 
 const props = defineProps({
   group: { type: Object, required: true },
@@ -51,7 +51,7 @@ const rendererComponent = computed(() => RENDERERS[rendererKey(props.resource)])
 const renderKey = computed(() => (
   `${props.resource.resource_id}:${props.resource.version}:${retryVersion.value}`
 ))
-const isFullBleedResource = computed(() => isFaultWorkOrderReviewVisual(props.resource))
+const isFullBleedResource = computed(() => isTaskReviewVisual(props.resource))
 const downloadTarget = computed(() => props.group.primary?.download_url
   ? props.group.primary
   : props.resource)

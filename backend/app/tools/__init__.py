@@ -515,7 +515,6 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         "jiangsu_prepare_device_control",
         "jiangsu_execute_device_control",
         "jiangsu_prepare_fault_work_order",
-        "jiangsu_submit_fault_work_order_review",
     }):
         try:
             from app.tools.jiangsu.device_control import (
@@ -524,13 +523,11 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 JiangsuDeviceControlStateTool,
             )
             from app.tools.jiangsu.work_order_dispatch import JiangsuFaultWorkOrderDraftTool
-            from app.tools.jiangsu.work_order_review import JiangsuFaultWorkOrderReviewSubmitTool
             for tool in (
                 JiangsuDeviceControlStateTool(),
                 JiangsuDeviceControlPrepareTool(),
                 JiangsuDeviceControlExecuteTool(),
                 JiangsuFaultWorkOrderDraftTool(),
-                JiangsuFaultWorkOrderReviewSubmitTool(),
             ):
                 if is_project_tool_enabled(context, "legacy", tool.name):
                     registry.register(tool, priority=53)

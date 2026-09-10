@@ -55,7 +55,7 @@ def test_default_task_targets_fault_agent_and_skill():
     assert task.event_type == "jiangsu.station_fault.detected"
     assert task.execution_mode == "station_fault_diagnosis"
     assert task.skill_id == "station-alarm-diagnosis"
-    assert "jiangsu_prepare_fault_work_order" in task.prompt
+    assert "submit_task_review" in task.prompt
     assert task.workspace_entry.enabled is True
 
 
@@ -66,7 +66,8 @@ def test_smart_event_default_task_uses_unified_judgment_skill():
     assert task.event_type == "jiangsu.smart_event.alarm"
     assert task.skill_id == "smart-event-judgment"
     assert "最终事件类型" in task.prompt
-    assert "不得调用 jiangsu_prepare_fault_work_order" in task.prompt
+    assert "submit_task_review" in task.prompt
+    assert "不得自动关闭告警、派单" in task.prompt
     assert task.workspace_entry.enabled is True
 
 
@@ -80,7 +81,7 @@ def test_work_order_review_default_task_targets_ops_mode_skill_and_submit_tool()
     assert "payload.evidence_pack_path" in task.prompt
     assert "fault-work-order-review Skill" in task.prompt
     assert "SOP-03" in task.prompt
-    assert "jiangsu_submit_fault_work_order_review" in task.prompt
+    assert "submit_task_review" in task.prompt
     assert "M1-M8" not in task.prompt
     assert "E1-E9" not in task.prompt
     assert task.workspace_entry.enabled is True
@@ -109,7 +110,7 @@ def test_project_default_prompt_changes_refresh_seeded_task():
 
     refreshed = service.tasks["jiangsu_station_fault_diagnosis"]
     assert refreshed.prompt != "旧提示词"
-    assert "jiangsu_prepare_fault_work_order" in refreshed.prompt
+    assert "submit_task_review" in refreshed.prompt
     # Operator-side toggles survive the refresh.
     assert refreshed.enabled is False
 
@@ -136,7 +137,7 @@ def test_invalid_seeded_project_task_is_replaced():
 
     assert created == []
     assert service.broken is False
-    assert "jiangsu_prepare_fault_work_order" in service.tasks["jiangsu_station_fault_diagnosis"].prompt
+    assert "submit_task_review" in service.tasks["jiangsu_station_fault_diagnosis"].prompt
     assert service.tasks["jiangsu_station_fault_diagnosis"].enabled is False
 
 

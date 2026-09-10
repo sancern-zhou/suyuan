@@ -21,7 +21,9 @@ from app.services.jiangsu_smart_event import (
 
 
 @pytest.fixture(autouse=True)
-def reset_background_sync_state():
+def reset_background_sync_state(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.services.task_review.get_data_registry", lambda: tmp_path)
+    monkeypatch.setattr("app.services.jiangsu_smart_event.JiangsuSmartEventEvidenceFetcher", FakeEvidenceFetcher)
     JiangsuSmartEventService._background_sync_task = None
     JiangsuSmartEventService._background_sync_started_at = None
     yield
@@ -38,6 +40,7 @@ def test_normalize_alarm_keeps_pending_status_and_source_tag():
         "code": "5006A",
         "stationName": "海安监测站",
         "alarmtime": "2026-09-09 08:00:00",
+        "ddRuleType": "供电报警",
         "content": "UPS 电源报警",
     })
 
@@ -76,7 +79,7 @@ def test_normalize_alarm_uses_rule_type_when_content_is_not_descriptive():
         "ddRuleType": "断数报警",
     })
 
-    assert event["primary_clue_tag"] == "数采网络报警"
+    assert event["primary_clue_tag"] == "断数报警"
 
 
 def test_normalize_alarm_uses_v3_initial_naming_template():
@@ -85,6 +88,7 @@ def test_normalize_alarm_uses_v3_initial_naming_template():
         "code": "5006A",
         "stationName": "海安监测站",
         "alarmtime": "2026-09-09 08:00:00",
+        "ddRuleType": "供电报警",
         "content": "UPS 电源报警",
     })
 
@@ -116,9 +120,11 @@ class FailingAlarmTool:
 class CapturingScheduledTaskService:
     def __init__(self):
         self.events = []
+        self.force_retries = []
 
-    async def publish_event(self, event, *, wait=False):
+    async def publish_event(self, event, *, wait=False, force_retry=False):
         self.events.append((event, wait))
+        self.force_retries.append(force_retry)
         return EventDispatchResult(
             matched_task_ids=["jiangsu_smart_event_ai_judgment"],
             accepted_task_ids=["jiangsu_smart_event_ai_judgment"],
@@ -232,6 +238,7 @@ async def test_event_center_refresh_returns_store_first_and_syncs_in_background(
     assert service.list_tasks()[0]["status"] == "待执行"
     assert store["last_sync"]["new_event_count"] == 1
     assert store["last_sync"]["new_event_ids"] == ["alarm:1"]
+    assert store["events"][0]["evidence_package"]["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -257,7 +264,11 @@ async def test_background_sync_deduplicates_concurrent_triggers(tmp_path):
     assert first["triggered"] is True
     assert second["triggered"] is False
     assert second["in_progress"] is True
+    snapshot = await service.list_events(**window, refresh=False)
+    assert snapshot["source_metadata"]["sync"]["in_progress"] is True
     await JiangsuSmartEventService._background_sync_task
+    snapshot = await service.list_events(**window, refresh=False)
+    assert snapshot["source_metadata"]["sync"]["in_progress"] is False
     assert alarm_tool.calls == 1
     assert JiangsuSmartEventService.background_sync_status()["in_progress"] is False
 
@@ -282,7 +293,12 @@ async def test_manual_ai_judgment_dispatches_only_selected_event_with_evidence(m
     assert result["task"]["event_id"] == event["event_id"]
     assert len(scheduled.events) == 1
     dispatched = scheduled.events[0][0]
-    assert dispatched.payload["evidence_package"]["sources"]["monitoring"]["status"] == "success"
+    from app.utils.path_config import resolve_agent_path
+    package = json.loads(resolve_agent_path(dispatched.payload["evidence_package_path"]).read_text())
+    assert package["event_id"] == event["event_id"]
+    assert package["sources"]["monitoring"]["status"] == "success"
+    assert "evidence_package" not in dispatched.payload
+    assert "evidence_package" not in dispatched.payload["smart_event"]
     assert service._load_store()["events"][0]["event_status"] == "AI 研判中"
 
 
@@ -292,46 +308,8 @@ def test_create_task_requires_a_stored_event(tmp_path):
         service.create_task("alarm:missing")
 
 
-@pytest.mark.asyncio
-async def test_judgment_confirmation_operation_and_archive_are_persisted(tmp_path):
-    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00",
-        end_time="2026-09-09T23:59:59+08:00",
-    )
-    actor = {"user_id": "u1", "username": "operator"}
-    event = service.submit_ai_judgment(
-        "alarm:1",
-        {
-            "event_type": "疑似仪器故障",
-            "level": "P1",
-            "diagnosis_note": "建议核查校准记录",
-            "confirmed": True,
-        },
-        actor=actor,
-    )
-    assert event["event_status"] == "已确认"
-    record = service.record_operation(
-        "alarm:1", action="feedback", summary="已通知站点复核", actor=actor, details={"channel": "电话"}
-    )
-    archived = service.archive_event("alarm:1", actor=actor, comment="复核完成")
-    assert record["action"] == "feedback"
-    assert archived["archived"] is True
-    assert archived["event_status"] == "已归档"
-    assert len(archived["operation_records"]) == 3
-    with pytest.raises(ValueError, match="smart_event_archived"):
-        service.record_operation("alarm:1", action="note", summary="不可修改", actor=actor)
 
 
-@pytest.mark.asyncio
-async def test_archive_requires_confirmed_judgment(tmp_path):
-    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00",
-        end_time="2026-09-09T23:59:59+08:00",
-    )
-    with pytest.raises(ValueError, match="smart_event_judgment_not_confirmed"):
-        service.archive_event("alarm:1", actor={"user_id": "u1", "username": "operator"})
 
 
 @pytest.mark.asyncio
@@ -377,8 +355,8 @@ class SameDayAlarmsTool:
 
     def __init__(self, rows=None):
         self.rows = rows or [
-            {"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "content": "UPS 电源报警"},
-            {"id": 2, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 15:00:00", "content": "SO2 分析仪故障报警"},
+            {"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "ddRuleType": "供电报警", "content": "UPS 电源报警"},
+            {"id": 2, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 15:00:00", "ddRuleType": "仪器状态超上下限报警", "content": "SO2 分析仪故障报警"},
         ]
 
     async def execute(self, **kwargs):
@@ -388,9 +366,11 @@ class SameDayAlarmsTool:
 class FakeEvidenceFetcher:
     def __init__(self):
         self.fetched = []
+        self.snapshots = []
 
     async def fetch(self, event, **kwargs):
         self.fetched.append(event.get("event_id"))
+        self.snapshots.append(json.loads(json.dumps(event)))
         return {
             "schema_version": "jiangsu_smart_event_evidence/v1",
             "status": "success",
@@ -399,7 +379,21 @@ class FakeEvidenceFetcher:
         }
 
 
-def _finished_execution(response: str, *, execution_id: str = "exec:merge") -> TaskExecution:
+def _submit_result(summary, execution_id, *, same_cause=None):
+    from app.services.task_review import submit_review
+    fields = [{"key": "event_type", "label": "事件类型", "value": "疑似仪器故障"}]
+    if same_cause is not None:
+        fields.append({"key": "same_cause", "label": "连续性", "value": str(same_cause).lower()})
+    return submit_review({
+        "subject_id": "alarm:1", "event_id": "alarm:1", "category": "智能事件",
+        "title": "测试研判事件", "summary": summary, "decision": "needs_action", "comment": "核查仪器状态",
+        "checks": [{"name": "证据一致性", "status": "pass", "basis": "设备日志"}],
+        "sections": [{"title": "结论", "fields": fields}],
+    }, {"task_id": "jiangsu_smart_event_ai_judgment", "task_name": "江苏智能事件AI研判", "execution_id": execution_id})
+
+
+def _finished_execution(response: str, *, execution_id: str = "exec:merge", same_cause=None) -> TaskExecution:
+    _submit_result(response, execution_id, same_cause=same_cause)
     return TaskExecution(
         execution_id=execution_id,
         task_id="jiangsu_smart_event_ai_judgment",
@@ -434,7 +428,7 @@ async def test_same_site_same_day_alarms_merge_into_one_event(tmp_path):
     assert event["event_id"] == "alarm:1"
     assert event["clue_count"] == 2
     assert event["merged_alarm_ids"] == ["alarm:1", "alarm:2"]
-    assert event["event_start_time"].startswith("2026-09-09T08:00:00")
+    assert event["event_start_time"].startswith("2026-09-09T15:00:00")
     assert event["event_end_time"].startswith("2026-09-09T15:00:00")
     assert event["primary_clue_tag"] == "供电报警"
     assert event["initial_event_name"] == "示例站供电断数线索待研判事件"
@@ -533,7 +527,7 @@ async def test_incremental_dispatch_carries_continuity_context(tmp_path, monkeyp
     )
     service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution("第一轮结论。"))
     tool.rows = tool.rows + [
-        {"id": 3, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 16:00:00", "content": "数采仪离线"},
+        {"id": 3, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 16:00:00", "ddRuleType": "断数报警", "content": "数采仪离线"},
     ]
     await service.sync_alarm_events(
         start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=True
@@ -544,8 +538,8 @@ async def test_incremental_dispatch_carries_continuity_context(tmp_path, monkeyp
     context = dispatched.payload["continuity_context"]
     assert context["mode"] == "incremental"
     assert context["previous_final_response"] == "第一轮结论。"
-    assert [tag["tag_name"] for tag in context["new_clue_tags"]] == ["数采网络报警"]
-    assert "连续性判断" in context["instruction"]
+    assert [tag["tag_name"] for tag in context["new_clue_tags"]] == ["断数报警"]
+    assert "same_cause" in context["instruction"]
 
 
 @pytest.mark.asyncio
@@ -566,7 +560,7 @@ async def test_apply_task_execution_continuity_same_cause_updates_base_card(tmp_
     )
     service.apply_task_execution(
         "alarm:1", build_jiangsu_smart_event_task(),
-        _finished_execution("连续性判断：同一原因延续\n第二轮结论：供电异常持续。", execution_id="exec:2"),
+        _finished_execution("第二轮结论：供电异常持续。", execution_id="exec:2", same_cause=True),
     )
 
     store = service._load_store()
@@ -574,13 +568,13 @@ async def test_apply_task_execution_continuity_same_cause_updates_base_card(tmp_
     assert event["event_status"] == "AI 已研判"
     assert event["last_continuity_result"] == "same_cause"
     assert event["judgment_history"][0]["final_response"] == "第一轮结论。"
-    assert event["ai_judgment"]["final_response"].startswith("连续性判断")
+    assert event["ai_judgment"]["final_response"].startswith("第二轮结论")
     assert event["judged_clue_ids"] == ["alarm:1:alarm", "alarm:3:alarm"]
     assert "pending_delta" not in event
     base_card, incremental_card = store["tasks"][0], store["tasks"][1]
     assert incremental_card["continuity_result"] == "same_cause"
     # 同一原因延续：原待办任务卡片更新为最新结论。
-    assert base_card["final_response"].startswith("连续性判断：同一原因延续")
+    assert base_card["final_response"].startswith("第二轮结论")
 
 
 @pytest.mark.asyncio
@@ -601,7 +595,7 @@ async def test_apply_task_execution_continuity_new_cause_keeps_base_card(tmp_pat
     )
     service.apply_task_execution(
         "alarm:1", build_jiangsu_smart_event_task(),
-        _finished_execution("连续性判断：新事件\n第二轮结论：独立仪器故障。", execution_id="exec:2"),
+        _finished_execution("第二轮结论：独立仪器故障。", execution_id="exec:2", same_cause=False),
     )
 
     store = service._load_store()
@@ -611,11 +605,11 @@ async def test_apply_task_execution_continuity_new_cause_keeps_base_card(tmp_pat
     # 新事件：原任务卡片保留上一轮结论，增量卡为独立研判轮次。
     assert base_card["final_response"] == "第一轮结论。"
     assert incremental_card["continuity_result"] == "new_cause"
-    assert incremental_card["final_response"].startswith("连续性判断：新事件")
+    assert incremental_card["final_response"].startswith("第二轮结论")
 
 
 @pytest.mark.asyncio
-async def test_run_ai_judgment_refetches_stale_evidence_after_merge(tmp_path, monkeypatch):
+async def test_sync_refetches_merged_bucket_before_ai_judgment(tmp_path, monkeypatch):
     scheduled = CapturingScheduledTaskService()
     monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: scheduled)
     evidence = FakeEvidenceFetcher()
@@ -626,15 +620,20 @@ async def test_run_ai_judgment_refetches_stale_evidence_after_merge(tmp_path, mo
     await service.sync_alarm_events(
         start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
     )
+    assert evidence.fetched == ["alarm:1"]
+    assert scheduled.events == []
     await service.run_ai_judgment("alarm:1")
     assert len(evidence.fetched) == 1
 
-    tool.rows = tool.rows + [
+    tool.rows = [
         {"id": 3, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 15:00:00", "content": "数采仪离线"},
     ]
     await service.sync_alarm_events(
         start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
     )
+    assert evidence.fetched == ["alarm:1", "alarm:1"]
+    assert evidence.snapshots[-1]["merged_alarm_ids"] == ["alarm:1", "alarm:3"]
+    assert evidence.snapshots[-1]["event_end_time"].startswith("2026-09-09T15:00:00")
     await service.run_ai_judgment("alarm:1")
 
     # 合并后证据指纹失效：扩展时间窗口重新抓取，仍是同一个证据包文件。
@@ -666,94 +665,17 @@ STRUCTURED_RESPONSE = """研判结论：疑似 SO2 仪器故障，有数据影�
 ```"""
 
 
-@pytest.mark.asyncio
-async def test_apply_task_execution_parses_structured_judgment_json(tmp_path):
-    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
-    )
-    service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution(STRUCTURED_RESPONSE))
-
-    event = service._load_store()["events"][0]
-    assert event["ai_event_type"] == "疑似仪器故障"
-    assert event["ai_data_impact"] == "有数据影响"
-    assert event["ai_suggested_level"] == "P1"
-    # 未提供 event_name 时按 V3.0 模板生成：站点+类型+（数据影响）。
-    assert event["ai_event_name"] == "A疑似仪器故障（有数据影响）"
-    assert event["event_name"] == event["ai_event_name"]
-    # ai_diagnosis_note 优先取结构化摘要而非整段回复。
-    assert event["ai_diagnosis_note"].startswith("SO2 分析仪报警")
-    structured = event["ai_structured_judgment"]
-    assert structured["primary_evidence_tags"] == ["报警：仪器报警"]
-    assert structured["compliance_explanation_result"] == "无合规记录"
-    assert set(structured["data_analysis"]) == {
-        "station_series_analysis", "regional_comparison_analysis",
-        "data_impact_assessment", "logic_direction_check",
-    }
-    assert event["judged_clue_ids"] == ["alarm:1:alarm"]
 
 
-@pytest.mark.asyncio
-async def test_structured_judgment_ignores_unknown_enums(tmp_path):
-    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
-    )
-    response = """结论。
-```json
-{"event_type": "自造类型", "data_impact": "影响很大", "suggested_level": "P9", "diagnosis_note": "摘要保留"}
-```"""
-    service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution(response))
-
-    event = service._load_store()["events"][0]
-    structured = event["ai_structured_judgment"]
-    # 非法枚举剔除：类型/影响/等级不回写，名称不生成；合法字段保留。
-    assert structured["event_type"] is None
-    assert structured["data_impact"] is None
-    assert structured["suggested_level"] is None
-    assert structured["diagnosis_note"] == "摘要保留"
-    assert event.get("ai_event_type") is None
-    assert event.get("ai_event_name") is None
-    assert event["event_name"] == event["initial_event_name"]
-    assert event["ai_data_impact"] == "待确认"
 
 
-@pytest.mark.asyncio
-async def test_structured_continuity_json_overrides_text_marker(tmp_path):
-    tool = SameDayAlarmsTool(rows=[
-        {"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "content": "UPS 电源报警"},
-    ])
-    service = JiangsuSmartEventService(tool, data_root=tmp_path)
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
-    )
-    service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution("第一轮结论。", execution_id="exec:1"))
-    tool.rows = tool.rows + [
-        {"id": 3, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 15:00:00", "content": "SO2 分析仪故障报警"},
-    ]
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
-    )
-    # 文本标记行说同一原因，json 块说新事件：以结构化字段为准。
-    response = """连续性判断：同一原因延续
-第二轮说明。
-```json
-{"event_type": "疑似仪器故障", "continuity": {"same_cause": false}}
-```"""
-    service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution(response, execution_id="exec:2"))
-
-    event = service._load_store()["events"][0]
-    assert event["last_continuity_result"] == "new_cause"
-    assert event["ai_event_type"] == "疑似仪器故障"
-    base_card = service._load_store()["tasks"][0]
-    assert base_card["final_response"] == "第一轮结论。"
 
 
 def test_legacy_store_merges_same_day_events_and_repoints_tasks(tmp_path):
     store_dir = tmp_path / "jiangsu_smart_events"
     store_dir.mkdir(parents=True)
-    first = normalize_alarm_event({"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "content": "UPS 电源报警"})
-    second = normalize_alarm_event({"id": 2, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 15:00:00", "content": "SO2 分析仪故障报警"})
+    first = normalize_alarm_event({"id": 1, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 08:00:00", "ddRuleType": "供电报警", "content": "UPS 电源报警"})
+    second = normalize_alarm_event({"id": 2, "code": "A", "stationName": "示例站", "alarmtime": "2026-09-09 15:00:00", "ddRuleType": "仪器状态超上下限报警", "content": "SO2 分析仪故障报警"})
     second_task = {"task_id": "task:second", "event_id": "alarm:2", "task_type": "ai_judgment", "status": "待执行"}
     (store_dir / "store.json").write_text(json.dumps({
         "schema_version": "jiangsu_smart_events/v1",
@@ -793,9 +715,10 @@ async def test_dispatch_order_moves_event_to_dispatching_state(tmp_path):
     operation = event["operation_records"][-1]
     assert operation["action"] == "dispatch_order"
     assert operation["details"]["assignee"] == "站点运维"
-    service.archive_event(
-        "alarm:1", actor=actor, confirmation={"event_type": "疑似仪器故障", "level": "P2"},
-    )
+    review = _submit_result("结论", "exec:archive")
+    service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution("结论", execution_id="exec:archive"))
+    from app.services.task_review import decide_review
+    decide_review(review["review_id"], {"version": review["version"], "action": "confirm", "decision": "approve", "comment": "完成", "data_impact": []}, actor)
     with pytest.raises(ValueError, match="smart_event_archived"):
         service.dispatch_order("alarm:1", title="归档后不可派单", actor=actor)
 
@@ -875,6 +798,7 @@ async def test_manual_rerun_starts_fresh_conversation_and_cancels_stale_cards(tm
     assert statuses[incremental["task_id"]] == "已取消"
     # 全新研判的派发不带增量上下文。
     dispatched = scheduled.events[-1][0]
+    assert scheduled.force_retries[-1] is True
     assert dispatched.payload["continuity_context"] is None
     # 完成后旧结论被替换进历史。
     service.apply_task_execution("alarm:1", build_jiangsu_smart_event_task(), _finished_execution("全新结论。", execution_id="exec:3"))
@@ -884,36 +808,6 @@ async def test_manual_rerun_starts_fresh_conversation_and_cancels_stale_cards(tm
     assert event["judgment_history"][0]["final_response"] == "第一轮结论。"
 
 
-@pytest.mark.asyncio
-async def test_archive_with_confirmation_overrides_fields_without_prior_manual_confirmation(tmp_path):
-    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
-    await service.sync_alarm_events(
-        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
-    )
-    actor = {"user_id": "u1", "username": "operator"}
-    # 未带归档确认且无人工确认时仍拒绝旧式归档。
-    with pytest.raises(ValueError, match="smart_event_judgment_not_confirmed"):
-        service.archive_event("alarm:1", actor=actor)
-    archived = service.archive_event(
-        "alarm:1",
-        actor=actor,
-        comment="复核完成",
-        confirmation={
-            "event_type": "疑似站房停电",
-            "event_name": "A疑似站房停电（有数据影响）",
-            "level": "P1",
-            "data_impact": "有数据影响",
-        },
-    )
-
-    assert archived["event_status"] == "已归档"
-    assert archived["event_name"] == "A疑似站房停电（有数据影响）"
-    assert archived["ai_event_type"] == "疑似站房停电"
-    assert archived["manual_final_level"] == "P1"
-    confirmed = archived["archive_confirmed"]
-    assert confirmed["event_type"] == "疑似站房停电"
-    assert confirmed["confirmed_by"] == actor
-    assert archived["manual_confirmation"]["source"] == "archive"
 
 
 def test_smart_event_task_uses_event_trigger_and_history_learning():
@@ -925,7 +819,7 @@ def test_smart_event_task_uses_event_trigger_and_history_learning():
 
 
 @pytest.mark.asyncio
-async def test_scheduled_task_final_reply_is_persisted_to_event_detail(tmp_path, monkeypatch):
+async def test_submitted_review_is_persisted_to_event_detail(tmp_path, monkeypatch):
     service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
     await service.sync_alarm_events(
         start_time="2026-09-09T00:00:00+08:00",
@@ -950,6 +844,7 @@ async def test_scheduled_task_final_reply_is_persisted_to_event_detail(tmp_path,
             )
         ],
     )
+    _submit_result("研判结论：来自通用提交而非最终回复", execution.execution_id)
     await persist_scheduled_task_result(
         task,
         TaskEvent(event_id="alarm:1", event_type="jiangsu.smart_event.alarm"),
@@ -1044,7 +939,7 @@ def _make_package(station_hour_data, regional_deltas=None):
     pkg = {
         "status": "success",
         "sources": _make_hour_records(station_hour_data),
-        "time_windows": {"query": {"start": "2026-09-09 00:00:00", "end": "2026-09-09 23:00:00"}},
+        "time_windows": {"day": {"start": "2026-09-09 00:00:00", "end": "2026-09-09 23:00:00"}},
     }
     if regional_deltas is not None:
         pkg["sources"]["comparison"] = {"regional_deltas": regional_deltas}
@@ -1291,15 +1186,12 @@ class FakeDoorAdapter:
         return {"success": True, "data": self.rows, "metadata": {}}
 
 
-class FakeEvidenceFetcherWithTools:
+class FakeEvidenceFetcherWithTools(FakeEvidenceFetcher):
     def __init__(self, work_orders=None, qc_rows=None, door_rows=None):
+        super().__init__()
         self.work_order_tool = FakeWorkOrderTool(work_orders or [])
         self.qc_history_tool = FakeQcTool(qc_rows or [])
         self.legacy_adapter = FakeDoorAdapter(door_rows or [])
-
-    async def fetch(self, event):
-        return {"status": "success", "sources": {}, "gaps": []}
-
 
 @pytest.mark.asyncio
 async def test_sync_compliance_clues_attaches_to_matching_bucket(tmp_path):
@@ -1319,9 +1211,15 @@ async def test_sync_compliance_clues_attaches_to_matching_bucket(tmp_path):
     store["events"] = [bucket]
     service._save_store(store)
 
+    await service.collect_event_evidence("evt-comp")
     result = await service.sync_compliance_clues(date="2026-09-09")
     assert result["attached"] == 1
     assert result["stations"] == 1
+    assert result["evidence"] == {"collected": 1, "failed": 0}
+    assert evidence.fetched == ["evt-comp", "evt-comp"]
+    assert evidence.snapshots[-1]["clue_tags"][0]["tag_name"] == "维修记录"
+    repeated = await service.sync_compliance_clues(date="2026-09-09")
+    assert repeated["evidence"]["collected"] == 0
 
     reloaded = service._load_store()
     reloaded_bucket = reloaded["events"][0]
@@ -1453,3 +1351,271 @@ async def test_collect_event_evidence_attaches_detection_tags(tmp_path):
     tag_names = [t["tag_name"] for t in reloaded_bucket["clue_tags"]]
     assert "负值或无效值" in tag_names
     assert reloaded_bucket.get("evidence_fingerprint") is not None
+    persisted = json.loads(service._evidence_package_path("evt-detect").read_text())
+    assert persisted["detected_clue_tags"] == reloaded_bucket["evidence_package"]["detected_clue_tags"]
+
+
+@pytest.mark.asyncio
+async def test_sync_collects_each_bucket_once_and_reuses_unchanged_evidence(tmp_path):
+    evidence = FakeEvidenceFetcher()
+    tool = SameDayAlarmsTool()
+    service = JiangsuSmartEventService(tool, data_root=tmp_path, evidence_fetcher=evidence)
+    window = {"start_time": "2026-09-09T00:00:00+08:00", "end_time": "2026-09-09T23:59:59+08:00", "dispatch_ai": False}
+
+    first = await service.sync_alarm_events(**window)
+    repeated = await service.sync_alarm_events(**window)
+
+    assert first["evidence"] == {"collected": 1, "failed": 0}
+    assert repeated["evidence"]["collected"] == 0
+    assert evidence.fetched == ["alarm:1"]
+    assert len(evidence.snapshots[0]["clue_tags"]) == 2
+    assert first["dispatches"] == []
+
+    # An existing alarm can widen the window without introducing a new tag.
+    tool.rows[-1]["alarmtime"] = "2026-09-09 16:00:00"
+    extended = await service.sync_alarm_events(**window)
+    assert extended["merged_event_count"] == 0
+    assert extended["evidence"]["collected"] == 1
+    assert evidence.snapshots[-1]["event_end_time"].startswith("2026-09-09T16:00:00")
+
+
+@pytest.mark.asyncio
+async def test_failed_collection_keeps_event_and_retries_on_sync(tmp_path):
+    class FailingOnceFetcher(FakeEvidenceFetcher):
+        async def fetch(self, event, **kwargs):
+            package = await super().fetch(event, **kwargs)
+            # Events must be committed before upstream evidence collection.
+            assert service._stored_event(service._load_store(), event["event_id"]) is not None
+            if len(self.fetched) == 1:
+                raise RuntimeError("evidence source unavailable")
+            return package
+
+    evidence = FailingOnceFetcher()
+    service = JiangsuSmartEventService(SameDayAlarmsTool(), data_root=tmp_path, evidence_fetcher=evidence)
+    window = {"start_time": "2026-09-09T00:00:00+08:00", "end_time": "2026-09-09T23:59:59+08:00", "dispatch_ai": False}
+    first = await service.sync_alarm_events(**window)
+    assert first["evidence"] == {"collected": 1, "failed": 1}
+    event = service._load_store()["events"][0]
+    assert event["event_status"] == "未研判"
+    assert event["evidence_package"]["gaps"][0]["reason"] == "evidence source unavailable"
+    retried = await service.sync_alarm_events(**window)
+    assert retried["evidence"] == {"collected": 1, "failed": 0}
+    assert evidence.fetched == ["alarm:1", "alarm:1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("package", [None, {"status": "failed"}, {"status": "success"}])
+async def test_manual_ai_dispatch_never_collects_missing_or_stale_evidence(tmp_path, monkeypatch, package):
+    scheduled = CapturingScheduledTaskService()
+    monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: scheduled)
+    evidence = FakeEvidenceFetcher()
+    service = JiangsuSmartEventService(SameDayAlarmsTool(), data_root=tmp_path, evidence_fetcher=evidence)
+    event = normalize_alarm_event(SameDayAlarmsTool().rows[0])
+    event["evidence_package"] = package
+    event["evidence_fingerprint"] = "stale"
+    service._upsert_events([event])
+
+    result = await service.run_ai_judgment(event["event_id"])
+
+    assert evidence.fetched == []
+    assert len(scheduled.events) == 1
+    assert result["task"]["status"] == "执行中"
+
+
+@pytest.mark.asyncio
+async def test_evidence_collection_preserves_judgment_and_new_events_written_during_fetch(tmp_path):
+    class ConcurrentWriterFetcher(FakeEvidenceFetcher):
+        async def fetch(self, event, **kwargs):
+            writer = JiangsuSmartEventService(data_root=tmp_path)
+            writer.apply_task_execution(event["event_id"], build_jiangsu_smart_event_task(), _finished_execution("并发完成的研判"))
+            writer._upsert_events([normalize_alarm_event({
+                "id": 99, "code": "B", "alarmtime": "2026-09-09 15:00:00", "content": "仪器报警",
+            })])
+            return await super().fetch(event, **kwargs)
+
+    service = JiangsuSmartEventService(SameDayAlarmsTool(), data_root=tmp_path, evidence_fetcher=ConcurrentWriterFetcher())
+    await service.sync_alarm_events(
+        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False,
+    )
+    store = service._load_store()
+    assert {event["event_id"] for event in store["events"]} == {"alarm:1", "alarm:99"}
+    event = service._stored_event(store, "alarm:1")
+    assert event["ai_judgment"]["final_response"] == "并发完成的研判"
+    assert event["evidence_package"]["status"] == "success"
+    assert service.list_tasks(event_id="alarm:1")[0]["status"] == "已完成"
+
+
+@pytest.mark.asyncio
+async def test_older_collection_does_not_replace_newer_merged_evidence(tmp_path):
+    class MergeDuringFetch(FakeEvidenceFetcher):
+        async def fetch(self, event, **kwargs):
+            newer = JiangsuSmartEventService(data_root=tmp_path, evidence_fetcher=FakeEvidenceFetcher())
+            newer._upsert_events([normalize_alarm_event(SameDayAlarmsTool().rows[1])])
+            await newer.collect_event_evidence(event["event_id"])
+            package = await super().fetch(event, **kwargs)
+            package["obsolete"] = True
+            return package
+
+    service = JiangsuSmartEventService(data_root=tmp_path, evidence_fetcher=MergeDuringFetch())
+    service._upsert_events([normalize_alarm_event(SameDayAlarmsTool().rows[0])])
+    result = await service.collect_event_evidence("alarm:1")
+    event = result["event"]
+    assert event["clue_count"] == 2
+    assert event["evidence_fingerprint"] == _event_fingerprint(event)
+    assert "obsolete" not in event["evidence_package"]
+    persisted = json.loads(service._evidence_package_path("alarm:1").read_text())
+    assert "obsolete" not in persisted
+
+
+@pytest.mark.asyncio
+async def test_bulk_evidence_repairs_missing_failed_and_stale_packages_only(tmp_path):
+    evidence = FakeEvidenceFetcher()
+    service = JiangsuSmartEventService(data_root=tmp_path, evidence_fetcher=evidence)
+    events = []
+    for index, state in enumerate(["missing", "failed", "stale", "ready", "archived"]):
+        event = normalize_alarm_event({"id": index, "code": state, "alarmtime": "2026-09-09 08:00:00"})
+        if state != "missing":
+            event["evidence_package"] = {"status": "failed" if state == "failed" else "success"}
+        if state == "ready":
+            event["evidence_fingerprint"] = _event_fingerprint(event)
+        if state == "archived":
+            event["archived"] = True
+        events.append(event)
+    service._upsert_events(events)
+
+    result = await service.collect_all_event_evidence()
+
+    assert result["collected"] == 3
+    assert evidence.fetched == ["alarm:0", "alarm:1", "alarm:2"]
+    assert all(event["evidence_fingerprint"] == _event_fingerprint(event) for event in result["events"])
+
+
+@pytest.mark.asyncio
+async def test_list_pages_are_small_and_filter_before_pagination(tmp_path, monkeypatch):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    events = [{"event_id": str(i), "event_name": f"事件{i}", "event_status": "待研判",
+               "event_type": "数据" if i % 2 else "运维", "site_id": "station",
+               "evidence_package": {"large": "x" * 10000},
+               "ai_judgment": {"final_response": "x" * 10000}}
+              for i in range(23)]
+    service._save_store({"events": events, "tasks": []})
+    window = {"start_time": "2026-09-10", "end_time": "2026-09-11", "refresh": False}
+    first = await service.list_events(**window, limit=10, page=1, summary=True)
+    second = await service.list_events(**window, limit=10, page=2, summary=True)
+    assert first["total"] == second["total"] == 23
+    assert len(first["events"]) == len(second["events"]) == 10
+    assert set(item["event_id"] for item in first["events"]).isdisjoint(item["event_id"] for item in second["events"])
+    assert len(json.dumps(first).encode()) < 10000
+    assert "evidence_package" not in first["events"][0]
+    last = await service.list_events(**window, limit=10, page=3, summary=True)
+    assert len(last["events"]) == 3
+    filtered = await service.list_events(**window, limit=10, page=2, summary=True, event_type="数据")
+    assert filtered["total"] == 11
+    assert [item["event_id"] for item in filtered["events"]] == ["21"]
+    assert filtered["stats"]["total"] == 23
+    assert filtered["filters"]["types"] == ["数据", "运维"]
+    detail = await service.get_event("21", **window)
+    assert detail["evidence_package"]["large"] == "x" * 10000
+
+
+@pytest.mark.asyncio
+async def test_list_index_serves_pages_without_loading_store_or_starting_sync(tmp_path, monkeypatch):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    service._save_store({"events": [{"event_id": str(i), "ai_judgment": {"final_response": "done"},
+                                    "evidence_package": {"large": "x" * 100000}} for i in range(23)],
+                         "tasks": [{"task_id": "task", "event_id": "0"}]})
+    def forbidden(*args, **kwargs):
+        raise AssertionError("List must not read the full store or start upstream work")
+    monkeypatch.setattr(service, "_load_store", forbidden)
+    monkeypatch.setattr(service, "start_background_sync", forbidden)
+    payload = await service.list_events(start_time="2026-09-10", end_time="2026-09-11",
+                                        limit=10, page=2, summary=True, refresh=True)
+    assert [item["event_id"] for item in payload["events"]] == [str(i) for i in range(10, 20)]
+    assert payload["stats"]["pending"] == 0
+    assert service.list_tasks(event_id="0")[0]["task_id"] == "task"
+    assert service.list_index_path.stat().st_size < 10000
+
+
+def test_list_index_tracks_worker_writes_and_repairs_external_changes(tmp_path):
+    writer = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    reader = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    writer._save_store({"events": [{"event_id": "first"}], "tasks": []})
+    assert reader._load_list_store()["events"][0]["event_id"] == "first"
+    writer._save_store({"events": [{"event_id": "second"}], "tasks": []})
+    assert reader._load_list_store()["events"][0]["event_id"] == "second"
+    writer.store_path.write_text(json.dumps({"events": [], "tasks": []}))
+    assert reader._load_list_store()["events"] == []
+    writer.list_index_path.write_text("broken")
+    assert reader._load_list_store()["events"] == []
+
+
+@pytest.mark.asyncio
+async def test_plain_successful_reply_does_not_create_review_or_judgment(tmp_path):
+    from app.services.task_review import list_reviews
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    await service.sync_alarm_events(start_time='2026-09-09T00:00:00+08:00', end_time='2026-09-09T23:59:59+08:00', dispatch_ai=False)
+    task = build_jiangsu_smart_event_task()
+    execution = TaskExecution(execution_id='unsubmitted', task_id=task.task_id, task_name=task.name,
+        status=ExecutionStatus.SUCCESS, total_steps=1,
+        steps=[StepExecution(step_id='task', status=ExecutionStatus.SUCCESS, agent_prompt='p',
+                             agent_response='```json\n{"success":true,"diagnosis_note":"伪结论"}\n```')])
+    service.apply_task_execution('alarm:1', task, execution)
+    assert list_reviews() == []
+    event = service._stored_event(service._load_store(), 'alarm:1')
+    assert not event['ai_judgment']['final_response']
+    assert event['event_status'] == 'AI 研判失败'
+
+
+@pytest.mark.asyncio
+async def test_generic_human_archive_updates_event_detail_and_list(tmp_path):
+    from app.services.task_review import decide_review, list_reviews
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    await service.sync_alarm_events(start_time='2026-09-09T00:00:00+08:00', end_time='2026-09-09T23:59:59+08:00', dispatch_ai=False)
+    service.apply_task_execution('alarm:1', build_jiangsu_smart_event_task(), _finished_execution('需人工确认'))
+    record = list_reviews()[0]
+    decide_review(record['review_id'], dict(version=1, action='confirm', decision='approve', comment='核验完成', data_impact=[]), {'username': 'operator'})
+    assert not list_reviews()
+    assert (await service.get_event('alarm:1'))['event_status'] == '已归档'
+    event = next(e for e in service._load_list_store()['events'] if e['event_id'] == 'alarm:1')
+    assert event['archived'] is True
+    with pytest.raises(ValueError, match='smart_event_archived'):
+        service.dispatch_order('alarm:1', title='不可派单')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary", [False, True])
+async def test_latest_occurrence_from_legacy_clues_sorted_before_pagination(tmp_path, summary):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    service._save_store({"events": [
+        {"event_id": "older", "event_start_time": "2026-09-09T10:00:00+08:00"},
+        {"event_id": "missing"},
+        {"event_id": "merged", "event_start_time": "2026-09-09T08:00:00+08:00",
+         "clue_tags": [{"tag_start_time": "2026-09-09T15:00:00+08:00"}]},
+        {"event_id": "newer", "event_start_time": "2026-09-10T09:00:00+08:00"},
+    ], "tasks": []})
+    window = dict(start_time="2026-09-09", end_time="2026-09-11", refresh=False,
+                  summary=summary, limit=2)
+    first = await service.list_events(**window, page=1)
+    second = await service.list_events(**window, page=2)
+    assert [item["event_id"] for item in first["events"]] == ["newer", "merged"]
+    assert [item["event_id"] for item in second["events"]] == ["older", "missing"]
+    assert "T15:00:00" in first["events"][1]["event_start_time"]
+
+
+def test_merge_and_attach_keep_latest_occurrence_with_out_of_order_clues(tmp_path):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    def alarm(identifier, hour):
+        return normalize_alarm_event({"id": identifier, "code": "5006A",
+                                      "alarmtime": f"2026-09-09 {hour}:00:00"})
+    bucket = alarm(1, "10")
+    service._merge_event_into(bucket, alarm(2, "15"))
+    service._merge_event_into(bucket, alarm(3, "08"))
+    assert "T15:00:00" in bucket["event_start_time"]
+    store = {"events": [bucket], "tasks": []}
+    service._attach_tags_to_bucket(store, bucket, [
+        {"tag_id": "late", "tag_start_time": "2026-09-09T17:00:00+08:00",
+         "tag_end_time": "2026-09-09T18:00:00+08:00"},
+        {"tag_id": "early", "tag_start_time": "2026-09-09T09:00:00+08:00"},
+    ])
+    assert "T17:00:00" in bucket["event_start_time"]
+    assert "T18:00:00" in bucket["event_end_time"]

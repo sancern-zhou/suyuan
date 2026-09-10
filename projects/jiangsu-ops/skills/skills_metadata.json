@@ -5,7 +5,7 @@
       "aliases": ["故障工单审核", "省中心工单审核", "工单审核闭环"],
       "required_tools": [
         "read_file",
-        "jiangsu_submit_fault_work_order_review",
+        "submit_task_review",
         "jiangsu_query_statistics",
         "jiangsu_fetch_alarm_records",
         "jiangsu_fetch_station_data",

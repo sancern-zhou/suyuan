@@ -84,29 +84,10 @@ export async function submitJiangsuSmartEventFeedback(eventId, feedback, attachm
   }))
 }
 
-export async function submitJiangsuSmartEventJudgment(eventId, judgment) {
-  return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/ai-judgments`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(judgment),
-  }))
-}
-
 export async function recordJiangsuSmartEventOperation(eventId, operation) {
   return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/operations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(operation),
-  }))
-}
-
-export async function archiveJiangsuSmartEvent(eventId, comment = '', confirmation = null) {
-  const body = confirmation
-    ? { comment: comment || null, ...confirmation }
-    : { comment: comment || null }
-  return parse(await authFetch(`${BASE}/${encodeURIComponent(eventId)}/archive`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
   }))
 }

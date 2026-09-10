@@ -6,6 +6,8 @@ previous completed clock hour of province-control alarms and upserts them
 into ``jiangsu_smart_events/store.json``.  Existing events are updated in
 place, new events are appended, and the deduplication key stays the stable
 ``event_id``, so the small overlap at the window border is safe.
+New or changed event buckets collect evidence immediately after persistence.
+Compliance clues also refresh evidence after merging; AI stays manual.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ class JiangsuSmartEventAlarmSyncFetcher(DataFetcher):
             end_time=end.isoformat(),
             actor={"user_id": "system", "username": "smart-event-sync"},
             dispatch_ai=False,
-            fetch_evidence=False,
+            fetch_evidence=True,
         )
         compliance_result = await self._service.sync_compliance_clues(
             actor={"user_id": "system", "username": "smart-event-sync"},

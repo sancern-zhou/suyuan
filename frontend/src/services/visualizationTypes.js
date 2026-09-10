@@ -1,13 +1,13 @@
-export const FAULT_WORK_ORDER_REVIEW_TYPE = 'fault_work_order_review'
+export const TASK_REVIEW_TYPE = 'task_review'
 
-export const isFaultWorkOrderReviewVisual = value => {
+export const isTaskReviewVisual = value => {
   const metadata = value?.metadata || {}
   const meta = value?.meta || {}
   return (
-    value?.type === FAULT_WORK_ORDER_REVIEW_TYPE ||
-    metadata.type === FAULT_WORK_ORDER_REVIEW_TYPE ||
-    metadata.visual_behavior === FAULT_WORK_ORDER_REVIEW_TYPE ||
-    meta.type === FAULT_WORK_ORDER_REVIEW_TYPE ||
-    meta.visual_behavior === FAULT_WORK_ORDER_REVIEW_TYPE
+    value?.type === TASK_REVIEW_TYPE ||
+    metadata.type === TASK_REVIEW_TYPE ||
+    metadata.visual_behavior === TASK_REVIEW_TYPE ||
+    meta.type === TASK_REVIEW_TYPE ||
+    meta.visual_behavior === TASK_REVIEW_TYPE
   )
 }

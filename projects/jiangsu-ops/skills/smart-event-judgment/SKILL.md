@@ -26,6 +26,10 @@ description: Analyze Jiangsu smart-event clue bundles and evidence packages, def
 
 ## 输出
 
-按 `projects/jiangsu-ops/skills/smart-event-judgment/references/output-contract.md` 返回结构化研判结果，并在最终回复中给出可读结论。必须包含最终事件类型、正式事件名称、数据影响、建议等级、关键证据、候选原因、处置建议和人工确认风险。最终回复应能直接展示在事件详情页；不得输出“已修复”“已派单”等未经证据确认的状态。
+按 `projects/jiangsu-ops/skills/smart-event-judgment/references/output-contract.md` 调用 `submit_task_review` 提交结构化结果。最终回复仅简述结论和提交状态；不得输出“已修复”“已派单”等未经证据确认的状态。
 
 任务完成后由系统把结果回写事件和证据包。人工确认仍是最终事件类型、等级和归档状态的最终依据。
+
+## 提交与待办
+
+完成分析后必须按 [提交协议](projects/jiangsu-ops/skills/smart-event-judgment/references/output-contract.md) 调用 `submit_task_review`。不再输出或依赖最终回复末尾的 JSON 回填块。工具成功保存的结构化记录是研判结果与待办的唯一来源。

@@ -158,7 +158,7 @@ backend:
   fetchers:
     - jiangsu_station_fault_event
     - jiangsu_fault_work_order_review_event
-    - jiangsu_review_feedback
+    - task_review_feedback
     - jiangsu_nmc_observed_weather
     - jiangsu_smart_event_alarm_sync
   tools:
@@ -175,7 +175,7 @@ backend:
     - jiangsu_prepare_device_control
     - jiangsu_execute_device_control
     - jiangsu_prepare_fault_work_order
-    - jiangsu_submit_fault_work_order_review
+    - submit_task_review
     - jiangsu_fetch_station_alarm_logs
     - jiangsu_fetch_fault_work_orders
     - jiangsu_fetch_fault_work_order_detail
@@ -339,7 +339,7 @@ backend:
       - jiangsu_fetch_qc_task_status
       - jiangsu_fetch_qc_run_logs
       - jiangsu_fetch_qc_monitoring_curve
-      - jiangsu_submit_fault_work_order_review
+      - submit_task_review
       - jiangsu_query_operations_graph
       - knowledge_graph_query
       - create_report_chart

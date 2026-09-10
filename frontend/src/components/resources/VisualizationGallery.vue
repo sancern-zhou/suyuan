@@ -16,7 +16,7 @@
 import { computed, ref, watch } from 'vue'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { visualizationGalleryItems } from '@/services/visualizationGallery.js'
-import { isFaultWorkOrderReviewVisual } from '@/services/visualizationTypes.js'
+import { isTaskReviewVisual } from '@/services/visualizationTypes.js'
 import VisualizationCard from './VisualizationCard.vue'
 
 const resourceStore = useSessionResourceStore()
@@ -39,7 +39,7 @@ const orderedItems = computed(() => [...items.value].sort((left, right) => (
   - (groupOrder.get(right.group.group_id) ?? Number.MAX_SAFE_INTEGER)
 )))
 const fullBleedSingleItem = computed(() => (
-  orderedItems.value.length === 1 && isFaultWorkOrderReviewVisual(orderedItems.value[0]?.resource)
+  orderedItems.value.length === 1 && isTaskReviewVisual(orderedItems.value[0]?.resource)
 ))
 
 watch(

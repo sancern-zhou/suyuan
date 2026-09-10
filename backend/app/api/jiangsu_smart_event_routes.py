@@ -23,15 +23,6 @@ class SmartEventTaskRequest(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=120)
 
 
-class SmartEventJudgmentRequest(BaseModel):
-    event_type: str = Field(min_length=1, max_length=120)
-    event_name: str | None = Field(default=None, max_length=240)
-    level: str | None = Field(default=None, max_length=40)
-    data_impact: Any = None
-    diagnosis_note: str | None = Field(default=None, max_length=8000)
-    confirmed: bool = False
-
-
 class SmartEventOperationRequest(BaseModel):
     action: str = Field(min_length=1, max_length=80)
     summary: str = Field(min_length=1, max_length=2000)
@@ -50,14 +41,6 @@ class SmartEventFeedbackRequest(BaseModel):
     attachments: list[str] = Field(default_factory=list)
 
 
-class SmartEventArchiveRequest(BaseModel):
-    comment: str | None = Field(default=None, max_length=2000)
-    event_type: str | None = Field(default=None, max_length=120)
-    event_name: str | None = Field(default=None, max_length=240)
-    level: str | None = Field(default=None, max_length=40)
-    data_impact: Any = None
-
-
 def _default_times() -> tuple[str, str]:
     end = datetime.now().astimezone()
     return (end - timedelta(hours=24)).isoformat(), end.isoformat()
@@ -70,7 +53,9 @@ async def list_smart_events(
     station_code: list[str] | None = Query(default=None),
     status: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=100),
+    limit: int = Query(default=10, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    event_type: str | None = Query(default=None),
     refresh: bool = Query(default=True),
     user: CurrentUser = Depends(require_current_user),
 ) -> dict:
@@ -84,6 +69,9 @@ async def list_smart_events(
             keyword=keyword,
             limit=limit,
             refresh=refresh,
+            page=page,
+            summary=True,
+            event_type=event_type,
         )
     except SmartEventUpstreamError as exc:
         raise HTTPException(status_code=502, detail={"code": "smart_event_upstream_unavailable", "message": str(exc)}) from exc
@@ -198,26 +186,6 @@ async def collect_all_smart_event_evidence(
     return {"status": "collected", **await JiangsuSmartEventService().collect_all_event_evidence(limit=limit)}
 
 
-@router.post("/{event_id}/ai-judgments")
-async def submit_smart_event_judgment(
-    event_id: str,
-    request: SmartEventJudgmentRequest,
-    user: CurrentUser = Depends(require_current_user),
-) -> dict:
-    service = JiangsuSmartEventService()
-    try:
-        event = service.submit_ai_judgment(
-            event_id,
-            request.model_dump(),
-            actor={"user_id": user.id, "username": user.username},
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"event": event}
-
-
 @router.post("/{event_id}/operations")
 async def record_smart_event_operation(
     event_id: str,
@@ -288,36 +256,6 @@ async def submit_smart_event_feedback(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "feedback_recorded", **result}
-
-
-@router.post("/{event_id}/archive")
-async def archive_smart_event(
-    event_id: str,
-    request: SmartEventArchiveRequest | None = None,
-    user: CurrentUser = Depends(require_current_user),
-) -> dict:
-    service = JiangsuSmartEventService()
-    try:
-        event = service.archive_event(
-            event_id,
-            comment=request.comment if request else None,
-            confirmation=(
-                {
-                    "event_type": request.event_type,
-                    "event_name": request.event_name,
-                    "level": request.level,
-                    "data_impact": request.data_impact,
-                }
-                if request and any((request.event_type, request.event_name, request.level, request.data_impact is not None))
-                else None
-            ),
-            actor={"user_id": user.id, "username": user.username},
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="smart_event_not_found") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"event": event}
 
 
 @router.post("/{event_id}/tasks")

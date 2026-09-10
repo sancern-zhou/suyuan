@@ -31,10 +31,9 @@ JIANGSU_STATION_FAULT_PROMPT = (
     "knowledge_graph_query（系统注入知识库 ID，depth=1、top_k<=5），不得反复检索或"
     "因图谱查询阻塞证据诊断；无结果、超时或知识库不可用时立即继续实时告警、监测、"
     "巡检和质控接口。输出故障摘要、证据时间线、按置信度排序的原因、"
-    "处置步骤和验证标准；随后调用 jiangsu_prepare_fault_work_order 生成待确认"
-    "工单草案（站点、设备、故障现象由系统自动解析，只需提供标题、故障描述、"
-    "处置方案、验证标准和紧急程度）。当前阶段禁止自动执行设备控制或关闭告警；"
-    "工单需人工在右侧面板确认后才推送，不得声称已创建工单或已派单。"
+    "处置步骤和验证标准；调用 submit_task_review 提交人工待办，category 填故障诊断，subject_id 填事件 ID。"
+    "以 checks 填写证据核验、actions 填写处置建议、sections 填写故障事实和验证标准，evidence 引用真实证据包。"
+    "当前阶段禁止自动执行设备控制、关闭告警或推送工单。"
 )
 
 
@@ -46,11 +45,11 @@ JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
     "payload.evidence_pack_path，再使用已绑定的 fault-work-order-review Skill 按证据包 "
     "sop_id 渐近读取对应 SOP 手册和输出契约，完成审核；SOP-03 必须区分未产生、未上传、"
     "暂时不可见和补传完整性。结束前只调用 "
-    "jiangsu_submit_fault_work_order_review 生成右侧人工确认归档卡片。各 SOP 按事实一致性和逻辑一致性判断，"
+    "submit_task_review 生成右侧人工确认归档卡片。各 SOP 按事实一致性和逻辑一致性判断，"
     "运维提交的详细工单、附件照片、截图、补传回执和影响边界属于核心材料；系统主动抓取的"
     "监测、质控、告警、动环、同城对比和传输辅助数据只做一致性核验，缺失不得机械降级为 "
     "needs_evidence；附件、截图、监测/审核标识和边界已闭环时，非实质性工单措辞瑕疵不得单独"
-    "作为退回补材料理由。review_summary 必须用一句话给出结论、数据处置和核心原因，详细核验项"
+    "作为退回补材料理由。summary 必须用一句话给出结论、数据处置和核心原因，详细核验项"
     "仅做追溯。长期记忆和历史案例只用于形成待核验假设，不能替代本次证据；本次确认的可复用经验由任务历史学习沉淀，不回写固定 SOP。当前阶段禁止自动回写平台工单状态，禁止"
     "自动剔除或修改监测数据。"
 )
@@ -58,28 +57,15 @@ JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
 
 def _smart_event_task_prompt(event_type_dictionary: list[str] | None = None) -> str:
     base = (
-        "完成本次江苏智能事件的 AI 研判。当前输入只有告警线索类型，不能把线索类型直接当作最终事件类型。"
-        "先阅读事件上下文和告警证据，识别线索、完成证据核验，再结合智能事件类型字典定义最终事件类型。"
-        "必要时调用江苏只读接口补充站点、告警、巡检或质控证据；结合任务专属案例库和长期记忆形成待核验假设，"
-        "不得把记忆直接当作本次事实。按智能事件类型字典判断最可能的事件类型，给出事件名称、影响判断、"
-        "建议等级、证据链、原因排序、处置建议和需要人工确认的风险。"
-        "若事件上下文包含 continuity_context（上一轮研判结论与新增线索），本次为增量研判："
-        "先对比新增线索与上一轮结论，判断属于同一原因的延续还是新的独立事件，"
-        "并在回复第一行单独输出\u201c连续性判断：同一原因延续\u201d或\u201c连续性判断：新事件\u201d；"
-        "随后基于合并后的完整事件与证据包输出覆盖全部线索的研判结论，不得丢弃历史线索。"
-        "数据影响为\u201c有数据影响\u201d时，研判说明必须包含数据详细分析四段：本站点污染物时序变化、"
-        "区域背景对比、数据影响判断、事件与数据逻辑方向校验。"
-        "最终回复必须是人类可读的完整研判结论，且在末尾附上一个 ```json 代码块输出结构化结论，"
-        "字段固定为：event_type（必须来自智能事件类型字典）、event_name（建议格式\u201c站点名称+事件类型+（数据影响）\u201d）、"
-        "data_impact（有数据影响|无数据影响|待确认）、suggested_level（P0|P1|P2|P3|待确认）、"
-        "diagnosis_note（研判摘要）、manual_review_suggestion（人工复核建议）、disposal_suggestions（数组）、"
-        "primary_evidence_tags（主要依据标签数组）、supporting_evidence_tags（辅助依据标签数组）、"
-        "compliance_explanation_result（完全解释|部分解释|不能解释|无合规记录）、"
-        "data_analysis（对象，含 station_series_analysis、regional_comparison_analysis、"
-        "data_impact_assessment、logic_direction_check 四段文本，有数据影响时必须输出）、"
-        "continuity（对象，仅增量研判时输出 same_cause 布尔值）。"
-        "json 代码块中的枚举值必须严格遵守上述清单，不得自造取值。"
-        "不得调用 jiangsu_prepare_fault_work_order，不得自动关闭告警、修改监测数据或执行设备控制；派单和归档由人工确认流程处理。"
+        "完成本次江苏智能事件研判。告警类型只是线索，先读证据包并核验事实，再判断最终事件类型、数据影响、等级和处置建议。"
+        "按 smart-event-judgment Skill 的 output-contract.md 调用 submit_task_review 提交结构化结果。"
+        "subject_id 和 event_id 均填 smart_event.event_id，category 填智能事件。"
+        "提交成功才生成待办；最终文字回复不参与系统回填。"
+        "有数据影响时，在 sections 中完整填写本站时序、区域背景、数据影响判断、事件与数据逻辑方向校验四段分析。"
+        "存在 continuity_context 时先核验新增线索和现场反馈，提交覆盖全部已核验事实的完整结论；"
+        "连续性判断写入 sections 的 same_cause 字段，不输出文本标记行。"
+        "任务记忆和案例只能形成待核验假设，不能替代本次证据。"
+        "不得自动关闭告警、派单、修改监测数据或执行设备控制。"
     )
     if event_type_dictionary:
         dictionary_text = "、".join(event_type_dictionary)

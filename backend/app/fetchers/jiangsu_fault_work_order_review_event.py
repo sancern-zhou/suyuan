@@ -18,7 +18,9 @@ import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.fetchers.weather.jiangsu_review_weather import fetch_city_weather
 from app.scheduled_tasks.models.event import TaskEvent
-from app.services.jiangsu_work_order_review import REVIEW_SCENARIO, has_active_review
+from app.services.task_review import has_active_review
+
+REVIEW_SCENARIO = "fault_work_order_review"
 from app.tools.jiangsu.fault_diagnosis import (
     JiangsuFaultWorkOrderDetailTool,
     JiangsuFaultWorkOrdersTool,
@@ -721,7 +723,7 @@ def _review_route(order: dict[str, Any], detail: dict[str, Any]) -> dict[str, An
             "sop_id": "SOP-02",
             "event_type": REVIEW_EVENT_TYPE,
             "review_type": "fault_work_order_env_sop02",
-            "review_submit_tool": "jiangsu_submit_fault_work_order_review",
+            "review_submit_tool": "submit_task_review",
             "route_reason": "命中监测数据、采样、供电或站房环境异常关键词",
             "keyword_hits": sop02_hits[:30],
             "qc_keyword_hits": qc_hits[:20],
@@ -732,7 +734,7 @@ def _review_route(order: dict[str, Any], detail: dict[str, Any]) -> dict[str, An
             "sop_id": "SOP-01",
             "event_type": REVIEW_EVENT_TYPE,
             "review_type": "fault_work_order_qc_sop01",
-            "review_submit_tool": "jiangsu_submit_fault_work_order_review",
+            "review_submit_tool": "submit_task_review",
             "route_reason": "命中质控/校准/仪器测量链关键词，且未命中 SOP-02 采样、供电或站房环境异常关键词",
             "keyword_hits": qc_hits[:20],
         }
@@ -741,7 +743,7 @@ def _review_route(order: dict[str, Any], detail: dict[str, Any]) -> dict[str, An
             "sop_id": "SOP-03",
             "event_type": REVIEW_EVENT_TYPE,
             "review_type": "fault_work_order_transmission_sop03",
-            "review_submit_tool": "jiangsu_submit_fault_work_order_review",
+            "review_submit_tool": "submit_task_review",
             "route_reason": "命中数据传输、平台离线、未上传或补传关键词，且未命中测量/采样/供电类 SOP-02 关键词",
             "keyword_hits": transmission_hits[:30],
             "fault_event_type": _classify_transmission_event_type(text),
@@ -1511,7 +1513,7 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
             code = str(order.get("workingOrderCode") or "").strip()
             if not code:
                 continue
-            if has_active_review(code):
+            if has_active_review("jiangsu_fault_work_order_review", code):
                 skipped_existing += 1
                 continue
             try:

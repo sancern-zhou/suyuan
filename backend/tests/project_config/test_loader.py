@@ -91,7 +91,7 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
     assert context.manifest.backend.fetchers == [
         "jiangsu_station_fault_event",
         "jiangsu_fault_work_order_review_event",
-        "jiangsu_review_feedback",
+        "task_review_feedback",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
     ]
@@ -110,13 +110,13 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         assert "jiangsu_query_operations_graph" in context.manifest.backend.agent_mode_tools[mode]
         assert "knowledge_graph_query" in context.manifest.backend.agent_mode_tools[mode]
     assert "jiangsu_query_operations_graph" in context.manifest.backend.tools
-    assert "jiangsu_submit_fault_work_order_review" in context.manifest.backend.tools
+    assert "submit_task_review" in context.manifest.backend.tools
     assert {
         "jiangsu_fetch_qc_task_history",
         "jiangsu_fetch_qc_task_status",
         "jiangsu_fetch_qc_run_logs",
         "jiangsu_fetch_qc_monitoring_curve",
-        "jiangsu_submit_fault_work_order_review",
+        "submit_task_review",
     } <= set(context.manifest.backend.agent_mode_tools["ops"])
     assert context.manifest.scheduled_tasks_enabled is True
     assert context.manifest.scheduled_tasks == [

@@ -37,16 +37,13 @@ test('smart event workspace handles Agent focus, comparison, history, and task c
 })
 
 test('fixed event detail exposes confirmation and archive controls', () => {
-  assert.match(source, /submitJiangsuSmartEventJudgment/)
-  assert.match(source, /archiveJiangsuSmartEvent/)
-  assert.match(source, /保存并确认/)
-  assert.match(source, /归档事件/)
+  assert.match(source, /TaskReviewPanel/)
+  assert.match(source, /refreshSelectedReview/)
   assert.match(source, /label: '处置操作'/)
   assert.match(source, /派单处理/)
   assert.match(source, /工单说明/)
   assert.match(source, /dispatchDialogVisible/)
   assert.match(source, /role="dialog" aria-modal="true" aria-label="工单派发"/)
-  assert.match(source, /归档反馈（可选）/)
   assert.doesNotMatch(source, /label: '人工确认'/)
   assert.match(source, /platform_alarm: '平台报警'/)
   assert.match(source, /video: '视频监控记录'/)
@@ -62,11 +59,6 @@ test('disposal area submits dispatch order, incremental feedback, and archive co
   assert.match(source, /handleFeedbackAttachments/)
   assert.match(source, /submitDispatchOrder/)
   assert.match(source, /submitFeedback/)
-  assert.match(source, /archiveConfirmation/)
-  assert.match(source, /归档事件类型/)
-  assert.match(source, /归档事件名称/)
-  assert.match(source, /是否有数据影响/)
-  assert.match(source, /默认带入当前研判结论/)
   assert.match(source, /aria-label="操作历史"/)
   assert.match(source, /operationActionLabel/)
   assert.match(source, /暂无处置记录/)
@@ -90,13 +82,13 @@ test('event list keeps internal event identifiers out of the visible table', () 
   assert.doesNotMatch(source, /<small>\{\{ event\.event_id \}\}<\/small>/)
 })
 
-test('event list shows stored events first and refreshes only when sync adds new events', () => {
-  assert.match(source, /listJiangsuSmartEvents\(\{ refresh: true \}\)/)
-  assert.match(source, /listJiangsuSmartEvents\(\{ refresh: false \}\)/)
+test('event list shows stored pages first and refreshes in the background', () => {
+  assert.match(source, /pollSyncStatus\(syncGeneration\)/)
+  assert.match(source, /listJiangsuSmartEvents\(\{ \.\.\.activeQuery\.value, refresh: false \}\)/)
   assert.match(source, /watchBackgroundSync\(\)/)
-  assert.match(source, /payload\.source_metadata\?\.sync\?\.in_progress/)
+  assert.doesNotMatch(source, /refresh: true/)
   assert.match(source, /applySyncedEvents\(payload\)/)
-  assert.match(source, /incoming\.some\(item => !known\.has\(item\.event_id\)\)/)
+  assert.match(source, /applyListPage\(payload\)/)
   assert.match(source, /onUnmounted\(\(\) => \{\n?\s*stopSyncWatch\(\)/)
   assert.match(source, /window\.removeEventListener\('resize', handleChartResize\)/)
   assert.match(source, /syncing \? '同步中…' : lastSyncTime/)
@@ -122,30 +114,22 @@ test('merged events surface pending delta and incremental judgment continuity', 
   assert.match(source, /aria-label="线索标签集合"/)
 })
 
-test('judgment panel renders structured AI conclusion with collapse and dispatch action', () => {
-  assert.match(source, /ai_structured_judgment/)
-  assert.match(source, /judgment-chips/)
-  assert.match(source, /人工复核建议/)
-  assert.match(source, /处置建议/)
-  assert.match(source, /aria-label="数据详细分析"/)
-  assert.match(source, /事件与数据逻辑方向校验/)
-  assert.match(source, /研判依据标签/)
-  assert.match(source, /合规解释结论/)
-  assert.match(source, /研判依据与参数快照/)
-  assert.match(source, /param-snapshot/)
+test('judgment panel renders Markdown conclusion and keeps structured details out of the result', () => {
+  assert.match(source, /TaskReviewPanel/)
+  assert.match(source, /<MarkdownRenderer[^>]*:content="judgmentText"/)
+  assert.doesNotMatch(source, /aria-label="数据详细分析"|<summary>研判依据与参数快照/)
   assert.match(source, /getJiangsuSmartEventConfig/)
   assert.match(source, /AI 重新研判/)
   assert.match(source, /执行 AI 研判/)
-  assert.match(source, /if \(dataImpactText\.value !== '有数据影响'\) return \[\]/)
 })
 
 test('monitoring section renders six-pollutant line chart, table toggle, and regional delta bars', () => {
   assert.match(source, /import \* as echarts from 'echarts'/)
-  assert.match(source, /aria-label="六参折线时序图"/)
+  assert.match(source, /aria-label="六参五分钟折线时序图"/)
   assert.match(source, /aria-label="监测数据视图切换"/)
-  assert.match(source, /aria-label="小时数据表"/)
+  assert.match(source, /aria-label="监测数据表"/)
   assert.match(source, /aria-label="区域差异柱状图"/)
-  assert.match(source, /hourChartOption/)
+  assert.match(source, /minuteChartOption/)
   assert.match(source, /deltaChartOption/)
   assert.match(source, /regionalDeltas/)
   assert.match(source, /'与周边站点差值', type: 'bar', itemStyle: \{ color: '#1677ff' \}/)
@@ -153,4 +137,29 @@ test('monitoring section renders six-pollutant line chart, table toggle, and reg
   assert.match(source, /POLLUTANT_SERIES/)
   assert.match(source, /monitoringView === 'chart'/)
   assert.match(source, /recordPollutant/)
+})
+
+
+test('stored list is displayed before the background refresh resolves', async () => {
+  const body = source.match(/const loadEvents = async \(page = 1\) => \{([\s\S]*?)\n\}\n\nconst resetFilters/)[1]
+  const loading = { value: false }
+  const events = { value: [] }
+  let backgroundStarted = false
+  const run = new Function('loading', 'events', 'error', 'lastSync', 'props',
+    'stopSyncWatch', 'listJiangsuSmartEvents', 'watchBackgroundSync',
+    'activeQuery', 'PAGE_SIZE', 'statusFilter', 'typeFilter', 'keyword', 'applyListPage',
+    `return (async (page = 1) => {${body}})()`)
+  await run(loading, events, { value: '' }, { value: null }, {}, () => {},
+    async params => {
+      assert.equal(params.refresh, false)
+      assert.equal(params.limit, 10)
+      assert.equal(params.page, 1)
+      return { events: [{ event_id: 'stored' }] }
+    }, () => {
+      assert.equal(loading.value, false)
+      assert.equal(events.value[0].event_id, 'stored')
+      backgroundStarted = true
+    }, { value: {} }, 10, { value: '' }, { value: '' }, { value: '' }, payload => { events.value = payload.events })
+  assert.equal(backgroundStarted, true)
+  assert.match(source, /v-if="loading && !events.length"/)
 })

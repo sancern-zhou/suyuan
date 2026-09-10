@@ -195,7 +195,7 @@ import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
 import { visualizationGalleryItems } from '@/services/visualizationGallery.js'
-import { isFaultWorkOrderReviewVisual } from '@/services/visualizationTypes.js'
+import { isTaskReviewVisual } from '@/services/visualizationTypes.js'
 
 const props = defineProps({
   visible: {
@@ -289,7 +289,7 @@ const visualizationItems = computed(() => visualizationGalleryItems(panelResourc
 const fullBleedVisualizationPanel = computed(() => (
   props.activeTab === 'visualization' &&
   visualizationItems.value.length === 1 &&
-  isFaultWorkOrderReviewVisual(visualizationItems.value[0]?.resource)
+  isTaskReviewVisual(visualizationItems.value[0]?.resource)
 ))
 const resolvedPanelStyle = computed(() => ({
   ...props.panelStyle,

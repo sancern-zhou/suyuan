@@ -68,7 +68,7 @@ def test_jiangsu_ops_mode_includes_qc_review_tools():
     context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
 
     ops_tools = context.manifest.backend.agent_mode_tools["ops"]
-    assert "jiangsu_submit_fault_work_order_review" in ops_tools
+    assert "submit_task_review" in ops_tools
     assert "jiangsu_fetch_qc_task_history" in ops_tools
     assert "jiangsu_fetch_station_environment_history" in ops_tools
 
@@ -78,4 +78,4 @@ def test_jiangsu_fault_work_order_review_tool_is_registered():
 
     registered = set(create_global_tool_registry(context=context).list_tools())
 
-    assert "jiangsu_submit_fault_work_order_review" in registered
+    assert "submit_task_review" in registered

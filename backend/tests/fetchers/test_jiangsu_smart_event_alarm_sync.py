@@ -41,14 +41,18 @@ async def test_fetcher_syncs_previous_hour_into_the_service():
             calls.append(kwargs)
             return {"events": [], "stored_event_count": 0, "created_tasks": []}
 
+        async def sync_compliance_clues(self, **kwargs):
+            return {"status": "no_buckets", "attached": 0, "stations": 0}
+
     fetcher = JiangsuSmartEventAlarmSyncFetcher(service=FakeService())
     result = await fetcher.fetch_and_store()
 
-    assert result["stored_event_count"] == 0
+    assert result["alarm_sync"]["stored_event_count"] == 0
+    assert result["compliance_sync"]["attached"] == 0
     assert len(calls) == 1
     kwargs = calls[0]
     assert kwargs["dispatch_ai"] is False
-    assert kwargs["fetch_evidence"] is False
+    assert kwargs["fetch_evidence"] is True
     assert kwargs["actor"] == {"user_id": "system", "username": "smart-event-sync"}
     assert "T" in kwargs["start_time"] and "T" in kwargs["end_time"]
     assert kwargs["end_time"] > kwargs["start_time"]

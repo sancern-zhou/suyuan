@@ -17,8 +17,8 @@
     <section v-if="viewMode === 'list'" class="event-list-page" aria-label="智能事件列表">
       <div class="list-toolbar">
         <div class="filter-row">
-          <label><span>事件状态</span><select v-model="statusFilter" aria-label="状态筛选"><option value="">全部状态</option><option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option></select></label>
-          <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选"><option value="">全部事件类型</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label><span>事件状态</span><select v-model="statusFilter" aria-label="状态筛选" @change="loadEvents()"><option value="">全部状态</option><option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选" @change="loadEvents()"><option value="">全部事件类型</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
           <label class="keyword-filter"><span>关键词</span><input v-model="keyword" type="search" placeholder="事件编号、站点或事件名称" @keyup.enter="loadEvents" /></label>
           <button type="button" class="primary-button" :disabled="loading" @click="loadEvents">查询 <i class="search-icon" aria-hidden="true"></i></button>
           <button type="button" class="secondary-button" :disabled="loading" @click="resetFilters">重置 <span>↻</span></button>
@@ -27,21 +27,21 @@
         <span v-if="actionMessage" class="action-message list-action-message">{{ actionMessage }}</span>
       </div>
       <div class="list-metrics">
-        <div class="metric-total"><i></i><span>事件总数</span><strong>{{ events.length }}</strong></div>
+        <div class="metric-total"><i></i><span>事件总数</span><strong>{{ listStats.total }}</strong></div>
         <div class="metric-pending"><i></i><span>待 AI 研判</span><strong>{{ pendingCount }}</strong></div>
         <div class="metric-station"><i></i><span>涉及站点</span><strong>{{ stationCount }}</strong></div>
         <div class="metric-sync"><i></i><span>最近同步</span><strong>{{ syncing ? '同步中…' : lastSyncTime }}</strong></div>
-        <b>共 {{ filteredEvents.length }} 条</b>
+        <b>共 {{ totalEvents }} 条</b>
       </div>
-      <div v-if="loading" class="state">正在加载事件...</div>
-      <div v-else-if="error" class="state error">{{ error }}</div>
+      <div v-if="loading && !events.length" class="state">正在加载事件...</div>
+      <div v-else-if="error && !events.length" class="state error">{{ error }}</div>
       <div v-else-if="!filteredEvents.length" class="state">暂无符合条件的智能事件</div>
       <div v-else class="event-table-wrap">
         <table class="event-table">
           <thead><tr><th>序号</th><th>状态</th><th>事件名称</th><th>线索标签</th><th>AI事件类型</th><th>数据影响</th><th>等级</th><th>站点</th><th>发生时间</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="(event, index) in filteredEvents" :key="event.event_id" @click="openDetail(event.event_id)">
-              <td>{{ index + 1 }}</td>
+              <td>{{ (currentPage - 1) * PAGE_SIZE + index + 1 }}</td>
               <td><span class="table-chip" :class="statusClass(event)">{{ event.event_status || '待研判' }}</span></td>
               <td><div class="event-name"><strong>{{ event.event_name || event.initial_event_name || '待研判事件' }}</strong><small>{{ event.alarm_content || '暂无具体告警内容' }}</small></div></td>
               <td class="tag-cell">
@@ -66,6 +66,12 @@
           </tbody>
         </table>
       </div>
+      <nav class="event-pagination" aria-label="事件分页">
+        <span>共 {{ totalEvents }} 条，每页 {{ PAGE_SIZE }} 条</span>
+        <button type="button" :disabled="loading || currentPage <= 1" @click="loadEvents(currentPage - 1)">上一页</button>
+        <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
+        <button type="button" :disabled="loading || currentPage >= totalPages" @click="loadEvents(currentPage + 1)">下一页</button>
+      </nav>
     </section>
 
     <section v-else-if="viewMode === 'config'" class="config-page" aria-label="事件中心配置">
@@ -80,8 +86,6 @@
           <h4>事件合并</h4>
           <div class="config-row">
             <label>同日合并窗口（分钟）<input v-model.number="configDraft.event_merge_window_minutes" type="number" min="0" /></label>
-            <label>证据前扩展（分钟）<input v-model.number="configDraft.event_before_extend_minutes" type="number" min="0" /></label>
-            <label>证据后扩展（分钟）<input v-model.number="configDraft.event_after_extend_minutes" type="number" min="0" /></label>
           </div>
         </div>
         <div class="config-section">
@@ -183,49 +187,8 @@
                   </template>
 
                   <section v-else-if="section.key === 'judgment'" class="special-panel judgment" aria-label="AI研判结果">
-                    <p v-if="evidenceFocus" class="focus-note">当前证据焦点：{{ evidenceFocus }}</p>
                     <template v-if="judgment?.final_response">
-                      <div class="judgment-chips">
-                        <span class="j-chip j-type">{{ aiTypeText }}</span>
-                        <span class="j-chip" :class="dataImpactClass">{{ dataImpactText }}</span>
-                        <span class="j-chip j-level">{{ levelText }}</span>
-                        <span v-if="continuityLabel" class="j-chip j-continuity">{{ continuityLabel }}</span>
-                      </div>
-                      <div v-if="judgmentName" class="judgment-name">{{ judgmentName }}</div>
-                      <p v-if="judgmentSummary" class="j-note">{{ judgmentSummary }}</p>
-                      <div v-if="structuredJudgment.manual_review_suggestion" class="j-block">
-                        <h5>人工复核建议</h5>
-                        <p>{{ structuredJudgment.manual_review_suggestion }}</p>
-                      </div>
-                      <div v-if="disposalSuggestions.length" class="j-block">
-                        <h5>处置建议</h5>
-                        <ul class="j-suggestion-list"><li v-for="(item, index) in disposalSuggestions" :key="index">{{ item }}</li></ul>
-                      </div>
-                      <div v-if="dataAnalysisEntries.length" class="j-block j-data-analysis" aria-label="数据详细分析">
-                        <h5>数据详细分析</h5>
-                        <div v-for="entry in dataAnalysisEntries" :key="entry.key" class="analysis-item">
-                          <strong>{{ entry.label }}</strong>
-                          <p>{{ entry.text }}</p>
-                        </div>
-                      </div>
-                      <div v-if="primaryEvidenceTags.length || supportingEvidenceTags.length" class="j-block">
-                        <h5>研判依据标签</h5>
-                        <div class="tag-chip-wrap">
-                          <span v-for="tag in primaryEvidenceTags" :key="`p-${tag}`" class="clue-chip primary-ev">主要：{{ tag }}</span>
-                          <span v-for="tag in supportingEvidenceTags" :key="`s-${tag}`" class="clue-chip">辅助：{{ tag }}</span>
-                        </div>
-                      </div>
-                      <div v-if="complianceResultText" class="j-block j-compliance">
-                        <h5>合规解释结论</h5>
-                        <p>{{ complianceResultText }}</p>
-                      </div>
-                      <details class="j-collapse">
-                        <summary>研判依据与参数快照</summary>
-                        <p class="final-response">{{ judgment.final_response }}</p>
-                        <dl class="param-snapshot">
-                          <div v-for="item in paramSnapshot" :key="item.label"><dt>{{ item.label }}</dt><dd>{{ item.value }}</dd></div>
-                        </dl>
-                      </details>
+                      <div v-if="judgmentText" class="j-note"><MarkdownRenderer :content="judgmentText" :streaming="false" /></div>
                     </template>
                     <p v-else class="muted">当前状态为{{ selectedEvent?.event_status || '未研判' }}：系统已完成线索归并和标签保留，AI 研判完成后将写入事件名称、事件类型、数据影响、事件等级和摘要说明。</p>
                     <div v-if="!selectedEvent?.archived" class="disposal-actions judgment-actions">
@@ -240,7 +203,7 @@
                         <li v-for="item in judgmentHistory" :key="`${item.round}-${item.task_id || item.archived_at}`">
                           <strong>第 {{ item.round }} 轮</strong>
                           <span>{{ formatTime(item.completed_at || item.archived_at) }}</span>
-                          <p>{{ item.final_response }}</p>
+                          <MarkdownRenderer :content="item.final_response" :streaming="false" />
                         </li>
                       </ol>
                     </div>
@@ -250,7 +213,7 @@
                     <div class="disposal-actions">
                       <button type="button" class="disposal-button primary" @click="openDispatchPage">派单处理</button>
                       <button type="button" class="disposal-button" @click="openFeedbackDialog">事件反馈</button>
-                      <button type="button" class="disposal-button" @click="openArchiveDialog">归档事件</button>
+                      <button type="button" class="disposal-button" @click="reviewDialogVisible = true" :disabled="!selectedEvent.review_id">审核与归档</button>
                     </div>
                     <div class="operation-history-block" aria-label="操作历史">
                       <h4>操作历史</h4>
@@ -280,17 +243,17 @@
                     <template v-if="section.key === 'monitoring'">
                       <div class="monitoring-toolbar">
                         <div class="monitoring-overview">
-                          <div><span>小时数据</span><strong>{{ hourRecords.length }}</strong><small>条</small></div>
+                          <div><span>小时数据</span><strong>{{ monitoringRows(section.value, 'station_hour').length }}</strong><small>条</small></div>
                           <div><span>五分钟数据</span><strong>{{ monitoringRows(section.value, 'station_5minute').length }}</strong><small>条</small></div>
                         </div>
                         <div class="view-toggle" role="group" aria-label="监测数据视图切换">
-                          <button type="button" :class="{ active: monitoringView === 'chart' }" aria-label="六参折线时序图" @click="monitoringView = 'chart'">折线图</button>
-                          <button type="button" :class="{ active: monitoringView === 'table' }" aria-label="小时数据表" @click="monitoringView = 'table'">数据表</button>
+                          <button type="button" :class="{ active: monitoringView === 'chart' }" aria-label="六参五分钟折线时序图" @click="monitoringView = 'chart'">折线图（五分钟）</button>
+                          <button type="button" :class="{ active: monitoringView === 'table' }" aria-label="监测数据表" @click="monitoringView = 'table'">数据表</button>
                         </div>
                       </div>
-                      <div v-if="monitoringView === 'chart'" class="hour-line-chart" aria-label="六参折线时序图">
-                        <div v-if="hourChartOption" ref="hourChartRef" class="chart-canvas"></div>
-                        <p v-else class="source-empty">暂无小时监测数据，无法绘制时序图</p>
+                      <div v-if="monitoringView === 'chart'" class="minute-line-chart" aria-label="六参五分钟折线时序图">
+                        <div v-if="minuteChartOption" :ref="el => { minuteChartRef = el }" class="chart-canvas"></div>
+                        <p v-else class="source-empty">暂无五分钟监测数据，无法绘制时序图</p>
                       </div>
                       <template v-else>
                         <div v-for="kind in ['station_hour', 'station_5minute']" :key="kind" class="data-subsection">
@@ -303,7 +266,7 @@
                       </template>
                       <div v-if="deltaChartOption" class="regional-delta-block" aria-label="区域差异柱状图">
                         <h4>区域差异（本站均值 − 区域均值，事件时段）</h4>
-                        <div ref="deltaChartRef" class="chart-canvas delta-canvas"></div>
+                        <div :ref="el => { deltaChartRef = el }" class="chart-canvas delta-canvas"></div>
                         <p class="delta-legend">蓝色柱：与周边站点差值；红色柱：与全市其余站点差值。正值表示本站高于区域背景，负值表示低于区域背景。</p>
                       </div>
                     </template>
@@ -353,40 +316,21 @@
           </div>
         </div>
       </div>
-      <div v-if="archiveDialogVisible" class="archive-overlay" role="dialog" aria-modal="true" aria-label="归档事件">
-        <div class="archive-dialog">
-          <header><strong>归档事件</strong><button type="button" aria-label="关闭归档窗口" @click="archiveDialogVisible = false">×</button></header>
-          <p class="dialog-note">默认带入当前研判结论，人工可修改；确认归档后事件锁定。</p>
-          <div class="dispatch-form">
-            <label><span>归档事件类型</span><input v-model="archiveConfirmation.eventType" type="text" placeholder="归档确认的事件类型" /></label>
-            <label><span>归档事件等级</span>
-              <select v-model="archiveConfirmation.level" aria-label="归档事件等级">
-                <option value="">待定</option>
-                <option v-for="level in ['P0', 'P1', 'P2', 'P3']" :key="level" :value="level">{{ level }}</option>
-              </select>
-            </label>
-            <label><span>是否有数据影响</span>
-              <select v-model="archiveConfirmation.dataImpact" aria-label="是否有数据影响">
-                <option v-for="option in ['有数据影响', '无数据影响', '待确认']" :key="option" :value="option">{{ option }}</option>
-              </select>
-            </label>
-            <label><span>归档事件名称</span><input v-model="archiveConfirmation.eventName" type="text" placeholder="归档确认的事件名称" /></label>
-            <label class="dispatch-description"><span>归档反馈（可选）</span><textarea v-model="archiveFeedback" rows="3" placeholder="请输入归档反馈内容" /></label>
-          </div>
-          <div class="confirmation-actions">
-            <button type="button" class="primary-button" :disabled="confirmationBusy" @click="archiveSelectedEvent">确认归档</button>
-            <button type="button" class="secondary-button" @click="archiveDialogVisible = false">取消</button>
-          </div>
+      <div v-if="reviewDialogVisible && selectedEvent?.review_id" class="archive-overlay" role="dialog" aria-modal="true" aria-label="审核事项">
+        <div class="archive-dialog" style="height:85vh;display:flex;flex-direction:column;width:min(1000px,95vw)">
+          <button type="button" @click="reviewDialogVisible = false">关闭</button>
+          <TaskReviewPanel :review-id="selectedEvent.review_id" @updated="refreshSelectedReview" />
         </div>
       </div>
   </section>
 </template>
 
 <script setup>
+import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import {
-  archiveJiangsuSmartEvent,
   dispatchJiangsuSmartEventOrder,
   getJiangsuSmartEvent,
   getJiangsuSmartEventConfig,
@@ -394,7 +338,6 @@ import {
   listJiangsuSmartEvents,
   collectJiangsuSmartEventEvidence,
   submitJiangsuSmartEventFeedback,
-  submitJiangsuSmartEventJudgment,
   dispatchJiangsuSmartEventAiJudgment,
   saveJiangsuSmartEventConfig,
 } from '@/services/jiangsuSmartEventsApi.js'
@@ -405,6 +348,20 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'open-task'])
 const events = ref([])
+const PAGE_SIZE = 10
+const currentPage = ref(1)
+const totalEvents = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil(totalEvents.value / PAGE_SIZE)))
+const listStats = ref({ total: 0, pending: 0, stations: 0 })
+const listFilters = ref({ statuses: [], types: [] })
+const activeQuery = ref({})
+const applyListPage = payload => {
+  events.value = payload.events || []
+  totalEvents.value = payload.total ?? events.value.length
+  currentPage.value = payload.page || 1
+  listStats.value = payload.stats || { total: totalEvents.value, pending: 0, stations: 0 }
+  listFilters.value = payload.filters || { statuses: [], types: [] }
+}
 const selectedId = ref(props.initialEventId || '')
 const selectedEvent = ref(null)
 const tasks = ref([])
@@ -418,9 +375,6 @@ const error = ref('')
 const workspaceMode = ref('detail')
 const compareEvents = ref([])
 const evidenceFocus = ref('')
-const judgmentType = ref('')
-const judgmentLevel = ref('')
-const judgmentNote = ref('')
 const confirmationBusy = ref(false)
 const actionMessage = ref('')
 const dispatchDialogVisible = ref(false)
@@ -428,9 +382,6 @@ const feedbackDialogVisible = ref(false)
 const feedbackText = ref('')
 const feedbackAttachmentNames = ref([])
 const dispatchOrder = ref({ type: '', assignee: '运维处置人员', title: '', description: '' })
-const archiveConfirmation = ref({ eventType: '', level: '', dataImpact: '待确认', eventName: '' })
-const archiveDialogVisible = ref(false)
-const archiveFeedback = ref('')
 const viewMode = ref(props.initialEventId ? 'detail' : 'list')
 const evidenceBusy = ref(false)
 const aiBusyIds = ref(new Set())
@@ -441,71 +392,8 @@ const judgmentHistory = computed(() => Array.isArray(selectedEvent.value?.judgme
 const judgmentRounds = computed(() => judgmentHistory.value.length + (judgment.value?.final_response ? 1 : 0))
 const eventConfig = ref(null)
 
-const structuredJudgment = computed(() => {
-  const raw = selectedEvent.value?.ai_structured_judgment
-  if (raw && typeof raw === 'object' && Object.keys(raw).length) return raw
-  return {
-    event_type: selectedEvent.value?.ai_event_type || '',
-    data_impact: selectedEvent.value?.ai_data_impact || '',
-    suggested_level: selectedEvent.value?.ai_suggested_level || '',
-  }
-})
-const aiTypeText = computed(() => structuredJudgment.value.event_type || selectedEvent.value?.event_type || '待 AI 研判')
-const dataImpactText = computed(() => structuredJudgment.value.data_impact || selectedEvent.value?.ai_data_impact || '待确认')
-const dataImpactClass = computed(() => {
-  if (dataImpactText.value === '有数据影响') return 'impact-yes'
-  if (dataImpactText.value === '无数据影响') return 'impact-no'
-  return 'impact-unknown'
-})
-const levelText = computed(() => structuredJudgment.value.suggested_level || selectedEvent.value?.ai_suggested_level || '待研判')
-const judgmentName = computed(() => selectedEvent.value?.ai_event_name || '')
-const judgmentSummary = computed(() => structuredJudgment.value.diagnosis_note || selectedEvent.value?.ai_diagnosis_note || '')
-const disposalSuggestions = computed(() => Array.isArray(structuredJudgment.value.disposal_suggestions) ? structuredJudgment.value.disposal_suggestions.filter(Boolean) : [])
-const primaryEvidenceTags = computed(() => Array.isArray(structuredJudgment.value.primary_evidence_tags) ? structuredJudgment.value.primary_evidence_tags.filter(Boolean) : [])
-const supportingEvidenceTags = computed(() => Array.isArray(structuredJudgment.value.supporting_evidence_tags) ? structuredJudgment.value.supporting_evidence_tags.filter(Boolean) : [])
-const complianceResultText = computed(() => structuredJudgment.value.compliance_explanation_result || '')
-const continuityLabel = computed(() => {
-  const result = selectedEvent.value?.last_continuity_result
-  if (result === 'same_cause') return '连续性：同一原因延续'
-  if (result === 'new_cause') return '连续性：新事件'
-  return ''
-})
-const DATA_ANALYSIS_LABELS = [
-  { key: 'station_series_analysis', label: '本站点污染物时序变化' },
-  { key: 'regional_comparison_analysis', label: '区域背景对比' },
-  { key: 'data_impact_assessment', label: '数据影响判断' },
-  { key: 'logic_direction_check', label: '事件与数据逻辑方向校验' },
-]
-const dataAnalysisEntries = computed(() => {
-  // V3.0 9.6：数据详细分析仅在有数据影响时展示。
-  if (dataImpactText.value !== '有数据影响') return []
-  const analysis = structuredJudgment.value.data_analysis
-  if (!analysis || typeof analysis !== 'object') return []
-  return DATA_ANALYSIS_LABELS
-    .map(item => ({ ...item, text: String(analysis[item.key] || '').trim() }))
-    .filter(item => item.text)
-})
-const paramSnapshot = computed(() => {
-  const pkg = selectedEvent.value?.evidence_package || {}
-  const windows = pkg.time_windows || {}
-  const policy = pkg.collection_policy || {}
-  const comparison = (pkg.sources || {}).comparison || {}
-  const config = eventConfig.value || {}
-  const items = []
-  if (windows.event?.start) items.push({ label: '事件窗口', value: `${windows.event.start} ~ ${windows.event.end}` })
-  if (windows.query?.start) items.push({ label: '前后分析窗口', value: `${windows.query.start} ~ ${windows.query.end}（前后各扩展 ${policy.event_extension_minutes ?? windows.extension_minutes ?? 30} 分钟）` })
-  if (config.event_merge_window_minutes) items.push({ label: '事件归并窗口', value: `同站点同自然日归并（参考窗口 ${config.event_merge_window_minutes} 分钟）` })
-  if (comparison.comparison_scope) items.push({ label: '对照范围', value: comparison.comparison_scope === 'same_district' ? `同区县省控站点${comparison.station_codes?.length ? `（${comparison.station_codes.length} 个）` : ''}` : comparison.comparison_scope })
-  if (config.station_missing_factor_threshold) items.push({ label: '站点级断数因子数阈值', value: config.station_missing_factor_threshold })
-  if (config.multi_instrument_threshold) items.push({ label: '多仪器断数因子数阈值', value: config.multi_instrument_threshold })
-  if (config.data_anomaly_threshold_pct) items.push({ label: '异常变化率阈值', value: `${config.data_anomaly_threshold_pct}%` })
-  if (config.video_tag_confidence_threshold) items.push({ label: '视频置信度阈值', value: config.video_tag_confidence_threshold })
-  const limits = config.pollutant_hour_limits || {}
-  const limitItems = Object.entries(limits).filter(([, v]) => v != null)
-  if (limitItems.length) items.push({ label: '浓度超限阈值', value: limitItems.map(([k, v]) => `${k}:${v}`).join(' ') })
-  if (policy.compliance_scope) items.push({ label: '合规时间匹配', value: policy.compliance_scope === 'event_natural_day' ? '同站点事件自然日' : policy.compliance_scope })
-  return items
-})
+const judgmentText = computed(() => judgment.value?.final_response || '')
+const judgmentSummary = computed(() => judgment.value?.final_response || '')
 const loadEventConfig = async () => {
   try {
     const payload = await getJiangsuSmartEventConfig()
@@ -522,8 +410,6 @@ const configSaveMessage = ref('')
 const configSaveOk = ref(false)
 const configDraft = ref({
   event_merge_window_minutes: 60,
-  event_before_extend_minutes: 30,
-  event_after_extend_minutes: 30,
   station_missing_factor_threshold: 2,
   multi_instrument_threshold: 2,
   data_anomaly_threshold_pct: 20,
@@ -546,8 +432,6 @@ const openConfig = async () => {
     const limits = cfg.pollutant_hour_limits || {}
     configDraft.value = {
       event_merge_window_minutes: cfg.event_merge_window_minutes ?? 60,
-      event_before_extend_minutes: cfg.event_before_extend_minutes ?? 30,
-      event_after_extend_minutes: cfg.event_after_extend_minutes ?? 30,
       station_missing_factor_threshold: cfg.station_missing_factor_threshold ?? 2,
       multi_instrument_threshold: cfg.multi_instrument_threshold ?? 2,
       data_anomaly_threshold_pct: cfg.data_anomaly_threshold_pct ?? 20,
@@ -595,22 +479,13 @@ const saveConfig = async () => {
     configSaving.value = false
   }
 }
-const aiDispatchDescription = computed(() => judgment.value?.final_response || selectedEvent.value?.ai_data_impact || selectedEvent.value?.primary_clue_tag || '请根据事件证据完成现场核查与处置。')
+const aiDispatchDescription = computed(() => judgmentSummary.value || selectedEvent.value?.ai_data_impact || selectedEvent.value?.primary_clue_tag || '请根据事件证据完成现场核查与处置。')
 const operationRecords = computed(() => Array.isArray(selectedEvent.value?.operation_records) ? selectedEvent.value.operation_records : [])
-const statusOptions = computed(() => [...new Set(events.value.map(item => item.event_status).filter(Boolean))])
-const typeOptions = computed(() => [...new Set(events.value.map(item => item.ai_event_type || item.event_type).filter(Boolean))])
-const filteredEvents = computed(() => {
-  const query = keyword.value.trim().toLowerCase()
-  return events.value.filter(event => {
-    const type = event.ai_event_type || event.event_type || ''
-    const text = [event.event_id, event.event_name, event.initial_event_name, event.site_name, event.site_id, event.primary_clue_tag, event.source_alarm_rule_type].filter(Boolean).join(' ').toLowerCase()
-    return (!statusFilter.value || event.event_status === statusFilter.value)
-      && (!typeFilter.value || type === typeFilter.value)
-      && (!query || text.includes(query))
-  })
-})
-const pendingCount = computed(() => events.value.filter(item => !item.ai_judgment?.final_response).length)
-const stationCount = computed(() => new Set(events.value.map(item => item.site_id || item.site_name).filter(Boolean)).size)
+const statusOptions = computed(() => listFilters.value.statuses)
+const typeOptions = computed(() => listFilters.value.types)
+const filteredEvents = computed(() => events.value)
+const pendingCount = computed(() => listStats.value.pending)
+const stationCount = computed(() => listStats.value.stations)
 const lastSyncTime = computed(() => formatTime(lastSync.value))
 
 const tagSourceClass = source => {
@@ -807,9 +682,9 @@ const displayCell = (row, column) => {
 }
 
 const monitoringView = ref('chart')
-const hourChartRef = ref(null)
+const minuteChartRef = ref(null)
 const deltaChartRef = ref(null)
-let hourChartInstance = null
+let minuteChartInstance = null
 let deltaChartInstance = null
 const POLLUTANT_SERIES = [
   { key: 'pM10', label: 'PM10' },
@@ -829,18 +704,18 @@ const recordPollutant = (row, key) => {
   }
   return null
 }
-const hourRecords = computed(() => {
-  const data = selectedEvent.value?.evidence_package?.sources?.monitoring?.data?.station_hour?.data
+const minuteRecords = computed(() => {
+  const data = selectedEvent.value?.evidence_package?.sources?.monitoring?.data?.station_5minute?.data
   return Array.isArray(data) ? data.filter(row => row && typeof row === 'object') : []
 })
-const hourTimes = computed(() => [...new Set(hourRecords.value.map(row => String(row.timePoint || '')).filter(Boolean))].sort())
-const hourChartOption = computed(() => {
-  if (!hourTimes.value.length) return null
+const minuteTimes = computed(() => [...new Set(minuteRecords.value.map(row => String(row.timePoint || '')).filter(Boolean))].sort())
+const minuteChartOption = computed(() => {
+  if (!minuteTimes.value.length) return null
   return {
     tooltip: { trigger: 'axis' },
     legend: { data: POLLUTANT_SERIES.map(item => item.label), top: 0 },
     grid: { left: 56, right: 24, top: 36, bottom: 56 },
-    xAxis: { type: 'category', data: hourTimes.value, axisLabel: { formatter: value => String(value).slice(5, 16) } },
+    xAxis: { type: 'category', data: minuteTimes.value, axisLabel: { formatter: value => String(value).slice(5, 16) } },
     yAxis: { type: 'value', name: '浓度' },
     series: POLLUTANT_SERIES.map(item => ({
       name: item.label,
@@ -848,8 +723,8 @@ const hourChartOption = computed(() => {
       showSymbol: false,
       connectNulls: true,
       emphasis: { focus: 'series' },
-      data: hourTimes.value.map(time => {
-        const row = hourRecords.value.find(record => String(record.timePoint) === time)
+      data: minuteTimes.value.map(time => {
+        const row = minuteRecords.value.find(record => String(record.timePoint) === time)
         return recordPollutant(row, item.key)
       }),
     })),
@@ -881,7 +756,10 @@ const deltaChartOption = computed(() => {
   }
 })
 const ensureChart = (holder, instance, option) => {
-  if (!holder || !option) return null
+  if (!holder || !option) {
+    instance?.dispose()
+    return null
+  }
   if (instance && (instance.isDisposed() || instance.getDom() !== holder)) {
     instance.dispose()
     instance = null
@@ -890,20 +768,17 @@ const ensureChart = (holder, instance, option) => {
   chart.setOption(option, true)
   return chart
 }
-const renderCharts = async () => {
-  await nextTick()
-  if (monitoringView.value === 'chart' && hourChartRef.value && hourChartOption.value) {
-    hourChartInstance = ensureChart(hourChartRef.value, hourChartInstance, hourChartOption.value)
-  }
-  if (deltaChartRef.value && deltaChartOption.value) {
-    deltaChartInstance = ensureChart(deltaChartRef.value, deltaChartInstance, deltaChartOption.value)
-  }
+const renderCharts = () => {
+  minuteChartInstance = ensureChart(minuteChartRef.value, minuteChartInstance, minuteChartOption.value)
+  deltaChartInstance = ensureChart(deltaChartRef.value, deltaChartInstance, deltaChartOption.value)
 }
 const handleChartResize = () => {
-  hourChartInstance?.resize()
+  minuteChartInstance?.resize()
   deltaChartInstance?.resize()
 }
-watch([hourChartOption, deltaChartOption, monitoringView], () => { renderCharts() })
+// Function refs keep one DOM element inside the section v-for. Track mount/unmount
+// as well as data changes so returning to an unchanged event recreates its charts.
+watch([minuteChartRef, deltaChartRef, minuteChartOption, deltaChartOption], renderCharts, { flush: 'post' })
 onMounted(() => { window.addEventListener('resize', handleChartResize) })
 
 const formatTime = value => {
@@ -912,26 +787,26 @@ const formatTime = value => {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
 }
 
+let detailRequestId = 0
 const selectEvent = async eventId => {
+  const requestId = ++detailRequestId
   selectedId.value = eventId
   detailLoading.value = true
   try {
-    const [detail, taskPayload] = await Promise.all([
-      getJiangsuSmartEvent(eventId, { refresh: false }),
-      listJiangsuSmartEventTasks({ event_id: eventId })
-    ])
+    tasks.value = []
+    listJiangsuSmartEventTasks({ event_id: eventId }).then(payload => {
+      if (requestId === detailRequestId) tasks.value = payload.tasks || []
+    }).catch(() => {})
+    const detail = await getJiangsuSmartEvent(eventId, { refresh: false })
+    if (requestId !== detailRequestId) return
     selectedEvent.value = detail.event || null
-    tasks.value = taskPayload.tasks || []
     if (eventConfig.value === null) loadEventConfig()
-    judgmentType.value = selectedEvent.value?.manual_confirmation?.event_type || selectedEvent.value?.ai_event_type || ''
-    judgmentLevel.value = selectedEvent.value?.manual_confirmation?.level || selectedEvent.value?.ai_suggested_level || ''
-    judgmentNote.value = selectedEvent.value?.manual_confirmation?.diagnosis_note || ''
     actionMessage.value = ''
     workspaceMode.value = 'detail'
   } catch (err) {
-    error.value = err?.message || '事件详情加载失败'
+    if (requestId === detailRequestId) error.value = err?.message || '事件详情加载失败'
   } finally {
-    detailLoading.value = false
+    if (requestId === detailRequestId) detailLoading.value = false
   }
 }
 
@@ -1007,26 +882,6 @@ const collectEvidence = async () => {
   }
 }
 
-const saveJudgment = async () => {
-  if (!selectedEvent.value || !judgmentType.value.trim()) return
-  confirmationBusy.value = true
-  actionMessage.value = ''
-  try {
-    const payload = await submitJiangsuSmartEventJudgment(selectedEvent.value.event_id, {
-      event_type: judgmentType.value.trim(),
-      level: judgmentLevel.value.trim() || null,
-      diagnosis_note: judgmentNote.value.trim() || null,
-      confirmed: true,
-    })
-    selectedEvent.value = payload.event || selectedEvent.value
-    actionMessage.value = '已保存并确认'
-  } catch (err) {
-    actionMessage.value = err?.message || '确认失败'
-  } finally {
-    confirmationBusy.value = false
-  }
-}
-
 const openDispatchPage = () => {
   actionMessage.value = ''
   dispatchOrder.value = {
@@ -1090,42 +945,10 @@ const submitFeedback = async () => {
   }
 }
 
-const openArchiveDialog = () => {
-  actionMessage.value = ''
-  const event = selectedEvent.value || {}
-  archiveConfirmation.value = {
-    eventType: event.ai_event_type || event.manual_confirmation?.event_type || '',
-    level: event.ai_suggested_level || event.manual_confirmation?.level || '',
-    dataImpact: event.ai_data_impact || '待确认',
-    eventName: event.ai_event_name || event.event_name || event.initial_event_name || '',
-  }
-  archiveFeedback.value = ''
-  archiveDialogVisible.value = true
-}
-
-const archiveSelectedEvent = async () => {
-  if (!selectedEvent.value) return
-  confirmationBusy.value = true
-  actionMessage.value = ''
-  try {
-    const payload = await archiveJiangsuSmartEvent(
-      selectedEvent.value.event_id,
-      archiveFeedback.value.trim(),
-      {
-        event_type: archiveConfirmation.value.eventType.trim() || null,
-        event_name: archiveConfirmation.value.eventName.trim() || null,
-        level: archiveConfirmation.value.level || null,
-        data_impact: archiveConfirmation.value.dataImpact,
-      },
-    )
-    selectedEvent.value = payload.event || selectedEvent.value
-    archiveDialogVisible.value = false
-    actionMessage.value = '事件已归档并锁定'
-  } catch (err) {
-    actionMessage.value = err?.message || '归档失败'
-  } finally {
-    confirmationBusy.value = false
-  }
+const reviewDialogVisible = ref(false)
+const refreshSelectedReview = async () => {
+  const payload = await getJiangsuSmartEvent(selectedEvent.value.event_id, { refresh: false })
+  selectedEvent.value = payload.event
 }
 
 const compare = async eventIds => {
@@ -1142,14 +965,18 @@ const compare = async eventIds => {
   }
 }
 
-const loadEvents = async () => {
+const loadEvents = async (page = 1) => {
+  if (loading.value) return
   stopSyncWatch()
   loading.value = true
   error.value = ''
+  activeQuery.value = { page: Number.isInteger(page) ? page : 1, limit: PAGE_SIZE, status: statusFilter.value, event_type: typeFilter.value, keyword: keyword.value }
   try {
-    const payload = await listJiangsuSmartEvents({ refresh: true })
-    events.value = payload.events || []
+    const payload = await listJiangsuSmartEvents({ ...activeQuery.value, refresh: false })
+    applyListPage(payload)
     lastSync.value = payload.source_metadata?.last_sync?.synced_at || null
+    loading.value = false
+    watchBackgroundSync()
     const command = props.workspaceCommand
     if (command?.type === 'compare_events' && Array.isArray(command.event_ids)) {
       await compare(command.event_ids.map(String).filter(Boolean))
@@ -1161,7 +988,6 @@ const loadEvents = async () => {
       evidenceFocus.value = command.focus || 'evidence'
       await openDetail(String(command.event_id))
     }
-    watchBackgroundSync()
   } catch (err) {
     error.value = err?.message || '智能事件加载失败'
   } finally {
@@ -1176,56 +1002,47 @@ const resetFilters = () => {
   loadEvents()
 }
 
-const SYNC_POLL_INTERVAL_MS = 3000
-const SYNC_POLL_MAX_ATTEMPTS = 20
+const SYNC_POLL_INTERVAL_MS = 15000
+let syncGeneration = 0
 let syncPollTimer = null
-let syncPollAttempts = 0
 const syncing = ref(false)
 
 const stopSyncWatch = () => {
+  syncGeneration += 1
   if (syncPollTimer) { clearTimeout(syncPollTimer); syncPollTimer = null }
   syncing.value = false
 }
 
 const applySyncedEvents = payload => {
-  const incoming = payload.events || []
-  const known = new Set(events.value.map(item => item.event_id))
-  const hasNewEvents = incoming.some(item => !known.has(item.event_id))
-  if (!hasNewEvents) return
-  events.value = incoming
+  applyListPage(payload)
 }
 
-const pollSyncStatus = async () => {
+const pollSyncStatus = async (generation = syncGeneration) => {
   syncPollTimer = null
   try {
-    const payload = await listJiangsuSmartEvents({ refresh: false })
+    const payload = await listJiangsuSmartEvents({ ...activeQuery.value, page: currentPage.value, refresh: false })
+    if (generation !== syncGeneration) return
     if (payload.source_metadata?.last_sync?.synced_at) lastSync.value = payload.source_metadata.last_sync.synced_at
-    if (!payload.source_metadata?.sync?.in_progress) {
-      applySyncedEvents(payload)
-      syncing.value = false
-      return
-    }
+    applySyncedEvents(payload)
   } catch (err) {
-    // 轮询失败时保持当前展示，继续等待下一次轮询。
+    // 后台读取失败时保留列表，下次轮询重试。
   }
-  syncPollAttempts += 1
-  if (syncPollAttempts >= SYNC_POLL_MAX_ATTEMPTS) { syncing.value = false; return }
-  syncPollTimer = setTimeout(pollSyncStatus, SYNC_POLL_INTERVAL_MS)
+  if (generation !== syncGeneration) return
+  syncPollTimer = setTimeout(() => pollSyncStatus(generation), SYNC_POLL_INTERVAL_MS)
 }
 
 const watchBackgroundSync = () => {
   stopSyncWatch()
-  syncing.value = true
-  syncPollAttempts = 0
-  pollSyncStatus()
+  syncPollTimer = setTimeout(() => pollSyncStatus(syncGeneration), SYNC_POLL_INTERVAL_MS)
 }
 
 onUnmounted(() => {
   stopSyncWatch()
+  detailRequestId += 1
   window.removeEventListener('resize', handleChartResize)
-  hourChartInstance?.dispose()
+  minuteChartInstance?.dispose()
   deltaChartInstance?.dispose()
-  hourChartInstance = null
+  minuteChartInstance = null
   deltaChartInstance = null
 })
 
@@ -1257,6 +1074,7 @@ loadEvents()
 </script>
 
 <style scoped>
+.event-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 12px 0; }
 .smart-event-center { height: 100%; overflow: auto; padding: 24px; background: #f4f7fb; color: #17324d; }
 .panel-header, .detail-header, .section-title, .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .panel-header { margin-bottom: 16px; }.eyebrow { margin: 0 0 5px; color: #2f6bff; font-size: 10px; letter-spacing: .14em; }.panel-header h2, .detail-header h3 { margin: 0; }.description, .detail-header p, .muted { color: #66758a; font-size: 12px; }.header-actions { display: flex; gap: 8px; }.header-actions button, .back-button, .task-card { border: 1px solid #c9d5e3; border-radius: 8px; background: #fff; color: #2f6bff; cursor: pointer; padding: 8px 12px; }.header-actions .close { color: #526171; }
@@ -1291,7 +1109,7 @@ loadEvents()
 .view-toggle { display: flex; flex: 0 0 auto; gap: 6px; }
 .view-toggle button { border: 1px solid #d9d9d9; border-radius: 2px; background: #fff; color: #555; cursor: pointer; padding: 5px 12px; font-size: 12px; }
 .view-toggle button.active { border-color: #1684f8; background: #1684f8; color: #fff; }
-.hour-line-chart { margin-bottom: 16px; }
+.minute-line-chart { margin-bottom: 16px; }
 .chart-canvas { width: 100%; height: 300px; }
 .regional-delta-block { margin-top: 16px; border-top: 1px dashed #e8e8e8; padding-top: 12px; }
 .regional-delta-block h4 { margin: 0 0 8px; color: #344054; font-size: 13px; font-weight: 600; }

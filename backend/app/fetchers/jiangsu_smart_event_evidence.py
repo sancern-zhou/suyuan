@@ -4,14 +4,21 @@ The event generator only normalizes alarm clues.  This fetcher turns each
 event into a bounded, auditable evidence package for a later Agent judgment.
 It deliberately records the unavailable video source instead of fabricating
 video evidence.
+
+抓取窗口约定（窗口定义见 ``_windows``）：
+- ``day``：事件自然日（当天）。小时监测数据、门禁、气象、区域对比、数采报警、
+  合规工单、质控记录使用该窗口。
+- ``hour``：事件开始时间所在整点小时。5 分钟监测数据、仪器状态、动环历史使用
+  该窗口；动环历史仅在站房设备告警日志出现动环（动力环境）类告警时才抓取。
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
+import re
+from collections.abc import Awaitable, Callable
 from datetime import datetime, time, timedelta
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from app.fetchers.weather.jiangsu_review_weather import fetch_city_weather
 from app.tools.jiangsu.fault_diagnosis import (
@@ -25,10 +32,19 @@ from app.tools.jiangsu.review_station_selection import select_district_stations
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
 from app.tools.jiangsu.station_type import station_type_from_row
 
-
 EVIDENCE_SCHEMA = "jiangsu_smart_event_evidence/v1"
-EVENT_WINDOW_EXTENSION_MINUTES = int(os.getenv("JIANGSU_SMART_EVENT_WINDOW_EXTENSION_MINUTES", "30"))
 MAX_INLINE_RECORDS = 500
+
+# 原平台 StationIntegrateAppService.GetAlarmTypeCount 的告警分类：
+# 动力环境（动环）= SubCatalog ∈ (1100, 1300)，排除水浸 1205、火警 1207、
+# 采样总管温湿度 1218/1219；仪器状态 = (700, 800)。
+POWER_ENVIRONMENT_ALARM_EXCLUDED_CODES = {1205, 1207, 1218, 1219}
+
+# 质控记录无严重级别字段（原平台 NewQCHisResult 仅有 QCResult 文本），
+# 平台侧质控告警即「质控不合格报警」，因此按文本关键词识别严重记录。
+QC_SEVERE_KEYWORDS = ("不合格", "超差", "异常", "失败", "报警", "严重")
+
+DEFAULT_INSTRUMENT_POLLUTANTS: tuple[str, ...] = ("PM10", "PM2.5", "SO2", "NO2", "CO", "O3")
 
 # 六项污染物规范名 → 上游字段名别名（按出现顺序取第一个存在的字段）。
 POLLUTANT_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -39,6 +55,20 @@ POLLUTANT_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("CO", ("co", "CO", "Co")),
     ("O3", ("o3", "O3")),
 )
+
+# 线索文本 → 规范污染物名。NO2 必须先于 NO 匹配，避免子串误命中。
+_POLLUTANT_TEXT_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("PM10", ("PM10",)),
+    ("PM2.5", ("PM2.5", "PM2_5", "PM25")),
+    ("SO2", ("SO2", "二氧化硫")),
+    ("NO2", ("NO2", "二氧化氮")),
+    ("NO", ("NO", "一氧化氮")),
+    ("CO", ("CO", "一氧化碳")),
+    ("O3", ("O3", "臭氧")),
+)
+_INSTRUMENT_POLLUTANT_CODE_ALIASES: dict[str, tuple[str, ...]] = {
+    "PM2.5": ("PM2_5", "PM2.5"),
+}
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -118,6 +148,104 @@ def _pollutant_means(records: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
+def _pollutant_in_text(text: str, alias: str) -> bool:
+    return (
+        re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", text, re.IGNORECASE)
+        is not None
+    )
+
+
+def _target_pollutants(event: dict[str, Any]) -> list[str]:
+    """从线索标签与告警内容提取目标污染物；识别不到时回退六项污染物。"""
+    texts = [
+        str(event.get("primary_clue_tag") or ""),
+        str(event.get("alarm_content") or ""),
+        str(event.get("source_alarm_rule_type") or ""),
+    ]
+    for tag in event.get("clue_tags") or []:
+        if isinstance(tag, dict):
+            texts.extend(
+                str(tag.get(key) or "") for key in ("tag_name", "tag_object", "tag_display_text")
+            )
+    text = " ".join(texts)
+    found = [
+        name
+        for name, aliases in _POLLUTANT_TEXT_ALIASES
+        if any(_pollutant_in_text(text, alias) for alias in aliases)
+    ]
+    return found or list(DEFAULT_INSTRUMENT_POLLUTANTS)
+
+
+def _instrument_pollutant_codes(pollutants: list[str]) -> list[str]:
+    return [
+        code
+        for name in pollutants
+        for code in _INSTRUMENT_POLLUTANT_CODE_ALIASES.get(name, (name,))
+    ]
+
+
+def _is_power_environment_alarm(row: dict[str, Any]) -> bool:
+    raw = row.get("AlarmType")
+    if raw is None:
+        raw = row.get("alarmType")
+    if raw is None:
+        raw = row.get("SubCatalog")
+    try:
+        code = int(raw)
+    except (TypeError, ValueError):
+        return False
+    return 1100 < code < 1300 and code not in POWER_ENVIRONMENT_ALARM_EXCLUDED_CODES
+
+
+def _power_environment_alarms(result: Any) -> list[dict[str, Any]]:
+    """从站房设备告警日志结果中提取动环（动力环境）类告警。"""
+    rows: list[dict[str, Any]] = []
+    data = result.get("data") if isinstance(result, dict) else None
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        inner = item.get("result") if isinstance(item.get("result"), dict) else {}
+        for row in inner.get("alarmLogs") or []:
+            if isinstance(row, dict) and _is_power_environment_alarm(row):
+                rows.append(row)
+    return rows
+
+
+def _qc_record_is_severe(row: Any) -> bool:
+    if not isinstance(row, dict):
+        return False
+    text = " ".join(
+        str(row.get(key) or "")
+        for key in ("qcResult", "QCResult", "qc_result", "tstatusStr", "TStatusStr", "result")
+    ).strip()
+    if not text:
+        return False
+    if any(keyword in text for keyword in QC_SEVERE_KEYWORDS):
+        return True
+    return "合格" not in text
+
+
+def _qc_severe_only(result: dict[str, Any]) -> dict[str, Any]:
+    """质控操作记录只保留严重告警类型（不合格/超差等非合格结果）。"""
+    data = result.get("data")
+    if not isinstance(data, list):
+        return result
+    total = result.get("record_count")
+    total_text = total if total is not None else len(data)
+    kept = [row for row in data if _qc_record_is_severe(row)]
+    result["data"] = kept
+    result["record_count"] = len(kept)
+    result["returned_records"] = len(kept)
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    metadata["qc_severe_only"] = True
+    metadata["total_record_count"] = total_text
+    result["metadata"] = metadata
+    result["status"] = "success" if kept else "empty"
+    base_summary = str(result.get("summary") or "质控任务查询完成。").rstrip("。")
+    result["summary"] = f"{base_summary}；仅保留严重告警类型记录 {len(kept)}/{total_text} 条。"
+    return result
+
+
 def _compact(value: Any, *, depth: int = 0, max_items: int = MAX_INLINE_RECORDS) -> Any:
     if isinstance(value, str):
         return value if len(value) <= 2000 else value[:2000] + "…[truncated]"
@@ -126,7 +254,10 @@ def _compact(value: Any, *, depth: int = 0, max_items: int = MAX_INLINE_RECORDS)
     if isinstance(value, list):
         return [_compact(item, depth=depth + 1, max_items=max_items) for item in value[:max_items]]
     if isinstance(value, dict):
-        return {str(key): _compact(item, depth=depth + 1, max_items=max_items) for key, item in value.items()}
+        return {
+            str(key): _compact(item, depth=depth + 1, max_items=max_items)
+            for key, item in value.items()
+        }
     return value
 
 
@@ -160,7 +291,9 @@ def _compact_result(result: Any, *, max_records: int = MAX_INLINE_RECORDS) -> di
 
 
 def _profile(event: dict[str, Any]) -> dict[str, Any]:
-    trigger = str(event.get("clue_trigger_type") or event.get("event_trigger_type") or "").rsplit(".", 1)[-1]
+    trigger = str(event.get("clue_trigger_type") or event.get("event_trigger_type") or "").rsplit(
+        ".", 1
+    )[-1]
     if trigger not in {"power", "network", "environment", "instrument"}:
         primary = str(event.get("primary_clue_tag") or "")
         if "供电" in primary or "UPS" in primary:
@@ -174,19 +307,44 @@ def _profile(event: dict[str, Any]) -> dict[str, Any]:
     profiles = {
         "power": {
             "name": "供电/UPS告警证据",
-            "fetch": ["monitoring", "station_alarm", "platform_alarm", "acquisition_alarm", "environment", "door", "compliance"],
+            "fetch": [
+                "monitoring",
+                "station_alarm",
+                "acquisition_alarm",
+                "environment",
+                "door",
+                "compliance",
+            ],
         },
         "network": {
             "name": "数采网络告警证据",
-            "fetch": ["monitoring", "station_alarm", "platform_alarm", "acquisition_alarm", "door", "compliance"],
+            "fetch": ["monitoring", "station_alarm", "acquisition_alarm", "door", "compliance"],
         },
         "environment": {
             "name": "站房环境告警证据",
-            "fetch": ["monitoring", "station_alarm", "platform_alarm", "acquisition_alarm", "environment", "comparison", "weather", "door", "compliance"],
+            "fetch": [
+                "monitoring",
+                "station_alarm",
+                "acquisition_alarm",
+                "environment",
+                "comparison",
+                "weather",
+                "door",
+                "compliance",
+            ],
         },
         "instrument": {
             "name": "仪器告警证据",
-            "fetch": ["monitoring", "station_alarm", "platform_alarm", "acquisition_alarm", "instrument_status", "environment", "door", "qc_history", "compliance"],
+            "fetch": [
+                "monitoring",
+                "station_alarm",
+                "acquisition_alarm",
+                "instrument_status",
+                "environment",
+                "door",
+                "qc_history",
+                "compliance",
+            ],
         },
     }
     selected = profiles[trigger]
@@ -224,17 +382,14 @@ class JiangsuSmartEventEvidenceFetcher:
         end = end or start
         if end < start:
             end = start
-        before_minutes = int((config or {}).get("event_before_extend_minutes") or EVENT_WINDOW_EXTENSION_MINUTES)
-        after_minutes = int((config or {}).get("event_after_extend_minutes") or EVENT_WINDOW_EXTENSION_MINUTES)
-        query_start = start - timedelta(minutes=before_minutes)
-        query_end = end + timedelta(minutes=after_minutes)
-        compliance_start = datetime.combine(start.date(), time.min, tzinfo=start.tzinfo)
-        compliance_end = datetime.combine(end.date(), time.max.replace(microsecond=0), tzinfo=end.tzinfo)
+        hour_start = start.replace(minute=0, second=0, microsecond=0)
+        hour_end = hour_start + timedelta(minutes=59, seconds=59)
+        day_start = datetime.combine(start.date(), time.min, tzinfo=start.tzinfo)
+        day_end = datetime.combine(end.date(), time.max.replace(microsecond=0), tzinfo=end.tzinfo)
         return {
             "event": {"start": _format_time(start), "end": _format_time(end)},
-            "query": {"start": _format_time(query_start), "end": _format_time(query_end)},
-            "compliance": {"start": _format_time(compliance_start), "end": _format_time(compliance_end)},
-            "extension_minutes": before_minutes,
+            "hour": {"start": _format_time(hour_start), "end": _format_time(hour_end)},
+            "day": {"start": _format_time(day_start), "end": _format_time(day_end)},
         }
 
     @staticmethod
@@ -242,12 +397,21 @@ class JiangsuSmartEventEvidenceFetcher:
         try:
             return _compact_result(await operation)
         except Exception as exc:  # noqa: BLE001 - preserve a visible evidence gap
-            return {"success": False, "status": "failed", "summary": f"{label}失败：{exc}", "data": []}
+            return {
+                "success": False,
+                "status": "failed",
+                "summary": f"{label}失败：{exc}",
+                "data": [],
+            }
 
     async def _monitoring(self, station_code: str, window: dict[str, Any]) -> dict[str, Any]:
-        start, end = window["query"]["start"], window["query"]["end"]
+        scopes = {
+            "station_hour": (window["day"]["start"], window["day"]["end"], "当天"),
+            "station_5minute": (window["hour"]["start"], window["hour"]["end"], "事件整点小时"),
+        }
 
         async def fetch(data_kind: str) -> dict[str, Any]:
+            start, end, scope_label = scopes[data_kind]
             try:
                 records, payload = await self.station_data_tool.fetch_raw_records(
                     data_kind=data_kind,
@@ -260,43 +424,65 @@ class JiangsuSmartEventEvidenceFetcher:
                 return {
                     "success": True,
                     "status": "success" if records else "empty",
-                    "summary": f"本站{data_kind}原始数据查询完成：{len(records)}条。",
-                    "metadata": {"time_range": [start, end], "data_type": 0, "station_code": station_code, **_compact(payload)},
+                    "summary": f"本站{data_kind}原始数据查询完成（{scope_label}）：{len(records)}条。",
+                    "metadata": {
+                        "time_range": [start, end],
+                        "window_scope": scope_label,
+                        "data_type": 0,
+                        "station_code": station_code,
+                        **_compact(payload),
+                    },
                     "record_count": len(records),
                     "data": _compact(records),
                 }
             except Exception as exc:  # noqa: BLE001
-                return {"success": False, "status": "failed", "summary": f"本站{data_kind}查询失败：{exc}", "data": []}
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "summary": f"本站{data_kind}查询失败：{exc}",
+                    "data": [],
+                }
 
         hour, five_minute = await asyncio.gather(fetch("station_hour"), fetch("station_5minute"))
         successful = [item for item in (hour, five_minute) if item.get("success") is True]
         return {
             "success": bool(successful),
-            "status": "success" if all(item.get("status") == "success" for item in (hour, five_minute)) else ("partial" if successful else "failed"),
-            "summary": f"本站监测数据采集完成：小时数据 {hour.get('record_count', 0)} 条，5分钟数据 {five_minute.get('record_count', 0)} 条。",
+            "status": "success"
+            if all(item.get("status") == "success" for item in (hour, five_minute))
+            else ("partial" if successful else "failed"),
+            "summary": f"本站监测数据采集完成：小时数据（当天）{hour.get('record_count', 0)} 条，5分钟数据（事件整点小时）{five_minute.get('record_count', 0)} 条。",
             "record_count": sum(int(item.get("record_count") or 0) for item in (hour, five_minute)),
             "data": {"station_hour": hour, "station_5minute": five_minute},
         }
 
-    async def _fetch_hour_records(self, codes: list[str], window: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _fetch_hour_records(
+        self, codes: list[str], window: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         records, _ = await self.station_data_tool.fetch_raw_records(
             data_kind="station_hour",
             station_codes=codes,
-            start_time=window["query"]["start"],
-            end_time=window["query"]["end"],
+            start_time=window["day"]["start"],
+            end_time=window["day"]["end"],
             data_type=0,
             station_type="省控",
         )
         return [item for item in records if isinstance(item, dict)]
 
     async def _city_rest_summary(
-        self, event: dict[str, Any], station_code: str,
-        directory: list[dict[str, Any]], window: dict[str, Any],
+        self,
+        event: dict[str, Any],
+        station_code: str,
+        directory: list[dict[str, Any]],
+        window: dict[str, Any],
     ) -> dict[str, Any]:
         """全市其余省控站点的事件窗口均值（仅聚合，不落原始记录）。"""
         city_name = str(event.get("city_name") or "").strip()
         if not city_name:
-            return {"status": "skipped", "reason": "事件缺少城市信息，无法计算全市背景。", "means": {}}
+            return {
+                "status": "skipped",
+                "reason": "事件缺少城市信息，无法计算全市背景。",
+                "means": {},
+            }
         codes: list[str] = []
         for row in directory:
             if not isinstance(row, dict):
@@ -314,7 +500,12 @@ class JiangsuSmartEventEvidenceFetcher:
         try:
             records = await self._fetch_hour_records(codes, window)
         except Exception as exc:  # noqa: BLE001 - 全市背景失败不阻塞周边对比
-            return {"status": "failed", "reason": f"全市背景查询失败：{exc}", "station_count": len(codes), "means": {}}
+            return {
+                "status": "failed",
+                "reason": f"全市背景查询失败：{exc}",
+                "station_count": len(codes),
+                "means": {},
+            }
         means = _pollutant_means(_in_event_window(records, window["event"]))
         return {
             "status": "success" if means else "empty",
@@ -335,7 +526,9 @@ class JiangsuSmartEventEvidenceFetcher:
         peer_means = _pollutant_means(_in_event_window(peer_records, event_window))
         city_means = (city_rest or {}).get("means") or {}
 
-        def build(other_means: dict[str, float]) -> tuple[dict[str, float], dict[str, float | None]]:
+        def build(
+            other_means: dict[str, float],
+        ) -> tuple[dict[str, float], dict[str, float | None]]:
             delta: dict[str, float] = {}
             pct: dict[str, float | None] = {}
             for canonical, _ in POLLUTANT_FIELDS:
@@ -369,7 +562,9 @@ class JiangsuSmartEventEvidenceFetcher:
             "same_city_delta_pct": city_pct,
         }
 
-    async def _comparison(self, event: dict[str, Any], station_code: str, window: dict[str, Any]) -> dict[str, Any]:
+    async def _comparison(
+        self, event: dict[str, Any], station_code: str, window: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             directory = await self.station_data_tool.fetch_station_directory()
             station = {
@@ -391,7 +586,9 @@ class JiangsuSmartEventEvidenceFetcher:
             else:
                 target_records, peer_records = await target_task, []
             city_rest = await self._city_rest_summary(event, station_code, directory, window)
-            regional_deltas = self._build_regional_deltas(window, target_records, peer_records, city_rest)
+            regional_deltas = self._build_regional_deltas(
+                window, target_records, peer_records, city_rest
+            )
             records = peer_records + target_records
             payload = {
                 "station_codes": codes,
@@ -403,20 +600,85 @@ class JiangsuSmartEventEvidenceFetcher:
                 "status": "success" if records else "empty",
                 **selection,
                 "regional_deltas": regional_deltas,
-                "metadata": {"time_range": [window["query"]["start"], window["query"]["end"]], **_compact(payload)},
+                "metadata": {
+                    "time_range": [window["day"]["start"], window["day"]["end"]],
+                    **_compact(payload),
+                },
                 "record_count": len(records),
                 "data": _compact(records),
             }
         except Exception as exc:  # noqa: BLE001
-            return {"success": False, "status": "failed", "summary": f"区域背景查询失败：{exc}", "data": []}
+            return {
+                "success": False,
+                "status": "failed",
+                "summary": f"区域背景查询失败：{exc}",
+                "data": [],
+            }
 
-    async def fetch(self, event: dict[str, Any], *, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def _environment(
+        self,
+        event: dict[str, Any],
+        station_code: str,
+        window: dict[str, Any],
+        gate: Awaitable[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """动环历史按门控抓取：站房设备告警日志出现动环类告警才查询。"""
+        try:
+            alarm_result = await gate
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "success": False,
+                "status": "failed",
+                "summary": f"动环告警判定失败：{exc}",
+                "record_count": 0,
+                "data": [],
+            }
+        if not isinstance(alarm_result, dict) or alarm_result.get("success") is not True:
+            reason = alarm_result.get("summary") if isinstance(alarm_result, dict) else None
+            return {
+                "success": False,
+                "status": "failed",
+                "summary": "站房设备告警日志不可用，无法判定是否存在动环类告警，动环历史未抓取。",
+                "record_count": 0,
+                "data": [],
+                "gate": {"available": False, "reason": reason},
+            }
+        env_alarms = _power_environment_alarms(alarm_result)
+        if not env_alarms:
+            return {
+                "success": True,
+                "status": "skipped",
+                "summary": "当天站房设备告警中无动环（动力环境）类告警，未抓取动环历史。",
+                "record_count": 0,
+                "data": [],
+                "gate": {"environment_alarm_count": 0},
+            }
+        result = await self._safe(
+            "站房动环",
+            self.environment_tool.execute(
+                station_code=station_code,
+                unique_code=event.get("unique_code"),
+                start_time=window["hour"]["start"],
+                end_time=window["hour"]["end"],
+                time_type="h",
+            ),
+        )
+        result["gate"] = {
+            "environment_alarm_count": len(env_alarms),
+            "alarms": _compact(env_alarms[:10]),
+        }
+        return result
+
+    async def fetch(
+        self, event: dict[str, Any], *, config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         station_code = str(event.get("site_id") or "").strip()
         windows = self._windows(event, config)
         profile = _profile(event)
+        target_pollutants = _target_pollutants(event)
         package: dict[str, Any] = {
             "schema_version": EVIDENCE_SCHEMA,
-            "package_version": 1,
+            "package_version": 2,
             "event_id": event.get("event_id"),
             "event_context": {
                 "site_id": event.get("site_id"),
@@ -431,96 +693,129 @@ class JiangsuSmartEventEvidenceFetcher:
             "collection_policy": {
                 "monitoring_data_type": 0,
                 "monitoring_station_type": "全部",
-                "event_extension_minutes": windows.get("extension_minutes", EVENT_WINDOW_EXTENSION_MINUTES),
+                "hour_window_scope": "事件开始时间所在整点小时",
+                "day_window_scope": "事件自然日（当天）",
+                "instrument_target_pollutants": target_pollutants,
+                "environment_gated_by": "站房设备告警日志中的动环（动力环境）类告警",
+                "qc_severe_only": True,
                 "compliance_scope": "event_natural_day",
                 "max_inline_records": MAX_INLINE_RECORDS,
             },
             "sources": {},
             "gaps": [
-                {"source": "video", "status": "unavailable", "reason": "原始视频线索接口尚未接入，暂不抓取。"}
+                {
+                    "source": "video",
+                    "status": "unavailable",
+                    "reason": "原始视频线索接口尚未接入，暂不抓取。",
+                }
             ],
         }
         if not station_code:
             package["status"] = "failed"
-            package["gaps"].append({"source": "station", "status": "failed", "reason": "事件缺少站点编码。"})
+            package["gaps"].append(
+                {"source": "station", "status": "failed", "reason": "事件缺少站点编码。"}
+            )
             return package
 
-        query = windows["query"]
-        compliance = windows["compliance"]
+        hour_window = windows["hour"]
+        day_window = windows["day"]
         sources: dict[str, Awaitable[Any]] = {}
         fetch_set = set(profile["fetch"])
+        station_alarm_task: Awaitable[dict[str, Any]] | None = None
+        if "station_alarm" in fetch_set or "environment" in fetch_set:
+            # 站房设备告警接口原生按查询当日返回（原平台固定 TimePoint=今天00:00~明天00:00）。
+            station_alarm_task = asyncio.ensure_future(
+                self._safe(
+                    "站房告警", self.station_alarm_tool.execute(station_codes=[station_code])
+                )
+            )
+            if "station_alarm" in fetch_set:
+                sources["station_alarm"] = station_alarm_task
         if "monitoring" in fetch_set:
             sources["monitoring"] = self._monitoring(station_code, windows)
-        if "station_alarm" in fetch_set:
-            sources["station_alarm"] = self._safe(
-                "站房告警", self.station_alarm_tool.execute(station_codes=[station_code])
-            )
-        if "platform_alarm" in fetch_set:
-            sources["platform_alarm"] = self.legacy_adapter.platform_alarms(
-                station_code=station_code, start_time=query["start"], end_time=query["end"]
-            )
         if "acquisition_alarm" in fetch_set:
             sources["acquisition_alarm"] = self.legacy_adapter.acquisition_alarms(
-                station_code=station_code, start_time=query["start"], end_time=query["end"]
+                station_code=station_code,
+                start_time=day_window["start"],
+                end_time=day_window["end"],
             )
         if "instrument_status" in fetch_set:
             sources["instrument_status"] = self.legacy_adapter.instrument_status(
-                station_code=station_code, start_time=query["start"], end_time=query["end"]
+                station_code=station_code,
+                start_time=hour_window["start"],
+                end_time=hour_window["end"],
+                pollutant_codes=_instrument_pollutant_codes(target_pollutants),
             )
         if "environment" in fetch_set:
-            sources["environment"] = self._safe(
-                "站房动环", self.environment_tool.execute(
-                    station_code=station_code,
-                    unique_code=event.get("unique_code"),
-                    start_time=query["start"],
-                    end_time=query["end"],
-                    time_type="h",
-                )
+            sources["environment"] = self._environment(
+                event,
+                station_code,
+                windows,
+                station_alarm_task
+                or asyncio.ensure_future(
+                    self._safe(
+                        "站房告警", self.station_alarm_tool.execute(station_codes=[station_code])
+                    )
+                ),
             )
         if "compliance" in fetch_set:
             sources["compliance"] = self._safe(
-                "合规工单", self.work_order_tool.execute(
+                "合规工单",
+                self.work_order_tool.execute(
                     station_codes=[station_code],
-                    start_time=compliance["start"],
-                    end_time=compliance["end"],
+                    start_time=day_window["start"],
+                    end_time=day_window["end"],
                     workflow_statuses=["ToAssign", "ToAccept", "Doing", "Finish"],
                     order_statuses=["Wait", "Doing", "Finish"],
                     fetch_all=True,
                     page_size=50,
-                )
+                ),
             )
         if "qc_history" in fetch_set:
-            sources["qc_history"] = self._safe(
-                "质控历史", self.qc_history_tool.execute(
-                    station_codes=[station_code],
-                    start_time=compliance["start"],
-                    end_time=compliance["end"],
+
+            async def qc_history() -> dict[str, Any]:
+                result = await self._safe(
+                    "质控历史",
+                    self.qc_history_tool.execute(
+                        station_codes=[station_code],
+                        start_time=day_window["start"],
+                        end_time=day_window["end"],
+                    ),
                 )
-            )
+                return _qc_severe_only(result)
+
+            sources["qc_history"] = qc_history()
         if "comparison" in fetch_set:
             sources["comparison"] = self._comparison(event, station_code, windows)
         if "weather" in fetch_set:
             sources["weather"] = self._safe(
-                "城市气象", self.weather_fetcher(
+                "城市气象",
+                self.weather_fetcher(
                     city_name=event.get("city_name"),
-                    start_time=query["start"],
-                    end_time=query["end"],
-                )
+                    start_time=day_window["start"],
+                    end_time=day_window["end"],
+                ),
             )
         if "door" in fetch_set:
             sources["door"] = self.legacy_adapter.door_records(
-                station_code=station_code, start_time=query["start"], end_time=query["end"]
+                station_code=station_code,
+                start_time=day_window["start"],
+                end_time=day_window["end"],
             )
 
         results = await asyncio.gather(*sources.values(), return_exceptions=True)
         for name, result in zip(sources, results, strict=True):
-            package["sources"][name] = result if isinstance(result, dict) else _compact_result(result)
+            package["sources"][name] = (
+                result if isinstance(result, dict) else _compact_result(result)
+            )
             if not package["sources"][name].get("success", False):
-                package["gaps"].append({
-                    "source": name,
-                    "status": package["sources"][name].get("status", "failed"),
-                    "reason": package["sources"][name].get("summary") or "未返回有效证据",
-                })
+                package["gaps"].append(
+                    {
+                        "source": name,
+                        "status": package["sources"][name].get("status", "failed"),
+                        "reason": package["sources"][name].get("summary") or "未返回有效证据",
+                    }
+                )
         package["source_alarm"] = _compact(event.get("evidence", {}).get("alarm"))
         merged_alarms = event.get("evidence", {}).get("alarms")
         if isinstance(merged_alarms, list) and merged_alarms:
@@ -534,7 +829,13 @@ class JiangsuSmartEventEvidenceFetcher:
         ]
         package["status"] = "partial" if package["gaps"] else "success"
         package["collection_notes"] = [
-            "事件查询窗口为事件起止时间前后各扩展 30 分钟。",
+            "小时监测数据、门禁记录、城市气象、区域对比、数采报警、合规工单、质控记录均按事件自然日（当天）抓取。",
+            "5分钟监测数据、仪器状态、动环历史按事件开始时间所在整点小时抓取。",
+            "仪器状态仅抓取目标污染物（自线索标签与告警内容提取，识别不到时回退六项污染物）。",
+            "动环历史仅在站房设备告警日志出现动环（动力环境）类告警时抓取。",
+            "质控操作记录仅保留严重告警类型（不合格/超差等非合格结果）。",
+            "站房设备告警接口原生仅返回查询当日数据。",
+            "平台告警源已移除：原 ALMsummary 仓储无平台 API 可查。",
             "合规工单按事件涉及自然日查询，用于判断同站点同日操作是否能够解释异常线索。",
             "区域对比按同区县省控站点取原始记录；全市其余省控站点仅计算事件窗口均值与差值，不落原始记录。",
             "视频线索接口尚未接入，已显式记录为 evidence gap，不推断视频结论。",

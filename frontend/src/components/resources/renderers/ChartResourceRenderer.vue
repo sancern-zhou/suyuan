@@ -2,7 +2,7 @@
   <div :class="['chart', {
     'stationhouse-chart': isStationhouse,
     'work-order-chart': isFaultWorkOrder,
-    'work-order-review-chart': isFaultWorkOrderReview
+    'task-review-chart': isTaskReview
   }]">
     <p v-if="loading">正在加载...</p>
     <div v-else-if="error" class="error">
@@ -11,7 +11,6 @@
     </div>
     <StationhouseInspectionPanel v-else-if="spec && isStationhouse" :data="spec" />
     <FaultWorkOrderPanel v-else-if="spec && isFaultWorkOrder" :data="spec" />
-    <FaultWorkOrderReviewPanel v-else-if="spec && isFaultWorkOrderReview" :data="spec" />
     <TaskReviewPanel v-else-if="spec?.type === 'task_review'" :review-id="spec.data.review_id" />
     <ChartPanel v-else-if="spec" :data="spec" />
   </div>
@@ -23,9 +22,8 @@ import { authFetch } from '@/auth/http.js'
 import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 import ChartPanel from '@/components/visualization/ChartPanel.vue'
 import FaultWorkOrderPanel from '@/components/visualization/FaultWorkOrderPanel.vue'
-import FaultWorkOrderReviewPanel from '@/components/visualization/FaultWorkOrderReviewPanel.vue'
 import StationhouseInspectionPanel from '@/components/visualization/StationhouseInspectionPanel.vue'
-import { isFaultWorkOrderReviewVisual } from '@/services/visualizationTypes.js'
+import { isTaskReviewVisual } from '@/services/visualizationTypes.js'
 
 const props = defineProps({
   resource: { type: Object, required: true },
@@ -42,8 +40,8 @@ const isStationhouse = computed(() => (
 const isFaultWorkOrder = computed(() => (
   spec.value?.type === 'fault_work_order' || props.resource?.metadata?.type === 'fault_work_order'
 ))
-const isFaultWorkOrderReview = computed(() => (
-  isFaultWorkOrderReviewVisual(spec.value) || isFaultWorkOrderReviewVisual(props.resource)
+const isTaskReview = computed(() => (
+  isTaskReviewVisual(spec.value) || isTaskReviewVisual(props.resource)
 ))
 
 const load = async () => {
@@ -68,8 +66,8 @@ watch(() => props.contentUrl, load)
 .chart { height: 100%; padding: 12px; overflow: auto; box-sizing: border-box; }
 .chart.stationhouse-chart { height: auto; min-height: 724px; flex: 0 0 724px; overflow-x: auto; overflow-y: visible; }
 .chart.work-order-chart { height: auto; min-height: 560px; overflow: visible; }
-.chart.work-order-review-chart { display: flex; height: 100%; min-height: 0; padding: 0; overflow: hidden; }
-.chart.work-order-review-chart :deep(.qc-review-panel) { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.chart.task-review-chart { display: flex; height: 100%; min-height: 0; padding: 0; overflow: hidden; }
+.chart.task-review-chart :deep(.task-review-panel) { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .error { display: grid; min-height: 240px; gap: 8px; place-content: center; color: #b42318; text-align: center; }
 .error button { border: 0; background: transparent; color: #1976d2; cursor: pointer; }
 </style>
