@@ -157,3 +157,18 @@ def test_optional_requirement_still_rejects_invalid_provided_value():
         service.submit_review(payload(sections=[dict(title='结论', fields=[dict(key='level', label='等级', value='P9')])]),
                               {**source('exec-2'), 'result_requirements': rules})
     assert service.list_reviews()[0]['execution_id'] == 'exec-1'
+
+
+@pytest.mark.parametrize("legacy_record", [False, True])
+def test_archived_review_reopen_policy_is_enforced_under_review_lock(legacy_record):
+    locked_source = {**source(), "allow_archived_review_reopen": False}
+    record = service.submit_review(payload(), source() if legacy_record else locked_source)
+    archived = service.decide_review(record["review_id"], human(record), {})
+    assert service.submit_review(payload(), locked_source) == archived
+    with pytest.raises(ValueError, match="已归档"):
+        service.submit_review(payload(), {**source("exec-2"), "allow_archived_review_reopen": False})
+    assert service.load_review(record["review_id"]) == archived
+    if not legacy_record:
+        # A previously locked record cannot be unlocked by a later caller.
+        with pytest.raises(ValueError, match="已归档"):
+            service.submit_review(payload(), source("exec-3"))

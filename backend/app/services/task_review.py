@@ -168,6 +168,11 @@ def submit_review(payload, source):
             if previous["submission"] == submission:
                 return previous
             raise ValueError("本轮已提交；修改结论须启动新一轮任务，禁止覆盖人工审核依据")
+        allow_reopen = source.get("allow_archived_review_reopen", True) and (
+            previous.get("allow_archived_review_reopen", True) if previous else True
+        )
+        if previous and previous["status"] == "archived" and not allow_reopen:
+            raise ValueError("已归档审核记录不允许 AI 重新提交")
         now = datetime.now().astimezone().isoformat()
         history = previous["history"] if previous else []
         if previous:
@@ -179,6 +184,7 @@ def submit_review(payload, source):
             "version": previous["version"] + 1 if previous else 1,
             "created_at": previous["created_at"] if previous else now,
             "updated_at": now, "history": history,
+            "allow_archived_review_reopen": allow_reopen,
         }
         save_review(record)
         return record
