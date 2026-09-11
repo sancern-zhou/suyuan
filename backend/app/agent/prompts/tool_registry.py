@@ -585,12 +585,12 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "deliberation_reviewer": DELIBERATION_REVIEWER_TOOLS,
     }
 
-    if mode not in mode_mapping:
-        raise ValueError(f"Unknown mode: {mode}")
-
     project_tool_names = _get_project_tool_names_by_mode(mode)
     if project_tool_names is not None:
         return _build_tool_dict(project_tool_names)
+
+    if mode not in mode_mapping:
+        raise ValueError(f"Unknown mode: {mode}")
 
     return mode_mapping[mode]
 

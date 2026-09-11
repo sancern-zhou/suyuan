@@ -6,6 +6,29 @@ from app.agent.prompts.ops_prompt import build_ops_prompt
 from app.agent.prompts.social_prompt import build_social_prompt
 
 
+def test_project_specific_mode_is_resolved_before_builtin_validation(monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.prompts.tool_registry._get_project_tool_names_by_mode",
+        lambda mode: ["project_tool", "submit_task_review"] if mode == "project_mode" else None,
+    )
+
+    assert list(get_tools_by_mode("project_mode")) == ["project_tool", "submit_task_review"]
+
+
+def test_undeclared_mode_remains_invalid(monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.prompts.tool_registry._get_project_tool_names_by_mode",
+        lambda mode: None,
+    )
+
+    try:
+        get_tools_by_mode("unknown_mode")
+    except ValueError as exc:
+        assert str(exc) == "Unknown mode: unknown_mode"
+    else:
+        raise AssertionError("undeclared modes must be rejected")
+
+
 
 def test_assistant_mode_does_not_expose_task_tools_or_todowrite():
     tools = get_tools_by_mode("assistant")
