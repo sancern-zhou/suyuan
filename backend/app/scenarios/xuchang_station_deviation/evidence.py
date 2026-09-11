@@ -264,7 +264,7 @@ def _station_5min_indicators(alert: dict[str, Any], rows: list[dict[str, Any]]) 
         "target_station_5min_changes": target_changes,
         "target_peer_5min_comparison": peer_comparison,
         "marked_quality_records": marked,
-        "peer_comparison_note": "每个5分钟槽位的周边站点中位数用于对比；带mark记录不作为污染异常事实直接解释。",
+            "peer_comparison_note": "每个5分钟槽位的其余有效站点均值用于对比；带mark记录不作为污染异常事实直接解释。",
     }
 
 

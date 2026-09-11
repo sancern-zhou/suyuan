@@ -244,7 +244,7 @@ class QueryGDSuncereStationHourTool(LLMTool):
         function_schema = {
             "name": "query_gd_suncere_station_hour_new",
             "description": (
-                "查询广东省站点级小时空气质量数据。"
+                "查询广东省站点级小时空气质量数据。仅适用于广东省城市；cities中的城市名称必须使用带“市”的完整名称（例如“广州市”），不能用于许昌等非广东城市。"
                 "用户提到具体站点或需要站点级小时数据时使用；城市聚合小时数据用query_gd_suncere_city_hour。"
                 "通过ns_type选择标准：2新国标，1旧国标。cities和stations至少提供一个；station_type仅cities时生效；include_weather默认true。"
             ),
@@ -258,7 +258,7 @@ class QueryGDSuncereStationHourTool(LLMTool):
                     "cities": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "城市列表，可自动展开站点"
+                        "description": "广东省城市列表，可自动展开站点；必须使用带“市”的完整城市名称（例如“广州市”）"
                     },
                     "stations": {
                         "type": "array",

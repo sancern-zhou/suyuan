@@ -88,6 +88,15 @@ backend:
       - schedule_task
       - send_notification
   disabled_tools:
+    - query_gd_suncere
+    - query_gd_suncere_city_hour
+    - query_gd_suncere_station_hour_new
+    - query_gd_suncere_station_day_new
+    - query_gd_suncere_regional_comparison
+    - query_gd_suncere_city_day
+    - query_gd_suncere_district_day
+    - query_gd_suncere_district_report
+    - query_gd_suncere_report_compare
     - analyze_city_pollutant_rankings
     - get_5min_data
     - get_observed_meteorology
@@ -111,6 +120,7 @@ backend:
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_station_deviation_alert_fetcher
+    - xuchang_station_hourly_rise_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
@@ -147,5 +157,6 @@ knowledge:
   - xuchang
 scheduled_tasks:
   - task_xuchang_station_deviation_alert
+  - task_xuchang_station_hourly_rise_alert
   - task_xuchang_station_daily_source_report
   - task_xuchang_weekly_weather_situation_report

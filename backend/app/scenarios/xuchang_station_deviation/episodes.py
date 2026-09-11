@@ -16,10 +16,15 @@ TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 def _hour(value: Any) -> datetime:
+    """Normalize timestamps without truncating minutes.
+
+    Minute alerts use this same episode store, so truncating to the hour would
+    make a 30-minute inactivity window impossible to enforce.
+    """
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=TZ_SHANGHAI)
-    return parsed.astimezone(TZ_SHANGHAI).replace(minute=0, second=0, microsecond=0)
+    return parsed.astimezone(TZ_SHANGHAI)
 
 
 class XuchangStationDeviationEpisodeService:
@@ -29,7 +34,7 @@ class XuchangStationDeviationEpisodeService:
         self,
         *,
         output_root: Path | None = None,
-        close_after_hours: int = 3,
+        close_after_hours: float = 0.5,
         material_ratio_increase: float = 0.25,
         material_value_increase_ratio: float = 0.2,
     ) -> None:
@@ -43,11 +48,28 @@ class XuchangStationDeviationEpisodeService:
     def state_path(self) -> Path:
         return self.output_root / "episode_state.json"
 
+    @staticmethod
+    def _alert_type(alert: dict[str, Any]) -> str:
+        """Return a stable rule identity used to isolate alert episodes."""
+        explicit = alert.get("alert_type")
+        if explicit:
+            return str(explicit)
+        rule = str(alert.get("rule") or "unknown")
+        if rule.startswith("six_consecutive"):
+            return "continuous_rise"
+        if "synchronous" in rule or "multi_station" in rule:
+            return "multi_station_sync"
+        if alert.get("measurement_granularity") == "hour":
+            return "hourly_deviation"
+        return "station_deviation"
+
     def record(self, alert: dict[str, Any]) -> dict[str, Any]:
         occurred_at = _hour(alert["occurred_at"])
         station_id = str(alert["station_id"])
         pollutant = str(alert["target_pollutant"]).upper()
-        key = f"{station_id}::{pollutant}"
+        granularity = str(alert.get("measurement_granularity") or alert.get("granularity") or "unknown")
+        alert_type = self._alert_type(alert)
+        key = f"{granularity}::{alert_type}::{station_id}::{pollutant}"
         with self._lock:
             state = self._load()
             episode = state["active"].get(key)
@@ -72,6 +94,8 @@ class XuchangStationDeviationEpisodeService:
                     "station_id": station_id,
                     "station_name": alert.get("station_name") or station_id,
                     "target_pollutant": pollutant,
+                    "measurement_granularity": granularity,
+                    "alert_type": alert_type,
                     "started_at": occurred_at.isoformat(),
                     "last_seen_at": occurred_at.isoformat(),
                     "last_notified_at": occurred_at.isoformat(),

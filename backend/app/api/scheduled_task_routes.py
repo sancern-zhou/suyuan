@@ -161,6 +161,10 @@ class UpdateTaskMemoryRequest(BaseModel):
     content: str = Field(..., min_length=1, description="记忆 Markdown 全文")
     expected_version: int = Field(..., ge=0, description="编辑时读取到的记忆版本")
 
+class UpdateTaskCaseRequest(BaseModel):
+    """人工编辑案例库中的一条案例。"""
+    case: Dict[str, Any] = Field(..., description="案例 JSON 内容")
+
 
 # ===== API端点 =====
 
@@ -758,6 +762,27 @@ async def get_task_history_memory(
             meta=storage.read_meta(),
             case_count=storage.case_count(),
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/history/cases/{execution_id}")
+async def update_task_history_case(
+    task_id: str,
+    execution_id: str,
+    request: UpdateTaskCaseRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """人工修订任务案例，供用户纠正自动沉淀的执行结论。"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        if not storage.update_case(execution_id, request.case):
+            raise HTTPException(status_code=404, detail="案例不存在")
+        cases = storage.recent_cases(200)
+        cases.reverse()
+        return {"case": next((item for item in cases if str(item.get("execution_id")) == execution_id), request.case)}
     except HTTPException:
         raise
     except Exception as e:

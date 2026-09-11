@@ -218,6 +218,38 @@
             </div>
           </div>
         </div>
+
+        <!-- AI回复操作栏：用时统计 + 复制按钮 -->
+        <div v-if="showAgentMessageFooter(message)" class="agent-message-footer">
+          <span
+            v-if="getFinalDurationText(message)"
+            class="agent-message-duration"
+            title="AI 回复总用时"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7.5V12l3 2" />
+            </svg>
+            <span>用时 {{ getFinalDurationText(message) }}</span>
+          </span>
+          <div class="agent-message-tools">
+            <button
+              class="agent-message-tool-button"
+              :class="{ copied: copiedAgentMessageId === message.id }"
+              type="button"
+              :title="copiedAgentMessageId === message.id ? '已复制' : '复制'"
+              @click.stop="copyAgentMessage(message)"
+            >
+              <svg v-if="copiedAgentMessageId === message.id" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m5 12 4 4 10-10" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 错误消息 -->
@@ -790,31 +822,124 @@ const markUserMessageCopied = (messageId) => {
   }, 1400)
 }
 
-const copyUserMessage = async (message) => {
-  const text = getUserMessageText(getMessageContent(message))
-  if (!text) return
-
+// 【新增】共享剪贴板写入（优先 Clipboard API，失败时降级 execCommand）
+const writeClipboardText = async (text) => {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
-      markUserMessageCopied(message?.id)
-      return
+      return true
     }
   } catch (error) {
     console.warn('Clipboard copy failed, falling back:', error)
   }
 
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
-  markUserMessageCopied(message?.id)
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    return true
+  } catch (error) {
+    console.warn('Clipboard fallback copy failed:', error)
+    return false
+  }
 }
+
+const copyUserMessage = async (message) => {
+  const text = getUserMessageText(getMessageContent(message))
+  if (!text) return
+
+  if (await writeClipboardText(text)) {
+    markUserMessageCopied(message?.id)
+  }
+}
+
+// 【新增】AI回复（final消息）复制按钮状态与处理
+const copiedAgentMessageId = ref(null)
+let copiedAgentMessageTimer = null
+
+const markAgentMessageCopied = (messageId) => {
+  copiedAgentMessageId.value = messageId || null
+  if (copiedAgentMessageTimer) {
+    clearTimeout(copiedAgentMessageTimer)
+  }
+  copiedAgentMessageTimer = setTimeout(() => {
+    copiedAgentMessageId.value = null
+    copiedAgentMessageTimer = null
+  }, 1400)
+}
+
+const copyAgentMessage = async (message) => {
+  const text = contentToString(getMessageContent(message)).trim()
+  if (!text) return
+
+  if (await writeClipboardText(text)) {
+    markAgentMessageCopied(message?.id)
+  }
+}
+
+// 【新增】AI回复用时统计：优先使用store在完成时记录的response_duration_ms，
+// 否则用 final 消息与其前最近 user 消息的时间戳差值（历史消息恢复场景）
+const formatResponseDuration = (durationMs) => {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return ''
+  const totalSeconds = durationMs / 1000
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(1)} 秒`
+  const totalWholeSeconds = Math.round(totalSeconds)
+  const minutes = Math.floor(totalWholeSeconds / 60)
+  const seconds = totalWholeSeconds % 60
+  if (minutes < 60) return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`
+}
+
+const finalDurationTextMap = computed(() => {
+  const map = new Map()
+  const msgs = props.messages
+
+  for (let i = 0; i < msgs.length; i++) {
+    const message = msgs[i]
+    if (getMessageType(message) !== 'final') continue
+
+    const precomputed = Number(message.data?.response_duration_ms)
+    let durationMs = Number.isFinite(precomputed) ? precomputed : null
+
+    if (durationMs === null) {
+      let startTimestamp = null
+      for (let j = i - 1; j >= 0; j--) {
+        if (getMessageType(msgs[j]) === 'user') {
+          startTimestamp = msgs[j].timestamp
+          break
+        }
+      }
+      const endTimestamp = message.timestamp
+      if (startTimestamp && endTimestamp) {
+        const start = Date.parse(startTimestamp)
+        const end = Date.parse(endTimestamp)
+        if (Number.isFinite(start) && Number.isFinite(end)) {
+          durationMs = end - start
+        }
+      }
+    }
+
+    const text = formatResponseDuration(durationMs)
+    if (text) map.set(message.id, text)
+  }
+
+  return map
+})
+
+const getFinalDurationText = (message) => finalDurationTextMap.value.get(message?.id) || ''
+
+// 【新增】AI回复操作栏显示条件：流式结束且有可复制内容
+const showAgentMessageFooter = (message) => (
+  message?.streaming !== true && !!contentToString(getMessageContent(message)).trim()
+)
 
 // 【新增】处理details的toggle事件
 const handleProcessToggle = (messageId, event) => {
@@ -1133,6 +1258,9 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   if (copiedUserMessageTimer) {
     clearTimeout(copiedUserMessageTimer)
+  }
+  if (copiedAgentMessageTimer) {
+    clearTimeout(copiedAgentMessageTimer)
   }
   document.removeEventListener('keydown', handleEscKey)
 })
@@ -2111,6 +2239,86 @@ const downloadPreviewedImage = async () => {
   }
 }
 
+// 【新增】AI回复操作栏：用时统计 + 复制按钮
+.agent-message-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  min-height: 26px;
+}
+
+.agent-message-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1;
+  color: #8a97ab;
+  user-select: none;
+  white-space: nowrap;
+
+  svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+.agent-message-tools {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.message-wrapper:hover .agent-message-tools,
+.message-wrapper:focus-within .agent-message-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-message-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d8deea;
+  border-radius: 6px;
+  color: #627089;
+  background: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+
+  svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #1976D2;
+    border-color: #90CAF9;
+    background: #fff;
+  }
+
+  &.copied {
+    color: #2e7d32;
+    border-color: #a5d6a7;
+    background: #f1f8f4;
+  }
+}
+
 .live-process-details {
   margin: 6px 0 10px 0;
   border: none;
@@ -2529,6 +2737,11 @@ const downloadPreviewedImage = async () => {
     opacity: 1;
     pointer-events: auto;
     align-self: flex-end;
+  }
+
+  .agent-message-tools {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .attachment-image {

@@ -114,6 +114,36 @@ class TaskCaseStorage:
             return 0
         return sum(1 for line in lines if line.strip())
 
+    def update_case(self, execution_id: str, case: dict[str, Any]) -> bool:
+        """Replace a case identified by its execution id, preserving JSONL order."""
+        with self._lock():
+            try:
+                lines = self.cases_file.read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                return False
+            found = False
+            updated = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    current = json.loads(line)
+                except json.JSONDecodeError:
+                    updated.append(line)
+                    continue
+                if str(current.get("execution_id", "")) == str(execution_id):
+                    replacement = dict(case)
+                    replacement.setdefault("execution_id", execution_id)
+                    updated.append(json.dumps(replacement, ensure_ascii=False, default=str))
+                    found = True
+                else:
+                    updated.append(json.dumps(current, ensure_ascii=False, default=str))
+            if found:
+                tmp = self.cases_file.with_suffix(".jsonl.tmp")
+                tmp.write_text("\n".join(updated) + "\n", encoding="utf-8")
+                tmp.replace(self.cases_file)
+            return found
+
     def read_memory(self) -> str:
         try:
             return self.memory_file.read_text(encoding="utf-8").strip()

@@ -169,6 +169,17 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       };
     },
 
+    async updateTaskHistoryCase(taskId, executionId, caseData) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/cases/${encodeURIComponent(executionId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case: caseData })
+      });
+      if (!response.ok) throw new Error(await responseErrorMessage(response, '案例保存失败'));
+      const data = await response.json();
+      return data.case || caseData;
+    },
+
     async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {
       const params = new URLSearchParams({
         page: String(page),

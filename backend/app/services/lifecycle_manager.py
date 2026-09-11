@@ -50,7 +50,10 @@ from app.fetchers.xuchang_daily_attainment_forecast import XuchangDailyAttainmen
 from app.fetchers.xuchang_henan_month_year_accumulate import XuchangHenanMonthYearAccumulateFetcher
 from app.fetchers.xuchang_nmc_hourly_forecast import XuchangNmcHourlyForecastFetcher
 from app.fetchers.xuchang_weather_com_daily_forecast import XuchangWeatherComDailyForecastFetcher
-from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher
+from app.fetchers.xuchang_station_deviation_alert import (
+    XuchangStationDeviationAlertFetcher,
+    XuchangStationHourlyRiseAlertFetcher,
+)
 from app.fetchers.xuchang_station_daily_pollution import XuchangStationDailyPollutionFetcher
 from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
@@ -140,6 +143,7 @@ def _configured_fetchers(project_context):
         "xuchang_nmc_hourly_forecast_fetcher": XuchangNmcHourlyForecastFetcher,
         "xuchang_weather_com_daily_forecast_fetcher": XuchangWeatherComDailyForecastFetcher,
         "xuchang_station_deviation_alert_fetcher": XuchangStationDeviationAlertFetcher,
+        "xuchang_station_hourly_rise_alert_fetcher": XuchangStationHourlyRiseAlertFetcher,
         "xuchang_station_daily_pollution_fetcher": XuchangStationDailyPollutionFetcher,
         "xuchang_zhongda_station_minute_fetcher": XuchangZhongdaStationFetcher,
         "xuchang_zhongda_station_hour_fetcher":

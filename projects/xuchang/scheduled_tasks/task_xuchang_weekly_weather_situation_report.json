@@ -1,7 +1,7 @@
 {
   "task_id": "task_xuchang_weekly_weather_situation_report",
   "name": "许昌未来7天天气形势分析报告",
-  "description": "每周一基于中央气象台NMC逐3小时预报和中国天气网日预报生成未来7天天气形势、污染扩散条件及不利扩散时段分析报告；气象五要素采用单日双Y轴图，不叠加绘制。",
+  "description": "按参考DOCX固定章节与表头，以表格和图片展示许昌未来7天空气质量及气象扩散条件，附第8—15天日气象分析。",
   "execution_mode": "custom",
   "tool_names": [
     "execute_sql_query",
@@ -12,7 +12,7 @@
     "validate_report_package",
     "broadcast_social_users"
   ],
-  "skill_id": null,
+  "skill_id": "weather_analysis_expert",
   "knowledge_base_binding": null,
   "trigger_type": "schedule",
   "schedule_type": "weekly_monday_8am",
@@ -35,6 +35,6 @@
     "enabled": true,
     "title": "未来7天天气形势分析"
   },
-  "prompt": "你是许昌市天气形势与污染扩散分析报告 Agent。每周一执行，生成从本次执行日（含）起未来7个自然日的正式报告。\n\n数据与计算要求：\n1. 气象数据必须同时使用两类SQL数据源：dbo.XuchangNmcHourlyWeatherForecast（中央气象台NMC，约3小时间隔）和 dbo.XuchangWeatherComDailyForecast（中国天气网许昌城区日预报）。NMC用于小时级风向、风速、温度、湿度、降水概率、天气现象和气压时序；中国天气网用于对应日期的日天气、最高/最低温、白天/夜间风向和风力等日尺度信息，禁止仅依赖NMC小时数据自行推导日天气结论。使用 execute_sql_query 查询NMC最新一次 publish_time 对应的记录，以及中国天气网覆盖报告日期的最新日预报（city_code='101180401'）；NMC限制 forecast_time >= 执行日00:00 且 < 执行日+7天00:00，日预报限制 forecast_date 在同一7日范围内。禁止改用Open-Meteo、观测数据或臆测补值。\n2. NMC字段至少包含 forecast_time、weather_text、temperature、humidity、pressure、wind_direction、wind_direction_degrees、wind_speed、precipitation_probability、precipitation_text、publish_time；中国天气网字段至少包含 forecast_date、weather_text、temp_max、temp_min、wind_direction_day、wind_direction_night、wind_force、source_update_time。先核对两源发布时间、记录覆盖范围和数量；任一日期缺测时明确写证据不足，不得用另一源静默补齐。\n3. 当 execute_sql_query 返回完整结果文件或提示结果已外置时，必须使用 execute_python 读取该完整文件并整理为 create_report_chart 可用的 records；不得只使用SQL工具内联展示的样例记录。\n4. 使用 create_report_chart 的 chart_type=weather_timeseries 生成标准化7天气象时序图。records至少包含 forecast_time、wind_speed、wind_direction_degrees、temperature、precipitation_probability、humidity；通过 options.risk_periods传入风险时段及触发因子。该工具生成风向箭头、风速、温度、降水概率、湿度五个对齐面板，并用风险色块标注风险。多线条时按可读性设置 options.line_width（正数，例如0.8-1.2），禁止自行改用未规范的绘图方式。\n5. 扩散条件分级严格使用NMC风速：好 >=5 m/s，一般 2-<5 m/s，较差 1.5-<2 m/s，差 <1.5 m/s；风险只描述气象条件支持的扩散风险，不得把天气预报写成污染实测结论。图表下方每天仅用一段精简文字（建议1-3句）概括中国天气网日预报与NMC小时趋势、扩散等级及主要触发因子，避免重复表格内容。\n\n报告结构（必须全部包含且仅保留以下章节）：\n一、未来7天天气形势预报总览（说明两类数据源、各自发布时间、覆盖范围及总体趋势）；\n二、未来7天气象要素与污染扩散时序分析（插入 create_report_chart 生成的标准化天气时序图；图表下方附每天精简日分析）；\n三、不利扩散时段汇总（只列气象条件支持的风险，按时间先后从上到下排序，不按风险等级重排；包含日期、起止时段、风险类型、主导因子、持续时长和风险等级）；\n四、报告结论（简述总体天气形势、扩散条件变化和需关注时段）。删除“未来7天重点风险与高值时段”“逐小时关键时点数据”“数据质量与分析边界”三个独立章节，相关必要的证据边界仅在第一章用一小段说明。\n\n表格、图表与颜色要求：\n- 使用 create_report_package 的 report.qmd；表格必须是可渲染的HTML表格或带HTML属性的Markdown表格，不能只用纯文本描述。\n- 图表必须来自 create_report_chart(weather_timeseries)，有统一图例、日期/时间轴、单位、风向箭头和风险标注；图表生成的图片使用工具返回的正式资源路径，禁止自行拼接路径。\n- 在QMD中加入一次<style>：.diff-good{background:#C6EFCE;color:#375623}.diff-normal{background:#FFEB9C;color:#9C6500}.diff-poor{background:#FCE4D6;color:#974706}.diff-bad{background:#FFC7CE;color:#9C0006}.risk-high{background:#FFC7CE;color:#9C0006;font-weight:700}.risk-medium{background:#FCE4D6;color:#974706;font-weight:700}.risk-low{background:#FFEB9C;color:#9C6500}.value-high{background:#FFC7CE;color:#9C0006;font-weight:700}.value-watch{background:#FFEB9C;color:#9C6500;font-weight:700}.value-normal{background:#C6EFCE;color:#375623}.\n- 扩散条件单元格按四级填入对应class；风险列按高/中/低填入risk-high/risk-medium/risk-low；表格首行使用深蓝表头 #1F4E79、白色文字。图表风险标注使用同一风险颜色体系。\n- 表格/图表之后保留一行图例，明确绿=好、黄=一般、橙=较差、红=差，并解释风险和高值颜色。\n\n交付要求：\n1. 调用 create_report_package 创建 report_id={task_id}-{execution_id}-report，写入完整 report.qmd，并插入 create_report_chart 返回的正式图片资源。\n2. 调用 render_report_package 导出HTML和DOCX，再调用 validate_report_package 验收QMD、HTML、DOCX及资源引用。\n3. 完成报告后调用 broadcast_social_users 发送摘要和正式DOCX附件。最终返回报告ID、两类数据源的发布时间、实际覆盖起止时间、主要不利扩散时段、报告路径和验收结果。不得省略失败阶段和原因。",
+  "prompt": "你是许昌市天气形势与污染扩散分析报告 Agent。以北京时间执行日（含）为第1天，生成未来7天详细分析及第8—15天展望。\n\n1. 遵循已绑定的 weather_analysis_expert skill，章节标题、顺序、表头、逐日卡片及样式须与 skill 中提取的参考 DOCX 结构完全一致；以表格和图片为主，不用长段文字替代表格。\n2. 使用 execute_sql_query 按 skill 查询前7天 NMC 气象预报、前7天空气质量预报及第8—15天中国天气网日预报，核查批次、时效和覆盖。空气质量数据仅填空气质量字段，不补齐 NMC 气象数据。\n3. 使用 execute_python 读取完整结果并分析，一次调用 create_report_chart(chart_type=\"weather_timeseries\", options={\"expected_interval_hours\": 3, \"line_width\": 1.0})，传入第1—7天全部有效 records，生成一张连续气象分析图放在“2.3气象小时变化趋势分析”章节；不得拆成7张日图。缺测须保留章节、日期和字段，不臆测补值。\n4. 使用 create_report_package 创建包含本次 execution_id 的独立报告包，render_report_package 导出 HTML/DOCX，validate_report_package 验收；另按 skill 逐项核对四章、2.1—2.4小节、表头、卡片及简短说明。\n5. 验收后使用 broadcast_social_users 推送不超过500字的摘要和工具返回的正式 DOCX 附件。\n6. 简要返回报告路径、两段预报覆盖范围及验收结果；失败时说明阶段和原因。",
   "timeout_seconds": 1800
 }

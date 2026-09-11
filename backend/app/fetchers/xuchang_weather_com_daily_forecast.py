@@ -34,7 +34,6 @@ class DailyForecast:
     wind_direction_day: str | None
     wind_direction_night: str | None
     wind_force: str | None
-    source_update_time: str | None
 
     def to_record(self, fetched_at: datetime) -> dict[str, Any]:
         return {
@@ -43,7 +42,7 @@ class DailyForecast:
             "weather_text": self.weather_text, "temp_max": self.temp_max,
             "temp_min": self.temp_min, "wind_direction_day": self.wind_direction_day,
             "wind_direction_night": self.wind_direction_night, "wind_force": self.wind_force,
-            "source_update_time": self.source_update_time, "fetched_at": fetched_at,
+            "fetched_at": fetched_at,
         }
 
 
@@ -67,14 +66,16 @@ def _parse_date(label: str, reference: date) -> date | None:
     if not match:
         return None
     day = int(match.group("day"))
-    for offset in range(0, 370):
+    # Pages can lag behind the local date near midnight. A stale day label
+    # must not roll forward into the following month outside this forecast.
+    for offset in range(15):
         candidate = reference + timedelta(days=offset)
         if candidate.day == day:
             return candidate
     return None
 
 
-def parse_daily_forecast_page(page: str, reference: date, source_update_time: str | None = None) -> list[DailyForecast]:
+def parse_daily_forecast_page(page: str, reference: date) -> list[DailyForecast]:
     """Parse either weather.com.cn 7-day or 15-day forecast HTML."""
     rows: list[DailyForecast] = []
     for match in _LI_RE.finditer(page):
@@ -112,7 +113,6 @@ def parse_daily_forecast_page(page: str, reference: date, source_update_time: st
             wind_direction_day=wind_titles[0] if wind_titles else (_text(re.search(r'<(?:span|p)[^>]*class=["\'][^"\']*\bwind\b[^"\']*["\'][^>]*>(.*?)</(?:span|p)>', body, re.I | re.S).group(1)) if re.search(r'class=["\'][^"\']*\bwind\b', body, re.I) else None),
             wind_direction_night=wind_titles[1] if len(wind_titles) > 1 else None,
             wind_force=force_value,
-            source_update_time=source_update_time,
         ))
     return rows
 
@@ -138,7 +138,7 @@ class XuchangWeatherComDailyForecastStorage:
     def save(self, records: list[dict[str, Any]]) -> int:
         if not records:
             return 0
-        columns = ("city_code", "city_name", "forecast_date", "date_label", "weather_text", "temp_max", "temp_min", "wind_direction_day", "wind_direction_night", "wind_force", "source_update_time", "fetched_at")
+        columns = ("city_code", "city_name", "forecast_date", "date_label", "weather_text", "temp_max", "temp_min", "wind_direction_day", "wind_direction_night", "wind_force", "fetched_at")
         update = [c for c in columns if c not in {"city_code", "forecast_date"}]
         sql = f"""MERGE dbo.{self.table_name} AS target USING (SELECT ? AS city_code, ? AS forecast_date) AS source
         ON target.city_code=source.city_code AND target.forecast_date=source.forecast_date
@@ -152,7 +152,7 @@ class XuchangWeatherComDailyForecastStorage:
                 id BIGINT IDENTITY(1,1) PRIMARY KEY, city_code NVARCHAR(20) NOT NULL, city_name NVARCHAR(32) NOT NULL,
                 forecast_date DATE NOT NULL, date_label NVARCHAR(32) NULL, weather_text NVARCHAR(64) NULL,
                 temp_max FLOAT NULL, temp_min FLOAT NULL, wind_direction_day NVARCHAR(32) NULL,
-                wind_direction_night NVARCHAR(32) NULL, wind_force NVARCHAR(32) NULL, source_update_time NVARCHAR(32) NULL,
+                wind_direction_night NVARCHAR(32) NULL, wind_force NVARCHAR(32) NULL,
                 fetched_at DATETIME2 NOT NULL, created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(), updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                 CONSTRAINT UX_{self.table_name}_CityDate UNIQUE (city_code, forecast_date));""")
             cursor.fast_executemany = True

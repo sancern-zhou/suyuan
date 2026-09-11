@@ -36,6 +36,29 @@
 - 告警 JSON 的 `rule_hits` 是触发告警的主规则
 - 告警 JSON 的 `supporting_rule_hits` 是辅助解释线索，只能作为提示性证据
 
+## 运城告警溯源场景资产要求
+
+当任务输入为运城市告警溯源分析，且证据目录中存在下列文件时，气象分析专家必须先读取并分析这些资产，再生成草稿。缺失资产不得跳过，应在草稿的“不确定性和补证建议”中说明影响。
+
+草稿必须按实际时间顺序组织气象实况、轨迹和预报信息。每项使用的 JSON 记录或图片必须写明实际有效时次和建议挂接的时间节点；轨迹写明轨迹受体时刻，预报写明起报时间和预报时效。无法确认时次的图片只列入已阅读资产，不建议进入正文。运城场景使用“需要补充确认的信息”说明缺失资产及其业务影响。
+
+| 资产 | 必读/必看内容 | 草稿要求 |
+| --- | --- | --- |
+| `meteorology_history.json` | 告警前后小时风速、风向、温度、湿度、降水、边界层或可用扩散指标 | 说明告警前后扩散条件、湿清除条件和是否支持本地累积 |
+| `trajectory_analysis.json` | 后向轨迹起报时间、高度、轨迹方向、途经区域和端点分布 | 判断潜在输送方向，只使用“提示/支持/不支持/不确定”表述 |
+| `trajectory.png` | 后向轨迹图形态、方向和空间分布 | 草稿中必须插入图片引用：`![后向轨迹](trajectory.png)` |
+| `wind_field.png` | 区域风场、目标城市附近风向风速和上风向关系 | 草稿中必须插入图片引用：`![区域风场](wind_field.png)` |
+| `visibility.png` | 能见度低值区和目标城市附近变化 | 若存在，结合湿度、颗粒物或天气背景说明能见度线索，并插入图片 |
+| `rainfall_24h.png` | 24 小时降水落区和强度 | 若存在，说明降水是否支持湿清除或湿度抬升，并插入图片 |
+| `radar_mosaic.png`、`radar_composite_reflectivity_003.png` | 雷达回波位置、移动方向和是否影响目标城市 | 若存在，说明对降水和湿清除判断的支撑程度，并至少插入一张雷达图 |
+| `precipitable_water_000.png` | 可降水量背景 | 若存在，说明水汽条件对降水和湿度判断的辅助意义 |
+| `precipitation_forecast.png`、`precipitation_forecast_024.png`、`precipitation_forecast_048.png`、`precipitation_forecast_072.png`、`hourly_precipitation_forecast.png` | 未来降水时间窗、落区和强度 | 判断未来 24-72 小时湿清除、湿度和颗粒物风险，至少插入一张最相关降水预报图 |
+| `wind_forecast_024.png`、`wind_forecast_048.png`、`wind_forecast_072.png` | 未来风向风速和扩散/输送条件 | 判断未来 24-72 小时扩散和输送风险，至少插入一张最相关风场预报图 |
+| `national_tmax_forecast.png`、`national_tmin_forecast.png` | 最高/最低温背景 | 对 O3 或二次转化风险相关时，应说明温度条件 |
+| `forecast_meteorology.json` | 未来逐小时气象预报 | 与图片预报交叉核对，给出未来 24-48 小时重点时段 |
+
+草稿必须包含“已阅读资产”小节，列出实际读取的 JSON 和查看的图片；必须包含“建议插入图片”小节，列出图片文件名、实际有效时次、建议挂接的时间节点和一句业务化图注。
+
 ## 业务边界
 
 - 不确认具体污染源。
@@ -63,8 +86,8 @@
    - `report_docx_path = {evidence_dir}/report.docx`
 3. 读取本 skill、告警 JSON、`tracing_context_manifest.json` 和 manifest 中列出的所有可用资产；如果存在 `fire_hotspots.json`，只能将其作为周边生物质燃烧、露天焚烧或热异常影响的提示性证据，不得据此确认具体污染源或责任主体。
 4. 只做输入一致性校验，不重新判断告警是否成立；如果告警 JSON 不是 `has_alert=true` 且 `status=pending_trace`，返回失败 JSON，不生成报告。
-5. 同步调用气象 expert 子 Agent，要求输出 `weather_draft_path`。调用时必须在 goal 中明确要求专家 Agent 先阅读 `backend/docs/skills/weather_analysis_expert.md`，并按 Skill 中的"运城告警溯源场景资产要求"表读取和分析所有图片资产，将分析结果和图片引用写入草稿。
-6. 同步调用常规 expert 子 Agent，要求输出 `routine_draft_path`。调用时必须在 goal 中明确要求专家 Agent 先阅读 `backend/docs/skills/routine_monitoring_analysis_expert.md`，并按 Skill 中的"运城告警溯源场景资产要求"表读取和分析所有图片资产，将分析结果和图片引用写入草稿。
+5. 同步调用气象 expert 子 Agent，要求输出 `weather_draft_path`。调用时必须在 goal 中明确要求专家 Agent 先阅读 `backend/docs/skills/weather_analysis_expert.md` 和本 skill 中的“运城告警溯源场景资产要求”，按资产表读取和分析所有图片资产，将分析结果和图片引用写入草稿。
+6. 同步调用常规 expert 子 Agent，要求输出 `routine_draft_path`。调用时必须在 goal 中明确要求专家 Agent 先阅读 `backend/docs/skills/routine_monitoring_analysis_expert.md` 和本 skill 中的“运城告警溯源场景资产要求”，按资产表读取和分析所有图片资产，将分析结果和图片引用写入草稿。
 7. 读取两个专家草稿，检查是否存在越界结论、AQI 口径错误、缺失资产未说明、驻场建议不可执行等问题。
 8. 生成 `report_qmd_path`，并确保报告以“污染过程时间线”为核心，包含“本次告警概览、污染过程时间线、当前情况与未来趋势、可能影响因素、现场行动安排、需要补充确认的信息、附件与数据来源”。
 9. 使用标准报告包能力导出 Word：读取 `backend/app/tools/report/report_package/references/index.md`，调用 `create_report_package` 保存报告包，调用 `render_report_package(format="docx")` 导出 Word，并用 `validate_report_package(require_docx=true)` 验收。

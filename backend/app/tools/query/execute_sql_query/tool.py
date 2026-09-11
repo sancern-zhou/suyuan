@@ -210,7 +210,7 @@ AIR_QUALITY_SCHEMA_GUIDE = (
     "WHERE city_code = '{city_code}' AND forecast_time >= '2026-08-30 11:00' ORDER BY forecast_time。"
     "\n- XuchangWeatherComDailyForecast（中国天气网许昌1-15日日气象预报）："
     "按city_code='101180401'（许昌城区）筛选，forecast_date为预报日期；字段包括weather_text、temp_max、temp_min、"
-    "wind_direction_day、wind_direction_night、wind_force、source_update_time和fetched_at。"
+    "wind_direction_day、wind_direction_night、wind_force和fetched_at。"
 )
 
 

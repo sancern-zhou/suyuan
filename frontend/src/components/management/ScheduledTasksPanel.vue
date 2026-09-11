@@ -454,6 +454,14 @@
 
           <!-- 案例库页签 -->
           <div v-else-if="historyTab === 'cases'" class="history-cases">
+            <div v-if="caseEditing" class="history-memory-editor">
+              <textarea v-model="caseDraft" rows="14" placeholder="编辑案例 JSON"></textarea>
+              <div v-if="caseEditError" class="form-error" role="alert">{{ caseEditError }}</div>
+              <div class="history-memory-editor-actions">
+                <button class="panel-btn small" @click="cancelCaseEdit">取消</button>
+                <button class="panel-btn small primary" :disabled="caseSaving" @click="saveCaseEdit">{{ caseSaving ? '保存中...' : '保存案例' }}</button>
+              </div>
+            </div>
             <div v-if="historyCases.length === 0" class="history-state">
               暂无历史案例，任务每次执行后会自动累积。
             </div>
@@ -487,6 +495,7 @@
               <div v-if="caseItem.errors?.length" class="history-case-errors">
                 <p v-for="(error, index) in caseItem.errors" :key="index">{{ error }}</p>
               </div>
+              <button class="panel-btn small" @click="startCaseEdit(caseItem)">编辑案例</button>
             </div>
             <p v-if="historyCasesTotal > historyCases.length" class="history-cases-more">
               仅显示最近 {{ historyCases.length }} 条，共 {{ historyCasesTotal }} 条
@@ -724,6 +733,11 @@ const memoryEditing = ref(false)
 const memoryDraft = ref('')
 const memorySaving = ref(false)
 const memoryEditError = ref('')
+const caseEditing = ref(false)
+const caseEditingId = ref('')
+const caseDraft = ref('')
+const caseSaving = ref(false)
+const caseEditError = ref('')
 let historyRequestToken = 0
 
 const md = new MarkdownIt({ breaks: true })
@@ -835,6 +849,27 @@ const startMemoryEdit = () => {
 const cancelMemoryEdit = () => {
   memoryEditing.value = false
   memoryEditError.value = ''
+}
+
+const startCaseEdit = (item) => {
+  caseEditingId.value = String(item.execution_id)
+  caseDraft.value = JSON.stringify(item, null, 2)
+  caseEditError.value = ''
+  caseEditing.value = true
+}
+const cancelCaseEdit = () => { caseEditing.value = false; caseEditError.value = '' }
+const saveCaseEdit = async () => {
+  if (!historyTask.value) return
+  let parsed
+  try { parsed = JSON.parse(caseDraft.value) } catch { caseEditError.value = '请输入有效的 JSON'; return }
+  caseSaving.value = true; caseEditError.value = ''
+  try {
+    const updated = await scheduledTasksStore.updateTaskHistoryCase(historyTask.value.task_id, caseEditingId.value, parsed)
+    const index = historyCases.value.findIndex(item => String(item.execution_id) === caseEditingId.value)
+    if (index >= 0) historyCases.value[index] = updated
+    caseEditing.value = false
+  } catch (error) { caseEditError.value = '保存失败：' + (error.message || '未知错误') }
+  finally { caseSaving.value = false }
 }
 
 const saveMemoryEdit = async () => {

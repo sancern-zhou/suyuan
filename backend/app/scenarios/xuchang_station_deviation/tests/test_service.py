@@ -5,8 +5,27 @@ import pytest
 from app.scenarios.xuchang_station_deviation.service import (
     XuchangStationDeviationAlertService,
     StationDeviationConfig,
+    air_quality_level_from_aqi,
     detect_station_deviations,
+    evaluate_adverse_meteorology,
 )
+
+
+def test_aqi_is_mapped_to_dynamic_threshold_level():
+    assert air_quality_level_from_aqi(50) == "优"
+    assert air_quality_level_from_aqi(100) == "良"
+    assert air_quality_level_from_aqi(150) == "轻度污染"
+    assert air_quality_level_from_aqi(999) == "严重污染"
+    assert air_quality_level_from_aqi(None) is None
+
+
+def test_adverse_meteorology_lowers_sensitivity_without_humidity_only_trigger():
+    decision = evaluate_adverse_meteorology({"wind_speed": 1.2, "stability": "stable", "humidity": 70})
+    assert decision["adverse"] is True
+    assert decision["sensitivity"] == 0.75
+    humid_only = evaluate_adverse_meteorology({"wind_speed": 3, "stability": "neutral", "humidity": 85})
+    assert humid_only["adverse"] is False
+    assert "高湿辅助" in humid_only["reasons"]
 
 
 def _row(station_id: str, value: float) -> dict:
@@ -36,7 +55,7 @@ def test_detects_leave_one_out_station_deviation():
     alert = result["alerts"][0]
     assert alert["station_id"] == "a"
     assert alert["peer_mean"] == 40.0
-    assert alert["peer_baseline_method"] == "leave_one_out_median"
+    assert alert["peer_baseline_method"] == "leave_one_out_mean"
     assert alert["absolute_delta"] == 60.0
     assert alert["deviation_ratio"] == 1.5
 

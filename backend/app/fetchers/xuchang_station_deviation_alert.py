@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 
@@ -15,6 +16,7 @@ from app.scenarios.xuchang_station_deviation.episodes import (
 from app.scenarios.xuchang_station_deviation.evidence import (
     XuchangStationDeviationEvidenceCollector,
 )
+from app.scenarios.xuchang_station_deviation.dispatch import UpwindRoadDispatchBuilder
 from app.scenarios.xuchang_station_deviation.service import (
     EVENT_TYPE,
     XuchangStationDeviationAlertService,
@@ -24,7 +26,9 @@ from app.utils.path_config import format_agent_path
 
 
 logger = structlog.get_logger()
+TZ_SHANGHAI = ZoneInfo("Asia/Shanghai")
 EPISODE_CLOSED_EVENT_TYPE = "xuchang.station_deviation.episode_closed"
+HOURLY_EVENT_TYPE = "xuchang.station_deviation.hourly_alert_created"
 
 
 class XuchangStationDeviationAlertFetcher(DataFetcher):
@@ -34,6 +38,7 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
         analysis_tool: Any | None = None,
         episode_service: XuchangStationDeviationEpisodeService | None = None,
         evidence_collector: XuchangStationDeviationEvidenceCollector | None = None,
+        dispatch_builder: UpwindRoadDispatchBuilder | None = None,
     ) -> None:
         super().__init__(
             name="xuchang_station_deviation_alert_fetcher",
@@ -41,13 +46,48 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
             # 中大分钟抓取在每个 5 分钟槽的第 1 分钟启动；本任务在入口
             # 延迟 30 秒，给抓取和入库留出时间（01:30、06:30...）。
             schedule="1-59/5 * * * *",
-            version="1.2.0",
+            version="1.3.0",
         )
         self.service = service or XuchangStationDeviationAlertService()
         # Kept as a compatibility argument for callers; source attribution is
         # intentionally no longer run in the event-driven alert path.
         self.episode_service = episode_service or XuchangStationDeviationEpisodeService()
         self.evidence_collector = evidence_collector or XuchangStationDeviationEvidenceCollector()
+        self.dispatch_builder = dispatch_builder or UpwindRoadDispatchBuilder(output_root=self.service.output_root)
+
+    async def _attach_dispatch(self, alert: dict, evidence: dict, scopes: dict) -> None:
+        # Share roads/image between factors of the same station and event slot.
+        key = (str(alert.get("station_id")), alert.get("occurred_at"))
+        try:
+            if key not in scopes:
+                scopes[key] = await asyncio.to_thread(self.dispatch_builder.build, alert, evidence)
+            scope = scopes[key]
+        except Exception as exc:
+            logger.warning("xuchang_road_dispatch_failed", error_type=type(exc).__name__)
+            scope = {"status": "unavailable", "roads": [], "map_status": "unavailable",
+                     "reason": "道路范围生成失败，请先核实风向和站点位置", "errors": [type(exc).__name__]}
+        guidance = self.dispatch_builder.guidance(alert, scope)
+        alert["dispatch_guidance"] = guidance
+        evidence["dispatch_guidance"] = guidance
+        evidence["upwind_road_scope"] = scope
+        for field in ("upwind_road_scope_path", "upwind_road_scope_image_path"):
+            if scope.get(field):
+                alert[field] = evidence[field] = scope[field]
+        evidence["event"] = dict(alert)
+        evidence["dispatch_media"] = list(dict.fromkeys(alert[field] for field in (
+            "upwind_road_scope_image_path", "multifactor_table_path", "timeseries_chart_path") if alert.get(field)))
+        alert["dispatch_media"] = evidence["dispatch_media"]
+
+    @staticmethod
+    def _attach_evidence_media(alert: dict, evidence: dict) -> None:
+        """Finalize evidence metadata without creating a road-scope map."""
+        evidence["event"] = dict(alert)
+        media = [
+            alert.get("multifactor_table_path"),
+            alert.get("timeseries_chart_path"),
+        ]
+        evidence["dispatch_media"] = list(dict.fromkeys(path for path in media if path))
+        alert["dispatch_media"] = evidence["dispatch_media"]
 
     async def fetch_and_store(self) -> dict[str, Any]:
         await asyncio.sleep(30)
@@ -96,6 +136,10 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                                 "reason": "event alert path reports monitoring facts; upwind enterprise analysis is disabled",
                             },
                         )
+                        # Road and static-map dispatch generation was removed
+                        # from this event-driven fetcher. Monitoring evidence
+                        # remains available for downstream analysis.
+                        self._attach_evidence_media(alert, evidence)
                         evidences.append({"alert": alert, "evidence": evidence})
                     except Exception as exc:
                         logger.exception("xuchang_scenario_1_evidence_collection_failed", event_id=alert["event_id"])
@@ -124,4 +168,64 @@ class XuchangStationDeviationAlertFetcher(DataFetcher):
                 ))
         result["closed_episodes"] = closed_episodes
         logger.info("xuchang_station_deviation_alert_completed", alert_count=len(result["alerts"]), target_hour=result["target_hour"])
+        return result
+
+
+class XuchangStationHourlyRiseAlertFetcher(XuchangStationDeviationAlertFetcher):
+    """Hourly station rise alert chain.
+
+    The hourly chain deliberately has its own fetcher and event type so hourly
+    episode handling and task memory do not mix with the five-minute stream.
+    The shared service is invoked with an explicit hourly target slot; the
+    resulting payload still uses the same evidence envelope contract.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.name = "xuchang_station_hourly_rise_alert_fetcher"
+        self.description = "许昌站点小时污染抬升告警"
+        self.schedule = "5 * * * *"
+        self.version = "1.1.0"
+
+    async def fetch_and_store(self) -> dict[str, Any]:
+        result = await self.service.run(target_time=datetime.now(TZ_SHANGHAI), granularity="hour")
+        alerts = result.get("alerts", [])
+        if alerts:
+            from app.scheduled_tasks import get_scheduled_task_service
+
+            task_service = get_scheduled_task_service()
+            for alert in alerts:
+                try:
+                    evidence = await self.evidence_collector.collect(
+                        alert=alert,
+                        source_screening={"status": "not_run", "reason": "hourly alert monitoring facts"},
+                    )
+                    self._attach_evidence_media(alert, evidence)
+                    evidence_path = self.service.write_episode_evidence_package(
+                        station_id=str(alert.get("station_id")),
+                        occurred_at=alert["occurred_at"],
+                        alerts=[{"alert": alert, "evidence": evidence}],
+                    )
+                    alert["evidence_package_path"] = format_agent_path(evidence_path)
+                except Exception as exc:  # noqa: BLE001 - preserve alert even if context collection fails
+                    logger.exception("xuchang_hourly_alert_evidence_failed", event_id=alert.get("event_id"))
+                    alert["evidence_collection"] = {"status": "failed", "error": str(exc)}
+                await task_service.publish_event(TaskEvent(
+                    event_id=f"xuchang-station-hourly-{alert['event_id']}",
+                    event_type=HOURLY_EVENT_TYPE,
+                    occurred_at=alert["occurred_at"],
+                    attributes={
+                        "city": alert.get("city", "许昌市"),
+                        "target_pollutant": alert.get("target_pollutant"),
+                        "station_id": alert.get("station_id"),
+                        "granularity": "hour",
+                    },
+                    payload={**alert, "granularity": "hour"},
+                ))
+        result["granularity"] = "hour"
+        logger.info(
+            "xuchang_station_hourly_rise_alert_completed",
+            alert_count=len(alerts),
+            target_slot=result.get("target_slot"),
+        )
         return result

@@ -714,8 +714,9 @@ class XuchangZhongdaStationFetcher(_ZhongdaBaseFetcher):
 class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
     """Persist 中大 platform city hour/day observations.
 
-    City endpoints currently return empty arrays on the platform side; empty
-    results are logged and stored as zero rows, never raised as errors.
+    City endpoints can lag behind station data.  Each run therefore re-queries
+    the full previous-day-to-current-hour window; the table unique key makes
+    repeated rows idempotent while allowing late city aggregates to backfill.
     """
 
     TABLE_SPECS = {
@@ -757,8 +758,15 @@ class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
     def _window(self) -> tuple[datetime, datetime]:
         now = datetime.now().replace(second=0, microsecond=0)
         if self.data_kind == "city_hour":
-            end = now.replace(minute=0)
-            return end - timedelta(hours=3), end
+            # 城市聚合通常晚于站点小时数据生成。每小时重查“昨天 00:00
+            # 至当前小时（含当前小时）”，迟到数据可在后续轮次补齐；
+            # _store 使用唯一键 upsert，重复小时不会产生重复记录。
+            current_hour = now.replace(minute=0)
+            start = (current_hour - timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            end = current_hour + timedelta(hours=1)
+            return start, end
         end = now.replace(hour=0, minute=0)
         start = end - timedelta(days=settings.zhongda_city_day_lookback_days)
         return start, end
@@ -788,11 +796,24 @@ class XuchangZhongdaCityFetcher(_ZhongdaBaseFetcher):
         raw: list[dict[str, Any]] = []
         # DataTypePlan 按规划期互斥，跨 2026-01-01 等边界时必须分段查询
         for plan, seg_start, seg_end in split_window_by_plan(start, end):
+            logger.info(
+                "zhongda_city_hour_query_window",
+                plan=plan,
+                start=seg_start,
+                end=seg_end,
+                data_table_type=settings.zhongda_data_table_type,
+            )
             raw.extend(
                 self._client().fetch_grid(
                     endpoint, self._query_params(plan, seg_start, seg_end), controller, action
                 )
             )
+        logger.info(
+            "zhongda_city_hour_query_result",
+            start=start,
+            end=end,
+            raw_count=len(raw),
+        )
         records: list[dict[str, Any]] = []
         if self.data_kind == "city_hour":
             for row in raw:
