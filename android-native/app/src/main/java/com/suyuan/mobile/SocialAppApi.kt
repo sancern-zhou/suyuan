@@ -43,6 +43,12 @@ data class BroadcastInbox(
     val nextCursor: String? = null,
     val hasMore: Boolean = false,
 )
+data class ReportResult(
+    val reportId: String, val taskId: String, val executionId: String, val taskName: String,
+    val reportType: String, val title: String, val summary: String, val generatedAt: String?,
+    val read: Boolean, val attachments: List<UploadedAttachment> = emptyList(),
+)
+data class ReportInbox(val reports: List<ReportResult>, val unreadCount: Int, val nextCursor: String? = null, val hasMore: Boolean = false)
 data class ChatMessage(
     val id: String,
     val kind: String,
@@ -290,10 +296,11 @@ class SocialAppApi(
         }
     }
 
-    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList()): Flow<AgentEvent> = channelFlow {
+    fun stream(token: String, query: String, sessionId: String?, attachments: List<UploadedAttachment> = emptyList(), mode: String = "expert"): Flow<AgentEvent> = channelFlow {
         withContext(Dispatchers.IO) {
             val payload = JSONObject().apply {
                 put("query", query)
+                put("mode", mode)
                 if (sessionId != null) put("session_id", sessionId)
                 put("attachments", org.json.JSONArray().apply { attachments.forEach { put(it.toJson()) } })
             }.toString().toRequestBody("application/json".toMediaType())
@@ -544,6 +551,32 @@ class SocialAppApi(
             if (!it.isSuccessful) throw ApiException(it.code, "广播消息删除失败 (${it.code})")
             JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true)
         }
+    }
+
+    suspend fun reports(token: String, reportType: String? = null, limit: Int = 30, before: String? = null): ReportInbox = withContext(Dispatchers.IO) {
+        val params = buildString { append("?limit=").append(limit); reportType?.takeIf { it.isNotBlank() }?.let { append("&report_type=").append(java.net.URLEncoder.encode(it, "UTF-8")) }; before?.let { append("&before=").append(java.net.URLEncoder.encode(it, "UTF-8")) } }
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/report-results$params")).header("Authorization", "Bearer $token").get().build()).execute()
+        response.use {
+            if (!it.isSuccessful) throw ApiException(it.code, "报告成果查询失败 (${it.code})")
+            val json = JSONObject(it.body?.string().orEmpty()); val array = json.optJSONArray("reports") ?: org.json.JSONArray()
+            val reports = buildList {
+                for (index in 0 until array.length()) { val item = array.optJSONObject(index) ?: continue
+                    val attachments = buildList { item.optJSONArray("attachments")?.let { values -> for (i in 0 until values.length()) values.optJSONObject(i)?.let { add(UploadedAttachment.fromJson(it)) } } }
+                    add(ReportResult(item.optString("report_id", "report-$index"), item.optString("task_id"), item.optString("execution_id"), item.optString("task_name"), item.optString("report_type"), item.optString("title"), item.optString("summary"), item.optString("generated_at").ifBlank { null }, item.optBoolean("read"), attachments))
+                }
+            }
+            ReportInbox(reports, json.optInt("unread_count", reports.count { !it.read }), json.optString("next_cursor").ifBlank { null }, json.optBoolean("has_more"))
+        }
+    }
+
+    suspend fun markReportRead(token: String, reportId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/report-results/${java.net.URLEncoder.encode(reportId, "UTF-8")}/read")).header("Authorization", "Bearer $token").post("".toRequestBody("application/json".toMediaType())).build()).execute()
+        response.use { if (!it.isSuccessful) throw ApiException(it.code, "报告成果已读失败 (${it.code})"); JSONObject(it.body?.string().orEmpty()).optBoolean("read", true) }
+    }
+
+    suspend fun deleteReport(token: String, reportId: String): Boolean = withContext(Dispatchers.IO) {
+        val response = client.newCall(Request.Builder().url(url("/api/social/app/report-results/${java.net.URLEncoder.encode(reportId, "UTF-8")}")).header("Authorization", "Bearer $token").delete().build()).execute()
+        response.use { if (!it.isSuccessful) throw ApiException(it.code, "报告成果删除失败 (${it.code})"); JSONObject(it.body?.string().orEmpty()).optBoolean("deleted", true) }
     }
 
     suspend fun download(token: String, attachment: UploadedAttachment): ByteArray = withContext(Dispatchers.IO) {

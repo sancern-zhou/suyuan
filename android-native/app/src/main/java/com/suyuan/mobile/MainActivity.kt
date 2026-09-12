@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
@@ -21,6 +22,8 @@ import android.widget.Toast
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -36,6 +39,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +55,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ButtonDefaults
@@ -252,6 +260,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var localError by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
     var showBroadcasts by remember { mutableStateOf(false) }
+    var showReports by remember { mutableStateOf(false) }
     val voiceClient = remember { RealtimeVoiceClient(BuildConfig.API_BASE_URL) }
     DisposableEffect(voiceClient) {
         onDispose { voiceClient.stop() }
@@ -343,13 +352,19 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         Column(Modifier.fillMaxSize()) {
         AppTopBar(
             showHistory = showHistory,
-            onHistory = { showHistory = true; showBroadcasts = false },
-            onBack = { showHistory = false; showBroadcasts = false },
-            onBroadcasts = { showBroadcasts = true; showHistory = false; viewModel.openBroadcasts() },
+            showBroadcasts = showBroadcasts,
+            showReports = showReports,
+            onHistory = { showHistory = true; showBroadcasts = false; showReports = false },
+            onBack = { showHistory = false; showBroadcasts = false; showReports = false },
+            onBroadcasts = { showBroadcasts = true; showHistory = false; showReports = false; viewModel.openBroadcasts() },
+            onReports = { showReports = true; showHistory = false; showBroadcasts = false; viewModel.refreshReports() },
             unreadBroadcastCount = state.unreadBroadcastCount,
-            onNew = { showHistory = false; showBroadcasts = false; viewModel.newConversation() },
+            unreadReportCount = state.reportUnreadCount,
+            onNew = { showHistory = false; showBroadcasts = false; showReports = false; viewModel.newConversation() },
         )
-        if (showBroadcasts) {
+        if (showReports) {
+            ReportPanel(state, viewModel)
+        } else if (showBroadcasts) {
             BroadcastPanel(state, viewModel, onBack = { showBroadcasts = false })
         } else if (showHistory) {
             HistoryPanel(state, viewModel, onBack = { showHistory = false })
@@ -390,7 +405,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
                 if (state.messages.isEmpty()) {
-                    item { EmptyChatState(loading = state.loading) }
+                    item { EmptyChatState(loading = state.loading, mode = state.mode, onModeSelected = viewModel::selectMode) }
                 } else items(state.messages, key = { it.id }) {
                     ChatMessageView(it, state, viewModel)
                 }
@@ -594,10 +609,14 @@ private fun VoiceRecordingOverlay(offsetX: Float) {
 @Composable
 private fun AppTopBar(
     showHistory: Boolean,
+    showBroadcasts: Boolean,
+    showReports: Boolean,
     onHistory: () -> Unit,
     onBack: () -> Unit,
     onBroadcasts: () -> Unit,
+    onReports: () -> Unit,
     unreadBroadcastCount: Int,
+    unreadReportCount: Int,
     onNew: () -> Unit,
 ) {
     Row(
@@ -605,17 +624,29 @@ private fun AppTopBar(
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            IconButton(onClick = if (showHistory) onBack else onHistory) {
-                Icon(painterResource(if (showHistory) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory) "返回对话" else "历史会话", tint = SuyuanColors.text)
+            IconButton(onClick = if (showHistory || showBroadcasts || showReports) onBack else onHistory) {
+                Icon(painterResource(if (showHistory || showBroadcasts || showReports) R.drawable.ic_back else R.drawable.ic_menu), contentDescription = if (showHistory || showBroadcasts || showReports) "返回对话" else "历史会话", tint = SuyuanColors.text)
             }
             if (showHistory) Text("历史会话", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
-            if (!showHistory) {
+            if (showBroadcasts) {
+                Icon(painterResource(R.drawable.ic_campaign), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp).padding(start = 2.dp))
+                Text("广播消息", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            } else if (showReports) {
+                Icon(painterResource(R.drawable.ic_file), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(22.dp))
+                Text("报告成果", color = SuyuanColors.text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+            } else if (!showHistory) {
                 Box {
                     IconButton(onClick = onBroadcasts) {
-                        Icon(painterResource(R.drawable.ic_broadcast), contentDescription = "广播消息", tint = SuyuanColors.text)
+                        Icon(painterResource(R.drawable.ic_campaign), contentDescription = "广播消息", tint = SuyuanColors.text)
                     }
                     if (unreadBroadcastCount > 0) {
                         Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
+                    }
+                }
+                IconButton(onClick = onReports) {
+                    Box {
+                        Icon(painterResource(R.drawable.ic_file), contentDescription = "报告成果", tint = SuyuanColors.text)
+                        if (unreadReportCount > 0) Box(Modifier.size(8.dp).clip(CircleShape).background(SuyuanColors.error).align(androidx.compose.ui.Alignment.TopEnd))
                     }
                 }
             }
@@ -731,14 +762,7 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
             }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(painterResource(R.drawable.ic_back), contentDescription = "返回对话", tint = SuyuanColors.text)
-            }
-            Text("广播消息", color = SuyuanColors.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             if (state.broadcastMessages.any { !it.read }) {
                 TextButton(onClick = { viewModel.markAllBroadcastsRead() }) { Text("全部已读", color = SuyuanColors.primary, fontSize = 12.sp) }
             }
@@ -834,9 +858,57 @@ private fun BroadcastPanel(state: AppUiState, viewModel: AppViewModel, onBack: (
 }
 
 @Composable
-private fun EmptyChatState(loading: Boolean = false) {
+private fun ReportPanel(state: AppUiState, viewModel: AppViewModel) {
+    var reportType by rememberSaveable { mutableStateOf("") }
+    var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            OutlinedTextField(value = reportType, onValueChange = { reportType = it }, singleLine = true, label = { Text("报告类型") }, modifier = Modifier.weight(1f))
+            TextButton(onClick = { viewModel.refreshReports(reportType.trim().ifBlank { null }) }) { Text("筛选") }
+        }
+        if (state.reportLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp) }
+        } else if (state.reportError != null && state.reportResults.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text(state.reportError, color = SuyuanColors.error, fontSize = 14.sp) }
+        } else if (state.reportResults.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) { Text("暂无报告成果", color = SuyuanColors.secondaryText, fontSize = 15.sp) }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+                items(state.reportResults, key = { it.reportId }) { report ->
+                    val expanded = expandedId == report.reportId
+                    Surface(color = if (expanded) SuyuanColors.panel else Color.White, shape = RoundedCornerShape(12.dp), tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth().clickable { expandedId = if (expanded) null else report.reportId; viewModel.markReportRead(report) }) {
+                        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Icon(painterResource(R.drawable.ic_file), contentDescription = null, tint = SuyuanColors.primary, modifier = Modifier.size(18.dp))
+                                Text(report.title, color = SuyuanColors.text, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 7.dp).weight(1f))
+                                if (!report.read) Text("未读", color = SuyuanColors.primary, fontSize = 11.sp)
+                            }
+                            Text("${report.reportType} · ${report.generatedAt?.replace('T', ' ')?.take(16) ?: ""}", color = SuyuanColors.secondaryText, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
+                            if (expanded) {
+                                if (report.summary.isNotBlank()) MarkdownContent(report.summary, SuyuanColors.text)
+                                report.attachments.forEach { attachment -> AttachmentView(attachment, state, viewModel, LocalContext.current) }
+                            } else Text(report.summary.replace(Regex("\\s+"), " ").trim(), color = SuyuanColors.text, fontSize = 13.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(top = 7.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyChatState(loading: Boolean = false, mode: String = "expert", onModeSelected: (String) -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(top = 110.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-        Text(if (loading) "正在恢复会话" else "开始对话", color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+        Text(if (loading) "正在恢复会话" else modeTitle(mode), color = SuyuanColors.text, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+        Row(Modifier.padding(top = 22.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("query" to "问数生图", "knowledge" to "知识问答", "expert" to "专家模式").forEach { (key, label) ->
+                Surface(
+                    color = if (mode == key) SuyuanColors.primary.copy(alpha = .22f) else SuyuanColors.panel,
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.clickable { onModeSelected(key) },
+                ) { Text(label, color = if (mode == key) SuyuanColors.primary else SuyuanColors.text, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) }
+            }
+        }
         Text(
             if (loading) "正在加载最近的会话内容…" else "向溯源 Agent 描述你想完成的任务",
             color = SuyuanColors.secondaryText,
@@ -864,6 +936,12 @@ private fun ThinkingIndicator() {
             modifier = Modifier.padding(start = 7.dp),
         )
     }
+}
+
+private fun modeTitle(mode: String): String = when (mode) {
+    "query" -> "问数生图模式开始对话"
+    "knowledge" -> "知识问答模式开始对话"
+    else -> "专家模式开始对话"
 }
 
 @Composable
@@ -934,21 +1012,27 @@ private fun ChatMessageView(message: ChatMessage, state: AppUiState, viewModel: 
                             )
                         }
                         if (message.expanded) {
-                            Text(
-                                message.content,
-                                color = SuyuanColors.secondaryText,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp,
-                                modifier = Modifier.padding(start = 32.dp, end = 10.dp, bottom = 10.dp),
-                            )
+                            SelectionContainer {
+                                Text(
+                                    message.content,
+                                    color = SuyuanColors.secondaryText,
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp,
+                                    modifier = Modifier.padding(start = 32.dp, end = 10.dp, bottom = 10.dp),
+                                )
+                            }
                         }
                     }
                 }
                 "tool" -> {
-                    Text(message.content, color = SuyuanColors.secondaryText, fontSize = 12.sp)
+                    SelectionContainer {
+                        Text(message.content, color = SuyuanColors.secondaryText, fontSize = 12.sp)
+                    }
                     message.attachments.forEach { attachment -> AttachmentView(attachment, state, viewModel, context) }
                 }
-                "error" -> Text(message.content, color = SuyuanColors.error, fontSize = 13.sp, lineHeight = 19.sp)
+                "error" -> SelectionContainer {
+                    Text(message.content, color = SuyuanColors.error, fontSize = 13.sp, lineHeight = 19.sp)
+                }
                 else -> {
                     if (message.content.isNotBlank()) {
                         MarkdownContent(message.content, if (isUser) SuyuanColors.primary else SuyuanColors.text)
@@ -976,12 +1060,16 @@ private sealed class MarkdownBlock {
 
 @Composable
 private fun MarkdownContent(content: String, color: Color) {
-    parseMarkdownBlocks(content).forEach { block ->
-        when (block) {
-            is MarkdownBlock.Text -> if (block.value.isNotBlank()) {
-                Text(remember(block.value) { markdownToAnnotatedString(block.value) }, color = color, fontSize = 15.sp, lineHeight = 22.sp)
+    SelectionContainer {
+        Column {
+            parseMarkdownBlocks(content).forEach { block ->
+                when (block) {
+                    is MarkdownBlock.Text -> if (block.value.isNotBlank()) {
+                        Text(remember(block.value) { markdownToAnnotatedString(block.value) }, color = color, fontSize = 15.sp, lineHeight = 22.sp)
+                    }
+                    is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, color)
+                }
             }
-            is MarkdownBlock.Table -> MarkdownTable(block.headers, block.rows, color)
         }
     }
 }
@@ -1314,12 +1402,7 @@ private fun DocumentPreviewContent(
 ) {
     Column(Modifier.fillMaxSize()) {
         if (pdfBytes != null) {
-            val bitmap = remember(pdfBytes) { renderPdfFirstPage(context, pdfBytes)?.asImageBitmap() }
-            if (bitmap != null) {
-                ZoomableBitmapPreview(bitmap, attachment.filename)
-            } else {
-                Text("暂时无法渲染此文档", color = SuyuanColors.secondaryText, fontSize = 12.sp)
-            }
+            PdfDocumentPreview(pdfBytes, attachment.filename, context)
         } else if (attachment.mimeType.equals("text/html", ignoreCase = true) || attachment.filename.endsWith(".html", true) || attachment.filename.endsWith(".htm", true)) {
             AndroidView(
                 factory = {
@@ -1359,6 +1442,23 @@ private fun DocumentPreviewContent(
                 Text("下载")
             }
         }
+    }
+}
+
+@Composable
+private fun PdfDocumentPreview(bytes: ByteArray, filename: String, context: android.content.Context) {
+    val combinedBitmap by produceState<Bitmap?>(initialValue = null, key1 = bytes) {
+        value = withContext(Dispatchers.Default) { renderPdfLongImage(context, bytes) }
+    }
+    if (combinedBitmap == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = SuyuanColors.primary, strokeWidth = 2.dp)
+                Text("正在生成 PDF 预览…", color = SuyuanColors.secondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+            }
+        }
+    } else {
+        PdfLongImagePreview(combinedBitmap!!, filename)
     }
 }
 
@@ -1413,27 +1513,92 @@ private fun ZoomableBitmapPreview(
     }
 }
 
-private fun renderPdfFirstPage(context: android.content.Context, bytes: ByteArray): Bitmap? {
+private fun renderPdfLongImage(context: android.content.Context, bytes: ByteArray): Bitmap? {
     val file = runCatching {
         File.createTempFile("preview-", ".pdf", context.cacheDir).apply { writeBytes(bytes) }
     }.getOrNull() ?: return null
     return runCatching {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
             android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
-                if (renderer.pageCount == 0) {
-                    null
-                } else {
-                    renderer.openPage(0).use { page ->
-                        val scale = minOf(2f, 900f / page.width.toFloat())
-                        val bitmap = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
-                        bitmap.eraseColor(AndroidColor.WHITE)
-                        page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        bitmap
+                if (renderer.pageCount == 0) return@use null
+                val targetWidth = 900
+                val pageSizes = (0 until renderer.pageCount).map { index ->
+                    renderer.openPage(index).use { page ->
+                        val scale = minOf(2f, targetWidth.toFloat() / page.width.toFloat())
+                        Pair((page.width * scale).toInt(), (page.height * scale).toInt())
                     }
                 }
+                val width = pageSizes.maxOf { it.first }
+                val totalHeight = pageSizes.sumOf { it.second.toLong() }
+                // Android bitmaps have a practical maximum dimension; reduce
+                // the scale for unusually long PDFs before allocating the canvas.
+                val heightLimit = 30000L
+                val reduction = if (totalHeight > heightLimit) heightLimit.toDouble() / totalHeight else 1.0
+                val finalWidth = (width * reduction).toInt().coerceAtLeast(1)
+                val finalHeight = (totalHeight * reduction).toInt().coerceAtLeast(1)
+                val bitmap = Bitmap.createBitmap(finalWidth, finalHeight, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(AndroidColor.WHITE)
+                val canvas = Canvas(bitmap)
+                var top = 0f
+                (0 until renderer.pageCount).forEachIndexed { index, _ ->
+                    renderer.openPage(index).use { page ->
+                        val pageWidth = (pageSizes[index].first * reduction).toInt().coerceAtLeast(1)
+                        val pageHeight = (pageSizes[index].second * reduction).toInt().coerceAtLeast(1)
+                        val pageBitmap = Bitmap.createBitmap(pageWidth, pageHeight, Bitmap.Config.ARGB_8888)
+                        pageBitmap.eraseColor(AndroidColor.WHITE)
+                        page.render(pageBitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        canvas.drawBitmap(pageBitmap, ((finalWidth - pageWidth) / 2f), top, null)
+                        pageBitmap.recycle()
+                        top += pageHeight
+                    }
+                }
+                bitmap
             }
         }
     }.getOrNull().also { file.delete() }
+}
+
+@Composable
+private fun PdfLongImagePreview(bitmap: Bitmap, filename: String) {
+    var scale by remember(bitmap) { mutableFloatStateOf(1f) }
+    var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
+    val scrollState = rememberScrollState()
+    Column(
+        Modifier.fillMaxSize().verticalScroll(scrollState, enabled = scale <= 1.01f),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+    ) {
+        androidx.compose.foundation.Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = filename,
+            contentScale = ContentScale.FillWidth,
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                }
+                .pointerInput(bitmap) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.changes.none { it.pressed }) break
+                            // Leave one-finger movement unconsumed so the
+                            // parent verticalScroll can page through the PDF.
+                            if (event.changes.count { it.pressed } >= 2) {
+                                val nextScale = (scale * event.calculateZoom()).coerceIn(1f, 4f)
+                                scale = nextScale
+                                offset += event.calculatePan()
+                                if (scale <= 1.01f) offset = Offset.Zero
+                                event.changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                },
+        )
+    }
 }
 
 private fun saveImageToGallery(context: android.content.Context, bytes: ByteArray, filename: String): Boolean {

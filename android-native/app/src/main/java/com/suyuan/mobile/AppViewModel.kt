@@ -36,6 +36,7 @@ data class AppUiState(
     val accountId: String = "",
     val displayName: String = "",
     val sessionId: String? = null,
+    val mode: String = "expert",
     val sessions: List<SessionInfo> = emptyList(),
     val sessionsHasMore: Boolean = false,
     val sessionsLoadingMore: Boolean = false,
@@ -53,6 +54,10 @@ data class AppUiState(
     val broadcastNextCursor: String? = null,
     val broadcastHasMore: Boolean = false,
     val broadcastLoadingMore: Boolean = false,
+    val reportResults: List<ReportResult> = emptyList(),
+    val reportUnreadCount: Int = 0,
+    val reportLoading: Boolean = false,
+    val reportError: String? = null,
 ) {
     val loggedIn: Boolean get() = token.isNotBlank()
 }
@@ -61,6 +66,7 @@ private data class PendingTurn(
     val query: String,
     val attachments: List<UploadedAttachment>,
     val sessionId: String?,
+    val mode: String,
 )
 
 class AppViewModel(
@@ -80,12 +86,14 @@ class AppViewModel(
         val needsRefresh = refreshToken.isNotBlank() && store.expiresAt() <= (System.currentTimeMillis() / 1000L) + 60L
         if (needsRefresh) refreshSession(showError = false)
         else if (_state.value.loggedIn) {
-            refreshSessions()
+            refreshSessions(selectExisting = false)
             refreshBroadcasts()
         }
     }
 
     fun updateDraft(value: String) = _state.value.let { _state.value = it.copy(draft = value, error = null) }
+
+    fun selectMode(mode: String) { if (mode in setOf("query", "knowledge", "expert")) _state.value = _state.value.copy(mode = mode) }
 
     fun newConversation() {
         // Do not cancel an in-flight turn from the previous session. Its
@@ -243,7 +251,7 @@ class AppViewModel(
     private fun applyLoginResult(result: LoginResult) {
         store.save(result)
         _state.value = AppUiState(result.token, result.accountId, result.displayName, loading = false)
-        refreshSessions()
+        refreshSessions(selectExisting = false)
         refreshBroadcasts()
     }
 
@@ -287,7 +295,7 @@ class AppViewModel(
             attachments = emptyList(),
             messages = current.messages + userMessage,
         )
-        pendingTurns.addLast(PendingTurn(query, current.attachments.toList(), current.sessionId))
+        pendingTurns.addLast(PendingTurn(query, current.attachments.toList(), current.sessionId, current.mode))
         ensureStreamWorker()
     }
 
@@ -315,7 +323,7 @@ class AppViewModel(
         var answerId: String? = null
         var outputAttachments: List<UploadedAttachment> = emptyList()
         runCatching {
-            repository.stream(current.token, turn.query, turnSessionId, turn.attachments).collect { event ->
+            repository.stream(current.token, turn.query, turnSessionId, turn.attachments, turn.mode).collect { event ->
                 if (event.type == "start") {
                     val session = runCatching { org.json.JSONObject(event.data).optString("session_id") }.getOrNull()
                     if (!session.isNullOrBlank() && turnSessionId == null) {
@@ -810,7 +818,33 @@ class AppViewModel(
         }
     }
 
-    private fun refreshSessions() {
+    fun refreshReports(reportType: String? = null) {
+        val token = _state.value.token
+        if (token.isBlank() || _state.value.reportLoading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(reportLoading = true, reportError = null)
+            runCatching { repository.reports(token, reportType = reportType) }
+                .onSuccess { inbox -> _state.value = _state.value.copy(reportResults = inbox.reports, reportUnreadCount = inbox.unreadCount, reportLoading = false) }
+                .onFailure { _state.value = _state.value.copy(reportLoading = false, reportError = friendlyError(it)) }
+        }
+    }
+
+    fun markReportRead(report: ReportResult) {
+        if (report.read) return
+        viewModelScope.launch {
+            runCatching { repository.markReportRead(_state.value.token, report.reportId) }
+                .onSuccess { _state.value = _state.value.copy(reportResults = _state.value.reportResults.map { if (it.reportId == report.reportId) it.copy(read = true) else it }, reportUnreadCount = (_state.value.reportUnreadCount - 1).coerceAtLeast(0)) }
+        }
+    }
+
+    fun deleteReport(report: ReportResult) {
+        viewModelScope.launch {
+            runCatching { repository.deleteReport(_state.value.token, report.reportId) }
+                .onSuccess { _state.value = _state.value.copy(reportResults = _state.value.reportResults.filterNot { it.reportId == report.reportId }) }
+        }
+    }
+
+    private fun refreshSessions(selectExisting: Boolean = true) {
         val token = _state.value.token
         if (token.isBlank()) return
         viewModelScope.launch {
@@ -820,8 +854,11 @@ class AppViewModel(
                         it.sessionId.startsWith("broadcast_session_")
                     }
                     val current = _state.value
-                    if (conversationSessions.isEmpty()) {
+                    if (conversationSessions.isEmpty() || !selectExisting) {
                         _state.value = current.copy(sessions = emptyList(), sessionsHasMore = false, sessionId = null, loading = false)
+                        if (!selectExisting) {
+                            _state.value = current.copy(sessions = conversationSessions, sessionsHasMore = sessions.size >= SESSION_PAGE_SIZE, sessionId = null, messages = emptyList(), loading = false)
+                        }
                         return@onSuccess
                     }
 
