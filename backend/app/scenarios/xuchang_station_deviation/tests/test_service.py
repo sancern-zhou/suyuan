@@ -182,3 +182,87 @@ async def test_run_attaches_daily_pollution_source_features(tmp_path):
     assert features["sample_count"] == 3
     assert "classification" in features
     assert "minute pollutants" in features["granularity"]
+
+
+def _alert(station_id: str, pollutant: str) -> dict:
+    return {
+        "event_id": f"test-{station_id}-{pollutant.lower().replace('.', '')}",
+        "station_id": station_id,
+        "station_name": station_id,
+        "target_pollutant": pollutant,
+        "occurred_at": "2026-09-12T21:35:00+08:00",
+    }
+
+
+def test_no2_nox_pair_does_not_trigger_multifactor_table(tmp_path):
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    rows = [_row("a", 100), _row("b", 40), _row("c", 40)]
+
+    assert service.write_multifactor_table(
+        [_alert("a", "NO2"), _alert("a", "NOX")], rows) is None
+
+
+def test_distinct_pollutants_still_trigger_multifactor_table(tmp_path):
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    rows = [
+        {**_row("a", 41), "data_source": "hour", "data_time": datetime(2026, 9, 12, 20)},
+        {**_row("a", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)},
+        {**_row("b", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)},
+        {**_row("c", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)},
+    ]
+
+    path = service.write_multifactor_table(
+        [_alert("a", "NO2"), _alert("a", "SO2")], rows)
+
+    assert path is not None and path.exists()
+
+
+def test_multifactor_snapshot_pins_values_to_alert_slot():
+    rows = [
+        # 21:30 旧槽的 SO2 不应回退到告警槽 21:35 的表格里。
+        {**_row("a", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 30),
+         "so2": 5, "no2": 80},
+        # 告警槽内 SO2 与 PM2.5 无效（负值），NO2 正常。
+        {**_row("a", 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35),
+         "so2": -99, "pm25": -99, "no2": 100},
+        # PM2.5 只有小时源，取上一完整小时。
+        {**_row("a", 41), "data_source": "hour", "data_time": datetime(2026, 9, 12, 20)},
+    ]
+
+    snapshot = XuchangStationDeviationAlertService._multifactor_snapshot(
+        [_alert("a", "NO2"), _alert("a", "SO2")], rows)
+
+    slot_key, station_ids, names, latest, marked = snapshot
+    assert slot_key == datetime(2026, 9, 12, 21, 35)
+    assert "SO2" not in latest["a"]
+    assert latest["a"]["NO2"] == (datetime(2026, 9, 12, 21, 35), 100.0)
+    assert latest["a"]["PM2.5"] == (datetime(2026, 9, 12, 20), 41.0)
+
+
+def test_multifactor_snapshot_prefers_slot_pm25_over_previous_hour():
+    rows = [
+        {**_row("a", 41), "data_source": "hour", "data_time": datetime(2026, 9, 12, 20)},
+        {**_row("a", 52), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)},
+    ]
+
+    _, _, _, latest, _ = XuchangStationDeviationAlertService._multifactor_snapshot(
+        [_alert("a", "NO2"), _alert("a", "SO2")], rows)
+
+    assert latest["a"]["PM2.5"] == (datetime(2026, 9, 12, 21, 35), 52.0)
+
+
+@pytest.mark.asyncio
+async def test_run_no2_nox_episode_has_no_multifactor_table(tmp_path):
+    rows = []
+    for sid, no2_value in (("a", 100), ("b", 40), ("c", 40)):
+        row = {**_row(sid, 40), "data_source": "minute", "data_time": datetime(2026, 9, 12, 21, 35)}
+        row["no2"] = no2_value
+        rows.append(row)
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    service.load_station_rows = lambda timestamp: (rows, {"hour": 3, "minute": 3})
+
+    result = await service.run(datetime(2026, 9, 12, 21, 36))
+
+    pollutants = {a["target_pollutant"] for a in result["alerts"] if a["station_id"] == "a"}
+    assert pollutants == {"NO2", "NOX"}
+    assert all("multifactor_table_path" not in a for a in result["alerts"])

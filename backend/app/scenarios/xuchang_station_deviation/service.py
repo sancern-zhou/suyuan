@@ -161,6 +161,12 @@ def _has_mark(value: Any) -> bool:
     return value is not None and str(value).strip() != ""
 
 
+def _observed_indicator(pollutant: Any) -> str:
+    # NOX 筛查读的是 NO2 列，因子归并时与 NO2 视为同一种污染物。
+    name = str(pollutant or "")
+    return OBSERVED_INDICATORS.get(name, name)
+
+
 def _hour(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(minute=0, second=0, microsecond=0)
@@ -572,9 +578,66 @@ class XuchangStationDeviationAlertService:
         plt.close(fig)
         return path
 
+    @staticmethod
+    def _multifactor_snapshot(
+        alerts: list[dict[str, Any]], rows: list[dict[str, Any]],
+    ) -> tuple[datetime, list[str], dict[str, str], dict[str, dict[str, tuple[datetime, float]]], dict[str, dict[str, bool]]] | None:
+        """Collect per-station values pinned to the alert slot only.
+
+        Minute pollutants come from the alert five-minute slot; PM2.5 falls
+        back to the previous completed hour (its screening source).  Readings
+        outside the slot are ignored so a missing value renders as "—"
+        instead of silently showing stale data from earlier slots.
+        """
+        try:
+            alert_dt = datetime.fromisoformat(str(alerts[0].get("occurred_at") or ""))
+        except ValueError:
+            return None
+        if alert_dt.tzinfo is None:
+            alert_dt = alert_dt.replace(tzinfo=TZ_SHANGHAI)
+        slot_key = _slot(alert_dt, "minute").replace(tzinfo=None)
+        hour_key = slot_key.replace(minute=0) - timedelta(hours=1)
+        pollutants = ("PM2.5", "PM10", "SO2", "NO2", "CO", "O3")
+        fields = {name: POLLUTANT_COLUMNS[name] for name in pollutants}
+        station_ids = sorted({str(row.get("station_id") or "") for row in rows if row.get("station_id")})
+        names: dict[str, str] = {}
+        latest: dict[str, dict[str, tuple[datetime, float]]] = defaultdict(dict)
+        marked: dict[str, dict[str, bool]] = defaultdict(lambda: defaultdict(bool))
+        for row in rows:
+            sid = str(row.get("station_id") or "")
+            if not sid:
+                continue
+            names[sid] = str(row.get("name") or row.get("station_name") or names.get(sid) or "未命名站点")
+            timestamp = row.get("data_time")
+            if not isinstance(timestamp, datetime):
+                continue
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.astimezone(TZ_SHANGHAI).replace(tzinfo=None)
+            source = row.get("data_source")
+            if source == "minute":
+                in_slot = _slot(timestamp, "minute").replace(tzinfo=None) == slot_key
+            elif source == "hour":
+                in_slot = _hour(timestamp) == hour_key
+            else:
+                in_slot = False
+            if not in_slot:
+                continue
+            for pollutant, field in fields.items():
+                if source == "hour" and pollutant != "PM2.5":
+                    continue
+                value = _float(row.get(field))
+                if value is None:
+                    continue
+                previous = latest[sid].get(pollutant)
+                if previous is None or timestamp > previous[0]:
+                    latest[sid][pollutant] = (timestamp, value)
+                    marked[sid][pollutant] = _has_mark(row.get(f"{field}_mark"))
+        return slot_key, station_ids, names, latest, marked
+
     def write_multifactor_table(self, alerts: list[dict[str, Any]], rows: list[dict[str, Any]]) -> Path | None:
         """Render a compact six-pollutant table for a multi-factor episode."""
-        if len(alerts) < 2:
+        # NOX 与 NO2 共用同一监测列，按观测指标去重后再计数，避免伪多因子。
+        if len({_observed_indicator(a.get("target_pollutant")) for a in alerts}) < 2:
             return None
         try:
             import matplotlib
@@ -587,28 +650,14 @@ class XuchangStationDeviationAlertService:
         except Exception as exc:  # pragma: no cover
             logger.warning("xuchang_multifactor_table_unavailable", error=str(exc))
             return None
+        snapshot = self._multifactor_snapshot(alerts, rows)
+        if snapshot is None:
+            return None
+        slot_key, station_ids, names, latest, marked = snapshot
         pollutants = ("PM2.5", "PM10", "SO2", "NO2", "CO", "O3")
-        fields = {name: POLLUTANT_COLUMNS[name] for name in pollutants}
-        # The composition table is a city-wide monitoring snapshot.  Alerts
-        # determine which cells are highlighted, while every national-control
-        # station present in the loaded rows gets a row in the table.
-        station_ids = sorted({str(row.get("station_id") or "") for row in rows if row.get("station_id")})
-        names = {}
-        latest: dict[str, dict[str, tuple[datetime, float]]] = defaultdict(dict)
-        marked: dict[str, dict[str, bool]] = defaultdict(lambda: defaultdict(bool))
-        for row in rows:
-            sid = str(row.get("station_id") or "")
-            if not sid:
-                continue
-            names[sid] = str(row.get("name") or row.get("station_name") or names.get(sid) or "未命名站点")
-            timestamp = row.get("data_time")
-            if not isinstance(timestamp, datetime):
-                continue
-            for pollutant, field in fields.items():
-                value = _float(row.get(field))
-                if value is not None and (pollutant not in latest[sid] or timestamp > latest[sid][pollutant][0]):
-                    latest[sid][pollutant] = (timestamp, value)
-                    marked[sid][pollutant] = _has_mark(row.get(f"{field}_mark"))
+        # The composition table is a city-wide monitoring snapshot pinned to
+        # the alert slot. Alerts determine which cells are highlighted, while
+        # every national-control station with a slot reading keeps its row.
         station_ids = [sid for sid in station_ids if sid in latest]
         if not station_ids:
             return None
@@ -622,7 +671,7 @@ class XuchangStationDeviationAlertService:
         table = ax.table(cellText=cell_text, colLabels=["站点", *pollutants], cellLoc="center", loc="center",
                          colWidths=[0.22] + [0.13] * len(pollutants))
         table.auto_set_font_size(False); table.set_fontsize(10); table.scale(1, 1.6)
-        alerted = {(str(a.get("station_id")), str(a.get("target_pollutant"))) for a in alerts}
+        alerted = {(str(a.get("station_id")), _observed_indicator(a.get("target_pollutant"))) for a in alerts}
         for (row_index, col_index), cell in table.get_celld().items():
             cell.get_text().set_fontproperties(font)
             if row_index == 0:
@@ -635,7 +684,9 @@ class XuchangStationDeviationAlertService:
                 if marked[sid][pollutant]:
                     cell.get_text().set_color("#888888")
                     cell.get_text().set_fontstyle("italic")
-        ax.set_title("多因子污染物浓度综合表（红框为告警因子，灰色斜体*为带标识数据）", fontproperties=font, pad=16)
+        ax.set_title(
+            f"多因子污染物浓度综合表（{slot_key:%m-%d %H:%M} 快照，PM2.5 为上一小时值；红框为告警因子，灰色斜体*为带标识数据）",
+            fontproperties=font, pad=16)
         apply_font_to_figure(fig)
         event_id = alerts[0].get("event_id", "multifactor")
         path = self.output_root / "charts" / f"{event_id}-multifactor-table.png"
@@ -758,7 +809,8 @@ class XuchangStationDeviationAlertService:
             alerts_by_station[str(alert.get("station_id") or "")].append(alert)
         multifactor_paths = {
             sid: self.write_multifactor_table(items, rows)
-            for sid, items in alerts_by_station.items() if len(items) >= 2
+            for sid, items in alerts_by_station.items()
+            if len({_observed_indicator(a.get("target_pollutant")) for a in items}) >= 2
         }
         for alert in result["alerts"]:
             # Reuse the daily review's composition model. It selects minute
