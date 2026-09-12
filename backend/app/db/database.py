@@ -278,6 +278,8 @@ async def init_db():
     import app.knowledge_base.graph_build_models  # noqa: F401
     import app.boards.models  # noqa: F401
     import app.exam.models  # noqa: F401
+    import app.db.models.task_review_db  # noqa: F401
+    import app.db.models.smart_event_db  # noqa: F401
 
     async with engine.begin() as conn:
         dialect_name = getattr(getattr(conn, "dialect", None), "name", "")

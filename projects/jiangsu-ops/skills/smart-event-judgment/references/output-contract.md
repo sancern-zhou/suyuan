@@ -14,7 +14,7 @@
 - `review_basis`：本次判断依据。
 - `actions`：处置建议数组。
 - `evidence`：证据包或图表等文件，格式 `{"label":"证据说明","path":"已存在的数据目录文件路径"}`。
-- `data_impact`：有明确污染物数据处置建议时填写。每项包含 `pollutant`、`decision`、`basis`；需要时间区间时提供含时区且开始不晚于结束的 `start/end`。剔除建议额外提供 `boundary_sources`、`reasonableness_status` 和 `reasonableness_basis`。尚不能确定区间时用 `needs_evidence`，不要捏造时间。
+- 顶层 `data_impact`（数组，不是下文同名的影响结论字符串）：有明确污染物数据处置建议时填写。每项包含 `pollutant`、`decision`、`basis`；需要时间区间时提供含时区且开始不晚于结束的 `start/end`。剔除建议额外提供 `boundary_sources`、`reasonableness_status` 和 `reasonableness_basis`。尚不能确定区间时用 `needs_evidence`，不要捏造时间。
 
 ## 详情区块
 
@@ -33,12 +33,14 @@
 `station_series_analysis`、`regional_comparison_analysis`、`data_impact_assessment`、`logic_direction_check`。
 每项填写实际分析，包括本站时序、区域背景、受影响污染物与时段，以及事件与数据变化方向是否一致。
 
-主要与辅助证据标签可另建区块，沿用事件线索的展示文本，不能把线索名称直接当成最终事件类型。
+“证据标签”区块必须提供 `primary_evidence_tags`（主要证据）和 `supporting_evidence_tags`（辅助证据）。沿用实际线索的展示文本，多项用顿号分隔；没有支持证据填“无”，不能编造标签或把线索名称直接当成最终事件类型。
 
 ## 增量与反馈
 
-输入含 `continuity_context` 时，先读取上一轮结论与新增线索或现场反馈。输出覆盖全部已核验线索的新版完整结论，不丢弃历史事实。
+输入含 `continuity_context` 时，先读取上一轮结论与新增线索或现场反馈。输出覆盖全部已核验线索的新版完整结论，不丢弃历史事实。反馈触发的轮次以反馈确认的结论为基准重新选择事件类型并更新各字段，不得仅因证据缺口维持待定类型。
 
-新增线索场景在“连续性判断”区块中提供 `key="same_cause"`，`value` 为 `"true"` 或 `"false"`；说明同一原因延续或新原因的事实依据。不同原因的旧结论保留在审核版本历史中。反馈场景核验反馈对上一轮结论的补充和修正。
+新增线索场景在“连续性判断”区块中提供 `key="same_cause"`，`value` 为 `"true"`、`"false"` 或 `"待确认"`；另填 `continuity_basis` 说明同因、不同原因或无法确认的依据。同站点同自然日仍为一个事件。不同原因的旧结论保留在审核版本历史中。反馈场景核验反馈对上一轮结论的补充和修正。
 
 不输出连续性标记行，不声称已经归档、派单或恢复告警。只有通用工具返回 `success=true` 才能声称“已提交人工审核”。
+
+提交失败时根据工具返回的字段错误修正后重提，不声称已生成待办。仅允许字典中的固定类型；具体仪器名称放在 `title` 和分析中。四段分析中证据不足的项应说明已核验事实和缺口，不能用“正常”代替缺失数据。

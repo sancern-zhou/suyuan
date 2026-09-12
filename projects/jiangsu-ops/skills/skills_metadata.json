@@ -2,7 +2,11 @@
   "skills": {
     "fault-work-order-review": {
       "enabled": true,
-      "aliases": ["故障工单审核", "省中心工单审核", "工单审核闭环"],
+      "aliases": [
+        "故障工单审核",
+        "省中心工单审核",
+        "工单审核闭环"
+      ],
       "required_tools": [
         "read_file",
         "submit_task_review",
@@ -22,7 +26,10 @@
     },
     "ops-work-order-audit": {
       "enabled": true,
-      "aliases": ["运维工单审核", "工单审核"],
+      "aliases": [
+        "运维工单审核",
+        "工单审核"
+      ],
       "required_tools": [
         "read_file",
         "ops_audit_fetch_dataset",
@@ -35,7 +42,10 @@
     },
     "station-alarm-diagnosis": {
       "enabled": true,
-      "aliases": ["站点告警诊断", "站房故障诊断"],
+      "aliases": [
+        "站点告警诊断",
+        "站房故障诊断"
+      ],
       "required_tools": [
         "read_file",
         "jiangsu_fetch_station_data",
@@ -51,7 +61,11 @@
     },
     "smart-event-judgment": {
       "enabled": true,
-      "aliases": ["江苏智能事件研判", "智能事件AI研判", "告警事件研判"],
+      "aliases": [
+        "江苏智能事件研判",
+        "智能事件AI研判",
+        "告警事件研判"
+      ],
       "required_tools": [
         "read_file",
         "jiangsu_fetch_station_data",
@@ -63,6 +77,22 @@
         "jiangsu_fetch_qc_task_history",
         "jiangsu_fetch_qc_task_status",
         "jiangsu_fetch_qc_run_logs"
+      ]
+    },
+    "工单轨迹合理性分析": {
+      "enabled": true,
+      "aliases": [
+        "工单轨迹分析",
+        "轨迹合理性分析",
+        "签到轨迹分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "jiangsu_analyze_work_order_tracks",
+        "create_report_package",
+        "render_report_package",
+        "validate_report_package",
+        "submit_task_review"
       ]
     }
   }

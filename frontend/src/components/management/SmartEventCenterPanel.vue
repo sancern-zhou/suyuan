@@ -1,5 +1,5 @@
 <template>
-  <section class="smart-event-center" :class="{ 'detail-mode': viewMode !== 'list' }">
+  <section ref="rootRef" class="smart-event-center" :class="{ 'detail-mode': viewMode !== 'list', 'workbench-fit': workbenchActive }">
     <header class="panel-header">
       <div class="panel-title">
         <i class="title-mark"></i>
@@ -10,7 +10,7 @@
           <button type="button" :disabled="loading" @click="loadEvents"><span class="button-icon">↻</span>刷新</button>
           <button type="button" class="close" @click="$emit('close')">关闭</button>
         </template>
-        <button v-else type="button" class="header-back-button" @click="backToList">{{ viewMode === 'config' ? '返回列表' : '返回列表' }}</button>
+        <button v-else type="button" class="header-back-button" @click="backToList">返回列表</button>
       </div>
     </header>
 
@@ -19,6 +19,7 @@
         <div class="filter-row">
           <label><span>事件状态</span><select v-model="statusFilter" aria-label="状态筛选" @change="loadEvents()"><option value="">全部状态</option><option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option></select></label>
           <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选" @change="loadEvents()"><option value="">全部事件类型</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label v-if="levelOptions.length"><span>等级</span><select v-model="levelFilter" aria-label="等级筛选" @change="loadEvents()"><option value="">全部等级</option><option v-for="value in levelOptions" :key="value" :value="value">{{ value }}</option></select></label>
           <label class="keyword-filter"><span>关键词</span><input v-model="keyword" type="search" placeholder="事件编号、站点或事件名称" @keyup.enter="loadEvents" /></label>
           <button type="button" class="primary-button" :disabled="loading" @click="loadEvents">查询 <i class="search-icon" aria-hidden="true"></i></button>
           <button type="button" class="secondary-button" :disabled="loading" @click="resetFilters">重置 <span>↻</span></button>
@@ -52,12 +53,12 @@
                 <span v-if="event.pending_delta" class="delta-flag">新增线索待研判</span>
               </td>
               <td>{{ event.ai_event_type || event.event_type || '待研判' }}</td>
-              <td>{{ event.ai_data_impact || '待确认' }}</td>
+              <td>{{ displayDataImpact(event) }}</td>
               <td>{{ event.ai_suggested_level || '待研判' }}</td>
               <td>{{ event.site_name || event.site_id || '未知站点' }}</td>
-              <td>{{ formatTime(event.event_start_time) }}</td>
+              <td>{{ formatTime(event.latest_occurrence_time || event.event_start_time) }}</td>
               <td class="operation-cell">
-                <button type="button" class="ai-button" :disabled="event.archived || isAiBusy(event.event_id)" @click.stop="dispatchAiJudgment(event)">
+                <button v-if="!hasCompletedJudgment(event) || event.pending_delta" type="button" class="ai-button" :disabled="event.archived || isAiBusy(event.event_id)" @click.stop="dispatchAiJudgment(event)">
                   {{ isAiBusy(event.event_id) ? '研判中…' : 'AI研判' }}
                 </button>
                 <button type="button" class="detail-button" @click.stop="openDetail(event.event_id)">详情</button>
@@ -86,6 +87,19 @@
           <h4>事件合并</h4>
           <div class="config-row">
             <label>同日合并窗口（分钟）<input v-model.number="configDraft.event_merge_window_minutes" type="number" min="0" /></label>
+          </div>
+        </div>
+        <div class="config-section">
+          <h4>自动研判与回扫</h4>
+          <div class="config-row">
+            <label>自动 AI 研判<select v-model="configDraft.auto_ai_enabled"><option :value="true">开启</option><option :value="false">关闭</option></select></label>
+            <label>线索扫描周期（分钟）<input v-model.number="configDraft.schedule_interval_minutes" type="number" min="1" max="1440" /></label>
+            <label>延迟线索回扫（小时）<input v-model.number="configDraft.rescan_lookback_hours" type="number" min="1" max="168" /></label>
+            <label>证据刷新周期（分钟）<input v-model.number="configDraft.evidence_refresh_minutes" type="number" min="1" max="1440" /></label>
+            <label>每轮证据采集数<input v-model.number="configDraft.evidence_batch_size" type="number" min="1" max="1000" /></label>
+            <label>AI 最大并发数<input v-model.number="configDraft.ai_max_concurrency" type="number" min="1" max="10" /></label>
+            <label>失败后最多重试次数<input v-model.number="configDraft.ai_max_retries" type="number" min="0" max="10" /></label>
+            <label>首次重试等待（分钟）<input v-model.number="configDraft.ai_retry_delay_minutes" type="number" min="1" max="1440" /></label>
           </div>
         </div>
         <div class="config-section">
@@ -178,6 +192,16 @@
                     <div class="event-grid">
                       <div v-for="fact in eventFacts" :key="fact.label" class="event-grid-item"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>
                     </div>
+                    <section class="merged-alarm-content" aria-label="全部告警内容">
+                      <h4>告警内容<span class="alarm-count">（{{ detailAlarmRows.length }} 条）</span></h4>
+                      <ol v-if="detailAlarmRows.length">
+                        <li v-for="alarm in detailAlarmRows" :key="alarm.key">
+                          <div class="alarm-meta"><time>{{ formatTime(alarm.time) }}</time><strong>{{ alarm.type }}</strong></div>
+                          <p>{{ alarm.content }}</p>
+                        </li>
+                      </ol>
+                      <p v-else class="source-empty">暂无具体告警内容</p>
+                    </section>
                     <div v-if="detailTagChips.length" class="detail-tag-row" aria-label="线索标签集合">
                       <span class="detail-tag-title">线索标签</span>
                       <div class="tag-chip-wrap">
@@ -187,14 +211,23 @@
                   </template>
 
                   <section v-else-if="section.key === 'judgment'" class="special-panel judgment" aria-label="AI研判结果">
+                    <p v-if="selectedEvent.data_impact_conflict" class="delta-note" role="status">{{ selectedEvent.data_impact_conflict_note }}</p>
                     <template v-if="judgment?.final_response">
                       <div v-if="judgmentText" class="j-note"><MarkdownRenderer :content="judgmentText" :streaming="false" /></div>
+                      <details v-if="judgmentDetails.length" :key="selectedEvent.event_id" class="judgment-details">
+                        <summary>完整研判分析与依据</summary>
+                        <section v-for="item in judgmentDetails" :key="item.key">
+                          <h4>{{ item.label }}</h4>
+                          <MarkdownRenderer :content="item.value" :streaming="false" />
+                        </section>
+                      </details>
                     </template>
                     <p v-else class="muted">当前状态为{{ selectedEvent?.event_status || '未研判' }}：系统已完成线索归并和标签保留，AI 研判完成后将写入事件名称、事件类型、数据影响、事件等级和摘要说明。</p>
                     <div v-if="!selectedEvent?.archived" class="disposal-actions judgment-actions">
-                      <button type="button" class="disposal-button" :disabled="isAiBusy(String(selectedEvent?.event_id || ''))" @click="dispatchAiJudgment(selectedEvent)">
-                        {{ isAiBusy(String(selectedEvent?.event_id || '')) ? '研判中…' : (judgment?.final_response ? 'AI 重新研判' : '执行 AI 研判') }}
+                      <button v-if="!hasCompletedJudgment(selectedEvent) || selectedEvent?.pending_delta" type="button" class="disposal-button" :disabled="isAiBusy(String(selectedEvent?.event_id || ''))" @click="dispatchAiJudgment(selectedEvent)">
+                        {{ isAiBusy(String(selectedEvent?.event_id || '')) ? '研判中…' : (judgment?.final_response ? 'AI 增量研判' : '执行 AI 研判') }}
                       </button>
+                      <p v-else class="judgment-done-note">AI 研判已完成，不再提供手动研判入口；后续合并新线索或提交事件反馈时会自动发起增量研判。</p>
                     </div>
                     <div v-if="selectedEvent?.pending_delta" class="delta-note">本事件在上一轮研判后合并了 {{ (selectedEvent.pending_delta.clue_ids || []).length }} 条新线索，触发 AI 研判将进行增量研判。</div>
                     <div v-if="judgmentHistory.length" class="judgment-history">
@@ -211,8 +244,8 @@
 
                   <section v-else-if="section.key === 'disposal'" v-show="!selectedEvent.archived" class="special-panel confirmation" aria-label="处置操作">
                     <div class="disposal-actions">
-                      <button type="button" class="disposal-button primary" @click="openDispatchPage">派单处理</button>
-                      <button type="button" class="disposal-button" @click="openFeedbackDialog">事件反馈</button>
+                      <button type="button" class="disposal-button primary" :disabled="!['待复核', '已反馈'].includes(selectedEvent.event_status)" @click="openDispatchPage">派单处理</button>
+                      <button type="button" class="disposal-button" :disabled="!['待复核', '待反馈', '已反馈'].includes(selectedEvent.event_status)" @click="openFeedbackDialog">事件反馈</button>
                       <button type="button" class="disposal-button" @click="reviewDialogVisible = true" :disabled="!selectedEvent.review_id">审核与归档</button>
                     </div>
                     <div class="operation-history-block" aria-label="操作历史">
@@ -230,40 +263,48 @@
 
                   <section v-else-if="section.key === 'tasks'" class="special-panel task-section" aria-label="关联研判任务">
                     <button v-for="task in tasks" :key="task.task_id" type="button" class="task-card" @click="$emit('open-task', task)">
-                      <span><strong>{{ task.title || 'AI 研判任务' }}</strong><small>{{ task.status || '待执行' }}</small></span>
+                      <span><strong>{{ task.title || 'AI 研判任务' }}</strong><small>{{ task.status || '待执行' }}<template v-if="task.automatic_attempts"> · 已自动尝试 {{ task.automatic_attempts }} 次</template><template v-if="task.retry_exhausted"> · 已达重试上限，请人工处理</template><template v-else-if="task.next_retry_at"> · 下次重试 {{ formatTime(task.next_retry_at) }}</template></small></span>
                       <span class="task-arrow">进入任务 →</span>
                     </button>
                     <p v-if="!tasks.length" class="source-empty">暂无关联研判任务</p>
                   </section>
 
                   <template v-else>
-                    <p class="source-summary">{{ section.value?.summary || '尚未抓取该数据源' }}</p>
-                    <div class="source-meta"><span>记录数 {{ sourceRecordCount(section.value) }}</span><span v-if="section.value?.metadata?.time_range">{{ section.value.metadata.time_range.join(' ~ ') }}</span></div>
+                    <p v-if="section.key === 'instrument_status'" class="source-summary">目标污染物：{{ selectedEvent.evidence_package?.collection_policy?.instrument_target_pollutants?.join('、') || '未识别' }}</p>
+                    <p class="source-summary">{{ section.key === 'monitoring' ? '本站六项污染物小时监测数据' : section.key === 'video' ? `可预览图片 ${videoEvidenceRows(section).length} 张` : (section.value?.summary || '尚未抓取该数据源') }}</p>
+                    <div class="source-meta"><span>记录数 {{ section.key === 'monitoring' ? hourlyRecords.length : sourceRecordCount(section.value) }}</span><span v-if="section.value?.metadata?.time_range">{{ section.value.metadata.time_range.join(' ~ ') }}</span></div>
 
-                    <template v-if="section.key === 'monitoring'">
+                    <template v-if="section.key === 'video'">
+                      <div v-if="videoEvidenceRows(section).length" class="video-evidence-grid">
+                        <figure v-for="item in videoEvidenceRows(section)" :key="item.index" class="video-evidence-card">
+                          <img v-if="item.path && videoImageUrls[item.index]" :src="videoImageUrls[item.index]" :alt="`${item.row.title || '视频'}截图`" loading="lazy" @click="previewImageUrl = videoImageUrls[item.index]">
+                          <div v-else class="video-evidence-missing">暂无可预览图片</div>
+                          <figcaption><strong>{{ item.row.title || '视频线索' }}</strong><span>{{ formatTime(item.row.time) }}</span></figcaption>
+                        </figure>
+                      </div>
+                      <p v-else class="source-empty">暂无视频监控记录</p>
+                    </template>
+                    <template v-else-if="section.key === 'monitoring'">
                       <div class="monitoring-toolbar">
                         <div class="monitoring-overview">
-                          <div><span>小时数据</span><strong>{{ monitoringRows(section.value, 'station_hour').length }}</strong><small>条</small></div>
-                          <div><span>五分钟数据</span><strong>{{ monitoringRows(section.value, 'station_5minute').length }}</strong><small>条</small></div>
+                          <div><span>小时数据</span><strong>{{ hourlyRecords.length }}</strong><small>条</small></div>
                         </div>
                         <div class="view-toggle" role="group" aria-label="监测数据视图切换">
-                          <button type="button" :class="{ active: monitoringView === 'chart' }" aria-label="六参五分钟折线时序图" @click="monitoringView = 'chart'">折线图（五分钟）</button>
-                          <button type="button" :class="{ active: monitoringView === 'table' }" aria-label="监测数据表" @click="monitoringView = 'table'">数据表</button>
+                          <button type="button" :class="{ active: monitoringView === 'chart' }" :aria-pressed="monitoringView === 'chart'" title="六参小时折线时序图" aria-label="六参小时折线时序图" @click="monitoringView = 'chart'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2v12h12M4 10l3-4 3 2 4-5" /></svg>小时曲线</button>
+                          <button type="button" :class="{ active: monitoringView === 'table' }" :aria-pressed="monitoringView === 'table'" title="小时数据表" aria-label="监测数据表" @click="monitoringView = 'table'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM2 6h12M2 10h12M6 2v12" /></svg>小时数据表</button>
                         </div>
                       </div>
-                      <div v-if="monitoringView === 'chart'" class="minute-line-chart" aria-label="六参五分钟折线时序图">
-                        <div v-if="minuteChartOption" :ref="el => { minuteChartRef = el }" class="chart-canvas"></div>
-                        <p v-else class="source-empty">暂无五分钟监测数据，无法绘制时序图</p>
+                      <div v-if="monitoringView === 'chart'" class="minute-line-chart" aria-label="六参小时折线时序图">
+                        <div v-if="hourlyChartOption" :ref="el => { hourlyChartRef = el }" class="chart-canvas"></div>
+                        <p v-else class="source-empty">暂无小时监测数据，无法绘制时序图</p>
                       </div>
-                      <template v-else>
-                        <div v-for="kind in ['station_hour', 'station_5minute']" :key="kind" class="data-subsection">
-                          <h4>{{ kind === 'station_hour' ? '站点小时数据' : '站点五分钟数据' }}</h4>
-                          <div v-if="monitoringRows(section.value, kind).length" class="source-table-wrap">
-                            <table class="source-table"><thead><tr><th v-for="column in monitoringColumns" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in monitoringRows(section.value, kind).slice(0, 12)" :key="index"><td v-for="column in monitoringColumns" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
-                          </div>
-                          <p v-else class="source-empty">暂无{{ kind === 'station_hour' ? '小时' : '五分钟' }}监测数据</p>
+                      <div v-else class="data-subsection">
+                        <h4>站点小时数据</h4>
+                        <div v-if="hourlyRecords.length" class="source-table-wrap monitoring-table-wrap" tabindex="0" aria-label="完整小时监测数据表">
+                          <table class="source-table"><thead><tr><th v-for="column in monitoringColumns" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in hourlyRecords" :key="index"><td v-for="column in monitoringColumns" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
                         </div>
-                      </template>
+                        <p v-else class="source-empty">暂无小时监测数据</p>
+                      </div>
                       <div v-if="deltaChartOption" class="regional-delta-block" aria-label="区域差异柱状图">
                         <h4>区域差异（本站均值 − 区域均值，事件时段）</h4>
                         <div :ref="el => { deltaChartRef = el }" class="chart-canvas delta-canvas"></div>
@@ -271,8 +312,18 @@
                       </div>
                     </template>
 
-                    <div v-else-if="sourceRows(section).length" class="source-table-wrap">
-                      <table class="source-table"><thead><tr><th v-for="column in sourceColumns(section)" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in sourceRows(section).slice(0, 12)" :key="index"><td v-for="column in sourceColumns(section)" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
+                    <template v-else-if="section.key === 'weather'">
+                      <div class="minute-line-chart" aria-label="气象折线时序图">
+                        <div v-if="weatherChartOption" :ref="el => { weatherChartRef = el }" class="chart-canvas weather-chart-canvas"></div>
+                        <p v-else class="source-empty">暂无气象时序数据，无法绘制气象图</p>
+                      </div>
+                      <div v-if="sourceRows(section).length" class="source-table-wrap">
+                        <table class="source-table"><thead><tr><th v-for="column in sourceColumns(section)" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in (section.key === 'instrument_status' ? sourceRows(section) : sourceRows(section).slice(0, 12))" :key="index"><td v-for="column in sourceColumns(section)" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
+                      </div>
+                    </template>
+
+                    <div v-else-if="sourceRows(section).length" class="source-table-wrap" :class="{ 'monitoring-table-wrap': section.key === 'instrument_status' }">
+                      <table class="source-table"><thead><tr><th v-for="column in sourceColumns(section)" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in (section.key === 'instrument_status' ? sourceRows(section) : sourceRows(section).slice(0, 12))" :key="index"><td v-for="column in sourceColumns(section)" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
                     </div>
                     <p v-else class="source-empty">暂无{{ section.label }}数据</p>
                   </template>
@@ -322,14 +373,22 @@
           <TaskReviewPanel :review-id="selectedEvent.review_id" @updated="refreshSelectedReview" />
         </div>
       </div>
+      <div v-if="previewImageUrl" class="image-preview-overlay" role="dialog" aria-modal="true" aria-label="图片预览" @click.self="previewImageUrl = ''">
+        <button type="button" class="image-preview-close" aria-label="关闭图片预览" @click="previewImageUrl = ''">×</button>
+        <img :src="previewImageUrl" alt="放大预览" class="image-preview-image">
+      </div>
   </section>
 </template>
 
 <script setup>
+import { eventAlarmRows } from './jiangsuEventAlarms.js'
 import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
+import { jiangsuJudgmentDetails } from './jiangsuJudgmentPresentation.js'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { authFetch } from '@/auth/http'
 import * as echarts from 'echarts'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
+import { getTaskReview } from '@/services/taskReviewsApi.js'
 import {
   dispatchJiangsuSmartEventOrder,
   getJiangsuSmartEvent,
@@ -344,7 +403,8 @@ import {
 
 const props = defineProps({
   initialEventId: { type: String, default: '' },
-  workspaceCommand: { type: Object, default: null }
+  workspaceCommand: { type: Object, default: null },
+  category: { type: String, default: 'all' }
 })
 const emit = defineEmits(['close', 'open-task'])
 const events = ref([])
@@ -353,21 +413,26 @@ const currentPage = ref(1)
 const totalEvents = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil(totalEvents.value / PAGE_SIZE)))
 const listStats = ref({ total: 0, pending: 0, stations: 0 })
-const listFilters = ref({ statuses: [], types: [] })
+const listFilters = ref({ statuses: [], types: [], levels: [] })
 const activeQuery = ref({})
 const applyListPage = payload => {
   events.value = payload.events || []
   totalEvents.value = payload.total ?? events.value.length
   currentPage.value = payload.page || 1
   listStats.value = payload.stats || { total: totalEvents.value, pending: 0, stations: 0 }
-  listFilters.value = payload.filters || { statuses: [], types: [] }
+  listFilters.value = { statuses: [], types: [], levels: [], ...(payload.filters || {}) }
 }
 const selectedId = ref(props.initialEventId || '')
 const selectedEvent = ref(null)
+const reviewEvidence = ref([])
 const tasks = ref([])
 const keyword = ref('')
 const statusFilter = ref('')
 const typeFilter = ref('')
+const levelFilter = ref('')
+// AI 下发的列表时间范围（ISO 字符串），透传给列表查询；界面上通过重置清除
+const listStartTime = ref('')
+const listEndTime = ref('')
 const lastSync = ref(null)
 const loading = ref(false)
 const detailLoading = ref(false)
@@ -383,6 +448,8 @@ const feedbackText = ref('')
 const feedbackAttachmentNames = ref([])
 const dispatchOrder = ref({ type: '', assignee: '运维处置人员', title: '', description: '' })
 const viewMode = ref(props.initialEventId ? 'detail' : 'list')
+// 与详情区 <template v-else> 分支条件一致：仅固定详情工作台启用纵向撑满布局。
+const workbenchActive = computed(() => viewMode.value === 'detail' && !detailLoading.value && workspaceMode.value === 'detail' && Boolean(selectedEvent.value))
 const evidenceBusy = ref(false)
 const aiBusyIds = ref(new Set())
 const activeEvidenceKey = ref('event')
@@ -393,6 +460,7 @@ const judgmentRounds = computed(() => judgmentHistory.value.length + (judgment.v
 const eventConfig = ref(null)
 
 const judgmentText = computed(() => judgment.value?.final_response || '')
+const judgmentDetails = computed(() => jiangsuJudgmentDetails(selectedEvent.value?.ai_structured_judgment))
 const judgmentSummary = computed(() => judgment.value?.final_response || '')
 const loadEventConfig = async () => {
   try {
@@ -409,6 +477,15 @@ const configSaving = ref(false)
 const configSaveMessage = ref('')
 const configSaveOk = ref(false)
 const configDraft = ref({
+  auto_ai_enabled: true,
+  schedule_interval_minutes: 60,
+  rescan_lookback_hours: 24,
+  evidence_refresh_minutes: 60,
+  evidence_batch_size: 30,
+  ai_max_concurrency: 2,
+  ai_max_retries: 3,
+  ai_retry_delay_minutes: 5,
+
   event_merge_window_minutes: 60,
   station_missing_factor_threshold: 2,
   multi_instrument_threshold: 2,
@@ -431,6 +508,16 @@ const openConfig = async () => {
     const cfg = payload.config || {}
     const limits = cfg.pollutant_hour_limits || {}
     configDraft.value = {
+      ...cfg,
+      auto_ai_enabled: cfg.auto_ai_enabled ?? true,
+      schedule_interval_minutes: cfg.schedule_interval_minutes ?? 60,
+      rescan_lookback_hours: cfg.rescan_lookback_hours ?? 24,
+      evidence_refresh_minutes: cfg.evidence_refresh_minutes ?? 60,
+      evidence_batch_size: cfg.evidence_batch_size ?? 30,
+      ai_max_concurrency: cfg.ai_max_concurrency ?? 2,
+      ai_max_retries: cfg.ai_max_retries ?? 3,
+      ai_retry_delay_minutes: cfg.ai_retry_delay_minutes ?? 5,
+
       event_merge_window_minutes: cfg.event_merge_window_minutes ?? 60,
       station_missing_factor_threshold: cfg.station_missing_factor_threshold ?? 2,
       multi_instrument_threshold: cfg.multi_instrument_threshold ?? 2,
@@ -483,7 +570,15 @@ const aiDispatchDescription = computed(() => judgmentSummary.value || selectedEv
 const operationRecords = computed(() => Array.isArray(selectedEvent.value?.operation_records) ? selectedEvent.value.operation_records : [])
 const statusOptions = computed(() => listFilters.value.statuses)
 const typeOptions = computed(() => listFilters.value.types)
-const filteredEvents = computed(() => events.value)
+const levelOptions = computed(() => listFilters.value.levels || [])
+const CATEGORY_TYPES = {
+  'external-environment': ['疑似雾炮喷淋', '疑似人员进入采样区干扰操作', '疑似外界环境影响'],
+  'instrument-fault': ['疑似仪器故障', '疑似站房停电', '疑似公共系统异常', '疑似站房环境影响']
+}
+const filteredEvents = computed(() => {
+  const types = CATEGORY_TYPES[props.category]
+  return types ? events.value.filter(event => types.includes(event.ai_event_type || event.event_type)) : events.value
+})
 const pendingCount = computed(() => listStats.value.pending)
 const stationCount = computed(() => listStats.value.stations)
 const lastSyncTime = computed(() => formatTime(lastSync.value))
@@ -529,13 +624,17 @@ const hiddenTagCount = event => {
 const expandTags = id => { expandedTagIds.value = new Set(expandedTagIds.value).add(String(id)) }
 const detailTagChips = computed(() => tagChips(selectedEvent.value))
 const evidenceSourceEntries = computed(() => {
-  const labels = { monitoring: '本站监测数据', station_alarm: '站房设备报警', platform_alarm: '平台报警', acquisition_alarm: '数采报警', environment: '动力环境历史', qc_history: '质控操作记录', compliance: '运维工单检索', comparison: '片区小时对比', weather: '气象时序数据', instrument_status: '仪器状态', door: '门禁记录', video: '视频监控记录' }
+  const labels = { monitoring: '本站监测数据', station_alarm: '站房设备报警', acquisition_alarm: '数采报警', environment: '动力环境历史', qc_history: '质控操作记录', compliance: '运维工单检索', comparison: '片区小时对比', weather: '气象时序数据', instrument_status: '仪器状态', door: '门禁记录', video: '视频监控记录' }
   const packageData = selectedEvent.value?.evidence_package || {}
+  // 平台告警源已下线，存量旧证据包中的该源不再展示。
+  const hiddenSources = new Set(['platform_alarm', 'uploaded_workbook', 'video_clip'])
   const sources = packageData.sources || {}
   const gaps = Array.isArray(packageData.gaps) ? packageData.gaps : []
-  const entries = Object.entries(sources).map(([key, value], index) => ({ key, label: labels[key] || key, value, index: index + 1 }))
+  const entries = Object.entries(sources)
+    .filter(([key]) => !hiddenSources.has(key))
+    .map(([key, value], index) => ({ key, label: labels[key] || key, value, index: index + 1 }))
   gaps.forEach(gap => {
-    if (!gap?.source || entries.some(entry => entry.key === gap.source)) return
+    if (!gap?.source || hiddenSources.has(gap.source) || entries.some(entry => entry.key === gap.source)) return
     entries.push({
       key: gap.source,
       label: labels[gap.source] || gap.source,
@@ -551,16 +650,22 @@ const workbenchSections = computed(() => [
   { key: 'disposal', label: '处置操作', index: evidenceSourceEntries.value.length + 3, value: { status: selectedEvent.value?.archived ? 'success' : 'empty', success: Boolean(selectedEvent.value?.archived) } },
   { key: 'tasks', label: '关联任务', index: evidenceSourceEntries.value.length + 4, value: { status: tasks.value.length ? 'success' : 'empty', success: tasks.value.length > 0 } },
 ])
+const detailAlarmRows = computed(() => eventAlarmRows(selectedEvent.value))
+const displayDataImpact = event => ['有数据影响', '无数据影响'].includes(event?.ai_data_impact)
+  ? event.ai_data_impact : (event?.system_data_impact || '待确认')
 const eventFacts = computed(() => [
   { label: '站点名称', value: selectedEvent.value?.site_name || selectedEvent.value?.site_id || '-' },
-  { label: '发生时间', value: formatTime(selectedEvent.value?.event_start_time) },
+  { label: '发生时间', value: formatTime(selectedEvent.value?.latest_occurrence_time || selectedEvent.value?.event_start_time) },
+  { label: '事件起始时间', value: formatTime(selectedEvent.value?.event_start_time) },
+  { label: '事件结束时间', value: formatTime(selectedEvent.value?.event_end_time) },
   { label: '事件名称', value: selectedEvent.value?.event_name || selectedEvent.value?.initial_event_name || '-' },
   { label: '告警类型', value: selectedEvent.value?.source_alarm_rule_type || selectedEvent.value?.primary_clue_tag || '待识别' },
-  { label: '告警内容', value: selectedEvent.value?.alarm_content || '暂无具体告警内容' },
   { label: '线索数量', value: selectedEvent.value?.clue_count || detailTagChips.value.length || '-' },
   { label: 'AI事件类型', value: selectedEvent.value?.ai_event_type || '待研判' },
   { label: '处理状态', value: selectedEvent.value?.event_status || '未研判' },
-  { label: '数据影响', value: selectedEvent.value?.ai_data_impact || '待确认' },
+  { label: '数据影响', value: displayDataImpact(selectedEvent.value) },
+  { label: '系统数据影响初判', value: selectedEvent.value?.system_data_impact || '待确认' },
+  { label: 'AI 研判优先级', value: selectedEvent.value?.ai_task_priority === 'urgent' ? '紧急' : '普通' },
   { label: '建议等级', value: selectedEvent.value?.ai_suggested_level || '待研判' },
   { label: '研判轮次', value: judgmentRounds.value || '待研判' },
 ])
@@ -609,6 +714,7 @@ const sourceColumnDefinitions = {
     { key: 'windDirection', label: '风向' }, { key: 'pressure', label: '气压' },
   ],
   instrument_status: [
+    { key: 'pollutantName', label: '污染物' }, { key: 'dataResolution', label: '数据类型' },
     { key: 'timePoint', label: '时间' }, { key: 'statusName', label: '监测项' },
     { key: 'moniterValue', label: '监测值' }, { key: 'targetUnit', label: '单位' },
     { key: 'lowLimit', label: '下限' }, { key: 'topLimit', label: '上限' },
@@ -641,15 +747,36 @@ const sourceStatus = source => {
   if (source.status === 'success') return '已获取'
   if (source.success === true && !source.status) return '已获取'
   if (source.status === 'empty') return '无记录'
+  if (source.status === 'skipped') return '按条件跳过'
   if (source.status === 'unavailable') return '暂不可用'
   return source.status === 'partial' ? '部分获取' : '获取失败'
 }
-const sourceStatusClass = source => source?.status === 'success' || (source?.success === true && !source?.status) ? 'ok' : source?.status === 'empty' ? 'empty' : 'bad'
+const sourceStatusClass = source => source?.status === 'success' || (source?.success === true && !source?.status) ? 'ok' : (source?.status === 'empty' || source?.status === 'skipped') ? 'empty' : 'bad'
 const sourceRecordCount = source => {
   if (!source) return 0
   if (source.record_count != null) return source.record_count
   if (source.data?.station_hour?.record_count != null) return Number(source.data.station_hour.record_count || 0) + Number(source.data.station_5minute?.record_count || 0)
   return Array.isArray(source.data) ? source.data.length : 0
+}
+const videoEvidenceRows = section => {
+  const rows = sourceRows(section)
+  return rows.map((row, index) => {
+    const path = row?.image_path || row?.imagePath || row?.screenshot_path || row?.screenshotPath
+    const evidenceIndex = reviewEvidence.value.findIndex(item => {
+      const candidate = String(item?.path || '')
+      return path && candidate === String(path)
+    })
+    return { row, index, path, evidenceIndex }
+  }).filter(item => item.path)
+}
+const reviewEvidenceUrl = evidenceIndex => evidenceIndex >= 0 && selectedEvent.value?.review_id
+  ? `/api/task-reviews/${encodeURIComponent(selectedEvent.value.review_id)}/evidence/${evidenceIndex}` : ''
+const videoEvidenceUrl = item => item?.path && selectedEvent.value?.event_id
+  ? `/api/jiangsu/smart-events/${encodeURIComponent(selectedEvent.value.event_id)}/video-image` : ''
+const loadVideoImages = async eventId => {
+  videoImageUrls.value = {}
+  const response = await authFetch(`/api/jiangsu/smart-events/${encodeURIComponent(eventId)}/video-image`)
+  if (response.ok) videoImageUrls.value = { 0: URL.createObjectURL(await response.blob()) }
 }
 const normalizeQcRow = row => ({
   ...row,
@@ -659,6 +786,12 @@ const normalizeQcRow = row => ({
 const sourceRows = section => {
   const source = section?.value
   if (!source) return []
+  if (section.key === 'instrument_status') {
+    const rowsFor = data => Array.isArray(data) ? data : (data?.items || data?.list || data?.rows || data?.records || data?.data || [])
+    return [['five_minute', '五分钟'], ['hour', '小时']].flatMap(([key, label]) =>
+      rowsFor(source.data?.[key]).map(row => ({ ...row, pollutantName: row.pollutantName || row.pollutantCode || '-', dataResolution: label }))
+    )
+  }
   if (Array.isArray(source.data)) {
     let rows = source.data.flatMap(row => row?.result?.alarmLogs || row?.alarmLogs || [row])
     if (section.key === 'qc_history') rows = rows.map(normalizeQcRow)
@@ -673,7 +806,6 @@ const sourceRows = section => {
 const sourceColumns = source => {
   return sourceColumnDefinitions[source?.key] || []
 }
-const monitoringRows = (source, kind) => Array.isArray(source?.data?.[kind]?.data) ? source.data[kind].data : []
 const displayCell = (row, column) => {
   const value = row?.[column]
   if (value == null || value === '') return '-'
@@ -682,10 +814,12 @@ const displayCell = (row, column) => {
 }
 
 const monitoringView = ref('chart')
-const minuteChartRef = ref(null)
+const hourlyChartRef = ref(null)
 const deltaChartRef = ref(null)
-let minuteChartInstance = null
+const weatherChartRef = ref(null)
+let hourlyChartInstance = null
 let deltaChartInstance = null
+let weatherChartInstance = null
 const POLLUTANT_SERIES = [
   { key: 'pM10', label: 'PM10' },
   { key: 'pM2_5', label: 'PM2.5' },
@@ -704,18 +838,18 @@ const recordPollutant = (row, key) => {
   }
   return null
 }
-const minuteRecords = computed(() => {
-  const data = selectedEvent.value?.evidence_package?.sources?.monitoring?.data?.station_5minute?.data
-  return Array.isArray(data) ? data.filter(row => row && typeof row === 'object') : []
+const hourlyRecords = computed(() => {
+  const data = selectedEvent.value?.evidence_package?.sources?.monitoring?.data?.station_hour?.data
+  return Array.isArray(data) ? data.filter(row => row && typeof row === 'object').slice().sort((a, b) => String(a.timePoint || '').localeCompare(String(b.timePoint || ''))) : []
 })
-const minuteTimes = computed(() => [...new Set(minuteRecords.value.map(row => String(row.timePoint || '')).filter(Boolean))].sort())
-const minuteChartOption = computed(() => {
-  if (!minuteTimes.value.length) return null
+const hourlyTimes = computed(() => hourlyRecords.value.map(row => String(row.timePoint || '')))
+const hourlyChartOption = computed(() => {
+  if (!hourlyTimes.value.length) return null
   return {
     tooltip: { trigger: 'axis' },
     legend: { data: POLLUTANT_SERIES.map(item => item.label), top: 0 },
     grid: { left: 56, right: 24, top: 36, bottom: 56 },
-    xAxis: { type: 'category', data: minuteTimes.value, axisLabel: { formatter: value => String(value).slice(5, 16) } },
+    xAxis: { type: 'category', data: hourlyTimes.value, axisLabel: { formatter: value => String(value).slice(5, 16) } },
     yAxis: { type: 'value', name: '浓度' },
     series: POLLUTANT_SERIES.map(item => ({
       name: item.label,
@@ -723,10 +857,7 @@ const minuteChartOption = computed(() => {
       showSymbol: false,
       connectNulls: true,
       emphasis: { focus: 'series' },
-      data: minuteTimes.value.map(time => {
-        const row = minuteRecords.value.find(record => String(record.timePoint) === time)
-        return recordPollutant(row, item.key)
-      }),
+      data: hourlyRecords.value.map(row => recordPollutant(row, item.key)),
     })),
   }
 })
@@ -768,18 +899,105 @@ const ensureChart = (holder, instance, option) => {
   chart.setOption(option, true)
   return chart
 }
+const WEATHER_SERIES = [
+  { key: 'temperature', label: '气温(℃)' },
+  { key: 'humidity', label: '湿度(%)' },
+  { key: 'windSpeed', label: '风速(m/s)' },
+  { key: 'pressure', label: '气压(hPa)' },
+]
+const weatherRecords = computed(() => {
+  const data = selectedEvent.value?.evidence_package?.sources?.weather?.data
+  const rows = Array.isArray(data) ? data.filter(row => row && typeof row === 'object' && row.timePoint) : []
+  return [...rows].sort((a, b) => String(a.timePoint).localeCompare(String(b.timePoint)))
+})
+const weatherTimeKey = value => String(value || '').replace('T', ' ').slice(0, 19)
+const weatherValue = value => {
+  if (value == null || value === '' || Number(value) <= -99) return null
+  return Number.isFinite(Number(value)) ? Number(value) : null
+}
+const weatherChartOption = computed(() => {
+  if (!weatherRecords.value.length) return null
+  const times = [...new Set([...weatherRecords.value, ...hourlyRecords.value].map(row => weatherTimeKey(row.timePoint)))].filter(Boolean).sort()
+  const weatherByTime = new Map(weatherRecords.value.map(row => [weatherTimeKey(row.timePoint), row]))
+  const pollutantsByTime = new Map(hourlyRecords.value.map(row => [weatherTimeKey(row.timePoint), row]))
+  const series = POLLUTANT_SERIES.map(item => ({
+    name: item.label, type: 'line', xAxisIndex: 0, yAxisIndex: item.key === 'co' ? 1 : 0,
+    showSymbol: false, connectNulls: false,
+    data: times.map(time => recordPollutant(pollutantsByTime.get(time), item.key)),
+  }))
+  series.push(...WEATHER_SERIES.map(item => ({
+    name: item.label, type: 'line', xAxisIndex: item.key === 'windSpeed' ? 1 : 2,
+    yAxisIndex: { windSpeed: 2, temperature: 4, humidity: 5, pressure: 6 }[item.key],
+    showSymbol: false, connectNulls: false,
+    data: times.map(time => weatherValue(weatherByTime.get(time)?.[item.key])),
+  })))
+  series.push({
+    name: '风向', type: 'scatter', xAxisIndex: 1, yAxisIndex: 3,
+    symbol: 'path://M-1,12 L-1,-5 L-4,-5 L0,-12 L4,-5 L1,-5 L1,12 Z',
+    symbolSize: [8, 26], itemStyle: { color: '#1684f8' },
+    data: times.flatMap(time => {
+      const row = weatherByTime.get(time)
+      const direction = weatherValue(row?.windDirection ?? row?.windDirect)
+      if (direction == null || direction < 0 || direction > 360) return []
+      // 气象风向表示来向；箭头指向风吹去的方向。
+      return [{ value: [time, 0.5, direction], symbolRotate: 180 - direction }]
+    }),
+    encode: { x: 0, y: 1, tooltip: [2] },
+    tooltip: { valueFormatter: value => `${value}°（来向）` },
+  })
+  const xAxis = [0, 1, 2].map(gridIndex => ({
+    type: 'category', gridIndex, data: times, boundaryGap: false,
+    axisLabel: { hideOverlap: true, formatter: value => String(value).slice(5, 16) },
+  }))
+  return {
+    tooltip: { trigger: 'axis', confine: true },
+    legend: { type: 'scroll', top: 0, left: 0, right: 0 },
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    grid: [
+      { left: 64, right: 108, top: 56, height: 130 },
+      { left: 64, right: 108, top: 240, height: 90 },
+      { left: 64, right: 108, top: 386, height: 130 },
+    ],
+    xAxis,
+    yAxis: [
+      { type: 'value', gridIndex: 0, name: '浓度 (μg/m³)', scale: true },
+      { type: 'value', gridIndex: 0, name: 'CO (mg/m³)', position: 'right', scale: true, splitLine: { show: false } },
+      { type: 'value', gridIndex: 1, name: '风速 (m/s)', min: 0 },
+      { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 },
+      { type: 'value', gridIndex: 2, name: '气温 (℃)', scale: true },
+      { type: 'value', gridIndex: 2, name: '湿度 (%)', position: 'right', min: 0, max: 100, splitLine: { show: false } },
+      { type: 'value', gridIndex: 2, name: '气压 (hPa)', position: 'right', offset: 56, scale: true, splitLine: { show: false } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1, 2], filterMode: 'none' },
+      { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 8, height: 22, filterMode: 'none' },
+    ],
+    series,
+  }
+})
 const renderCharts = () => {
-  minuteChartInstance = ensureChart(minuteChartRef.value, minuteChartInstance, minuteChartOption.value)
+  hourlyChartInstance = ensureChart(hourlyChartRef.value, hourlyChartInstance, hourlyChartOption.value)
   deltaChartInstance = ensureChart(deltaChartRef.value, deltaChartInstance, deltaChartOption.value)
+  weatherChartInstance = ensureChart(weatherChartRef.value, weatherChartInstance, weatherChartOption.value)
 }
 const handleChartResize = () => {
-  minuteChartInstance?.resize()
+  hourlyChartInstance?.resize()
   deltaChartInstance?.resize()
+  weatherChartInstance?.resize()
 }
 // Function refs keep one DOM element inside the section v-for. Track mount/unmount
 // as well as data changes so returning to an unchanged event recreates its charts.
-watch([minuteChartRef, deltaChartRef, minuteChartOption, deltaChartOption], renderCharts, { flush: 'post' })
-onMounted(() => { window.addEventListener('resize', handleChartResize) })
+watch([hourlyChartRef, deltaChartRef, weatherChartRef, hourlyChartOption, deltaChartOption, weatherChartOption], renderCharts, { flush: 'post' })
+const rootRef = ref(null)
+let chartResizeObserver = null
+onMounted(() => {
+  window.addEventListener('resize', handleChartResize)
+  // 嵌入右侧面板时宽度可拖动调整，通过容器尺寸观察同步图表尺寸
+  if (typeof ResizeObserver !== 'undefined') {
+    chartResizeObserver = new ResizeObserver(handleChartResize)
+    if (rootRef.value) chartResizeObserver.observe(rootRef.value)
+  }
+})
 
 const formatTime = value => {
   if (!value) return '时间未知'
@@ -800,6 +1018,16 @@ const selectEvent = async eventId => {
     const detail = await getJiangsuSmartEvent(eventId, { refresh: false })
     if (requestId !== detailRequestId) return
     selectedEvent.value = detail.event || null
+    loadVideoImages(eventId).catch(() => {})
+    reviewEvidence.value = []
+    if (selectedEvent.value?.review_id) {
+      try {
+        const review = await getTaskReview(selectedEvent.value.review_id)
+        if (requestId === detailRequestId) reviewEvidence.value = review.review?.evidence || []
+      } catch (_) {
+        // The event evidence table remains usable when an old review was removed.
+      }
+    }
     if (eventConfig.value === null) loadEventConfig()
     actionMessage.value = ''
     workspaceMode.value = 'detail'
@@ -817,9 +1045,18 @@ const openDetail = async eventId => {
 
 const isAiBusy = eventId => aiBusyIds.value.has(String(eventId))
 
+// 与后端 _bucket_judged 对齐：已有 AI 研判结论的事件不再提供手动研判入口，避免误触发整轮重判。
+const hasCompletedJudgment = event => Boolean(event?.ai_judgment?.final_response)
+  || Boolean(event?.ai_event_type)
+  || ['AI 已研判', '待人工确认', '已确认'].includes(String(event?.event_status || ''))
+
 const dispatchAiJudgment = async event => {
   const eventId = String(event?.event_id || '')
   if (!eventId || isAiBusy(eventId)) return
+  if (hasCompletedJudgment(event) && !event.pending_delta) {
+    actionMessage.value = '该事件已完成 AI 研判，无需再次触发'
+    return
+  }
   aiBusyIds.value = new Set(aiBusyIds.value).add(eventId)
   error.value = ''
   actionMessage.value = ''
@@ -906,7 +1143,7 @@ const submitDispatchOrder = async () => {
     })
     selectedEvent.value = payload.event || selectedEvent.value
     dispatchDialogVisible.value = false
-    actionMessage.value = '派单已提交，事件进入派单处置中'
+    actionMessage.value = '派单已提交，事件进入待反馈'
   } catch (err) {
     actionMessage.value = err?.message || '派单提交失败'
   } finally {
@@ -970,24 +1207,22 @@ const loadEvents = async (page = 1) => {
   stopSyncWatch()
   loading.value = true
   error.value = ''
-  activeQuery.value = { page: Number.isInteger(page) ? page : 1, limit: PAGE_SIZE, status: statusFilter.value, event_type: typeFilter.value, keyword: keyword.value }
+  activeQuery.value = {
+    page: Number.isInteger(page) ? page : 1,
+    limit: PAGE_SIZE,
+    status: statusFilter.value,
+    event_type: typeFilter.value,
+    level: levelFilter.value,
+    keyword: keyword.value,
+    start_time: listStartTime.value || undefined,
+    end_time: listEndTime.value || undefined,
+  }
   try {
     const payload = await listJiangsuSmartEvents({ ...activeQuery.value, refresh: false })
     applyListPage(payload)
     lastSync.value = payload.source_metadata?.last_sync?.synced_at || null
     loading.value = false
     watchBackgroundSync()
-    const command = props.workspaceCommand
-    if (command?.type === 'compare_events' && Array.isArray(command.event_ids)) {
-      await compare(command.event_ids.map(String).filter(Boolean))
-    } else if (command?.type === 'show_operation_history' && command.event_id) {
-      workspaceMode.value = 'history'
-      await openDetail(String(command.event_id))
-      workspaceMode.value = 'history'
-    } else if (command?.type === 'focus_evidence' && command.event_id) {
-      evidenceFocus.value = command.focus || 'evidence'
-      await openDetail(String(command.event_id))
-    }
   } catch (err) {
     error.value = err?.message || '智能事件加载失败'
   } finally {
@@ -998,7 +1233,10 @@ const loadEvents = async (page = 1) => {
 const resetFilters = () => {
   statusFilter.value = ''
   typeFilter.value = ''
+  levelFilter.value = ''
   keyword.value = ''
+  listStartTime.value = ''
+  listEndTime.value = ''
   loadEvents()
 }
 
@@ -1040,19 +1278,50 @@ onUnmounted(() => {
   stopSyncWatch()
   detailRequestId += 1
   window.removeEventListener('resize', handleChartResize)
-  minuteChartInstance?.dispose()
+  chartResizeObserver?.disconnect()
+  chartResizeObserver = null
+  hourlyChartInstance?.dispose()
   deltaChartInstance?.dispose()
-  minuteChartInstance = null
+  hourlyChartInstance = null
   deltaChartInstance = null
 })
 
 watch(() => props.initialEventId, value => { if (value && value !== selectedId.value) openDetail(value) })
+
+// Agent 焦点值到固定详情证据分区的映射；未命中时不强行滚动
+const EVIDENCE_FOCUS_TARGETS = {
+  alarm: 'event',
+  event: 'event',
+  base: 'event',
+  timeline: 'monitoring',
+  monitoring: 'monitoring',
+  data: 'monitoring',
+  weather: 'weather',
+  video: 'video',
+  judgment: 'judgment',
+  ai: 'judgment',
+  impact: 'judgment',
+  disposal: 'disposal',
+  operation: 'disposal',
+  task: 'tasks',
+  tasks: 'tasks',
+}
+const focusEvidenceSection = async () => {
+  const focusKey = String(evidenceFocus.value || '').trim().toLowerCase()
+  if (!focusKey) return
+  const target = EVIDENCE_FOCUS_TARGETS[focusKey]
+  if (!target || !workbenchSections.value.some(section => section.key === target)) return
+  await nextTick()
+  scrollToEvidence(target)
+}
+
+// immediate：面板首次挂载（含右侧面板被 AI 命令打开）时也要消费当前命令
 watch(() => props.workspaceCommand, command => {
   if (!command) return
   if (command.type === 'open_event_detail' && command.event_id) openDetail(String(command.event_id))
   if (command.type === 'focus_evidence' && command.event_id) {
     evidenceFocus.value = command.focus || 'evidence'
-    openDetail(String(command.event_id))
+    openDetail(String(command.event_id)).then(focusEvidenceSection)
   }
   if (command.type === 'compare_events' && Array.isArray(command.event_ids)) compare(command.event_ids.map(String).filter(Boolean))
   if (command.type === 'show_operation_history' && command.event_id) {
@@ -1066,10 +1335,17 @@ watch(() => props.workspaceCommand, command => {
   }
   if (command.type === 'show_event_list' || command.type === 'filter_event_list') {
     viewMode.value = 'list'
-    keyword.value = command.filters?.keyword || command.query?.keyword || ''
+    workspaceMode.value = 'detail'
+    const filters = command.filters || {}
+    keyword.value = filters.keyword || command.query?.keyword || ''
+    statusFilter.value = filters.status || filters.event_status || ''
+    typeFilter.value = filters.event_type || filters.type || ''
+    levelFilter.value = filters.level || filters.ai_suggested_level || ''
+    listStartTime.value = filters.start_time || filters.startTime || ''
+    listEndTime.value = filters.end_time || filters.endTime || ''
     loadEvents()
   }
-}, { deep: true })
+}, { deep: true, immediate: true })
 loadEvents()
 </script>
 
@@ -1084,7 +1360,7 @@ loadEvents()
 
 /* Match the legacy AI judgment workbench: fixed index and continuously expanded evidence. */
 .evidence-detail-board { padding: 0; overflow: hidden; border: 1px solid #e5e9ef; border-radius: 4px; }
-.workbench-layout { display: flex; height: min(720px, calc(100vh - 230px)); min-height: 520px; overflow: hidden; background: #fff; }
+.workbench-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; background: #fff; }
 .workbench-index { flex: 0 0 190px; height: 100%; box-sizing: border-box; overflow-y: auto; border-right: 1px solid #e5e9ef; background: #f7f9fb; padding: 16px 10px; }
 .workbench-index-title { padding: 0 10px 12px; color: #1f2933; font-size: 15px; font-weight: 600; }
 .workbench-index-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; min-height: 38px; border: 0; border-left: 3px solid transparent; background: transparent; color: #4b5563; cursor: pointer; padding: 8px 8px 8px 10px; text-align: left; font-size: 12px; }
@@ -1168,10 +1444,12 @@ loadEvents()
 .event-table th { color: #333; background: #deefff; font-weight: 600; }
 .event-table td { color: #444; }.event-table th:last-child, .event-table td:last-child { border-right: 0; }
 .event-table tbody tr:hover { background: #eaf5ff; }
-.event-table th:nth-child(1) { width: 46px; }.event-table th:nth-child(2) { width: 72px; }.event-table th:nth-child(3) { width: 165px; }.event-table th:nth-child(4) { width: 100px; }.event-table th:nth-child(5) { width: 112px; }.event-table th:nth-child(6) { width: 82px; }.event-table th:nth-child(7) { width: 55px; }.event-table th:nth-child(8) { width: 105px; }.event-table th:nth-child(9) { width: 130px; }.event-table th:nth-child(10) { width: 130px; }
+.event-table th:nth-child(1) { width: 46px; }.event-table th:nth-child(2) { width: 72px; }.event-table th:nth-child(3) { width: 165px; }.event-table th:nth-child(4) { width: 100px; }.event-table th:nth-child(5) { width: 112px; }.event-table th:nth-child(6) { width: 82px; }.event-table th:nth-child(7) { width: 55px; }.event-table th:nth-child(8) { width: 105px; }.event-table th:nth-child(9) { width: 130px; }.event-table th:nth-child(10) { width: 150px; }
 .event-name { display: block; }.event-name strong { display: block; color: #333; font-weight: 500; }
 .table-chip { border-radius: 2px; padding: 3px 8px; }.table-chip.pending { color: #595959; background: #f0f0f0; }.table-chip.warning { color: #d46b08; background: #fff7e6; }.table-chip.success { color: #389e0d; background: #f6ffed; }
-.operation-cell { justify-content: center; flex-wrap: nowrap; }
+.operation-cell { display: table-cell; min-width: 130px; vertical-align: middle; text-align: center; white-space: nowrap; }
+.operation-cell button { white-space: nowrap; }
+.operation-cell .detail-button { margin-left: 6px; }
 .detail-button { border-color: #1684f8; border-radius: 2px; color: #1684f8; }.ai-button { border-color: #1684f8; border-radius: 2px; background: #1684f8; color: #fff; }
 .detail-toolbar { align-items: center; min-height: 44px; margin: 0; padding: 7px 12px; border-radius: 4px 4px 0 0; background: #fff; }
 .back-button { border-color: transparent; background: transparent; color: #1684f8; padding-left: 0; }
@@ -1180,7 +1458,7 @@ loadEvents()
 .detail-header h3 { font-size: 16px; font-weight: 600; }.detail-header p { margin: 5px 0 0; }
 .status-badge { border-radius: 2px; padding: 4px 9px; color: #d46b08; background: #fff7e6; }
 .evidence-detail-board { margin-top: 10px; border: 0; border-radius: 4px; }
-.workbench-layout { height: min(720px, calc(100vh - 232px)); min-height: 520px; background: #edf1f4; }
+.workbench-layout { flex: 1; min-height: 0; background: #edf1f4; }
 .workbench-index { flex-basis: 196px; padding: 0 8px 12px; border-right: 10px solid #edf1f4; background: #eaf5ff; }
 .workbench-index-title { margin: 0 -8px 8px; padding: 12px 16px; background: #4799e8; color: #fff; font-size: 14px; }
 .workbench-index-item { min-height: 40px; border: 0; border-radius: 0; padding: 8px 10px; color: #3d5366; }
@@ -1189,7 +1467,6 @@ loadEvents()
 .workbench-index-item.active .index-state { border-color: rgba(255,255,255,.7); }
 .index-state { box-sizing: border-box; border: 2px solid #eaf5ff; }
 .workbench-content { padding: 0 0 24px; background: #edf1f4; scroll-padding-top: 0; }
-.workbench-content::after { display: block; height: calc(100% - 54px); content: ''; }
 .workbench-section { margin: 0 0 10px; padding: 0 16px 16px; scroll-margin-top: 0; border: 0; background: #fff; }
 .workbench-section .special-panel { margin: 0; padding: 0; border: 0; background: transparent; }
 .disposal-actions { display: flex; gap: 10px; padding: 6px 0; }
@@ -1205,11 +1482,17 @@ loadEvents()
 .workbench-section-header h3 { color: #333; font-size: 14px; }
 .event-grid { border-color: #d9e2eb; }.event-grid-item { border-color: #d9e2eb; }
 .event-grid-item span { background: #f2f8fd; color: #555; }.event-grid-item strong { color: #333; }
-.source-summary { color: #666; }.source-meta { color: #888; }
+.source-summary { color: #666; }.source-meta { flex-wrap: wrap; color: #888; font-size: 12px; }
+.source-status { padding: 2px 8px; border-radius: 2px; font-size: 12px; line-height: 20px; }
+.source-status.ok { color: #389e0d; background: #f6ffed; }
+.source-status.empty { color: #595959; background: #f0f0f0; }
+.source-status.bad { color: #d4380d; background: #fff2e8; }
+.data-subsection h4, .regional-delta-block h4 { margin-bottom: 8px; color: #333; font-size: 14px; font-weight: 600; line-height: 20px; }
+.delta-legend { color: #888; font-size: 12px; }
 .monitoring-overview div { border: 0; border-left: 3px solid #1684f8; background: #f2f8fd; }
 .monitoring-overview strong { color: #1684f8; }
 .source-table-wrap { border-color: #d9e2eb; }
-.source-table th, .source-table td { height: 38px; box-sizing: border-box; border-color: #e8e8e8; text-align: center; }
+.source-table th, .source-table td { height: 38px; font-size: 12px; box-sizing: border-box; border-color: #e8e8e8; text-align: center; }
 .source-table th { color: #333; background: #deefff; font-weight: 600; }.source-table td { color: #444; }
 .judgment, .confirmation, .task-section { margin-top: 10px; padding: 0 16px 16px; border: 0; border-radius: 4px; background: #fff; }
 .section-title { min-height: 44px; margin: 0 -16px 12px; padding: 0 16px; border-bottom: 1px solid #e8e8e8; }
@@ -1228,10 +1511,22 @@ loadEvents()
 .tag-more { border: 0; background: transparent; color: #1684f8; cursor: pointer; padding: 2px 2px; font-size: 11px; }
 .tag-more:hover { text-decoration: underline; }
 .delta-flag { display: inline-block; margin-top: 4px; border-radius: 2px; padding: 2px 6px; background: #fff7e6; color: #d46b08; font-size: 11px; }
+.detail-tag-row .clue-chip { font-size: 12px; }
 .detail-tag-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid #e8e8e8; border-radius: 2px; background: #fbfdff; }
 .detail-tag-title { flex: none; color: #555; font-size: 12px; line-height: 22px; }
 .detail-tag-row .tag-chip-wrap { flex: 1; }
 .detail-tag-row .clue-chip { max-width: none; }
+.merged-alarm-content { margin-top: 12px; padding: 12px 16px; border: 1px solid #e8e8e8; border-radius: 2px; background: #fbfdff; }
+.merged-alarm-content h4 { margin: 0 0 10px; color: #333; font-size: 14px; font-weight: 600; line-height: 20px; }
+.merged-alarm-content h4 .alarm-count { color: #888; font-weight: 400; font-size: 12px; }
+.merged-alarm-content ol { margin: 0; padding-left: 18px; }
+.merged-alarm-content li { margin-bottom: 10px; color: #555; font-size: 12px; line-height: 1.7; }
+.merged-alarm-content li:last-child { margin-bottom: 0; }
+.merged-alarm-content .alarm-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.merged-alarm-content .alarm-meta time { color: #888; font-size: 11px; }
+.merged-alarm-content .alarm-meta strong { color: #1684f8; font-size: 12px; font-weight: 500; }
+.merged-alarm-content p { margin: 0; color: #555; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.merged-alarm-content .source-empty { min-height: auto; margin: 0; color: #8c8c8c; font-size: 12px; }
 .delta-note { margin-top: 10px; border-left: 3px solid #fa8c16; padding: 8px 10px; background: #fff7e6; color: #d46b08; font-size: 12px; }
 .judgment-history { margin-top: 12px; border-top: 1px dashed #e8e8e8; padding-top: 10px; }
 .judgment-history h4 { margin: 0 0 8px; color: #555; font-size: 12px; font-weight: 600; }
@@ -1270,6 +1565,7 @@ loadEvents()
 .param-snapshot dt { flex: none; color: #888; font-size: 12px; }
 .param-snapshot dd { margin: 0; color: #444; font-size: 12px; overflow-wrap: anywhere; }
 .judgment-actions { padding: 4px 0 8px; }
+.judgment-done-note { margin: 0; color: #888; font-size: 12px; line-height: 1.6; }
 .operation-history-block { margin-top: 14px; border-top: 1px dashed #e8e8e8; padding-top: 10px; }
 .operation-history-block h4 { margin: 0 0 8px; color: #555; font-size: 12px; font-weight: 600; }
 .operation-list { margin: 0; padding-left: 18px; }
@@ -1304,4 +1600,35 @@ loadEvents()
 .config-button { background: none; border: 1px solid #d9d9d9; border-radius: 2px; padding: 4px 10px; cursor: pointer; font-size: 12px; color: #555; }
 .config-button:hover { border-color: #1684f8; color: #1684f8; }
 @media (max-width: 860px) { .smart-event-center { padding: 8px; }.smart-event-center.detail-mode { width: calc(100% + 16px); height: calc(100% + 16px); margin: -8px; }.panel-header { margin: -8px -8px 8px; }.filter-row label, .filter-row .keyword-filter { width: 100%; min-width: 0; }.filter-row input, .filter-row select, .filter-row .keyword-filter input { flex: 1; width: auto; }.list-metrics { flex-wrap: wrap; }.list-metrics div { min-width: 50%; box-sizing: border-box; }.list-metrics > b { width: 100%; padding-bottom: 10px; }.workbench-index { border-right: 0; background: #eaf5ff; }.workbench-content { height: 620px; }.workbench-section { padding-right: 10px; padding-left: 10px; }.workbench-section-header { margin-right: -10px; margin-left: -10px; padding-right: 10px; padding-left: 10px; } }
+</style>
+
+<style scoped>
+.judgment-details { margin-top: 16px; border-top: 1px solid #dbe5ef; padding-top: 12px; }
+.judgment-details summary { cursor: pointer; font-weight: 600; }
+.judgment-details section { margin-top: 14px; overflow-wrap: anywhere; }
+/* Nogcon UI normalization */
+.smart-event-center { background: #f5f7fa; color: #1f2937; font-family: "Microsoft YaHei", sans-serif; }
+.panel-header { background: #fff; border-bottom-color: #e5e7eb; }
+.title-mark { background: #1677ff; }
+.event-list-page,.event-detail,.list-toolbar,.event-table-wrap,.detail-toolbar,.detail-header,.judgment,.confirmation,.task-section { border-radius: 8px; }
+.event-list-page,.event-detail,.list-toolbar,.event-table-wrap,.detail-toolbar,.detail-header,.judgment,.confirmation,.task-section { box-shadow: 0 1px 4px rgba(16,24,40,.06); }
+.primary-button,.header-back-button,.evidence-button,.ai-button { background: #1677ff !important; border-color: #1677ff !important; border-radius: 6px; }
+.secondary-button,.detail-button,.back-button { border-radius: 6px; }
+.event-table th,.source-table th { background: #f2f6fc; color: #344054; }
+.event-table td,.source-table td { color: #344054; }
+.workbench-index { background: #f8fafc; border-right-color: #e5e7eb; }
+.workbench-index-item.active { background: #eaf3ff; color: #0958d9; border-left: 3px solid #1677ff; }
+.workbench-content { background: #f5f7fa; }
+.workbench-section { border-radius: 8px; }
+
+/* 固定详情工作台纵向撑满容器，替代 100vh 固定高度：消除底部占位空白并最大化可视证据区。 */
+.smart-event-center.workbench-fit { display: flex; flex-direction: column; overflow: hidden; }
+.workbench-fit .event-detail { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.workbench-fit .evidence-detail-board { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.workbench-fit .workbench-layout { flex: 1; min-height: 0; }
+@media (max-width: 860px) {
+  .smart-event-center.workbench-fit { display: block; overflow: auto; }
+  .workbench-fit .event-detail, .workbench-fit .evidence-detail-board { display: block; flex: none; }
+  .workbench-fit .workbench-layout { display: block; flex: none; height: auto; min-height: 0; }
+}
 </style>

@@ -6,13 +6,39 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import require_admin_user, require_current_user
 from app.auth.models import CurrentUser
 from app.services.jiangsu_smart_event import JiangsuSmartEventService, SmartEventUpstreamError
+from app.utils.path_config import get_data_registry, is_path_within, resolve_agent_path
 
 router = APIRouter(prefix="/api/jiangsu/smart-events", tags=["jiangsu-smart-events"])
+
+
+@router.get("/{event_id}/video-image")
+async def video_image(event_id: str, user: CurrentUser = Depends(require_current_user)):
+    event = await JiangsuSmartEventService().get_event(event_id)
+    evidence = (event or {}).get("evidence", {})
+    video = evidence.get("video", {}) if isinstance(evidence, dict) else {}
+    # Video evidence is stored as a list of recognition rows.  Older records
+    # may use a metadata object, so accept both shapes and serve the first
+    # available source image for the event.
+    path_value = None
+    if isinstance(video, dict):
+        path_value = video.get("metadata", {}).get("image_path")
+    elif isinstance(video, list):
+        path_value = next(
+            (row.get("image_path") for row in video if isinstance(row, dict) and row.get("image_path")),
+            None,
+        )
+    if not path_value:
+        raise HTTPException(status_code=404, detail="video_image_not_found")
+    path = resolve_agent_path(path_value)
+    if not is_path_within(path, [get_data_registry()]) or not path.is_file():
+        raise HTTPException(status_code=404, detail="video_image_not_found")
+    return FileResponse(path, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
 
 
 class SmartEventConfigRequest(BaseModel):
@@ -56,6 +82,7 @@ async def list_smart_events(
     limit: int = Query(default=10, ge=1, le=100),
     page: int = Query(default=1, ge=1),
     event_type: str | None = Query(default=None),
+    level: str | None = Query(default=None),
     refresh: bool = Query(default=True),
     user: CurrentUser = Depends(require_current_user),
 ) -> dict:
@@ -72,6 +99,7 @@ async def list_smart_events(
             page=page,
             summary=True,
             event_type=event_type,
+            level=level,
         )
     except SmartEventUpstreamError as exc:
         raise HTTPException(status_code=502, detail={"code": "smart_event_upstream_unavailable", "message": str(exc)}) from exc
@@ -117,7 +145,11 @@ async def save_smart_event_config(
     user: CurrentUser = Depends(require_admin_user),
 ) -> dict:
     service = JiangsuSmartEventService()
-    return {"config": service.save_config(request.values), "source": "local_fallback", "platform_config_api": False}
+    try:
+        config = service.save_config(request.values)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"config": config, "source": "local_fallback", "platform_config_api": False}
 
 
 @router.get("/tasks")
@@ -214,7 +246,7 @@ async def dispatch_smart_event_order(
     request: SmartEventDispatchOrderRequest,
     user: CurrentUser = Depends(require_current_user),
 ) -> dict:
-    """提交派单处置：事件状态更新为“派单处置中”。"""
+    """提交派单处置：事件状态更新为“待反馈”。"""
     service = JiangsuSmartEventService()
     try:
         event = service.dispatch_order(

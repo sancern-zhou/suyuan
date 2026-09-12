@@ -347,7 +347,8 @@ export function usePanelManagement(store = null) {
       if (shouldShow && rightPanelVisible.value) {
         // 右侧面板展开时，自动折叠左侧面板
         leftSidebarCollapsed.value = true
-      } else if (!shouldShow) {
+      } else if (!shouldShow && activeRightTab.value !== 'smart-event') {
+        // 智能事件工作区不依赖会话资源，激活时保持右侧面板展开
         rightPanelVisible.value = false
         // 右侧面板收起时，恢复左侧面板
         leftSidebarCollapsed.value = false

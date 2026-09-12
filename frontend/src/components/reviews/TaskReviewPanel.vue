@@ -3,7 +3,7 @@
     <p v-if="loading">正在读取审核结果…</p>
     <p v-if="error" role="alert">{{ error }} <button @click="load">刷新</button></p>
     <template v-if="review">
-      <header><span>{{ review.category }} · {{ statuses[review.status] }}</span><h2>{{ review.title }}</h2><p>{{ review.summary }}</p></header>
+      <header><span>{{ review.category }} · {{ (jiangsuReviewStatus(review) || statuses[review.status]) }}</span><h2>{{ review.title }}</h2><p>{{ review.summary }}</p></header>
       <p>业务编号：{{ review.subject_id }} · {{ review.task_name }}</p>
       <section><h3>AI 结论：{{ decisions[review.decision] }}</h3><p class="text">{{ review.comment }}</p></section>
       <section v-if="review.review_basis.length"><h3>审核依据</h3><ul><li v-for="basis in review.review_basis" :key="basis">{{ basis }}</li></ul></section>
@@ -29,6 +29,7 @@
   </section>
 </template>
 <script setup>
+import { jiangsuReviewStatus } from '../management/jiangsuJudgmentPresentation.js'
 import { computed, ref, watch } from 'vue'
 import { getTaskReview, decideTaskReview, downloadReviewEvidence } from '@/services/taskReviewsApi.js'
 const props = defineProps({ reviewId: { type: String, required: true } })

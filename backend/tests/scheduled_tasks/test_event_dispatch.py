@@ -132,6 +132,9 @@ def event_task():
         target_user_ids=["admin-1", "admin-2"],
         timeout_seconds=300,
         prompt="report",
+        # Event dispatch tests exercise routing/claiming only; do not invoke
+        # the production LLM-backed history consolidation flow.
+        history_learning={"enabled": False},
     )
 
 

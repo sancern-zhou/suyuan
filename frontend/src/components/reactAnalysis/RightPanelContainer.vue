@@ -8,6 +8,7 @@
     <template v-if="assistantMode === 'report-generation-expert'">
       <div class="right-panel-tabs">
         <button
+          v-if="documentCount > 0"
           :class="['tab-btn', { active: activeTab === 'document' }]"
           @click="handleTabChange('document')"
         >
@@ -15,6 +16,7 @@
           <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
         </button>
         <button
+          v-if="fileProductCount > 0"
           :class="['tab-btn', { active: activeTab === 'files' }]"
           @click="handleTabChange('files')"
         >
@@ -54,10 +56,10 @@
       <!-- 标签页切换按钮 -->
       <div v-if="showTabs && !fullBleedVisualizationPanel" class="right-panel-tabs" role="tablist" aria-label="右侧资源面板">
         <button
+          v-if="visualizationAvailable"
           :class="['tab-btn', { active: activeTab === 'visualization' }]"
           role="tab"
           :aria-selected="activeTab === 'visualization'"
-          :disabled="!visualizationAvailable"
           @click="handleTabChange('visualization')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -71,10 +73,10 @@
           <span v-if="visualizationCount > 0" class="tab-count">{{ visualizationCount }}</span>
         </button>
         <button
+          v-if="documentAvailable"
           :class="['tab-btn', { active: activeTab === 'document' }]"
           role="tab"
           :aria-selected="activeTab === 'document'"
-          :disabled="!documentAvailable"
           @click="handleTabChange('document')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -87,10 +89,10 @@
           <span v-if="documentCount > 0" class="tab-count">{{ documentCount }}</span>
         </button>
         <button
+          v-if="knowledgeCount > 0"
           :class="['tab-btn', { active: activeTab === 'knowledge' }]"
           role="tab"
           :aria-selected="activeTab === 'knowledge'"
-          :disabled="knowledgeCount === 0"
           @click="handleTabChange('knowledge')"
         >
           <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -103,7 +105,7 @@
           <span v-if="knowledgeCount > 0" class="tab-count">{{ knowledgeCount }}</span>
         </button>
         <button
-          v-if="sessionId"
+          v-if="fileProductCount > 0"
           :class="['tab-btn', { active: activeTab === 'files' }]"
           role="tab"
           :aria-selected="activeTab === 'files'"
@@ -137,6 +139,15 @@
             <path d="M11 10.5h3" />
           </svg>
           <span>画板</span>
+        </button>
+        <button
+          v-if="smartEventAvailable"
+          :class="['tab-btn', { active: activeTab === 'smart-event' }]"
+          role="tab"
+          :aria-selected="activeTab === 'smart-event'"
+          @click="handleTabChange('smart-event')"
+        >
+          <span>智能事件</span>
         </button>
       </div>
 
@@ -179,6 +190,24 @@
         :error="humanFeedbackError"
         @submit="$emit('submit-human-feedback', $event)"
       />
+
+      <!-- 智能事件工作区：江苏事件任务 Agent 可在保留对话的同时调度该页面 -->
+      <TaskExecutionWorkspace
+        v-if="activeTab === 'smart-event' && taskWorkspaceTask"
+        class="panel-content"
+        :task="taskWorkspaceTask"
+        show-back-button
+        @close="$emit('close-smart-event-task')"
+        @restore-execution-session="$emit('restore-execution-session', $event)"
+      />
+        <SmartEventCenterPanel
+          v-else-if="activeTab === 'smart-event'"
+          :category="smartEventCategory"
+        class="panel-content"
+        :workspace-command="smartEventCommand"
+        @close="$emit('close-smart-event-panel')"
+        @open-task="$emit('open-smart-event-task-side', $event)"
+      />
     </template>
   </div>
 </template>
@@ -191,6 +220,9 @@ import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.
 import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
 import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
+import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel.vue'
+import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
+import { projectConfig } from '@/config/projectConfig.js'
 import { useSessionResourceStore } from '@/stores/sessionResourceStore.js'
 import { summarizeRightPanelResources } from '@/components/resources/rightPanelResources.js'
 import { buildResourceGroups, targetTab } from '@/services/resourceGroups.js'
@@ -253,6 +285,14 @@ const props = defineProps({
   humanFeedbackError: {
     type: String,
     default: ''
+  },
+  smartEventCommand: {
+    type: Object,
+    default: null
+  },
+  taskWorkspaceTask: {
+    type: Object,
+    default: null
   }
 })
 
@@ -261,7 +301,11 @@ const emit = defineEmits([
   'board-xml-change',
   'board-selection-change',
   'board-snapshot-confirm',
-  'submit-human-feedback'
+  'submit-human-feedback',
+  'open-smart-event-task-side',
+  'close-smart-event-panel',
+  'close-smart-event-task',
+  'restore-execution-session'
 ])
 const resourceStore = useSessionResourceStore()
 
@@ -311,9 +355,19 @@ const explicitTarget = computed(() => {
   return group ? targetTab(group) : ''
 })
 
+const smartEventAvailable = computed(() => (
+  projectConfig.project === 'jiangsu-ops' &&
+  ['smart_event_external', 'smart_event_instrument'].includes(props.assistantMode)
+))
+const smartEventCategory = computed(() => {
+  if (props.assistantMode === 'smart_event_external') return 'external-environment'
+  if (props.assistantMode === 'smart_event_instrument') return 'instrument-fault'
+  return 'all'
+})
+
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return props.sessionId || resourceSummary.value.hasArtifacts || props.knowledgePanelVisible || showBoardTab.value || feedbackAvailable.value
+  return visualizationAvailable.value || documentAvailable.value || fileProductCount.value > 0 || knowledgeCount.value > 0 || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -336,6 +390,8 @@ watch(
       || (tab === 'knowledge' && knowledge === 0)
       || (tab === 'board' && !board)
       || (tab === 'feedback' && !feedback)
+      || (tab === 'files' && fileProductCount.value === 0)
+      || (tab === 'smart-event' && !smartEventAvailable.value)
     )
     if (unavailable) emit('tab-change', 'files')
   },
@@ -451,5 +507,12 @@ const handleBoardSnapshotConfirm = (snapshot) => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* 右侧面板容器无 16px 内边距，取消智能事件详情页的全出血负边距 */
+.panel-content :deep(.smart-event-center.detail-mode) {
+  width: 100%;
+  height: 100%;
+  margin: 0;
 }
 </style>

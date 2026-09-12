@@ -321,6 +321,18 @@ export const AGENT_MODES = Object.freeze([
       'M17.5 16.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm2.1 5.1 1.9 1.9',
       'm12 3 1 2.1L15.2 6l-2.2.9L12 9l-.9-2.1L8.8 6l2.3-.9L12 3Z'
     ]
+  },
+  {
+    id: 'smart_event_external', name: '外界环境识别智能体', shortName: '外界环境',
+    description: '识别外界环境和人为行为对监测代表性的影响',
+    welcome: { description: '围绕雾炮、喷淋、人员进入和其他外界环境线索开展证据核验与处置。', features: ['查询环境事件', '核验气象与门禁证据', '反馈归档', '派单处置'], example: '查询今天的疑似外界环境影响事件' },
+    tags: ['外界环境', '事件处置'], accent: '#1677ff', iconPaths: ['M4 5h16v14H4z', 'M6 15c2-5 4-5 6 0s4 5 6 0']
+  },
+  {
+    id: 'smart_event_instrument', name: '仪器故障识别智能体', shortName: '仪器故障',
+    description: '识别仪器、供电、数采和站房运行故障',
+    welcome: { description: '围绕仪器状态、断数、供电、数采和站房环境线索开展故障核验与处置。', features: ['查询故障事件', '核验仪器与质控证据', '反馈归档', '派单维修'], example: '查询今天的疑似仪器故障事件并给出处置建议' },
+    tags: ['仪器故障', '事件处置'], accent: '#0f9d8a', iconPaths: ['M4 5h16v14H4z', 'M12 7v10M8 11h8M9 17h6']
   }
 ])
 
@@ -354,14 +366,15 @@ export const AGENT_SCENES = Object.freeze([
     id: 'operations',
     name: '运维管理',
     description: '运维处置与任务管理',
-    modeIds: ['ops', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis'],
+    modeIds: ['ops', 'smart_inspection', 'operations_analysis', 'device_control', 'station_fault_diagnosis', 'smart_event_external', 'smart_event_instrument'],
     iconPaths: [
       { tone: 'primary', d: 'm12 3.5 7.4 4.25v8.5L12 20.5l-7.4-4.25v-8.5L12 3.5Z' },
       { tone: 'primary', d: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z' },
       { tone: 'accent', d: 'm10.3 12 1.15 1.15 2.4-2.55' },
       { tone: 'accent', d: 'M18.3 5.2a1.1 1.1 0 1 0 2.2 0 1.1 1.1 0 0 0-2.2 0Z' }
     ]
-  }
+  },
+
 ])
 
 function mergeAgentMode(agent, override) {

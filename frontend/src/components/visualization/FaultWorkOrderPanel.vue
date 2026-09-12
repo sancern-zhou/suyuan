@@ -343,4 +343,13 @@ onMounted(async () => {
 .dismiss-button:hover { background: rgba(124, 166, 193, .12); }
 .confirm-button { padding: 8px 24px; border: 0; border-radius: 5px; background: linear-gradient(90deg, #0d7fd6, #1ac8ff); color: #fff; cursor: pointer; font-size: 12px; font-weight: 700; }
 .confirm-button:disabled, .dismiss-button:disabled { opacity: .5; cursor: not-allowed; }
+/* Nogcon UI: shared light workspace treatment */
+.work-order-panel { border-color: #d9e2eb; border-radius: 8px; background: #fff; color: #1f2937; font-family: "Microsoft YaHei", sans-serif; box-shadow: 0 2px 8px rgba(31,45,61,.08); }
+.panel-header { border-bottom: 1px solid #d9e2eb; background: #fff; }
+.eyebrow { color: #1677ff; }.heading strong { color: #1f2937; }.station-meta { color: #667085; }
+.system-grid > div { border-color: #e2e8f0; background: #f7f9fc; }.system-grid span { color: #667085; }.system-grid strong { color: #344054; }
+.field > span { color: #344054; }.field input,.field select,.field textarea { border-color: #d0d5dd; background: #fff; color: #1f2937; border-radius: 6px; }
+.form-section h4 { border-color: #e2e8f0; color: #1f2937; }.form-section h4::before { background: #1677ff; box-shadow: none; }
+.chip { border-color: #d0d5dd; background: #fff; color: #475467; border-radius: 6px; }.chip.checked { border-color: #1677ff; background: #eaf3ff; color: #0958d9; }
+.panel-footer { border-color: #e2e8f0; }.confirm-hint,.result-note { color: #667085; }.dismiss-button { border-color: #d0d5dd; color: #475467; background: #fff; }.confirm-button { border-radius: 6px; background: #1677ff; }
 </style>

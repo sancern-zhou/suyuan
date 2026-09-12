@@ -1,17 +1,18 @@
 """One validated hand-off and human-review lifecycle for all scheduled tasks."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime
 import fcntl
 import hashlib
 import json
 import os
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 from app.utils.path_config import get_data_registry
 
 
@@ -98,6 +99,17 @@ class HumanDecision(ReviewModel):
     intervals_confirmed: bool = False
 
 
+def _storage_mode() -> str:
+    configured = os.getenv("TASK_REVIEW_STORAGE")
+    if configured:
+        return configured.strip().lower()
+    return "db" if os.getenv("DATABASE_URL") else "file"
+
+
+def _use_db() -> bool:
+    return _storage_mode() != "file"
+
+
 def reviews_dir() -> Path:
     path = get_data_registry() / "task_reviews"
     path.mkdir(parents=True, exist_ok=True)
@@ -110,12 +122,237 @@ def review_path(review_id: str) -> Path:
     return reviews_dir() / f"{review_id}.json"
 
 
+@contextmanager
+def review_lock(review_id):
+    with review_path(review_id).with_suffix(".lock").open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def _parse_db_datetime(value):
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed
+
+
+def _db_record_to_dict(row) -> dict:
+    from datetime import datetime as _datetime
+
+    data = {}
+    for col in row.__table__.columns:
+        value = getattr(row, col.name)
+        data[col.name] = value.isoformat() if isinstance(value, _datetime) else value
+    return data
+
+
+async def _db_load_review(review_id: str) -> dict | None:
+    from sqlalchemy import select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        row = (await session.execute(
+            select(TaskReviewDB).where(TaskReviewDB.review_id == review_id)
+        )).scalar_one_or_none()
+        return _db_record_to_dict(row) if row else None
+
+
+async def _db_save_review(review: dict) -> None:
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    values = {
+        "review_id": review["review_id"],
+        "subject_id": review.get("subject_id", ""),
+        "event_id": review.get("event_id"),
+        "category": review.get("category", ""),
+        "title": review.get("title", ""),
+        "summary": review.get("summary", ""),
+        "decision": review.get("decision"),
+        "comment": review.get("comment"),
+        "status": review.get("status", "pending_review"),
+        "task_id": review.get("task_id", ""),
+        "task_name": review.get("task_name", ""),
+        "execution_id": review.get("execution_id", ""),
+        "version": review.get("version", 1),
+        "created_at": _parse_db_datetime(review.get("created_at")),
+        "updated_at": _parse_db_datetime(review.get("updated_at")),
+        "allow_archived_review_reopen": review.get("allow_archived_review_reopen", True),
+        "submission": review.get("submission", {}),
+        "checks": review.get("checks", []),
+        "data_impact": review.get("data_impact", []),
+        "evidence": review.get("evidence", []),
+        "actions": review.get("actions", []),
+        "sections": review.get("sections", []),
+        "review_basis": review.get("review_basis", []),
+        "human_decision": review.get("human_decision"),
+        "human_feedback": review.get("human_feedback"),
+        "operations": review.get("operations", []),
+        "history": review.get("history", []),
+    }
+    async with bridge_session() as session:
+        stmt = pg_insert(TaskReviewDB).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["review_id"],
+            set_={key: value for key, value in values.items() if key != "review_id"},
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+
+def _db_filters(pending_only: bool, category: str | None, task_id: str | None):
+    from sqlalchemy import and_
+
+    from app.db.models.task_review_db import TaskReviewDB
+
+    clauses = []
+    if pending_only:
+        clauses.append(TaskReviewDB.status.in_(["pending_review", "in_disposal"]))
+    if category is not None:
+        clauses.append(TaskReviewDB.category == category)
+    if task_id is not None:
+        clauses.append(TaskReviewDB.task_id == task_id)
+    return and_(*clauses) if clauses else None
+
+
+async def _db_list_reviews(*, pending_only=True, category=None, task_id=None, limit=None, offset=0) -> list[dict]:
+    from sqlalchemy import select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        stmt = select(TaskReviewDB).where(_db_filters(pending_only, category, task_id))
+        stmt = stmt.order_by(TaskReviewDB.updated_at.desc())
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_db_record_to_dict(row) for row in rows]
+
+
+async def _db_list_categories() -> list[str]:
+    from sqlalchemy import distinct, select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        rows = await session.execute(select(distinct(TaskReviewDB.category)))
+        return sorted({row[0] for row in rows if row[0]})
+
+
+async def _db_has_active_review(task_id: str, subject_id: str) -> bool:
+    from sqlalchemy import func, select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        stmt = select(func.count(TaskReviewDB.review_id)).where(
+            TaskReviewDB.task_id == task_id,
+            TaskReviewDB.subject_id == subject_id,
+            TaskReviewDB.status.in_(["pending_review", "in_disposal"]),
+        )
+        return (await session.execute(stmt)).scalar_one() > 0
+
+
+async def _db_pending_feedback_reviews() -> list[dict]:
+    from sqlalchemy import String, cast, or_, select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        clause = or_(
+            TaskReviewDB.human_feedback["status"].astext.in_(["pending", "failed"]),
+            cast(TaskReviewDB.history, String).like('%"status": "pending"%'),
+            cast(TaskReviewDB.history, String).like('%"status": "failed"%'),
+        )
+        stmt = select(TaskReviewDB).where(clause).order_by(TaskReviewDB.updated_at.asc()).limit(200)
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_db_record_to_dict(row) for row in rows]
+
+
+async def _db_list_reviews_payload(*, pending_only=True, category=None, limit=100, offset=0) -> dict:
+    from sqlalchemy import distinct, func, select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    async with bridge_session() as session:
+        where = _db_filters(pending_only, category, None)
+        total = (await session.execute(
+            select(func.count(TaskReviewDB.review_id)).where(where)
+        )).scalar_one()
+        stmt = select(TaskReviewDB).where(where).order_by(TaskReviewDB.updated_at.desc())
+        stmt = stmt.offset(offset).limit(limit)
+        rows = (await session.execute(stmt)).scalars().all()
+        categories = sorted({row[0] for row in (await session.execute(
+            select(distinct(TaskReviewDB.category))
+        )).all() if row[0]})
+    return {"records": [_db_record_to_dict(row) for row in rows],
+            "total": total, "categories": categories}
+
+
 def load_review(review_id):
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        return run_db(_db_load_review(review_id))
     path = review_path(review_id)
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
+async def _db_load_reviews(review_ids: list[str]) -> dict[str, dict]:
+    from sqlalchemy import select
+
+    from app.db.models.task_review_db import TaskReviewDB
+    from app.db.sync_bridge import bridge_session
+
+    if not review_ids:
+        return {}
+    async with bridge_session() as session:
+        rows = (await session.execute(
+            select(TaskReviewDB).where(TaskReviewDB.review_id.in_(review_ids))
+        )).scalars().all()
+        return {row.review_id: _db_record_to_dict(row) for row in rows}
+
+
+def load_reviews(review_ids) -> dict:
+    """Batch load review records by ID; missing IDs are absent from the result."""
+    ids = [rid for rid in review_ids if rid]
+    if not ids:
+        return {}
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        return run_db(_db_load_reviews(ids))
+    result = {}
+    for rid in ids:
+        try:
+            record = load_review(rid)
+        except ValueError:
+            continue
+        if record is not None:
+            result[rid] = record
+    return result
+
+
 def save_review(review):
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        run_db(_db_save_review(review))
+        return
     path = review_path(review["review_id"])
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
@@ -128,24 +365,58 @@ def save_review(review):
         temporary.unlink(missing_ok=True)
 
 
-@contextmanager
-def review_lock(review_id):
-    with review_path(review_id).with_suffix(".lock").open("a") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        yield
+def list_reviews(*, pending_only=True, category=None, task_id=None, limit=None, offset=0):
+    if _use_db():
+        from app.db.sync_bridge import run_db
 
-
-def list_reviews(*, pending_only=True, category=None, task_id=None):
+        return run_db(_db_list_reviews(pending_only=pending_only, category=category,
+                                       task_id=task_id, limit=limit, offset=offset))
     records = [json.loads(path.read_text(encoding="utf-8")) for path in reviews_dir().glob("*.json")]
-    return sorted((record for record in records
-                   if (not pending_only or record["status"] in {"pending_review", "in_disposal"})
-                   and (category is None or record["category"] == category)
-                   and (task_id is None or record["task_id"] == task_id)),
-                  key=lambda item: item["updated_at"], reverse=True)
+    filtered = sorted((record for record in records
+                       if (not pending_only or record["status"] in {"pending_review", "in_disposal"})
+                       and (category is None or record["category"] == category)
+                       and (task_id is None or record["task_id"] == task_id)),
+                      key=lambda item: item["updated_at"], reverse=True)
+    return filtered if limit is None else filtered[offset:offset + limit]
+
+
+def count_reviews(*, pending_only=True, category=None, task_id=None) -> int:
+    return len(list_reviews(pending_only=pending_only, category=category, task_id=task_id))
+
+
+def list_categories() -> list[str]:
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        return run_db(_db_list_categories())
+    return sorted({record["category"] for record in list_reviews(pending_only=False)})
+
+
+def list_reviews_payload(*, pending_only=True, category=None, limit=100, offset=0) -> dict:
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        return run_db(_db_list_reviews_payload(pending_only=pending_only, category=category,
+                                               limit=limit, offset=offset))
+    records = list_reviews(pending_only=pending_only, category=category)
+    return {"records": records[offset:offset + limit], "total": len(records), "categories": list_categories()}
 
 
 def has_active_review(task_id, subject_id):
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        return run_db(_db_has_active_review(task_id, subject_id))
     return any(record["subject_id"] == subject_id for record in list_reviews(task_id=task_id))
+
+
+def pending_feedback_reviews() -> list[dict]:
+    if _use_db():
+        from app.db.sync_bridge import run_db
+
+        return run_db(_db_pending_feedback_reviews())
+    return [json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(reviews_dir().glob("*.json"))]
 
 
 def submit_review(payload, source):
@@ -158,7 +429,7 @@ def submit_review(payload, source):
             raise ValueError("subject_id 和 event_id 必须匹配本次任务绑定的业务编号")
     from app.scheduled_tasks.models.review_requirements import validate_review_result
     validate_review_result(submission, source.get("result_requirements", []))
-    from app.utils.path_config import resolve_agent_path, is_path_within, format_agent_path
+    from app.utils.path_config import format_agent_path, is_path_within, resolve_agent_path
     for evidence in submission["evidence"]:
         path = resolve_agent_path(evidence["path"])
         if not is_path_within(path, [get_data_registry()]) or not path.is_file():

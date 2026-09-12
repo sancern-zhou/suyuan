@@ -10,3 +10,15 @@ test('all todo categories use submitted generic reviews and the shared detail pa
   assert.match(source, /eventTasks/)
   assert.doesNotMatch(source, /fetchRecentExecutions|listJiangsuSmartEventTasks|executionToAttentionItem|smartEventTasks/)
 })
+
+test('todo cards navigate to the review conversation and keep archive as a secondary action', async () => {
+  const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
+  assert.match(source, /emit\('select-review', task\)/)
+  assert.match(source, /'select-task', 'select-review'/)
+  assert.match(source, /task-action-secondary" @click="selectedReviewId = task\.review_id"/)
+  const view = await readFile(new URL('../../views/ReactAnalysisView.vue', import.meta.url), 'utf8')
+  assert.match(view, /@select-review="handleTodoReviewOpen"/)
+  assert.match(view, /suppressSmartEventCommandOpen/)
+  const layout = await readFile(new URL('../reactAnalysis/MainLayout.vue', import.meta.url), 'utf8')
+  assert.match(layout, /@select-review="\$emit\('select-review', \$event\)"/)
+})

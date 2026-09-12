@@ -448,9 +448,9 @@ class ScheduledTaskService:
                 if recovered:
                     existing = recovered
             if existing and force_retry and existing.status == "failed":
-                claim = self.claim_storage.retry_failed(task.task_id, event.event_id)
+                claim = self.claim_storage.retry_failed(task.task_id, event.event_id, event=event)
             elif existing and force_retry and existing.status == "succeeded":
-                claim = self.claim_storage.reopen(task.task_id, event.event_id)
+                claim = self.claim_storage.reopen(task.task_id, event.event_id, event=event)
             elif existing:
                 result.duplicate_task_ids.append(task.task_id)
                 continue

@@ -34,6 +34,16 @@ def _records(data: Any) -> list[Any]:
     return []
 
 
+def filter_instrument_rows(data: Any, pollutant_codes: list[str]) -> list[dict[str, Any]]:
+    def normalize(value):
+        return str(value or "").upper().replace("_", "").replace(".", "").strip()
+    allowed = {normalize(code) for code in pollutant_codes}
+    return [row for row in _records(data) if isinstance(row, dict) and any(
+        normalize(row.get(key)) in allowed
+        for key in ("pollutantCode", "pollutantName", "PollutantCode", "PollutantName")
+    )]
+
+
 def _result(*, endpoint: str, data: Any, query: dict[str, Any], success: bool = True, status: str | None = None, summary: str | None = None) -> dict[str, Any]:
     rows = _records(data)
     final_status = status or ("success" if rows else "empty")
@@ -86,8 +96,22 @@ class JiangsuLegacyEvidenceAdapter:
                     await asyncio.sleep(0.2 * (attempt + 1))
         raise last_error or RuntimeError("江苏旧审核接口请求失败")
 
+    async def instrument_alarm_logs(self, *, station_code: str, start_time: str, end_time: str) -> dict[str, Any]:
+        query = {"station_code": station_code, "start_time": start_time, "end_time": end_time}
+        try:
+            payload = await self._get_retry(self._ACQUISITION_ALARM_PATH, [
+                ("StationCode", station_code), ("TimePoint", start_time), ("TimePoint", end_time),
+            ])
+            data = _payload_data(payload)
+            if not isinstance(data, list):
+                raise ValueError("告警接口未返回完整记录列表")
+            return _result(endpoint=self._ACQUISITION_ALARM_PATH, data=data, query=query)
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "status": "failed", "summary": f"仪器告警查询失败：{exc}", "metadata": {"query": query}, "data": []}
+
     async def instrument_status(self, *, station_code: str, start_time: str, end_time: str, pollutant_codes: list[str] | None = None) -> dict[str, Any]:
-        query = {"station_code": station_code, "start_time": start_time, "end_time": end_time, "pollutant_codes": pollutant_codes or []}
+        pollutant_codes = pollutant_codes or ["PM10", "PM2_5", "PM2.5", "SO2", "NO2", "CO", "O3"]
+        query = {"station_code": station_code, "start_time": start_time, "end_time": end_time, "pollutant_codes": pollutant_codes}
         payload_base = {"Codes": [station_code], "PollutantCodes": pollutant_codes or [], "StartTime": start_time, "EndTime": end_time}
         try:
             minute_payload, hour_payload = await asyncio.gather(
@@ -95,14 +119,14 @@ class JiangsuLegacyEvidenceAdapter:
                 self._post_retry(self._INSTRUMENT_HOUR_PATH, payload_base),
             )
             minute_data, hour_data = _payload_data(minute_payload), _payload_data(hour_payload)
-            minute_rows, hour_rows = _records(minute_data), _records(hour_data)
+            minute_rows, hour_rows = filter_instrument_rows(minute_data, pollutant_codes), filter_instrument_rows(hour_data, pollutant_codes)
             return {
                 "success": True,
                 "status": "success" if minute_rows or hour_rows else "empty",
                 "summary": f"仪器状态查询完成：五分钟 {len(minute_rows)} 条，小时 {len(hour_rows)} 条。",
                 "metadata": {"source": "jiangsu_legacy_review_api", "endpoints": [self._INSTRUMENT_5MIN_PATH, self._INSTRUMENT_HOUR_PATH], "query": query, "record_count": len(minute_rows) + len(hour_rows), "queried_at": datetime.now().astimezone().isoformat()},
                 "record_count": len(minute_rows) + len(hour_rows),
-                "data": {"five_minute": minute_data, "hour": hour_data},
+                "data": {"five_minute": minute_rows, "hour": hour_rows},
             }
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "status": "failed", "summary": f"仪器状态查询失败：{exc}", "metadata": {"query": query}, "record_count": 0, "data": []}

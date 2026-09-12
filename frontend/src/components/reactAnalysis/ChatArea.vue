@@ -66,6 +66,7 @@
       :is-analyzing="isAnalyzing"
       :placeholder="inputPlaceholder"
       :assistant-mode="assistantMode"
+      :agent-mode="agentMode"
       :use-reranker="useReranker"
       @send="$emit('send', $event)"
       @pause="$emit('pause')"
@@ -320,6 +321,7 @@ defineExpose({
   overflow-y: auto;
   padding: 16px;
 }
+
 
 .read-only-notice {
   display: flex;

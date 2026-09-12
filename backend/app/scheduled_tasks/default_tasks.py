@@ -6,12 +6,13 @@ from collections.abc import Iterable
 
 from pydantic import ValidationError
 
-from app.scheduled_tasks.models import ScheduledTask, TriggerType, WorkspaceEntry
+from app.scheduled_tasks.models import ScheduledTask, ScheduleType, TriggerType, WorkspaceEntry
 
 
 JIANGSU_STATION_FAULT_TASK_ID = "jiangsu_station_fault_diagnosis"
 JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID = "jiangsu_fault_work_order_review"
 JIANGSU_SMART_EVENT_TASK_ID = "jiangsu_smart_event_ai_judgment"
+JIANGSU_NETWORK_INSPECTION_TASK_ID = "jiangsu_network_inspection_watch"
 JIANGSU_SMART_EVENT_LEGACY_TASK_IDS = {
     "jiangsu_smart_event_power_alarm",
     "jiangsu_smart_event_network_alarm",
@@ -54,18 +55,26 @@ JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
     "自动剔除或修改监测数据。"
 )
 
+JIANGSU_NETWORK_INSPECTION_PROMPT = (
+    "执行江苏全网运维巡检值守任务。调用 jiangsu_network_inspection_workflow，period 使用 day；"
+    "根据工作流返回的 conclusion 和 issues 调用 submit_task_review 生成一张人工待办。"
+    "category 固定填写‘运维值守’，subject_id 固定为‘网络巡检-{YYYY-MM-DD}’，同一执行只提交一次。"
+    "title 使用‘江苏全网巡检值守’，summary 填工作流 200-300 字短结论，comment 填结论和问题清单；"
+    "checks 至少包含巡检覆盖、异常站点和数据完整性三项，evidence 仅引用真实数据目录文件（如无文件则不填）。"
+    "本任务只读，不创建工单、不关闭告警、不执行设备控制；结论仅代表自动巡检结果，需人工确认现场情况。"
+ )
+
 
 def _smart_event_task_prompt(event_type_dictionary: list[str] | None = None) -> str:
     base = (
-        "完成本次江苏智能事件研判。告警类型只是线索，先读证据包并核验事实，再判断最终事件类型、数据影响、等级和处置建议。"
-        "按 smart-event-judgment Skill 的 output-contract.md 调用 submit_task_review 提交结构化结果。"
-        "subject_id 和 event_id 均填 smart_event.event_id，category 填智能事件。"
-        "提交成功才生成待办；最终文字回复不参与系统回填。"
-        "有数据影响时，在 sections 中完整填写本站时序、区域背景、数据影响判断、事件与数据逻辑方向校验四段分析。"
-        "存在 continuity_context 时先核验新增线索和现场反馈，提交覆盖全部已核验事实的完整结论；"
-        "连续性判断写入 sections 的 same_cause 字段，不输出文本标记行。"
-        "任务记忆和案例只能形成待核验假设，不能替代本次证据。"
-        "不得自动关闭告警、派单、修改监测数据或执行设备控制。"
+        "完成本次江苏智能事件研判，按 smart-event-judgment Skill 核验完整证据包，判断最终事件类型并提交结果。"
+        "事件始终按同站点、同自然日归并；发生时间显示最新线索，事件起止取最早、最晚线索。"
+        "按 output-contract.md 调用 submit_task_review，subject_id 和 event_id 均填 smart_event.event_id，category 填智能事件。"
+        "所有结论（含 P3 和待确认）均须提交；最终回复不参与系统回填。"
+        "system_data_impact 是系统初判，ai_task_priority 仅用于调度；冲突时说明证据。"
+        "不得把超限或取数失败直接当成数据异常。"
+        "有数据影响必须提交四段分析，增量轮次提交覆盖全部事实的完整结论及连续性依据。"
+        "任务记忆只能形成待核验假设，不得自动关闭告警、派单、归档、修改数据或控制设备。"
     )
     if event_type_dictionary:
         dictionary_text = "、".join(event_type_dictionary)
@@ -87,6 +96,8 @@ def build_jiangsu_smart_event_task(event_type_dictionary: list[str] | None = Non
             pass
     from app.services.jiangsu_smart_event import AI_EVENT_TYPES
     return ScheduledTask(
+        allow_archived_review_reopen=False,
+        review_subject_attribute="smart_event_id",
         result_requirements=[
             _result_field("title", "事件名称"),
             _result_field("summary", "研判结论"),
@@ -94,6 +105,16 @@ def build_jiangsu_smart_event_task(event_type_dictionary: list[str] | None = Non
             _result_field("sections.suggested_level", "建议等级", ["P0", "P1", "P2", "P3", "待确认"]),
             _result_field("sections.data_impact", "数据影响", ["有数据影响", "无数据影响", "待确认"]),
             _result_field("sections.compliance_explanation_result", "合规解释", ["完全解释", "部分解释", "不能解释", "无合规记录"]),
+            _result_field("sections.primary_evidence_tags", "主要证据标签"),
+            _result_field("sections.supporting_evidence_tags", "辅助证据标签"),
+            {"field": "sections.same_cause", "label": "连续性判断", "required": False,
+             "allowed_values": ["true", "false", "待确认"]},
+            *[{**_result_field("sections." + key, label),
+               "required_when": {"sections.data_impact": "有数据影响"}}
+              for key, label in [("station_series_analysis", "本站时序"),
+                                 ("regional_comparison_analysis", "区域背景"),
+                                 ("data_impact_assessment", "数据影响判断"),
+                                 ("logic_direction_check", "事件与数据逻辑方向校验")]],
         ],
         task_id=JIANGSU_SMART_EVENT_TASK_ID,
         name="江苏智能事件AI研判",
@@ -186,6 +207,35 @@ DEFAULT_TASK_FACTORIES = {
 DEFAULT_TASK_FACTORIES[JIANGSU_SMART_EVENT_TASK_ID] = build_jiangsu_smart_event_task
 
 
+def build_jiangsu_network_inspection_task() -> ScheduledTask:
+    return ScheduledTask(
+        task_id=JIANGSU_NETWORK_INSPECTION_TASK_ID,
+        name="江苏全网巡检值守",
+        description="每日汇总站房巡检异常，生成运维值守短结论和问题清单",
+        execution_mode="custom",
+        tool_names=["jiangsu_network_inspection_workflow", "submit_task_review"],
+        schedule_type=ScheduleType.DAILY_8AM,
+        hour=8,
+        minute=0,
+        prompt=JIANGSU_NETWORK_INSPECTION_PROMPT,
+        timeout_seconds=600,
+        created_by="project-default",
+        owner_user_id="system",
+        owner_username="ops-watch-agent",
+        owner_display_name="运维值守智能体",
+        tags=["江苏", "运维值守", "全网巡检", "只读"],
+        workspace_entry=WorkspaceEntry(enabled=True, title="运维值守"),
+    )
+
+
+DEFAULT_TASK_FACTORIES[JIANGSU_NETWORK_INSPECTION_TASK_ID] = build_jiangsu_network_inspection_task
+JIANGSU_TRACK_MONTHLY_TASK_ID = "jiangsu_work_order_track_monthly_review"
+def build_jiangsu_track_monthly_task() -> ScheduledTask:
+    return ScheduledTask(task_id=JIANGSU_TRACK_MONTHLY_TASK_ID, name="工单轨迹合理性月度分析", description="分析上月签到轨迹并生成每人一张复核待办", execution_mode="custom", tool_names=["jiangsu_analyze_work_order_tracks", "create_report_package", "render_report_package", "validate_report_package", "submit_task_review"], skill_id="工单轨迹合理性分析", schedule_type=ScheduleType.MONTHLY_CUSTOM, day_of_month=3, hour=7, minute=0, prompt="分析上一个自然月；每人每月一张待办；远离站点仅进报告。", history_learning={"enabled": True})
+DEFAULT_TASK_FACTORIES[JIANGSU_TRACK_MONTHLY_TASK_ID] = build_jiangsu_track_monthly_task
+
+
+
 def _raw_task_enabled(service, task_id: str) -> bool | None:
     raw_tasks = None
     storage = getattr(service, "task_storage", None)
@@ -250,7 +300,10 @@ def ensure_project_default_tasks(service, task_ids: Iterable[str]) -> list[str]:
         elif existing.created_by == "project-default":
             desired = factory()
             if (
-                existing.result_requirements != desired.result_requirements
+                (task_id == JIANGSU_SMART_EVENT_TASK_ID
+                 and existing.allow_archived_review_reopen != desired.allow_archived_review_reopen)
+                or existing.review_subject_attribute != desired.review_subject_attribute
+                or existing.result_requirements != desired.result_requirements
                 or existing.prompt != desired.prompt
                 or existing.knowledge_base_binding != desired.knowledge_base_binding
                 or existing.skill_id != desired.skill_id

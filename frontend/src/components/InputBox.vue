@@ -1,6 +1,15 @@
 <template>
   <div class="input-area">
-    <div class="input-container">
+    <div class="input-container" :class="{ 'has-quick-prompts': quickPrompts.length }">
+      <div v-if="quickPrompts.length" class="smart-event-quick-prompts" aria-label="常用问题">
+        <button
+          v-for="prompt in quickPrompts"
+          :key="prompt"
+          type="button"
+          :disabled="disabled || isAnalyzing"
+          @click="sendQuickPrompt(prompt)"
+        >{{ prompt }}</button>
+      </div>
       <div v-if="selectedSkill || selectedFileRefs.length" class="composer-selection-bar">
         <button
           v-if="selectedSkill"
@@ -339,6 +348,10 @@ const props = defineProps({
     type: String,
     default: 'general-agent'
   },
+  agentMode: {
+    type: String,
+    default: 'assistant'
+  },
   useReranker: {
     type: Boolean,
     default: false
@@ -354,6 +367,15 @@ const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReran
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
+const quickPrompts = computed(() => (
+  ['smart_event_external', 'smart_event_instrument'].includes(props.agentMode)
+    ? ['今日识别结果', '每周事件统计', '待办统计', '数据影响诊断']
+    : []
+))
+const sendQuickPrompt = (query) => {
+  if (!query || props.disabled || props.isAnalyzing) return
+  emit('send', { query })
+}
 const showKnowledgeBaseSelector = ref(false)
 const activeTrigger = ref(null)
 const highlightedPaletteIndex = ref(0)
@@ -1279,6 +1301,10 @@ defineExpose({
   gap: 10px;
 }
 
+.input-container.has-quick-prompts {
+  gap: 2px;
+}
+
 .composer-selection-bar {
   display: flex;
   flex-wrap: wrap;
@@ -1885,6 +1911,36 @@ defineExpose({
   &:hover {
     opacity: 0.8;
   }
+}
+
+.smart-event-quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 0 4px;
+}
+
+.smart-event-quick-prompts button {
+  min-height: 30px;
+  padding: 6px 14px;
+  border: 1px solid #b7d7ef;
+  border-radius: 4px;
+  background: #fff;
+  color: #1769aa;
+  font-size: 12px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.smart-event-quick-prompts button:hover:not(:disabled) {
+  border-color: #1677ff;
+  background: #f0f7ff;
+}
+
+.smart-event-quick-prompts button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
 }
 
 .attachment-file-icon {

@@ -571,6 +571,10 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "operations_analysis": OPERATIONS_ANALYSIS_TOOLS,
         "device_control": DEVICE_CONTROL_TOOLS,
         "station_fault_diagnosis": STATION_FAULT_DIAGNOSIS_TOOLS,
+        # Smart-event entry points are separate modes so their prompts/tool
+        # surfaces can diverge without changing the shared event store.
+        "smart_event_external": STATION_FAULT_DIAGNOSIS_TOOLS,
+        "smart_event_instrument": STATION_FAULT_DIAGNOSIS_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
         "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,

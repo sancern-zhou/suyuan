@@ -9,9 +9,12 @@ def test_smart_event_router_exposes_human_closure_routes():
     from app.api.jiangsu_smart_event_routes import router
 
     paths = {(route.path, tuple(sorted(route.methods or []))) for route in router.routes}
-    assert ("/api/jiangsu/smart-events/{event_id}/ai-judgments", ("POST",)) in paths
+    assert ("/api/jiangsu/smart-events/{event_id}/ai-judgments", ("POST",)) not in paths
     assert ("/api/jiangsu/smart-events/{event_id}/operations", ("POST",)) in paths
-    assert ("/api/jiangsu/smart-events/{event_id}/archive", ("POST",)) in paths
+    assert ("/api/jiangsu/smart-events/{event_id}/archive", ("POST",)) not in paths
+    from app.api.task_review_routes import router as review_router
+    review_paths = {(route.path, tuple(sorted(route.methods or []))) for route in review_router.routes}
+    assert ("/api/task-reviews/{review_id}/decision", ("POST",)) in review_paths
 
 
 def test_smart_event_router_exposes_manual_ai_dispatch_route():

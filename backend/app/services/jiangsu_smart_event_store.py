@@ -15,6 +15,12 @@ from app.utils.path_config import format_agent_path, resolve_agent_path
 
 SCHEMA = "jiangsu_smart_events/v2"
 HEAVY_FIELDS = {"evidence", "evidence_package", "judgment_history", "operation_records"}
+EVIDENCE_STUB_FIELDS = {
+    "event_id", "schema_version", "package_version", "status", "collected_at",
+    "profile", "gaps", "source_status", "missing_sources", "required_sources",
+    "detected_clue_tags", "system_assessment",
+    "ai_judgment", "judgment_status", "judgment_updated_at", "ai_structured_judgment",
+}
 
 
 def encoded(value):
@@ -137,6 +143,29 @@ class JiangsuEventPackages:
         row = {key: value for key, value in detail.items() if key not in HEAVY_FIELDS | {"_evidence_ref"}}
         row["_detail_ref"] = format_agent_path(path)
         return row
+
+    def write_evidence_only(self, event):
+        """Persist the heavy evidence package to its immutable file and replace
+        the in-event package with a lightweight stub. Used by DB-primary mode."""
+        package = event.get("evidence_package")
+        if not isinstance(package, dict):
+            return
+        if "sources" not in package and package.get("persisted_path"):
+            return
+        event_id = str(event["event_id"])
+        folder = self.root / "events" / hashlib.sha256(event_id.encode()).hexdigest()[:24]
+        package = dict(package)
+        package.pop("persisted_path", None)
+        package.setdefault("event_id", event_id)
+        digest = hashlib.sha256(encoded(package)).hexdigest()
+        path = folder / f"evidence-{digest}.json"
+        if not path.exists():
+            atomic_json(path, package)
+        reference = format_agent_path(path)
+        event["evidence_package"] = {
+            **{key: package[key] for key in EVIDENCE_STUB_FIELDS if key in package},
+            "persisted_path": reference,
+        }
 
     @staticmethod
     def _merge_rows(base_rows, proposed_rows, current_rows, key):

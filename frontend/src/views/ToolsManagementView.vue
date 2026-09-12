@@ -6,9 +6,6 @@
           <h2>工具管理</h2>
           <p>分类直接铺开，每个工具一个卡片</p>
         </div>
-        <span class="stats" v-if="stats">
-          共 {{ stats.total }} 个工具 / {{ stats.enabled }} 已启用 / {{ stats.disabled }} 已禁用
-        </span>
       </div>
       <div class="header-actions">
         <div class="search-box">
@@ -25,13 +22,9 @@
       </div>
     </header>
 
-    <section class="summary-row" aria-label="工具概览">
-      <article v-for="item in summaryCards" :key="item.label" class="summary-card">
-        <span>{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
-        <small>{{ item.hint }}</small>
-      </article>
-    </section>
+    <nav class="category-tabs" aria-label="工具分类">
+      <button v-for="section in toolSections" :key="section.id" type="button" @click="document.getElementById('tool-section-'+section.id)?.scrollIntoView({behavior:'smooth'})">{{ section.title }}</button>
+    </nav>
 
     <section v-if="loading" class="state-panel">
       <strong>加载中...</strong>
@@ -45,7 +38,7 @@
     <section v-else class="tool-sections">
       <article
         v-for="section in toolSections"
-        :key="section.id"
+        :id="'tool-section-'+section.id" :key="section.id"
         class="tool-section"
       >
         <header class="section-header">
@@ -528,6 +521,12 @@ onMounted(fetchTools)
   gap: 12px;
   margin-bottom: 18px;
 }
+
+.category-tabs { display:flex; gap:34px; align-items:center; overflow-x:auto; white-space:nowrap; margin:18px 0 28px; border-bottom:1px solid #eee; }
+.category-tabs button { border:0; background:none; padding:0 0 14px; color:#888; font-size:18px; font-weight:600; cursor:pointer; }
+.category-tabs button:hover { color:#111; }
+.tool-section { scroll-margin-top:24px; }
+.tool-card { border:1px solid #ececec; border-radius:24px; padding:28px 40px; box-shadow:0 8px 24px rgba(0,0,0,.03); background:#fff; }
 
 .summary-card {
   display: grid;

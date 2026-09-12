@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import fcntl
+import json
 from copy import deepcopy
 from datetime import datetime, timedelta
 
-from app.scheduled_tasks.storage.task_case_storage import TaskCaseStorage, MemoryVersionConflictError
+from app.scheduled_tasks.storage.task_case_storage import (
+    MemoryVersionConflictError,
+    TaskCaseStorage,
+)
+
 
 async def _distill(task, memory, review):
-    from app.services.llm_service import LLMService
     from app.scheduled_tasks.history_learning import _parse_consolidation_response
+    from app.services.llm_service import LLMService
 
     prompt = f'''你维护当前任务的长期记忆。请输出 JSON：
 {{"case": {{"case_brief": "简短回顾", "findings": ["有依据的经验"]}}, "memory": "完整新版 Markdown"}}。
@@ -43,7 +47,8 @@ async def consume_feedback(review_id, task, storage=None, feedback_id=None):
 
 
 async def _consume_feedback(review_id, task, storage=None, feedback_id=None):
-    from app.services.task_review import load_review, save_review as persist, review_lock
+    from app.services.task_review import load_review, review_lock
+    from app.services.task_review import save_review as persist
 
     def save_review(value):
         with review_lock(review_id):
@@ -123,12 +128,11 @@ async def _consume_feedback(review_id, task, storage=None, feedback_id=None):
 
 async def consume_pending_feedback():
     from app.scheduled_tasks.storage import TaskStorage
-    from app.services.task_review import reviews_dir
+    from app.services.task_review import pending_feedback_reviews
 
     now = datetime.now().astimezone().isoformat()
     processed = 0
-    for path in sorted(reviews_dir().glob('*.json')):
-        review = json.loads(path.read_text(encoding='utf-8'))
+    for review in pending_feedback_reviews():
         task = TaskStorage().get(review['task_id'])
         if task is None or not task.history_learning.enabled:
             continue

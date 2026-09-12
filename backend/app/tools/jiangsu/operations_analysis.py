@@ -816,3 +816,34 @@ class JiangsuStationDirectoryTool(_JiangsuOperationsTool):
         except (ValueError, httpx.HTTPError) as exc:
             logger.warning("jiangsu_station_directory_failed", error=str(exc))
             return {"status": "failed", "success": False, "data": [], "summary": f"江苏运维站点台账查询失败：{exc}"}
+
+class JiangsuWorkOrderTrackAnalysisTool(_JiangsuOperationsTool):
+    """Deterministic monthly trajectory analysis; report-only, no writes."""
+    def __init__(self):
+        super().__init__(name="jiangsu_analyze_work_order_tracks", description="分析签到轨迹疑似串单和多站点签到", function_schema={"name":"jiangsu_analyze_work_order_tracks","description":"按时间范围分析运维签到轨迹","parameters":{"type":"object","properties":{"start_time":{"type":"string"},"end_time":{"type":"string"},"speed_limit":{"type":"number","default":250},"overlap_minutes":{"type":"number","default":10},"distance_limit":{"type":"number","default":1},"gps_limit":{"type":"number","default":0.5}},"required":["start_time","end_time"]}})
+    async def execute(self, context=None, start_time=None, end_time=None, speed_limit=250, overlap_minutes=10, distance_limit=1, gps_limit=0.5, **kwargs):
+        records = await JiangsuAttendanceRecordsTool().execute(context=context, start_time=start_time, end_time=end_time, max_result_count=500)
+        rows = records.get("data", [])
+        findings, remote, users = [], [], {}
+        def get(r, *ks):
+            return next((r.get(k) for k in ks if r.get(k) is not None), None)
+        from datetime import datetime
+        from math import asin, cos, radians, sin, sqrt
+        def dist(a,b):
+            la,lo,lb,lp=map(radians,(*a,*b)); h=sin((lb-la)/2)**2+cos(la)*cos(lb)*sin((lp-lo)/2)**2; return 6371*2*asin(sqrt(h))
+        for r in rows: users.setdefault(str(get(r,'user_name','UserName','userName','name') or '未知人员'),[]).append(r)
+        for user, rs in users.items():
+            rs.sort(key=lambda r:str(get(r,'sign_time','SignTime','attendance_time','time') or ''))
+            for a,b in zip(rs,rs[1:]):
+                try:
+                    ta=datetime.fromisoformat(str(get(a,'sign_time','SignTime','attendance_time','time')).replace('Z','+00:00')); tb=datetime.fromisoformat(str(get(b,'sign_time','SignTime','attendance_time','time')).replace('Z','+00:00')); hours=(tb-ta).total_seconds()/3600
+                    pa=(float(get(a,'station_lat','lat','StationLat')),float(get(a,'station_lon','lon','StationLon'))); pb=(float(get(b,'station_lat','lat','StationLat')),float(get(b,'station_lon','lon','StationLon'))); km=dist(pa,pb); speed=km/hours if hours>0 else float('inf')
+                except (TypeError,ValueError,ZeroDivisionError): continue
+                different=str(get(a,'station_code','StationCode'))!=str(get(b,'station_code','StationCode'))
+                if speed>speed_limit: findings.append({'user_name':user,'type':'cross_region_speed','speed_kmh':round(speed,1),'distance_km':round(km,2),'previous':a,'current':b})
+                if different and hours*60<overlap_minutes and km>distance_limit: findings.append({'user_name':user,'type':'multi_station_overlap','minutes':round(hours*60,2),'distance_km':round(km,2),'previous':a,'current':b})
+            for r in rs:
+                try:
+                    if float(get(r,'distance_to_station','Distance','distance') or 0)>gps_limit: remote.append({'user_name':user,'record':r})
+                except (TypeError,ValueError): pass
+        return {'success': True, 'status':'success' if rows else 'empty', 'findings':findings, 'remote_signins':remote, 'users':sorted(users), 'finding_count':len(findings), 'metadata': {'start_time':start_time,'end_time':end_time,'record_count':len(rows),'rules': {'speed_limit':speed_limit,'overlap_minutes':overlap_minutes,'distance_limit':distance_limit,'gps_limit':gps_limit}}, 'summary':f'轨迹分析完成：{len(rows)}条签到，发现{len(findings)}条疑似线索。'}

@@ -44,6 +44,7 @@ ROUTER_REGISTRY = [
     RouterSpec("app.api.knowledge_graph_routes", prefix="/api", description="Knowledge Graph API"),
     RouterSpec("app.api.knowledge_scene_routes", prefix="/api", description="Knowledge Scene API"),
     RouterSpec("app.api.report_generation", prefix="/api", description="Report generation"),
+    RouterSpec("app.api.report_library_routes", description="Smart report library", owner="core"),
     RouterSpec("app.api.expert_deliberation", prefix="/api", description="Expert deliberation"),
     RouterSpec("app.api.monitoring", description="LLM monitoring"),
     RouterSpec("app.api.image_routes", prefix="/api", description="Image cache API"),

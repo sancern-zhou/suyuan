@@ -6,3 +6,4 @@
 - [运维工单审核](ops-work-order-audit/SKILL.md) - 审核运维工单并生成可追溯的最终问题清单。用于指定时间或范围内工单的规则筛查、抽样复核、语义复核、命中解释和问题清单整理；正式报告由主 Agent 基于本技能结果生成，普通工单查询不使用本技能。
 - [江苏智能事件研判](smart-event-judgment/SKILL.md) - Analyze Jiangsu smart-event clue bundles and evidence packages, define the final event type and name after evidence review, assess data impact and level, and produce a human-confirmable judgment. Use for the unified Jiangsu smart-event AI task; do not use for direct station-fault diagnosis or work-order review.
 - [江苏站点告警诊断](station-alarm-diagnosis/SKILL.md) - Analyze Jiangsu air-monitoring station platform alarms, device alarms, monitoring-data anomalies, quality-control faults, communication faults, and environment/power faults from an event evidence package. Use when a station fault event needs evidence-based diagnosis, remediation steps, verification criteria, and a review-ready work-order draft.
+- [工单轨迹合理性分析](工单轨迹合理性分析/SKILL.md) - 江苏运维签到轨迹月度分析 SOP

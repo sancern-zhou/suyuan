@@ -491,16 +491,18 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
 
     if any(is_project_tool_enabled(context, "legacy", tool_name) for tool_name in {
         "jiangsu_fetch_attendance_records", "jiangsu_fetch_station_directory",
-        "jiangsu_query_operations_graph",
+        "jiangsu_query_operations_graph", "jiangsu_analyze_work_order_tracks",
     }):
         try:
             from app.tools.jiangsu.operations_analysis import (
                 JiangsuAttendanceRecordsTool,
+                JiangsuWorkOrderTrackAnalysisTool,
                 JiangsuOperationsKnowledgeGraphTool,
                 JiangsuStationDirectoryTool,
             )
             for tool in (
                 JiangsuAttendanceRecordsTool(),
+                JiangsuWorkOrderTrackAnalysisTool(),
                 JiangsuStationDirectoryTool(),
                 JiangsuOperationsKnowledgeGraphTool(),
             ):
@@ -1218,6 +1220,13 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         logger.info("tool_loaded", tool="knowledge_document_reader")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="knowledge_document_reader", error=str(e))
+
+    try:
+        from app.tools.workflow.jiangsu_network_inspection_workflow import JiangsuNetworkInspectionWorkflow
+        registry.register(JiangsuNetworkInspectionWorkflow(), priority=50)
+        logger.info("tool_loaded", tool="jiangsu_network_inspection_workflow")
+    except ImportError as e:
+        logger.warning("tool_import_failed", tool="jiangsu_network_inspection_workflow", error=str(e))
 
     logger.info(
         "global_tool_registry_created",

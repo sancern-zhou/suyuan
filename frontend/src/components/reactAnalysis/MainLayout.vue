@@ -36,6 +36,7 @@
         v-else-if="workspace === 'task-center' && TaskSchedulerCenter"
         :running-modes="runningAgentModes"
         @select-task="handleTaskWorkspaceSelect"
+        @select-review="$emit('select-review', $event)"
       />
       <template v-else>
         <div class="conversation-workspace">
@@ -167,6 +168,8 @@
             v-else-if="managementPanel === 'file-manager'"
             @close="$emit('close-management-panel')"
           />
+
+          <SmartReportsPanel v-else-if="managementPanel === 'smart-reports'" />
         </template>
           </ChatArea>
         </div>
@@ -197,11 +200,17 @@
         :human-feedback-submitting="humanFeedbackSubmitting"
         :human-feedback-error="humanFeedbackError"
         :knowledge-sources="knowledgeSources"
+        :smart-event-command="smartEventCommand"
+        :task-workspace-task="taskWorkspaceTask"
         @tab-change="handleTabChange"
         @board-xml-change="handleBoardXmlChange"
         @board-selection-change="handleBoardSelectionChange"
         @board-snapshot-confirm="handleBoardSnapshotConfirm"
         @submit-human-feedback="$emit('submit-human-feedback', $event)"
+        @open-smart-event-task-side="$emit('open-smart-event-task-side', $event)"
+        @close-smart-event-panel="$emit('close-smart-event-panel')"
+        @close-smart-event-task="$emit('close-smart-event-task')"
+        @restore-execution-session="$emit('restore-execution-session', $event)"
         />
       </template>
     </div>
@@ -226,6 +235,7 @@ import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
 import FileManagerPanel from '@/components/FileManagerPanel.vue'
+import SmartReportsPanel from '@/components/management/SmartReportsPanel.vue'
 import { useAuthStore } from '@/auth/authStore.js'
 
 const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
@@ -459,6 +469,7 @@ const emit = defineEmits([
   'load-more',
   'assistant-select',
   'sidebar-action',
+  'select-review',
   'load-session',
   'start-drag',
   'stop-drag',
@@ -491,6 +502,9 @@ const emit = defineEmits([
   'delete-scheduled-task',
   'restore-execution-session',
   'open-smart-event-task',
+  'open-smart-event-task-side',
+  'close-smart-event-panel',
+  'close-smart-event-task',
   'refresh-session-history',
   'cleanup-sessions',
   'restore-session',

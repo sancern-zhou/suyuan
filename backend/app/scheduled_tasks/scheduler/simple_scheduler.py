@@ -122,6 +122,12 @@ class SimpleScheduler:
                 f"at {task.hour:02d}:{task.minute:02d}"
             )
 
+        elif task.schedule_type == ScheduleType.MONTHLY_CUSTOM:
+            if task.day_of_month is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: monthly_custom requires day_of_month/hour/minute")
+                return
+            trigger = CronTrigger(day=task.day_of_month, hour=task.hour, minute=task.minute, timezone="Asia/Shanghai")
+
         else:
             logger.error(f"Unknown schedule type: {task.schedule_type}")
             return

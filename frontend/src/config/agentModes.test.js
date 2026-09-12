@@ -18,7 +18,9 @@ test('agent mode catalog exposes dedicated knowledge, ppt, chart and board modes
     'smart_inspection',
     'operations_analysis',
     'device_control',
-    'station_fault_diagnosis'
+    'station_fault_diagnosis',
+    'smart_event_external',
+    'smart_event_instrument'
   ])
   assert.deepEqual(AGENT_MODES.map(agent => agent.id), AGENT_MODE_IDS)
 })
@@ -45,7 +47,7 @@ test('agent platform icons use distinct semantic silhouettes', () => {
 })
 
 test('every agent provides complete chat welcome content', () => {
-  assert.equal(AGENT_MODES.length, 14)
+  assert.equal(AGENT_MODES.length, 16)
   for (const agent of AGENT_MODES) {
     assert.ok(agent.welcome?.description)
     assert.ok(agent.welcome?.features.length >= 3)
@@ -92,4 +94,10 @@ test('default platform scenes cover every shared agent exactly once', () => {
   const sceneModeIds = AGENT_SCENES.flatMap(scene => scene.modeIds)
   assert.equal(new Set(sceneModeIds).size, AGENT_MODE_IDS.length)
   assert.deepEqual([...sceneModeIds].sort(), [...AGENT_MODE_IDS].sort())
+})
+
+test('smart event modes are in the operations scene and all scenes have mode lists', () => {
+  assert.ok(AGENT_SCENES.every(scene => Array.isArray(scene.modeIds)))
+  assert.ok(AGENT_SCENES.find(scene => scene.id === 'operations').modeIds.includes('smart_event_external'))
+  assert.ok(AGENT_SCENES.find(scene => scene.id === 'operations').modeIds.includes('smart_event_instrument'))
 })

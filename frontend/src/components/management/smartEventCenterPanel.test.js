@@ -45,7 +45,8 @@ test('fixed event detail exposes confirmation and archive controls', () => {
   assert.match(source, /dispatchDialogVisible/)
   assert.match(source, /role="dialog" aria-modal="true" aria-label="工单派发"/)
   assert.doesNotMatch(source, /label: '人工确认'/)
-  assert.match(source, /platform_alarm: '平台报警'/)
+  assert.doesNotMatch(source, /platform_alarm: '平台报警'/)
+  assert.match(source, /hiddenSources/)
   assert.match(source, /video: '视频监控记录'/)
   assert.doesNotMatch(source, /ALMsummary/)
 })
@@ -75,7 +76,11 @@ test('fixed event detail presents old workbench style evidence sections', () => 
   assert.match(source, /暂无.*数据/)
   assert.match(source, /sourceColumnDefinitions/)
   assert.match(source, /getBoundingClientRect\(\)\.top <= containerTop \+ 8/)
-  assert.match(source, /workbench-content::after/)
+  // 详情内容区不再注入固定高度的伪元素，避免证据内容后出现空白占位。
+  assert.doesNotMatch(source, /workbench-content::after/)
+  // 动环门控未命中时证据源返回 skipped，详情页按中性状态展示而非获取失败。
+  assert.match(source, /source\.status === 'skipped'/)
+  assert.match(source, /按条件跳过/)
 })
 
 test('event list keeps internal event identifiers out of the visible table', () => {
@@ -114,27 +119,39 @@ test('merged events surface pending delta and incremental judgment continuity', 
   assert.match(source, /aria-label="线索标签集合"/)
 })
 
-test('judgment panel renders Markdown conclusion and keeps structured details out of the result', () => {
+test('judgment panel retains concise summary and exposes collapsible analysis', () => {
   assert.match(source, /TaskReviewPanel/)
   assert.match(source, /<MarkdownRenderer[^>]*:content="judgmentText"/)
-  assert.doesNotMatch(source, /aria-label="数据详细分析"|<summary>研判依据与参数快照/)
+  assert.match(source, /<summary>完整研判分析与依据<\/summary>/)
   assert.match(source, /getJiangsuSmartEventConfig/)
-  assert.match(source, /AI 重新研判/)
+  assert.match(source, /AI 增量研判/)
   assert.match(source, /执行 AI 研判/)
+})
+
+test('completed AI judgments hide manual dispatch actions to avoid mis-clicks', () => {
+  assert.match(source, /const hasCompletedJudgment = event =>/)
+  assert.match(source, /v-if="!hasCompletedJudgment\(event\) \|\| event\.pending_delta"/)
+  assert.match(source, /v-if="!hasCompletedJudgment\(selectedEvent\) \|\| selectedEvent\?\.pending_delta"/)
+  assert.match(source, /AI 研判已完成，不再提供手动研判入口/)
+  assert.match(source, /hasCompletedJudgment\(event\) && !event\.pending_delta/)
+  assert.match(source, /该事件已完成 AI 研判，无需再次触发/)
 })
 
 test('monitoring section renders six-pollutant line chart, table toggle, and regional delta bars', () => {
   assert.match(source, /import \* as echarts from 'echarts'/)
-  assert.match(source, /aria-label="六参五分钟折线时序图"/)
+  assert.match(source, /aria-label="六参小时折线时序图"/)
   assert.match(source, /aria-label="监测数据视图切换"/)
   assert.match(source, /aria-label="监测数据表"/)
   assert.match(source, /aria-label="区域差异柱状图"/)
-  assert.match(source, /minuteChartOption/)
+  assert.match(source, /aria-label="气象折线时序图"/)
+  assert.match(source, /hourlyChartOption/)
   assert.match(source, /deltaChartOption/)
+  assert.match(source, /weatherChartOption/)
   assert.match(source, /regionalDeltas/)
   assert.match(source, /'与周边站点差值', type: 'bar', itemStyle: \{ color: '#1677ff' \}/)
   assert.match(source, /'与全市其余站点差值', type: 'bar', itemStyle: \{ color: '#d4380d' \}/)
   assert.match(source, /POLLUTANT_SERIES/)
+  assert.match(source, /WEATHER_SERIES/)
   assert.match(source, /monitoringView === 'chart'/)
   assert.match(source, /recordPollutant/)
 })
@@ -147,7 +164,8 @@ test('stored list is displayed before the background refresh resolves', async ()
   let backgroundStarted = false
   const run = new Function('loading', 'events', 'error', 'lastSync', 'props',
     'stopSyncWatch', 'listJiangsuSmartEvents', 'watchBackgroundSync',
-    'activeQuery', 'PAGE_SIZE', 'statusFilter', 'typeFilter', 'keyword', 'applyListPage',
+    'activeQuery', 'PAGE_SIZE', 'statusFilter', 'typeFilter', 'levelFilter', 'keyword',
+    'listStartTime', 'listEndTime', 'applyListPage',
     `return (async (page = 1) => {${body}})()`)
   await run(loading, events, { value: '' }, { value: null }, {}, () => {},
     async params => {
@@ -159,7 +177,7 @@ test('stored list is displayed before the background refresh resolves', async ()
       assert.equal(loading.value, false)
       assert.equal(events.value[0].event_id, 'stored')
       backgroundStarted = true
-    }, { value: {} }, 10, { value: '' }, { value: '' }, { value: '' }, payload => { events.value = payload.events })
+    }, { value: {} }, 10, { value: '' }, { value: '' }, { value: '' }, { value: '' }, { value: '' }, { value: '' }, payload => { events.value = payload.events })
   assert.equal(backgroundStarted, true)
   assert.match(source, /v-if="loading && !events.length"/)
 })

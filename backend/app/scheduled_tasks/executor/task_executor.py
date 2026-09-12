@@ -191,9 +191,12 @@ class ScheduledTaskExecutor:
         # 即使执行中途失败/超时，也已收集到部分执行材料，供收尾时入案例库
         collected: dict = {}
 
+        # Event-driven tasks may target a dedicated mode while retaining a
+        # shared scheduled-task definition for compatibility.
+        execution_mode = str((event.attributes if event else {}).get("agent_mode") or task.execution_mode)
         try:
             shared_agent = None
-            if task.execution_mode == "custom":
+            if execution_mode == "custom":
                 if not self.agent_factory:
                     raise RuntimeError("Agent factory not configured")
                 runtime_tool_names = list(task.tool_names or [])
@@ -221,7 +224,7 @@ class ScheduledTaskExecutor:
                 result = await asyncio.wait_for(
                     self._run_agent(
                         prompt, task_session_id,
-                        manual_mode=task.execution_mode,
+                        manual_mode=execution_mode,
                         task=task, execution=execution, agent=shared_agent,
                         collected=collected,
                         extra_tool_names=runtime_extra_tool_names,

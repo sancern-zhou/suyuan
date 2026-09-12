@@ -103,6 +103,10 @@
       @delete-scheduled-task="deleteScheduledTask"
       @restore-execution-session="handleSessionRestoreAndClosePanel"
       @open-smart-event-task="handleSmartEventTaskOpen"
+      @open-smart-event-task-side="handleSmartEventSideTaskOpen"
+      @close-smart-event-panel="handleSmartEventPanelClose"
+      @close-smart-event-task="handleSmartEventTaskClose"
+      @select-review="handleTodoReviewOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
       @restore-session="handleSessionRestoreAndClosePanel"
@@ -192,6 +196,7 @@ const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
 const taskWorkspaceTask = ref(null)
 const smartEventCommand = ref(null)
+const suppressSmartEventCommandOpen = ref(false)
 const lastSmartEventCommandKey = ref('')
 const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
 
@@ -361,6 +366,26 @@ const runningAgentModes = computed(() => (
   AGENT_MODE_IDS.filter(mode => isAgentModeRunning(mode, store))
 ))
 
+// AI 工作区命令驱动的智能事件页面在右侧面板打开，保留对话窗口供用户继续交互；
+// 侧边栏“智能事件中心”入口仍走整页管理面板
+const openSmartEventSidePanel = () => {
+  workspace.value = 'chat'
+  hideManagementPanel()
+  activeRightTab.value = 'smart-event'
+  rightPanelVisible.value = true
+  leftSidebarCollapsed.value = true
+  vizWidth.value = Math.max(vizWidth.value, PANEL_SIZES.COLLAPSED_VIZ_WIDTH)
+}
+
+const handleSmartEventPanelClose = () => {
+  rightPanelVisible.value = false
+  leftSidebarCollapsed.value = false
+}
+
+const handleSmartEventTaskClose = () => {
+  taskWorkspaceTask.value = null
+}
+
 watch(currentModeMessages, messages => {
   const command = extractSmartEventWorkspaceCommand(messages)
   if (!command) return
@@ -368,10 +393,13 @@ watch(currentModeMessages, messages => {
   if (commandKey === lastSmartEventCommandKey.value) return
   lastSmartEventCommandKey.value = commandKey
   smartEventCommand.value = command
+  if (suppressSmartEventCommandOpen.value) {
+    // 待办卡进入对话回放时保留会话视图，不被历史工作区命令切走
+    suppressSmartEventCommandOpen.value = false
+    return
+  }
   if (['show_event_list', 'filter_event_list', 'open_event_detail', 'focus_evidence', 'compare_events', 'show_operation_history', 'open_task'].includes(command.type)) {
-    workspace.value = 'chat'
-    showManagementPanel('smart-events')
-    rightPanelVisible.value = false
+    openSmartEventSidePanel()
   }
 }, { deep: true })
 
@@ -459,6 +487,39 @@ const handleSessionRestoreAndClosePanel = async (sessionId) => {
   return restored
 }
 
+const handleTodoReviewOpen = async (review) => {
+  let sessionId = null
+  if (review?.execution_id && review?.task_id) {
+    try {
+      const { executions } = await scheduledTasksStore.fetchTaskExecutions(review.task_id, { page: 1, pageSize: 50 })
+      sessionId = executions.find(item => item.execution_id === review.execution_id)?.session_id || null
+    } catch (error) {
+      console.warn('[ReactAnalysisView] 研判执行记录获取失败:', error)
+    }
+  }
+  if (sessionId) {
+    suppressSmartEventCommandOpen.value = true
+    const restored = await handleSessionRestoreAndClosePanel(sessionId)
+    await nextTick()
+    if (restored) {
+      rightPanelVisible.value = true
+      if (!activeRightTab.value) activeRightTab.value = 'files'
+      if (suppressSmartEventCommandOpen.value) suppressSmartEventCommandOpen.value = false
+      return
+    }
+    suppressSmartEventCommandOpen.value = false
+  }
+  // 找不到执行会话时回退：打开智能事件工作区并聚焦该事件
+  if (review?.subject_id) {
+    const command = { type: 'open_event_detail', event_id: String(review.subject_id) }
+    smartEventCommand.value = command
+    lastSmartEventCommandKey.value = JSON.stringify(command)
+    workspace.value = 'chat'
+    showManagementPanel('smart-events')
+    rightPanelVisible.value = false
+  }
+}
+
 let routeSessionRestoreQueue = Promise.resolve()
 const queueRouteSessionRestore = (sessionId) => {
   routeSessionRestoreQueue = routeSessionRestoreQueue
@@ -492,16 +553,36 @@ const handleAssistantSelect = async (moduleId) => {
   }
 }
 
-const handleSmartEventTaskOpen = async (eventTask) => {
-  const scheduledTaskId = eventTask?.scheduled_task_id
-  if (!scheduledTaskId) return
+const resolveSmartEventTask = async (eventTask) => {
+  // AI 传入的可能是事件任务卡片 task_id 或调度任务 ID，两者都尝试解析
+  const candidates = [eventTask?.scheduled_task_id, eventTask?.task_id]
+    .map(id => String(id || '').trim())
+    .filter(Boolean)
+  if (!candidates.length) return null
   await scheduledTasksStore.fetchTasks()
-  const task = scheduledTasksStore.tasks.find(item => item.task_id === scheduledTaskId)
+  for (const candidate of new Set(candidates)) {
+    const task = scheduledTasksStore.tasks.find(item => item.task_id === candidate)
+    if (task) return task
+  }
+  return null
+}
+
+// 事件中心（管理面板）里的任务卡片：维持整页任务工作区展示
+const handleSmartEventTaskOpen = async (eventTask) => {
+  const task = await resolveSmartEventTask(eventTask)
   if (!task) return
   taskWorkspaceTask.value = task
   workspace.value = 'chat'
   showManagementPanel('task-workspace')
   rightPanelVisible.value = false
+}
+
+// 右侧面板（AI 命令驱动）里的任务卡片：留在右侧面板，对话窗口不收起
+const handleSmartEventSideTaskOpen = async (eventTask) => {
+  const task = await resolveSmartEventTask(eventTask)
+  if (!task) return
+  taskWorkspaceTask.value = task
+  openSmartEventSidePanel()
 }
 
 const handleSidebarAction = async (actionId) => {
@@ -547,6 +628,20 @@ const handleSidebarAction = async (actionId) => {
     return
   }
 
+  if (actionId === 'smart-event-external' || actionId === 'smart-event-instrument') {
+    if (!await confirmResourcePreviewLeave()) return
+    if (route.name !== 'analysis') await router.replace({ name: 'analysis' })
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'chat'
+    const targetMode = actionId === 'smart-event-instrument' ? 'smart_event_instrument' : 'smart_event_external'
+    if (store.currentMode !== targetMode) store.switchMode(targetMode)
+    activeRightTab.value = 'smart-event'
+    rightPanelVisible.value = true
+    leftSidebarCollapsed.value = true
+    return
+  }
+
   workspace.value = 'chat'
   switch (actionId) {
     case 'query-dashboard':
@@ -580,6 +675,9 @@ const handleSidebarAction = async (actionId) => {
       break
     case 'smart-events':
       showManagementPanel('smart-events')
+      break
+    case 'smart-reports':
+      showManagementPanel('smart-reports')
       break
     case 'session-history':
       console.log('[ReactAnalysisView] Showing session-history panel')

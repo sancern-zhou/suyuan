@@ -5,6 +5,7 @@
         <h2>{{ task?.workspace_entry?.title || task?.name || '告警溯源' }}</h2>
         <p class="workspace-description">按执行日期查看分析记录和文件产物</p>
       </div>
+      <button v-if="showBackButton" type="button" class="back-button" @click="$emit('close')">返回</button>
     </header>
 
     <div v-if="loading" class="state">正在加载分析记录...</div>
@@ -55,7 +56,11 @@
 import { computed, ref, watch } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 
-const props = defineProps({ task: { type: Object, default: null } })
+const props = defineProps({
+  task: { type: Object, default: null },
+  // 嵌入右侧面板时显示“返回”按钮，整页管理面板模式保持原有展示
+  showBackButton: { type: Boolean, default: false }
+})
 const emit = defineEmits(['close', 'restore-execution-session'])
 const store = useScheduledTasksStore()
 const executions = ref([])
@@ -150,6 +155,8 @@ watch(() => props.task?.task_id, () => load(1), { immediate: true })
 <style scoped>
 .task-workspace { height: 100%; overflow: auto; padding: 28px; background: #f7f9fc; }
 .workspace-header { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.back-button { flex: none; align-self: flex-start; min-height: 30px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; cursor: pointer; padding: 4px 12px; font-size: 12px; }
+.back-button:hover { border-color: #1976d2; color: #1976d2; }
 .eyebrow { margin: 0; color: #1976d2; font-size: 13px; }
 h2 { margin: 4px 0; font-size: 22px; color: #17223b; }
 .workspace-description { margin: 0; color: #64748b; }

@@ -19,7 +19,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 import tempfile
 from copy import deepcopy
 from datetime import datetime
@@ -27,16 +26,25 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import structlog
+
 from app.config.config_manager import config_manager
 from app.fetchers.jiangsu_smart_event_evidence import (
-    JiangsuSmartEventEvidenceFetcher,
     POLLUTANT_FIELDS,
+    JiangsuSmartEventEvidenceFetcher,
 )
-from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
-from app.utils.path_config import get_data_registry, resolve_agent_path, format_agent_path
-from app.services.jiangsu_smart_event_store import JiangsuEventPackages, SCHEMA as EVENT_STORE_SCHEMA
 from app.scheduled_tasks.models import TaskEvent
-
+from app.services.jiangsu_smart_event_automation import (
+    AUTOMATION_DEFAULTS,
+    evidence_signature,
+    schedule_retry,
+    update_impact_conflict,
+    update_initial_assessment,
+)
+from app.services.jiangsu_smart_event_store import SCHEMA as EVENT_STORE_SCHEMA
+from app.services.jiangsu_smart_event_store import JiangsuEventPackages
+from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
+from app.utils.path_config import format_agent_path, get_data_registry, resolve_agent_path
 
 AI_EVENT_TYPES = (
     "疑似雾炮喷淋",
@@ -59,9 +67,50 @@ SMART_EVENT_TRIGGER_TYPES = {
 }
 SMART_EVENT_EVENT_TYPE = "jiangsu.smart_event.alarm"
 SMART_EVENT_TASK_ID = "jiangsu_smart_event_ai_judgment"
+SMART_EVENT_AGENT_MODES = {
+    "external": "smart_event_external",
+    "environment": "smart_event_external",
+    "instrument": "smart_event_instrument",
+    "power": "smart_event_instrument",
+    "network": "smart_event_instrument",
+}
+
+
+def smart_event_agent_mode(event: dict[str, Any]) -> str:
+    """Resolve the dedicated conversational mode for an event clue."""
+    trigger = str(event.get("clue_trigger_type") or "").rsplit(".", 1)[-1]
+    return SMART_EVENT_AGENT_MODES.get(trigger, "smart_event_external")
 
 CONTINUITY_SAME_CAUSE = "same_cause"
 CONTINUITY_NEW_CAUSE = "new_cause"
+
+logger = structlog.get_logger()
+
+
+def _card_accepts_execution(card: dict[str, Any], attributes: dict[str, Any], started_at: Any) -> bool:
+    """Whether a finished execution still belongs to the card's current dispatch.
+
+    The dispatch token identifies one dispatch round. A worker restart resumes
+    queued claims from the durable snapshot, which may carry the token of an
+    earlier attempt while the card already stores a newer one. Such a resumed
+    execution is still the latest activity of the card and must be accepted
+    unless the card was re-dispatched after that execution started, in which
+    case a newer run supersedes the late result.
+    """
+
+    token = (attributes or {}).get("smart_event_dispatch_token")
+    if not token or card.get("dispatch_token") == token:
+        return True
+    dispatched = _parse_time(card.get("dispatched_at"))
+    started = _parse_time(started_at)
+    if dispatched is None or started is None:
+        return False
+    local_tz = datetime.now().astimezone().tzinfo
+    if dispatched.tzinfo is None:
+        dispatched = dispatched.replace(tzinfo=started.tzinfo or local_tz)
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=dispatched.tzinfo or local_tz)
+    return started >= dispatched
 
 JUDGMENT_ANALYSIS_KEYS = (
     "station_series_analysis", "regional_comparison_analysis",
@@ -113,6 +162,7 @@ DEFAULT_HOUR_LIMITS: dict[str, Any] = {
 }
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    **AUTOMATION_DEFAULTS,
     "version": 1,
     "event_merge_window_minutes": 60,
     "video_tag_confidence_threshold": 0.7,
@@ -165,6 +215,50 @@ def _parse_time(value: Any) -> datetime | None:
 
 def _format_time(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _normalize_event_times(event: dict[str, Any]) -> None:
+    """Keep the evidence interval separate from the latest displayed occurrence.
+
+    Retained clues recover starts overwritten by older display-time handling.
+    """
+    starts = [_parse_time(event.get("event_start_time"))]
+    ends = [_parse_time(event.get("event_end_time"))]
+    for tag in event.get("clue_tags", []) or []:
+        if isinstance(tag, dict) and tag.get("tag_category") != "合规" and tag.get("tag_source") != "合规记录":
+            starts.append(_parse_time(tag.get("tag_start_time")))
+            ends.append(_parse_time(tag.get("tag_end_time")) or _parse_time(tag.get("tag_start_time")))
+    starts = [value for value in starts if value is not None]
+    latest = _parse_time(event.get("latest_occurrence_time"))
+    if starts:
+        event["event_start_time"] = _format_time(min(starts))
+        event["latest_occurrence_time"] = _format_time(max(starts + ([latest] if latest else [])))
+    ends = [value for value in ends if value is not None] + starts
+    if ends:
+        event["event_end_time"] = _format_time(max(ends))
+
+
+def _is_archived(event: dict[str, Any]) -> bool:
+    return event.get("archived") is True or event.get("event_status") == "已归档"
+
+
+def _judged_status(event: dict[str, Any]) -> str:
+    return "待归档" if event.get("ai_suggested_level") == "P3" else "待复核"
+
+
+def _normalize_event_status(event: dict[str, Any]) -> None:
+    status = event.get("event_status")
+    if _is_archived(event):
+        event["archived"] = True
+        event["event_status"] = "已归档"
+    elif status in {"AI 已研判", "待人工确认", "已确认"}:
+        event["event_status"] = _judged_status(event)
+    elif status == "派单处置中":
+        event["event_status"] = "待反馈"
+    elif status == "待重新研判":
+        event["event_status"] = "待复核"
+    elif status in {"AI 研判中", "AI 研判失败"}:
+        event["event_status"] = _judged_status(event) if event.get("ai_event_type") else "未研判"
 
 
 def _first(record: dict[str, Any], *keys: str) -> Any:
@@ -305,8 +399,11 @@ def detect_data_clue_tags(
         return []
     event_id = str(event.get("event_id"))
     windows = package.get("time_windows") if isinstance(package.get("time_windows"), dict) else {}
-    # 新证据包用 day 窗口（小时数据按当天抓取）；旧包回退 query 窗口。
-    scope = windows.get("day") if isinstance(windows.get("day"), dict) else (
+    # 检测标签时间锚定事件窗口（告警起止），避免把合并桶的结束时间拉伸到自然日末尾；
+    # 旧包回退 day/query 窗口。
+    scope = (
+        windows.get("event") if isinstance(windows.get("event"), dict) else
+        windows.get("day") if isinstance(windows.get("day"), dict) else
         windows.get("query") if isinstance(windows.get("query"), dict) else {}
     )
     start_text, end_text = scope.get("start"), scope.get("end")
@@ -486,7 +583,7 @@ def normalize_alarm_event(record: dict[str, Any]) -> dict[str, Any]:
         "tag_name": label,
         "tag_object": obj,
         "tag_start_time": start,
-        "tag_end_time": start,
+        "tag_end_time": end,
         "tag_confidence": None,
         "clue_id": str(_first(record, "id", "alarmId", "callId") or event_id),
         "tag_display_text": f"报警：{label}（{alarm_content[:120]}）" if alarm_content else f"报警：{label}",
@@ -500,6 +597,7 @@ def normalize_alarm_event(record: dict[str, Any]) -> dict[str, Any]:
         "city_name": _first(record, "cityName", "city", "city_name"),
         "district_name": _first(record, "districtName", "district", "district_name"),
         "event_start_time": start,
+        "latest_occurrence_time": start,
         "event_end_time": end,
         "initial_event_name": initial_name,
         "event_name": initial_name,
@@ -517,6 +615,9 @@ def normalize_alarm_event(record: dict[str, Any]) -> dict[str, Any]:
         "ai_event_type": None,
         "ai_event_name": None,
         "ai_data_impact": "待确认",
+        "system_data_impact": "待确认",
+        "data_impact": "待确认",
+        "ai_task_priority": "normal",
         "ai_suggested_level": None,
         "ai_diagnosis_note": None,
         "manual_final_event_type": None,
@@ -561,6 +662,13 @@ class JiangsuSmartEventService:
         return JiangsuEventPackages(self.store_path)
 
     def _evidence_package_path(self, event_id: str) -> Path:
+        if self._db_mode():
+            from app.db.sync_bridge import run_db
+            from app.services.smart_event_db import get_evidence_path_async
+
+            reference = run_db(get_evidence_path_async(str(event_id)))
+            if reference:
+                return resolve_agent_path(reference)
         manifest = self.packages.read_manifest()
         if manifest.get("schema_version") == EVENT_STORE_SCHEMA:
             row = next((item for item in manifest.get("events", []) if item.get("event_id") == event_id), None)
@@ -570,6 +678,11 @@ class JiangsuSmartEventService:
                     return resolve_agent_path(detail["_evidence_ref"])
         safe_id = hashlib.sha256(str(event_id).encode("utf-8")).hexdigest()[:24]
         return self.data_root / "jiangsu_smart_events" / "evidence" / f"{safe_id}.json"
+
+    def _db_mode(self) -> bool:
+        from app.services.smart_event_db import smart_event_db_enabled
+
+        return smart_event_db_enabled()
 
     @property
     def list_index_path(self) -> Path:
@@ -584,44 +697,43 @@ class JiangsuSmartEventService:
 
     @staticmethod
     def _with_review_states(store):
-        from app.services.task_review import load_review
+        from app.services.task_review import load_reviews
+        review_ids = [event["review_id"] for event in store.get("events", []) if event.get("review_id")]
+        reviews = load_reviews(dict.fromkeys(review_ids))
         for event in store.get("events", []):
-            # Older buckets stored the earliest occurrence; derive the latest
-            # from retained clues for both detail reads and cached list reads.
-            times = [_parse_time(event.get("event_start_time"))]
-            times.extend(_parse_time(tag.get("tag_start_time"))
-                         for tag in event.get("clue_tags", []) or [] if isinstance(tag, dict))
-            valid_times = [value for value in times if value is not None]
-            if valid_times:
-                event["event_start_time"] = _format_time(max(valid_times))
+            _normalize_event_times(event)
+            _normalize_event_status(event)
             if not event.get("review_id"):
                 continue
-            review = load_review(event["review_id"])
+            review = reviews.get(event["review_id"])
             if review is None:
                 raise ValueError("event_review_record_missing")
-            if review["status"] == "archived":
+            if _is_archived(event) or review["status"] == "archived":
                 event["archived"] = True
                 event["event_status"] = "已归档"
             elif review["status"] == "in_disposal":
-                event["event_status"] = "派单处置中"
+                if event.get("event_status") != "已反馈":
+                    event["event_status"] = "待反馈"
             elif review["status"] == "rejected":
-                event["event_status"] = "待重新研判"
+                event["event_status"] = "待复核"
         return store
 
     @staticmethod
     def _event_summary(item: dict[str, Any]) -> dict[str, Any]:
         fields = {
             "event_id", "event_name", "initial_event_name", "event_status", "event_type",
-            "site_id", "site_name", "event_start_time", "alarm_content", "clue_tags",
+            "site_id", "site_name", "event_start_time", "event_end_time", "latest_occurrence_time", "alarm_content", "clue_tags",
             "primary_clue_tag", "source_alarm_rule_type", "pending_delta", "archived",
             "ai_event_type", "ai_data_impact", "ai_suggested_level", "clue_count", "review_id",
+            "system_data_impact", "data_impact", "ai_task_priority", "data_impact_basis",
+            "data_impact_conflict", "data_impact_conflict_note",
         }
         return {**{key: item[key] for key in fields if key in item},
                 "has_judgment": item.get("has_judgment", bool((item.get("ai_judgment") or {}).get("final_response")))}
 
     def _write_list_index(self, store: dict[str, Any], revision: list[int] | None) -> dict[str, Any]:
         index = {
-            "schema_version": 1,
+            "schema_version": 4,
             "store_revision": revision,
             "events": [self._event_summary(item) for item in store.get("events", []) if isinstance(item, dict)],
             "tasks": store.get("tasks", []),
@@ -646,10 +758,12 @@ class JiangsuSmartEventService:
         The revision belongs to the authoritative store, so a worker update
         invalidates an old index across processes without any browser cache.
         """
+        if self._db_mode():
+            return self._load_store()
         revision = self._store_revision()
         try:
             index = json.loads(self.list_index_path.read_text(encoding="utf-8"))
-            if (index.get("schema_version") == 1
+            if (index.get("schema_version") == 4
                     and index.get("store_revision") == revision
                     and isinstance(index.get("events"), list)
                     and isinstance(index.get("tasks"), list)):
@@ -665,6 +779,12 @@ class JiangsuSmartEventService:
         raise RuntimeError("smart_event_store_changed_during_index_rebuild")
 
     def _load_store(self, *, event_ids: set[str] | None = None) -> dict[str, Any]:
+        if self._db_mode():
+            from app.db.sync_bridge import run_db
+            from app.services.smart_event_db import load_store_async
+
+            store = run_db(load_store_async(event_ids=event_ids))
+            return self._with_review_states(store)
         manifest = self.packages.read_manifest()
         if manifest.get("schema_version") == EVENT_STORE_SCHEMA:
             return self._with_review_states(self.packages.load(event_ids=event_ids))
@@ -703,6 +823,12 @@ class JiangsuSmartEventService:
         return {"schema_version": "jiangsu_smart_events/v1", "events": [], "tasks": []}
 
     def _save_store(self, store: dict[str, Any]) -> None:
+        if self._db_mode():
+            from app.db.sync_bridge import run_db
+            from app.services.smart_event_db import save_store_async
+
+            run_db(save_store_async(store))
+            return
         packages = self.packages
         manifest = packages.save(store)
         self._write_list_index(manifest, packages.last_revision)
@@ -719,7 +845,7 @@ class JiangsuSmartEventService:
             filtered = [item for item in filtered if needle in json.dumps(item, ensure_ascii=False).lower()]
         filtered = sorted(
             filtered,
-            key=lambda item: (parsed.timestamp() if (parsed := _parse_time(item.get("event_start_time"))) else float("-inf")),
+            key=lambda item: (parsed.timestamp() if (parsed := _parse_time(item.get("latest_occurrence_time") or item.get("event_start_time"))) else float("-inf")),
             reverse=True,
         )
         return filtered[:limit]
@@ -742,7 +868,10 @@ class JiangsuSmartEventService:
         )
         if not result.get("success"):
             raise SmartEventUpstreamError(str(result.get("summary") or "告警接口查询失败"))
-        events = [normalize_alarm_event(row) for row in result.get("data", []) if isinstance(row, dict)]
+        invalid_states = {"撤销", "驳回", "无效", "取消", "已撤销", "已驳回", "已取消", "cancelled", "canceled", "revoked", "rejected", "invalid"}
+        events = [normalize_alarm_event(row) for row in result.get("data", []) if isinstance(row, dict)
+                  and not any(str(row.get(key) or "").strip().lower() in invalid_states
+                              for key in ("status", "state", "alarmState", "alarmStatus"))]
         if not station_codes:
             for event in events:
                 event["station_type"] = "省控"
@@ -757,15 +886,31 @@ class JiangsuSmartEventService:
         judgment = event.get("ai_judgment")
         if isinstance(judgment, dict) and judgment.get("final_response"):
             return True
-        return event.get("event_status") in {"AI 已研判", "待人工确认", "已确认"}
+        return bool(event.get("ai_event_type")) or event.get("event_status") in {"AI 已研判", "待人工确认", "已确认"}
 
     def _naming_priority(self) -> list[str]:
         config = self.load_config()
         priority = config.get("initial_naming_priority")
         return [str(item) for item in priority] if isinstance(priority, list) else []
 
+    def _hydrate_evidence(self, *events: dict[str, Any]) -> None:
+        """Load heavy legacy evidence payloads for lightweight-loaded events."""
+        lazy = [event for event in events if isinstance(event, dict) and event.pop("_evidence_lazy", None)]
+        if not lazy or not self._db_mode():
+            return
+        from app.db.sync_bridge import run_db
+        from app.services.smart_event_db import load_evidence_async
+
+        mapping = run_db(load_evidence_async([str(event["event_id"]) for event in lazy]))
+        for event in lazy:
+            record = mapping.get(str(event["event_id"]))
+            if record is not None:
+                event["evidence"] = record
+
     def _merge_event_into(self, target: dict[str, Any], donor: dict[str, Any]) -> list[str]:
-        """把 donor 事件的线索并入同站点同日的 target 事件桶，返回新增 tag_id 列表。"""
+        """把 donor 事件的线索并入已匹配的 target 事件桶，返回新增 tag_id 列表。"""
+        self._hydrate_evidence(target, donor)
+        self._ensure_not_archived(target)
         now = datetime.now().astimezone().isoformat()
         new_ids: list[str] = []
         tags = {item.get("tag_id"): item for item in target.get("clue_tags", []) if isinstance(item, dict)}
@@ -781,12 +926,14 @@ class JiangsuSmartEventService:
             incoming = _parse_time(donor.get(field))
             if incoming is None:
                 continue
-            if current is None or incoming > current:
+            if current is None or (incoming < current if field == "event_start_time" else incoming > current):
                 target[field] = _format_time(incoming)
+        _normalize_event_times(target)
         target["merged_alarm_ids"] = list(dict.fromkeys(
             [str(target.get("event_id"))]
             + [str(item) for item in (target.get("merged_alarm_ids") or [])]
             + [str(donor.get("event_id"))]
+            + [str(item) for item in (donor.get("merged_alarm_ids") or [])]
         ))
         evidence = target.setdefault("evidence", {})
         alarms: dict[str, Any] = {}
@@ -845,7 +992,7 @@ class JiangsuSmartEventService:
         合规记录与数据检测线索不单独创建事件（V3.0 6.3），只挂靠到同站点
         同日已有桶；已研判桶挂靠新标签会记录 pending_delta 并按需创建增量卡。
         """
-        if not tags:
+        if not tags or _is_archived(bucket):
             return []
         now = datetime.now().astimezone().isoformat()
         existing = {item.get("tag_id") for item in bucket.get("clue_tags", [])}
@@ -856,12 +1003,15 @@ class JiangsuSmartEventService:
         bucket["clue_count"] = len(bucket["clue_tags"])
         for field in ("event_start_time", "event_end_time"):
             for tag in new_tags:
+                if tag.get("tag_category") == "合规" or tag.get("tag_source") == "合规记录":
+                    continue
                 incoming = _parse_time(tag.get("tag_start_time") if field == "event_start_time" else tag.get("tag_end_time"))
                 if incoming is None:
                     continue
                 current = _parse_time(bucket.get(field))
-                if current is None or incoming > current:
+                if current is None or (incoming < current if field == "event_start_time" else incoming > current):
                     bucket[field] = _format_time(incoming)
+        _normalize_event_times(bucket)
         bucket["updated_at"] = now
         if not self._bucket_judged(bucket):
             primary = _primary_tag(bucket.get("clue_tags", []), self._naming_priority())
@@ -980,18 +1130,16 @@ class JiangsuSmartEventService:
             key = _bucket_key(item)
             if key is not None and key not in buckets:
                 buckets[key] = item
+        owners = {alias: item for item in existing.values()
+                  for alias in [str(item["event_id"]), *map(str, item.get("merged_alarm_ids") or [])]}
         created_tasks: list[dict[str, Any]] = []
         created_event_ids: list[str] = []
         merged_event_ids: list[str] = []
         now = datetime.now().astimezone().isoformat()
         for candidate in incoming:
             event_id = str(candidate["event_id"])
-            current = existing.get(event_id)
+            current = owners.get(event_id)
             if current is not None and (current.get("archived") is True or current.get("event_status") == "已归档"):
-                for field in ("source_alarm_state", "event_end_time", "alarm_content"):
-                    if candidate.get(field) not in (None, ""):
-                        current[field] = candidate[field]
-                current["updated_at"] = now
                 continue
             key = _bucket_key(candidate)
             bucket = current if current is not None else (buckets.get(key) if key else None)
@@ -1008,6 +1156,7 @@ class JiangsuSmartEventService:
                 new_tag_ids = self._merge_event_into(bucket, candidate)
                 if new_tag_ids:
                     merged_event_ids.append(str(bucket.get("event_id")))
+            owners[event_id] = bucket
             bucket_id = str(bucket.get("event_id"))
             cards = [
                 item for item in tasks
@@ -1044,6 +1193,8 @@ class JiangsuSmartEventService:
         self, store: dict[str, Any], events: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Attach bounded evidence packages without publishing AI tasks."""
+        if not events:
+            return {"collected": 0, "failed": 0}
         config = self.load_config()
         stored_by_id = {
             str(item.get("event_id")): item
@@ -1083,13 +1234,17 @@ class JiangsuSmartEventService:
         collected = 0
         for event_id, fingerprint, package in results:
             target = stored_by_id.get(event_id)
-            if target is None:
+            if target is None or _is_archived(target):
                 continue
             unchanged = _event_fingerprint(target) == fingerprint
             if not unchanged and not self._needs_event_evidence(target):
                 # A newer collection already covers the merged event.
                 continue
+            old_package = target.get("evidence_package") or {}
+            evidence_changed = bool(old_package.get("sources")) and evidence_signature(old_package) != evidence_signature(package)
             collected += 1
+            target["evidence_checked_at"] = datetime.now().astimezone().isoformat()
+            detected = []
             target["evidence_package"] = package
             target.setdefault("evidence", {})["package"] = package
             target["updated_at"] = datetime.now().astimezone().isoformat()
@@ -1107,6 +1262,11 @@ class JiangsuSmartEventService:
                 target["evidence_fingerprint"] = _event_fingerprint(target) if unchanged else fingerprint
             else:
                 target.pop("evidence_fingerprint", None)
+            update_initial_assessment(target, package, detected)
+            target["evidence_signature"] = evidence_signature(package)
+            if evidence_changed and self._bucket_judged(target) and package.get("status") in {"success", "partial"}:
+                target.setdefault("pending_delta", {}).update({"evidence_changed": True,
+                    "updated_at": datetime.now().astimezone().isoformat()})
             if package.get("status") == "failed":
                 failed += 1
         if results:
@@ -1160,14 +1320,17 @@ class JiangsuSmartEventService:
         if feedback:
             instruction = (
                 "本次为事件反馈后的增量研判：运维或现场人员已提交处理反馈（见 feedback 字段）。"
-                "请结合上一轮研判结论与反馈内容继续分析，核验反馈是否解释、修正或补充上一轮判断，"
+                "反馈是现场一手事实，优先于上一轮 AI 推断：以反馈确认的事件类型、根因和处理结果为基准，"
+                "重新选择事件类型并更新数据影响、建议等级与结论字段；"
+                "不得仅因证据包存在缺口而维持“数据异常待研判”或“其他待人工复核”等待定类型。"
+                "反馈与证据包明显矛盾时仍按反馈更新结论，并在人工复核建议中说明分歧证据。"
                 "输出更新后的完整研判结论；新结论将替换上一轮结论。"
             )
         else:
             instruction = (
                 "本次为增量研判：事件在上一轮研判后又合并了新线索。请先阅读上一轮研判结论和新增线索，"
                 "判断新增线索与上一轮事件是否同一原因；"
-                "在通用提交 sections 中用 same_cause 字段记录同一原因延续或新事件，"
+                "在通用提交 sections 中用 same_cause 字段记录 true、false 或待确认，并用 continuity_basis 说明依据；不同原因仍归并在本事件，"
                 "再基于合并后的完整事件与证据包输出覆盖全部线索的完整研判结论，不得丢弃历史线索。"
             )
         return {
@@ -1187,6 +1350,7 @@ class JiangsuSmartEventService:
     async def _dispatch_pending_tasks(
         self, store: dict[str, Any], *, wait: bool = False,
         event_ids: set[str] | None = None,
+        task_ids: set[str] | None = None,
         force_retry: bool = False,
     ) -> list[dict[str, Any]]:
         """Publish smart events to the real event-triggered task service."""
@@ -1201,13 +1365,16 @@ class JiangsuSmartEventService:
         events = {item.get("event_id"): item for item in store.get("events", [])}
         outcomes: list[dict[str, Any]] = []
         changed = False
-        for card in store.get("tasks", []):
+        for queued in list(store.get("tasks", [])):
+            card = next((item for item in store.get("tasks", []) if item.get("task_id") == queued.get("task_id")), queued)
+            if task_ids is not None and card.get("task_id") not in task_ids:
+                continue
             if card.get("task_type") != "ai_judgment" or card.get("status") not in {"待执行", "待调度"}:
                 continue
             if event_ids is not None and str(card.get("event_id")) not in event_ids:
                 continue
             event = events.get(card.get("event_id"))
-            if not event or not event.get("event_trigger_type"):
+            if not event or _is_archived(event) or not event.get("event_trigger_type"):
                 continue
             package_path = self._evidence_package_path(str(event["event_id"]))
             package = json.loads(package_path.read_text(encoding="utf-8"))
@@ -1215,12 +1382,18 @@ class JiangsuSmartEventService:
                 raise ValueError("smart_event_evidence_identity_mismatch")
             package_ref = format_agent_path(package_path)
             continuity = self._continuity_context(event, card)
+            card["dispatch_token"] = uuid4().hex
+            card["dispatched_at"] = datetime.now().astimezone().isoformat()
             task_event = TaskEvent(
                 event_id=str(event["event_id"]),
                 event_type=SMART_EVENT_EVENT_TYPE,
                 occurred_at=_parse_time(event.get("event_start_time")) or datetime.now().astimezone(),
                 attributes={
+                    "agent_mode": smart_event_agent_mode(event),
                     "smart_event_id": event["event_id"],
+                    "smart_event_task_id": card["task_id"],
+                    "smart_event_dispatch_token": card["dispatch_token"],
+                    "ai_task_priority": event.get("ai_task_priority", "normal"),
                     "smart_event_type": event.get("primary_clue_tag"),
                     "clue_type": event.get("primary_clue_tag"),
                     "site_id": event.get("site_id"),
@@ -1237,23 +1410,22 @@ class JiangsuSmartEventService:
                     "continuity_context": continuity,
                 },
             )
+            card["input_clue_ids"] = [str(tag.get("tag_id")) for tag in event.get("clue_tags", [])]
+            card["input_evidence_signature"] = event.get("evidence_signature") or evidence_signature(package)
+            card["status"] = "执行中"
+            card["updated_at"] = datetime.now().astimezone().isoformat()
+            self._save_store(store)
             try:
                 retry_options = {"force_retry": True} if force_retry else {}
                 dispatch = await task_service.publish_event(task_event, wait=wait, **retry_options)
-                if wait and dispatch.execution_ids:
-                    # The completion hook may already have written a terminal
-                    # status and final reply while publish_event was awaited.
-                    latest = self._load_store(event_ids={str(event["event_id"])})
-                    latest_card = next(
-                        (item for item in latest.get("tasks", []) if item.get("task_id") == card.get("task_id")),
-                        None,
-                    )
-                    if latest_card:
-                        store.clear()
-                        store.update(latest)
-                        card = latest_card
-                else:
-                    card["status"] = "执行中" if dispatch.accepted_task_ids else card.get("status", "待执行")
+                latest = self._load_store(event_ids={str(event["event_id"])})
+                latest_card = next((item for item in latest.get("tasks", []) if item.get("task_id") == card.get("task_id")), None)
+                if latest_card:
+                    store.clear()
+                    store.update(latest)
+                    card = latest_card
+                if not dispatch.accepted_task_ids and card.get("status") == "执行中":
+                    schedule_retry(card, self.load_config(), error="任务未接收：重复执行或没有匹配任务")
                 card["dispatch_status"] = "accepted" if dispatch.accepted_task_ids else "duplicate_or_unmatched"
                 card["scheduled_task_ids"] = list(dispatch.accepted_task_ids or dispatch.matched_task_ids)
                 card["execution_ids"] = list(dispatch.execution_ids)
@@ -1261,6 +1433,11 @@ class JiangsuSmartEventService:
                 changed = True
                 outcomes.append({"event_id": event["event_id"], **dispatch.model_dump(mode="json")})
             except Exception as exc:  # noqa: BLE001 - keep the event visible for retry
+                latest = self._load_store(event_ids={str(event["event_id"])})
+                card = next(item for item in latest["tasks"] if item["task_id"] == card["task_id"])
+                store.clear()
+                store.update(latest)
+                schedule_retry(card, self.load_config(), error=str(exc))
                 card["dispatch_status"] = "failed"
                 card["dispatch_error"] = str(exc)
                 card["updated_at"] = datetime.now().astimezone().isoformat()
@@ -1328,6 +1505,7 @@ class JiangsuSmartEventService:
 
     async def sync_compliance_clues(
         self, *, date: str | None = None, actor: dict[str, Any] | None = None,
+        fetch_evidence: bool = True,
     ) -> dict[str, Any]:
         """把同站点同日的运维工单/质控/门禁记录挂靠为合规线索标签。
 
@@ -1440,7 +1618,7 @@ class JiangsuSmartEventService:
             bucket for buckets in buckets_by_site.values() for bucket in buckets
             if self._needs_event_evidence(bucket)
         ]
-        evidence_result = await self._collect_event_evidence(store, candidates)
+        evidence_result = await self._collect_event_evidence(store, candidates) if fetch_evidence else {"collected": 0, "failed": 0}
         return {
             "status": "synced",
             "date": day_text,
@@ -1533,6 +1711,72 @@ class JiangsuSmartEventService:
             "started_at": _format_time(cls._background_sync_started_at),
         }
 
+    async def _list_events_from_db(self, *, start_time, end_time, station_codes, status,
+                                   keyword, event_type, level, limit, page, sync_state) -> dict[str, Any] | None:
+        from app.db.sync_bridge import run_db_async
+        from app.services import smart_event_db
+
+        if not smart_event_db.smart_event_db_enabled():
+            return None
+
+        async def overview_query(current_page):
+            return await run_db_async(smart_event_db.query_events_overview_async(
+                start_time=time_lo, end_time=time_hi, station_codes=station_codes,
+                status=status, keyword=keyword, event_type=event_type, level=level,
+                limit=limit, offset=(current_page - 1) * limit,
+            ))
+
+        try:
+            time_lo, time_hi = _parse_time(start_time), _parse_time(end_time)
+            page = max(1, page)
+            overview = await overview_query(page)
+            events, total = overview["events"], overview["total"]
+            if not events and total > 0 and page > 1:
+                page = max(1, min(page, max(1, (total + limit - 1) // limit)))
+                overview = await overview_query(page)
+                events = overview["events"]
+            last_sync = overview.get("last_sync")
+            last_sync = last_sync if isinstance(last_sync, dict) else None
+            upstream_error = str(last_sync.get("error")) if last_sync and last_sync.get("error") else None
+            return {
+                "events": [self._event_summary(item) for item in events],
+                "total": total,
+                "page": page,
+                "page_size": limit,
+                "stats": overview["stats"],
+                "filters": overview["filters"],
+                "source": "alarm_adapter_store_stale" if upstream_error else "alarm_adapter_store",
+                "source_metadata": {
+                    "store_path": str(self.store_path),
+                    "upstream_error": upstream_error,
+                    "last_sync": last_sync,
+                    "sync": {
+                        "in_progress": sync_state["in_progress"],
+                        "started_at": sync_state["started_at"],
+                    },
+                },
+                "capabilities": {
+                    "platform_event_api": False,
+                    "alarm_adapter": True,
+                    "event_store": True,
+                    "task_cards": True,
+                    "upstream_available": upstream_error is None,
+                    "ai_judgment": True,
+                    "event_driven_tasks": True,
+                    "task_history_learning": True,
+                    "alarm_scope": "省控",
+                    "unscoped_upstream_query": True,
+                    "operations": True,
+                    "manual_confirmation": True,
+                    "archive_lock": True,
+                    "same_day_merge": True,
+                    "incremental_judgment": True,
+                },
+            }
+        except Exception:
+            logger.exception("smart_event_db_list_failed")
+            return None
+
     async def list_events(
         self,
         *,
@@ -1546,6 +1790,7 @@ class JiangsuSmartEventService:
         page: int = 1,
         summary: bool = False,
         event_type: str | None = None,
+        level: str | None = None,
     ) -> dict[str, Any]:
         sync_state = self.background_sync_status()
         if refresh and not summary:
@@ -1555,6 +1800,14 @@ class JiangsuSmartEventService:
                 station_codes=station_codes,
                 limit=100,
             )
+        if summary:
+            db_result = await self._list_events_from_db(
+                start_time=start_time, end_time=end_time, station_codes=station_codes,
+                status=status, keyword=keyword, event_type=event_type, level=level,
+                limit=limit, page=page, sync_state=sync_state,
+            )
+            if db_result is not None:
+                return db_result
         store = await asyncio.to_thread(self._load_list_store) if summary else self._load_store()
         last_sync = store.get("last_sync") if isinstance(store.get("last_sync"), dict) else None
         upstream_error = str(last_sync.get("error")) if last_sync and last_sync.get("error") else None
@@ -1567,6 +1820,19 @@ class JiangsuSmartEventService:
         all_events = [item for item in store.get("events", []) if isinstance(item, dict)]
         if event_type:
             events = [item for item in events if (item.get("ai_event_type") or item.get("event_type")) == event_type]
+        if level:
+            events = [item for item in events if str(item.get("ai_suggested_level") or "") == level]
+        if summary:
+            # summary 数据源为本地 store，时间条件在此统一过滤（与上游同步窗口无关）。
+            # 缺少可解析时间的事件不受窗口排除，保持列表契约稳定。
+            time_lo = _parse_time(start_time)
+            time_hi = _parse_time(end_time)
+            if time_lo or time_hi:
+                events = [
+                    item for item in events
+                    if not (parsed := _parse_time(item.get("latest_occurrence_time") or item.get("event_start_time")))
+                    or ((not time_lo or parsed >= time_lo) and (not time_hi or parsed <= time_hi))
+                ]
         if summary and keyword:
             needle = keyword.strip().lower()
             search_fields = ("event_id", "event_name", "initial_event_name", "site_name", "site_id", "primary_clue_tag", "source_alarm_rule_type")
@@ -1589,6 +1855,7 @@ class JiangsuSmartEventService:
             "filters": {
                 "statuses": sorted({item["event_status"] for item in all_events if item.get("event_status")}),
                 "types": sorted({item.get("ai_event_type") or item.get("event_type") for item in all_events if item.get("ai_event_type") or item.get("event_type")}),
+                "levels": sorted({item["ai_suggested_level"] for item in all_events if item.get("ai_suggested_level")}),
             },
             "source": "alarm_adapter_store_stale" if upstream_error else "alarm_adapter_store",
             "source_metadata": {
@@ -1624,6 +1891,11 @@ class JiangsuSmartEventService:
         return self._stored_event(store, event_id)
 
     def list_tasks(self, *, event_id: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        if self._db_mode():
+            from app.db.sync_bridge import run_db
+            from app.services.smart_event_db import list_tasks_async
+
+            return run_db(list_tasks_async(event_id=event_id, status=status, limit=limit))
         tasks = [item for item in self._load_list_store().get("tasks", []) if isinstance(item, dict)]
         if event_id:
             tasks = [item for item in tasks if item.get("event_id") == event_id]
@@ -1632,6 +1904,11 @@ class JiangsuSmartEventService:
         return tasks[:limit]
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
+        if self._db_mode():
+            from app.db.sync_bridge import run_db
+            from app.services.smart_event_db import get_task_by_id_async
+
+            return run_db(get_task_by_id_async(task_id))
         return next((item for item in self.list_tasks(limit=1000) if item.get("task_id") == task_id), None)
 
     @staticmethod
@@ -1683,12 +1960,14 @@ class JiangsuSmartEventService:
         assignee: str | None = None, description: str | None = None,
         actor: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """提交派单处置：事件进入“派单处置中”并保留工单信息。"""
+        """提交派单处置：事件进入“待反馈”并保留工单信息。"""
         store = self._load_store(event_ids={event_id})
         event = self._stored_event(store, event_id)
         if event is None:
             raise KeyError(event_id)
         self._ensure_not_archived(event)
+        if event.get("event_status") not in {"待复核", "已反馈"}:
+            raise ValueError("smart_event_dispatch_not_allowed")
         order_title = str(title or "").strip()
         if not order_title:
             raise ValueError("dispatch_order_title_required")
@@ -1705,7 +1984,7 @@ class JiangsuSmartEventService:
                 "description": str(description or "").strip() or None,
             },
         )
-        event["event_status"] = "派单处置中"
+        event["event_status"] = "待反馈"
         event["updated_at"] = now
         store["updated_at"] = now
         self._save_store(store)
@@ -1726,6 +2005,8 @@ class JiangsuSmartEventService:
         if event is None:
             raise KeyError(event_id)
         self._ensure_not_archived(event)
+        if event.get("event_status") not in {"待复核", "待反馈", "已反馈"}:
+            raise ValueError("smart_event_feedback_not_allowed")
         feedback_text = str(feedback or "").strip()
         if not feedback_text:
             raise ValueError("feedback_required")
@@ -1827,7 +2108,7 @@ class JiangsuSmartEventService:
                 task = self._create_ai_task(event, actor=actor, reason="manual_rerun")
                 task["rerun_of_task_id"] = cards[-1].get("task_id") if cards else None
                 store.setdefault("tasks", []).append(task)
-        event["event_status"] = "AI 研判中"
+        _normalize_event_status(event)
         event["updated_at"] = datetime.now().astimezone().isoformat()
         store["updated_at"] = event["updated_at"]
         self._save_store(store)
@@ -1843,16 +2124,46 @@ class JiangsuSmartEventService:
         return {"event": latest_event, "task": latest_task, "dispatches": dispatches}
 
     def apply_task_execution(self, event_id: str, task: Any, execution: Any) -> None:
+        # Serialize against human archive and new review submissions. A callback
+        # cannot pass the archive check and then overwrite a concurrent archive.
+        from app.services.task_review import review_lock
+        review_id = "review_" + hashlib.sha256(json.dumps(
+            [task.task_id, event_id], ensure_ascii=False).encode()).hexdigest()[:32]
+        with review_lock(review_id):
+            self._apply_task_execution_locked(event_id, task, execution)
+
+    def _apply_task_execution_locked(self, event_id: str, task: Any, execution: Any) -> None:
         """Project the submitted generic review into the event; never parse replies."""
 
         store = self._load_store(event_ids={event_id})
         event = next((item for item in store.get("events", []) if item.get("event_id") == event_id), None)
-        if event is None:
+        if event is None or _is_archived(event):
+            return
+        attributes = getattr(execution, "event_attributes", None) or {}
+        submitted_card_id = attributes.get("smart_event_task_id")
+        if submitted_card_id and not any(card.get("task_id") == submitted_card_id
+                                        and card.get("status") != "已取消" for card in store.get("tasks", [])):
+            return
+        submitted_card = next((card for card in store.get("tasks", [])
+                               if card.get("task_id") == submitted_card_id), None)
+        if not _card_accepts_execution(submitted_card or {}, attributes, getattr(execution, "started_at", None)):
+            logger.warning(
+                "smart_event_stale_execution_result_dropped",
+                event_id=event_id,
+                task_id=submitted_card_id,
+                execution_id=getattr(execution, "execution_id", None),
+                card_dispatch_token=(submitted_card or {}).get("dispatch_token"),
+                execution_dispatch_token=attributes.get("smart_event_dispatch_token"),
+            )
+            return
+        if (event.get("ai_judgment") or {}).get("execution_id") == execution.execution_id:
             return
         from app.services.task_review import list_reviews
         submitted = next((record for record in list_reviews(pending_only=False, task_id=task.task_id)
                           if record["subject_id"] == event_id and record["execution_id"] == execution.execution_id), None)
-        success = submitted is not None
+        success = submitted is not None and str(getattr(execution, "status", "success")) in {"success", "ExecutionStatus.SUCCESS"}
+        if not success:
+            submitted = None
         final_response = submitted["summary"] if submitted else ""
         status = "success" if success else "failed"
         fields = {field["key"]: field["value"] for section in submitted["sections"] for field in section["fields"]
@@ -1864,7 +2175,10 @@ class JiangsuSmartEventService:
             "disposal_suggestions": submitted["actions"],
             "compliance_explanation_result": fields.get("compliance_explanation_result"),
             "data_analysis": {key: fields[key] for key in JUDGMENT_ANALYSIS_KEYS if key in fields},
-            "continuity_same_cause": fields.get("same_cause") == "true" if "same_cause" in fields else None,
+            "primary_evidence_tags": fields.get("primary_evidence_tags"),
+            "supporting_evidence_tags": fields.get("supporting_evidence_tags"),
+            "continuity_basis": fields.get("continuity_basis"),
+            "continuity_same_cause": {"true": True, "false": False}.get(fields.get("same_cause")),
         } if submitted else None
         if submitted:
             event["review_id"] = submitted["review_id"]
@@ -1894,6 +2208,7 @@ class JiangsuSmartEventService:
             event["ai_structured_judgment"] = structured
             if structured.get("event_type"):
                 event["ai_event_type"] = structured["event_type"]
+                event["event_type"] = structured["event_type"]
             if structured.get("data_impact"):
                 event["ai_data_impact"] = structured["data_impact"]
             if structured.get("suggested_level"):
@@ -1908,11 +2223,20 @@ class JiangsuSmartEventService:
                 event["event_name"] = judgment_name
         card_summary = final_response
         incremental_card: dict[str, Any] | None = None
+        completed_card = None
         for card in store.get("tasks", []):
             if card.get("event_id") != event_id or card.get("task_type") != "ai_judgment":
                 continue
+            if submitted_card_id and card.get("task_id") != submitted_card_id:
+                continue
             if card.get("status") in {"待执行", "待调度", "执行中"} or card.get("execution_id") == result["execution_id"]:
+                completed_card = card
                 card["status"] = "已完成" if success else "执行失败"
+                if success:
+                    card["next_retry_at"] = None
+                    card["retry_exhausted"] = False
+                else:
+                    schedule_retry(card, self.load_config(), error=getattr(execution, "error_message", None))
                 card["execution_id"] = result["execution_id"]
                 # Todo cards are an operational summary, not the full Agent transcript.
                 card["final_response"] = card_summary
@@ -1954,13 +2278,26 @@ class JiangsuSmartEventService:
             (incremental_card.get("continuity") or {}).get("reason") == "feedback"
         )
         if success:
-            event["event_status"] = "已反馈" if feedback_round else "AI 已研判"
+            if feedback_round or event.get("event_status") == "已反馈":
+                event["event_status"] = "已反馈"
+            elif event.get("event_status") != "待反馈":
+                event["event_status"] = _judged_status(event)
         else:
-            event["event_status"] = "AI 研判失败"
+            # Execution failure belongs to the task; retain the last business state.
+            event.setdefault("event_status", "未研判")
+        update_impact_conflict(event)
         if success:
-            # 本轮研判覆盖到当前全部线索；新增线索 watermark 清零。
-            event["judged_clue_ids"] = [str(tag.get("tag_id")) for tag in event.get("clue_tags", []) or []]
-            event.pop("pending_delta", None)
+            current_ids = [str(tag.get("tag_id")) for tag in event.get("clue_tags", [])]
+            covered_ids = (completed_card or {}).get("input_clue_ids", current_ids)
+            event["judged_clue_ids"] = covered_ids
+            covered_signature = (completed_card or {}).get("input_evidence_signature", event.get("evidence_signature"))
+            event["judged_evidence_signature"] = covered_signature
+            remaining = [identity for identity in current_ids if identity not in covered_ids]
+            if remaining or covered_signature != event.get("evidence_signature"):
+                event["pending_delta"] = {"clue_ids": remaining, "evidence_changed": covered_signature != event.get("evidence_signature"),
+                                          "updated_at": result["updated_at"]}
+            else:
+                event.pop("pending_delta", None)
         event["updated_at"] = result["updated_at"]
         store["updated_at"] = result["updated_at"]
         self._save_store(store)
@@ -1982,7 +2319,16 @@ class JiangsuSmartEventService:
         return dict(DEFAULT_CONFIG)
 
     def save_config(self, values: dict[str, Any]) -> dict[str, Any]:
-        config = {**DEFAULT_CONFIG, **values}
+        config = {**self.load_config(), **values}
+        bounds = {"schedule_interval_minutes": (1, 1440), "rescan_lookback_hours": (1, 168),
+                  "evidence_refresh_minutes": (1, 1440), "evidence_batch_size": (1, 1000),
+                  "ai_max_concurrency": (1, 10), "ai_max_retries": (0, 10), "ai_retry_delay_minutes": (1, 1440)}
+        for key, (minimum, maximum) in bounds.items():
+            value = config[key]
+            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                raise ValueError(f"{key} must be an integer between {minimum} and {maximum}")
+        if not isinstance(config["auto_ai_enabled"], bool):
+            raise ValueError("auto_ai_enabled must be boolean")
         config["version"] = int(config.get("version") or 1)
         config["ai_event_type_dictionary"] = [
             item for item in config["ai_event_type_dictionary"] if item in AI_EVENT_TYPES

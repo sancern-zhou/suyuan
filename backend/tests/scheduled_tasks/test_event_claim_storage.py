@@ -50,6 +50,33 @@ def test_failed_claim_can_be_retried_explicitly(tmp_path):
     assert retry.attempt == 2
 
 
+def test_retry_and_reopen_refresh_snapshot_with_latest_dispatch(tmp_path):
+    storage = EventClaimStorage(tmp_path)
+    claim = storage.try_claim("task-1", _event())
+    assert claim.event_snapshot["attributes"] == {"city": "运城市"}
+
+    storage.mark_status(claim.claim_id, "failed")
+    latest = TaskEvent(
+        event_id="event-1",
+        event_type="yuncheng.alert.created",
+        occurred_at="2026-07-13T16:05:00+08:00",
+        attributes={"city": "运城市", "smart_event_dispatch_token": "token-2"},
+        payload={"evidence_dir": "/tmp/evidence-2"},
+    )
+    retried = storage.retry_failed("task-1", "event-1", event=latest)
+    assert retried.event_snapshot["attributes"]["smart_event_dispatch_token"] == "token-2"
+    assert retried.event_snapshot["payload"]["evidence_dir"] == "/tmp/evidence-2"
+
+    storage.mark_status(claim.claim_id, "succeeded")
+    reopened = storage.reopen("task-1", "event-1", event=latest)
+    assert reopened.status == "claimed"
+    assert reopened.event_snapshot["attributes"]["smart_event_dispatch_token"] == "token-2"
+    # Without an event the previous snapshot is preserved.
+    storage.mark_status(claim.claim_id, "failed")
+    again = storage.retry_failed("task-1", "event-1")
+    assert again.event_snapshot["attributes"]["smart_event_dispatch_token"] == "token-2"
+
+
 def test_latest_event_snapshot_can_drive_manual_execution(tmp_path):
     storage = EventClaimStorage(tmp_path)
     storage.try_claim("task-1", _event("event-1", minute=0))

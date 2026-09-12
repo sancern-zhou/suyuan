@@ -105,6 +105,39 @@
         <button
           v-if="projectConfig.project === 'jiangsu-ops'"
           class="module-card"
+          :class="{ active: isActive('smart-event-external') }"
+          type="button"
+          @click="handleModuleSelect('smart-event-external')"
+          :title="isCollapsed ? '外界环境识别' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('smart-events')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">外界环境识别</p></div>
+        </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('smart-event-instrument') }"
+          type="button"
+          @click="handleModuleSelect('smart-event-instrument')"
+          :title="isCollapsed ? '仪器故障识别' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('smart-events')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">仪器故障识别</p></div>
+        </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('smart-reports') }"
+          type="button"
+          @click="handleModuleSelect('smart-reports')"
+          :title="isCollapsed ? '智能报告' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('smart-reports')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">智能报告</p></div>
+        </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
           :class="{ active: isActive('smart-events') }"
           type="button"
           @click="handleModuleSelect('smart-events')"
@@ -629,6 +662,9 @@ const moduleIcons = {
       <path d="M4 15h7v4H4z" />
       <path d="M13 15h7v4h-7z" />
     </svg>
+  `,
+  'smart-reports': `
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v4h3M9 12h6M9 15h6"/></svg>
   `,
   'social-platform': `
     <svg viewBox="0 0 24 24" aria-hidden="true">

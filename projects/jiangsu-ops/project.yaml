@@ -17,6 +17,8 @@ frontend:
     - operations_analysis
     - device_control
     - station_fault_diagnosis
+    - smart_event_external
+    - smart_event_instrument
   default_agent_mode: ops
   # Web 首页由“苏小环”统筹场景承载；专业智能体保留为按需进入的二级工作区。
   agent_platform_layout: coordinator
@@ -169,6 +171,7 @@ backend:
     - jiangsu_fetch_alarm_records
     - jiangsu_smart_event_workspace
     - jiangsu_fetch_attendance_records
+    - jiangsu_analyze_work_order_tracks
     - jiangsu_fetch_station_directory
     - jiangsu_query_operations_graph
     - jiangsu_get_device_control_state
@@ -176,11 +179,15 @@ backend:
     - jiangsu_execute_device_control
     - jiangsu_prepare_fault_work_order
     - submit_task_review
+    - create_report_package
+    - render_report_package
+    - validate_report_package
     - jiangsu_fetch_station_alarm_logs
     - jiangsu_fetch_fault_work_orders
     - jiangsu_fetch_fault_work_order_detail
     - jiangsu_fetch_auto_inspection
     - jiangsu_fetch_network_inspection_summary
+    - jiangsu_network_inspection_workflow
     - jiangsu_fetch_station_environment_history
     - jiangsu_fetch_qc_task_history
     - jiangsu_fetch_qc_task_status
@@ -210,6 +217,14 @@ backend:
       - manage_editable_ppt
       - create_pptx_with_ppt_master
       - validate_pptx
+    smart_event_external:
+      - jiangsu_smart_event_workspace
+      - jiangsu_prepare_fault_work_order
+      - submit_task_review
+    smart_event_instrument:
+      - jiangsu_smart_event_workspace
+      - jiangsu_prepare_fault_work_order
+      - submit_task_review
     # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
     knowledge:
       - knowledge_qa_workflow
@@ -340,12 +355,12 @@ backend:
       - jiangsu_fetch_qc_run_logs
       - jiangsu_fetch_qc_monitoring_curve
       - submit_task_review
-      - jiangsu_query_operations_graph
-      - knowledge_graph_query
-      - create_report_chart
       - create_report_package
       - render_report_package
       - validate_report_package
+      - jiangsu_query_operations_graph
+      - knowledge_graph_query
+      - create_report_chart
       - call_sub_agent
     # 站房巡检的业务查询仍为只读；巡检执行、工单生成与派发仍需后续单独评审。
     smart_inspection:
@@ -354,6 +369,7 @@ backend:
       - write_file
       - jiangsu_query_operations_graph
       - jiangsu_fetch_network_inspection_summary
+      - jiangsu_network_inspection_workflow
       - jiangsu_fetch_alarm_records
       - jiangsu_smart_event_workspace
       - jiangsu_fetch_auto_inspection
@@ -412,6 +428,8 @@ backend:
     device_control: projects/jiangsu-ops/prompts/device_control.md
     ops: projects/jiangsu-ops/prompts/ops.md
     station_fault_diagnosis: projects/jiangsu-ops/prompts/station_fault_diagnosis.md
+    smart_event_external: projects/jiangsu-ops/prompts/smart_event_external.md
+    smart_event_instrument: projects/jiangsu-ops/prompts/smart_event_instrument.md
 knowledge:
   collections: []
   # Runtime resolves this exact name to the active graph-enabled KB id.
@@ -424,3 +442,5 @@ scheduled_tasks:
   - jiangsu_station_fault_diagnosis
   - jiangsu_fault_work_order_review
   - jiangsu_smart_event_ai_judgment
+  - jiangsu_work_order_track_monthly_review
+  - jiangsu_network_inspection_watch

@@ -7,9 +7,6 @@
             <h2>技能管理</h2>
             <p>按目录直接展示每个技能卡片</p>
           </div>
-          <span class="stats" v-if="stats">
-            共 {{ stats.total }} 个技能 / {{ stats.official }} 个正式技能 / {{ stats.drafts }} 个待审核草稿
-          </span>
         </div>
         <div class="header-actions">
           <button
@@ -38,13 +35,9 @@
         {{ loadError }}
       </section>
 
-      <section class="summary-row" aria-label="技能概览">
-        <article v-for="item in summaryCards" :key="item.label" class="summary-card">
-          <span>{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-          <small>{{ item.hint }}</small>
-        </article>
-      </section>
+      <nav class="category-tabs" aria-label="技能分类">
+        <button v-for="section in skillSections" :key="section.id" type="button" @click="document.getElementById('skill-section-'+section.id)?.scrollIntoView({behavior:'smooth'})">{{ section.title }}</button>
+      </nav>
 
       <section v-if="loading" class="state-panel">
         <strong>加载中...</strong>
@@ -58,7 +51,7 @@
       <section v-else class="skill-sections">
         <article
           v-for="section in skillSections"
-          :key="section.id"
+          :id="'skill-section-'+section.id" :key="section.id"
           class="skill-section"
         >
           <button
@@ -654,6 +647,12 @@ onMounted(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
+
+.category-tabs { display:flex; gap:34px; align-items:center; overflow-x:auto; white-space:nowrap; margin:18px 0 28px; border-bottom:1px solid #eee; }
+.category-tabs button { border:0; background:none; padding:0 0 14px; color:#888; font-size:18px; font-weight:600; cursor:pointer; }
+.category-tabs button:hover { color:#111; }
+.skill-section { scroll-margin-top:24px; }
+.skill-card { border:1px solid #ececec; border-radius:24px; padding:28px 40px; box-shadow:0 8px 24px rgba(0,0,0,.03); background:#fff; }
 
 .summary-card {
   display: grid;

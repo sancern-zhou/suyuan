@@ -218,13 +218,13 @@ onMounted(() => {
 })
 const isCoordinatorLayout = computed(() => props.layout === 'coordinator')
 const isSceneLayout = computed(() => props.layout === 'scenes')
-const sceneGroups = computed(() => props.scenes.map(scene => ({
+const sceneGroups = computed(() => (Array.isArray(props.scenes) ? props.scenes : []).map(scene => ({
   ...scene,
-  agents: scene.modeIds
-    .map(mode => props.agents.find(agent => agent.id === mode))
+  agents: (Array.isArray(scene.modeIds) ? scene.modeIds : [])
+    .map(mode => (Array.isArray(props.agents) ? props.agents : []).find(agent => agent.id === mode))
     .filter(Boolean)
 })).filter(scene => scene.agents.length))
-const isRunning = mode => props.runningModes.includes(mode)
+const isRunning = mode => (Array.isArray(props.runningModes) ? props.runningModes : []).includes(mode)
 
 const formatTaskSchedule = (task) => {
   if (task.trigger_type === 'event') return '事件触发'

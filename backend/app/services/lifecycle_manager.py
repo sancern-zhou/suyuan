@@ -28,17 +28,23 @@ from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyStationHighValuesFetcher,
 )
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.jiangsu_fault_work_order_review_event import (
+    JiangsuFaultWorkOrderReviewEventFetcher,
+)
+from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
+from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
 from app.fetchers.satellite.gems_hcho_data_fetcher import GemsHchoDataFetcher
 from app.fetchers.satellite.gems_image_fetcher import GemsImageFetcher
 from app.fetchers.satellite.nasa_firms_fetcher import NASAFirmsFetcher
+from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
 from app.fetchers.tenders import TenderInformationFetcher  # 招投标信息每日抓取
 from app.fetchers.weather.city_air_quality_forecast_fetcher import CityAirQualityForecastFetcher
 from app.fetchers.weather.era5_fetcher import ERA5Fetcher
-from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.weather.jiangsu_nmc_observed_fetcher import (
     JiangsuNMCObservedWeatherFetcher,
 )
+from app.fetchers.weather.jining_era5_fetcher import JiningERA5Fetcher
 from app.fetchers.weather.nmc_observed_fetcher import NMCObservedWeatherFetcher
 from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetcher
 from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
@@ -46,13 +52,7 @@ from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
 from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
-from app.fetchers.jiangsu_fault_work_order_review_event import (
-    JiangsuFaultWorkOrderReviewEventFetcher,
-)
-from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
-from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
 from app.project_config.loader import load_project_context
-from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
 
 # 导入单一工具注册源
 from app.tools import global_tool_registry

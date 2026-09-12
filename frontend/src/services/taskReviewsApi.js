@@ -6,7 +6,7 @@ async function request(path, options) {
   if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : '审核请求失败')
   return payload
 }
-export const listTaskReviews = (offset = 0) => request(`?pending_only=true&limit=100&offset=${offset}`)
+export const listTaskReviews = (offset = 0) => request(`?pending_only=true&limit=1000&offset=${offset}`)
 export const getTaskReview = id => request(`/${encodeURIComponent(id)}`)
 export const decideTaskReview = (id, decision) => request(`/${encodeURIComponent(id)}/decision`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(decision)

@@ -72,10 +72,10 @@
               v-for="task in filteredTasks"
             :key="task.cardId || task.task_id || task.executionId"
             class="task-card"
-            :class="{ paused: activeTab !== 'todo' && !task.enabled }"
+            :class="{ paused: activeTab !== 'todo' && !task.enabled, 'duty-card': activeTab === 'todo' && task.category === '运维值守' }"
           >
             <span class="task-ambient" aria-hidden="true"></span>
-            <span class="task-type-badge">{{ activeTab === 'todo' ? '待处理' : getTaskTypeLabel(task) }}</span>
+            <span class="task-type-badge">{{ activeTab === 'todo' ? (task.category === '运维值守' ? '运维值守' : '待处理') : getTaskTypeLabel(task) }}</span>
             <span class="task-card-top">
               <span class="task-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M8 2.8h8" /></svg>
@@ -88,7 +88,7 @@
                 <i aria-hidden="true"></i>{{ task.enabled ? '已启用' : '已暂停' }}
               </span>
               <span v-else :class="['task-state', `todo-${task.status}`]">
-                <i aria-hidden="true"></i>{{ formatTodoStatus(task.status) }}
+                <i aria-hidden="true"></i>{{ formatTodoStatus(task) }}
               </span>
             </span>
             <span class="task-description">{{ activeTab === 'todo' ? task.summary : (task.description || '进入任务工作区查看执行情况与产出文件。') }}</span>
@@ -97,8 +97,15 @@
               <span v-if="activeTab === 'todo'">{{ task.severityLabel }}</span>
               <span v-else>{{ task.timeout_seconds || 1800 }} 秒超时</span>
             </span>
-            <button type="button" class="task-action" @click="activeTab === 'todo' ? selectedReviewId = task.review_id : emit('select-task', task)">
-              {{ activeTab === 'todo' ? '查看研判结果' : '进入工作区' }}
+            <span v-if="activeTab === 'todo'" class="task-actions">
+              <button type="button" class="task-action" @click="emit('select-review', task)">
+                进入对话工作区
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+              </button>
+              <button type="button" class="task-action task-action-secondary" @click="selectedReviewId = task.review_id">人工确认归档</button>
+            </span>
+            <button v-else type="button" class="task-action" @click="emit('select-task', task)">
+              进入工作区
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
             </button>
           </article>
@@ -119,6 +126,7 @@
 </template>
 
 <script setup>
+import { jiangsuReviewStatus } from '../management/jiangsuJudgmentPresentation.js'
 import { computed, onMounted, ref } from 'vue'
 import { useScheduledTasksStore } from '@/stores/scheduledTasks'
 import { listTaskReviews } from '@/services/taskReviewsApi.js'
@@ -127,7 +135,7 @@ import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 const props = defineProps({
   runningModes: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['select-task'])
+const emit = defineEmits(['select-task', 'select-review'])
 const scheduledTasksStore = useScheduledTasksStore()
 const loading = ref(false)
 const loadError = ref('')
@@ -174,7 +182,7 @@ const getTaskCountByType = typeId => (
     : visibleTasks.value.filter(task => resolveTaskType(task) === typeId).length
 )
 const getTaskTypeLabel = task => taskTypes.value.find(type => type.id === resolveTaskType(task))?.name || '其他任务'
-const formatTodoStatus = status => ({ pending_review: '待人工确认', in_disposal: '待处置' }[status])
+const formatTodoStatus = task => jiangsuReviewStatus(task) || ({ pending_review: '待人工确认', in_disposal: '待处置' }[task.status])
 const formatTodoTime = value => {
   if (!value) return '完成时间未知'
   const date = new Date(value)
@@ -206,11 +214,6 @@ const loadTasks = async () => {
       listTaskReviews()
     ])
     const loaded = [...reviewPayload.reviews]
-    while (loaded.length < reviewPayload.total) {
-      const page = await listTaskReviews(loaded.length)
-      if (!page.reviews.length) break
-      loaded.push(...page.reviews)
-    }
     reviews.value = [...new Map(loaded.map(review => [review.review_id, review])).values()]
     if (!taskTypes.value.some(type => type.id === activeTaskType.value)) activeTaskType.value = 'all'
   } catch (error) {
@@ -314,6 +317,8 @@ onMounted(loadTasks)
 .task-card.paused { opacity: .88; }
 .task-ambient { position: absolute; width: 260px; height: 260px; top: -145px; right: -100px; border-radius: 50%; background: radial-gradient(circle, rgba(63, 200, 212, .3), transparent 70%); pointer-events: none; }
 .task-type-badge { position: absolute; z-index: 2; top: 0; right: 0; padding: 5px 13px 6px 15px; border-radius: 0 14px 0 13px; background: linear-gradient(120deg, #f2a93b, #de9220); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.task-card.duty-card { border-color: rgba(46, 168, 151, .58); }
+.task-card.duty-card .task-type-badge { background: linear-gradient(120deg, #159b8a, #147a78); }
 .task-card-top { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 11px; padding-right: 76px; }
 .task-icon { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(255, 255, 255, .24); border-radius: 11px; background: rgba(255, 255, 255, .12); color: var(--cyan-400); }
 .task-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -327,6 +332,9 @@ onMounted(loadTasks)
 .task-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .task-meta span { position: relative; z-index: 1; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .16); border-radius: 999px; background: rgba(255, 255, 255, .08); color: #bfe3ec; font-size: 10px; }
 .task-action { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .14); color: var(--cyan-400); font-size: 11px; font-weight: 700; cursor: pointer; }
+.task-actions { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .14); }
+.task-actions .task-action { flex: 1; margin-top: 0; padding-top: 0; border-top: none; }
+.task-action-secondary { justify-content: center; color: #bfe3ec; font-weight: 600; }
 .task-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s ease; }
 .task-card:hover .task-action svg { transform: translateX(3px); }
 .empty-state { display: grid; min-height: 180px; place-content: center; gap: 5px; border: 1px dashed #bfd1d7; border-radius: 14px; background: rgba(255, 255, 255, .58); color: var(--muted); text-align: center; }

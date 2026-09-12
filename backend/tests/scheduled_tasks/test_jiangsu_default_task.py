@@ -2,6 +2,7 @@ from app.scheduled_tasks.default_tasks import (
     build_jiangsu_fault_work_order_review_task,
     build_jiangsu_smart_event_task,
     build_jiangsu_station_fault_task,
+    build_jiangsu_track_monthly_task,
     ensure_project_default_tasks,
 )
 
@@ -85,6 +86,20 @@ def test_work_order_review_default_task_targets_ops_mode_skill_and_submit_tool()
     assert "M1-M8" not in task.prompt
     assert "E1-E9" not in task.prompt
     assert task.workspace_entry.enabled is True
+
+
+def test_track_monthly_default_task_uses_published_skill_and_report_tools():
+    task = build_jiangsu_track_monthly_task()
+
+    assert task.task_id == "jiangsu_work_order_track_monthly_review"
+    assert task.skill_id == "工单轨迹合理性分析"
+    assert task.tool_names == [
+        "jiangsu_analyze_work_order_tracks",
+        "create_report_package",
+        "render_report_package",
+        "validate_report_package",
+        "submit_task_review",
+    ]
 
 
 def test_default_task_seeding_is_create_only():
