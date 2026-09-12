@@ -126,8 +126,8 @@ def event_task():
         description="event task",
         execution_mode="social",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
-        event_filters={"city": "运城市"},
+        event_type="xuchang.station_deviation.alert_created",
+        event_filters={"city": "许昌市"},
         broadcast_enabled=True,
         target_user_ids=["admin-1", "admin-2"],
         timeout_seconds=300,
@@ -138,8 +138,8 @@ def event_task():
 def _event(event_id="alert-1"):
     return TaskEvent(
         event_id=event_id,
-        event_type="yuncheng.alert.created",
-        attributes={"city": "运城市"},
+        event_type="xuchang.station_deviation.alert_created",
+        attributes={"city": "许昌市"},
         payload={"evidence_dir": "/tmp/evidence"},
     )
 
@@ -261,7 +261,7 @@ async def test_manual_execution_of_event_type_mismatch_reports_not_matched(
         TaskEvent(
             event_id="wrong-event",
             event_type="other.event",
-            attributes={"city": "运城市"},
+            attributes={"city": "许昌市"},
         ),
         wait=True,
         force_retry=True,

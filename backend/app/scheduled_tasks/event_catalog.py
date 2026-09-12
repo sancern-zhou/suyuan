@@ -10,14 +10,7 @@ class EventDefinition(BaseModel):
     filter_fields: list[str] = Field(default_factory=list)
 
 
-_EVENT_DEFINITIONS = {
-    "yuncheng.alert.created": EventDefinition(
-        event_type="yuncheng.alert.created",
-        label="运城市空气质量告警",
-        description="运城市小时盯守告警及溯源上下文已准备完成",
-        filter_fields=["city", "alert_level", "target_pollutant"],
-    )
-}
+_EVENT_DEFINITIONS: dict[str, EventDefinition] = {}
 
 
 def get_event_definitions() -> list[EventDefinition]:

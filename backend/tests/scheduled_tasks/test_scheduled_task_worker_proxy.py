@@ -60,7 +60,7 @@ def test_worker_internal_api_exposes_scheduled_tasks(monkeypatch):
         description="event task",
         execution_mode="social",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         broadcast_enabled=False,
         prompt="run",
     )

@@ -1,4 +1,4 @@
-"""Open-Meteo air quality forecast fetcher for Yuncheng and Xuchang."""
+"""Open-Meteo air quality forecast fetcher for Xuchang."""
 
 from __future__ import annotations
 
@@ -54,13 +54,6 @@ class HourlyObservation:
 
 
 AIR_QUALITY_FORECAST_CITIES: dict[str, AirQualityForecastCity] = {
-    "yuncheng": AirQualityForecastCity(
-        key="yuncheng",
-        name="运城市",
-        city_code="140800",
-        lat=35.11,
-        lon=111.06,
-    ),
     "xuchang": AirQualityForecastCity(
         key="xuchang",
         name="许昌市",
@@ -880,7 +873,7 @@ def is_first_forecast_time(generated_at: datetime) -> bool:
 
 
 class OpenMeteoAirQualityForecastFetcher(DataFetcher):
-    """Fetch future 72-hour air quality forecasts for Yuncheng and Xuchang."""
+    """Fetch future 72-hour air quality forecasts for Xuchang."""
 
     def __init__(
         self,
@@ -892,7 +885,7 @@ class OpenMeteoAirQualityForecastFetcher(DataFetcher):
     ):
         super().__init__(
             name="open_meteo_air_quality_forecast_fetcher",
-            description="运城市和许昌市未来72小时空气质量预报抓取",
+            description="许昌市未来72小时空气质量预报抓取",
             schedule="18 * * * *",
             version="1.0.0",
         )

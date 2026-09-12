@@ -22,11 +22,10 @@ def test_shared_catalog_resolves_city_alias_and_drives_fetch_targets():
         target.city for target in iter_era5_city_targets(ERA5_MAIN_FETCHER)
     }
     assert "南京市" in main_fetch_cities
-    assert "运城市" in main_fetch_cities
+    assert "许昌市" in main_fetch_cities
     assert "济宁市" not in main_fetch_cities
 
     nmc_stations = get_observed_station_targets(provider="NMC")
-    assert nmc_stations["yuncheng"].station_id == "AupnI"
     assert nmc_stations["xuchang"].station_id == "ZzMTA"
 
 
@@ -101,12 +100,12 @@ async def test_observed_city_query_uses_catalog_station_ids(monkeypatch):
     result = await tool.execute(
         context=None,
         data_type="observed",
-        city="运城",
+        city="许昌",
         start_time="2026-08-01T00:00:00",
         end_time="2026-08-01T23:59:59",
     )
 
     assert result["status"] == "success"
-    assert result["data"][0]["city"] == "运城市"
-    assert result["data"][0]["station_id"] == "AupnI"
+    assert result["data"][0]["city"] == "许昌市"
+    assert result["data"][0]["station_id"] == "ZzMTA"
     assert result["metadata"]["targets"][0]["provider"] == "NMC"

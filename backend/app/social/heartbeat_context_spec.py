@@ -33,11 +33,11 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
         user_id=user_id,
         response={
             "should_notify": True,
-            "summary": "发现运城市 AQI 小时浓度告警，已生成 report.docx 并推送。",
+            "summary": "发现许昌市 AQI 小时浓度告警，已生成 report.docx 并推送。",
             "executed_at": "2026-07-08T09:10:30",
         },
         heartbeat_session_id="heartbeat_weixin:bot:user_20260708091000",
-        tasks=[{"name": "运城市告警溯源报告推送", "manual_mode": "social"}],
+        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "social"}],
     )
 
     assert recorded is True
@@ -51,7 +51,7 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
     assert len(event_messages) == 1
     event = event_messages[0]
     assert event["role"] == "user"
-    assert "运城市告警溯源报告推送" in event["content"]
+    assert "许昌市告警溯源报告推送" in event["content"]
     assert "heartbeat_weixin:bot:user_20260708091000" in event["content"]
     assert event["data"]["kind"] == "scheduled_task_event"
     assert event["data"]["heartbeat_session_id"] == "heartbeat_weixin:bot:user_20260708091000"
@@ -70,11 +70,11 @@ async def test_non_silent_heartbeat_records_lightweight_event_in_social_main_ses
         user_id=user_id,
         response={
             "should_notify": True,
-            "summary": "发现运城市 AQI 小时浓度告警，已生成 report.docx 并推送。",
+            "summary": "发现许昌市 AQI 小时浓度告警，已生成 report.docx 并推送。",
             "executed_at": "2026-07-08T09:10:30",
         },
         heartbeat_session_id="heartbeat_weixin:bot:user_20260708091000",
-        tasks=[{"name": "运城市告警溯源报告推送", "manual_mode": "social"}],
+        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "social"}],
     )
 
     assert recorded_again is True
@@ -103,7 +103,7 @@ async def test_silent_heartbeat_does_not_record_social_main_session_context(tmp_
         user_id=user_id,
         response={"should_notify": False, "summary": "HEARTBEAT_OK"},
         heartbeat_session_id="heartbeat_weixin:bot:user_20260708081000",
-        tasks=[{"name": "运城市告警溯源报告推送", "manual_mode": "social"}],
+        tasks=[{"name": "许昌市告警溯源报告推送", "manual_mode": "social"}],
     )
 
     assert recorded is False

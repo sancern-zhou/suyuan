@@ -81,12 +81,12 @@ async def test_broadcast_is_appended_as_assistant_message_with_attachment(
     ok = await persist_broadcast_context(
         session_mapper=FakeSessionMapper(),
         social_user_id="weixin:bot:user",
-        message="运城告警摘要",
+        message="许昌告警摘要",
         media=[str(report)],
         metadata={
             "task_id": "task-1",
             "event_id": "alert-1",
-            "event_type": "yuncheng.alert.created",
+            "event_type": "xuchang.station_deviation.alert_created",
             "execution_id": "exec-1",
         },
     )
@@ -118,12 +118,12 @@ async def test_same_broadcast_message_is_idempotent(monkeypatch, tmp_path):
     kwargs = {
         "session_mapper": FakeSessionMapper(),
         "social_user_id": "weixin:bot:user",
-        "message": "运城告警摘要",
+        "message": "许昌告警摘要",
         "media": [str(report)],
         "metadata": {
             "task_id": "task-1",
             "event_id": "alert-1",
-            "event_type": "yuncheng.alert.created",
+            "event_type": "xuchang.station_deviation.alert_created",
             "execution_id": "exec-1",
         },
     }
@@ -221,7 +221,7 @@ async def test_targeted_broadcast_persists_context_for_each_success(
         context_metadata={
             "task_id": "task-1",
             "event_id": "alert-1",
-            "event_type": "yuncheng.alert.created",
+            "event_type": "xuchang.station_deviation.alert_created",
             "execution_id": "exec-1",
         },
     )

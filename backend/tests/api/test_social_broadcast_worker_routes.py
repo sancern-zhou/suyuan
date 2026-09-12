@@ -47,7 +47,7 @@ def test_worker_broadcast_route_requires_internal_token():
     try:
         response = client.post(
             "/internal/social/broadcast",
-            json={"message": "运城告警", "target_user_names": ["周三成"]},
+            json={"message": "许昌告警", "target_user_names": ["周三成"]},
         )
     finally:
         set_targeted_broadcast_service_override(None)
@@ -66,7 +66,7 @@ def test_worker_broadcast_route_fails_closed_when_token_is_not_configured():
     try:
         response = TestClient(app).post(
             "/internal/social/broadcast",
-            json={"message": "运城告警", "target_user_names": ["周三成"]},
+            json={"message": "许昌告警", "target_user_names": ["周三成"]},
         )
     finally:
         set_targeted_broadcast_service_override(None)
@@ -83,7 +83,7 @@ def test_worker_broadcast_route_validates_required_target_names():
         response = client.post(
             "/internal/social/broadcast",
             headers={"x-social-worker-token": "secret"},
-            json={"message": "运城告警", "target_user_names": []},
+            json={"message": "许昌告警", "target_user_names": []},
         )
     finally:
         set_targeted_broadcast_service_override(None)
@@ -96,7 +96,7 @@ def test_worker_broadcast_route_forwards_names_media_and_metadata():
     service = FakeTargetedBroadcastService()
     client = _client(service)
     payload = {
-        "message": "运城告警",
+        "message": "许昌告警",
         "target_user_names": ["周三成"],
         "media": ["/tmp/report.docx"],
         "context_metadata": {
