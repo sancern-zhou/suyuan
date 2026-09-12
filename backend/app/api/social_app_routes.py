@@ -68,6 +68,7 @@ class AppChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=20000)
     session_id: str | None = Field(default=None, max_length=128)
     attachments: list[dict] = Field(default_factory=list, max_length=8)
+    mode: Literal["query", "knowledge", "expert"] = "expert"
 
 
 class AppSteerRequest(BaseModel):
@@ -440,6 +441,147 @@ async def app_broadcasts(identity: AppIdentity = Depends(require_app_identity)) 
     }
 
 
+def _report_payload(row) -> dict:
+    from app.social.report_service import report_payload
+    payload = report_payload(row)
+    attachments = []
+    for index, item in enumerate(payload.get("attachments") or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("filename") or item.get("name") or "报告附件")
+        mime = str(item.get("mime_type") or mimetypes.guess_type(name)[0] or "application/octet-stream")
+        encoded = quote(row.report_id, safe="")
+        content_url = f"/api/social/app/report-results/{encoded}/attachments/{index}"
+        attachments.append({"file_id": f"report-{row.report_id}-{index}", "filename": name, "name": name,
+                            "type": "image" if mime.startswith("image/") else "document",
+                            "file_type": "image" if mime.startswith("image/") else "document",
+                            "mime_type": mime, "url": content_url, "preview_url": content_url,
+                            "download_url": f"{content_url}?disposition=attachment"})
+    payload["attachments"] = attachments
+    return payload
+
+
+@router.delete("/broadcasts/{message_id}")
+async def app_delete_broadcast(
+    message_id: str,
+    identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    """Delete one broadcast from the authenticated App inbox."""
+    from app.social.broadcast_context import delete_broadcast_message, load_broadcast_messages
+
+    messages = await load_broadcast_messages(identity.social_user_id)
+    if not any(str(item.get("id") or "") == message_id for item in messages):
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    deleted = await delete_broadcast_message(identity.social_user_id, message_id)
+    return {"message_id": message_id, "deleted": deleted}
+
+
+@router.get("/broadcasts/{message_id}/attachments/{attachment_index}")
+async def app_broadcast_attachment(
+    message_id: str,
+    attachment_index: int,
+    disposition: Literal["inline", "attachment"] = "inline",
+    identity: AppIdentity = Depends(require_app_identity),
+) -> FileResponse:
+    """Serve one persisted broadcast attachment without exposing its path."""
+    from app.social.broadcast_context import load_broadcast_messages
+
+    message = next(
+        (
+            item
+            for item in await load_broadcast_messages(identity.social_user_id)
+            if str(item.get("id") or "") == message_id
+        ),
+        None,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="broadcast_not_found")
+    data = message.get("data") if isinstance(message.get("data"), dict) else {}
+    attachments = data.get("attachments") if isinstance(data.get("attachments"), list) else []
+    if attachment_index < 0 or attachment_index >= len(attachments):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    attachment = attachments[attachment_index]
+    if not isinstance(attachment, dict):
+        raise HTTPException(status_code=404, detail="broadcast_attachment_not_found")
+    raw_path = str(attachment.get("path") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="broadcast_attachment_unavailable")
+    target = Path(raw_path).expanduser().resolve()
+    registry_root = get_data_registry().expanduser().resolve()
+    try:
+        target.relative_to(registry_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="broadcast_attachment_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="broadcast_attachment_missing")
+    filename = str(attachment.get("filename") or attachment.get("name") or target.name)
+    media_type = str(attachment.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type=disposition,
+    )
+
+
+@router.get("/report-results")
+async def app_report_results(
+    limit: int = Query(default=30, ge=1, le=100), before: str | None = Query(default=None, max_length=512),
+    report_type: str | None = Query(default=None, max_length=100), start_time: datetime | None = Query(default=None),
+    end_time: datetime | None = Query(default=None), identity: AppIdentity = Depends(require_app_identity),
+) -> dict:
+    from app.social.report_service import list_report_results
+    rows = await list_report_results(identity.social_user_id, limit=limit, before=before, report_type=report_type, start_time=start_time, end_time=end_time)
+    return {"reports": [_report_payload(row) for row in rows], "unread_count": sum(1 for row in rows if not row.read),
+            "next_cursor": rows[-1].report_id if len(rows) == limit else None, "has_more": len(rows) == limit}
+
+
+@router.post("/report-results/{report_id}/read")
+async def app_mark_report_read(report_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    from app.social.report_service import mark_report_read
+    changed = await mark_report_read(identity.social_user_id, report_id)
+    if not changed:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    return {"report_id": report_id, "read": True}
+
+
+@router.post("/report-results/read-all")
+async def app_mark_all_reports_read(identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    from app.social.report_service import mark_report_read
+    return {"read_all": True, "changed": await mark_report_read(identity.social_user_id)}
+
+
+@router.delete("/report-results/{report_id}")
+async def app_delete_report(report_id: str, identity: AppIdentity = Depends(require_app_identity)) -> dict:
+    from app.social.report_service import delete_report
+    deleted = await delete_report(identity.social_user_id, report_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    return {"report_id": report_id, "deleted": True}
+
+
+@router.get("/report-results/{report_id}/attachments/{attachment_index}")
+async def app_report_attachment(report_id: str, attachment_index: int, disposition: Literal["inline", "attachment"] = "inline", identity: AppIdentity = Depends(require_app_identity)) -> FileResponse:
+    from app.social.report_service import get_report
+    row = await get_report(identity.social_user_id, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="report_not_found")
+    attachments = row.attachments or []
+    if attachment_index < 0 or attachment_index >= len(attachments) or not isinstance(attachments[attachment_index], dict):
+        raise HTTPException(status_code=404, detail="report_attachment_not_found")
+    attachment = attachments[attachment_index]
+    target = Path(str(attachment.get("path") or "").strip()).expanduser().resolve()
+    try:
+        target.relative_to(get_data_registry().expanduser().resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="report_attachment_forbidden") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="report_attachment_missing")
+    filename = str(attachment.get("filename") or attachment.get("name") or target.name)
+    media_type = str(attachment.get("mime_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    return FileResponse(target, media_type=media_type, filename=filename, content_disposition_type=disposition)
+
+
 @router.post("/broadcasts/{message_id}/read")
 async def app_mark_broadcast_read(
     message_id: str,
@@ -737,6 +879,7 @@ async def _stream_events(
     session_id: str,
     query: str,
     attachments: list[dict] | None = None,
+    mode: str = "expert",
 ) -> AsyncIterator[str]:
     from app.agent.runtime.cancellation import cancellation_registry
 
@@ -759,7 +902,7 @@ async def _stream_events(
         async for event in agent.analyze(
             user_query=query,
             session_id=session_id,
-            manual_mode="social",
+            manual_mode=mode,
             session_storage_mode="social",
             user_identifier=identity.social_user_id,
             social_memory_store=memory_store,
@@ -840,7 +983,7 @@ async def chat_stream(
     session_id = await _ensure_session(request, identity, payload.session_id)
     attachments = await _sanitize_attachments(db, session_id, payload.attachments)
     response = StreamingResponse(
-        _stream_events(identity, session_id, payload.query, attachments),
+        _stream_events(identity, session_id, payload.query, attachments, payload.mode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Session-Id": session_id},
     )

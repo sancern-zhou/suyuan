@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 
 from app.social.broadcast_service import SocialBroadcastService
 from app.social.user_registry import get_social_user_registry
@@ -82,6 +83,19 @@ class EventTaskDelivery:
                 "event_id": event.event_id if event else None,
                 "event_type": event.event_type if event else None,
             },
+        )
+        from app.social.report_service import publish_report_results
+        report_type = task.report_type or (event.event_type if event else None) or "scheduled_report"
+        await publish_report_results(
+            recipients=[str(item) for item in social_to_user],
+            task_id=task.task_id,
+            execution_id=execution.execution_id,
+            task_name=task.name,
+            report_type=report_type,
+            title=task.name,
+            summary=output.broadcast.message,
+            attachments=[{"name": Path(path).name, "path": path} for path in output.broadcast.media],
+            metadata={"event_id": event.event_id if event else None, "event_type": event.event_type if event else None},
         )
         return [
             {

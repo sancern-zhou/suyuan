@@ -267,6 +267,7 @@ async def init_db():
     # Import optional model modules so their tables are registered on Base.metadata
     # before create_all runs.
     import app.social.models  # noqa: F401
+    import app.social.report_models  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.

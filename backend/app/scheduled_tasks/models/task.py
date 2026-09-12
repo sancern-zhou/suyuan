@@ -96,6 +96,7 @@ class ScheduledTask(BaseModel):
     event_filters: Dict[str, Any] = Field(default_factory=dict, description="事件属性过滤条件")
     target_user_ids: List[str] = Field(default_factory=list, description="后台社交用户ID")
     broadcast_enabled: bool = Field(default=False, description="是否广播执行结果")
+    report_type: Optional[str] = Field(default=None, description="报告成果类型")
     enabled: bool = Field(default=True, description="是否启用")
 
     # 灵活调度参数（根据schedule_type使用）
