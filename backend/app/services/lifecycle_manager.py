@@ -55,7 +55,6 @@ from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaCityFetcher,
     XuchangZhongdaStationFetcher,
 )
-from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
 from app.project_config.loader import load_project_context
 
 # 导入单一工具注册源
@@ -124,7 +123,6 @@ def _configured_fetchers(project_context):
         "city_pollution_event_monitor": CityPollutionEventFetcher,
         "tender_information": TenderInformationFetcher,
         "jining_quick_trace": JiningQuickTraceFetcher,
-        "yuncheng_trial": YunchengTrialFetcher,
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,

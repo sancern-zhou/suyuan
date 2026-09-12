@@ -23,7 +23,7 @@ def _task(prompt="生成报告"):
         description="报告",
         execution_mode="report",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         prompt=prompt,
     )
 

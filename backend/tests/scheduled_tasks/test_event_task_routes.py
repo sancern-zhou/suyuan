@@ -84,11 +84,31 @@ class FakeService:
         }
 
 
+def _fake_event_definitions():
+    return [
+        SimpleNamespace(
+            event_type="xuchang.station_deviation.alert_created",
+            label="许昌站点空间偏差告警",
+            description="测试用事件定义",
+            filter_fields=["city"],
+        )
+    ]
+
+
 def _client(monkeypatch, user=None):
     service = FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
     monkeypatch.setattr(routes, "get_social_user_registry", lambda: FakeRegistry())
     monkeypatch.setattr(routes, "get_tool_registry", lambda: FakeToolRegistry())
+    monkeypatch.setattr(routes, "get_event_definitions", _fake_event_definitions)
+    monkeypatch.setattr(
+        routes,
+        "get_event_definition",
+        lambda event_type: next(
+            (item for item in _fake_event_definitions() if item.event_type == event_type),
+            None,
+        ),
+    )
     app = FastAPI()
     app.dependency_overrides[require_current_user] = lambda: user or CurrentUser(
         id="creator-1",
@@ -103,20 +123,20 @@ def _client(monkeypatch, user=None):
 
 def _event_payload():
     return {
-        "name": "运城告警推送",
+        "name": "许昌告警推送",
         "description": "有告警时生成报告并推送",
         "execution_mode": "social",
         "trigger_type": "event",
         "schedule_type": None,
-        "event_type": "yuncheng.alert.created",
-        "event_filters": {"city": "运城市"},
+        "event_type": "xuchang.station_deviation.alert_created",
+        "event_filters": {"city": "许昌市"},
         "broadcast_enabled": True,
         "target_user_ids": ["admin-1", "admin-2"],
         "enabled": True,
-        "prompt": "执行运城告警溯源报告任务",
+        "prompt": "执行许昌告警溯源报告任务",
         "timeout_seconds": 1800,
-        "prompt": "执行运城告警溯源报告任务",
-        "tags": ["yuncheng", "event"],
+        "prompt": "执行许昌告警溯源报告任务",
+        "tags": ["xuchang", "event"],
     }
 
 
@@ -126,7 +146,7 @@ def test_list_event_types(monkeypatch):
     response = client.get("/api/scheduled-tasks/event-types")
 
     assert response.status_code == 200
-    assert response.json()[0]["event_type"] == "yuncheng.alert.created"
+    assert response.json()[0]["event_type"] == "xuchang.station_deviation.alert_created"
 
 
 def test_super_admin_account_can_see_disabled_tasks(monkeypatch):

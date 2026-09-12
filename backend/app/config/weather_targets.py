@@ -196,25 +196,6 @@ WEATHER_CITY_TARGETS: dict[str, WeatherCityTarget] = {
         lon=115.03,
         url_slug="zuoyang1",
     ),
-    "运城市": WeatherCityTarget(
-        "运城市",
-        "山西省",
-        35.0264,
-        111.0076,
-        ERA5_MAIN_FETCHER,
-        observed_stations=(
-            _nmc_station(
-                key="yuncheng",
-                station_id="AupnI",
-                station_name="运城",
-                province="山西省",
-                city="运城市",
-                lat=35.11,
-                lon=111.06,
-                url="/publish/forecast/ASX/yuncheng.html",
-            ),
-        ),
-    ),
     "许昌市": WeatherCityTarget(
         "许昌市",
         "河南省",

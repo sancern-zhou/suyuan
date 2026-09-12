@@ -20,11 +20,10 @@ def test_shared_catalog_resolves_city_alias_and_drives_fetch_targets():
         target.city for target in iter_era5_city_targets(ERA5_MAIN_FETCHER)
     }
     assert "南京市" in main_fetch_cities
-    assert "运城市" in main_fetch_cities
+    assert "许昌市" in main_fetch_cities
     assert "济宁市" not in main_fetch_cities
 
     nmc_stations = get_observed_station_targets(provider="NMC")
-    assert nmc_stations["yuncheng"].station_id == "AupnI"
     assert nmc_stations["xuchang"].station_id == "ZzMTA"
     assert nmc_stations["yuzhou"].station_id == "HFqwM"
     assert nmc_stations["changge"].station_id == "sHlBF"

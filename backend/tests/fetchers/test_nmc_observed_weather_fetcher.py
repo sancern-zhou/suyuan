@@ -50,7 +50,7 @@ def test_parse_nmc_passedchart_row_maps_fields_to_observed_data_point():
 
 
 def test_parse_nmc_passedchart_row_marks_partial_when_core_values_missing():
-    station = NMC_CITY_STATIONS["yuncheng"]
+    station = NMC_CITY_STATIONS["xuchang"]
     row = {
         "time": "2026-07-08 16:00",
         "temperature": 9999,
@@ -91,24 +91,9 @@ class FakeRepo:
 
 
 @pytest.mark.asyncio
-async def test_fetcher_stores_passedchart_rows_for_both_cities():
+async def test_fetcher_stores_passedchart_rows_for_configured_city():
     client = FakeClient(
         {
-            "AupnI": {
-                "data": {
-                    "passedchart": [
-                        {
-                            "time": "2026-07-08 15:00",
-                            "temperature": 38.6,
-                            "humidity": 30.0,
-                            "pressure": 955.0,
-                            "rain1h": 0.0,
-                            "windDirection": 179.0,
-                            "windSpeed": 5.7,
-                        }
-                    ]
-                }
-            },
             "ZzMTA": {
                 "data": {
                     "passedchart": [
@@ -138,17 +123,32 @@ async def test_fetcher_stores_passedchart_rows_for_both_cities():
 
     result = await fetcher.fetch_and_store()
 
-    assert result["saved"] == 2
+    assert result["saved"] == 1
     assert result["failed_cities"] == 0
-    assert [point.station_id for point in repo.saved] == ["AupnI", "ZzMTA"]
+    assert [point.station_id for point in repo.saved] == ["ZzMTA"]
 
 
 @pytest.mark.asyncio
 async def test_fetcher_continues_when_one_city_fails():
+    from app.config.weather_targets import ObservedWeatherStationTarget
+
+    def _station(key: str, station_id: str) -> ObservedWeatherStationTarget:
+        return ObservedWeatherStationTarget(
+            key=key,
+            station_id=station_id,
+            station_name=key,
+            province="河南省",
+            city=f"{key}市",
+            lat=34.0,
+            lon=113.0,
+            provider="NMC",
+        )
+
+    stations = {"a": _station("a", "58968"), "b": _station("b", "57089")}
     client = FakeClient(
         {
-            "AupnI": RuntimeError("network failed"),
-            "ZzMTA": {
+            "58968": RuntimeError("network failed"),
+            "57089": {
                 "data": {
                     "passedchart": [
                         {

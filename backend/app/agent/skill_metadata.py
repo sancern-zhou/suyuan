@@ -67,11 +67,6 @@ SKILL_METADATA = {
     "skill_template": {"enabled": False, "aliases": [], "required_tools": []},
     "top3_city_identification_rules": {"enabled": True, "aliases": [], "required_tools": []},
     "weather_analysis_expert": {"enabled": True, "aliases": [], "required_tools": []},
-    "yuncheng_alert_tracing_skill": {
-        "enabled": True,
-        "aliases": [],
-        "required_tools": ["create_report_package", "render_report_package", "validate_report_package"],
-    },
     "上个月污染特征与溯源分析": {
         "enabled": True, "aliases": [], "required_tools": ["call_sub_agent"],
     },
