@@ -17,6 +17,13 @@ frontend:
     - report
   default_agent_mode: query
   agent_platform_layout: scenes
+  agent_scenes:
+    - monitoring
+    - operations
+  sidebar_agent_modes:
+    - query
+    - knowledge
+    - expert
 backend:
   tools:
     - get_gems_image
@@ -120,7 +127,6 @@ backend:
     - xuchang_nmc_hourly_forecast_fetcher
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_station_deviation_alert_fetcher
-    - xuchang_station_hourly_rise_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
@@ -157,6 +163,5 @@ knowledge:
   - xuchang
 scheduled_tasks:
   - task_xuchang_station_deviation_alert
-  - task_xuchang_station_hourly_rise_alert
   - task_xuchang_station_daily_source_report
   - task_xuchang_weekly_weather_situation_report

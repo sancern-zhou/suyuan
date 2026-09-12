@@ -85,6 +85,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "broadcast_social_users"
     )
     assert context.manifest.backend.fetchers == [
+        "city_weather_history",
         "nmc_observed_weather",
         "nmc_weather_chart",
         "xuchang_daily_attainment_forecast_fetcher",
@@ -103,6 +104,15 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "gems_xuchang_image_fetcher",
     ]
     assert context.manifest.backend.disabled_tools == [
+        "query_gd_suncere",
+        "query_gd_suncere_city_hour",
+        "query_gd_suncere_station_hour_new",
+        "query_gd_suncere_station_day_new",
+        "query_gd_suncere_regional_comparison",
+        "query_gd_suncere_city_day",
+        "query_gd_suncere_district_day",
+        "query_gd_suncere_district_report",
+        "query_gd_suncere_report_compare",
         "analyze_city_pollutant_rankings",
         "get_5min_data",
         "get_observed_meteorology",

@@ -32,11 +32,6 @@ _EVENT_DEFINITIONS = {
         description="许昌市站点5分钟或PM2.5小时浓度相对其他站点偏差超过阈值，监测对比、气象和质控证据已生成",
         filter_fields=["city", "target_pollutant", "station_id"],
     ),
-    "xuchang.station_deviation.hourly_alert_created": EventDefinition(
-        event_type="xuchang.station_deviation.hourly_alert_created",
-        label="许昌站点小时污染抬升告警",
-        description="许昌站点小时数据污染抬升告警",
-    ),
     "xuchang.station_deviation.episode_closed": EventDefinition(
         event_type="xuchang.station_deviation.episode_closed",
         label="许昌站点空间偏差过程结束",
