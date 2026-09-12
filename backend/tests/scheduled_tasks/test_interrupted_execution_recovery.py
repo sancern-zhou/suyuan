@@ -28,6 +28,7 @@ def test_service_startup_fails_execution_interrupted_by_worker_restart(tmp_path)
         trigger_type="event",
         event_type="jiangsu.station_fault.detected",
         prompt="执行",
+        history_learning={"enabled": False},
     )
     tasks.create(task)
     event = TaskEvent(
@@ -70,6 +71,17 @@ class _SuccessfulAgent:
         }
 
 
+class _NoopConversationPersistence:
+    async def persist_agent_session(self, **kwargs):
+        return True
+
+    async def ensure_terminal_session(self, **kwargs):
+        return True
+
+    async def publish_conversation(self, **kwargs):
+        return True
+
+
 @pytest.mark.asyncio
 async def test_service_resumes_claimed_event_that_was_queued_before_restart(
     tmp_path,
@@ -85,6 +97,7 @@ async def test_service_resumes_claimed_event_that_was_queued_before_restart(
         trigger_type="event",
         event_type="jiangsu.station_fault.detected",
         prompt="执行",
+        history_learning={"enabled": False},
     )
     tasks.create(task)
     event = TaskEvent(
@@ -100,6 +113,7 @@ async def test_service_resumes_claimed_event_that_was_queued_before_restart(
         task_storage=tasks,
         execution_storage=executions,
         claim_storage=claims,
+        conversation_persistence=_NoopConversationPersistence(),
     )
     service._resume_claimed_event_tasks()
     await asyncio.gather(*list(service._event_tasks))
@@ -107,3 +121,4 @@ async def test_service_resumes_claimed_event_that_was_queued_before_restart(
     recovered_claim = claims.get(task.task_id, event.event_id)
     assert recovered_claim.claim_id == claim.claim_id
     assert recovered_claim.status == "succeeded"
+    await service.stop_async()

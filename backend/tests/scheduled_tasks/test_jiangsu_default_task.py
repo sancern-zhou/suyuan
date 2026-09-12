@@ -98,6 +98,7 @@ def test_track_monthly_default_task_uses_published_skill_and_report_tools():
         "create_report_package",
         "render_report_package",
         "validate_report_package",
+        "publish_report",
         "submit_task_review",
     ]
 

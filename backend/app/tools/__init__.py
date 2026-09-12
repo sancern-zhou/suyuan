@@ -1190,12 +1190,14 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
     try:
         from app.tools.report.report_package.tool import (
             CreateReportPackageTool,
+            PublishReportTool,
             RenderReportPackageTool,
             ValidateReportPackageTool,
         )
         registry.register(CreateReportPackageTool(), priority=388)
         registry.register(RenderReportPackageTool(), priority=389)
         registry.register(ValidateReportPackageTool(), priority=390)
+        registry.register(PublishReportTool(), priority=391)
         logger.info("tool_loaded", tool="report_package_tools")
     except ImportError as e:
         logger.warning("tool_import_failed", tool="report_package_tools", error=str(e))

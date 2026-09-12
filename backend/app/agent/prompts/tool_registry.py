@@ -27,6 +27,7 @@ ASSISTANT_TOOL_NAMES = [
     "grep",
     "create_html_artifact",
     "create_report_package",
+    "publish_report",
     "render_report_package",
     "validate_report_package",
     # 轻量数据计算与网页检索抓取。
@@ -210,6 +211,7 @@ REPORT_TOOL_NAMES = [
     "execute_python",
     # 报告产物收口
     "create_report_package",
+    "publish_report",
     "render_report_package",
     "validate_report_package",
 ]
@@ -274,6 +276,7 @@ OPS_TOOL_NAMES = [
     "execute_ops_sql_query",
     # 审核正式报告生成与验收
     "create_report_package",
+    "publish_report",
     "render_report_package",
     "validate_report_package",
     # 子 Agent 复核
@@ -326,6 +329,7 @@ SOCIAL_TOOL_NAMES = [
     # 正式报告生成与收口
     "create_report_chart",
     "create_report_package",
+    "publish_report",
     "validate_report_package",
     # 网络搜索
     "web_search",

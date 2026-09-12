@@ -182,6 +182,7 @@ backend:
     - create_report_package
     - render_report_package
     - validate_report_package
+    - publish_report
     - jiangsu_fetch_station_alarm_logs
     - jiangsu_fetch_fault_work_orders
     - jiangsu_fetch_fault_work_order_detail
@@ -212,6 +213,7 @@ backend:
       - execute_python
       - create_report_chart
       - create_report_package
+      - publish_report
       - render_report_package
       - validate_report_package
       - manage_editable_ppt
@@ -356,6 +358,7 @@ backend:
       - jiangsu_fetch_qc_monitoring_curve
       - submit_task_review
       - create_report_package
+      - publish_report
       - render_report_package
       - validate_report_package
       - jiangsu_query_operations_graph

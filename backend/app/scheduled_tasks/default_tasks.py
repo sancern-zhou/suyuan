@@ -231,7 +231,7 @@ def build_jiangsu_network_inspection_task() -> ScheduledTask:
 DEFAULT_TASK_FACTORIES[JIANGSU_NETWORK_INSPECTION_TASK_ID] = build_jiangsu_network_inspection_task
 JIANGSU_TRACK_MONTHLY_TASK_ID = "jiangsu_work_order_track_monthly_review"
 def build_jiangsu_track_monthly_task() -> ScheduledTask:
-    return ScheduledTask(task_id=JIANGSU_TRACK_MONTHLY_TASK_ID, name="工单轨迹合理性月度分析", description="分析上月签到轨迹并生成每人一张复核待办", execution_mode="custom", tool_names=["jiangsu_analyze_work_order_tracks", "create_report_package", "render_report_package", "validate_report_package", "submit_task_review"], skill_id="工单轨迹合理性分析", schedule_type=ScheduleType.MONTHLY_CUSTOM, day_of_month=3, hour=7, minute=0, prompt="分析上一个自然月；每人每月一张待办；远离站点仅进报告。", history_learning={"enabled": True})
+    return ScheduledTask(task_id=JIANGSU_TRACK_MONTHLY_TASK_ID, name="工单轨迹合理性月度分析", description="分析上月签到轨迹并生成每人一张复核待办", execution_mode="custom", tool_names=["jiangsu_analyze_work_order_tracks", "create_report_package", "render_report_package", "validate_report_package", "publish_report", "submit_task_review"], skill_id="工单轨迹合理性分析", schedule_type=ScheduleType.MONTHLY_CUSTOM, day_of_month=3, hour=7, minute=0, prompt="分析上一个自然月；生成正式报告时依次调用 create_report_package、render_report_package、validate_report_package，校验通过后显式调用 publish_report 才进入智能报告中心；远离站点仅进报告。", history_learning={"enabled": True})
 DEFAULT_TASK_FACTORIES[JIANGSU_TRACK_MONTHLY_TASK_ID] = build_jiangsu_track_monthly_task
 
 

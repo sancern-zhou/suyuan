@@ -10,6 +10,15 @@ from app.scheduled_tasks.models import ScheduledTask, TaskEvent, TaskExecution
 from app.scheduled_tasks.storage import ExecutionStorage, TaskStorage
 
 
+@pytest.fixture(autouse=True)
+def disable_history_consolidation(monkeypatch):
+    """Executor tests must not call the production LLM-backed memory flow."""
+    monkeypatch.setattr(
+        "app.scheduled_tasks.executor.task_executor.ScheduledTaskExecutor._get_case_storage",
+        lambda self, task: None,
+    )
+
+
 def test_parser_accepts_fenced_broadcast_json(tmp_path):
     report = tmp_path / "report.docx"
     report.write_bytes(b"docx")
@@ -203,6 +212,7 @@ async def test_executor_injects_task_skill_context(monkeypatch, tmp_path):
         task_storage=TaskStorage(storage_dir=tmp_path),
         execution_storage=ExecutionStorage(storage_dir=tmp_path),
         agent_factory=lambda: agent,
+        conversation_persistence=RecordingConversationPersistence(),
     )
 
     await executor._run_agent(
@@ -246,6 +256,7 @@ async def test_custom_task_injects_skill_without_tool_compatibility_check(monkey
         task_storage=TaskStorage(storage_dir=tmp_path),
         execution_storage=ExecutionStorage(storage_dir=tmp_path),
         agent_factory=lambda: agent,
+        conversation_persistence=RecordingConversationPersistence(),
     )
 
     await executor._run_agent(
@@ -515,7 +526,11 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
     )
 
     assert execution.status.value == "success"
-    assert requested_tools == ["execute_python", "broadcast_social_users"]
+    assert requested_tools == [
+        "execute_python",
+        "submit_task_review",
+        "broadcast_social_users",
+    ]
 
 
 @pytest.mark.asyncio

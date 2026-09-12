@@ -38,6 +38,19 @@ def build_network_inspection_result(result: Dict[str, Any], period: str) -> Dict
     alarms = [item for item in alarms if isinstance(item, dict)]
     alarm_stations = [item for item in stations if _is_alarm(item)]
 
+    # The live endpoint keeps the alarm category in alarmInfo rather than on
+    # each staList row. Build a code lookup so the issue list and statistics
+    # retain that information without changing the source tool contract.
+    alarm_category_by_code: Dict[str, str] = {}
+    for group in alarms:
+        group_name = _first(group, "name", "Name", default="巡检异常")
+        for alarm in group.get("list") or []:
+            if not isinstance(alarm, dict):
+                continue
+            code = _first(alarm, "code", "Code", "stationCode", "StationCode")
+            if code:
+                alarm_category_by_code[code] = group_name
+
     city_counter: Counter[str] = Counter()
     category_counter: Counter[str] = Counter()
     issues: List[Dict[str, Any]] = []
@@ -52,16 +65,19 @@ def build_network_inspection_result(result: Dict[str, Any], period: str) -> Dict
             "alarmType",
             "CategoryName",
             "categoryName",
-            default="巡检异常",
+            default=alarm_category_by_code.get(
+                _first(item, "StationCode", "stationCode", "code", "Code", "UniqueCode", "uniqueCode"),
+                "巡检异常",
+            ),
         )
         category_counter[category] += 1
         if len(issues) < 20:
             issues.append(
                 {
                     "station_name": _first(
-                        item, "StationName", "stationName", "PositionName", "positionName", default="未命名站点"
+                        item, "StationName", "stationName", "name", "Name", "PositionName", "positionName", default="未命名站点"
                     ),
-                    "station_code": _first(item, "StationCode", "stationCode", "UniqueCode", "uniqueCode"),
+                    "station_code": _first(item, "StationCode", "stationCode", "code", "Code", "UniqueCode", "uniqueCode"),
                     "city": city,
                     "category": category,
                     "raw": item,

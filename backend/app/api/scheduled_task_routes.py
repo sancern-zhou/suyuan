@@ -130,7 +130,6 @@ class ExecutionSummary(BaseModel):
     error_message: Optional[str] = None
     artifacts: List[str] = Field(default_factory=list)
     event_id: Optional[str] = None
-    event_attributes: Optional[Dict[str, Any]] = None
 
 
 class ExecutionListResponse(BaseModel):
@@ -192,7 +191,7 @@ def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
             artifacts.append(value.replace("\\", "/").rsplit("/", 1)[-1])
 
     return ExecutionSummary(
-        **execution.model_dump(exclude={"steps", "delivery_results"}),
+        **execution.model_dump(exclude={"steps", "delivery_results", "event_attributes"}),
         artifacts=list(dict.fromkeys(filter(None, artifacts))),
     )
 

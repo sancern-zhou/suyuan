@@ -7,7 +7,11 @@ class ResultFieldRequirement(BaseModel):
     field: str = Field(pattern=r"^(title|summary|decision|comment|sections\.[a-z][a-z0-9_]*)$")
     label: str = Field(min_length=1, max_length=120)
     required: bool = True
-    required_when: dict[str, str] = Field(default_factory=dict, description="全部字段匹配时才必填")
+    required_when: dict[str, str] = Field(
+        default_factory=dict,
+        description="全部字段匹配时才必填",
+        exclude_if=lambda value: not value,
+    )
     allowed_values: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

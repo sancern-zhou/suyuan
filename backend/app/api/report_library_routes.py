@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 
 from app.auth.dependencies import require_current_user
 from app.auth.models import CurrentUser
+from app.services.report_catalog import list_report_packages
 from app.utils.path_config import get_reports_dir
 
 router = APIRouter(prefix="/api/reports", tags=["report-library"])
@@ -69,28 +70,20 @@ async def list_reports(
     del user
     start = datetime.fromisoformat(start_time) if start_time else None
     end = datetime.fromisoformat(end_time) if end_time else None
+    indexed = await list_report_packages(report_type=report_type, format_name=format, start_time=start_time, end_time=end_time)
     reports = []
-    root = _report_root()
-    for meta_path in root.glob("*/meta.json"):
-        meta = _read_meta(meta_path)
-        if not meta:
-            continue
-        item = _report_dto(meta, meta_path.parent)
-        if report_type and item["report_type"] != report_type:
-            continue
-        if format and not any(f["format"] == format and f["available"] for f in item["files"]):
-            continue
-        stamp = item.get("updated_at") or item.get("created_at")
-        try:
-            value = datetime.fromisoformat(stamp) if stamp else None
-        except (TypeError, ValueError):
-            value = None
-        if start and value and value < start:
-            continue
-        if end and value and value > end:
-            continue
-        reports.append(item)
-    reports.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True)
+    for entry in indexed:
+        files = entry.files if isinstance(entry.files, dict) else {}
+        reports.append({
+            "report_id": entry.report_id,
+            "name": entry.title,
+            "report_type": entry.report_type,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+            "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
+            "status": entry.status,
+            "version": entry.version,
+            "files": [_format_file(entry.report_id, fmt, Path(str(path))) for fmt, path in files.items() if fmt in {"html", "docx", "qmd", "pdf"}],
+        })
     return {"reports": reports, "total": len(reports)}
 
 

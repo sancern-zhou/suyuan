@@ -25,6 +25,7 @@ from .task_review_db import TaskReviewDB
 
 # 导入智能事件模型
 from .smart_event_db import SmartEventDB, SmartEventTaskDB
+from app.db.report_package_model import ReportPackageDB
 
 __all__ = [
     "Base",
@@ -43,5 +44,5 @@ __all__ = [
     "TaskReviewDB",
     "SmartEventDB",
     "SmartEventTaskDB",
+    "ReportPackageDB",
 ]
-

@@ -745,7 +745,6 @@ format:
                 if key not in RESERVED_REPORT_META_KEYS:
                     meta[key] = value
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
         if validation.get("issues"):
             validation_error = format_report_image_validation_error(validation)
             return {
@@ -1059,3 +1058,62 @@ class ValidateReportPackageTool(LLMTool):
             "metadata": {"generator": "validate_report_package", "schema_version": "report_package.v1"},
             "summary": "报告包验收通过" if not errors else "报告包验收发现问题：" + "；".join(errors),
         }
+
+
+class PublishReportTool(LLMTool):
+    """Explicitly publish a validated report package to the report center."""
+
+    def __init__(self):
+        super().__init__(
+            name="publish_report",
+            description="将已生成并通过校验的正式报告包登记到智能报告中心；不调用此工具的报告不会进入报告列表。",
+            category=ToolCategory.REPORTING,
+            version="1.0.0",
+        )
+        self.function_schema = {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "report_id": {"type": "string", "description": "已生成的报告包 ID。"},
+                    "title": {"type": "string", "description": "报告中心显示名称，可选。"},
+                    "report_type": {"type": "string", "description": "报告类型，可选。"},
+                    "task_id": {"type": "string", "description": "来源定时任务 ID，可选。"},
+                    "execution_id": {"type": "string", "description": "来源执行 ID，可选。"},
+                    "period_start": {"type": "string", "description": "报告周期开始时间，可选。"},
+                    "period_end": {"type": "string", "description": "报告周期结束时间，可选。"},
+                },
+                "required": ["report_id"],
+            },
+        }
+
+    async def execute(self, report_id: str, **kwargs) -> Dict[str, Any]:
+        safe_id = _safe_report_id(report_id)
+        try:
+            report_dir = quarto_report_renderer.get_report_dir(safe_id)
+            meta_path = report_dir / "meta.json"
+            if not meta_path.is_file():
+                raise FileNotFoundError("报告包缺少 meta.json，请先调用 create_report_package")
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            validation = meta.get("validation") if isinstance(meta, dict) else None
+            if not isinstance(validation, dict) or validation.get("issues"):
+                raise ValueError("报告包未通过 validate_report_package 校验，不能发布")
+            if not (report_dir / "report.qmd").is_file():
+                raise FileNotFoundError("报告包缺少 report.qmd")
+            for key in ("title", "report_type", "task_id", "execution_id", "period_start", "period_end"):
+                if kwargs.get(key):
+                    meta[key] = kwargs[key]
+            meta["status"] = "published"
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            from app.services.report_catalog import publish_report_meta
+
+            await publish_report_meta(meta)
+            return {
+                "success": True,
+                "data": {"report_id": safe_id, "status": "published"},
+                "metadata": {"generator": "publish_report", "schema_version": "report_package.v1"},
+                "summary": f"报告 {safe_id} 已发布到智能报告中心",
+            }
+        except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+            return {"success": False, "data": {"error": str(exc), "report_id": safe_id}, "summary": f"报告发布失败：{exc}"}

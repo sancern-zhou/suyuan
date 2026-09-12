@@ -11,17 +11,17 @@ class EventDefinition(BaseModel):
 
 
 _EVENT_DEFINITIONS = {
-    "jiangsu.smart_event.alarm": EventDefinition(
-        event_type="jiangsu.smart_event.alarm",
-        label="江苏智能事件告警线索",
-        description="江苏告警线索证据包已准备完成，由智能事件 Agent 分析线索并定义最终事件类型",
-        filter_fields=["clue_type", "site_id", "site_name"],
-    ),
     "yuncheng.alert.created": EventDefinition(
         event_type="yuncheng.alert.created",
         label="运城市空气质量告警",
         description="运城市小时盯守告警及溯源上下文已准备完成",
         filter_fields=["city", "alert_level", "target_pollutant"],
+    ),
+    "jiangsu.smart_event.alarm": EventDefinition(
+        event_type="jiangsu.smart_event.alarm",
+        label="江苏智能事件告警线索",
+        description="江苏告警线索证据包已准备完成，由智能事件 Agent 分析线索并定义最终事件类型",
+        filter_fields=["clue_type", "site_id", "site_name"],
     ),
     "jiangsu.station_fault.detected": EventDefinition(
         event_type="jiangsu.station_fault.detected",

@@ -280,6 +280,7 @@ async def init_db():
     import app.exam.models  # noqa: F401
     import app.db.models.task_review_db  # noqa: F401
     import app.db.models.smart_event_db  # noqa: F401
+    import app.db.report_package_model  # noqa: F401
 
     async with engine.begin() as conn:
         dialect_name = getattr(getattr(conn, "dialect", None), "name", "")

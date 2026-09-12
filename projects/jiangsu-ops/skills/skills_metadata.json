@@ -92,6 +92,7 @@
         "create_report_package",
         "render_report_package",
         "validate_report_package",
+        "publish_report",
         "submit_task_review"
       ]
     }
