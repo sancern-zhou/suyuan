@@ -52,6 +52,7 @@ class CreateTaskRequest(BaseModel):
     event_type: Optional[str] = None
     event_filters: Dict[str, Any] = Field(default_factory=dict)
     broadcast_enabled: bool = False
+    report_type: Optional[str] = None
     target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
     steps: List[TaskStep] = Field(..., description="任务步骤")
@@ -75,6 +76,7 @@ class UpdateTaskRequest(BaseModel):
     event_type: Optional[str] = None
     event_filters: Optional[Dict[str, Any]] = None
     broadcast_enabled: Optional[bool] = None
+    report_type: Optional[str] = None
     target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
     steps: Optional[List[TaskStep]] = None
@@ -258,6 +260,7 @@ async def create_task(
             event_type=request.event_type,
             event_filters=request.event_filters,
             broadcast_enabled=request.broadcast_enabled,
+            report_type=request.report_type,
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
             steps=request.steps,
