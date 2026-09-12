@@ -75,3 +75,15 @@ test('execution record selection restores the existing session in the chat works
   assert.match(layoutSource, /'restore-execution-session'/)
   assert.match(viewSource, /@restore-execution-session="handleSessionRestoreAndClosePanel"/)
 })
+
+test('switching between task workspace entries opens the new page without toggling the panel off', () => {
+  const viewSource = readSource('../../views/ReactAnalysisView.vue')
+  const branchStart = viewSource.indexOf("actionId?.type === 'task-workspace'")
+  const branchEnd = viewSource.indexOf('const newTaskMode', branchStart)
+  const branch = viewSource.slice(branchStart, branchEnd)
+
+  assert.ok(branchStart >= 0)
+  assert.ok(branchEnd > branchStart)
+  assert.match(branch, /taskWorkspaceTask\.value\?\.task_id !== task\.task_id/)
+  assert.match(branch, /hideManagementPanel\(\)[\s\S]*showManagementPanel\('task-workspace'\)/)
+})

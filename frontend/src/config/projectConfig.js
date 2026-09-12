@@ -32,6 +32,8 @@ export function createProjectConfig(value) {
     defaultAgentMode,
     agentModeOverrides,
     agentPlatformLayout: value.frontend.agentPlatformLayout || 'scenes',
+    agentScenes: Object.freeze([...(value.frontend.agentScenes || [])]),
+    sidebarAgentModes: Object.freeze([...(value.frontend.sidebarAgentModes || ['query'])]),
     hasModule: moduleId => modules.has(moduleId),
     hasFeature: featureId => features[featureId] === true,
     isFeatureEnabled: (featureId, defaultValue = false) => (
@@ -53,7 +55,9 @@ const injected = typeof __SUYUAN_PROJECT_CONFIG__ === 'undefined'
         agentModes: ['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'],
         defaultAgentMode: 'assistant',
         agentModeOverrides: {},
-        agentPlatformLayout: 'scenes'
+        agentPlatformLayout: 'scenes',
+        agentScenes: [],
+        sidebarAgentModes: ['query']
       }
     }
   : __SUYUAN_PROJECT_CONFIG__

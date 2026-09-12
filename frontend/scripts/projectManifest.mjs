@@ -6,6 +6,8 @@ import { parse } from 'yaml'
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]*$/
 const AGENT_MODE_IDS = new Set(['assistant', 'ppt', 'expert', 'query', 'knowledge', 'report', 'chart', 'board', 'ops'])
+const AGENT_SCENE_IDS = new Set(['office', 'monitoring', 'operations'])
+const SIDEBAR_AGENT_MODE_IDS = new Set(['query', 'knowledge', 'expert'])
 const AGENT_PLATFORM_LAYOUTS = new Set(['scenes', 'environment-grid'])
 const AGENT_MODE_OVERRIDE_KEYS = new Set([
   'name',
@@ -103,6 +105,17 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
   if (!AGENT_PLATFORM_LAYOUTS.has(agentPlatformLayout)) {
     throw new Error(`unknown agent platform layout: ${agentPlatformLayout}`)
   }
+  const agentScenes = uniqueStrings(manifest.frontend?.agent_scenes ?? [], 'frontend.agent_scenes')
+  for (const sceneId of agentScenes) {
+    if (!AGENT_SCENE_IDS.has(sceneId)) throw new Error(`unknown agent scene: ${sceneId}`)
+  }
+  const sidebarAgentModes = uniqueStrings(manifest.frontend?.sidebar_agent_modes ?? ['query'], 'frontend.sidebar_agent_modes')
+  for (const modeId of sidebarAgentModes) {
+    if (!SIDEBAR_AGENT_MODE_IDS.has(modeId)) throw new Error(`unknown sidebar agent mode: ${modeId}`)
+    if (agentModes.length > 0 && !agentModes.includes(modeId)) {
+      throw new Error('frontend.sidebar_agent_modes entries must be declared in frontend.agent_modes')
+    }
+  }
   for (const moduleId of selected) {
     if (!IDENTIFIER.test(moduleId)) throw new Error(`invalid module identifier: ${moduleId}`)
     const moduleManifest = readYaml(resolve(repoRoot, 'modules', moduleId, 'module.yaml'))
@@ -125,7 +138,9 @@ export function loadProjectBuildConfig({ projectId, repoRoot }) {
       agentModes,
       defaultAgentMode,
       agentModeOverrides: normalizeAgentModeOverrides(manifest.frontend?.agent_mode_overrides),
-      agentPlatformLayout
+      agentPlatformLayout,
+      agentScenes,
+      sidebarAgentModes
     }
   }
 }

@@ -56,14 +56,14 @@ test('scheduled tasks use a distinct two-column featured-card treatment', async 
   assert.match(source, /class="task-badge"/)
 })
 
-test('scheduled tasks appear before the agent catalog', async () => {
+test('scheduled tasks appear below the agent catalog', async () => {
   const source = await readComponent('AgentPlatform.vue')
   const taskPortalIndex = source.indexOf('class="portal-section task-portal"')
   const agentPortalIndex = source.indexOf('class="agent-groups"')
 
   assert.ok(taskPortalIndex >= 0)
   assert.ok(agentPortalIndex >= 0)
-  assert.ok(taskPortalIndex < agentPortalIndex)
+  assert.ok(agentPortalIndex < taskPortalIndex)
 })
 
 test('scene headings are primary sections without a nested container surface', async () => {
@@ -75,6 +75,13 @@ test('scene headings are primary sections without a nested container surface', a
   assert.doesNotMatch(source, /\.scene-section \{[^}]*border/)
   assert.doesNotMatch(source, /\.scene-section \{[^}]*background/)
   assert.doesNotMatch(source, /\.scene-section \{[^}]*padding/)
+})
+
+test('scene catalog honors the project scene whitelist', async () => {
+  const source = await readComponent('AgentPlatform.vue')
+
+  assert.match(source, /projectConfig\.agentScenes/)
+  assert.match(source, /AGENT_SCENES\.filter\(scene => sceneIds\.includes\(scene\.id\)\)/)
 })
 
 test('empty chat resolves complete welcome copy from the selected agent catalog entry', async () => {

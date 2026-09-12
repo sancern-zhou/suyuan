@@ -16,14 +16,21 @@ test('sidebar exposes the agent platform as a primary action', async () => {
   assert.doesNotMatch(source, /linear-gradient\(135deg/)
 })
 
-test('sidebar exposes smart query and opens the AI query agent workspace', async () => {
+test('sidebar exposes project-configured agent mode entries that switch the chat mode', async () => {
   const sidebar = await readSource('../AssistantSidebar.vue')
   const analysisView = await readSource('../../views/ReactAnalysisView.vue')
 
-  assert.match(sidebar, /<p class="module-title">智能问数<\/p>/)
-  assert.match(sidebar, /handleModuleSelect\('query-dashboard'\)/)
+  assert.match(sidebar, /const SIDEBAR_AGENT_MODE_ENTRIES = \{[\s\S]*query: \{ action: 'query-dashboard', title: '智能问数'/)
+  assert.match(sidebar, /knowledge: \{ action: 'knowledge-qa', title: '知识问答'/)
+  assert.match(sidebar, /expert: \{ action: 'expert-analysis', title: '专家分析'/)
+  assert.match(sidebar, /projectConfig\.sidebarAgentModes/)
+  assert.match(sidebar, /v-for="mode in sidebarAgentModeEntries"/)
+  assert.match(sidebar, /@click="handleModuleSelect\(mode\.action\)"/)
   assert.match(sidebar, /id: 'query-dashboard',[\s\S]*name: '智能问数'/)
+  assert.doesNotMatch(sidebar, /air-quality-forecast/)
   assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\('query'\)/)
+  assert.match(analysisView, /case 'knowledge-qa':[\s\S]*store\.switchMode\('knowledge'\)/)
+  assert.match(analysisView, /case 'expert-analysis':[\s\S]*store\.switchMode\('expert'\)/)
 })
 
 test('sidebar moves system management entries into the bottom user settings menu', async () => {

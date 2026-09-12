@@ -25,57 +25,6 @@
 
       <div v-if="error" class="platform-error" role="alert">{{ error }}</div>
 
-      <section class="portal-section task-portal" aria-labelledby="tasks-title">
-        <header class="section-heading">
-          <span class="heading-bar task-bar" aria-hidden="true"></span>
-          <div>
-            <h2 id="tasks-title">定时任务</h2>
-            <p>与左侧工作区保持同步，快速进入任务执行空间</p>
-          </div>
-          <span class="section-count">{{ scheduledTasks.length }} TASKS</span>
-        </header>
-
-        <div v-if="scheduledTasks.length" class="scheduled-task-grid">
-          <button
-            v-for="task in scheduledTasks"
-            :key="task.task_id"
-            class="scheduled-task-card"
-            type="button"
-            @click="emit('select-task', task)"
-          >
-            <span class="task-ambient" aria-hidden="true"></span>
-            <span class="task-badge">定时工作区</span>
-            <span class="task-card-top">
-              <span class="task-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M8 2.8h8" /></svg>
-              </span>
-              <span class="task-title-wrap">
-                <strong>{{ task.workspace_entry?.title || task.name }}</strong>
-                <small>{{ task.name }}</small>
-              </span>
-              <span :class="['task-status', { paused: !task.enabled }]">
-                <i aria-hidden="true"></i>{{ task.enabled ? '已启用' : '已暂停' }}
-              </span>
-            </span>
-            <span class="card-description">{{ task.description || '进入任务工作区查看执行情况与产出文件。' }}</span>
-            <span class="task-meta">
-              <span>{{ formatTaskSchedule(task) }}</span>
-              <span>{{ task.timeout_seconds || 1800 }} 秒超时</span>
-            </span>
-            <span class="card-action task-action">
-              进入工作区
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
-            </span>
-          </button>
-        </div>
-        <div v-else class="task-empty-state">
-          <span class="task-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-          </span>
-          <div><strong>暂无显示在工作区的定时任务</strong><p>启用任务的工作区入口后，它会自动出现在这里。</p></div>
-        </div>
-      </section>
-
       <section class="agent-groups" aria-label="智能体场景">
         <div v-if="isSceneLayout" class="scene-stack">
           <section
@@ -168,6 +117,57 @@
         </div>
       </section>
 
+      <section class="portal-section task-portal" aria-labelledby="tasks-title">
+        <header class="section-heading">
+          <span class="heading-bar task-bar" aria-hidden="true"></span>
+          <div>
+            <h2 id="tasks-title">定时任务</h2>
+            <p>与左侧工作区保持同步，快速进入任务执行空间</p>
+          </div>
+          <span class="section-count">{{ scheduledTasks.length }} TASKS</span>
+        </header>
+
+        <div v-if="scheduledTasks.length" class="scheduled-task-grid">
+          <button
+            v-for="task in scheduledTasks"
+            :key="task.task_id"
+            class="scheduled-task-card"
+            type="button"
+            @click="emit('select-task', task)"
+          >
+            <span class="task-ambient" aria-hidden="true"></span>
+            <span class="task-badge">定时工作区</span>
+            <span class="task-card-top">
+              <span class="task-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M8 2.8h8" /></svg>
+              </span>
+              <span class="task-title-wrap">
+                <strong>{{ task.workspace_entry?.title || task.name }}</strong>
+                <small>{{ task.name }}</small>
+              </span>
+              <span :class="['task-status', { paused: !task.enabled }]">
+                <i aria-hidden="true"></i>{{ task.enabled ? '已启用' : '已暂停' }}
+              </span>
+            </span>
+            <span class="card-description">{{ task.description || '进入任务工作区查看执行情况与产出文件。' }}</span>
+            <span class="task-meta">
+              <span>{{ formatTaskSchedule(task) }}</span>
+              <span>{{ task.timeout_seconds || 1800 }} 秒超时</span>
+            </span>
+            <span class="card-action task-action">
+              进入工作区
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12" /><path d="m12 6 4 4-4 4" /></svg>
+            </span>
+          </button>
+        </div>
+        <div v-else class="task-empty-state">
+          <span class="task-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+          </span>
+          <div><strong>暂无显示在工作区的定时任务</strong><p>启用任务的工作区入口后，它会自动出现在这里。</p></div>
+        </div>
+      </section>
+
     </div>
   </main>
 </template>
@@ -179,7 +179,13 @@ import { projectConfig } from '@/config/projectConfig.js'
 
 const props = defineProps({
   agents: { type: Array, default: () => selectAgentModes(projectConfig.agentModeIds, projectConfig.agentModeOverrides) },
-  scenes: { type: Array, default: () => AGENT_SCENES },
+  scenes: {
+    type: Array,
+    default: () => {
+      const sceneIds = projectConfig.agentScenes
+      return sceneIds.length ? AGENT_SCENES.filter(scene => sceneIds.includes(scene.id)) : AGENT_SCENES
+    }
+  },
   layout: { type: String, default: () => projectConfig.agentPlatformLayout },
   runningModes: { type: Array, default: () => [] },
   selectingMode: { type: String, default: '' },
@@ -268,7 +274,7 @@ const formatTaskSchedule = (task) => {
 
 .platform-error { margin-bottom: 18px; padding: 10px 14px; border: 1px solid #efb7af; border-radius: 10px; background: #fff6f4; color: #b44738; font-size: 13px; }
 .portal-section + .portal-section { margin-top: 30px; }
-.task-portal + .agent-groups { margin-top: 30px; }
+.agent-groups + .task-portal { margin-top: 30px; }
 .section-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
 .heading-bar { width: 4px; height: 32px; border-radius: 3px; background: linear-gradient(180deg, var(--cyan-400), var(--teal-600)); }
 .task-bar { background: linear-gradient(180deg, #f2a93b, #de9220); }

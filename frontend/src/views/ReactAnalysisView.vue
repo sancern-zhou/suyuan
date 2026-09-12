@@ -425,8 +425,12 @@ const handleSidebarAction = async (actionId) => {
     if (taskMode !== store.currentMode) {
       store.switchMode(taskMode)
     }
+    const switchingTask = taskWorkspaceTask.value?.task_id !== task.task_id
     taskWorkspaceTask.value = task
     workspace.value = 'chat'
+    if (switchingTask) {
+      hideManagementPanel()
+    }
     showManagementPanel('task-workspace')
     rightPanelVisible.value = false
     return
@@ -458,6 +462,18 @@ const handleSidebarAction = async (actionId) => {
     case 'query-dashboard':
       if (!await confirmResourcePreviewLeave()) return
       store.switchMode('query')
+      hideManagementPanel()
+      resetPanelState()
+      break
+    case 'knowledge-qa':
+      if (!await confirmResourcePreviewLeave()) return
+      store.switchMode('knowledge')
+      hideManagementPanel()
+      resetPanelState()
+      break
+    case 'expert-analysis':
+      if (!await confirmResourcePreviewLeave()) return
+      store.switchMode('expert')
       hideManagementPanel()
       resetPanelState()
       break

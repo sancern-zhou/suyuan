@@ -39,28 +39,17 @@
           </div>
         </button>
         <button
-          v-if="projectConfig.hasModule('xuchang-air-quality')"
+          v-for="mode in sidebarAgentModeEntries"
+          :key="mode.id"
           class="module-card"
-          :class="{ active: isActive('air-quality-forecast') }"
+          :class="{ active: isActive(mode.action) }"
           type="button"
-          @click="handleModuleSelect('air-quality-forecast')"
-          :title="isCollapsed ? '预报预测' : ''"
+          @click="handleModuleSelect(mode.action)"
+          :title="isCollapsed ? mode.title : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon('air-quality-forecast')"></span>
+          <span class="module-icon" v-html="getModuleIcon(mode.icon)"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">预报预测</p>
-          </div>
-        </button>
-        <button
-          class="module-card"
-          :class="{ active: isActive('query-dashboard') }"
-          type="button"
-          @click="handleModuleSelect('query-dashboard')"
-          :title="isCollapsed ? '智能问数' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('query-dashboard')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">智能问数</p>
+            <p class="module-title">{{ mode.title }}</p>
           </div>
         </button>
         <button
@@ -406,13 +395,22 @@ const allModules = [
     requiredModule: 'legacy'
   },
   {
-    id: 'air-quality-forecast',
-    name: '预报预测',
-    abbr: '预报',
-    desc: '查看许昌市逐小时空气质量预报与观测',
-    badge: '预报',
+    id: 'knowledge-qa',
+    name: '知识问答',
+    abbr: '知识',
+    desc: '基于知识库检索的问答对话',
+    badge: '知识',
     isAction: true,
-    requiredModule: 'xuchang-air-quality'
+    requiredModule: 'legacy'
+  },
+  {
+    id: 'expert-analysis',
+    name: '专家分析',
+    abbr: '专家',
+    desc: '进入专家会商分析对话',
+    badge: '专家',
+    isAction: true,
+    requiredModule: 'legacy'
   },
   {
     id: 'knowledge-base',
@@ -489,6 +487,16 @@ const allModules = [
 
 const modules = filterSidebarModules(allModules, projectConfig.hasModule)
 
+const SIDEBAR_AGENT_MODE_ENTRIES = {
+  query: { action: 'query-dashboard', title: '智能问数', icon: 'query-dashboard' },
+  knowledge: { action: 'knowledge-qa', title: '知识问答', icon: 'knowledge-qa' },
+  expert: { action: 'expert-analysis', title: '专家分析', icon: 'expert-analysis' }
+}
+
+const sidebarAgentModeEntries = projectConfig.sidebarAgentModes
+  .map(modeId => ({ id: modeId, ...SIDEBAR_AGENT_MODE_ENTRIES[modeId] }))
+  .filter(mode => mode.action)
+
 const SETTINGS_MODULE_IDS = Object.freeze([
   'session-history',
   'skills-management',
@@ -529,14 +537,21 @@ const moduleIcons = {
       <path d="M20 8.5 16 6l-4 2-4-3" />
     </svg>
   `,
-  'air-quality-forecast': `
+  'knowledge-qa': `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 19V5" />
-      <path d="M4 19h16" />
-      <path d="M7.5 16v-4" />
-      <path d="M11.5 16V8" />
-      <path d="M15.5 16v-6" />
-      <path d="m7 8 4-3 3 2 5-3" />
+      <path d="M5 5.5C5 4.67 5.67 4 6.5 4h11c.83 0 1.5.67 1.5 1.5v13c0 .83-.67 1.5-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-13Z" />
+      <path d="M8.5 9.5h7" />
+      <path d="M8.5 13h4" />
+      <path d="M12 21v-2" />
+      <path d="m14.5 16.5 1.8-1.8 1.7 1.7" />
+    </svg>
+  `,
+  'expert-analysis': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3.5a3 3 0 0 1 3 3v.5a3 3 0 0 1 0 6v.5a3 3 0 0 1-6 0v-.5a3 3 0 0 1 0-6V6.5a3 3 0 0 1 3-3Z" />
+      <path d="M12 16.5V20" />
+      <path d="M8 20h8" />
+      <path d="m10 7.5.8.8L12.5 6.6" />
     </svg>
   `,
   'session-history': `
