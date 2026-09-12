@@ -57,9 +57,11 @@ class CreateTaskRequest(BaseModel):
     interval_minutes: Optional[int] = None
     hour: Optional[int] = None
     minute: Optional[int] = None
+    day_of_week: Optional[int] = None
     event_type: Optional[str] = None
     event_filters: Dict[str, Any] = Field(default_factory=dict)
     broadcast_enabled: bool = False
+    report_type: Optional[str] = None
     target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
     prompt: str = Field(..., min_length=1)
@@ -86,9 +88,11 @@ class UpdateTaskRequest(BaseModel):
     interval_minutes: Optional[int] = None
     hour: Optional[int] = None
     minute: Optional[int] = None
+    day_of_week: Optional[int] = None
     event_type: Optional[str] = None
     event_filters: Optional[Dict[str, Any]] = None
     broadcast_enabled: Optional[bool] = None
+    report_type: Optional[str] = None
     target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
     prompt: Optional[str] = Field(default=None, min_length=1)
@@ -286,8 +290,30 @@ def _can_access_task(task: ScheduledTask, user: CurrentUser) -> bool:
     return _is_scheduled_task_admin(user) or task.owner_user_id == user.id
 
 
+def _can_view_task(task: ScheduledTask, user: CurrentUser) -> bool:
+    if _can_access_task(task, user):
+        return True
+
+    workspace_entry = task.workspace_entry
+    if not workspace_entry or not workspace_entry.enabled:
+        return False
+
+    if task.owner_user_id == "system" or task.created_by == "system":
+        return True
+
+    if task.broadcast_enabled:
+        return not task.target_user_ids or user.id in task.target_user_ids
+
+    return False
+
+
 def _require_task_access(task: ScheduledTask, user: CurrentUser) -> None:
     if not _can_access_task(task, user):
+        raise HTTPException(status_code=404, detail=f"Task {task.task_id} not found")
+
+
+def _require_task_view(task: ScheduledTask, user: CurrentUser) -> None:
+    if not _can_view_task(task, user):
         raise HTTPException(status_code=404, detail=f"Task {task.task_id} not found")
 
 
@@ -389,9 +415,11 @@ async def create_task(
             interval_minutes=request.interval_minutes,
             hour=request.hour,
             minute=request.minute,
+            day_of_week=request.day_of_week,
             event_type=request.event_type,
             event_filters=request.event_filters,
             broadcast_enabled=request.broadcast_enabled,
+            report_type=request.report_type,
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
             tags=request.tags,
@@ -438,7 +466,7 @@ async def list_tasks(
     try:
         service = get_scheduled_task_service()
         tasks = service.list_tasks(enabled_only=enabled_only)
-        tasks = [task for task in tasks if _can_access_task(task, user)]
+        tasks = [task for task in tasks if _can_view_task(task, user)]
 
         # 获取调度器状态
         scheduler_status = service.get_scheduler_status()
@@ -474,7 +502,7 @@ async def get_task(
 
         if not task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-        _require_task_access(task, user)
+        _require_task_view(task, user)
 
         # 获取下次运行时间
         scheduler_status = service.get_scheduler_status()

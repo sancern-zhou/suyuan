@@ -71,6 +71,7 @@ def resolve_active_contexts(
     *,
     mode: str,
     resources: Iterable[StoredResource],
+    extra_tool_names: Iterable[str] | None = None,
 ) -> ResolvedActiveContexts:
     normalized = _normalize_items(items)
     skill_items = [item for item in normalized if item["type"] == "skill"]
@@ -81,7 +82,10 @@ def resolve_active_contexts(
     if skill_items:
         skill = load_skill_selection(
             skill_items[0]["id"],
-            available_tools=set(get_tools_by_mode(mode or "expert")),
+            available_tools=(
+                set(get_tools_by_mode(mode or "expert").keys())
+                | set(extra_tool_names or [])
+            ),
         )
 
     by_id = {resource.resource_id: resource for resource in resources}

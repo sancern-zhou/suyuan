@@ -185,6 +185,14 @@ async def call_llm_tool(tool_name: str, *args, **kwargs) -> Dict[str, Any]:
                 data_context_manager = execution_context.get_data_manager()
 
         exec_kwargs = kwargs.copy()
+        # call_sub_agent exposes a legacy business field named ``context``;
+        # keep it distinct from the injected ExecutionContext argument.
+        if (
+            tool_name == "call_sub_agent"
+            and execution_context is not None
+            and isinstance(exec_kwargs.get("context"), str)
+        ):
+            exec_kwargs["context_text"] = exec_kwargs.pop("context")
         # 移除 data_context_manager（如果来自 kwargs），后续按工具类型选择性注入
         exec_kwargs.pop('data_context_manager', None)
 

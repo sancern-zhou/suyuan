@@ -12,6 +12,7 @@ from pathlib import Path
 import asyncio
 import json
 import structlog
+import uuid
 
 from app.agent import create_react_agent
 from app.agent.active_contexts import (
@@ -21,12 +22,18 @@ from app.agent.active_contexts import (
     resolve_active_contexts,
 )
 from app.agent.session import Session, get_session_manager
+from app.agent.session.workspace_routing import (
+    bind_workspace_request_to_source_query,
+    is_workspace_approval_required,
+    is_workspace_promotion,
+)
 from app.agent.session.conversation_persistence import ConversationPersistenceService
 from app.agent.runtime.cancellation import PauseCheckpointError, cancellation_registry
 from app.agent.runtime.steering import steering_registry
 from app.agent.runtime.ownership import run_ownership_registry
 from app.agent.selection_context import (
     InvalidContextReference,
+    load_skill_selection,
     resource_refs_to_message_attachments,
     select_conversation_resources,
 )
@@ -510,6 +517,13 @@ class AgentCancelRequest(BaseModel):
     reason: Literal["user_paused", "client_cancelled"] = "user_paused"
 
 
+class AgentInteractionResolution(BaseModel):
+    """Resolution for a user-facing agent interaction request."""
+
+    decision: Literal["approve", "reject", "answer"]
+    response: Optional[str] = Field(default=None, max_length=4000)
+
+
 async def persist_new_web_session(
     *,
     manager,
@@ -848,7 +862,6 @@ async def analyze_stream(
         latest_drawio_board = None
 
         if not actual_session_id:
-            import uuid
             actual_session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{uuid.uuid4().hex[:8]}"
             analyze_kwargs["session_id"] = actual_session_id
 
@@ -872,7 +885,22 @@ async def analyze_stream(
             request.skill_ids,
         )
 
+        # Skill dependencies are loaded only for this run. They remain absent
+        # from the assistant's default tool schema and are validated against
+        # the globally registered tools before being appended as extras.
+        requested_skill_items = [
+            item for item in effective_active_contexts if item["type"] == "skill"
+        ]
+        on_demand_tool_names: list[str] = []
+
         try:
+            if requested_skill_items:
+                skill_probe = load_skill_selection(requested_skill_items[0]["id"])
+                registered_tool_names = set(global_tool_registry.list_tools())
+                on_demand_tool_names = [
+                    name for name in skill_probe.required_tools
+                    if name in registered_tool_names
+                ]
             requested_ids = [ref.resource_id for ref in request.context_refs]
             needs_resources = bool(requested_ids) or any(
                 item["type"] == "fixed_policy" for item in effective_active_contexts
@@ -891,6 +919,7 @@ async def analyze_stream(
                 effective_active_contexts,
                 mode=request.mode or "expert",
                 resources=available_resources,
+                extra_tool_names=on_demand_tool_names,
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=422, detail="selected_skill_not_found") from exc
@@ -916,6 +945,7 @@ async def analyze_stream(
         analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
         analyze_kwargs["fixed_policy_context"] = resolved_active_contexts.fixed_policy_context
         analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
+        analyze_kwargs["extra_tool_names"] = on_demand_tool_names
         if (
             preloaded_session
             and request.mode == "board"
@@ -1107,6 +1137,35 @@ async def analyze_stream(
                             # ✅ 流式事件：静默处理，只统计不输出
                             streaming_chunk_count += 1
 
+                        if event_type == "interaction_required":
+                            interaction_data = event.get("data") or {}
+                            if is_workspace_approval_required(interaction_data):
+                                pending_request = bind_workspace_request_to_source_query(
+                                    interaction_data["pending_request"],
+                                    original_query,
+                                )
+                                interaction_id = f"interaction_{uuid.uuid4().hex}"
+                                interaction = {
+                                    "interaction_id": interaction_id,
+                                    "kind": interaction_data["kind"],
+                                    "title": interaction_data.get("title") or "需要你的确认",
+                                    "question": interaction_data.get("question") or "是否继续？",
+                                    "actions": interaction_data.get("actions") or ["approve", "reject"],
+                                    "promotion": interaction_data["promotion"],
+                                    "pending_request": pending_request,
+                                }
+                                session.metadata["workspace"] = interaction["promotion"]
+                                session.metadata["pending_interaction"] = interaction
+                                session.metadata["workspace_session_id"] = actual_session_id
+                                session.metadata["workspace_status"] = "pending_approval"
+                                if not await session_manager.save_session_metadata(session):
+                                    raise RuntimeError("interaction_request_save_failed")
+                                event["data"] = {
+                                    **interaction,
+                                    "session_id": actual_session_id,
+                                    "run_id": latest_event_run_id,
+                                }
+
                         # 收集对话历史（转换为前端格式，添加 content 字段）
                         if event["type"] in ["thought", "tool_use", "tool_result"]:
                             # 创建前端格式的消息
@@ -1146,6 +1205,40 @@ async def analyze_stream(
                                                 latest_drawio_board or drawio_board_context,
                                                 result,
                                             )
+
+                                promotion = (
+                                    result.get("metadata", {}).get("workspace_promotion")
+                                    if isinstance(result, dict)
+                                    and isinstance(result.get("metadata"), dict)
+                                    else None
+                                )
+                                if is_workspace_promotion(promotion):
+                                    interaction_id = f"interaction_{uuid.uuid4().hex}"
+                                    interaction = {
+                                        "interaction_id": interaction_id,
+                                        "kind": "approval",
+                                        "title": "申请进入持续工作空间",
+                                        "question": (
+                                            f"当前任务需要持续使用{promotion['target_mode']}模式进行多轮编辑，"
+                                            "是否进入该工作空间？"
+                                        ),
+                                        "actions": ["approve", "reject"],
+                                        "promotion": promotion,
+                                    }
+                                    session.metadata["workspace"] = promotion
+                                    session.metadata["pending_interaction"] = interaction
+                                    session.metadata["workspace_session_id"] = actual_session_id
+                                    session.metadata["workspace_status"] = "pending_approval"
+                                    interaction_payload = {
+                                        "type": "interaction_required",
+                                        "data": {
+                                            **interaction,
+                                            "session_id": actual_session_id,
+                                        },
+                                    }
+                                    yield (
+                                        f"data: {json.dumps(interaction_payload, ensure_ascii=False)}\n\n"
+                                    )
 
                             frontend_message = {
                                 "type": event["type"],
@@ -1475,6 +1568,57 @@ async def steer_analysis(
         "session_id": session_id,
         "reason": None if accepted else "no_active_steerable_run_or_store_unavailable",
         "message": "已追加到当前执行任务" if accepted else "没有找到可追加的运行中任务",
+    }
+
+
+@router.post("/{session_id}/interactions/{interaction_id}")
+async def resolve_agent_interaction(
+    session_id: str,
+    interaction_id: str,
+    request: AgentInteractionResolution,
+    user: CurrentUser = Depends(require_current_user),
+    catalog: ConversationCatalogService = Depends(get_conversation_catalog),
+):
+    """Resolve a pending user interaction such as workspace approval."""
+    await catalog.require_write(session_id, user)
+    session_manager = get_session_manager()
+    session = await session_manager.load_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session_not_found")
+
+    pending = session.metadata.get("pending_interaction") if isinstance(session.metadata, dict) else None
+    if not isinstance(pending, dict) or pending.get("interaction_id") != interaction_id:
+        raise HTTPException(status_code=404, detail="interaction_not_found")
+
+    promotion = pending.get("promotion") if isinstance(pending.get("promotion"), dict) else None
+    session.metadata.pop("pending_interaction", None)
+    session.metadata["last_interaction"] = {
+        "interaction_id": interaction_id,
+        "decision": request.decision,
+        "response": request.response,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if request.decision == "approve" and is_workspace_promotion(promotion):
+        session.metadata["workspace_mode"] = promotion["target_mode"]
+        session.metadata["workspace_status"] = "active"
+    elif request.decision == "reject":
+        session.metadata.pop("workspace", None)
+        session.metadata.pop("workspace_session_id", None)
+        session.metadata.pop("workspace_mode", None)
+        session.metadata["workspace_status"] = "rejected"
+
+    if not await session_manager.save_session_metadata(session):
+        raise HTTPException(status_code=500, detail="interaction_resolution_save_failed")
+    return {
+        "status": "resolved",
+        "interaction_id": interaction_id,
+        "decision": request.decision,
+        "workspace_mode": session.metadata.get("workspace_mode"),
+        "pending_request": (
+            pending.get("pending_request")
+            if request.decision == "approve" and isinstance(pending, dict)
+            else None
+        ),
     }
 
 

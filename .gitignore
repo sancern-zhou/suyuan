@@ -226,6 +226,7 @@ backend/docs/skills/*
 !backend/docs/skills/ops_work_order_audit.md
 !backend/docs/skills/ops_work_order_audit/
 !backend/docs/skills/ops_work_order_audit/**
+!backend/docs/skills/archify.md
 scripts/
 !/.github/scripts/
 !/.github/scripts/build_filter_repo_replacements.py
@@ -282,4 +283,3 @@ id_rsa*
 id_ed25519*
 *credentials*.json
 *secrets*.yaml
-

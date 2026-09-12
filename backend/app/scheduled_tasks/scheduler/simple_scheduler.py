@@ -1,6 +1,6 @@
 """
 简单调度器 - 基于APScheduler
-支持预设cron模板和灵活调度（一次性、自定义间隔、自定义时间），最多3个并发任务
+支持预设cron模板和灵活调度（一次性、自定义间隔、每天/每周自定义时间），最多3个并发任务
 """
 import asyncio
 import structlog
@@ -105,6 +105,22 @@ class SimpleScheduler:
                 return
             trigger = CronTrigger(hour=task.hour, minute=task.minute, timezone="Asia/Shanghai")
             logger.info(f"Scheduled daily task: {task.name} at {task.hour:02d}:{task.minute:02d}")
+
+        elif task.schedule_type == ScheduleType.WEEKLY_CUSTOM:
+            # 每周自定义时间；APScheduler 使用 0=周一，6=周日
+            if task.day_of_week is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: schedule_type=weekly_custom but day_of_week/hour/minute is not set")
+                return
+            trigger = CronTrigger(
+                day_of_week=task.day_of_week,
+                hour=task.hour,
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled weekly task: {task.name} on day {task.day_of_week} "
+                f"at {task.hour:02d}:{task.minute:02d}"
+            )
 
         else:
             logger.error(f"Unknown schedule type: {task.schedule_type}")

@@ -92,7 +92,7 @@ async def _graph_build_recovery_loop() -> None:
     """Resume durable graph tasks after a web/worker process restart."""
     while True:
         try:
-            service = GraphBuildService(knowledge_async_session)
+            service = GraphBuildService(async_session)
             task_ids = await service.recover_expired_tasks()
             for task_id in task_ids:
                 task = await service.get_status(task_id=task_id)

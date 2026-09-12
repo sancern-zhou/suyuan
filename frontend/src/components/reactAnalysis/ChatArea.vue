@@ -47,6 +47,14 @@
       <button type="button" @click="$emit('new-web-conversation')">新建 Web 对话</button>
     </div>
 
+    <AgentInteractionDialog
+      v-show="!showManagementPanel"
+      :interaction="pendingInteraction"
+      :resolving="interactionResolving"
+      @resolve="$emit('resolve-interaction', $event)"
+      @close="$emit('close-interaction')"
+    />
+
     <!-- 输入框 -->
     <InputBox
       v-show="!showManagementPanel"
@@ -70,6 +78,7 @@
 import { ref, computed, nextTick } from 'vue'
 import ReActMessageList from '@/components/ReActMessageList.vue'
 import InputBox from '@/components/InputBox.vue'
+import AgentInteractionDialog from './dialogs/AgentInteractionDialog.vue'
 import { withComposerShortcutGuide } from '@/components/inputBoxPlaceholder.js'
 
 const props = defineProps({
@@ -80,6 +89,14 @@ const props = defineProps({
   pendingSteeringInputs: {
     type: Array,
     default: () => []
+  },
+  pendingInteraction: {
+    type: Object,
+    default: null
+  },
+  interactionResolving: {
+    type: Boolean,
+    default: false
   },
   isAnalyzing: {
     type: Boolean,
@@ -170,7 +187,9 @@ const emit = defineEmits([
   'drag-leave',
   'drop',
   'new-web-conversation',
-  'preview-message-attachment'
+  'preview-message-attachment',
+  'resolve-interaction',
+  'close-interaction'
 ])
 
 const inputBoxRef = ref(null)
