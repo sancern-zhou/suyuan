@@ -43,8 +43,12 @@ class FrontendManifest(StrictModel):
     default_agent_mode: str | None = None
     agent_mode_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     agent_platform_layout: Literal["scenes", "environment-grid"] = "scenes"
+    agent_scenes: list[str] = Field(default_factory=list)
+    sidebar_agent_modes: list[str] = Field(default_factory=list)
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
+    _unique_agent_scenes = field_validator("agent_scenes")(unique)
+    _unique_sidebar_agent_modes = field_validator("sidebar_agent_modes")(unique)
     _valid_agent_mode_overrides = field_validator("agent_mode_overrides")(valid_identifier_map)
 
     @model_validator(mode="after")
@@ -78,6 +82,7 @@ class WeatherHistoryConfig(StrictModel):
 
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
+    disabled_tools: list[str] = Field(default_factory=list)
     # ``None`` preserves the shared legacy directories/registrations.  An
     # explicitly empty list is meaningful: the project owns an empty surface.
     skills_dir: str | None = None
@@ -89,6 +94,7 @@ class BackendManifest(StrictModel):
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
 
     _unique_tools = field_validator("tools")(unique)
+    _unique_disabled_tools = field_validator("disabled_tools")(unique)
     _unique_fetchers = field_validator("fetchers")(unique)
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
