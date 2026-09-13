@@ -212,13 +212,15 @@ def build_jiangsu_network_inspection_task() -> ScheduledTask:
         task_id=JIANGSU_NETWORK_INSPECTION_TASK_ID,
         name="江苏全网巡检值守",
         description="每日汇总站房巡检异常，生成运维值守短结论和问题清单",
-        execution_mode="custom",
-        tool_names=["jiangsu_network_inspection_workflow", "submit_task_review"],
+        execution_mode="workflow",
+        workflow_name="jiangsu_network_inspection_workflow",
+        workflow_args={"period": "day"},
         schedule_type=ScheduleType.DAILY_8AM,
         hour=8,
         minute=0,
         prompt=JIANGSU_NETWORK_INSPECTION_PROMPT,
         timeout_seconds=600,
+        history_learning={"enabled": False},
         created_by="project-default",
         owner_user_id="system",
         owner_username="ops-watch-agent",
@@ -309,6 +311,9 @@ def ensure_project_default_tasks(service, task_ids: Iterable[str]) -> list[str]:
                 or existing.skill_id != desired.skill_id
                 or existing.event_type != desired.event_type
                 or existing.execution_mode != desired.execution_mode
+                or existing.workflow_name != desired.workflow_name
+                or existing.workflow_args != desired.workflow_args
+                or existing.history_learning != desired.history_learning
                 or existing.timeout_seconds != desired.timeout_seconds
             ):
                 desired.enabled = existing.enabled

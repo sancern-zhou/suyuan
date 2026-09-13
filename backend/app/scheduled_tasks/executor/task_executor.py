@@ -194,51 +194,74 @@ class ScheduledTaskExecutor:
         # Event-driven tasks may target a dedicated mode while retaining a
         # shared scheduled-task definition for compatibility.
         execution_mode = str((event.attributes if event else {}).get("agent_mode") or task.execution_mode)
+        is_workflow = execution_mode == "workflow"
         try:
-            shared_agent = None
-            if execution_mode == "custom":
-                if not self.agent_factory:
-                    raise RuntimeError("Agent factory not configured")
-                runtime_tool_names = list(task.tool_names or [])
-                for tool_name in runtime_extra_tool_names:
-                    if tool_name not in runtime_tool_names:
-                        runtime_tool_names.append(tool_name)
-                fixed_tools = build_runtime_custom_tool_registry(runtime_tool_names)
-                shared_agent = self.agent_factory(
-                    tool_registry=fixed_tools,
-                    enable_memory=False,
-                )
+            if is_workflow:
+                from ..workflow_tasks import execute_workflow_task
 
-            # 一个任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
-            # 只受任务级 timeout_seconds 约束。
-            prompt = self._build_task_prompt(
-                task.prompt,
-                task=task,
-                event=event,
-                execution_id=execution.execution_id,
-                broadcast_user_names=broadcast_user_names,
-                history_section=history_section,
-            )
-            from app.services.llm_service import llm_service
-            with llm_service.use_model_tier(task.model_tier):
-                result = await asyncio.wait_for(
-                    self._run_agent(
-                        prompt, task_session_id,
-                        manual_mode=execution_mode,
-                        task=task, execution=execution, agent=shared_agent,
-                        collected=collected,
-                        extra_tool_names=runtime_extra_tool_names,
-                        runtime_metadata=self._runtime_metadata(task, execution),
-                    ),
+                workflow_result = await asyncio.wait_for(
+                    execute_workflow_task(task, execution),
                     timeout=task.timeout_seconds,
                 )
-            execution.steps.append(self._result_to_execution(result, prompt, "task"))
-            execution.completed_steps += 1
-            self.execution_storage.update(execution)
-
-            # 任务完成
-            if execution.status == ExecutionStatus.RUNNING:
+                execution.steps.append(StepExecution(
+                    step_id="workflow",
+                    status=ExecutionStatus.SUCCESS,
+                    agent_prompt=f"workflow:{task.workflow_name}",
+                    agent_response=workflow_result.get("summary", ""),
+                    result_data_ids=[workflow_result["review_id"]],
+                    tool_calls=[{
+                        "tool": task.workflow_name,
+                        "success": True,
+                        "review_id": workflow_result["review_id"],
+                    }],
+                ))
+                execution.completed_steps += 1
+                self.execution_storage.update(execution)
                 execution.status = ExecutionStatus.SUCCESS
+            else:
+                shared_agent = None
+                if execution_mode == "custom":
+                    if not self.agent_factory:
+                        raise RuntimeError("Agent factory not configured")
+                    runtime_tool_names = list(task.tool_names or [])
+                    for tool_name in runtime_extra_tool_names:
+                        if tool_name not in runtime_tool_names:
+                            runtime_tool_names.append(tool_name)
+                    fixed_tools = build_runtime_custom_tool_registry(runtime_tool_names)
+                    shared_agent = self.agent_factory(
+                        tool_registry=fixed_tools,
+                        enable_memory=False,
+                    )
+
+                # 一个任务就是一次完整的 Agent 执行：Agent 自行规划工具调用。
+                prompt = self._build_task_prompt(
+                    task.prompt,
+                    task=task,
+                    event=event,
+                    execution_id=execution.execution_id,
+                    broadcast_user_names=broadcast_user_names,
+                    history_section=history_section,
+                )
+                from app.services.llm_service import llm_service
+                with llm_service.use_model_tier(task.model_tier):
+                    result = await asyncio.wait_for(
+                        self._run_agent(
+                            prompt, task_session_id,
+                            manual_mode=execution_mode,
+                            task=task, execution=execution, agent=shared_agent,
+                            collected=collected,
+                            extra_tool_names=runtime_extra_tool_names,
+                            runtime_metadata=self._runtime_metadata(task, execution),
+                        ),
+                        timeout=task.timeout_seconds,
+                    )
+                execution.steps.append(self._result_to_execution(result, prompt, "task"))
+                execution.completed_steps += 1
+                self.execution_storage.update(execution)
+
+                # 只有工作流或 Agent 正常返回且未抛异常时才算执行成功。
+                if execution.status == ExecutionStatus.RUNNING:
+                    execution.status = ExecutionStatus.SUCCESS
 
         except asyncio.TimeoutError:
             execution.status = ExecutionStatus.TIMEOUT
@@ -261,12 +284,12 @@ class ScheduledTaskExecutor:
             ).total_seconds()
 
             try:
-                if execution.execution_id not in self._persisted_execution_ids:
+                if not is_workflow and execution.execution_id not in self._persisted_execution_ids:
                     await self.conversation_persistence.ensure_terminal_session(
                         task=task,
                         execution=execution,
                     )
-                if execution.execution_id in self._persisted_execution_ids or execution.session_id:
+                if not is_workflow and (execution.execution_id in self._persisted_execution_ids or execution.session_id):
                     await self.conversation_persistence.publish_conversation(
                         task=task,
                         execution=execution,

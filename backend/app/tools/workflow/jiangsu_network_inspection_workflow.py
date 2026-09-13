@@ -147,10 +147,26 @@ class JiangsuNetworkInspectionWorkflow(WorkflowTool):
         if period not in _PERIOD_LABELS:
             return self._build_udf_v2_result("failed", False, {"period": period}, summary="巡检汇总失败：period 必须是 day、week 或 month")
         self._record_step("fetch_network_inspection_summary", "running", {"period": period})
-        raw = await JiangsuNetworkInspectionSummaryTool().execute(context=context, period=period)
+        summary_tool = JiangsuNetworkInspectionSummaryTool()
+        raw = await summary_tool.execute(context=context, period=period)
+        # The upstream inspection endpoint has intermittent 30-second stalls.
+        # A single bounded retry keeps the scheduled task from dropping an
+        # otherwise valid duty summary while preserving a deterministic limit.
+        if not raw.get("success"):
+            self._record_step("retry_network_inspection_summary", "running", {"attempt": 2})
+            raw = await summary_tool.execute(context=context, period=period)
+            if raw.get("success"):
+                self._record_step("retry_network_inspection_summary", "success")
+            else:
+                self._record_step("retry_network_inspection_summary", "failed")
         if not raw.get("success"):
             self._record_step("fetch_network_inspection_summary", "failed")
-            return self._build_udf_v2_result("failed", False, raw.get("data") or {}, summary=raw.get("summary", "全网巡检汇总失败"))
+            return self._build_udf_v2_result(
+                "failed",
+                False,
+                raw.get("data") or {},
+                summary=raw.get("summary") or "全网巡检汇总失败：接口连续两次未返回有效数据",
+            )
         self._record_step("fetch_network_inspection_summary", "success", raw.get("metadata") or {})
         data = build_network_inspection_result(raw.get("data") or {}, period)
         self._record_step("deterministic_aggregation", "success", {"issue_count": len(data["issues"])})
