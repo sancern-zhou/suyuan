@@ -25,9 +25,6 @@ POLLUTANT_COLUMNS = {"PM2.5": "pm25", "O3": "o3", "NOX": "no2"}
 AIR_QUALITY_LOOKBACK_HOURS = 12
 OBSERVED_WEATHER_LOOKBACK_HOURS = 3
 CALM_WIND_THRESHOLD_MS = 1.5
-# NMC 城市预报为 3 小时间隔；告警时刻后 3 小时内应能找到最近槽位。
-NMC_FORECAST_TABLE = "XuchangNmcHourlyWeatherForecast"
-NMC_FORECAST_LOOKAHEAD_HOURS = 3
 
 
 def _event_hour(value: str) -> datetime:
@@ -344,7 +341,6 @@ class XuchangStationDeviationEvidenceCollector:
         self,
         *,
         connection_string_factory: Callable[[], str] = xcai_connection_string,
-        forecast_client: Any | None = None,
         weather_repo: WeatherRepository | None = None,
     ) -> None:
         self.connection_string_factory = connection_string_factory
@@ -360,10 +356,9 @@ class XuchangStationDeviationEvidenceCollector:
         event_hour = _event_hour(alert["occurred_at"])
         air_start = event_hour - timedelta(hours=AIR_QUALITY_LOOKBACK_HOURS)
         weather_start = event_time - timedelta(hours=OBSERVED_WEATHER_LOOKBACK_HOURS)
-        air_result, observed_result, forecast_result = await asyncio.gather(
+        air_result, observed_result = await asyncio.gather(
             asyncio.to_thread(self._load_air_quality, air_start, event_time),
             self._load_observed_weather(weather_start, event_time),
-            asyncio.to_thread(self._load_forecast_weather, event_time),
             return_exceptions=True,
         )
 
@@ -386,15 +381,6 @@ class XuchangStationDeviationEvidenceCollector:
             }
         else:
             observed_meteorology = observed_result
-
-        if isinstance(forecast_result, BaseException):
-            errors.append({"asset": "forecast_meteorology", "error": str(forecast_result)})
-            forecast_meteorology: dict[str, Any] = {
-                "status": "failed", "source": f"XcAiDb.dbo.{NMC_FORECAST_TABLE}",
-                "event_time": event_time.isoformat(), "nearest_forecast": None,
-            }
-        else:
-            forecast_meteorology = forecast_result
 
         computed_indicators = {
             "calculation_status": "success" if air_quality.get("local_station_hour_records") else "unavailable",
@@ -424,7 +410,6 @@ class XuchangStationDeviationEvidenceCollector:
         asset_statuses = [
             air_quality.get("status"),
             observed_meteorology.get("status"),
-            forecast_meteorology.get("status"),
         ]
         if source_screening_status != "not_run":
             asset_statuses.insert(0, source_screening_status)
@@ -441,7 +426,6 @@ class XuchangStationDeviationEvidenceCollector:
             "source_screening": source_screening,
             "air_quality_context": air_quality,
             "observed_meteorology": observed_meteorology,
-            "forecast_meteorology": forecast_meteorology,
             "computed_indicators": computed_indicators,
             "collection": {
                 "status": collection_status,
@@ -519,45 +503,5 @@ class XuchangStationDeviationEvidenceCollector:
             "units": {
                 "temperature_2m": "degC", "relative_humidity_2m": "%", "wind_speed_10m": "m/s",
                 "wind_direction_10m": "degree", "surface_pressure": "hPa", "precipitation": "mm",
-            },
-        }
-
-    def _load_forecast_weather(self, event_time: datetime) -> dict[str, Any]:
-        """Load the NMC hourly forecast row nearest to the alert time."""
-        event_value = event_time.replace(tzinfo=None)
-        window_start = event_value
-        window_end = event_value + timedelta(hours=NMC_FORECAST_LOOKAHEAD_HOURS)
-        connection = pyodbc.connect(self.connection_string_factory(), timeout=30)
-        try:
-            cursor = connection.cursor()
-            cursor.execute(
-                f"""
-                SELECT TOP (1) station_id, city_code, city_name, forecast_time, publish_time,
-                       temperature, humidity, pressure, wind_speed, wind_direction,
-                       wind_direction_degrees, precipitation_probability, precipitation_text,
-                       weather_code, weather_text,
-                       DATEDIFF(MINUTE, ?, forecast_time) AS offset_minutes
-                FROM dbo.{NMC_FORECAST_TABLE}
-                WHERE forecast_time >= ? AND forecast_time <= ?
-                ORDER BY forecast_time ASC
-                """,
-                [event_value, window_start, window_end, event_value],
-            )
-            rows = _rows(cursor)
-        finally:
-            connection.close()
-
-        nearest = rows[0] if rows else None
-        return {
-            "status": "success" if nearest else "empty",
-            "source": f"XcAiDb.dbo.{NMC_FORECAST_TABLE} (NMC 3小时间隔城市预报)",
-            "event_time": event_time.isoformat(),
-            "selection": f"告警时间至未来{NMC_FORECAST_LOOKAHEAD_HOURS}h窗口内forecast_time最近的一条预报",
-            "nearest_forecast": nearest,
-            "offset_note": "仅选择offset_minutes>=0且不超过未来3小时的预报",
-            "units": {
-                "temperature": "degC", "humidity": "%", "pressure": "hPa",
-                "wind_speed": "m/s", "wind_direction_degrees": "degree",
-                "precipitation_probability": "%",
             },
         }

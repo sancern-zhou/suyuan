@@ -357,13 +357,47 @@ def _load_package(path_value: str) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _build_llm_evidence(package: dict[str, Any]) -> dict[str, Any]:
+    """Keep only analysis facts; raw tables and delivery assets stay outside the prompt."""
+    compact_alerts = []
+    for item in package.get("alerts") or []:
+        evidence = item.get("evidence") or {}
+        air = evidence.get("air_quality_context") or {}
+        weather = evidence.get("observed_meteorology") or {}
+        compact_weather = {
+            "status": weather.get("status"),
+            "summary": weather.get("summary"),
+            "station_hour_records": (weather.get("station_hour_records") or [])[-1:],
+        }
+        compact_alerts.append({
+            "alert": item.get("alert") or {},
+            "evidence": {
+                "collection": evidence.get("collection") or {},
+                "air_quality_context": {
+                    "status": air.get("status"),
+                    "window": air.get("window"),
+                    "record_counts": air.get("record_counts") or {},
+                    "maintenance_qc_review": air.get("maintenance_qc_review"),
+                },
+                "observed_meteorology": compact_weather,
+                "computed_indicators": evidence.get("computed_indicators") or {},
+            },
+        })
+    return {
+        "schema_version": package.get("schema_version"),
+        "station_id": package.get("station_id"),
+        "occurred_at": package.get("occurred_at"),
+        "alerts": compact_alerts,
+    }
+
+
 async def _generate_station_alert_message(
     package: dict[str, Any], task: Any, history_section: str | None = None
 ) -> str:
     """Ask the configured model to turn the trusted evidence into a notice."""
     from app.services.llm_service import llm_service
 
-    evidence = json.dumps(package, ensure_ascii=False, indent=2, default=str)
+    evidence = json.dumps(_build_llm_evidence(package), ensure_ascii=False, indent=2, default=str)
     task_prompt = str(getattr(task, "prompt", "") or "").strip()
     system_prompt = (
         "你是许昌市空气质量站点告警分析智能体。根据用户消息中的可信证据包生成告警通报。"
@@ -385,14 +419,22 @@ async def _generate_station_alert_message(
     )
     tier = getattr(task, "model_tier", "auto") or "auto"
     with llm_service.use_model_tier(tier):
-        message = await llm_service.chat(
+        response = await llm_service.chat_anthropic(
             [
-                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            timeout=max(60.0, float(getattr(task, "timeout_seconds", 120))),
+            system=system_prompt,
             max_tokens=4000,
         )
+    content_blocks = response.get("content", []) if isinstance(response, dict) else []
+    text_parts = []
+    for block in content_blocks:
+        if isinstance(block, dict):
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(str(block["text"]))
+        elif getattr(block, "type", None) == "text" and getattr(block, "text", None):
+            text_parts.append(str(block.text))
+    message = "\n".join(text_parts)
     message = llm_service.clean_thinking_tags(str(message or "")).strip()
     if not message:
         raise RuntimeError("LLM 未生成告警通报正文")

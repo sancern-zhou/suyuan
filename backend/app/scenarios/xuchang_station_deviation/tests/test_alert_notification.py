@@ -201,14 +201,14 @@ def test_run_station_alert_workflow_delivers_composed_notice(tmp_path, monkeypat
     )
 
     async def _fake_chat(messages, **kwargs):
-        assert messages[0]["role"] == "system"
+        assert messages[0]["role"] == "user"
         assert "可信证据包" in messages[0]["content"]
-        assert '"alerts"' in messages[1]["content"]
-        assert "执行指令测试" in messages[1]["content"]
-        return "LLM 生成的站点告警通报"
+        assert '"alerts"' in messages[0]["content"]
+        assert "执行指令测试" in messages[0]["content"]
+        return {"content": [{"type": "text", "text": "LLM 生成的站点告警通报"}]}
 
     monkeypatch.setattr(
-        "app.services.llm_service.llm_service.chat",
+        "app.services.llm_service.llm_service.chat_anthropic",
         _fake_chat,
     )
 
