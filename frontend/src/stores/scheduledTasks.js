@@ -26,6 +26,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     socialUsers: [],
     availableTools: [],
     availableSkills: [],
+    availableWorkflows: [],
     skillsLoading: false,
     ws: null,
     wsConnected: false,
@@ -75,6 +76,16 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       const data = await response.json();
       this.availableTools = Array.isArray(data?.tools) ? data.tools : [];
       return this.availableTools;
+    },
+
+    async fetchAvailableWorkflows() {
+      const response = await authFetch(`${API_BASE}/workflows`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch available workflows');
+      const data = await response.json();
+      this.availableWorkflows = Array.isArray(data?.workflows) ? data.workflows : [];
+      return this.availableWorkflows;
     },
 
     async fetchAvailableSkills() {

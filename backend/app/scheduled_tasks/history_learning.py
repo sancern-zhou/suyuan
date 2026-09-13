@@ -2,7 +2,7 @@
 任务级历史执行记忆
 
 - 执行前注入：把任务专属长期记忆与最近案例渲染进任务 prompt（仅绑定当前任务，不跨任务共享）
-- 执行后收尾：案例入库（确定性提取 + LLM 蒸馏）并维护长期记忆，完成前执行不结束
+- 执行后收尾：案例入库（确定性提取 + LLM 蒸馏）；长期记忆按日统一维护
 
 案例与记忆的职责边界：
 - 案例 = 单次执行的回顾性总结（做了什么 / 结论如何 / 关键事实发现），不包含面向下次执行的建议
@@ -10,14 +10,14 @@
 """
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import structlog
 
 from .models.event import TaskEvent
 from .models.execution import ExecutionStatus, TaskExecution
 from .models.task import ScheduledTask
-from .storage.task_case_storage import MemoryVersionConflictError, TaskCaseStorage
+from .storage.task_case_storage import TaskCaseStorage
 
 logger = structlog.get_logger()
 
@@ -71,9 +71,7 @@ _HISTORY_USAGE_NOTE = """历史记忆使用要求：
 3. 吸收「经验教训」，避免重复历史错误；历史产出引用（报告 ID 等）可用于检索上次的成品做对比。
 4. 历史记忆仅供参考，不得代替本次执行的事实核查。"""
 
-_CONSOLIDATION_PROMPT_TEMPLATE = """你是定时任务的执行记忆巩固器。任务「{task_name}」刚完成一次执行，请基于以下材料完成两件事：
-一、蒸馏本次案例：只回顾本次执行（做了什么、结论如何、关键事实发现），禁止写入任何面向下次执行的建议、待办或期望——那属于长期记忆的职责。
-二、改写任务长期记忆：跨次积累模式规律、经验教训、输出偏好与当前关注。
+_CONSOLIDATION_PROMPT_TEMPLATE = """你是定时任务的执行案例提取器。任务「{task_name}」刚完成一次执行，请只回顾本次执行（做了什么、结论如何、关键事实发现）。长期记忆由每日维护任务单独改写，本次不要生成长期记忆内容。
 
 任务描述：{task_description}
 任务提示词（截断）：{task_prompt}
@@ -94,27 +92,16 @@ _CONSOLIDATION_PROMPT_TEMPLATE = """你是定时任务的执行记忆巩固器�
 {{
   "case": {{
     "case_brief": "不超过80字：本次做了什么、结论如何",
+    "event_type": "可选：本次执行对应的事件类型",
     "findings": ["不超过5条，每条不超过60字，仅陈述本次确认的事实发现；无则空数组"],
     "cities": ["可选：本次案例明确涉及的城市名称"],
     "stations": ["可选：本次案例明确涉及的站点名称"],
     "pollutants": ["可选：本次案例明确涉及的污染物标准名称"]
   }},
-  "memory": "长期记忆 Markdown 全文（JSON 字符串，保留换行）"
+  "memory": ""
 }}
-
-memory 必须沿用固定骨架：
-# 任务记忆：{task_name}
-## 使命与背景
-## 已确认的模式与规律
-## 经验教训
-## 输出偏好
-## 当前关注
-
-memory 改写规则：
-- 基于当前长期记忆增量改写：仍然有效的保留、本次新发现的合并、已过时的删除；首次执行则初始化「使命与背景」。
-- 「当前关注」只保留仍值得下次跟进的事项（滚动更新，不超过5条）。
 - cities、stations、pollutants 仅从本次执行材料中提取；触发上下文已有对应属性时省略，无法确认时省略或返回空数组，禁止猜测。
-- 只依据给定材料，不编造；总长不超过 {memory_budget} 字符。"""
+- 只依据给定材料，不编造。"""
 
 
 def _extract_outputs(agent_result: dict) -> list[dict]:
@@ -244,13 +231,41 @@ def _render_case_line(case: dict, index: int) -> str:
     return line
 
 
-def build_history_section(task: ScheduledTask, storage: TaskCaseStorage) -> str | None:
+def build_history_section(
+    task: ScheduledTask,
+    storage: TaskCaseStorage,
+    event: TaskEvent | None = None,
+) -> str | None:
     """执行前注入：渲染「## 历史执行记忆」段；任务关闭或无任何历史时返回 None。"""
     config = task.history_learning
     if not config.enabled:
         return None
     memory = storage.read_memory()
     recent = storage.recent_cases(config.max_recent_cases)
+    filter_fields = {
+        "city": config.case_filter_by_city,
+        "station": config.case_filter_by_station,
+        "pollutant": config.case_filter_by_pollutant,
+    }
+    if event is not None and any(filter_fields.values()):
+        attributes = dict(event.attributes or {})
+        for key in ("city", "city_name", "station_id", "station_name", "station", "pollutant", "target_pollutant"):
+            if attributes.get(key) in (None, "", []):
+                value = event.payload.get(key)
+                if value not in (None, "", []):
+                    attributes[key] = value
+        values = {
+            "city": {str(attributes.get(key)).strip().casefold() for key in ("city", "city_name") if attributes.get(key) not in (None, "", [])},
+            "station": {str(attributes.get(key)).strip().casefold() for key in ("station_id", "station_name", "station") if attributes.get(key) not in (None, "", [])},
+            "pollutant": {str(attributes.get(key)).strip().casefold() for key in ("pollutant", "target_pollutant") if attributes.get(key) not in (None, "", [])},
+        }
+        recent = [
+            case for case in storage.read_cases()
+            if all(
+                not enabled or str(case.get(field) or "").strip().casefold() in values[field]
+                for field, enabled in filter_fields.items()
+            )
+        ][-config.max_recent_cases:]
     if not memory and not recent:
         return None
     total = storage.case_count()
@@ -290,8 +305,10 @@ def _parse_consolidation_response(content: str | dict) -> tuple[dict, str] | Non
         return None
     case_part = data.get("case")
     memory = data.get("memory")
-    if not isinstance(case_part, dict) or not isinstance(memory, str):
+    if not isinstance(case_part, dict):
         return None
+    if not isinstance(memory, str):
+        memory = ""
     brief = str(case_part.get("case_brief") or "").strip()
     if not brief:
         return None
@@ -300,9 +317,10 @@ def _parse_consolidation_response(content: str | dict) -> tuple[dict, str] | Non
     if isinstance(findings_raw, list):
         findings = [str(item).strip()[:80] for item in findings_raw if str(item).strip()][:MAX_FINDINGS]
     memory = memory.strip()
-    if len(memory) < 10:
-        return None
     distilled = {"case_brief": brief[:160], "findings": findings}
+    event_type = str(case_part.get("event_type") or "").strip()
+    if event_type:
+        distilled["event_type"] = event_type[:MAX_DIMENSION_VALUE_CHARS]
     for field in _CASE_DIMENSION_FIELDS:
         values = _normalize_dimension_values(case_part.get(field))
         if values:
@@ -341,7 +359,11 @@ async def _consolidation_call(
     agent_result: dict,
     memory_budget: int,
 ) -> tuple[dict, str]:
-    """一次 LLM 巩固调用：同时产出蒸馏案例与新版长期记忆；失败重试一次。"""
+    """Extract one case after execution.
+
+    The second tuple item is retained as an internal compatibility value; long-term
+    memory is no longer written from this per-execution call.
+    """
     from app.services.llm_service import LLMService
 
     agent_result = agent_result or {}
@@ -365,7 +387,8 @@ async def _consolidation_call(
     last_error: Exception = RuntimeError("consolidation failed")
     for _attempt in range(2):
         try:
-            response = await llm_service.call_llm_with_json_response(prompt, max_retries=1)
+            with llm_service.use_model_tier(task.model_tier):
+                response = await llm_service.call_llm_with_json_response(prompt, max_retries=1)
             parsed = _parse_consolidation_response(response)
             if parsed is not None:
                 distilled, memory = parsed
@@ -385,6 +408,108 @@ async def _consolidation_call(
     raise last_error
 
 
+async def _daily_memory_consolidation_call(
+    task: ScheduledTask,
+    old_memory: str,
+    cases: list[dict],
+    memory_budget: int,
+) -> str:
+    """Rewrite task memory once from the cases produced on one execution day."""
+    from app.services.llm_service import LLMService
+
+    prompt = f"""你是定时任务的长期记忆维护器。请根据任务当天的全部执行案例，重写任务专属长期记忆。
+任务：{task.name}
+任务描述：{task.description}
+任务提示词（截断）：{task.prompt[:LLM_TASK_PROMPT_MAX_CHARS]}
+
+【旧记忆】
+{old_memory.strip() or '（暂无，首次维护）'}
+
+【当天全部案例】
+{json.dumps(cases, ensure_ascii=False, default=str)[:LLM_SUMMARY_MAX_CHARS * 4]}
+
+只依据材料，不编造事实。保留仍有效的模式规律、经验教训、输出偏好和当前关注，删除过时内容。
+直接返回 Markdown 全文，不要代码块，不要解释。必须沿用以下骨架：
+# 任务记忆：{task.name}
+## 使命与背景
+## 已确认的模式与规律
+## 经验教训
+## 输出偏好
+## 当前关注
+总长度不超过 {memory_budget} 字符。"""
+    service = LLMService()
+    service.temperature = 0.2
+    with service.use_model_tier(task.model_tier):
+        response = await service.chat(
+            [{"role": "user", "content": prompt}],
+            timeout=max(60.0, float(task.timeout_seconds)),
+            max_tokens=3000,
+        )
+    memory = str(response or "").strip()
+    if not memory:
+        raise ValueError("daily memory response is empty")
+    return memory[:memory_budget].rstrip()
+
+
+async def maybe_consolidate_daily_memory(
+    task: ScheduledTask,
+    execution: TaskExecution,
+    storage: TaskCaseStorage,
+) -> bool:
+    """Maintain memory at most once per calendar day with an execution."""
+    if not task.history_learning.enabled:
+        return False
+    execution_day = (execution.completed_at or execution.started_at or datetime.now()).date()
+    day = (execution_day - timedelta(days=1)).isoformat()
+    meta = storage.read_meta()
+    if not storage.claim_memory_consolidation(day):
+        return False
+    cases = [
+        case for case in storage.read_cases()
+        if str(case.get("started_at") or "")[:10] == day
+    ]
+    if not cases:
+        return False
+    old_memory = storage.read_memory()
+    version = int(meta.get("version", 0))
+    try:
+        memory = await asyncio.wait_for(
+            _daily_memory_consolidation_call(
+                task, old_memory, cases, task.history_learning.memory_char_budget
+            ),
+            timeout=task.history_learning.consolidation_timeout_seconds,
+        )
+        latest_meta = storage.read_meta()
+        latest_meta.pop("memory_consolidation_in_progress_date", None)
+        storage.write_memory(
+            memory,
+            {
+                **latest_meta,
+                "version": int(latest_meta.get("version", version)) + 1,
+                "last_memory_consolidation_date": day,
+                "last_consolidation_status": "success",
+                "consolidation_failures": 0,
+                "updated_at": datetime.now().isoformat(),
+            },
+            expected_version=version,
+        )
+        return True
+    except Exception as error:  # noqa: BLE001 - memory maintenance must not fail execution
+        latest_meta = storage.read_meta()
+        latest_meta.pop("memory_consolidation_in_progress_date", None)
+        storage.write_meta(
+            {
+                **latest_meta,
+                "last_consolidation_status": "failed",
+                "last_consolidation_error": str(error)[:200],
+                "consolidation_failures": int(meta.get("consolidation_failures", 0)) + 1,
+                "updated_at": datetime.now().isoformat(),
+            }
+        )
+        logger.warning("scheduled_task_daily_memory_failed", task_id=task.task_id, error=str(error))
+        return False
+
+
 async def finalize_execution(
     task: ScheduledTask,
     execution: TaskExecution,
@@ -392,23 +517,16 @@ async def finalize_execution(
     agent_result: dict | None,
     storage: TaskCaseStorage,
 ) -> dict:
-    """执行后收尾：案例入库 + 长期记忆维护。
-
-    - 案例事实必然入库；巩固调用失败/超时降级为写 summary 兜底、保留旧记忆
-    - 先写案例、成功后才覆盖记忆，保证记忆与案例库一致
-    """
+    """执行后收尾：每次只写入一条案例，长期记忆按日维护。"""
     config = task.history_learning
     case = build_case(execution=execution, event=event, agent_result=agent_result)
-    base_meta = storage.read_meta()
-    base_version = int(base_meta.get("version", 0))
-    old_memory = storage.read_memory()
     consolidate_error: str | None = None
     outcome: tuple[dict, str] | None = None
     try:
         outcome = await asyncio.wait_for(
             _consolidation_call(
                 task=task,
-                old_memory=old_memory,
+                old_memory=storage.read_memory(),
                 case=case,
                 agent_result=agent_result,
                 memory_budget=config.memory_char_budget,
@@ -422,39 +540,46 @@ async def finalize_execution(
 
     meta = storage.read_meta()
     if outcome is not None:
-        distilled, memory_md = outcome
+        distilled, _memory_md = outcome
+        run_daily_memory = not _memory_md
         case["distilled"] = distilled
+        trigger = case.get("trigger") or {}
+        case["event_type"] = distilled.get("event_type") or trigger.get("event_type") or trigger.get("type")
+        attributes = trigger.get("attributes") or {}
+        case["city"] = (distilled.get("cities") or [attributes.get("city") or attributes.get("city_name")])[0]
+        case["station"] = (distilled.get("stations") or [attributes.get("station_name") or attributes.get("station_id")])[0]
+        case["pollutant"] = (distilled.get("pollutants") or [attributes.get("pollutant") or attributes.get("target_pollutant")])[0]
+        case["conclusion"] = distilled.get("case_brief")
         storage.append_case(case)
-        try:
+        if _memory_md and not storage.read_memory():
+            # Preserve old test/integration providers that returned an initial memory;
+            # normal providers leave this value empty and use the daily path above.
+            current_meta = storage.read_meta()
+            day = (execution.completed_at or execution.started_at or datetime.now()).date().isoformat()
             storage.write_memory(
-                memory_md,
+                _memory_md,
                 {
-                    "version": base_version + 1,
-                    "last_execution_id": execution.execution_id,
+                    **current_meta,
+                    "version": int(current_meta.get("version", 0)) + 1,
+                    "last_memory_consolidation_date": day,
                     "last_consolidation_status": "success",
                     "consolidation_failures": 0,
-                    "updated_at": datetime.now().isoformat(),
                 },
-                expected_version=base_version,
-            )
-        except MemoryVersionConflictError:
-            logger.info(
-                "scheduled_task_consolidation_stale_memory",
-                task_id=task.task_id,
-                execution_id=execution.execution_id,
-                expected_version=base_version,
-                current_version=int(storage.read_meta().get("version", 0)),
             )
     else:
         fallback = str((agent_result or {}).get("summary") or "").strip()
         if fallback:
             case["summary"] = fallback[:CASE_SUMMARY_MAX_CHARS]
+        trigger = case.get("trigger") or {}
+        case["event_type"] = trigger.get("event_type") or trigger.get("type")
+        case["conclusion"] = case.get("summary")
         storage.append_case(case)
         storage.write_meta(
             {
                 **meta,
                 "last_execution_id": execution.execution_id,
                 "last_consolidation_status": "failed",
+                "last_case_extraction_status": "failed",
                 "last_consolidation_error": (consolidate_error or "unparseable response")[:200],
                 "consolidation_failures": int(meta.get("consolidation_failures", 0)) + 1,
                 "updated_at": datetime.now().isoformat(),
@@ -467,4 +592,6 @@ async def finalize_execution(
         execution_id=execution.execution_id,
         distilled=outcome is not None,
     )
+    if outcome is not None and run_daily_memory:
+        await maybe_consolidate_daily_memory(task, execution, storage)
     return case

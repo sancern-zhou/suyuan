@@ -19,7 +19,6 @@ frontend:
   agent_platform_layout: scenes
   agent_scenes:
     - monitoring
-    - operations
   sidebar_agent_modes:
     - query
     - knowledge

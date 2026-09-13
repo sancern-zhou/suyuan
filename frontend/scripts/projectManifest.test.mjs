@@ -35,7 +35,7 @@ test('xuchang project enables only its declared business modules', () => {
   assert.deepEqual(config.frontend.agentModes, ['query', 'knowledge', 'expert', 'report'])
   assert.equal(config.frontend.defaultAgentMode, 'query')
   assert.equal(config.frontend.agentPlatformLayout, 'scenes')
-  assert.deepEqual(config.frontend.agentScenes, ['monitoring', 'operations'])
+  assert.deepEqual(config.frontend.agentScenes, ['monitoring'])
   assert.deepEqual(config.frontend.sidebarAgentModes, ['query', 'knowledge', 'expert'])
 })
 

@@ -43,8 +43,12 @@ class FrontendManifest(StrictModel):
     default_agent_mode: str | None = None
     agent_mode_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     agent_platform_layout: Literal["scenes", "environment-grid"] = "scenes"
+    agent_scenes: list[str] = Field(default_factory=list)
+    sidebar_agent_modes: list[str] = Field(default_factory=list)
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
+    _unique_agent_scenes = field_validator("agent_scenes")(unique)
+    _unique_sidebar_agent_modes = field_validator("sidebar_agent_modes")(unique)
     _valid_agent_mode_overrides = field_validator("agent_mode_overrides")(valid_identifier_map)
 
     @model_validator(mode="after")

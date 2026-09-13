@@ -22,7 +22,8 @@ test('execution mode options include every project mode plus task-only modes', (
     'query',
     'expert',
     'social',
-    'custom'
+    'custom',
+    'workflow'
   ])
   assert.equal(options[1].label, 'query（问数）')
 })
@@ -241,7 +242,10 @@ test('history learning defaults to enabled with fallback params', () => {
     enabled: true,
     max_recent_cases: 3,
     memory_char_budget: 4000,
-    active_retrieval_enabled: false
+    active_retrieval_enabled: false,
+    case_filter_by_city: false,
+    case_filter_by_station: false,
+    case_filter_by_pollutant: false
   })
 })
 
@@ -307,6 +311,56 @@ test('event trigger defaults to social execution and broadcasting', () => {
   assert.equal(form.execution_mode, 'social')
   assert.equal(form.broadcast_enabled, true)
   assert.equal(form.event_type, 'xuchang.station_deviation.alert_created')
+})
+
+
+test('event trigger keeps workflow mode untouched', () => {
+  const form = {
+    trigger_type: 'schedule',
+    execution_mode: 'workflow',
+    workflow_name: 'xuchang_station_deviation_alert',
+    broadcast_enabled: false,
+    event_type: ''
+  }
+
+  applyTriggerDefaults(form, 'event', [])
+
+  assert.equal(form.trigger_type, 'event')
+  assert.equal(form.execution_mode, 'workflow')
+  assert.equal(form.workflow_name, 'xuchang_station_deviation_alert')
+})
+
+
+test('workflow payload carries the selected workflow and switching modes clears it', () => {
+  const payload = buildTaskPayload({
+    name: '站点快速告警',
+    description: '确定性告警通报',
+    execution_mode: 'workflow',
+    workflow_name: 'xuchang_station_deviation_alert',
+    trigger_type: 'event',
+    event_type: 'xuchang.station_deviation.alert_created',
+    broadcast_enabled: true,
+    target_user_ids: ['app:android:android_demo'],
+    enabled: true
+  })
+
+  assert.equal(payload.workflow_name, 'xuchang_station_deviation_alert')
+  assert.deepEqual(payload.workflow_args, {})
+
+  const form = { execution_mode: 'workflow', workflow_name: 'xuchang_station_deviation_alert' }
+  applyExecutionMode(form, 'assistant')
+  assert.equal(form.workflow_name, '')
+
+  const cleared = buildTaskPayload({
+    ...form,
+    name: '普通任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+  assert.equal(Object.hasOwn(cleared, 'workflow_name'), false)
+  assert.equal(Object.hasOwn(cleared, 'workflow_args'), false)
 })
 
 test('task payload preserves each model tier and defaults legacy forms to auto', () => {

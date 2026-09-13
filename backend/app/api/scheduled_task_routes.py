@@ -47,9 +47,11 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social/custom）")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/query/social/custom/workflow）")
     model_tier: Literal["auto", "flash", "pro"] = "auto"
     tool_names: Optional[List[str]] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Dict[str, Any] = Field(default_factory=dict)
     skill_id: Optional[str] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
     schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
@@ -81,6 +83,8 @@ class UpdateTaskRequest(BaseModel):
     execution_mode: Optional[str] = None
     model_tier: Optional[Literal["auto", "flash", "pro"]] = None
     tool_names: Optional[List[str]] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Optional[Dict[str, Any]] = None
     skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
     schedule_type: Optional[ScheduleType] = None
@@ -252,6 +256,36 @@ def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
         ) from exc
 
 
+def _validate_workflow_task(task: ScheduledTask) -> None:
+    if task.execution_mode != "workflow":
+        return
+    from ..scheduled_tasks.workflow_tasks import registered_workflows
+
+    if (task.workflow_name or "") not in registered_workflows():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_task_workflow",
+                "workflow_name": task.workflow_name,
+                "registered": registered_workflows(),
+            },
+        )
+
+
+def _forbid_workflow_mode_change(task: ScheduledTask, updates: dict) -> None:
+    """Workflow tasks are code-registered units; their mode is immutable via API."""
+    if task.execution_mode != "workflow":
+        return
+    if "execution_mode" in updates and updates["execution_mode"] != "workflow":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "workflow_mode_immutable",
+                "message": "工作流任务不允许修改执行模式；如需更换模式请删除后以其他模式重建",
+            },
+        )
+
+
 def _validate_task_skill(task: ScheduledTask) -> None:
     if not task.skill_id:
         return
@@ -408,6 +442,8 @@ async def create_task(
             execution_mode=request.execution_mode,
             model_tier=request.model_tier,
             tool_names=request.tool_names,
+            workflow_name=request.workflow_name,
+            workflow_args=request.workflow_args,
             skill_id=request.skill_id,
             trigger_type=request.trigger_type,
             schedule_type=request.schedule_type,
@@ -432,6 +468,7 @@ async def create_task(
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
+        _validate_workflow_task(task)
 
         created_task = service.create_task(task)
 
@@ -455,6 +492,14 @@ async def create_task(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/workflows")
+async def list_workflows(user: CurrentUser = Depends(require_current_user)):
+    """List registered deterministic workflow names available for workflow tasks."""
+    from ..scheduled_tasks.workflow_tasks import registered_workflows
+
+    return {"workflows": registered_workflows()}
 
 
 @router.get("", response_model=List[TaskResponse])
@@ -540,14 +585,19 @@ async def update_task(
         _require_task_access(task, user)
 
         updates = request.model_dump(exclude_unset=True)
+        _forbid_workflow_mode_change(task, updates)
         if updates.get("execution_mode") != "custom" and "execution_mode" in updates:
             updates.setdefault("tool_names", None)
+        if updates.get("execution_mode") != "workflow" and "execution_mode" in updates:
+            updates.setdefault("workflow_name", None)
+            updates.setdefault("workflow_args", {})
         task_data = task.model_dump()
         task_data.update(updates)
         task = ScheduledTask.model_validate(task_data)
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
+        _validate_workflow_task(task)
 
         updated_task = service.update_task(task)
 

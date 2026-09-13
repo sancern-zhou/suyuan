@@ -21,7 +21,8 @@ export const buildExecutionModeOptions = (
   }))
   options.push(
     { value: 'social', label: 'social（社交任务）' },
-    { value: 'custom', label: 'custom（自选工具）' }
+    { value: 'custom', label: 'custom（自选工具）' },
+    { value: 'workflow', label: 'workflow（确定性工作流）' }
   )
   if (currentMode && !options.some(option => option.value === currentMode)) {
     options.push({ value: currentMode, label: `${currentMode}（当前任务模式）` })
@@ -33,9 +34,13 @@ export const buildExecutionModeOptions = (
 
 
 export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
+  const previousMode = form.execution_mode
   form.trigger_type = triggerType
   if (triggerType === 'event') {
-    form.execution_mode = 'social'
+    // 工作流任务是代码注册的确定性单元，切换触发方式不得改写其执行模式。
+    if (previousMode !== 'workflow') {
+      form.execution_mode = 'social'
+    }
     form.tool_names = []
     form.broadcast_enabled = true
     if (!form.event_type && eventTypes.length > 0) {
@@ -49,15 +54,17 @@ export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
 export const applyExecutionMode = (form, mode) => {
   form.execution_mode = mode
   if (mode !== 'custom') form.tool_names = []
+  if (mode !== 'workflow') form.workflow_name = ''
   return form
 }
 
 
 export const buildTaskPayload = (form) => {
   const isEvent = form.trigger_type === 'event'
+  const instruction = String(form.description || '').trim()
   const payload = {
     name: String(form.name || '').trim(),
-    description: String(form.description || '').trim(),
+    description: instruction,
     execution_mode: form.execution_mode || 'assistant',
     model_tier: form.model_tier || 'auto',
     skill_id: String(form.skill_id || '').trim() || null,
@@ -68,7 +75,7 @@ export const buildTaskPayload = (form) => {
     broadcast_enabled: Boolean(form.broadcast_enabled),
     target_user_ids: form.broadcast_enabled ? [...(form.target_user_ids || [])] : [],
     enabled: Boolean(form.enabled),
-    prompt: String(form.agent_prompt || form.description || '').trim(),
+    prompt: instruction,
     timeout_seconds: isEvent ? 1800 : 1800,
     tags: String(form.tagsText || '')
       .split(',')
@@ -87,12 +94,20 @@ export const buildTaskPayload = (form) => {
     max_recent_cases: Number(form.historyMaxRecentCases) || 3,
     memory_char_budget: Number(form.historyMemoryCharBudget) || 4000,
     active_retrieval_enabled: Boolean(form.historyActiveRetrievalEnabled)
+    ,case_filter_by_city: Boolean(form.historyCaseFilterByCity)
+    ,case_filter_by_station: Boolean(form.historyCaseFilterByStation)
+    ,case_filter_by_pollutant: Boolean(form.historyCaseFilterByPollutant)
   }
 
   if (payload.execution_mode === 'custom') {
     payload.tool_names = [...new Set(
       (form.tool_names || []).map(name => String(name).trim()).filter(Boolean)
     )]
+  }
+
+  if (payload.execution_mode === 'workflow') {
+    payload.workflow_name = String(form.workflow_name || '').trim() || null
+    payload.workflow_args = {}
   }
 
   if (!isEvent && form.schedule_type === 'once') {
