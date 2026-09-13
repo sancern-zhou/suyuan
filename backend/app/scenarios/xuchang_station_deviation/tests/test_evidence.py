@@ -8,25 +8,6 @@ from app.scenarios.xuchang_station_deviation.evidence import (
 )
 
 
-class _ForecastClient:
-    async def fetch_forecast(self, **kwargs):
-        return {
-            "hourly": {
-                "time": [
-                    "2026-08-05T04:00:00+00:00",
-                    "2026-08-05T05:00:00+00:00",
-                    "2026-08-06T05:00:00+00:00",
-                    "2026-08-06T06:00:00+00:00",
-                ],
-                "wind_speed_10m": [1.0, 2.0, 3.0, 4.0],
-                "boundary_layer_height": [300, 500, 900, 1000],
-            },
-            "hourly_units": {"wind_speed_10m": "km/h"},
-            "daily": {"time": ["2026-08-05", "2026-08-06"]},
-            "daily_units": {},
-        }
-
-
 class _WeatherRepo:
     async def get_observed_data(self, station_id, start_time, end_time):
         return [
@@ -61,23 +42,9 @@ def _alert():
     }
 
 
-def _patch_forecast(monkeypatch, collector, *, status="success", nearest=None):
-    monkeypatch.setattr(
-        collector,
-        "_load_forecast_weather",
-        lambda event_time: {
-            "status": status,
-            "source": "XcAiDb.dbo.XuchangNmcHourlyWeatherForecast (NMC 3小时间隔城市预报)",
-            "event_time": event_time.isoformat(),
-            "nearest_forecast": nearest,
-        },
-    )
-
-
 @pytest.mark.asyncio
 async def test_collect_records_partial_evidence_without_losing_source_screening(monkeypatch):
     collector = XuchangStationDeviationEvidenceCollector(
-        forecast_client=_ForecastClient(),
         weather_repo=_WeatherRepo(),
     )
 
@@ -85,7 +52,6 @@ async def test_collect_records_partial_evidence_without_losing_source_screening(
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(collector, "_load_air_quality", fail_air_quality)
-    _patch_forecast(monkeypatch, collector)
     source_screening = {"status": "insufficient_meteorology", "data": {"hourly_meteorology": []}}
 
     result = await collector.collect(alert=_alert(), source_screening=source_screening)
@@ -105,7 +71,6 @@ async def test_collect_records_partial_evidence_without_losing_source_screening(
 @pytest.mark.asyncio
 async def test_collect_marks_failed_source_screening_as_partial(monkeypatch):
     collector = XuchangStationDeviationEvidenceCollector(
-        forecast_client=_ForecastClient(),
         weather_repo=_WeatherRepo(),
     )
     monkeypatch.setattr(
@@ -118,7 +83,6 @@ async def test_collect_marks_failed_source_screening_as_partial(monkeypatch):
             "local_station_hour_records": [],
         },
     )
-    _patch_forecast(monkeypatch, collector)
 
     result = await collector.collect(
         alert=_alert(),
@@ -129,105 +93,3 @@ async def test_collect_marks_failed_source_screening_as_partial(monkeypatch):
     assert result["collection"]["errors"] == [
         {"asset": "source_screening", "error": "permit coordinate mapping missing"}
     ]
-
-
-class _ForecastCursor:
-    def __init__(self, rows):
-        self.statements = []
-        self.parameters = []
-        self.description = [
-            ("station_id",), ("city_code",), ("city_name",), ("forecast_time",),
-            ("publish_time",), ("temperature",), ("humidity",), ("pressure",),
-            ("wind_speed",), ("wind_direction",), ("wind_direction_degrees",),
-            ("precipitation_probability",), ("precipitation_text",),
-            ("weather_code",), ("weather_text",), ("offset_minutes",),
-        ]
-        self._rows = rows
-
-    def execute(self, statement, params):
-        self.statements.append(statement)
-        self.parameters.append(params)
-
-    def fetchall(self):
-        return self._rows
-
-    def close(self):
-        return None
-
-
-class _ForecastConnection:
-    def __init__(self, rows):
-        self.cursor_instance = _ForecastCursor(rows)
-        self.closed = False
-
-    def cursor(self):
-        return self.cursor_instance
-
-    def close(self):
-        self.closed = True
-
-
-@pytest.mark.asyncio
-async def test_collect_loads_nearest_nmc_forecast_row(monkeypatch):
-    connection = _ForecastConnection([
-        (
-            "ZzMTA", "411000", "许昌市",
-            datetime(2026, 8, 5, 14, 0), datetime(2026, 8, 5, 10, 25, 53),
-            28.6, 83.0, 1002.1, 3.3, "北风", 0.0, 75.7, None, 1, "多云", 60,
-        ),
-    ])
-    collector = XuchangStationDeviationEvidenceCollector(
-        connection_string_factory=lambda: "fake-connection-string",
-        weather_repo=_WeatherRepo(),
-    )
-    monkeypatch.setattr(
-        "app.scenarios.xuchang_station_deviation.evidence.pyodbc.connect",
-        lambda *args, **kwargs: connection,
-    )
-    monkeypatch.setattr(
-        collector,
-        "_load_air_quality",
-        lambda start, end: {"status": "success", "local_station_hour_records": []},
-    )
-
-    result = await collector.collect(alert=_alert(), source_screening={"status": "not_run"})
-
-    forecast = result["forecast_meteorology"]
-    assert forecast["status"] == "success"
-    assert forecast["nearest_forecast"]["forecast_time"] == "2026-08-05T14:00:00"
-    assert forecast["nearest_forecast"]["offset_minutes"] == 60
-    assert forecast["nearest_forecast"]["weather_text"] == "多云"
-    statement = connection.cursor_instance.statements[0]
-    assert "FROM dbo.XuchangNmcHourlyWeatherForecast" in statement
-    assert "ORDER BY forecast_time ASC" in statement
-    parameters = connection.cursor_instance.parameters[0]
-    # 第一个参数用于 DATEDIFF 计算 offset，其后是告警时刻至未来3小时窗口边界。
-    assert parameters[0] == datetime(2026, 8, 5, 13, 0)
-    assert parameters[1] == datetime(2026, 8, 5, 13, 0)
-    assert parameters[2] == datetime(2026, 8, 5, 16, 0)
-    assert parameters[3] == datetime(2026, 8, 5, 13, 0)
-    assert connection.closed is True
-
-
-@pytest.mark.asyncio
-async def test_collect_reports_empty_forecast_when_table_has_no_nearby_row(monkeypatch):
-    connection = _ForecastConnection([])
-    collector = XuchangStationDeviationEvidenceCollector(
-        connection_string_factory=lambda: "fake-connection-string",
-        weather_repo=_WeatherRepo(),
-    )
-    monkeypatch.setattr(
-        "app.scenarios.xuchang_station_deviation.evidence.pyodbc.connect",
-        lambda *args, **kwargs: connection,
-    )
-    monkeypatch.setattr(
-        collector,
-        "_load_air_quality",
-        lambda start, end: {"status": "success", "local_station_hour_records": []},
-    )
-
-    result = await collector.collect(alert=_alert(), source_screening={"status": "not_run"})
-
-    assert result["forecast_meteorology"]["status"] == "empty"
-    assert result["forecast_meteorology"]["nearest_forecast"] is None
-    assert result["collection"]["status"] == "partial"
