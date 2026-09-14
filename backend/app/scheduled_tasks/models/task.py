@@ -23,6 +23,7 @@ class ScheduleType(str, Enum):
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
     WEEKLY_CUSTOM = "weekly_custom"  # 每周自定义时间（需指定day_of_week、hour和minute）
     MONTHLY_CUSTOM = "monthly_custom"
+    QUARTERLY_CUSTOM = "quarterly_custom"
 
 
 class TriggerType(str, Enum):
@@ -202,9 +203,9 @@ class ScheduledTask(BaseModel):
             raise ValueError("schedule_type is required for schedule tasks")
         if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():
             raise ValueError("event_type is required for event tasks")
-        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type == ScheduleType.MONTHLY_CUSTOM:
+        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type in (ScheduleType.MONTHLY_CUSTOM, ScheduleType.QUARTERLY_CUSTOM):
             if self.day_of_month is None or self.hour is None or self.minute is None:
-                raise ValueError("day_of_month, hour and minute are required for monthly_custom schedule")
+                raise ValueError("day_of_month, hour and minute are required for monthly/quarterly schedule")
             if not 1 <= self.day_of_month <= 31 or not 0 <= self.hour <= 23 or not 0 <= self.minute <= 59:
                 raise ValueError("invalid monthly_custom schedule values")
         if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type == ScheduleType.WEEKLY_CUSTOM:

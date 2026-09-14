@@ -38,6 +38,8 @@ test('smart event workspace handles Agent focus, comparison, history, and task c
 
 test('fixed event detail exposes confirmation and archive controls', () => {
   assert.match(source, /TaskReviewPanel/)
+  // 归档弹窗使用紧凑模式：隐藏检查项、数据影响区间明细与证据材料，避免信息过载。
+  assert.match(source, /<TaskReviewPanel :review-id="selectedEvent\.review_id" compact/)
   assert.match(source, /refreshSelectedReview/)
   assert.match(source, /label: '处置操作'/)
   assert.match(source, /派单处理/)
@@ -81,6 +83,15 @@ test('fixed event detail presents old workbench style evidence sections', () => 
   // 动环门控未命中时证据源返回 skipped，详情页按中性状态展示而非获取失败。
   assert.match(source, /source\.status === 'skipped'/)
   assert.match(source, /按条件跳过/)
+})
+
+test('event timestamps use one second-precision display format', () => {
+  assert.match(source, /timeZone: 'Asia\/Shanghai'/)
+  assert.match(source, /naiveDateTime/)
+  assert.match(source, /`\$\{parts\.year\}-\$\{parts\.month\}-\$\{parts\.day\} \$\{parts\.hour\}:\$\{parts\.minute\}:\$\{parts\.second\}`/)
+  assert.match(source, /formatTimeRange\(section\.value\.metadata\.time_range\)/)
+  assert.match(source, /\(\?:time\|date\|_at\$\)/)
+  assert.doesNotMatch(source, /date\.toLocaleString\('zh-CN'/)
 })
 
 test('event list keeps internal event identifiers out of the visible table', () => {
@@ -137,23 +148,37 @@ test('completed AI judgments hide manual dispatch actions to avoid mis-clicks', 
   assert.match(source, /该事件已完成 AI 研判，无需再次触发/)
 })
 
-test('monitoring section renders six-pollutant line chart, table toggle, and regional delta bars', () => {
+test('regional comparison owns delta bars while raw monitoring remains hidden evidence', () => {
   assert.match(source, /import \* as echarts from 'echarts'/)
-  assert.match(source, /aria-label="六参小时折线时序图"/)
-  assert.match(source, /aria-label="监测数据视图切换"/)
-  assert.match(source, /aria-label="监测数据表"/)
   assert.match(source, /aria-label="区域差异柱状图"/)
   assert.match(source, /aria-label="气象折线时序图"/)
-  assert.match(source, /hourlyChartOption/)
   assert.match(source, /deltaChartOption/)
   assert.match(source, /weatherChartOption/)
   assert.match(source, /regionalDeltas/)
+  assert.match(source, /new Set\(\['monitoring', 'platform_alarm'/)
   assert.match(source, /'与周边站点差值', type: 'bar', itemStyle: \{ color: '#1677ff' \}/)
   assert.match(source, /'与全市其余站点差值', type: 'bar', itemStyle: \{ color: '#d4380d' \}/)
   assert.match(source, /POLLUTANT_SERIES/)
   assert.match(source, /WEATHER_SERIES/)
-  assert.match(source, /monitoringView === 'chart'/)
   assert.match(source, /recordPollutant/)
+  assert.match(source, /temperature: 4, humidity: 4, pressure: 5/)
+  assert.match(source, /name: '气温 \(℃\) \/ 湿度 \(%\)'/)
+  assert.match(source, /name: '气压 \(hPa\)', position: 'right'/)
+  assert.match(source, /axisLabel: \{ show: gridIndex === 2/)
+  assert.match(source, /axisPointer: \{ link: \[\{ xAxisIndex: 'all' \}\] \}/)
+  assert.match(source, /\.weather-chart-canvas \{ height: 580px; \}/)
+  assert.doesNotMatch(source, /aria-label="六参小时折线时序图"/)
+  assert.doesNotMatch(source, /aria-label="监测数据视图切换"/)
+  assert.doesNotMatch(source, /aria-label="监测数据表"/)
+})
+
+test('regional comparison renders target and peer time series instead of raw records table', () => {
+  assert.match(source, /目标站与对比站小时趋势/)
+  assert.match(source, /aria-label="片区对比污染物切换"/)
+  assert.match(source, /aria-label="目标站与对比站小时趋势图"/)
+  assert.match(source, /comparisonChartOption/)
+  assert.match(source, /station\.name.*station\.code/)
+  assert.doesNotMatch(source, /参与对比的小时记录/)
 })
 
 

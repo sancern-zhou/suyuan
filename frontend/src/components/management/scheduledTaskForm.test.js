@@ -22,7 +22,8 @@ test('execution mode options include every project mode plus task-only modes', (
     'query',
     'expert',
     'social',
-    'custom'
+    'custom',
+    'workflow'
   ])
   assert.equal(options[1].label, 'query（问数）')
 })
@@ -307,6 +308,55 @@ test('event trigger defaults to social execution and broadcasting', () => {
   assert.equal(form.execution_mode, 'social')
   assert.equal(form.broadcast_enabled, true)
   assert.equal(form.event_type, 'yuncheng.alert.created')
+})
+
+
+test('event trigger keeps workflow mode untouched', () => {
+  const form = {
+    trigger_type: 'schedule',
+    execution_mode: 'workflow',
+    workflow_name: 'jiangsu_network_inspection_workflow',
+    broadcast_enabled: false,
+    event_type: ''
+  }
+
+  applyTriggerDefaults(form, 'event', [])
+
+  assert.equal(form.trigger_type, 'event')
+  assert.equal(form.execution_mode, 'workflow')
+  assert.equal(form.workflow_name, 'jiangsu_network_inspection_workflow')
+})
+
+
+test('workflow payload carries the selected workflow and switching modes clears it', () => {
+  const payload = buildTaskPayload({
+    name: '江苏全网巡检值守',
+    description: '确定性值守结论',
+    execution_mode: 'workflow',
+    workflow_name: 'jiangsu_network_inspection_workflow',
+    workflow_args: { period: 'day' },
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.equal(payload.workflow_name, 'jiangsu_network_inspection_workflow')
+  assert.deepEqual(payload.workflow_args, { period: 'day' })
+
+  const form = { execution_mode: 'workflow', workflow_name: 'jiangsu_network_inspection_workflow' }
+  applyExecutionMode(form, 'assistant')
+  assert.equal(form.workflow_name, '')
+
+  const cleared = buildTaskPayload({
+    ...form,
+    name: '普通任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+  assert.equal(Object.hasOwn(cleared, 'workflow_name'), false)
+  assert.equal(Object.hasOwn(cleared, 'workflow_args'), false)
 })
 
 

@@ -233,6 +233,12 @@ _FAULT_ORDER_LIST_FIELDS = (
     "stationCodeStr",
     "stationName",
     "city",
+    "orderType",
+    "orderTypeStr",
+    "ruleType",
+    "ruleTypeName",
+    "orderCreateType",
+    "orderCreateTypeStr",
     "deviceId",
     "deviceInfo",
     "deviceCode",
@@ -628,13 +634,17 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
     # nodes plus all not-invalidated order states.
     _DEFAULT_WORKFLOW_STATUSES = ["ToAssign", "ToAccept", "Doing"]
     _DEFAULT_ORDER_STATUSES = ["Wait", "Doing", "Finish"]
+    _ORDER_TYPES = {
+        "Fault", "Check", "SECCheck", "Removal", "PowerCut", "Scrap", "ApplyFor",
+        "Repair", "Ozone", "AbnormalDataReview", "QC", "QA", "Calibration", "DataEntry",
+    }
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_fault_work_orders",
-            description="查询江苏故障工单清单：按工单号、创建时间、工单节点和状态筛选时，默认在一次工具调用内取齐匹配清单；超过 24 条时完整清单外部化保存、上下文返回 24 条首尾预览。也可仅按明确站点读取最近工单与历史处置详情。具体工单复核请继续调用 jiangsu_fetch_fault_work_order_detail。",
+            description="查询江苏运维工单清单：默认查询故障工单，也可查询巡检/例行运维、现场检查或取消类型过滤查询全部工单。按工单号、创建时间和状态筛选时默认取齐匹配清单；超过 24 条时完整清单外部化保存。具体故障工单复核请继续调用 jiangsu_fetch_fault_work_order_detail。",
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "查询故障工单清单。默认 fetch_all=true，由工具内部完成分页并一次返回完整匹配范围；超过 24 条自动保存完整数据文件并内联首尾 24 条。仅当用户明确要求浏览某一页时才设置 fetch_all=false。",
+            function_schema={"name": "jiangsu_fetch_fault_work_orders", "description": "查询运维工单清单，默认类型为故障工单。默认 fetch_all=true，由工具内部完成分页并一次返回完整匹配范围；超过 24 条自动保存完整数据文件并内联首尾 24 条。仅当用户明确要求浏览某一页时才设置 fetch_all=false。",
                              "parameters": {"type": "object", "properties": {
                                  "station_names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
                                                     "description": "站点名称列表，最多 10 个；与其他筛选条件组合时作为站点过滤。"},
@@ -646,6 +656,10 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                                            "description": "仅按站点查询时每站返回的最近工单条数。"},
                                  "working_order_code": {"type": "string",
                                                          "description": "工单号，模糊匹配，如 \"GD20260801001\"。"},
+                                 "order_types": {"type": "array", "maxItems": 1, "items": {"type": "string", "enum": [
+                                     "Fault", "Check", "SECCheck", "Removal", "PowerCut", "Scrap", "ApplyFor",
+                                     "Repair", "Ozone", "AbnormalDataReview", "QC", "QA", "Calibration", "DataEntry",
+                                 ]}, "description": "平台工单类型，最多指定一种；Check 是巡检/例行运维。省略时默认仅查 Fault；传空数组时取消类型过滤并查询全部工单。"},
                                  "start_time": {"type": "string", "description": "创建时间起，YYYY-MM-DD HH:mm:ss。"},
                                  "end_time": {"type": "string", "description": "创建时间止，YYYY-MM-DD HH:mm:ss。"},
                                  "current_points": {"type": "array", "items": {"type": "string"}, "minItems": 1,
@@ -667,6 +681,7 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
     async def execute(self, context=None, station_names: list[str] | None = None,
                       station_codes: list[str] | None = None, unique_codes: list[str] | None = None,
                       take: int = 5, working_order_code: str | None = None,
+                      order_types: list[str] | None = None,
                       start_time: str | None = None, end_time: str | None = None,
                       current_points: list[str] | None = None,
                       workflow_statuses: list[str] | None = None,
@@ -686,12 +701,14 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             points = current_points if isinstance(current_points, list) else None
             filters_given = bool(working_order_code or start_time or end_time
                                  or (points is not None and len(points) > 0)
-                                 or workflow_statuses is not None or order_statuses is not None)
+                                 or workflow_statuses is not None or order_statuses is not None
+                                 or order_types is not None)
             if not stations_given or filters_given:
                 return await self._execute_filtered(
                     context,
                     station_names, station_codes, unique_codes,
                     working_order_code=working_order_code, start_time=start_time, end_time=end_time,
+                    order_types=order_types,
                     current_points=points, workflow_statuses=workflow_statuses,
                     order_statuses=order_statuses, fetch_all=fetch_all,
                     page=page, page_size=page_size,
@@ -730,6 +747,7 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
         working_order_code: str | None,
         start_time: str | None,
         end_time: str | None,
+        order_types: list[str] | None,
         current_points: list[str] | None,
         workflow_statuses: list[str] | None,
         order_statuses: list[str] | None,
@@ -747,6 +765,7 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             order_code = str(working_order_code or "").strip()
             if len(order_code) > 64:
                 raise ValueError("working_order_code 过长")
+            type_values, type_default = self._normalise_order_types(order_types)
             filter_params: list[tuple[str, str]] = []
             if order_code:
                 filter_params.append(("WorkingOrderCode", order_code))
@@ -760,6 +779,8 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 filter_params += [("CreateTime", time_range[0]), ("CreateTime", time_range[1])]
             point_guids: list[str] = []
             if current_points:
+                if type_values != ["Fault"]:
+                    raise ValueError("current_points 仅支持 Fault 故障工单流程；查询全部或其他类型时请勿传入")
                 point_guids = await self._resolve_point_guids(current_points)
                 filter_params += [("CurrentPoint", guid) for guid in point_guids]
             workflow_values, workflow_default = self._normalise_status_values(
@@ -784,7 +805,8 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             request_page = 1 if fetch_all else page
             request_page_size = 50 if fetch_all else page_size
             payload = await self._fetch_filtered_page(
-                api, filter_params, page=request_page, page_size=request_page_size,
+                api, filter_params, order_types=type_values,
+                page=request_page, page_size=request_page_size,
             )
             result = payload.get("result") or {}
             if not isinstance(result, dict):
@@ -806,7 +828,8 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 page_count = (fetch_limit + request_page_size - 1) // request_page_size
                 remaining = await asyncio.gather(*(
                     self._fetch_filtered_page(
-                        api, filter_params, page=page_number, page_size=request_page_size,
+                        api, filter_params, order_types=type_values,
+                        page=page_number, page_size=request_page_size,
                     )
                     for page_number in range(2, page_count + 1)
                 ))
@@ -827,7 +850,7 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             inline_items, file_path, externalization = externalize_compact_records(
                 compact_items,
                 context=context,
-                schema="jiangsu_fault_work_order_list",
+                schema="jiangsu_fault_work_order_list" if type_values == ["Fault"] else "jiangsu_work_order_list",
                 metadata={
                     "source_tool": self.name,
                     "source_endpoint": self._LIST_PATH,
@@ -836,7 +859,8 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
                 },
             )
             defaults_applied = workflow_default or order_default
-            summary = f"故障工单查询完成：按条件筛选获取 {len(compact_items)} 条记录（共匹配 {total_count} 条）"
+            scope_label = "故障工单" if type_values == ["Fault"] else "工单"
+            summary = f"{scope_label}查询完成：按条件筛选获取 {len(compact_items)} 条记录（共匹配 {total_count} 条）"
             if file_path:
                 summary += "；完整清单已外部化保存，当前内联首尾 24 条预览"
             if fetch_all and not source_data_complete:
@@ -846,12 +870,14 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
             metadata = {"source": "jiangsu_operations_api", "endpoint": self._LIST_PATH,
                         "query_mode": "filtered",
                         "filters": {"working_order_code": order_code or None,
+                                    "order_types": type_values,
                                     "create_time": time_range or None,
                                     "current_points": current_points or [],
                                     "workflow_statuses": workflow_values,
                                     "order_statuses": order_values,
                                     "station_codes": station_filter_codes},
                         "defaults_applied": defaults_applied,
+                        "order_type_default_applied": type_default,
                         "record_count": len(compact_items), "total_count": total_count,
                         "returned_records": len(inline_items),
                         "fetch_all": fetch_all, "source_data_complete": source_data_complete,
@@ -873,16 +899,34 @@ class JiangsuFaultWorkOrdersTool(LLMTool):
         api: _JiangsuAuthenticatedApi,
         filter_params: list[tuple[str, str]],
         *,
+        order_types: list[str],
         page: int,
         page_size: int,
     ) -> dict[str, Any]:
         params = [
-            ("OrderType", "Fault"),
+            *(("OrderType", value) for value in order_types),
             ("MaxResultCount", str(page_size)),
             ("SkipCount", str((page - 1) * page_size)),
             *filter_params,
         ]
         return await api.get(self._LIST_PATH, params)
+
+    def _normalise_order_types(self, values: list[str] | None) -> tuple[list[str], bool]:
+        """None preserves the fault-tool default; [] deliberately queries every type."""
+        if values is None:
+            return ["Fault"], True
+        if not isinstance(values, list):
+            raise ValueError("order_types 必须是字符串数组")
+        if len(values) > 1:
+            raise ValueError("平台 OrderType 是单值筛选；order_types 最多指定一种，查询多种时请传空数组获取全部")
+        resolved: list[str] = []
+        for raw in values:
+            value = str(raw or "").strip()
+            if value not in self._ORDER_TYPES:
+                raise ValueError(f"order_types 含无效值“{value}”")
+            if value not in resolved:
+                resolved.append(value)
+        return resolved, False
 
     def _normalise_status_values(
         self,

@@ -261,6 +261,52 @@ async def test_fault_work_orders_list_mode_supports_order_code_time_and_statuses
 
 
 @pytest.mark.asyncio
+async def test_fault_work_orders_empty_order_types_queries_all_types(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        if path.endswith("GetAllEnabledBSDStationAsync"):
+            return {"success": True, "result": [
+                {"positionName": "站点甲", "cityName": "南京市", "stationCode": "1001A", "uniqueCode": "U1"},
+            ]}
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        requested.append(params)
+        return {"success": True, "result": {"items": [{
+            "workingOrderCode": "XJ-1", "orderType": "Check", "orderTypeStr": "巡检单",
+            "ruleType": "Week", "ruleTypeName": "每周",
+        }], "totalCount": 1}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(
+        station_codes=["1001A"], order_types=[], workflow_statuses=[], order_statuses=[],
+    )
+
+    assert result["success"] is True
+    assert not any(key == "OrderType" for key, _ in requested[0])
+    assert result["metadata"]["filters"]["order_types"] == []
+    assert result["data"][0]["orderType"] == "Check"
+    assert result["data"][0]["ruleTypeName"] == "每周"
+    assert result["summary"].startswith("工单查询完成")
+
+
+@pytest.mark.asyncio
+async def test_fault_work_orders_supports_platform_qa_type(monkeypatch):
+    requested = []
+
+    async def fake_get(self, path, params):
+        assert path.endswith("GetMtcWorkingOrderPagedListAsync")
+        requested.append(params)
+        return {"success": True, "result": {"items": [], "totalCount": 0}}
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    result = await JiangsuFaultWorkOrdersTool().execute(order_types=["QA"])
+
+    assert result["success"] is True
+    assert ("OrderType", "QA") in requested[0]
+    assert result["metadata"]["filters"]["order_types"] == ["QA"]
+
+
+@pytest.mark.asyncio
 async def test_fault_work_orders_list_mode_resolves_node_names(monkeypatch):
     requested = []
 

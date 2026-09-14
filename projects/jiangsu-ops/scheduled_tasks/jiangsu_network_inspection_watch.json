@@ -1,0 +1,20 @@
+{
+  "task_id": "jiangsu_network_inspection_watch",
+  "name": "江苏全网巡检值守",
+  "description": "每日汇总站房巡检异常，由确定性工作流聚合统计并生成运维值守短结论人工待办",
+  "execution_mode": "workflow",
+  "workflow_name": "jiangsu_network_inspection_workflow",
+  "workflow_args": {"period": "day"},
+  "trigger_type": "schedule",
+  "schedule_type": "daily_8am",
+  "enabled": true,
+  "prompt": "根据巡检统计证据生成 200-300 字当日值守短结论：先概括巡检周期、覆盖站点数、异常站点数和涉及城市数；再点出异常集中的城市与主要异常类别（引用真实数字）；最后给出建议优先核查方向，并说明结论仅代表自动巡检汇总、现场情况需人工确认。只使用证据中的真实数字和名称，不得补造；多站点异常时优先突出数量最多的城市和类别；不输出字段名、路径或接口信息。",
+  "timeout_seconds": 600,
+  "history_learning": {"enabled": true, "max_recent_cases": 3, "memory_char_budget": 4000, "active_retrieval_enabled": false},
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "ops-watch-agent",
+  "owner_display_name": "运维值守智能体",
+  "tags": ["江苏", "运维值守", "全网巡检", "只读"],
+  "workspace_entry": {"enabled": true, "title": "运维值守"}
+}

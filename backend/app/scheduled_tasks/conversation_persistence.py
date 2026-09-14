@@ -16,6 +16,37 @@ class ScheduledTaskConversationPersistence:
         self.catalog = catalog or get_conversation_catalog()
         self.transcript_persistence = ConversationPersistenceService()
 
+    @staticmethod
+    def _session_mode(task: ScheduledTask, execution: TaskExecution) -> str:
+        """Use the event's conversational mode when one was explicitly selected.
+
+        Event tasks share a scheduled-task definition whose execution_mode is
+        often ``station_fault_diagnosis``.  The dispatcher may select a more
+        specific mode (for example ``smart_event_external``); that mode owns
+        the correct conversational tool whitelist and must survive restore.
+        """
+        attributes = execution.event_attributes or {}
+        selected = attributes.get("agent_mode")
+        return str(selected or task.execution_mode)
+
+    @classmethod
+    def _scheduled_task_context(cls, task: ScheduledTask, execution: TaskExecution) -> dict:
+        attributes = execution.event_attributes or {}
+        return {
+            "task_id": task.task_id,
+            "task_name": task.name,
+            "execution_id": execution.execution_id,
+            "history_learning": task.history_learning.model_dump(mode="json"),
+            "result_requirements": [rule.model_dump(mode="json") for rule in task.result_requirements],
+            "model_tier": task.model_tier,
+            "allow_archived_review_reopen": task.allow_archived_review_reopen,
+            "review_subject_bound": bool(task.review_subject_attribute),
+            "expected_subject_id": (
+                attributes.get(task.review_subject_attribute)
+                if task.review_subject_attribute else None
+            ),
+        }
+
     async def persist_agent_session(
         self,
         *,
@@ -29,20 +60,23 @@ class ScheduledTaskConversationPersistence:
         if not callable(export):
             return False
 
+        session_mode = self._session_mode(task, execution)
         session = export(
             execution.session_id,
             query=task.description,
-            mode=task.execution_mode,
+            mode=session_mode,
         )
         if session is None:
             return False
 
         session.created_at = execution.started_at
         session.metadata.update({
-            "mode": task.execution_mode,
+            "mode": session_mode,
             "scheduled_task_id": task.task_id,
             "scheduled_execution_id": execution.execution_id,
             "scheduled_task_name": task.name,
+            "scheduled_task_context": self._scheduled_task_context(task, execution),
+            "scheduled_task_tools": ["submit_task_review"],
         })
 
         existing = await self.session_manager.load_session(session.session_id)
@@ -98,15 +132,18 @@ class ScheduledTaskConversationPersistence:
         display_history: list[dict],
     ) -> bool:
         """Create the catalog entry before the Agent emits its first event."""
+        session_mode = self._session_mode(task, execution)
         session = Session(
             session_id=execution.session_id,
             query=task.description,
             created_at=execution.started_at,
             metadata={
-                "mode": task.execution_mode,
+                "mode": session_mode,
                 "scheduled_task_id": task.task_id,
                 "scheduled_execution_id": execution.execution_id,
                 "scheduled_task_name": task.name,
+                "scheduled_task_context": self._scheduled_task_context(task, execution),
+                "scheduled_task_tools": ["submit_task_review"],
             },
         )
         self.transcript_persistence.apply_complete(
@@ -197,7 +234,7 @@ class ScheduledTaskConversationPersistence:
                 owner_username=task.owner_username,
                 owner_display_name=task.owner_display_name,
                 source=ConversationSource.WEB,
-                mode=task.execution_mode,
+                mode=self._session_mode(task, execution),
                 title=task.name,
                 read_only_on_web=False,
             )
@@ -258,10 +295,12 @@ class ScheduledTaskConversationPersistence:
             created_at=execution.started_at,
             conversation_history=history,
             metadata={
-                "mode": task.execution_mode,
+                "mode": self._session_mode(task, execution),
                 "scheduled_task_id": task.task_id,
                 "scheduled_execution_id": execution.execution_id,
                 "scheduled_task_name": task.name,
+                "scheduled_task_context": self._scheduled_task_context(task, execution),
+                "scheduled_task_tools": ["submit_task_review"],
             },
         )
         replace_transcript = getattr(

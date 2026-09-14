@@ -874,6 +874,32 @@ async def analyze_stream(
             else await load_session(actual_session_id) if actual_session_id else None
         )
 
+        # A scheduled event conversation may continue with the same review
+        # execution. Restore only the exact persisted runtime context; do not
+        # synthesize task identity or silently downgrade missing fields.
+        if preloaded_session and isinstance(preloaded_session.metadata, dict):
+            persisted_context = preloaded_session.metadata.get("scheduled_task_context")
+            persisted_tools = preloaded_session.metadata.get("scheduled_task_tools")
+            if persisted_context is not None or persisted_tools is not None:
+                if (
+                    not isinstance(persisted_context, dict)
+                    or not persisted_context.get("task_id")
+                    or not persisted_context.get("execution_id")
+                    or not isinstance(persisted_tools, list)
+                    or not persisted_tools
+                    or any(not isinstance(name, str) or not name for name in persisted_tools)
+                ):
+                    raise HTTPException(status_code=409, detail="scheduled_context_incomplete")
+                registered_tool_names = set(global_tool_registry.list_tools())
+                missing_tools = sorted(set(persisted_tools) - registered_tool_names)
+                if missing_tools:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "scheduled_context_tools_unavailable", "tools": missing_tools},
+                    )
+                analyze_kwargs["runtime_metadata"] = {"scheduled_task": persisted_context}
+                analyze_kwargs["extra_tool_names"] = list(dict.fromkeys(persisted_tools))
+
         requested_active_contexts = (
             [item.model_dump(exclude_none=True) for item in request.active_contexts]
             if request.active_contexts is not None
@@ -945,7 +971,11 @@ async def analyze_stream(
         analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
         analyze_kwargs["fixed_policy_context"] = resolved_active_contexts.fixed_policy_context
         analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
-        analyze_kwargs["extra_tool_names"] = on_demand_tool_names
+        persisted_extra_tools = analyze_kwargs.get("extra_tool_names") or []
+        analyze_kwargs["extra_tool_names"] = list(dict.fromkeys([
+            *persisted_extra_tools,
+            *on_demand_tool_names,
+        ]))
         if (
             preloaded_session
             and request.mode == "board"

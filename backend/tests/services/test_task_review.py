@@ -88,6 +88,16 @@ async def test_tool_failure_has_no_card_and_success_has_generic_resource():
     assert not (await tool.execute(**payload()))['success']
     result = await tool.execute(context=SimpleNamespace(scheduled_task_context=source()), **payload())
     assert result['success']
+
+
+@pytest.mark.asyncio
+async def test_tool_uses_summary_when_model_omits_comment():
+    tool = SubmitTaskReviewTool()
+    submission = payload()
+    submission.pop('comment')
+    result = await tool.execute(context=SimpleNamespace(scheduled_task_context=source()), **submission)
+    assert result['success'], result
+    assert service.list_reviews()[0]['submission']['comment'] == '结论摘要'
     assert result['visuals'][0]['type'] == 'task_review'
     assert result['resources']
 

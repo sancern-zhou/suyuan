@@ -31,6 +31,9 @@ from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
 from app.fetchers.jiangsu_fault_work_order_review_event import (
     JiangsuFaultWorkOrderReviewEventFetcher,
 )
+from app.fetchers.jiangsu_fault_work_order_review_rerun import (
+    JiangsuFaultWorkOrderReviewRerunFetcher,
+)
 from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
 from app.fetchers.jiangsu_station_fault_event import JiangsuStationFaultEventFetcher
 from app.fetchers.quick_trace import JiningQuickTraceFetcher  # 济宁市快速溯源报告每日生成
@@ -111,6 +114,7 @@ def _configured_fetchers(project_context):
     # through the historical "all fetchers" fallback.
     explicit_project_fetchers = {
         "jiangsu_fault_work_order_review_event",
+        "jiangsu_fault_work_order_review_rerun",
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
@@ -132,6 +136,7 @@ def _configured_fetchers(project_context):
         "jining_quick_trace": JiningQuickTraceFetcher,
         "yuncheng_trial": YunchengTrialFetcher,
         "jiangsu_fault_work_order_review_event": JiangsuFaultWorkOrderReviewEventFetcher,
+        "jiangsu_fault_work_order_review_rerun": JiangsuFaultWorkOrderReviewRerunFetcher,
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
         "jiangsu_smart_event_alarm_sync": JiangsuSmartEventAlarmSyncFetcher,
         "jiangsu_nmc_observed_weather": JiangsuNMCObservedWeatherFetcher,

@@ -11,9 +11,12 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.utils.path_config import get_data_registry
+
+logger = structlog.get_logger()
 
 
 class ReviewModel(BaseModel):
@@ -496,6 +499,27 @@ def decide_review(review_id, payload, actor):
                 "status": "pending", "attempts": 0,
             }
         save_review(record)
+        if decision["action"] == "reject":
+            # 智能事件人工退回后自动触发以审核意见为基准的增量 AI 研判；
+            # 钩子内部自行隔离异常，退回动作本身永不因此失败。
+            try:
+                from app.services.jiangsu_smart_event import queue_review_reject_rerun
+
+                queue_review_reject_rerun(record, decision, actor)
+            except Exception as exc:
+                logger.warning("smart_event_review_reject_rerun_hook_failed", error=str(exc))
+            # 故障工单审核退回后同样排队一次以人工意见为基准的增量复审，
+            # 由 worker 侧 jiangsu_fault_work_order_review_rerun 抓取器派发。
+            try:
+                from app.services.jiangsu_fault_work_order_review_rerun import (
+                    queue_fault_work_order_review_rerun,
+                )
+
+                queue_fault_work_order_review_rerun(record, decision, actor)
+            except Exception as exc:
+                logger.warning(
+                    "fault_work_order_review_reject_rerun_hook_failed", error=str(exc),
+                )
         return record
 
 

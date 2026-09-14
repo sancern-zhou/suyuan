@@ -21,7 +21,8 @@ export const buildExecutionModeOptions = (
   }))
   options.push(
     { value: 'social', label: 'social（社交任务）' },
-    { value: 'custom', label: 'custom（自选工具）' }
+    { value: 'custom', label: 'custom（自选工具）' },
+    { value: 'workflow', label: 'workflow（确定性工作流）' }
   )
   if (currentMode && !options.some(option => option.value === currentMode)) {
     options.push({ value: currentMode, label: `${currentMode}（当前任务模式）` })
@@ -33,9 +34,13 @@ export const buildExecutionModeOptions = (
 
 
 export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
+  const previousMode = form.execution_mode
   form.trigger_type = triggerType
   if (triggerType === 'event') {
-    form.execution_mode = 'social'
+    // 工作流任务是代码注册的确定性单元，切换触发方式不得改写其执行模式。
+    if (previousMode !== 'workflow') {
+      form.execution_mode = 'social'
+    }
     form.tool_names = []
     form.broadcast_enabled = true
     if (!form.event_type && eventTypes.length > 0) {
@@ -49,6 +54,7 @@ export const applyTriggerDefaults = (form, triggerType, eventTypes = []) => {
 export const applyExecutionMode = (form, mode) => {
   form.execution_mode = mode
   if (mode !== 'custom') form.tool_names = []
+  if (mode !== 'workflow') form.workflow_name = ''
   return form
 }
 
@@ -100,6 +106,11 @@ export const buildTaskPayload = (form) => {
     payload.tool_names = [...new Set(
       (form.tool_names || []).map(name => String(name).trim()).filter(Boolean)
     )]
+  }
+
+  if (payload.execution_mode === 'workflow') {
+    payload.workflow_name = String(form.workflow_name || '').trim() || null
+    payload.workflow_args = { ...(form.workflow_args || {}) }
   }
 
   if (!isEvent && form.schedule_type === 'once') {

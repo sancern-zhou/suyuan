@@ -160,6 +160,7 @@ backend:
   fetchers:
     - jiangsu_station_fault_event
     - jiangsu_fault_work_order_review_event
+    - jiangsu_fault_work_order_review_rerun
     - task_review_feedback
     - jiangsu_nmc_observed_weather
     - jiangsu_smart_event_alarm_sync
@@ -447,3 +448,5 @@ scheduled_tasks:
   - jiangsu_smart_event_ai_judgment
   - jiangsu_work_order_track_monthly_review
   - jiangsu_network_inspection_watch
+  - jiangsu_fault_work_order_monthly_report
+  - jiangsu_backup_quarterly_report

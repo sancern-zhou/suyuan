@@ -58,7 +58,6 @@ AI_EVENT_TYPES = (
     "数据异常待研判",
     "其他待人工复核",
 )
-
 SMART_EVENT_TRIGGER_TYPES = {
     "供电报警": "jiangsu.smart_event.alarm.power",
     "数采网络报警": "jiangsu.smart_event.alarm.network",
@@ -833,6 +832,14 @@ class JiangsuSmartEventService:
         manifest = packages.save(store)
         self._write_list_index(manifest, packages.last_revision)
 
+    async def aload_store(self, *, event_ids: set[str] | None = None) -> dict[str, Any]:
+        """Off-loop `_load_store` for callers running on an event loop."""
+        return await asyncio.to_thread(self._load_store, event_ids=event_ids)
+
+    async def asave_store(self, store: dict[str, Any]) -> None:
+        """Off-loop `_save_store` for callers running on an event loop."""
+        await asyncio.to_thread(self._save_store, store)
+
     @staticmethod
     def _filter_events(
         events: list[dict[str, Any]], *, status: str | None, keyword: str | None, limit: int
@@ -1225,7 +1232,7 @@ class JiangsuSmartEventService:
         # Collection yields to other requests. Preserve judgments, feedback,
         # and newly merged clues written while upstream evidence was fetched.
         store.clear()
-        store.update(self._load_store(event_ids={event_id for event_id, _, _ in results}))
+        store.update(await self.aload_store(event_ids={event_id for event_id, _, _ in results}))
         stored_by_id = {
             str(item.get("event_id")): item
             for item in store.get("events", []) if isinstance(item, dict)
@@ -1271,7 +1278,7 @@ class JiangsuSmartEventService:
                 failed += 1
         if results:
             store["updated_at"] = datetime.now().astimezone().isoformat()
-            self._save_store(store)
+            await self.asave_store(store)
         return {"collected": collected, "failed": failed}
 
     @staticmethod
@@ -1317,7 +1324,16 @@ class JiangsuSmartEventService:
         ]
         feedback = continuity.get("feedback") if isinstance(continuity.get("feedback"), dict) else None
         previous = event.get("ai_judgment") if isinstance(event.get("ai_judgment"), dict) else {}
-        if feedback:
+        if feedback and feedback.get("source") == "review_reject":
+            instruction = (
+                "本次为人工审核退回后的增量研判：审核员已退回上一轮结论并给出人工判定意见（见 feedback 字段）。"
+                "人工判定意见是权威基准，优先于上一轮 AI 推断与证据包缺口："
+                "除非存在与人工判定直接矛盾且确凿的新证据（须在人工复核建议中逐条列明分歧依据），"
+                "否则必须按人工判定意见更新事件类型、数据影响、建议等级与结论，并同步更新 event_type、event_name 等结论字段；"
+                "不得因证据不足而维持“数据异常待研判”或“其他待人工复核”等待定类型。"
+                "输出更新后的完整研判结论；新结论将替换上一轮结论。"
+            )
+        elif feedback:
             instruction = (
                 "本次为事件反馈后的增量研判：运维或现场人员已提交处理反馈（见 feedback 字段）。"
                 "反馈是现场一手事实，优先于上一轮 AI 推断：以反馈确认的事件类型、根因和处理结果为基准，"
@@ -1377,7 +1393,7 @@ class JiangsuSmartEventService:
             if not event or _is_archived(event) or not event.get("event_trigger_type"):
                 continue
             package_path = self._evidence_package_path(str(event["event_id"]))
-            package = json.loads(package_path.read_text(encoding="utf-8"))
+            package = json.loads(await asyncio.to_thread(package_path.read_text, encoding="utf-8"))
             if str(package.get("event_id")) != str(event["event_id"]):
                 raise ValueError("smart_event_evidence_identity_mismatch")
             package_ref = format_agent_path(package_path)
@@ -1414,11 +1430,11 @@ class JiangsuSmartEventService:
             card["input_evidence_signature"] = event.get("evidence_signature") or evidence_signature(package)
             card["status"] = "执行中"
             card["updated_at"] = datetime.now().astimezone().isoformat()
-            self._save_store(store)
+            await self.asave_store(store)
             try:
                 retry_options = {"force_retry": True} if force_retry else {}
                 dispatch = await task_service.publish_event(task_event, wait=wait, **retry_options)
-                latest = self._load_store(event_ids={str(event["event_id"])})
+                latest = await self.aload_store(event_ids={str(event["event_id"])})
                 latest_card = next((item for item in latest.get("tasks", []) if item.get("task_id") == card.get("task_id")), None)
                 if latest_card:
                     store.clear()
@@ -1433,7 +1449,7 @@ class JiangsuSmartEventService:
                 changed = True
                 outcomes.append({"event_id": event["event_id"], **dispatch.model_dump(mode="json")})
             except Exception as exc:  # noqa: BLE001 - keep the event visible for retry
-                latest = self._load_store(event_ids={str(event["event_id"])})
+                latest = await self.aload_store(event_ids={str(event["event_id"])})
                 card = next(item for item in latest["tasks"] if item["task_id"] == card["task_id"])
                 store.clear()
                 store.update(latest)
@@ -1445,7 +1461,7 @@ class JiangsuSmartEventService:
                 outcomes.append({"event_id": event["event_id"], "status": "failed", "error": str(exc)})
         if changed:
             store["updated_at"] = datetime.now().astimezone().isoformat()
-            self._save_store(store)
+            await self.asave_store(store)
         return outcomes
 
     async def sync_alarm_events(
@@ -1463,7 +1479,9 @@ class JiangsuSmartEventService:
         fetched = await self._fetch_alarm_events(
             start_time=start_time, end_time=end_time, station_codes=station_codes, limit=limit
         )
-        store, created_tasks, created_event_ids, merged_event_ids = self._upsert_events(fetched["events"], actor=actor)
+        store, created_tasks, created_event_ids, merged_event_ids = await asyncio.to_thread(
+            self._upsert_events, fetched["events"], actor=actor
+        )
         evidence_result = {"collected": 0, "failed": 0}
         if fetch_evidence:
             alarm_ids = {str(item["event_id"]) for item in fetched["events"]}
@@ -1491,7 +1509,7 @@ class JiangsuSmartEventService:
             "source_metadata": fetched["source_metadata"],
             "synced_at": datetime.now().astimezone().isoformat(),
         }
-        self._save_store(store)
+        await self.asave_store(store)
         return {
             "events": fetched["events"],
             "stored_event_count": len(store.get("events", [])),
@@ -1586,7 +1604,7 @@ class JiangsuSmartEventService:
                         clues.append((station, tag))
 
         await asyncio.gather(collect_orders(), collect_qc(), collect_doors())
-        store = self._load_store()
+        store = await self.aload_store()
         buckets_by_site = {}
         for event in store.get("events", []):
             if not isinstance(event, dict) or event.get("archived") is True or event.get("event_status") == "已归档":
@@ -1613,7 +1631,7 @@ class JiangsuSmartEventService:
             "synced_at": now,
         }
         store["updated_at"] = now
-        self._save_store(store)
+        await self.asave_store(store)
         candidates = [
             bucket for buckets in buckets_by_site.values() for bucket in buckets
             if self._needs_event_evidence(bucket)
@@ -1886,9 +1904,32 @@ class JiangsuSmartEventService:
             },
         }
 
+    def _hydrate_evidence_package(self, event: dict[str, Any]) -> dict[str, Any]:
+        """DB 主模式下事件只存证据 stub，详情读取时从本地证据文件回填完整包。"""
+        package = event.get("evidence_package")
+        reference = package.get("persisted_path") if isinstance(package, dict) else None
+        if not reference or "sources" in package:
+            return event
+        event_id = str(event.get("event_id"))
+        try:
+            full = self.packages.read_evidence_package(str(reference), event_id)
+        except (OSError, ValueError):
+            logger.warning(
+                "smart_event_evidence_hydrate_failed",
+                event_id=event_id,
+                reference=str(reference),
+            )
+            return event
+        full.setdefault("persisted_path", str(reference))
+        event["evidence_package"] = full
+        return event
+
     async def get_event(self, event_id: str, **query: Any) -> dict[str, Any] | None:
         store = await asyncio.to_thread(self._load_store, event_ids={event_id})
-        return self._stored_event(store, event_id)
+        event = self._stored_event(store, event_id)
+        if event is not None:
+            self._hydrate_evidence_package(event)
+        return event
 
     def list_tasks(self, *, event_id: str | None = None, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         if self._db_mode():
@@ -1990,16 +2031,12 @@ class JiangsuSmartEventService:
         self._save_store(store)
         return event
 
-    async def submit_feedback(
+    def _record_feedback(
         self, event_id: str, *, feedback: str, attachments: list[str] | None = None,
-        actor: dict[str, Any] | None = None, dispatch: bool = True,
-    ) -> dict[str, Any]:
-        """记录事件反馈，并以增量对话继续上一轮 AI 研判。
-
-        反馈是增量对话：反馈内容作为新增输入推送给上一轮研判会话，Agent
-        输出的更新结论会替换上一轮 ``ai_judgment``（旧结论进入
-        ``judgment_history``），完成后事件状态回到“已反馈”。
-        """
+        actor: dict[str, Any] | None = None, source: str = "manual",
+        human_decision: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """落盘一次反馈并排队增量研判卡；不在当前进程派发，Web/Worker 均可调用。"""
         store = self._load_store(event_ids={event_id})
         event = self._stored_event(store, event_id)
         if event is None:
@@ -2012,12 +2049,16 @@ class JiangsuSmartEventService:
             raise ValueError("feedback_required")
         attachment_names = [str(item).strip()[:200] for item in (attachments or []) if str(item).strip()][:20]
         now = datetime.now().astimezone().isoformat()
+        summary_prefix = "收到审核退回反馈" if source == "review_reject" else "收到事件反馈"
+        details: dict[str, Any] = {"feedback": feedback_text, "attachments": attachment_names, "source": source}
+        if human_decision:
+            details["human_decision"] = human_decision
         self._append_operation(
             event,
             action="event_feedback",
             actor=actor or {"user_id": "system", "username": "system"},
-            summary=f"收到事件反馈：{feedback_text[:120]}",
-            details={"feedback": feedback_text, "attachments": attachment_names},
+            summary=f"{summary_prefix}：{feedback_text[:120]}",
+            details=details,
         )
         event["event_status"] = "已反馈"
         event["updated_at"] = now
@@ -2025,23 +2066,71 @@ class JiangsuSmartEventService:
             item for item in store.get("tasks", [])
             if item.get("event_id") == event_id and item.get("task_type") == "ai_judgment"
         ]
+        feedback_payload: dict[str, Any] = {
+            "feedback": feedback_text,
+            "attachments": attachment_names,
+            "submitted_at": now,
+            "source": source,
+        }
+        if human_decision:
+            feedback_payload["human_decision"] = human_decision
         incremental_task = None
-        if not any(item.get("status") in {"待执行", "待调度", "执行中"} for item in cards):
+        pending_card = next(
+            (item for item in reversed(cards) if item.get("status") in {"待执行", "待调度"}), None
+        )
+        if pending_card is not None:
+            # 已有待执行增量卡（如新线索合并触发）：把反馈并入该卡，不重复排队。
+            if isinstance(pending_card.get("continuity"), dict):
+                pending_card["continuity"]["feedback"] = feedback_payload
+                incremental_task = pending_card
+        elif not any(item.get("status") == "执行中" for item in cards):
             base = next((item for item in reversed(cards) if item.get("status") == "已完成"), None)
             incremental_task = self._create_ai_task(event, actor=actor, base_task=base, reason="feedback")
             if isinstance(incremental_task.get("continuity"), dict):
-                incremental_task["continuity"]["feedback"] = {
-                    "feedback": feedback_text,
-                    "attachments": attachment_names,
-                    "submitted_at": now,
-                }
+                incremental_task["continuity"]["feedback"] = feedback_payload
             store.setdefault("tasks", []).append(incremental_task)
         store["updated_at"] = now
         self._save_store(store)
+        return event, incremental_task
+
+    def queue_review_reject_feedback(
+        self, event_id: str, *, feedback: str, actor: dict[str, Any] | None = None,
+        human_decision: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """审核退回自动触发的增量研判：以人工判定为基准继续上一轮会话。
+
+        仅落一张“待执行”增量卡，不在当前进程派发；worker 每分钟一次的
+        自动化队列 tick 会领取并派发，因此 Web 进程（审核接口所在）调用
+        是安全的。人工判定意见通过 ``continuity.feedback`` 进入增量指令，
+        AI 必须以其为权威基准更新结论。
+        """
+        _, incremental_task = self._record_feedback(
+            event_id, feedback=feedback, actor=actor,
+            source="review_reject", human_decision=human_decision,
+        )
+        return incremental_task
+
+    async def submit_feedback(
+        self, event_id: str, *, feedback: str, attachments: list[str] | None = None,
+        actor: dict[str, Any] | None = None, dispatch: bool = True,
+    ) -> dict[str, Any]:
+        """记录事件反馈，并以增量对话继续上一轮 AI 研判。
+
+        反馈是增量对话：反馈内容作为新增输入推送给上一轮研判会话，Agent
+        输出的更新结论会替换上一轮 ``ai_judgment``（旧结论进入
+        ``judgment_history``），完成后事件状态回到“已反馈”。
+        """
+        event, incremental_task = self._record_feedback(
+            event_id, feedback=feedback, attachments=attachments, actor=actor,
+        )
         dispatches: list[dict[str, Any]] = []
         if dispatch and incremental_task is not None:
             dispatches = await self._dispatch_pending_tasks(
-                self._load_store(event_ids={event_id}), event_ids={event_id}
+                self._load_store(event_ids={event_id}), event_ids={event_id},
+                # Feedback is a deliberate continuation of the completed
+                # event round. Reopen the event claim so the scheduler does
+                # not mistake it for a duplicate initial judgment.
+                force_retry=True,
             )
         latest_store = self._load_store(event_ids={event_id})
         latest_event = self._stored_event(latest_store, event_id) or event
@@ -2277,8 +2366,15 @@ class JiangsuSmartEventService:
         feedback_round = incremental_card is not None and (
             (incremental_card.get("continuity") or {}).get("reason") == "feedback"
         )
+        feedback_source = (
+            ((incremental_card.get("continuity") or {}).get("feedback") or {}).get("source")
+            if incremental_card is not None else None
+        )
         if success:
-            if feedback_round or event.get("event_status") == "已反馈":
+            if feedback_round and feedback_source == "review_reject":
+                # 审核退回触发的重研判：新结论提交人工复核，不进入“已反馈”。
+                event["event_status"] = _judged_status(event)
+            elif feedback_round or event.get("event_status") == "已反馈":
                 event["event_status"] = "已反馈"
             elif event.get("event_status") != "待反馈":
                 event["event_status"] = _judged_status(event)
@@ -2337,6 +2433,40 @@ class JiangsuSmartEventService:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return config
+
+
+def queue_review_reject_rerun(
+    record: dict[str, Any], decision: dict[str, Any], actor: dict[str, Any],
+) -> dict[str, Any] | None:
+    """task_review 退回钩子：智能事件审核退回后自动排队以人工判定为基准的增量研判。
+
+    只处理智能事件审核记录；排队失败仅记录告警，绝不影响退回动作本身。
+    增量卡由 worker 的自动化队列每分钟领取派发。
+    """
+    if record.get("task_id") != SMART_EVENT_TASK_ID or not record.get("event_id"):
+        return None
+    feedback = str(decision.get("comment") or "").strip()
+    if not feedback:
+        return None
+    human_decision = {
+        "action": decision.get("action"),
+        "decision": decision.get("decision"),
+        "comment": feedback,
+        "actor": {"user_id": actor.get("user_id"), "username": actor.get("username")},
+        "occurred_at": (record.get("human_decision") or {}).get("occurred_at"),
+    }
+    try:
+        return JiangsuSmartEventService().queue_review_reject_feedback(
+            str(record["event_id"]), feedback=feedback, actor=actor, human_decision=human_decision,
+        )
+    except (KeyError, ValueError, OSError, RuntimeError) as exc:
+        logger.warning(
+            "smart_event_review_reject_rerun_failed",
+            review_id=record.get("review_id"),
+            event_id=record.get("event_id"),
+            error=str(exc),
+        )
+        return None
 
 
 async def persist_scheduled_task_result(task: Any, event: Any, execution: Any) -> None:

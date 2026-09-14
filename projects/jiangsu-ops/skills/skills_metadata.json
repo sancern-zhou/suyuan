@@ -40,6 +40,43 @@
         "validate_report_package"
       ]
     },
+    "fault-work-order-monthly-analysis": {
+      "enabled": true,
+      "aliases": [
+        "故障工单月度分析",
+        "故障工单月报",
+        "站点故障频发分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "jiangsu_fetch_fault_work_orders",
+        "jiangsu_fetch_fault_work_order_detail",
+        "execute_python",
+        "create_report_package",
+        "render_report_package",
+        "validate_report_package",
+        "publish_report",
+        "submit_task_review"
+      ]
+    },
+    "backup-quarterly-analysis": {
+      "enabled": true,
+      "aliases": [
+        "备机季度分析",
+        "备机使用分析",
+        "备机超期分析"
+      ],
+      "required_tools": [
+        "read_file",
+        "jiangsu_fetch_fault_work_orders",
+        "jiangsu_fetch_fault_work_order_detail",
+        "execute_python",
+        "create_report_package",
+        "render_report_package",
+        "validate_report_package",
+        "publish_report"
+      ]
+    },
     "station-alarm-diagnosis": {
       "enabled": true,
       "aliases": [

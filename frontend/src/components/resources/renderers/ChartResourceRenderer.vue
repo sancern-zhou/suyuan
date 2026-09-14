@@ -11,7 +11,7 @@
     </div>
     <StationhouseInspectionPanel v-else-if="spec && isStationhouse" :data="spec" />
     <FaultWorkOrderPanel v-else-if="spec && isFaultWorkOrder" :data="spec" />
-    <TaskReviewPanel v-else-if="spec?.type === 'task_review'" :review-id="spec.data.review_id" />
+    <TaskReviewPanel v-else-if="spec?.type === 'task_review'" :review-id="spec.data.review_id" compact />
     <ChartPanel v-else-if="spec" :data="spec" />
   </div>
 </template>

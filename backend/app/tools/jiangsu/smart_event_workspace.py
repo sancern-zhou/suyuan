@@ -9,10 +9,11 @@ concrete identifiers.  It never changes event data.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.services.jiangsu_smart_event import JiangsuSmartEventService
+from app.services.jiangsu_smart_event import AI_EVENT_TYPES, JiangsuSmartEventService
 from app.tools.base import LLMTool, ToolCategory
 
 
@@ -26,7 +27,15 @@ COMMANDS = {
     "show_operation_history",
 }
 
-FILTER_FIELDS = ("start_time", "end_time", "station", "status", "event_type", "level", "keyword")
+FILTER_FIELDS = (
+    "start_time", "end_time", "station", "status", "event_type", "event_types", "level", "keyword"
+)
+
+EXTERNAL_ENVIRONMENT_EVENT_TYPES = (
+    "疑似雾炮喷淋",
+    "疑似人员进入采样区干扰操作",
+    "疑似外界环境影响",
+)
 
 EVENT_SUMMARY_FIELDS = (
     "event_id",
@@ -65,6 +74,11 @@ def _normalize_filters(filters: dict[str, Any]) -> dict[str, Any]:
         "level": _first_value(filters, "level", "ai_suggested_level", "severity"),
         "keyword": " ".join(part for part in keyword_parts if part) or None,
     }
+    event_types = filters.get("event_types")
+    if isinstance(event_types, list):
+        normalized["event_types"] = [
+            str(item).strip() for item in event_types if str(item).strip()
+        ]
     return {key: value for key, value in normalized.items() if value}
 
 
@@ -99,9 +113,29 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
                         "filters": {
                             "type": "object",
                             "description": "事件列表筛选条件，字段：start_time、end_time（ISO 时间）、"
-                            "station（站点名称）、status（事件状态）、event_type（AI事件类型）、"
-                            "level（等级）、keyword（关键词）",
-                            "properties": {field: {"type": "string"} for field in FILTER_FIELDS},
+                            "station（站点名称）、status（事件状态）、event_type（AI最终研判类型）、"
+                            "event_types（多个AI最终研判类型）、"
+                            "level（等级）、keyword（关键词）。event_type 必须严格使用以下标准值："
+                            + "、".join(AI_EVENT_TYPES)
+                            + "。雾炮、喷淋、人员进入采样区等是原始线索，不是 event_type。"
+                            "用户说“外界环境识别结果”时，应查询外界环境组的三个标准类型："
+                            "疑似雾炮喷淋、疑似人员进入采样区干扰操作、疑似外界环境影响；"
+                            "此时使用 event_types 一次传入这三个值，不要只选其中一个。"
+                            "不要自行省略“疑似”，也不要把未完成 AI 研判的事件当作已识别结果。",
+                            "properties": {
+                                **{
+                                    field: {
+                                        "type": "string",
+                                        **({"enum": list(AI_EVENT_TYPES)} if field == "event_type" else {}),
+                                    }
+                                    for field in FILTER_FIELDS if field != "event_types"
+                                },
+                                "event_types": {
+                                    "type": "array",
+                                    "items": {"type": "string", "enum": list(AI_EVENT_TYPES)},
+                                    "uniqueItems": True,
+                                },
+                            },
                         },
                     },
                     "required": ["command"],
@@ -113,18 +147,39 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
         end_at = datetime.now().astimezone()
         start_at = end_at - timedelta(days=7)
         service = JiangsuSmartEventService()
-        payload = await service.list_events(
-            start_time=normalized.get("start_time") or start_at.isoformat(),
-            end_time=normalized.get("end_time") or end_at.isoformat(),
-            status=normalized.get("status"),
-            keyword=normalized.get("keyword"),
-            event_type=normalized.get("event_type"),
-            level=normalized.get("level"),
-            limit=20,
-            page=1,
-            summary=True,
-            refresh=False,
-        )
+        query_args = {
+            "start_time": normalized.get("start_time") or start_at.isoformat(),
+            "end_time": normalized.get("end_time") or end_at.isoformat(),
+            "status": normalized.get("status"),
+            "keyword": normalized.get("keyword"),
+            "level": normalized.get("level"),
+            "limit": 20,
+            "page": 1,
+            "summary": True,
+            "refresh": False,
+        }
+        event_types = normalized.get("event_types") or [normalized.get("event_type")]
+        event_types = [item for item in event_types if item]
+        payloads = await asyncio.gather(*(
+            service.list_events(**query_args, event_type=event_type)
+            for event_type in (event_types or [None])
+        ))
+        payload = payloads[0]
+        if len(payloads) > 1:
+            merged = {
+                str(event.get("event_id")): event
+                for item in payloads
+                for event in item.get("events", [])
+                if isinstance(event, dict) and event.get("event_id")
+            }
+            payload = {
+                "events": sorted(
+                    merged.values(),
+                    key=lambda item: item.get("latest_occurrence_time") or item.get("event_start_time") or "",
+                    reverse=True,
+                )[:20],
+                "total": sum(int(item.get("total") or 0) for item in payloads),
+            }
         events = [
             {key: value for key, value in value_dict.items() if key in EVENT_SUMMARY_FIELDS}
             for value_dict in payload.get("events", [])

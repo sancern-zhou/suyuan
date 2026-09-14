@@ -6,6 +6,8 @@ test('all todo categories use submitted generic reviews and the shared detail pa
   const source = await readFile(new URL('./TaskSchedulerCenter.vue', import.meta.url), 'utf8')
   assert.match(source, /listTaskReviews\(\)/)
   assert.match(source, /TaskReviewPanel :review-id="selectedReviewId"/)
+  // 人工确认归档弹窗同样使用紧凑模式，避免信息过载。
+  assert.match(source, /TaskReviewPanel :review-id="selectedReviewId" compact/)
   assert.match(source, /task\.category/)
   assert.match(source, /eventTasks/)
   assert.doesNotMatch(source, /fetchRecentExecutions|listJiangsuSmartEventTasks|executionToAttentionItem|smartEventTasks/)

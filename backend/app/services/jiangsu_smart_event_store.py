@@ -82,6 +82,13 @@ class JiangsuEventPackages:
             raise ValueError("smart_event_package_outside_event_directory")
         return path
 
+    def read_evidence_package(self, reference: str, event_id: str) -> dict:
+        """Read a full evidence package back from its immutable file (DB stub mode)."""
+        package = json.loads(self._package_path(reference, event_id).read_text(encoding="utf-8"))
+        if str(package.get("event_id")) != str(event_id):
+            raise ValueError("smart_event_evidence_identity_mismatch")
+        return package
+
     def read_event(self, row):
         event_id = str(row["event_id"])
         detail = json.loads(self._package_path(row["_detail_ref"], event_id).read_text(encoding="utf-8"))
@@ -89,10 +96,7 @@ class JiangsuEventPackages:
             raise ValueError("smart_event_detail_identity_mismatch")
         reference = detail.pop("_evidence_ref", None)
         if reference:
-            package = json.loads(self._package_path(reference, event_id).read_text(encoding="utf-8"))
-            if str(package.get("event_id")) != event_id:
-                raise ValueError("smart_event_evidence_identity_mismatch")
-            detail["evidence_package"] = package
+            detail["evidence_package"] = self.read_evidence_package(reference, event_id)
         return detail
 
     def load(self, event_ids=None):

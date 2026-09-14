@@ -26,6 +26,7 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
     socialUsers: [],
     availableTools: [],
     availableSkills: [],
+    availableWorkflows: [],
     skillsLoading: false,
     ws: null,
     wsConnected: false,
@@ -75,6 +76,16 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
       const data = await response.json();
       this.availableTools = Array.isArray(data?.tools) ? data.tools : [];
       return this.availableTools;
+    },
+
+    async fetchAvailableWorkflows() {
+      const response = await authFetch(`${API_BASE}/workflows`, {
+        clearOnUnauthorized: false
+      });
+      if (!response.ok) throw new Error('Failed to fetch available workflows');
+      const data = await response.json();
+      this.availableWorkflows = Array.isArray(data?.workflows) ? data.workflows : [];
+      return this.availableWorkflows;
     },
 
     async fetchAvailableSkills() {
@@ -167,6 +178,22 @@ export const useScheduledTasksStore = defineStore('scheduledTasks', {
         meta: (data?.meta && typeof data.meta === 'object') ? data.meta : {},
         caseCount: Number(data?.case_count) || 0
       };
+    },
+
+    async updateTaskHistoryCase(taskId, executionId, caseData) {
+      const response = await authFetch(`${API_BASE}/${taskId}/history/cases/${encodeURIComponent(executionId)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ case: caseData })
+      });
+      if (!response.ok) {
+        const error = new Error(await responseErrorMessage(response, '案例保存失败'));
+        error.status = response.status;
+        throw error;
+      }
+      return response.json();
     },
 
     async fetchRecentExecutions({ page = 1, pageSize = 10 } = {}) {

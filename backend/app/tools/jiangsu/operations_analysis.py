@@ -743,19 +743,37 @@ class JiangsuAttendanceRecordsTool(_JiangsuOperationsTool):
                       skip_count: int = 0, max_result_count: int = 200, **_: Any) -> dict[str, Any]:
         try:
             self._validate(start_time, end_time, skip_count, max_result_count)
-            params: list[tuple[str, Any]] = [
-                ("warrantytime[0]", start_time or ""), ("warrantytime[1]", end_time or ""),
-                ("skipCount", skip_count), ("maxResultCount", max_result_count),
-            ]
-            for key, value in (("UserName", user_name), ("UnitID", unit_id), ("StationCode", station_code)):
-                if value and value.strip():
-                    params.append((key, value.strip()))
-            records, total_count = self._page(await self._request(self._PATH, params))
+            # The platform endpoint is paginated.  A single first page made
+            # monthly reports silently incomplete once a month exceeded 500
+            # sign-ins, so fetch bounded pages until totalCount is covered.
+            page_size = min(max_result_count, 500)
+            records: list[dict[str, Any]] = []
+            reported_total: int | None = None
+            page = skip_count
+            page_count = 0
+            max_pages = 200
+            while page_count < max_pages:
+                params: list[tuple[str, Any]] = [
+                    ("warrantytime[0]", start_time or ""), ("warrantytime[1]", end_time or ""),
+                    ("skipCount", page), ("maxResultCount", page_size),
+                ]
+                for key, value in (("UserName", user_name), ("UnitID", unit_id), ("StationCode", station_code)):
+                    if value and value.strip():
+                        params.append((key, value.strip()))
+                batch, total_count = self._page(await self._request(self._PATH, params))
+                reported_total = total_count if reported_total is None else max(reported_total, total_count)
+                records.extend(batch)
+                page_count += 1
+                if not batch or len(records) >= reported_total:
+                    break
+                page += len(batch)
+            total_count = reported_total if reported_total is not None else len(records)
             return {
                 "status": "success" if records else "empty", "success": True, "data": records,
                 "metadata": {"source": "jiangsu_operations_attendance_api", "endpoint": self._PATH,
                              "time_range": [start_time, end_time], "filters": {"user_name": user_name, "unit_id": unit_id, "station_code": station_code},
-                             "pagination": {"skip_count": skip_count, "max_result_count": max_result_count},
+                             "pagination": {"skip_count": skip_count, "page_size": page_size, "pages_fetched": page_count,
+                                             "complete": len(records) >= total_count or (page_count == 1 and len(records) < page_size)},
                              "record_count": len(records), "total_count": total_count, "queried_at": datetime.now().astimezone().isoformat()},
                 "summary": f"江苏运维人员到站签到记录查询完成：返回 {len(records)} 条，共 {total_count} 条。",
             }
@@ -823,6 +841,17 @@ class JiangsuWorkOrderTrackAnalysisTool(_JiangsuOperationsTool):
         super().__init__(name="jiangsu_analyze_work_order_tracks", description="分析签到轨迹疑似串单和多站点签到", function_schema={"name":"jiangsu_analyze_work_order_tracks","description":"按时间范围分析运维签到轨迹","parameters":{"type":"object","properties":{"start_time":{"type":"string"},"end_time":{"type":"string"},"speed_limit":{"type":"number","default":250},"overlap_minutes":{"type":"number","default":10},"distance_limit":{"type":"number","default":1},"gps_limit":{"type":"number","default":0.5}},"required":["start_time","end_time"]}})
     async def execute(self, context=None, start_time=None, end_time=None, speed_limit=250, overlap_minutes=10, distance_limit=1, gps_limit=0.5, **kwargs):
         records = await JiangsuAttendanceRecordsTool().execute(context=context, start_time=start_time, end_time=end_time, max_result_count=500)
+        if not records.get("success", False):
+            return {
+                "success": False,
+                "status": "failed",
+                "findings": [],
+                "remote_signins": [],
+                "users": [],
+                "finding_count": 0,
+                "metadata": {"start_time": start_time, "end_time": end_time, "source_status": records.get("status")},
+                "summary": f"轨迹分析失败：{records.get('summary') or '签到数据源不可用'}",
+            }
         rows = records.get("data", [])
         findings, remote, users = [], [], {}
         def get(r, *ks):
@@ -833,13 +862,13 @@ class JiangsuWorkOrderTrackAnalysisTool(_JiangsuOperationsTool):
             la,lo,lb,lp=map(radians,(*a,*b)); h=sin((lb-la)/2)**2+cos(la)*cos(lb)*sin((lp-lo)/2)**2; return 6371*2*asin(sqrt(h))
         for r in rows: users.setdefault(str(get(r,'user_name','UserName','userName','name') or '未知人员'),[]).append(r)
         for user, rs in users.items():
-            rs.sort(key=lambda r:str(get(r,'sign_time','SignTime','attendance_time','time') or ''))
+            rs.sort(key=lambda r:str(get(r,'sign_time','SignTime','signInTime','attendance_time','time') or ''))
             for a,b in zip(rs,rs[1:]):
                 try:
-                    ta=datetime.fromisoformat(str(get(a,'sign_time','SignTime','attendance_time','time')).replace('Z','+00:00')); tb=datetime.fromisoformat(str(get(b,'sign_time','SignTime','attendance_time','time')).replace('Z','+00:00')); hours=(tb-ta).total_seconds()/3600
-                    pa=(float(get(a,'station_lat','lat','StationLat')),float(get(a,'station_lon','lon','StationLon'))); pb=(float(get(b,'station_lat','lat','StationLat')),float(get(b,'station_lon','lon','StationLon'))); km=dist(pa,pb); speed=km/hours if hours>0 else float('inf')
+                    ta=datetime.fromisoformat(str(get(a,'sign_time','SignTime','signInTime','attendance_time','time')).replace('Z','+00:00')); tb=datetime.fromisoformat(str(get(b,'sign_time','SignTime','signInTime','attendance_time','time')).replace('Z','+00:00')); hours=(tb-ta).total_seconds()/3600
+                    pa=(float(get(a,'station_lat','lat','StationLat','latitude')),float(get(a,'station_lon','lon','StationLon','longitude'))); pb=(float(get(b,'station_lat','lat','StationLat','latitude')),float(get(b,'station_lon','lon','StationLon','longitude'))); km=dist(pa,pb); speed=km/hours if hours>0 else float('inf')
                 except (TypeError,ValueError,ZeroDivisionError): continue
-                different=str(get(a,'station_code','StationCode'))!=str(get(b,'station_code','StationCode'))
+                different=str(get(a,'station_code','StationCode','stationCode'))!=str(get(b,'station_code','StationCode','stationCode'))
                 if speed>speed_limit: findings.append({'user_name':user,'type':'cross_region_speed','speed_kmh':round(speed,1),'distance_km':round(km,2),'previous':a,'current':b})
                 if different and hours*60<overlap_minutes and km>distance_limit: findings.append({'user_name':user,'type':'multi_station_overlap','minutes':round(hours*60,2),'distance_km':round(km,2),'previous':a,'current':b})
             for r in rs:

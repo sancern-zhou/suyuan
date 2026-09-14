@@ -44,6 +44,68 @@ def filter_instrument_rows(data: Any, pollutant_codes: list[str]) -> list[dict[s
     )]
 
 
+# The alarm service mixes application self-monitoring with data-path alarms.
+# These catalogues/messages describe database or process resource pressure, not
+# a loss, delay, or corruption of monitoring data.  Keep them out of the
+# evidence payload; the upstream alarm database remains the audit source.
+_NON_DIAGNOSTIC_ALARM_SUBCATALOGS = {
+    201, 202, 203, 204,  # host memory, CPU, and network-throughput thresholds
+    212, 215, 216,       # application memory, thread, and handle thresholds
+    231, 232,            # database CPU and IO thresholds
+    301, 304,            # generic database timeout/statement errors
+    312, 313,            # application error-log count and database size
+    333,                 # application auto-update access failure
+    622,                 # database opened by another application
+}
+_NON_DIAGNOSTIC_ALARM_TEXT = (
+    "数据库被其他软件打开",
+    "执行数据库语句时遇到错误",
+    "从数据库执行批量插入时遇到错误",
+    "从数据库读取数据时遇到错误",
+    "执行超时已过期",
+    "系统空闲物理内存",
+    "系统CPU占用比率高",
+    "系统网络下载流量高",
+    "数据库有高CPU占用",
+    "数据库有高IO占用",
+    "软件物理内存占用高",
+    "软件线程数高",
+    "软件句柄数高",
+    "软件最近错误日志较多",
+    "数据库占用空间过大",
+    "自动更新访问失败",
+)
+
+
+def filter_diagnostic_alarm_rows(data: Any) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Return only alarms that can support a monitoring/data-path diagnosis."""
+    rows = _records(data)
+    kept: list[dict[str, Any]] = []
+    suppressed = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            suppressed += 1
+            continue
+        try:
+            subcatalog = int(
+                row.get("subCatalog") or row.get("SubCatalog")
+                or row.get("alarmType") or row.get("AlarmType") or 0
+            )
+        except (TypeError, ValueError):
+            subcatalog = 0
+        description = str(
+            row.get("descriptionDE") or row.get("Description") or row.get("description")
+            or row.get("alarmContent") or row.get("content") or ""
+        ).strip()
+        if subcatalog in _NON_DIAGNOSTIC_ALARM_SUBCATALOGS or any(
+            marker in description for marker in _NON_DIAGNOSTIC_ALARM_TEXT
+        ):
+            suppressed += 1
+            continue
+        kept.append(row)
+    return kept, {"source_record_count": len(rows), "diagnostic_record_count": len(kept), "suppressed_record_count": suppressed}
+
+
 def _result(*, endpoint: str, data: Any, query: dict[str, Any], success: bool = True, status: str | None = None, summary: str | None = None) -> dict[str, Any]:
     rows = _records(data)
     final_status = status or ("success" if rows else "empty")
@@ -105,7 +167,14 @@ class JiangsuLegacyEvidenceAdapter:
             data = _payload_data(payload)
             if not isinstance(data, list):
                 raise ValueError("告警接口未返回完整记录列表")
-            return _result(endpoint=self._ACQUISITION_ALARM_PATH, data=data, query=query)
+            diagnostic_rows, filter_stats = filter_diagnostic_alarm_rows(data)
+            result = _result(endpoint=self._ACQUISITION_ALARM_PATH, data=diagnostic_rows, query=query)
+            result["metadata"]["alarm_filter"] = filter_stats
+            result["summary"] = (
+                f"数采报警查询完成：保留 {filter_stats['diagnostic_record_count']} 条诊断告警，"
+                f"过滤 {filter_stats['suppressed_record_count']} 条非诊断性系统告警。"
+            )
+            return result
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "status": "failed", "summary": f"仪器告警查询失败：{exc}", "metadata": {"query": query}, "data": []}
 
@@ -136,7 +205,14 @@ class JiangsuLegacyEvidenceAdapter:
         params = [("StationCode", station_code), ("TimePoint", start_time), ("TimePoint", end_time)]
         try:
             payload = await self._get_retry(self._ACQUISITION_ALARM_PATH, params)
-            return _result(endpoint=self._ACQUISITION_ALARM_PATH, data=_payload_data(payload), query=query, summary="数采报警查询完成。")
+            diagnostic_rows, filter_stats = filter_diagnostic_alarm_rows(_payload_data(payload))
+            result = _result(endpoint=self._ACQUISITION_ALARM_PATH, data=diagnostic_rows, query=query)
+            result["metadata"]["alarm_filter"] = filter_stats
+            result["summary"] = (
+                f"数采报警查询完成：保留 {filter_stats['diagnostic_record_count']} 条诊断告警，"
+                f"过滤 {filter_stats['suppressed_record_count']} 条非诊断性系统告警。"
+            )
+            return result
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "status": "failed", "summary": f"数采报警查询失败：{exc}", "metadata": {"endpoint": self._ACQUISITION_ALARM_PATH, "query": query}, "record_count": 0, "data": []}
 

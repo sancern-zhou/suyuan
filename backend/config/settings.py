@@ -543,7 +543,7 @@ class Settings(BaseSettings):
         description="Concurrent LLM request limit per provider/model pool"
     )
     llm_request_timeout_seconds: float = Field(
-        default=180.0,
+        default=300.0,
         description="Timeout in seconds for LLM provider requests"
     )
     llm_fallbacks: str = Field(

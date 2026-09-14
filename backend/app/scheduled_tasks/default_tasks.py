@@ -12,7 +12,6 @@ from app.scheduled_tasks.models import ScheduledTask, ScheduleType, TriggerType,
 JIANGSU_STATION_FAULT_TASK_ID = "jiangsu_station_fault_diagnosis"
 JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID = "jiangsu_fault_work_order_review"
 JIANGSU_SMART_EVENT_TASK_ID = "jiangsu_smart_event_ai_judgment"
-JIANGSU_NETWORK_INSPECTION_TASK_ID = "jiangsu_network_inspection_watch"
 JIANGSU_SMART_EVENT_LEGACY_TASK_IDS = {
     "jiangsu_smart_event_power_alarm",
     "jiangsu_smart_event_network_alarm",
@@ -37,7 +36,6 @@ JIANGSU_STATION_FAULT_PROMPT = (
     "当前阶段禁止自动执行设备控制、关闭告警或推送工单。"
 )
 
-
 JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
     "仅审核小时数据有效性与剔除时段，granularity 固定 hour；5分钟数据仅作分析参考，不生成分钟级处置。"
     "记忆维护：仅积累故障表现、证据判别、边界经验及案例来源；不复制固定SOP或输出契约，"
@@ -51,18 +49,15 @@ JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
     "监测、质控、告警、动环、同城对比和传输辅助数据只做一致性核验，缺失不得机械降级为 "
     "needs_evidence；附件、截图、监测/审核标识和边界已闭环时，非实质性工单措辞瑕疵不得单独"
     "作为退回补材料理由。summary 必须用一句话给出结论、数据处置和核心原因，详细核验项"
-    "仅做追溯。长期记忆和历史案例只用于形成待核验假设，不能替代本次证据；本次确认的可复用经验由任务历史学习沉淀，不回写固定 SOP。当前阶段禁止自动回写平台工单状态，禁止"
-    "自动剔除或修改监测数据。"
+    "仅做追溯。长期记忆和历史案例只用于形成待核验假设，不能替代本次证据；本次确认的可复用经验由任务历史学习沉淀，不回写固定 SOP。"
+    "若可信事件上下文的 payload 含 continuity_context（人工退回后的增量复审）：人工退回意见是权威修正基准，"
+    "先逐项对照上一轮结论与退回意见，基于同一证据包修正审核结论、数据处置与核验项；"
+    "除非存在与退回意见直接矛盾且确凿的证据并在 comment 中逐条列明分歧依据，"
+    "否则必须按人工意见更新 decision、data_impact 与核验项，不得原样重复被退回的结论，"
+    "也不得以辅助证据缺口为由维持待定；确需补充事实时按 Skill 约束做最小化只读补查。"
+    "增量轮次仍须满足全部结果字段要求，并以同一工单号作为 subject_id 再次调用 submit_task_review。"
+    "当前阶段禁止自动回写平台工单状态，禁止自动剔除或修改监测数据。"
 )
-
-JIANGSU_NETWORK_INSPECTION_PROMPT = (
-    "执行江苏全网运维巡检值守任务。调用 jiangsu_network_inspection_workflow，period 使用 day；"
-    "根据工作流返回的 conclusion 和 issues 调用 submit_task_review 生成一张人工待办。"
-    "category 固定填写‘运维值守’，subject_id 固定为‘网络巡检-{YYYY-MM-DD}’，同一执行只提交一次。"
-    "title 使用‘江苏全网巡检值守’，summary 填工作流 200-300 字短结论，comment 填结论和问题清单；"
-    "checks 至少包含巡检覆盖、异常站点和数据完整性三项，evidence 仅引用真实数据目录文件（如无文件则不填）。"
-    "本任务只读，不创建工单、不关闭告警、不执行设备控制；结论仅代表自动巡检结果，需人工确认现场情况。"
- )
 
 
 def _smart_event_task_prompt(event_type_dictionary: list[str] | None = None) -> str:
@@ -207,30 +202,6 @@ DEFAULT_TASK_FACTORIES = {
 DEFAULT_TASK_FACTORIES[JIANGSU_SMART_EVENT_TASK_ID] = build_jiangsu_smart_event_task
 
 
-def build_jiangsu_network_inspection_task() -> ScheduledTask:
-    return ScheduledTask(
-        task_id=JIANGSU_NETWORK_INSPECTION_TASK_ID,
-        name="江苏全网巡检值守",
-        description="每日汇总站房巡检异常，生成运维值守短结论和问题清单",
-        execution_mode="workflow",
-        workflow_name="jiangsu_network_inspection_workflow",
-        workflow_args={"period": "day"},
-        schedule_type=ScheduleType.DAILY_8AM,
-        hour=8,
-        minute=0,
-        prompt=JIANGSU_NETWORK_INSPECTION_PROMPT,
-        timeout_seconds=600,
-        history_learning={"enabled": False},
-        created_by="project-default",
-        owner_user_id="system",
-        owner_username="ops-watch-agent",
-        owner_display_name="运维值守智能体",
-        tags=["江苏", "运维值守", "全网巡检", "只读"],
-        workspace_entry=WorkspaceEntry(enabled=True, title="运维值守"),
-    )
-
-
-DEFAULT_TASK_FACTORIES[JIANGSU_NETWORK_INSPECTION_TASK_ID] = build_jiangsu_network_inspection_task
 JIANGSU_TRACK_MONTHLY_TASK_ID = "jiangsu_work_order_track_monthly_review"
 def build_jiangsu_track_monthly_task() -> ScheduledTask:
     return ScheduledTask(task_id=JIANGSU_TRACK_MONTHLY_TASK_ID, name="工单轨迹合理性月度分析", description="分析上月签到轨迹并生成每人一张复核待办", execution_mode="custom", tool_names=["jiangsu_analyze_work_order_tracks", "create_report_package", "render_report_package", "validate_report_package", "publish_report", "submit_task_review"], skill_id="工单轨迹合理性分析", schedule_type=ScheduleType.MONTHLY_CUSTOM, day_of_month=3, hour=7, minute=0, prompt="分析上一个自然月；生成正式报告时依次调用 create_report_package、render_report_package、validate_report_package，校验通过后显式调用 publish_report 才进入智能报告中心；远离站点仅进报告。", history_learning={"enabled": True})

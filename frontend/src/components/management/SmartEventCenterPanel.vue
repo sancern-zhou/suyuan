@@ -193,11 +193,30 @@
                       <div v-for="fact in eventFacts" :key="fact.label" class="event-grid-item"><span>{{ fact.label }}</span><strong>{{ fact.value }}</strong></div>
                     </div>
                     <section class="merged-alarm-content" aria-label="全部告警内容">
-                      <h4>告警内容<span class="alarm-count">（{{ detailAlarmRows.length }} 条）</span></h4>
+                      <h4>告警内容<span class="alarm-count">（{{ detailAlarmRows.length }} 条<template v-if="detailAlarmGroups.length > 1 && detailAlarmGroups.length < detailAlarmRows.length"> · 已归并为 {{ detailAlarmGroups.length }} 组</template>）</span></h4>
                       <ol v-if="detailAlarmRows.length">
-                        <li v-for="alarm in detailAlarmRows" :key="alarm.key">
-                          <div class="alarm-meta"><time>{{ formatTime(alarm.time) }}</time><strong>{{ alarm.type }}</strong></div>
-                          <p>{{ alarm.content }}</p>
+                        <li v-for="group in detailAlarmGroups" :key="group.key">
+                          <template v-if="group.kind === 'single'">
+                            <div class="alarm-meta"><time>{{ formatTime(group.rows[0].time) }}</time><strong>{{ group.rows[0].type }}</strong></div>
+                            <p>{{ group.rows[0].content }}</p>
+                          </template>
+                          <template v-else>
+                            <div class="alarm-meta">
+                              <time>{{ alarmGroupTimeText(group) }}</time>
+                              <strong>{{ group.title }}</strong>
+                              <span class="alarm-group-badge">×{{ group.count }}</span>
+                            </div>
+                            <p v-for="(line, index) in group.summaries" :key="index" class="alarm-group-summary">{{ line }}</p>
+                            <details class="alarm-group-raw">
+                              <summary>展开逐条（{{ group.count }} 条）</summary>
+                              <ol>
+                                <li v-for="alarm in group.rows" :key="alarm.key">
+                                  <div class="alarm-meta"><time>{{ formatTime(alarm.time) }}</time><strong>{{ alarm.type }}</strong></div>
+                                  <p>{{ alarm.content }}</p>
+                                </li>
+                              </ol>
+                            </details>
+                          </template>
                         </li>
                       </ol>
                       <p v-else class="source-empty">暂无具体告警内容</p>
@@ -271,8 +290,8 @@
 
                   <template v-else>
                     <p v-if="section.key === 'instrument_status'" class="source-summary">目标污染物：{{ selectedEvent.evidence_package?.collection_policy?.instrument_target_pollutants?.join('、') || '未识别' }}</p>
-                    <p class="source-summary">{{ section.key === 'monitoring' ? '本站六项污染物小时监测数据' : section.key === 'video' ? `可预览图片 ${videoEvidenceRows(section).length} 张` : (section.value?.summary || '尚未抓取该数据源') }}</p>
-                    <div class="source-meta"><span>记录数 {{ section.key === 'monitoring' ? hourlyRecords.length : sourceRecordCount(section.value) }}</span><span v-if="section.value?.metadata?.time_range">{{ section.value.metadata.time_range.join(' ~ ') }}</span></div>
+                    <p class="source-summary">{{ section.key === 'video' ? `可预览图片 ${videoEvidenceRows(section).length} 张` : (section.value?.summary || '尚未抓取该数据源') }}</p>
+                    <div class="source-meta"><span>记录数 {{ sourceRecordCount(section.value) }}</span><span v-if="section.value?.metadata?.time_range">{{ formatTimeRange(section.value.metadata.time_range) }}</span></div>
 
                     <template v-if="section.key === 'video'">
                       <div v-if="videoEvidenceRows(section).length" class="video-evidence-grid">
@@ -284,34 +303,38 @@
                       </div>
                       <p v-else class="source-empty">暂无视频监控记录</p>
                     </template>
-                    <template v-else-if="section.key === 'monitoring'">
-                      <div class="monitoring-toolbar">
-                        <div class="monitoring-overview">
-                          <div><span>小时数据</span><strong>{{ hourlyRecords.length }}</strong><small>条</small></div>
-                        </div>
-                        <div class="view-toggle" role="group" aria-label="监测数据视图切换">
-                          <button type="button" :class="{ active: monitoringView === 'chart' }" :aria-pressed="monitoringView === 'chart'" title="六参小时折线时序图" aria-label="六参小时折线时序图" @click="monitoringView = 'chart'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2v12h12M4 10l3-4 3 2 4-5" /></svg>小时曲线</button>
-                          <button type="button" :class="{ active: monitoringView === 'table' }" :aria-pressed="monitoringView === 'table'" title="小时数据表" aria-label="监测数据表" @click="monitoringView = 'table'"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h12v12H2zM2 6h12M2 10h12M6 2v12" /></svg>小时数据表</button>
-                        </div>
+                    <template v-else-if="section.key === 'comparison'">
+                      <div class="comparison-overview">
+                        <div><span>目标站点</span><strong>{{ comparisonTargetName }}</strong></div>
+                        <div><span>同区县对比站点</span><strong>{{ comparisonNearbyCount }}</strong><small>个</small></div>
+                        <div><span>全市其余站点</span><strong>{{ comparisonCityCount }}</strong><small>个</small></div>
                       </div>
-                      <div v-if="monitoringView === 'chart'" class="minute-line-chart" aria-label="六参小时折线时序图">
-                        <div v-if="hourlyChartOption" :ref="el => { hourlyChartRef = el }" class="chart-canvas"></div>
-                        <p v-else class="source-empty">暂无小时监测数据，无法绘制时序图</p>
-                      </div>
-                      <div v-else class="data-subsection">
-                        <h4>站点小时数据</h4>
-                        <div v-if="hourlyRecords.length" class="source-table-wrap monitoring-table-wrap" tabindex="0" aria-label="完整小时监测数据表">
-                          <table class="source-table"><thead><tr><th v-for="column in monitoringColumns" :key="column.key">{{ column.label }}</th></tr></thead><tbody><tr v-for="(row, index) in hourlyRecords" :key="index"><td v-for="column in monitoringColumns" :key="column.key">{{ displayCell(row, column.key) }}</td></tr></tbody></table>
-                        </div>
-                        <p v-else class="source-empty">暂无小时监测数据</p>
+                      <div v-if="comparisonDeltaRows.length" class="comparison-analysis-grid">
+                        <section class="comparison-analysis-panel">
+                          <h4>事件时段均值差异</h4>
+                          <table class="source-table comparison-delta-table"><thead><tr><th>污染物</th><th>本站 − 同区县</th><th>本站 − 全市其余</th></tr></thead><tbody><tr v-for="row in comparisonDeltaRows" :key="row.name"><td>{{ row.name }}</td><td>{{ row.nearby }}</td><td>{{ row.city }}</td></tr></tbody></table>
+                        </section>
+                        <section class="comparison-analysis-panel">
+                          <h4>趋势一致性</h4>
+                          <table class="source-table comparison-delta-table"><thead><tr><th>污染物</th><th>本站趋势</th><th>同区县趋势</th><th>一致性</th><th>相关系数</th><th>对齐小时</th></tr></thead><tbody><tr v-for="row in comparisonTrendRows" :key="`${row.name}-trend`"><td>{{ row.name }}</td><td>{{ row.target }}</td><td>{{ row.nearby }}</td><td>{{ row.consistent }}</td><td>{{ row.correlation }}</td><td>{{ row.hours }}</td></tr></tbody></table>
+                        </section>
                       </div>
                       <div v-if="deltaChartOption" class="regional-delta-block" aria-label="区域差异柱状图">
                         <h4>区域差异（本站均值 − 区域均值，事件时段）</h4>
                         <div :ref="el => { deltaChartRef = el }" class="chart-canvas delta-canvas"></div>
                         <p class="delta-legend">蓝色柱：与周边站点差值；红色柱：与全市其余站点差值。正值表示本站高于区域背景，负值表示低于区域背景。</p>
                       </div>
+                      <div v-if="comparisonChartOption" class="comparison-records-wrap">
+                        <div class="comparison-chart-header">
+                          <h4>目标站与对比站小时趋势</h4>
+                          <div class="comparison-pollutant-switch" role="group" aria-label="片区对比污染物切换">
+                            <button v-for="item in POLLUTANT_SERIES" :key="item.key" type="button" :class="{ active: comparisonPollutant === item.key }" :aria-pressed="comparisonPollutant === item.key" @click="comparisonPollutant = item.key">{{ item.label }}</button>
+                          </div>
+                        </div>
+                        <div :ref="el => { comparisonChartRef = el }" class="chart-canvas comparison-chart-canvas" aria-label="目标站与对比站小时趋势图"></div>
+                      </div>
+                      <p v-if="!comparisonDeltaRows.length && !sourceRows(section).length" class="source-empty">暂无片区对比结果</p>
                     </template>
-
                     <template v-else-if="section.key === 'weather'">
                       <div class="minute-line-chart" aria-label="气象折线时序图">
                         <div v-if="weatherChartOption" :ref="el => { weatherChartRef = el }" class="chart-canvas weather-chart-canvas"></div>
@@ -370,7 +393,7 @@
       <div v-if="reviewDialogVisible && selectedEvent?.review_id" class="archive-overlay" role="dialog" aria-modal="true" aria-label="审核事项">
         <div class="archive-dialog" style="height:85vh;display:flex;flex-direction:column;width:min(1000px,95vw)">
           <button type="button" @click="reviewDialogVisible = false">关闭</button>
-          <TaskReviewPanel :review-id="selectedEvent.review_id" @updated="refreshSelectedReview" />
+          <TaskReviewPanel :review-id="selectedEvent.review_id" compact @updated="refreshSelectedReview" />
         </div>
       </div>
       <div v-if="previewImageUrl" class="image-preview-overlay" role="dialog" aria-modal="true" aria-label="图片预览" @click.self="previewImageUrl = ''">
@@ -381,7 +404,7 @@
 </template>
 
 <script setup>
-import { eventAlarmRows } from './jiangsuEventAlarms.js'
+import { eventAlarmRows, groupAlarmRows } from './jiangsuEventAlarms.js'
 import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 import { jiangsuJudgmentDetails } from './jiangsuJudgmentPresentation.js'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -627,7 +650,8 @@ const evidenceSourceEntries = computed(() => {
   const labels = { monitoring: '本站监测数据', station_alarm: '站房设备报警', acquisition_alarm: '数采报警', environment: '动力环境历史', qc_history: '质控操作记录', compliance: '运维工单检索', comparison: '片区小时对比', weather: '气象时序数据', instrument_status: '仪器状态', door: '门禁记录', video: '视频监控记录' }
   const packageData = selectedEvent.value?.evidence_package || {}
   // 平台告警源已下线，存量旧证据包中的该源不再展示。
-  const hiddenSources = new Set(['platform_alarm', 'uploaded_workbook', 'video_clip'])
+  // 本站小时监测数据仍保留在证据包中供研判和气象联动使用，界面统一在片区对比中呈现。
+  const hiddenSources = new Set(['monitoring', 'platform_alarm', 'uploaded_workbook', 'video_clip'])
   const sources = packageData.sources || {}
   const gaps = Array.isArray(packageData.gaps) ? packageData.gaps : []
   const entries = Object.entries(sources)
@@ -651,6 +675,12 @@ const workbenchSections = computed(() => [
   { key: 'tasks', label: '关联任务', index: evidenceSourceEntries.value.length + 4, value: { status: tasks.value.length ? 'success' : 'empty', success: tasks.value.length > 0 } },
 ])
 const detailAlarmRows = computed(() => eventAlarmRows(selectedEvent.value))
+const detailAlarmGroups = computed(() => groupAlarmRows(detailAlarmRows.value))
+const alarmGroupTimeText = group => {
+  const end = formatTime(group.endTime)
+  const start = formatTime(group.startTime)
+  return !group.startTime || group.startTime === group.endTime ? end : `${end} – ${start}`
+}
 const displayDataImpact = event => ['有数据影响', '无数据影响'].includes(event?.ai_data_impact)
   ? event.ai_data_impact : (event?.system_data_impact || '待确认')
 const eventFacts = computed(() => [
@@ -669,18 +699,6 @@ const eventFacts = computed(() => [
   { label: '建议等级', value: selectedEvent.value?.ai_suggested_level || '待研判' },
   { label: '研判轮次', value: judgmentRounds.value || '待研判' },
 ])
-const monitoringColumns = [
-  { key: 'timePoint', label: '时间' },
-  { key: 'sO2', label: 'SO₂' },
-  { key: 'nO2', label: 'NO₂' },
-  { key: 'co', label: 'CO' },
-  { key: 'o3', label: 'O₃' },
-  { key: 'pM10', label: 'PM₁₀' },
-  { key: 'pM2_5', label: 'PM₂.₅' },
-  { key: 'temperature', label: '气温' },
-  { key: 'humidity', label: '湿度' },
-  { key: 'windSpeed', label: '风速' },
-]
 const sourceColumnDefinitions = {
   station_alarm: [
     { key: 'alarmTime', label: '告警时间' }, { key: 'stationName', label: '站点名称' },
@@ -707,7 +725,12 @@ const sourceColumnDefinitions = {
     { key: 'orderTitle', label: '工单标题' }, { key: 'workingOrderCode', label: '工单号' },
     { key: 'orderStatus', label: '工单状态' }, { key: 'handler', label: '处理人' },
   ],
-  comparison: monitoringColumns,
+  comparison: [
+    { key: 'stationCode', label: '站点编码' }, { key: 'stationName', label: '站点名称' },
+    { key: 'timePoint', label: '时间' }, { key: 'sO2', label: 'SO₂' },
+    { key: 'nO2', label: 'NO₂' }, { key: 'co', label: 'CO' }, { key: 'o3', label: 'O₃' },
+    { key: 'pM10', label: 'PM₁₀' }, { key: 'pM2_5', label: 'PM₂.₅' },
+  ],
   weather: [
     { key: 'timePoint', label: '时间' }, { key: 'temperature', label: '气温' },
     { key: 'humidity', label: '湿度' }, { key: 'windSpeed', label: '风速' },
@@ -809,16 +832,18 @@ const sourceColumns = source => {
 const displayCell = (row, column) => {
   const value = row?.[column]
   if (value == null || value === '') return '-'
+  if (/(?:time|date|_at$)/i.test(column) || (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value.trim()))) {
+    return formatTime(value)
+  }
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value).length > 72 ? `${String(value).slice(0, 72)}…` : String(value)
 }
 
-const monitoringView = ref('chart')
-const hourlyChartRef = ref(null)
 const deltaChartRef = ref(null)
+const comparisonChartRef = ref(null)
 const weatherChartRef = ref(null)
-let hourlyChartInstance = null
 let deltaChartInstance = null
+let comparisonChartInstance = null
 let weatherChartInstance = null
 const POLLUTANT_SERIES = [
   { key: 'pM10', label: 'PM10' },
@@ -842,28 +867,85 @@ const hourlyRecords = computed(() => {
   const data = selectedEvent.value?.evidence_package?.sources?.monitoring?.data?.station_hour?.data
   return Array.isArray(data) ? data.filter(row => row && typeof row === 'object').slice().sort((a, b) => String(a.timePoint || '').localeCompare(String(b.timePoint || ''))) : []
 })
-const hourlyTimes = computed(() => hourlyRecords.value.map(row => String(row.timePoint || '')))
-const hourlyChartOption = computed(() => {
-  if (!hourlyTimes.value.length) return null
-  return {
-    tooltip: { trigger: 'axis' },
-    legend: { data: POLLUTANT_SERIES.map(item => item.label), top: 0 },
-    grid: { left: 56, right: 24, top: 36, bottom: 56 },
-    xAxis: { type: 'category', data: hourlyTimes.value, axisLabel: { formatter: value => String(value).slice(5, 16) } },
-    yAxis: { type: 'value', name: '浓度' },
-    series: POLLUTANT_SERIES.map(item => ({
-      name: item.label,
-      type: 'line',
-      showSymbol: false,
-      connectNulls: true,
-      emphasis: { focus: 'series' },
-      data: hourlyRecords.value.map(row => recordPollutant(row, item.key)),
-    })),
-  }
-})
 const regionalDeltas = computed(() => {
   const deltas = selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas
   return deltas && typeof deltas === 'object' ? deltas : null
+})
+const comparisonTargetName = computed(() => {
+  const comparison = selectedEvent.value?.evidence_package?.sources?.comparison
+  return comparison?.target_station_name || comparison?.target_station?.name || comparison?.target_station_code || selectedEvent.value?.site_name || '-'
+})
+const comparisonNearbyCount = computed(() => selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas?.nearby_stations?.station_count
+  ?? selectedEvent.value?.evidence_package?.sources?.comparison?.peer_station_count ?? 0)
+const comparisonCityCount = computed(() => selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas?.city_rest_stations?.station_count
+  ?? selectedEvent.value?.evidence_package?.sources?.comparison?.city_rest_station_count ?? 0)
+const comparisonDeltaRows = computed(() => {
+  const deltas = selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas
+  if (!deltas || typeof deltas !== 'object') return []
+  const nearby = deltas.nearby_station_delta || {}
+  const city = deltas.same_city_delta || {}
+  const order = Array.isArray(deltas.pollutant_order) ? deltas.pollutant_order : POLLUTANT_SERIES.map(item => item.label)
+  return order.filter(name => nearby[name] != null || city[name] != null).map(name => ({
+    name,
+    nearby: nearby[name] == null ? '-' : nearby[name],
+    city: city[name] == null ? '-' : city[name],
+  }))
+})
+const comparisonTrendRows = computed(() => {
+  const trends = selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas?.trend_comparison
+  if (!trends || typeof trends !== 'object') return []
+  const order = Array.isArray(selectedEvent.value?.evidence_package?.sources?.comparison?.regional_deltas?.pollutant_order)
+    ? selectedEvent.value.evidence_package.sources.comparison.regional_deltas.pollutant_order
+    : POLLUTANT_SERIES.map(item => item.label)
+  return order.filter(name => trends[name]).map(name => ({
+    name,
+    target: trends[name].target_direction || '数据不足',
+    nearby: trends[name].nearby_direction || '数据不足',
+    consistent: trends[name].consistency || (trends[name].direction_consistent ? '一致' : '不一致/不足'),
+    correlation: trends[name].pearson_correlation == null ? '-' : trends[name].pearson_correlation,
+    hours: trends[name].aligned_hours ?? 0,
+  }))
+})
+const comparisonPollutant = ref('pM10')
+const comparisonRecords = computed(() => {
+  const data = selectedEvent.value?.evidence_package?.sources?.comparison?.data
+  return Array.isArray(data) ? data.filter(row => row && typeof row === 'object' && row.timePoint) : []
+})
+const comparisonChartOption = computed(() => {
+  if (!comparisonRecords.value.length) return null
+  const times = [...new Set(comparisonRecords.value.map(row => weatherTimeKey(row.timePoint)))].filter(Boolean).sort()
+  const targetCode = String(selectedEvent.value?.site_id || '')
+  const stations = new Map()
+  for (const row of comparisonRecords.value) {
+    const code = String(row.stationCode || row.code || '')
+    if (!code) continue
+    const station = stations.get(code) || { code, name: row.stationName || row.name || code, values: new Map() }
+    station.values.set(weatherTimeKey(row.timePoint), recordPollutant(row, comparisonPollutant.value))
+    stations.set(code, station)
+  }
+  if (!stations.size || !times.length) return null
+  const ordered = [...stations.values()].sort((a, b) => Number(b.code === targetCode) - Number(a.code === targetCode) || a.name.localeCompare(b.name, 'zh-CN'))
+  return {
+    tooltip: { trigger: 'axis', confine: true },
+    legend: { type: 'scroll', top: 0, left: 0, right: 0 },
+    grid: { left: 58, right: 24, top: 52, bottom: 56 },
+    xAxis: { type: 'category', boundaryGap: false, data: times, axisLabel: { hideOverlap: true, formatter: value => String(value).slice(5, 16) } },
+    yAxis: { type: 'value', name: comparisonPollutant.value === 'co' ? 'mg/m³' : 'μg/m³', scale: true },
+    dataZoom: [{ type: 'inside', filterMode: 'none' }, { type: 'slider', bottom: 8, height: 20, filterMode: 'none' }],
+    series: ordered.map((station, index) => {
+      const target = station.code === targetCode
+      return {
+        name: `${station.name}（${station.code}）${target ? ' · 目标站' : ''}`,
+        type: 'line',
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: target ? 3 : 1.5, opacity: target ? 1 : 0.72 },
+        itemStyle: target ? { color: '#d4380d' } : undefined,
+        z: target ? 5 : 2 + index,
+        data: times.map(time => station.values.get(time) ?? null),
+      }
+    }),
+  }
 })
 const deltaChartOption = computed(() => {
   if (!regionalDeltas.value) return null
@@ -927,7 +1009,7 @@ const weatherChartOption = computed(() => {
   }))
   series.push(...WEATHER_SERIES.map(item => ({
     name: item.label, type: 'line', xAxisIndex: item.key === 'windSpeed' ? 1 : 2,
-    yAxisIndex: { windSpeed: 2, temperature: 4, humidity: 5, pressure: 6 }[item.key],
+    yAxisIndex: { windSpeed: 2, temperature: 4, humidity: 4, pressure: 5 }[item.key],
     showSymbol: false, connectNulls: false,
     data: times.map(time => weatherValue(weatherByTime.get(time)?.[item.key])),
   })))
@@ -947,7 +1029,10 @@ const weatherChartOption = computed(() => {
   })
   const xAxis = [0, 1, 2].map(gridIndex => ({
     type: 'category', gridIndex, data: times, boundaryGap: false,
-    axisLabel: { hideOverlap: true, formatter: value => String(value).slice(5, 16) },
+    name: gridIndex === 2 ? '时间' : '',
+    axisLabel: { show: gridIndex === 2, hideOverlap: true, formatter: value => String(value).slice(5, 16) },
+    axisTick: { show: gridIndex === 2 },
+    axisLine: { show: gridIndex === 2 },
   }))
   return {
     tooltip: { trigger: 'axis', confine: true },
@@ -964,9 +1049,8 @@ const weatherChartOption = computed(() => {
       { type: 'value', gridIndex: 0, name: 'CO (mg/m³)', position: 'right', scale: true, splitLine: { show: false } },
       { type: 'value', gridIndex: 1, name: '风速 (m/s)', min: 0 },
       { type: 'value', gridIndex: 1, show: false, min: 0, max: 1 },
-      { type: 'value', gridIndex: 2, name: '气温 (℃)', scale: true },
-      { type: 'value', gridIndex: 2, name: '湿度 (%)', position: 'right', min: 0, max: 100, splitLine: { show: false } },
-      { type: 'value', gridIndex: 2, name: '气压 (hPa)', position: 'right', offset: 56, scale: true, splitLine: { show: false } },
+      { type: 'value', gridIndex: 2, name: '气温 (℃) / 湿度 (%)', scale: true },
+      { type: 'value', gridIndex: 2, name: '气压 (hPa)', position: 'right', scale: true, splitLine: { show: false } },
     ],
     dataZoom: [
       { type: 'inside', xAxisIndex: [0, 1, 2], filterMode: 'none' },
@@ -976,18 +1060,18 @@ const weatherChartOption = computed(() => {
   }
 })
 const renderCharts = () => {
-  hourlyChartInstance = ensureChart(hourlyChartRef.value, hourlyChartInstance, hourlyChartOption.value)
   deltaChartInstance = ensureChart(deltaChartRef.value, deltaChartInstance, deltaChartOption.value)
+  comparisonChartInstance = ensureChart(comparisonChartRef.value, comparisonChartInstance, comparisonChartOption.value)
   weatherChartInstance = ensureChart(weatherChartRef.value, weatherChartInstance, weatherChartOption.value)
 }
 const handleChartResize = () => {
-  hourlyChartInstance?.resize()
   deltaChartInstance?.resize()
+  comparisonChartInstance?.resize()
   weatherChartInstance?.resize()
 }
 // Function refs keep one DOM element inside the section v-for. Track mount/unmount
 // as well as data changes so returning to an unchanged event recreates its charts.
-watch([hourlyChartRef, deltaChartRef, weatherChartRef, hourlyChartOption, deltaChartOption, weatherChartOption], renderCharts, { flush: 'post' })
+watch([deltaChartRef, comparisonChartRef, weatherChartRef, deltaChartOption, comparisonChartOption, weatherChartOption], renderCharts, { flush: 'post' })
 const rootRef = ref(null)
 let chartResizeObserver = null
 onMounted(() => {
@@ -999,11 +1083,27 @@ onMounted(() => {
   }
 })
 
+const SHANGHAI_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+})
 const formatTime = value => {
   if (!value) return '时间未知'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
+  const text = String(value).trim()
+  const naiveDateTime = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2}))?$/)
+  if (naiveDateTime) return `${naiveDateTime[1]} ${naiveDateTime[2]}:${naiveDateTime[3] || '00'}`
+  const date = value instanceof Date ? value : new Date(text)
+  if (Number.isNaN(date.getTime())) return text
+  const parts = Object.fromEntries(SHANGHAI_DATE_TIME_FORMATTER.formatToParts(date).map(part => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`
 }
+const formatTimeRange = values => Array.isArray(values) ? values.map(formatTime).join(' ~ ') : formatTime(values)
 
 let detailRequestId = 0
 const selectEvent = async eventId => {
@@ -1280,10 +1380,12 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleChartResize)
   chartResizeObserver?.disconnect()
   chartResizeObserver = null
-  hourlyChartInstance?.dispose()
   deltaChartInstance?.dispose()
-  hourlyChartInstance = null
+  comparisonChartInstance?.dispose()
+  weatherChartInstance?.dispose()
   deltaChartInstance = null
+  comparisonChartInstance = null
+  weatherChartInstance = null
 })
 
 watch(() => props.initialEventId, value => { if (value && value !== selectedId.value) openDetail(value) })
@@ -1356,7 +1458,8 @@ loadEvents()
 .panel-header { margin-bottom: 16px; }.eyebrow { margin: 0 0 5px; color: #2f6bff; font-size: 10px; letter-spacing: .14em; }.panel-header h2, .detail-header h3 { margin: 0; }.description, .detail-header p, .muted { color: #66758a; font-size: 12px; }.header-actions { display: flex; gap: 8px; }.header-actions button, .back-button, .task-card { border: 1px solid #c9d5e3; border-radius: 8px; background: #fff; color: #2f6bff; cursor: pointer; padding: 8px 12px; }.header-actions .close { color: #526171; }
 .event-list-page, .event-detail { min-width: 0; border: 1px solid #dfe7f1; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(25, 42, 70, .04); }.event-list-page { overflow: hidden; }.list-toolbar { padding: 14px 16px; border-bottom: 1px solid #dfe7f1; color: #66758a; font-size: 12px; }.filter-row { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }.filter-row input, .filter-row select { height: 36px; min-width: 150px; border: 1px solid #c9d5e3; border-radius: 8px; padding: 0 10px; background: #fff; }.filter-row input { min-width: 240px; flex: 1; }.list-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px 16px; border-bottom: 1px solid #edf2f7; background: #fbfcfe; }.list-metrics div { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid #dfe7f1; border-radius: 10px; background: #fff; }.list-metrics span { color: #66758a; font-size: 12px; }.list-metrics strong { font-size: 20px; }.event-table-wrap { overflow: auto; }.event-table { width: 100%; min-width: 980px; border-collapse: collapse; table-layout: fixed; }.event-table th, .event-table td { padding: 12px 10px; border-bottom: 1px solid #edf2f7; vertical-align: middle; text-align: left; word-break: break-word; }.event-table th { color: #66758a; background: #fbfcfe; font-size: 12px; }.event-table td { color: #223040; font-size: 13px; }.event-table tbody tr { cursor: pointer; }.event-table tbody tr:hover { background: #f5f9ff; }.event-table th:nth-child(1) { width: 100px; }.event-table th:nth-child(2) { width: 190px; }.event-table th:nth-child(3) { width: 150px; }.event-table th:nth-child(4) { width: 140px; }.event-table th:nth-child(5) { width: 100px; }.event-table th:nth-child(6) { width: 90px; }.event-table th:nth-child(7) { width: 140px; }.event-table th:nth-child(8) { width: 170px; }.event-table th:nth-child(9) { width: 76px; }.event-name { display: grid; gap: 4px; }.event-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.event-name small { color: #66758a; font-size: 11px; }.table-chip { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; }.table-chip.pending { color: #526171; background: #edf2f7; }.table-chip.warning { color: #e07a1e; background: #fff2e2; }.table-chip.success { color: #1f9d65; background: #eaf9f1; }.detail-button { border: 1px solid #2f6bff; border-radius: 7px; color: #2f6bff; background: #fff; padding: 5px 10px; cursor: pointer; }.state { padding: 45px 10px; color: #66758a; text-align: center; }.state.error { color: #bd554c; }
 .event-detail { padding: 20px; }.detail-toolbar { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 14px; }.evidence-button { border: 1px solid #2f6bff; border-radius: 8px; color: #2f6bff; background: #fff; padding: 8px 12px; cursor: pointer; }.evidence-button:disabled { opacity: .5; cursor: not-allowed; }.detail-header { align-items: flex-start; padding-bottom: 16px; border-bottom: 1px solid #edf2f2; }.detail-header h3 { max-width: 600px; font-size: 20px; }.status-badge { color: #e07a1e; padding: 5px 8px; border-radius: 10px; background: #fff2e2; font-size: 11px; }.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }.facts div { padding: 10px; border-radius: 7px; background: #f5f9f9; }.facts dt { color: #80949a; font-size: 10px; }.facts dd { margin: 4px 0 0; color: #34545d; font-size: 12px; }.evidence-summary { margin-top: 16px; padding: 14px; border: 1px solid #e4ecf7; border-radius: 10px; background: #fbfdff; }.evidence-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }.evidence-sources span { padding: 4px 8px; border-radius: 999px; background: #eaf1ff; color: #2f6bff; font-size: 11px; }.evidence-gap { color: #bb7b1c; font-size: 12px; }.evidence-detail-board { margin-top: 16px; padding: 14px; border: 1px solid #e4ecf7; border-radius: 10px; background: #fff; }.evidence-source-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }.evidence-source-card { min-width: 0; padding: 12px; border: 1px solid #e2e9f2; border-radius: 8px; background: #fbfcfe; }.evidence-source-card header, .source-meta, .monitoring-counts { display: flex; align-items: center; justify-content: space-between; gap: 8px; }.evidence-source-card header { color: #34545d; font-size: 12px; }.source-summary, .source-empty { min-height: 30px; margin: 8px 0; color: #66758a; font-size: 11px; line-height: 1.5; }.source-meta, .monitoring-counts { color: #82909f; font-size: 10px; }.source-status { padding: 3px 7px; border-radius: 999px; font-size: 10px; }.source-status.ok { color: #1f8b5b; background: #e8f8ef; }.source-status.empty { color: #8a6b1c; background: #fff5d9; }.source-status.bad { color: #b6534a; background: #ffeded; }.monitoring-counts { margin-top: 8px; color: #2f6bff; }.source-table-wrap { margin-top: 8px; overflow: auto; }.source-table { width: 100%; border-collapse: collapse; font-size: 10px; }.source-table th, .source-table td { max-width: 150px; padding: 5px 6px; border-bottom: 1px solid #e8edf3; text-align: left; vertical-align: top; word-break: break-word; }.source-table th { color: #6b7b8c; background: #f4f7fb; font-weight: 500; }.source-table td { color: #405466; }.judgment, .task-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf2f2; }.section-title { color: #42616a; font-size: 12px; }.section-title span { color: #82969c; font-size: 10px; }.final-response { white-space: pre-wrap; line-height: 1.7; color: #334f57; font-size: 13px; }.task-card { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 8px; text-align: left; }.task-card span:first-child { display: grid; gap: 4px; }.task-card small { color: #83969c; }.task-arrow { white-space: nowrap; font-size: 11px; }.confirmation { margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf2f2; }.confirmation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }.confirmation input, .confirmation textarea { width: 100%; box-sizing: border-box; border: 1px solid #d9e6e7; border-radius: 6px; padding: 8px 9px; font: inherit; font-size: 12px; }.confirmation textarea { margin-top: 8px; resize: vertical; }.confirmation-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }.confirmation-actions button { border: 1px solid #acd5d4; border-radius: 6px; background: #effafa; color: #286e73; cursor: pointer; padding: 7px 10px; font-size: 11px; }.confirmation-actions button:disabled { cursor: not-allowed; opacity: .5; }.action-message { color: #5d7c82; font-size: 11px; }
-@media (max-width: 860px) { .smart-event-center { padding: 14px; }.list-toolbar { align-items: stretch; flex-direction: column; }.list-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.facts { grid-template-columns: 1fr; } }
+.comparison-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }.comparison-overview > div { padding: 9px; border: 1px solid #e2e9f2; background: #f7faff; }.comparison-overview span, .comparison-overview small { color: #78899a; font-size: 10px; }.comparison-overview strong { display: block; margin-top: 4px; color: #294b61; font-size: 13px; }.comparison-overview small { margin-left: 3px; }.comparison-analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 14px; }.comparison-analysis-panel { min-width: 0; overflow-x: auto; }.comparison-analysis-panel h4, .comparison-records-wrap h4 { margin: 0 0 6px; color: #42616a; font-size: 12px; }.comparison-delta-table { min-width: 100%; }.comparison-delta-table th, .comparison-delta-table td { text-align: right; white-space: nowrap; }.comparison-delta-table th:first-child, .comparison-delta-table td:first-child { text-align: left; }.comparison-records-wrap { margin-top: 14px; }.comparison-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }.comparison-pollutant-switch { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; background: #eef2f5; }.comparison-pollutant-switch button { min-width: 48px; border: 0; padding: 5px 8px; background: transparent; color: #607483; cursor: pointer; font-size: 10px; }.comparison-pollutant-switch button.active { background: #fff; color: #176b70; box-shadow: 0 1px 3px rgb(37 70 78 / 14%); font-weight: 600; }.comparison-chart-canvas { height: 360px; }
+@media (max-width: 860px) { .smart-event-center { padding: 14px; }.list-toolbar { align-items: stretch; flex-direction: column; }.list-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.facts { grid-template-columns: 1fr; }.comparison-analysis-grid { grid-template-columns: 1fr; } }
 
 /* Match the legacy AI judgment workbench: fixed index and continuously expanded evidence. */
 .evidence-detail-board { padding: 0; overflow: hidden; border: 1px solid #e5e9ef; border-radius: 4px; }
@@ -1379,21 +1482,13 @@ loadEvents()
 .source-summary { min-height: 0; margin: 0 0 8px; color: #66758a; font-size: 12px; line-height: 1.6; }
 .source-meta { display: flex; justify-content: space-between; gap: 12px; padding: 0 0 10px; color: #82909f; font-size: 11px; }
 .source-status { padding: 3px 8px; border-radius: 10px; font-size: 10px; }.source-status.ok { color: #1f8b5b; background: #e8f8ef; }.source-status.empty { color: #8a6b1c; background: #fff5d9; }.source-status.bad { color: #b6534a; background: #ffeded; }
-.monitoring-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); gap: 10px; margin-bottom: 14px; }
-.monitoring-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.monitoring-toolbar .monitoring-overview { margin-bottom: 0; }
-.view-toggle { display: flex; flex: 0 0 auto; gap: 6px; }
-.view-toggle button { border: 1px solid #d9d9d9; border-radius: 2px; background: #fff; color: #555; cursor: pointer; padding: 5px 12px; font-size: 12px; }
-.view-toggle button.active { border-color: #1684f8; background: #1684f8; color: #fff; }
 .minute-line-chart { margin-bottom: 16px; }
 .chart-canvas { width: 100%; height: 300px; }
+.weather-chart-canvas { height: 580px; }
 .regional-delta-block { margin-top: 16px; border-top: 1px dashed #e8e8e8; padding-top: 12px; }
 .regional-delta-block h4 { margin: 0 0 8px; color: #344054; font-size: 13px; font-weight: 600; }
 .delta-canvas { height: 260px; }
 .delta-legend { margin: 8px 0 0; color: #888; font-size: 11px; line-height: 1.6; }
-.monitoring-overview div { display: flex; align-items: baseline; gap: 5px; padding: 11px 12px; border: 1px solid #dfe5ec; border-left: 4px solid #1677ff; background: #f7faff; }
-.monitoring-overview span { flex: 1; color: #5f6b7a; font-size: 12px; }.monitoring-overview strong { color: #0958d9; font-size: 20px; }.monitoring-overview small { color: #82909f; }
-.data-subsection + .data-subsection { margin-top: 16px; }.data-subsection h4 { margin: 0 0 8px; color: #344054; font-size: 13px; font-weight: 600; }
 .source-table-wrap { width: 100%; overflow: auto; border: 1px solid #e5e9ef; }
 .source-table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: auto; }
 .source-table th, .source-table td { padding: 9px 10px; border-right: 1px solid #edf0f3; border-bottom: 1px solid #edf0f3; text-align: left; white-space: nowrap; font-size: 11px; }
@@ -1487,10 +1582,8 @@ loadEvents()
 .source-status.ok { color: #389e0d; background: #f6ffed; }
 .source-status.empty { color: #595959; background: #f0f0f0; }
 .source-status.bad { color: #d4380d; background: #fff2e8; }
-.data-subsection h4, .regional-delta-block h4 { margin-bottom: 8px; color: #333; font-size: 14px; font-weight: 600; line-height: 20px; }
+.regional-delta-block h4 { margin-bottom: 8px; color: #333; font-size: 14px; font-weight: 600; line-height: 20px; }
 .delta-legend { color: #888; font-size: 12px; }
-.monitoring-overview div { border: 0; border-left: 3px solid #1684f8; background: #f2f8fd; }
-.monitoring-overview strong { color: #1684f8; }
 .source-table-wrap { border-color: #d9e2eb; }
 .source-table th, .source-table td { height: 38px; font-size: 12px; box-sizing: border-box; border-color: #e8e8e8; text-align: center; }
 .source-table th { color: #333; background: #deefff; font-weight: 600; }.source-table td { color: #444; }
@@ -1526,6 +1619,13 @@ loadEvents()
 .merged-alarm-content .alarm-meta time { color: #888; font-size: 11px; }
 .merged-alarm-content .alarm-meta strong { color: #1684f8; font-size: 12px; font-weight: 500; }
 .merged-alarm-content p { margin: 0; color: #555; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.merged-alarm-content .alarm-group-badge { border-radius: 2px; padding: 1px 6px; background: #e6f7ff; color: #0958d9; font-size: 11px; line-height: 16px; }
+.merged-alarm-content .alarm-group-summary { margin: 2px 0 0; color: #444; }
+.merged-alarm-content .alarm-group-raw { margin-top: 6px; }
+.merged-alarm-content .alarm-group-raw summary { cursor: pointer; color: #1684f8; font-size: 11px; user-select: none; }
+.merged-alarm-content .alarm-group-raw summary:hover { text-decoration: underline; }
+.merged-alarm-content .alarm-group-raw ol { margin: 8px 0 0; padding-left: 16px; }
+.merged-alarm-content .alarm-group-raw li { margin-bottom: 8px; border-left: 2px solid #e8e8e8; padding-left: 8px; }
 .merged-alarm-content .source-empty { min-height: auto; margin: 0; color: #8c8c8c; font-size: 12px; }
 .delta-note { margin-top: 10px; border-left: 3px solid #fa8c16; padding: 8px 10px; background: #fff7e6; color: #d46b08; font-size: 12px; }
 .judgment-history { margin-top: 12px; border-top: 1px dashed #e8e8e8; padding-top: 10px; }

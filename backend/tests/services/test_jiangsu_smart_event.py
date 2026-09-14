@@ -833,6 +833,7 @@ async def test_feedback_starts_incremental_round_and_replaces_conclusion(tmp_pat
     context = dispatched.payload["continuity_context"]
     assert context["reason"] == "feedback"
     assert "现场确认喷淋" in context["feedback"]["feedback"]
+    assert scheduled.force_retries[-1] is True
 
     # 反馈增量研判完成后：上一轮结论进入历史，新结论替换，状态回到已反馈。
     service.apply_task_execution(
@@ -844,6 +845,67 @@ async def test_feedback_starts_incremental_round_and_replaces_conclusion(tmp_pat
     assert event["event_status"] == "已反馈"
     assert event["ai_judgment"]["final_response"] == "反馈复核后的更新结论。"
     assert event["judgment_history"][0]["final_response"] == "第一轮结论。"
+
+
+@pytest.mark.asyncio
+async def test_review_reject_auto_queues_incremental_rerun_with_human_baseline(tmp_path, monkeypatch):
+    scheduled = CapturingScheduledTaskService()
+    monkeypatch.setattr("app.scheduled_tasks.get_scheduled_task_service", lambda: scheduled)
+    # 退回钩子在 task_review 内部新建 service，走默认数据目录，须指向测试目录。
+    monkeypatch.setattr("app.services.jiangsu_smart_event.get_data_registry", lambda: tmp_path)
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path, evidence_fetcher=FakeEvidenceFetcher())
+    await service.sync_alarm_events(
+        start_time="2026-09-09T00:00:00+08:00", end_time="2026-09-09T23:59:59+08:00", dispatch_ai=False
+    )
+    first_card = service.list_tasks()[0]
+    service.apply_task_execution(
+        "alarm:1", build_jiangsu_smart_event_task(),
+        _finished_execution("第一轮结论：数据异常待研判。", execution_id="exec:1"),
+    )
+    from app.services.task_review import decide_review, load_review
+
+    event = service._load_store()["events"][0]
+    review = load_review(event["review_id"])
+
+    # 审核员退回修改：人工判定为外界环境影响。
+    decide_review(review["review_id"], {
+        "version": review["version"], "action": "reject", "decision": "reject",
+        "comment": "判定为外界环境影响，更新结论。", "data_impact": [],
+    }, {"user_id": "u1", "username": "reviewer"})
+
+    store = service._load_store()
+    event = store["events"][0]
+    assert load_review(event["review_id"])["status"] == "rejected"
+    assert event["event_status"] == "待复核"
+    # 退回自动排队增量研判卡：复用上一轮会话，携带人工判定作为权威基准。
+    rerun = store["tasks"][-1]
+    assert rerun["status"] == "待执行"
+    assert rerun["conversation_id"] == first_card["conversation_id"]
+    assert rerun["continuity"]["reason"] == "feedback"
+    assert rerun["continuity"]["feedback"]["source"] == "review_reject"
+    assert rerun["continuity"]["feedback"]["feedback"] == "判定为外界环境影响，更新结论。"
+    assert rerun["continuity"]["feedback"]["human_decision"]["decision"] == "reject"
+    assert event["operation_records"][-1]["action"] == "event_feedback"
+    assert event["operation_records"][-1]["details"]["source"] == "review_reject"
+
+    # 派发时的增量指令以人工判定为权威基准。
+    await service._dispatch_pending_tasks(service._load_store(event_ids={"alarm:1"}), event_ids={"alarm:1"})
+    dispatched = scheduled.events[-1][0]
+    context = dispatched.payload["continuity_context"]
+    assert context["feedback"]["source"] == "review_reject"
+    assert context["feedback"]["human_decision"]["comment"] == "判定为外界环境影响，更新结论。"
+    assert "人工判定意见是权威基准" in context["instruction"]
+
+    # 增量轮完成后：新结论按人工基准替换旧结论，事件回到待复核等待再次审核。
+    service.apply_task_execution(
+        "alarm:1", build_jiangsu_smart_event_task(),
+        _finished_execution("按人工判定更新：疑似外界环境影响。", execution_id="exec:reject-1"),
+    )
+    event = service._load_store()["events"][0]
+    assert event["event_status"] == "待复核"
+    assert event["ai_judgment"]["final_response"] == "按人工判定更新：疑似外界环境影响。"
+    assert event["judgment_history"][0]["final_response"] == "第一轮结论：数据异常待研判。"
+    assert load_review(event["review_id"])["status"] == "pending_review"
 
 
 @pytest.mark.asyncio
@@ -1602,6 +1664,59 @@ async def test_list_pages_are_small_and_filter_before_pagination(tmp_path, monke
     assert filtered["filters"]["types"] == ["数据", "运维"]
     detail = await service.get_event("21", **window)
     assert detail["evidence_package"]["large"] == "x" * 10000
+
+
+@pytest.mark.asyncio
+async def test_get_event_hydrates_stub_evidence_package_from_file(tmp_path, monkeypatch):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    event = normalize_alarm_event({"id": 9, "code": "3011A", "alarmtime": "2026-09-13 08:00:00"})
+    event["evidence_package"] = {
+        "event_id": event["event_id"],
+        "status": "partial",
+        "collected_at": "2026-09-13T08:05:00+08:00",
+        "gaps": [],
+        "source_status": {"monitoring": "success"},
+        "sources": {"monitoring": {"status": "success", "data": {"rows": [1, 2, 3]}}},
+    }
+    service._upsert_events([event])
+
+    stored = service._load_store(event_ids={event["event_id"]})["events"][0]
+    # 模拟 DB 主模式落库：重载荷只留在本地证据文件，事件里仅剩轻量 stub
+    service.packages.write_evidence_only(stored)
+    stub = stored["evidence_package"]
+    assert "sources" not in stub
+    assert stub.get("persisted_path")
+    monkeypatch.setattr(service, "_load_store", lambda **kwargs: {"events": [stored], "tasks": []})
+
+    detail = await service.get_event(event["event_id"])
+
+    assert detail["evidence_package"]["sources"]["monitoring"]["data"]["rows"] == [1, 2, 3]
+    assert detail["evidence_package"]["status"] == "partial"
+    assert detail["evidence_package"]["persisted_path"] == stub["persisted_path"]
+
+
+@pytest.mark.asyncio
+async def test_get_event_keeps_stub_when_evidence_file_missing(tmp_path, monkeypatch):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    event = normalize_alarm_event({"id": 10, "code": "3011A", "alarmtime": "2026-09-13 08:00:00"})
+    event["evidence_package"] = {
+        "event_id": event["event_id"],
+        "status": "partial",
+        "sources": {"monitoring": {"status": "success"}},
+    }
+    service._upsert_events([event])
+
+    stored = service._load_store(event_ids={event["event_id"]})["events"][0]
+    service.packages.write_evidence_only(stored)
+    from app.utils.path_config import resolve_agent_path
+
+    resolve_agent_path(stored["evidence_package"]["persisted_path"]).unlink()
+    monkeypatch.setattr(service, "_load_store", lambda **kwargs: {"events": [stored], "tasks": []})
+
+    detail = await service.get_event(event["event_id"])
+
+    assert "sources" not in detail["evidence_package"]
+    assert detail["evidence_package"]["status"] == "partial"
 
 
 @pytest.mark.asyncio

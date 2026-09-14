@@ -3,12 +3,13 @@ import pytest
 from app.fetchers.jiangsu_smart_event_evidence import (
     JiangsuSmartEventEvidenceFetcher,
     _compact_result,
+    _filter_station_alarm_noise,
     _instrument_pollutant_codes,
     _profile,
     _qc_severe_only,
     _target_pollutants,
 )
-from app.tools.jiangsu.legacy_evidence import JiangsuLegacyEvidenceAdapter
+from app.tools.jiangsu.legacy_evidence import JiangsuLegacyEvidenceAdapter, filter_diagnostic_alarm_rows
 
 
 def test_event_profile_routes_alarm_types_to_required_sources():
@@ -114,6 +115,138 @@ def test_qc_severe_only_keeps_non_qualified_records():
     assert filtered["metadata"]["qc_severe_only"] is True
     assert filtered["metadata"]["total_record_count"] == 3
     assert "1/3" in filtered["summary"]
+
+
+def test_diagnostic_alarm_filter_removes_software_resource_noise():
+    rows = [
+        {"subCatalog": 202, "descriptionDE": "【系统空闲物理内存比率低】数值：9.75 %"},
+        {"subCatalog": 622, "descriptionDE": "数据库被其他软件打开"},
+        {"subCatalog": 231, "descriptionDE": "【数据库有高CPU占用】数值：2750"},
+        {"subCatalog": 212, "descriptionDE": "【软件物理内存占用高（加权均值）】数值：253.68 MB"},
+        {"subCatalog": 304, "descriptionDE": "执行数据库语句时遇到错误"},
+        {"subCatalog": 312, "descriptionDE": "【软件最近错误日志较多】数值：102 项"},
+        {"subCatalog": 333, "descriptionDE": "自动更新访问失败"},
+        {"subCatalog": 321, "descriptionDE": "【数据重发表堆积】数值：56485 项"},
+        {"subCatalog": 331, "descriptionDE": "数据上报到平台接收端失败"},
+        {"subCatalog": 335, "descriptionDE": "网络异常：数据传输通讯失败"},
+        {"subCatalog": 1251, "descriptionDE": "总管静压突变"},
+    ]
+    kept, stats = filter_diagnostic_alarm_rows(rows)
+    assert [row["subCatalog"] for row in kept] == [321, 331, 335, 1251]
+    assert stats == {"source_record_count": 11, "diagnostic_record_count": 4, "suppressed_record_count": 7}
+
+
+@pytest.mark.asyncio
+async def test_acquisition_alarm_source_returns_only_diagnostic_rows(monkeypatch):
+    adapter = JiangsuLegacyEvidenceAdapter()
+
+    async def fake_get(path, params):
+        return {"result": [
+            {"subCatalog": 622, "descriptionDE": "数据库被其他软件打开"},
+            {"subCatalog": 706, "descriptionDE": "PM2.5监测设备离线"},
+        ]}
+
+    monkeypatch.setattr(adapter, "_get_retry", fake_get)
+    result = await adapter.acquisition_alarms(
+        station_code="3011A", start_time="2026-09-14 00:00:00", end_time="2026-09-14 23:59:59"
+    )
+    assert result["record_count"] == 1
+    assert result["data"][0]["subCatalog"] == 706
+    assert result["metadata"]["alarm_filter"]["suppressed_record_count"] == 1
+
+
+def _station_alarm_result_with_noise():
+    return {
+        "success": True,
+        "status": "success",
+        "summary": "站房告警查询完成：并发查询 1 个站点，返回 5 条告警记录。",
+        "metadata": {"record_count": 5},
+        "data": [{
+            "station": {"station_code": "3011A"},
+            "result": {"alarmLogs": [
+                {"AlarmType": 231, "Description": "【数据库有高CPU占用】数值：2641"},
+                {"AlarmType": 212, "Description": "【软件物理内存占用高（加权均值）】数值：567.23 MB"},
+                {"AlarmType": 622, "Description": "从数据库执行批量插入时遇到错误"},
+                # catalog 缺失时按文案兜底过滤。
+                {"AlarmType": 0, "Description": "【数据库有高IO占用】数值：36381"},
+                {"AlarmType": 750, "Description": "SO2 分析仪状态异常"},
+            ]},
+            "success": True,
+        }],
+    }
+
+
+def test_station_alarm_noise_filter_removes_self_monitoring_rows():
+    filtered = _filter_station_alarm_noise(_station_alarm_result_with_noise())
+    rows = filtered["data"][0]["result"]["alarmLogs"]
+    assert [row["AlarmType"] for row in rows] == [750]
+    assert filtered["metadata"]["record_count"] == 1
+    assert filtered["metadata"]["alarm_filter"] == {
+        "source_record_count": 5,
+        "diagnostic_record_count": 1,
+        "suppressed_record_count": 4,
+    }
+    assert "过滤 4 条" in filtered["summary"]
+
+
+def test_station_alarm_noise_filter_keeps_result_without_suppression():
+    result = {
+        "success": True,
+        "status": "empty",
+        "summary": "站房告警查询完成：并发查询 1 个站点，返回 0 条告警记录。",
+        "metadata": {"record_count": 0},
+        "data": [{"station": {"station_code": "3011A"}, "result": {"alarmLogs": []}, "success": True}],
+    }
+    assert _filter_station_alarm_noise(result) is result
+    failed = {"success": False, "status": "failed", "summary": "站房告警查询失败", "data": []}
+    assert _filter_station_alarm_noise(failed) is failed
+
+
+@pytest.mark.asyncio
+async def test_fetch_wires_station_alarm_noise_filter(monkeypatch):
+    class StubStationAlarmTool:
+        async def execute(self, **kwargs):
+            return _station_alarm_result_with_noise()
+
+    class StubLegacyAdapter:
+        async def acquisition_alarms(self, **kwargs):
+            return {"success": True, "status": "empty", "summary": "数采报警查询完成。", "data": []}
+
+        async def door_records(self, **kwargs):
+            return {"success": True, "status": "empty", "summary": "门禁记录查询完成。", "data": []}
+
+    class StubQcTool:
+        async def execute(self, **kwargs):
+            return {"success": True, "status": "empty", "summary": "质控任务查询完成。", "data": []}
+
+    async def stub_source(*args, **kwargs):
+        return {"success": True, "status": "empty", "summary": "ok", "data": []}
+
+    fetcher = JiangsuSmartEventEvidenceFetcher(
+        station_alarm_tool=StubStationAlarmTool(),
+        legacy_adapter=StubLegacyAdapter(),
+        qc_history_tool=StubQcTool(),
+        weather_fetcher=stub_source,
+    )
+    monkeypatch.setattr(fetcher, "_monitoring", stub_source)
+    monkeypatch.setattr(fetcher, "_instrument_status", stub_source)
+    monkeypatch.setattr(fetcher, "_environment", stub_source)
+    monkeypatch.setattr(fetcher, "_comparison", stub_source)
+    monkeypatch.setattr(fetcher, "_compliance", stub_source)
+
+    package = await fetcher.fetch({
+        "event_id": "alarm:1",
+        "site_id": "3011A",
+        "site_name": "测试站",
+        "event_trigger_type": "jiangsu.smart_event.alarm.power",
+        "event_start_time": "2026-09-14T17:00:00+08:00",
+        "event_end_time": "2026-09-14T22:00:00+08:00",
+    })
+
+    source = package["sources"]["station_alarm"]
+    rows = source["data"][0]["result"]["alarmLogs"]
+    assert [row["AlarmType"] for row in rows] == [750]
+    assert source["metadata"]["alarm_filter"]["suppressed_record_count"] == 4
 
 
 def test_power_environment_alarm_classification():
@@ -239,6 +372,28 @@ class StubEnvironmentTool:
 
 
 @pytest.mark.asyncio
+async def test_compliance_queries_all_work_order_types():
+    class WorkOrderTool:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"status": "empty", "success": True, "data": []}
+
+    tool = WorkOrderTool()
+    fetcher = JiangsuSmartEventEvidenceFetcher(work_order_tool=tool)
+    result = await fetcher._compliance(
+        "3011A", {"start": "2026-09-14 00:00:00", "end": "2026-09-14 23:59:59"}
+    )
+
+    assert result["status"] == "empty"
+    assert tool.calls[0]["order_types"] == []
+    assert tool.calls[0]["station_codes"] == ["3011A"]
+    assert tool.calls[0]["workflow_statuses"] == ["ToAssign", "ToAccept", "Doing", "Finish"]
+
+
+@pytest.mark.asyncio
 async def test_resolve_city_falls_back_to_station_directory():
     directory = [{"stationCode": "3011A", "cityName": "南通市"}]
     fetcher = JiangsuSmartEventEvidenceFetcher(station_data_tool=StubStationDataTool(directory, {}))
@@ -318,8 +473,14 @@ async def test_comparison_computes_regional_deltas_for_nearby_and_city_rest():
             {"stationCode": "A", "timePoint": "2026-09-09 11:00:00", "pM10": 110, "sO2": 12},
             {"stationCode": "A", "timePoint": "2026-09-09 12:00:00", "pM10": 999, "sO2": 99},
         ],
-        "B": [{"stationCode": "B", "timePoint": "2026-09-09 10:00:00", "pM10": 120, "sO2": 11}],
-        "C": [{"stationCode": "C", "timePoint": "2026-09-09 10:00:00", "pM10": 140, "sO2": 9}],
+        "B": [
+            {"stationCode": "B", "timePoint": "2026-09-09 10:00:00", "pM10": 100, "sO2": 11},
+            {"stationCode": "B", "timePoint": "2026-09-09 11:00:00", "pM10": 140, "sO2": 11},
+        ],
+        "C": [
+            {"stationCode": "C", "timePoint": "2026-09-09 10:00:00", "pM10": 140, "sO2": 9},
+            {"stationCode": "C", "timePoint": "2026-09-09 11:00:00", "pM10": 140, "sO2": 9},
+        ],
     }
     fetcher = JiangsuSmartEventEvidenceFetcher(
         station_data_tool=StubStationDataTool(directory, records_by_code)
@@ -347,8 +508,15 @@ async def test_comparison_computes_regional_deltas_for_nearby_and_city_rest():
     assert deltas["nearby_station_delta_pct"]["PM10"] == -16.7
     assert deltas["same_city_delta"]["PM10"] == -30.0
     assert deltas["same_city_delta_pct"]["PM10"] == -23.1
+    assert deltas["trend_comparison"]["PM10"]["target_direction"] == "上升"
+    assert deltas["trend_comparison"]["PM10"]["nearby_direction"] == "上升"
+    assert deltas["trend_comparison"]["PM10"]["direction_consistent"] is True
+    assert deltas["trend_comparison"]["PM10"]["consistency"] == "一致"
+    assert deltas["trend_comparison"]["PM10"]["pearson_correlation"] is None
     # 展示数据保留同区站 + 本站的原始记录。
-    assert result["record_count"] == 4
+    assert result["record_count"] == 5
+    assert {row["stationCode"] for row in result["data"]} == {"A", "B"}
+    assert {row["stationName"] for row in result["data"]} == {"本站", "邻站"}
 
 
 def test_target_pollutants_reads_all_merged_alarm_contents():

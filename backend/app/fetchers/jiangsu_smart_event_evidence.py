@@ -29,7 +29,7 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuStationAlarmLogsTool,
     JiangsuStationEnvironmentHistoryTool,
 )
-from app.tools.jiangsu.legacy_evidence import JiangsuLegacyEvidenceAdapter
+from app.tools.jiangsu.legacy_evidence import JiangsuLegacyEvidenceAdapter, filter_diagnostic_alarm_rows
 from app.tools.jiangsu.review_station_selection import select_district_stations
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
 from app.tools.jiangsu.station_type import station_type_from_row
@@ -148,6 +148,89 @@ def _pollutant_means(records: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
+def _hourly_pollutant_series(records: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    """Build timestamp-aligned pollutant means for trend comparison."""
+    buckets: dict[str, dict[str, list[float]]] = {}
+    for record in records:
+        moment = _record_time(record)
+        if moment is None:
+            continue
+        timestamp = moment.strftime("%Y-%m-%dT%H:00:00")
+        values = buckets.setdefault(timestamp, {})
+        for canonical, aliases in POLLUTANT_FIELDS:
+            for alias in aliases:
+                if alias not in record:
+                    continue
+                value = _numeric(record.get(alias))
+                if value is not None:
+                    values.setdefault(canonical, []).append(value)
+                break
+    return {
+        timestamp: {
+            pollutant: round(sum(values) / len(values), 3)
+            for pollutant, values in row.items() if values
+        }
+        for timestamp, row in buckets.items()
+    }
+
+
+def _trend_direction(values: list[float]) -> str:
+    if len(values) < 2:
+        return "数据不足"
+    change = values[-1] - values[0]
+    threshold = max(0.001, sum(abs(value) for value in values) / len(values) * 0.05)
+    if change > threshold:
+        return "上升"
+    if change < -threshold:
+        return "下降"
+    return "基本稳定"
+
+
+def _build_trend_comparison(
+    target_records: list[dict[str, Any]], peer_records: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    target = _hourly_pollutant_series(target_records)
+    peer = _hourly_pollutant_series(peer_records)
+    result: dict[str, dict[str, Any]] = {}
+    for canonical, _ in POLLUTANT_FIELDS:
+        common = sorted(set(target) & set(peer))
+        target_values = [target[t][canonical] for t in common if canonical in target[t] and canonical in peer[t]]
+        peer_values = [peer[t][canonical] for t in common if canonical in target[t] and canonical in peer[t]]
+        target_direction = _trend_direction(target_values)
+        peer_direction = _trend_direction(peer_values)
+        correlation: float | None = None
+        if len(target_values) >= 3:
+            target_mean = sum(target_values) / len(target_values)
+            peer_mean = sum(peer_values) / len(peer_values)
+            numerator = sum(
+                (mine - target_mean) * (other - peer_mean)
+                for mine, other in zip(target_values, peer_values)
+            )
+            target_scale = sum((value - target_mean) ** 2 for value in target_values) ** 0.5
+            peer_scale = sum((value - peer_mean) ** 2 for value in peer_values) ** 0.5
+            if target_scale and peer_scale:
+                correlation = round(numerator / (target_scale * peer_scale), 3)
+        if len(target_values) < 2:
+            consistency = "数据不足"
+        elif correlation is None:
+            consistency = "一致" if target_direction == peer_direction else "不一致"
+        elif correlation >= 0.7:
+            consistency = "一致"
+        elif correlation >= 0.3:
+            consistency = "部分一致"
+        else:
+            consistency = "不一致"
+        result[canonical] = {
+            "target_direction": target_direction,
+            "nearby_direction": peer_direction,
+            "direction_consistent": consistency == "一致",
+            "consistency": consistency,
+            "pearson_correlation": correlation,
+            "aligned_hours": len(target_values),
+        }
+    return result
+
+
 def _pollutant_in_text(text: str, alias: str) -> bool:
     return (
         re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", text, re.IGNORECASE)
@@ -218,6 +301,38 @@ def _power_environment_alarms(result: Any) -> list[dict[str, Any]]:
             if isinstance(row, dict) and _is_power_environment_alarm(row):
                 rows.append(row)
     return rows
+
+
+def _filter_station_alarm_noise(result: Any) -> Any:
+    """站房设备告警与数采报警同源混入自监控噪声（数据库/进程资源类），入包前复用同一诊断过滤器剔除。"""
+    if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+        return result
+    source_count = 0
+    kept_count = 0
+    for item in result["data"]:
+        if not isinstance(item, dict) or not isinstance(item.get("result"), dict):
+            continue
+        inner = item["result"]
+        rows, stats = filter_diagnostic_alarm_rows(inner.get("alarmLogs") or [])
+        inner["alarmLogs"] = rows
+        source_count += stats["source_record_count"]
+        kept_count += stats["diagnostic_record_count"]
+    suppressed = source_count - kept_count
+    if not suppressed:
+        return result
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+    metadata["record_count"] = kept_count
+    metadata["alarm_filter"] = {
+        "source_record_count": source_count,
+        "diagnostic_record_count": kept_count,
+        "suppressed_record_count": suppressed,
+    }
+    result["metadata"] = metadata
+    result["summary"] = (
+        f"站房告警查询完成：保留 {kept_count} 条诊断告警，"
+        f"过滤 {suppressed} 条非诊断性系统告警。"
+    )
+    return result
 
 
 def _qc_record_is_severe(row: Any) -> bool:
@@ -444,6 +559,22 @@ class JiangsuSmartEventEvidenceFetcher:
             "data": {"station_hour": hour},
         }
 
+    async def _compliance(self, station_code: str, day_window: dict[str, str]) -> dict[str, Any]:
+        """Fetch every work-order type; an empty type list removes the platform filter."""
+        return await self._safe(
+            "合规工单",
+            self.work_order_tool.execute(
+                station_codes=[station_code],
+                order_types=[],
+                start_time=day_window["start"],
+                end_time=day_window["end"],
+                workflow_statuses=["ToAssign", "ToAccept", "Doing", "Finish"],
+                order_statuses=["Wait", "Doing", "Finish"],
+                fetch_all=True,
+                page_size=50,
+            ),
+        )
+
     async def _fetch_hour_records(
         self, codes: list[str], window: dict[str, Any]
     ) -> list[dict[str, Any]]:
@@ -455,7 +586,13 @@ class JiangsuSmartEventEvidenceFetcher:
             data_type=0,
             station_type="省控",
         )
-        return [item for item in records if isinstance(item, dict)]
+        rows = [item for item in records if isinstance(item, dict)]
+        # The hour-data endpoint omits station identity when querying a
+        # single station. The requested code is authoritative in that case.
+        if len(codes) == 1:
+            for row in rows:
+                row.setdefault("stationCode", codes[0])
+        return rows
 
     async def _city_rest_summary(
         self,
@@ -531,6 +668,7 @@ class JiangsuSmartEventEvidenceFetcher:
 
         nearby_delta, nearby_pct = build(peer_means)
         city_delta, city_pct = build(city_means)
+        nearby_trend = _build_trend_comparison(target_records, peer_records)
         peer_codes = {
             str(record.get("stationCode") or record.get("code") or "").strip()
             for record in peer_records
@@ -549,6 +687,8 @@ class JiangsuSmartEventEvidenceFetcher:
             "nearby_station_delta_pct": nearby_pct,
             "same_city_delta": city_delta,
             "same_city_delta_pct": city_pct,
+            "trend_comparison": nearby_trend,
+            "trend_window": dict(window["day"]),
         }
 
     async def _comparison(
@@ -569,11 +709,24 @@ class JiangsuSmartEventEvidenceFetcher:
             peer_codes = [code for code in codes if code != station_code]
             target_task = self._fetch_hour_records([station_code], window)
             if peer_codes:
-                target_records, peer_records = await asyncio.gather(
-                    target_task, self._fetch_hour_records(peer_codes, window)
-                )
+                peer_tasks = [self._fetch_hour_records([code], window) for code in peer_codes]
+                target_records, *peer_batches = await asyncio.gather(target_task, *peer_tasks)
+                peer_records = [row for batch in peer_batches for row in batch]
             else:
                 target_records, peer_records = await target_task, []
+            station_names = {
+                str(row.get("stationCode") or "").strip(): str(
+                    row.get("positionName") or row.get("stationName") or row.get("station_code") or ""
+                ).strip()
+                for row in directory
+                if isinstance(row, dict) and str(row.get("stationCode") or "").strip()
+            }
+            station_names.setdefault(station_code, str(event.get("site_name") or station_code))
+            for row in [*target_records, *peer_records]:
+                code = str(row.get("stationCode") or row.get("code") or "").strip()
+                if code:
+                    row.setdefault("stationCode", code)
+                    row.setdefault("stationName", station_names.get(code) or code)
             city_rest = await self._city_rest_summary(event, station_code, directory, window)
             regional_deltas = self._build_regional_deltas(
                 window, target_records, peer_records, city_rest
@@ -798,7 +951,11 @@ class JiangsuSmartEventEvidenceFetcher:
                 )
             )
             if "station_alarm" in fetch_set:
-                sources["station_alarm"] = station_alarm_task
+
+                async def station_alarm_source() -> dict[str, Any]:
+                    return _filter_station_alarm_noise(await station_alarm_task)
+
+                sources["station_alarm"] = station_alarm_source()
         if "monitoring" in fetch_set:
             sources["monitoring"] = self._monitoring(station_code, windows)
         if "acquisition_alarm" in fetch_set:
@@ -822,18 +979,7 @@ class JiangsuSmartEventEvidenceFetcher:
                 ),
             )
         if "compliance" in fetch_set:
-            sources["compliance"] = self._safe(
-                "合规工单",
-                self.work_order_tool.execute(
-                    station_codes=[station_code],
-                    start_time=day_window["start"],
-                    end_time=day_window["end"],
-                    workflow_statuses=["ToAssign", "ToAccept", "Doing", "Finish"],
-                    order_statuses=["Wait", "Doing", "Finish"],
-                    fetch_all=True,
-                    page_size=50,
-                ),
-            )
+            sources["compliance"] = self._compliance(station_code, day_window)
         if "qc_history" in fetch_set:
 
             async def qc_history() -> dict[str, Any]:

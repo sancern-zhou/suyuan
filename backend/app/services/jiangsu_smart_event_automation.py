@@ -1,6 +1,7 @@
 """Durable Jiangsu event assessment, priority dispatch and delayed-clue polling."""
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import hashlib
 import json
@@ -110,7 +111,7 @@ class JiangsuSmartEventAutomation:
     async def _tick(self, now):
         service = self.service
         config = service.load_config()
-        store = service._load_store()
+        store = await service.aload_store()
         state = store.get("automation") or {}
         last_scan = parse_time(state.get("last_scan_at"))
         retry_scan = parse_time(state.get("scan_retry_at"))
@@ -136,7 +137,7 @@ class JiangsuSmartEventAutomation:
                         date=day, actor=actor, fetch_evidence=False))
                 except Exception as exc:
                     errors.append(f"合规扫描 {day}：{exc}")
-            store = service._load_store()
+            store = await service.aload_store()
             state = store.setdefault("automation", {})
             state["scan_window"] = [start.isoformat(), now.isoformat()]
             state["scan_errors"] = errors
@@ -146,10 +147,10 @@ class JiangsuSmartEventAutomation:
             else:
                 state["last_scan_at"] = now.isoformat()
                 state.pop("scan_retry_at", None)
-            service._save_store(store)
+            await service.asave_store(store)
 
         # Refresh unchanged, open events too: delayed monitoring is not a new alarm ID.
-        store = service._load_store()
+        store = await service.aload_store()
         cutoff = now - timedelta(hours=config["rescan_lookback_hours"])
         candidates = []
         for event in store.get("events", []):
@@ -183,8 +184,8 @@ class JiangsuSmartEventAutomation:
         task = task_service.get_task(SMART_EVENT_TASK_ID)
         if task is None or not task.enabled:
             return {"status": "task_disabled", "dispatched": 0}
-        self._recover_running(task_service, task, now)
-        store = service._load_store()
+        await asyncio.to_thread(self._recover_running, task_service, task, now)
+        store = await service.aload_store()
         events = {event["event_id"]: event for event in store.get("events", [])}
         cards = store.setdefault("tasks", [])
         for event in events.values():
@@ -198,7 +199,7 @@ class JiangsuSmartEventAutomation:
                 base = next((card for card in reversed(related) if card.get("status") == "已完成"), None)
                 if not service._bucket_judged(event) or event.get("pending_delta"):
                     cards.append(service._create_ai_task(event, base_task=base, reason="delayed_evidence"))
-        service._save_store(store)
+        await service.asave_store(store)
         active = sum(card.get("status") == "执行中" and not _is_archived(events.get(card.get("event_id"), {})) for card in cards)
         slots = max(0, config["ai_max_concurrency"] - active)
         pending = [card for card in cards if card.get("task_type") == "ai_judgment"
@@ -215,7 +216,7 @@ class JiangsuSmartEventAutomation:
             event_id = queued["event_id"]
             if event_id in dispatched_events:
                 continue
-            latest = service._load_store(event_ids={event_id})
+            latest = await service.aload_store(event_ids={event_id})
             event = service._stored_event(latest, event_id)
             if event is None or _is_archived(event) or service._needs_event_evidence(event):
                 continue
@@ -225,25 +226,25 @@ class JiangsuSmartEventAutomation:
             card = next(card for card in related if card["task_id"] == queued["task_id"])
             if int(card.get("automatic_attempts") or 0) >= 1 + config["ai_max_retries"]:
                 card["retry_exhausted"] = True
-                service._save_store(latest)
+                await service.asave_store(latest)
                 continue
             card["automatic_attempts"] = int(card.get("automatic_attempts") or 0) + 1
             card["last_attempt_at"] = now.isoformat()
             card["status"] = "待调度"
             card["next_retry_at"] = None
             card["priority"] = event.get("ai_task_priority", "normal")
-            service._save_store(latest)
+            await service.asave_store(latest)
             try:
                 result = await service._dispatch_pending_tasks(
-                    service._load_store(event_ids={event_id}), event_ids={event_id},
+                    await service.aload_store(event_ids={event_id}), event_ids={event_id},
                     task_ids={card["task_id"]}, force_retry=True)
             except Exception as exc:
                 result = [{"event_id": event_id, "status": "failed", "error": str(exc)}]
-            latest = service._load_store(event_ids={event_id})
+            latest = await service.aload_store(event_ids={event_id})
             latest_card = next(item for item in latest["tasks"] if item["task_id"] == card["task_id"])
             if latest_card.get("status") in {"待执行", "待调度"}:
                 schedule_retry(latest_card, config, error=str(result), now=now)
-                service._save_store(latest)
+                await service.asave_store(latest)
             outcomes.extend(result)
             dispatched_events.add(event_id)
             slots -= 1

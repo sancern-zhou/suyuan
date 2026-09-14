@@ -1,0 +1,30 @@
+{
+  "task_id": "jiangsu_backup_quarterly_report",
+  "name": "江苏备机合规与使用季度分析",
+  "description": "按月汇总季度故障工单并关联设备更换记录或台账useDate/stopDate，分析备机48小时启用、30天连续使用和站点频繁更换；生命周期数据未接入前不发布业务结论",
+  "execution_mode": "custom",
+  "tool_names": [
+    "jiangsu_fetch_fault_work_orders",
+    "jiangsu_fetch_fault_work_order_detail",
+    "execute_python",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
+    "publish_report"
+  ],
+  "skill_id": "backup-quarterly-analysis",
+  "schedule_type": "quarterly_custom",
+  "day_of_month": 5,
+  "hour": 8,
+  "minute": 0,
+  "enabled": false,
+  "prompt": "统计上一个季度备机使用情况。必须将季度拆成3个自然月调用故障工单接口，固定传order_types=[Fault]、workflow_statuses=[Finish]、order_statuses=[Finish]、fetch_all=true，记录每月total_count、returned_records、source_data_complete，按工单号/唯一编码去重合并；禁止直接查询完整季度时间段。合并后统计月度数据、故障站点TOP和接口完整性。再通过已注册的设备台账/生命周期取数能力关联useDate、stopDate、is_backup、backup_role、originalMachine、masterSlaveNum；若没有设备台账工具或关联失败，必须明确记录生命周期数据待接入，不得声称完成备机合规分析。使用 execute_python 调用 app.services.jiangsu_operations_reports.build_backup_quarterly_report 完成48小时、30天和站点频次计算，禁止在脚本或提示词中重新实现统计规则。正式报告必须包含执行摘要、季度取数概况、故障基础分布、备机启用时效、连续运行超期、站点更换频次、无法判定记录、数据质量和下期动作。只有三个月均无工单时才生成以数据门禁为主的报告；存在故障工单但生命周期未关联时，保留真实故障统计并将备机指标标为待关联，不得写成0个超时/超期或无异常。stopDate为空时按报告截止日计算并标记仍在使用；备案只豁免违规判定，不得删除原始记录。保存每月元数据、去重规则、字段覆盖率和无法判定原因。严格执行 create_report_package、render_report_package(format=docx)、validate_report_package(require_html=true, require_docx=true)、publish_report，校验失败不得发布。",
+  "timeout_seconds": 1800,
+  "created_by": "project-default",
+  "owner_user_id": "system",
+  "owner_username": "jiangsu-backup-report-agent",
+  "owner_display_name": "备机分析智能体",
+  "tags": ["江苏", "备机", "季度分析", "数据门禁", "只读"],
+  "workspace_entry": {"enabled": true, "title": "备机季度分析"},
+  "history_learning": {"enabled": true, "max_recent_cases": 2, "memory_char_budget": 4000, "active_retrieval_enabled": false}
+}

@@ -128,6 +128,47 @@ async def test_persists_runtime_transcript_as_owned_web_conversation():
 
 
 @pytest.mark.asyncio
+async def test_event_agent_mode_survives_conversation_persistence():
+    manager = FakeSessionManager()
+    catalog = FakeCatalog()
+    persistence = ScheduledTaskConversationPersistence(
+        session_manager=manager,
+        catalog=catalog,
+    )
+    execution = TaskExecution(
+        execution_id="exec-event-1",
+        task_id="task-1",
+        task_name="告警分析",
+        session_id="scheduled-event-session",
+        status="running",
+        total_steps=1,
+        event_attributes={"agent_mode": "smart_event_instrument"},
+    )
+
+    await persistence.create_running_agent_session(
+        task=task(),
+        execution=execution,
+        display_history=[{"type": "user", "content": "事件研判"}],
+    )
+    await persistence.publish_conversation(task=task(), execution=execution)
+
+    assert manager.existing.metadata["mode"] == "smart_event_instrument"
+    assert manager.existing.metadata["scheduled_task_context"] == {
+        "task_id": "task-1",
+        "task_name": "告警分析",
+        "execution_id": "exec-event-1",
+        "history_learning": task().history_learning.model_dump(mode="json"),
+        "result_requirements": [],
+        "model_tier": task().model_tier,
+        "allow_archived_review_reopen": task().allow_archived_review_reopen,
+        "review_subject_bound": False,
+        "expected_subject_id": None,
+    }
+    assert manager.existing.metadata["scheduled_task_tools"] == ["submit_task_review"]
+    assert catalog.registrations[0]["mode"] == "smart_event_instrument"
+
+
+@pytest.mark.asyncio
 async def test_publishes_running_transcript_before_terminal_execution():
     manager = FakeSessionManager()
     catalog = FakeCatalog()

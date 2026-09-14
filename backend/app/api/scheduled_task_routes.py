@@ -5,8 +5,10 @@
 import math
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from app.auth.dependencies import require_current_user
@@ -37,6 +39,7 @@ from app.scheduled_tasks.custom_agent import (
     validate_custom_tool_names,
 )
 from app.agent.selection_context import describe_skill_item, load_skill_selection
+from app.utils.path_config import resolve_agent_path
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -51,10 +54,12 @@ class CreateTaskRequest(BaseModel):
     """创建任务请求"""
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
-    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/ops/query/social/custom）")
+    execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/ops/query/social/custom/workflow）")
     model_tier: Literal["auto", "flash", "pro"] = "auto"
     result_requirements: List[ResultFieldRequirement] = Field(default_factory=list)
     tool_names: Optional[List[str]] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Dict[str, Any] = Field(default_factory=dict)
     skill_id: Optional[str] = None
     trigger_type: TriggerType = Field(default=TriggerType.SCHEDULE, description="触发方式")
     schedule_type: Optional[ScheduleType] = Field(default=None, description="调度类型")
@@ -86,6 +91,8 @@ class UpdateTaskRequest(BaseModel):
     model_tier: Optional[Literal["auto", "flash", "pro"]] = None
     result_requirements: Optional[List[ResultFieldRequirement]] = None
     tool_names: Optional[List[str]] = None
+    workflow_name: Optional[str] = None
+    workflow_args: Optional[Dict[str, Any]] = None
     skill_id: Optional[str] = None
     trigger_type: Optional[TriggerType] = None
     schedule_type: Optional[ScheduleType] = None
@@ -130,6 +137,9 @@ class ExecutionSummary(BaseModel):
     error_message: Optional[str] = None
     artifacts: List[str] = Field(default_factory=list)
     event_id: Optional[str] = None
+    result_message: Optional[str] = None
+    conversation_available: bool = True
+    artifact_urls: List[str] = Field(default_factory=list)
 
 
 class ExecutionListResponse(BaseModel):
@@ -171,6 +181,11 @@ class UpdateTaskMemoryRequest(BaseModel):
     expected_version: int = Field(..., ge=0, description="编辑时读取到的记忆版本")
 
 
+class UpdateTaskCaseRequest(BaseModel):
+    """人工编辑案例库中的一条案例。"""
+    case: Dict[str, Any] = Field(..., description="案例 JSON 内容")
+
+
 # ===== API端点 =====
 
 
@@ -182,6 +197,9 @@ _ARTIFACT_PATTERN = re.compile(
 
 def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
     artifacts: List[str] = []
+    artifact_paths: List[str] = []
+    result_message = execution.steps[-1].agent_response if execution.steps else None
+    conversation_available = not execution.steps or execution.steps[-1].step_id != "workflow"
     for step in execution.steps:
         for visual in step.result_visuals:
             value = visual.get("title") or visual.get("name") or visual.get("file_name")
@@ -189,10 +207,27 @@ def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
                 artifacts.append(str(value).replace("\\", "/").rsplit("/", 1)[-1])
         for value in _ARTIFACT_PATTERN.findall(step.agent_response or ""):
             artifacts.append(value.replace("\\", "/").rsplit("/", 1)[-1])
+        for call in step.tool_calls:
+            for value in (call.get("media") or call.get("attachments") or []):
+                if not value:
+                    continue
+                path_value = str(value)
+                artifacts.append(path_value.replace("\\", "/").rsplit("/", 1)[-1])
+                try:
+                    if resolve_agent_path(path_value).is_file() and path_value not in artifact_paths:
+                        artifact_paths.append(path_value)
+                except (OSError, ValueError):
+                    continue
 
     return ExecutionSummary(
         **execution.model_dump(exclude={"steps", "delivery_results", "event_attributes"}),
         artifacts=list(dict.fromkeys(filter(None, artifacts))),
+        result_message=result_message,
+        conversation_available=conversation_available,
+        artifact_urls=[
+            f"/api/scheduled-tasks/{execution.task_id}/executions/{execution.execution_id}/artifacts/{index}"
+            for index, _ in enumerate(artifact_paths)
+        ],
     )
 
 
@@ -251,6 +286,36 @@ def _validate_custom_task_tools(task: ScheduledTask, user: CurrentUser) -> None:
             status_code=400,
             detail={"code": "invalid_custom_task_tools", "items": exc.items},
         ) from exc
+
+
+def _validate_workflow_task(task: ScheduledTask) -> None:
+    if task.execution_mode != "workflow":
+        return
+    from app.scheduled_tasks.workflow_tasks import registered_workflows
+
+    if (task.workflow_name or "") not in registered_workflows():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_task_workflow",
+                "workflow_name": task.workflow_name,
+                "registered": registered_workflows(),
+            },
+        )
+
+
+def _forbid_workflow_mode_change(task: ScheduledTask, updates: dict) -> None:
+    """Workflow tasks are code-registered units; their mode is immutable via API."""
+    if task.execution_mode != "workflow":
+        return
+    if "execution_mode" in updates and updates["execution_mode"] != "workflow":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "workflow_mode_immutable",
+                "message": "工作流任务不允许修改执行模式；如需更换模式请删除后以其他模式重建",
+            },
+        )
 
 
 def _validate_task_skill(task: ScheduledTask) -> None:
@@ -410,6 +475,8 @@ async def create_task(
             model_tier=request.model_tier,
             result_requirements=request.result_requirements,
             tool_names=request.tool_names,
+            workflow_name=request.workflow_name,
+            workflow_args=request.workflow_args,
             skill_id=request.skill_id,
             trigger_type=request.trigger_type,
             schedule_type=request.schedule_type,
@@ -433,6 +500,7 @@ async def create_task(
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
+        _validate_workflow_task(task)
 
         created_task = service.create_task(task)
 
@@ -456,6 +524,14 @@ async def create_task(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/workflows")
+async def list_workflows(user: CurrentUser = Depends(require_current_user)):
+    """List registered deterministic workflow names available for workflow tasks."""
+    from app.scheduled_tasks.workflow_tasks import registered_workflows
+
+    return {"workflows": registered_workflows()}
 
 
 @router.get("", response_model=List[TaskResponse])
@@ -541,8 +617,12 @@ async def update_task(
         _require_task_access(task, user)
 
         updates = request.model_dump(exclude_unset=True)
+        _forbid_workflow_mode_change(task, updates)
         if updates.get("execution_mode") != "custom" and "execution_mode" in updates:
             updates.setdefault("tool_names", None)
+        if updates.get("execution_mode") != "workflow" and "execution_mode" in updates:
+            updates.setdefault("workflow_name", None)
+            updates.setdefault("workflow_args", {})
         task_data = task.model_dump()
         task_data.update(updates)
         if {"model_tier", "result_requirements"} & updates.keys():
@@ -551,6 +631,7 @@ async def update_task(
         await _validate_event_task_config(task)
         _validate_custom_task_tools(task, user)
         _validate_task_skill(task)
+        _validate_workflow_task(task)
 
         updated_task = service.update_task(task)
 
@@ -753,6 +834,39 @@ async def get_task_executions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{task_id}/executions/{execution_id}/artifacts/{artifact_index}")
+async def get_execution_artifact(
+    task_id: str,
+    execution_id: str,
+    artifact_index: int,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """Serve a persisted execution attachment after task-level authorization."""
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _require_task_access(task, user)
+    execution = service.get_execution(execution_id)
+    if not execution or execution.task_id != task_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    paths: list[str] = []
+    for step in execution.steps:
+        for call in step.tool_calls:
+            for value in (call.get("media") or call.get("attachments") or []):
+                path_value = str(value)
+                try:
+                    if resolve_agent_path(path_value).is_file() and path_value not in paths:
+                        paths.append(path_value)
+                except (OSError, ValueError):
+                    continue
+    if artifact_index < 0 or artifact_index >= len(paths):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    path = resolve_agent_path(paths[artifact_index])
+    return FileResponse(path, filename=Path(path).name)
+
+
 def _get_task_case_storage(task_id: str, user: CurrentUser) -> TaskCaseStorage:
     service = get_scheduled_task_service()
     task = service.get_task(task_id)
@@ -774,6 +888,27 @@ async def get_task_history_cases(
         cases = storage.recent_cases(limit)
         cases.reverse()  # recent_cases 返回旧→新，接口统一最新在前
         return TaskHistoryCasesResponse(cases=cases, total=storage.case_count())
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/history/cases/{execution_id}")
+async def update_task_history_case(
+    task_id: str,
+    execution_id: str,
+    request: UpdateTaskCaseRequest,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """人工修订任务案例，供用户纠正自动沉淀的执行结论。"""
+    try:
+        storage = _get_task_case_storage(task_id, user)
+        if not storage.update_case(execution_id, request.case):
+            raise HTTPException(status_code=404, detail="案例不存在")
+        cases = storage.recent_cases(200)
+        cases.reverse()
+        return {"case": next((item for item in cases if str(item.get("execution_id")) == execution_id), request.case)}
     except HTTPException:
         raise
     except Exception as e:

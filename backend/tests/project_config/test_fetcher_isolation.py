@@ -15,5 +15,9 @@ def test_default_project_does_not_implicitly_start_jiangsu_fetcher():
 def test_jiangsu_project_explicitly_starts_only_its_fetcher():
     assert _fetcher_names("jiangsu-ops") == [
         "jiangsu_station_fault_event",
+        "jiangsu_fault_work_order_review_event",
+        "jiangsu_fault_work_order_review_rerun",
+        "task_review_feedback",
         "jiangsu_nmc_observed_weather_fetcher",
+        "jiangsu_smart_event_alarm_sync",
     ]

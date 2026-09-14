@@ -123,6 +123,7 @@ class ScheduledTaskExecutor:
             names.append(SCHEDULED_BROADCAST_TOOL)
         if (
             task.history_learning.enabled
+            and task.execution_mode != "workflow"
             and task.history_learning.active_retrieval_enabled
         ):
             names.append(SCHEDULED_HISTORY_SEARCH_TOOL)
@@ -200,7 +201,9 @@ class ScheduledTaskExecutor:
                 from ..workflow_tasks import execute_workflow_task
 
                 workflow_result = await asyncio.wait_for(
-                    execute_workflow_task(task, execution),
+                    execute_workflow_task(
+                        task, execution, event=event, history_section=history_section
+                    ),
                     timeout=task.timeout_seconds,
                 )
                 execution.steps.append(StepExecution(
@@ -208,14 +211,20 @@ class ScheduledTaskExecutor:
                     status=ExecutionStatus.SUCCESS,
                     agent_prompt=f"workflow:{task.workflow_name}",
                     agent_response=workflow_result.get("summary", ""),
-                    result_data_ids=[workflow_result["review_id"]],
+                    result_data_ids=workflow_result.get("data_ids", []),
                     tool_calls=[{
                         "tool": task.workflow_name,
                         "success": True,
-                        "review_id": workflow_result["review_id"],
+                        **(workflow_result.get("tool_call_details") or {}),
                     }],
                 ))
                 execution.completed_steps += 1
+                # 工作流结论进入历史学习案例库，与 Agent 执行同口径收尾。
+                collected.update({
+                    "summary": workflow_result.get("final_message")
+                    or workflow_result.get("summary", ""),
+                    "workflow_result": workflow_result,
+                })
                 self.execution_storage.update(execution)
                 execution.status = ExecutionStatus.SUCCESS
             else:

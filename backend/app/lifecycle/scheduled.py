@@ -33,10 +33,30 @@ async def start_scheduled_task_service() -> None:
 
         service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
         from app.scheduled_tasks.default_tasks import ensure_project_default_tasks
+        from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
+        from app.utils.path_config import PROJECT_ROOT
 
-        created = ensure_project_default_tasks(service, context.manifest.scheduled_tasks)
+        # JSON 种子（projects/<project>/scheduled_tasks/*.json）优先生效；
+        # 其余任务仍由代码内默认任务工厂引导并随代码刷新。
+        definition_root = PROJECT_ROOT / "projects" / context.manifest.project / "scheduled_tasks"
+        json_seeded = {
+            task_id for task_id in context.manifest.scheduled_tasks
+            if (definition_root / f"{task_id}.json").is_file()
+        }
+        created = ensure_project_default_tasks(
+            service, [tid for tid in context.manifest.scheduled_tasks if tid not in json_seeded]
+        )
+        synced = sync_project_scheduled_tasks(
+            project_id=context.manifest.project,
+            task_ids=[tid for tid in context.manifest.scheduled_tasks if tid in json_seeded],
+            service=service,
+        )
         start_service()
-        logger.info("scheduled_task_service_started", default_tasks_created=created)
+        logger.info(
+            "scheduled_task_service_started",
+            default_tasks_created=created,
+            project_tasks_synced=synced,
+        )
     except Exception as e:
         logger.error("scheduled_task_service_failed", error=str(e), exc_info=True)
         logger.warning("continuing_without_scheduled_tasks")

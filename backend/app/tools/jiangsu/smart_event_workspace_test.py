@@ -69,6 +69,52 @@ async def test_workspace_tool_resolves_user_filters_and_returns_event_ids(monkey
     assert result["data"]["ui_command"]["filters"]["level"] == "重要"
 
 
+def test_workspace_tool_schema_requires_canonical_ai_event_types():
+    schema = JiangsuSmartEventWorkspaceTool().function_schema
+    filters = schema["parameters"]["properties"]["filters"]
+    event_type = filters["properties"]["event_type"]
+    assert "疑似外界环境影响" in event_type["enum"]
+    assert "外界环境影响" not in event_type["enum"]
+    assert "原始线索" in filters["description"]
+    assert filters["properties"]["event_types"]["items"]["enum"] == event_type["enum"]
+    assert "一次传入这三个值" in filters["description"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_tool_queries_all_selected_ai_event_types(monkeypatch):
+    queried = []
+
+    async def fake_list_events(self, **kwargs):
+        event_type = kwargs["event_type"]
+        queried.append(event_type)
+        return {
+            "events": [{
+                "event_id": f"event:{len(queried)}",
+                "ai_event_type": event_type,
+                "latest_occurrence_time": f"2026-09-14T0{len(queried)}:00:00+08:00",
+            }],
+            "total": 1,
+        }
+
+    monkeypatch.setattr(JiangsuSmartEventService, "list_events", fake_list_events)
+    result = await JiangsuSmartEventWorkspaceTool().execute(
+        command="filter_event_list",
+        filters={"event_types": [
+            "疑似雾炮喷淋",
+            "疑似人员进入采样区干扰操作",
+            "疑似外界环境影响",
+        ]},
+    )
+
+    assert set(queried) == {
+        "疑似雾炮喷淋",
+        "疑似人员进入采样区干扰操作",
+        "疑似外界环境影响",
+    }
+    assert result["data"]["total"] == 3
+    assert len(result["data"]["events"]) == 3
+
+
 @pytest.mark.asyncio
 async def test_workspace_tool_open_task_resolves_event_tasks(monkeypatch):
     monkeypatch.setattr(

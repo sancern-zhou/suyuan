@@ -227,7 +227,7 @@ class SessionThreadExecutor:
 
     def submit(
         self,
-        session_id: str,
+        session_key: str,
         task_func: Callable,
         *args,
         timeout: float = 120.0,
@@ -236,7 +236,7 @@ class SessionThreadExecutor:
         """提交 session 任务到专用线程
 
         Args:
-            session_id: Session ID
+            session_key: Session ID used to select the dedicated worker thread.
             task_func: 要执行的任务函数
             *args: 位置参数
             timeout: 超时时间（秒）
@@ -250,12 +250,12 @@ class SessionThreadExecutor:
             RuntimeError: 任务执行失败
         """
         # 获取或创建session专用线程
-        worker = self._get_or_create_worker(session_id)
+        worker = self._get_or_create_worker(session_key)
 
         # 提交任务
         logger.debug(
             "[SESSION_EXECUTOR] Submitting task",
-            session_id=session_id,
+            session_id=session_key,
             thread_id=worker.thread_id,
             task_func=task_func.__name__
         )

@@ -119,7 +119,7 @@
     <div v-if="selectedReviewId" class="review-overlay" @click.self="selectedReviewId = null">
       <section class="review-dialog" role="dialog" aria-modal="true" aria-label="待办事项详情">
         <button class="review-close" type="button" @click="selectedReviewId = null">关闭</button>
-        <TaskReviewPanel :review-id="selectedReviewId" @updated="loadTasks" />
+        <TaskReviewPanel :review-id="selectedReviewId" compact @updated="loadTasks" />
       </section>
     </div>
   </main>
@@ -331,7 +331,7 @@ onMounted(loadTasks)
 .task-description { position: relative; z-index: 1; display: block; margin-top: 11px; max-width: 90%; color: rgba(220, 239, 244, .78); font-size: 12px; line-height: 1.6; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
 .task-meta span { position: relative; z-index: 1; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .16); border-radius: 999px; background: rgba(255, 255, 255, .08); color: #bfe3ec; font-size: 10px; }
-.task-action { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .14); color: var(--cyan-400); font-size: 11px; font-weight: 700; cursor: pointer; }
+.task-action { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 12px; border: none; border-top: 1px solid rgba(255, 255, 255, .14); background: transparent; color: var(--cyan-400); font-size: 11px; font-weight: 700; cursor: pointer; }
 .task-actions { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .14); }
 .task-actions .task-action { flex: 1; margin-top: 0; padding-top: 0; border-top: none; }
 .task-action-secondary { justify-content: center; color: #bfe3ec; font-weight: 600; }

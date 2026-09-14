@@ -45,6 +45,66 @@ async def test_attendance_records_maps_filters_and_returns_location_events(monke
 
 
 @pytest.mark.asyncio
+async def test_attendance_records_fetches_all_pages(monkeypatch):
+    tool = JiangsuAttendanceRecordsTool()
+    calls = []
+
+    async def request(path, params):
+        calls.append(dict(params))
+        offset = dict(params)["skipCount"]
+        if offset == 0:
+            return {"result": {"items": [{"id": 1}], "totalCount": 3}}
+        return {"result": {"items": [{"id": 2}, {"id": 3}], "totalCount": 3}}
+
+    monkeypatch.setattr(tool, "_request", request)
+    result = await tool.execute(
+        start_time="2026-08-01 00:00:00", end_time="2026-08-02 00:00:00", max_result_count=2
+    )
+
+    assert result["success"] is True
+    assert [row["id"] for row in result["data"]] == [1, 2, 3]
+    assert result["metadata"]["pagination"] == {
+        "skip_count": 0, "page_size": 2, "pages_fetched": 2, "complete": True
+    }
+    assert [call["skipCount"] for call in calls] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_track_analysis_supports_original_platform_field_names(monkeypatch):
+    from app.tools.jiangsu.operations_analysis import JiangsuWorkOrderTrackAnalysisTool
+
+    async def request(_tool, path, params):
+        return {"result": {"items": [
+            {"userName": "张三", "stationCode": "A", "signInTime": "2026-08-01T08:00:00", "latitude": 32.0, "longitude": 120.0, "distance": "0.1"},
+            {"userName": "张三", "stationCode": "B", "signInTime": "2026-08-01T08:05:00", "latitude": 32.2, "longitude": 120.0, "distance": "0.1"},
+        ], "totalCount": 2}}
+
+    tool = JiangsuWorkOrderTrackAnalysisTool()
+    monkeypatch.setattr(JiangsuAttendanceRecordsTool, "_request", request)
+    result = await tool.execute(start_time="2026-08-01", end_time="2026-08-02")
+
+    assert result["success"] is True
+    assert result["users"] == ["张三"]
+    assert result["finding_count"] == 2
+    assert result["remote_signins"] == []
+
+
+@pytest.mark.asyncio
+async def test_track_analysis_propagates_attendance_source_failure(monkeypatch):
+    from app.tools.jiangsu.operations_analysis import JiangsuWorkOrderTrackAnalysisTool
+
+    async def failed(*args, **kwargs):
+        return {"success": False, "status": "failed", "summary": "签到接口超时"}
+
+    monkeypatch.setattr(JiangsuAttendanceRecordsTool, "execute", failed)
+    result = await JiangsuWorkOrderTrackAnalysisTool().execute(start_time="2026-08-01", end_time="2026-08-02")
+
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert "签到接口超时" in result["summary"]
+
+
+@pytest.mark.asyncio
 async def test_station_directory_filters_result_client_side(monkeypatch):
     tool = JiangsuStationDirectoryTool()
 

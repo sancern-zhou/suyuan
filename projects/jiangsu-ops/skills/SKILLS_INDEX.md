@@ -2,8 +2,10 @@
 
 此文件由技能管理服务自动生成，请勿手动编辑。
 
+- [备机季度分析](backup-quarterly-analysis/SKILL.md) - 江苏备机合规与使用季度分析。
+- [故障工单月度分析](fault-work-order-monthly-analysis/SKILL.md) - 江苏故障工单月度综合分析与报告生成。
 - [江苏故障工单审核](fault-work-order-review/SKILL.md) - 审核江苏省中心故障工单事件。用于从审核事件证据包读取工单详单、质控、5 分钟宽表原始监测、小时原始数据、动环、告警、同区确定性摘要、传输缺失和附件线索，按证据包 sop_id 渐近读取对应 SOP 手册，生成可人工确认归档的结构化审核结论。
 - [运维工单审核](ops-work-order-audit/SKILL.md) - 审核运维工单并生成可追溯的最终问题清单。用于指定时间或范围内工单的规则筛查、抽样复核、语义复核、命中解释和问题清单整理；正式报告由主 Agent 基于本技能结果生成，普通工单查询不使用本技能。
 - [江苏智能事件研判](smart-event-judgment/SKILL.md) - Analyze Jiangsu smart-event clue bundles and evidence packages, define the final event type and name after evidence review, assess data impact and level, and produce a human-confirmable judgment. Use for the unified Jiangsu smart-event AI task; do not use for direct station-fault diagnosis or work-order review.
 - [江苏站点告警诊断](station-alarm-diagnosis/SKILL.md) - Analyze Jiangsu air-monitoring station platform alarms, device alarms, monitoring-data anomalies, quality-control faults, communication faults, and environment/power faults from an event evidence package. Use when a station fault event needs evidence-based diagnosis, remediation steps, verification criteria, and a review-ready work-order draft.
-- [工单轨迹合理性分析](工单轨迹合理性分析/SKILL.md) - 江苏运维签到轨迹月度分析 SOP
+- [工单轨迹合理性分析 SOP](工单轨迹合理性分析/SKILL.md) - 江苏运维签到轨迹月度分析，生成正式报告并创建人工复核待办。
