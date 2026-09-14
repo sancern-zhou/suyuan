@@ -127,6 +127,14 @@ test('session restore does not replace the current chat with an empty persisted 
   assert.match(source, /if \(!hasRestorableLocalState\(localSessionState\)\) return false/)
 })
 
+test('session restore permits a persisted board without migrated chat messages', async () => {
+  const source = await readSource('../../composables/reactAnalysis/useSessionManagement.js')
+
+  assert.match(source, /const restoredBoard = sessionData\.metadata\?\.drawio_board \|\| sessionData\.drawio_board \|\| null/)
+  assert.match(source, /if \(messages\.length === 0 && !restoredBoard\?\.board_id\)/)
+  assert.match(source, /restoredBoard\?\.board_id[\s\S]*loadDrawioBoardVersions/)
+})
+
 test('primary sidebar actions share one uniform spacing system', async () => {
   const source = await readSource('../AssistantSidebar.vue')
 
