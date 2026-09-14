@@ -5,8 +5,10 @@
 import math
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from app.auth.dependencies import require_current_user
@@ -37,6 +39,7 @@ from app.scheduled_tasks.custom_agent import (
     validate_custom_tool_names,
 )
 from app.agent.selection_context import describe_skill_item, load_skill_selection
+from app.utils.path_config import resolve_agent_path
 
 router = APIRouter(prefix="/api/scheduled-tasks", tags=["scheduled-tasks"])
 
@@ -129,6 +132,9 @@ class ExecutionSummary(BaseModel):
     failed_steps: int
     error_message: Optional[str] = None
     artifacts: List[str] = Field(default_factory=list)
+    result_message: Optional[str] = None
+    conversation_available: bool = True
+    artifact_urls: List[str] = Field(default_factory=list)
 
 
 class ExecutionListResponse(BaseModel):
@@ -185,6 +191,9 @@ _ARTIFACT_PATTERN = re.compile(
 
 def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
     artifacts: List[str] = []
+    artifact_paths: List[str] = []
+    result_message = execution.steps[-1].agent_response if execution.steps else None
+    conversation_available = not execution.steps or execution.steps[-1].step_id != "workflow"
     for step in execution.steps:
         for visual in step.result_visuals:
             value = visual.get("title") or visual.get("name") or visual.get("file_name")
@@ -192,10 +201,26 @@ def _execution_summary(execution: TaskExecution) -> ExecutionSummary:
                 artifacts.append(str(value).replace("\\", "/").rsplit("/", 1)[-1])
         for value in _ARTIFACT_PATTERN.findall(step.agent_response or ""):
             artifacts.append(value.replace("\\", "/").rsplit("/", 1)[-1])
+        for call in step.tool_calls:
+            for value in (call.get("media") or call.get("attachments") or []):
+                if value:
+                    path_value = str(value)
+                    artifacts.append(path_value.replace("\\", "/").rsplit("/", 1)[-1])
+                    try:
+                        if resolve_agent_path(path_value).is_file() and path_value not in artifact_paths:
+                            artifact_paths.append(path_value)
+                    except (OSError, ValueError):
+                        continue
 
     return ExecutionSummary(
         **execution.model_dump(exclude={"steps", "event_attributes", "delivery_results"}),
         artifacts=list(dict.fromkeys(filter(None, artifacts))),
+        result_message=result_message,
+        conversation_available=conversation_available,
+        artifact_urls=[
+            f"/api/scheduled-tasks/{execution.task_id}/executions/{execution.execution_id}/artifacts/{index}"
+            for index, _ in enumerate(artifact_paths)
+        ],
     )
 
 
@@ -798,6 +823,39 @@ async def get_task_executions(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{task_id}/executions/{execution_id}/artifacts/{artifact_index}")
+async def get_execution_artifact(
+    task_id: str,
+    execution_id: str,
+    artifact_index: int,
+    user: CurrentUser = Depends(require_current_user),
+):
+    """Serve a persisted execution attachment after task-level authorization."""
+    service = get_scheduled_task_service()
+    task = service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    _require_task_access(task, user)
+    execution = service.get_execution(execution_id)
+    if not execution or execution.task_id != task_id:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    paths: list[str] = []
+    for step in execution.steps:
+        for call in step.tool_calls:
+            for value in (call.get("media") or call.get("attachments") or []):
+                path_value = str(value)
+                try:
+                    if resolve_agent_path(path_value).is_file() and path_value not in paths:
+                        paths.append(path_value)
+                except (OSError, ValueError):
+                    continue
+    if artifact_index < 0 or artifact_index >= len(paths):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    path = resolve_agent_path(paths[artifact_index])
+    return FileResponse(path, filename=Path(path).name)
 
 
 def _get_task_case_storage(task_id: str, user: CurrentUser) -> TaskCaseStorage:

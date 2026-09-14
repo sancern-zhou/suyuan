@@ -59,5 +59,6 @@ export const executionStatusMeta = (status) => (
 
 
 export const canRestoreExecution = (execution) => (
+  execution?.conversation_available !== false &&
   typeof execution?.session_id === 'string' && execution.session_id.trim().length > 0
 )

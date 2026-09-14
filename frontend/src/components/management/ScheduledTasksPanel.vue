@@ -122,7 +122,7 @@
           class="execution-history-item"
           :class="{ disabled: !canRestoreExecution(execution) }"
           :disabled="!canRestoreExecution(execution)"
-          :title="canRestoreExecution(execution) ? '查看执行对话' : '该记录未生成会话'"
+          :title="canRestoreExecution(execution) ? '查看执行对话' : (execution.conversation_available === false ? '工作流结果请在执行记录详情中查看' : '该记录未生成会话')"
           @click="restoreExecutionSession(execution)"
         >
           <span class="execution-history-main">

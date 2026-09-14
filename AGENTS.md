@@ -23,6 +23,23 @@
 
 - 禁止在项目根目录直接执行 `npm run build`，禁止维护第二套前端 bundle。
 - 每个项目的 web 进程与 worker 进程必须成对启动（worker 缺失时 fetchers/scheduled-tasks 等接口会 503）。
+- web 与 worker 必须在独立于当前终端的会话中启动，禁止依赖前台 shell 或临时工具会话；否则终端会话结束后进程退出，网关将返回 502。启动时使用 `setsid` 脱离会话，并使用 `nohup`、独立日志和 PID 文件：
+
+  ```bash
+  cd backend
+  BACKEND_PYTHON=/path/to/conda/envs/backend_py311/bin/python
+  nohup setsid "$BACKEND_PYTHON" -m uvicorn app.main:app \
+    --host 0.0.0.0 --port 8000 --workers 1 --env-file .env --no-proxy-headers \
+    > /tmp/suyuan-web.log 2>&1 < /dev/null &
+  echo $! > /tmp/suyuan-web.pid
+
+  nohup setsid "$BACKEND_PYTHON" -m app.worker \
+    > /tmp/suyuan-worker.log 2>&1 < /dev/null &
+  echo $! > /tmp/suyuan-worker.pid
+  ```
+
+  启动后必须检查 `ss -ltnp` 中 web 端口和 worker 内部端口均在监听；停止或重启时使用 PID 文件操作对应进程，不能只关闭当前终端。
+- 许昌（xuchang）分支的部署环境 web 进程使用 3 个 uvicorn worker 启动（`--workers 3`），用于支撑多并发对话任务；对话（agent SSE）请求由 web 进程处理，跨进程 cancel/steer 依赖环境文件中的 Redis 配置（`REDIS_HOST`/`REDIS_PORT`/`REDIS_DB`/`REDIS_PASSWORD`）。`app.worker` 后台进程仍为单实例，不随 web worker 数量扩展。注意：每个 web worker 启动时会加载 bge-m3 嵌入模型（约 1G 内存），worker 数量受服务器内存约束——6.5G 内存的机器上限为 3 个 web worker，禁止在该规格机器上使用 4 个及以上（会触发 OOM 反复杀进程）。
 - 所有部署环境的 `DATA_REGISTRY_DIR` 必须在对应后端环境文件中显式配置为绝对路径；同一项目的 web 与 worker 必须使用同一个值。禁止依赖工作树位置推导持久化目录，切换工作树前须先运行 `python -m app.utils.deployment_preflight --env-file <env-file>` 校验。
 - 前端部署后必须确认构建产物包含统一资源接口，并且不再包含旧接口：
 

@@ -206,7 +206,8 @@ class ScheduledTaskExecutor:
                     step_id="workflow",
                     status=ExecutionStatus.SUCCESS,
                     agent_prompt=f"workflow:{task.workflow_name}",
-                    agent_response=workflow_result.get("summary", ""),
+                    agent_response=workflow_result.get("final_message")
+                    or workflow_result.get("summary", ""),
                     result_data_ids=workflow_result.get("data_ids", []),
                     tool_calls=[{
                         "tool": task.workflow_name,

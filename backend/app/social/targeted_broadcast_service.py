@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from app.social.broadcast_service import SocialBroadcastService
@@ -130,6 +131,12 @@ class TargetedSocialBroadcastService:
                 persist_context=True,
                 context_metadata=context_metadata or {},
             )
+            await self._publish_report_if_requested(
+                context_metadata=context_metadata or {},
+                recipients=[user.social_user_id for _, user in valid],
+                message=message,
+                media=media or [],
+            )
             identity_by_social_id = {
                 user.social_user_id: (name, user.id)
                 for name, user in valid
@@ -182,6 +189,29 @@ class TargetedSocialBroadcastService:
             "media_sent": broadcast_result.get("media_sent", 0),
             "summary": summary,
         }
+
+    @staticmethod
+    async def _publish_report_if_requested(
+        *, context_metadata: dict[str, Any], recipients: list[str], message: str,
+        media: list[str],
+    ) -> None:
+        report_type = str(context_metadata.get("report_type") or "").strip()
+        document_suffixes = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
+        documents = [path for path in media if Path(str(path).split("?", 1)[0]).suffix.lower() in document_suffixes]
+        if not report_type or not documents:
+            return
+        from app.social.report_service import publish_report_results
+        await publish_report_results(
+            recipients=recipients,
+            task_id=str(context_metadata.get("task_id") or "assistant_broadcast"),
+            execution_id=str(context_metadata.get("execution_id") or ""),
+            task_name=str(context_metadata.get("task_name") or "报告成果"),
+            report_type=report_type,
+            title=str(context_metadata.get("title") or context_metadata.get("task_name") or "报告成果"),
+            summary=message,
+            attachments=[{"name": Path(path).name, "path": path} for path in documents],
+            metadata={"event_id": context_metadata.get("event_id"), "event_type": context_metadata.get("event_type"), "source": "broadcast_social_users"},
+        )
 
     @staticmethod
     def _failed_row(

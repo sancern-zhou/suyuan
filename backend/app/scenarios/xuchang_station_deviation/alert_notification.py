@@ -492,6 +492,7 @@ async def run_station_alert_workflow(
         "tool_call_details": {
             "recipients": [row.get("user_id") for row in delivery_results],
             "media_count": len(media),
+            "media": media,
             "evidence_package_path": package_path,
         },
     }
