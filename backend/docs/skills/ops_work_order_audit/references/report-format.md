@@ -10,6 +10,13 @@
 - 不得使用语义候选、语义任务、抽样结果、旧报告或历史输出补充问题。
 - 报告可以整理、分组和改写已有问题，但不得重新判断、发现或新增问题。
 
+## 目标读者与表达方式
+
+- 报告面向环境管理人员、运维管理人员和站点负责人，不面向开发人员或审核规则维护人员。
+- 使用中文业务名称和完整句子，读者无需了解数据库表名、程序变量名或审核实现细节即可理解问题。
+- 每条问题回答三个问题：哪里有问题、表单和附件/要求分别是什么、需要核对什么。
+- 原始字段名、规则 ID、附件单元格或页码只作为必要定位信息附带展示，不作为问题主体；机器证据只保留在 `evidence_facts`，不要直接复制到正文。
+
 ## 报告结构
 
 除报告标题外，正文仅包含以下两个章节，顺序固定：
@@ -46,7 +53,7 @@
 - `站点`：优先使用 `station_name`，缺失时使用同轮数据集中的 `base_station.NAME`；两者都没有时明确标记缺失，不猜测。
 - `中文表单`：使用 `rf_form_name`；不得向用户展示内部英文表名 `rf_table`。
 - `工单号`：使用完整 `working_order_code`。
-- `问题描述`：根据本条 `message` 和 `components[].evidence_facts` 展开为可核查事实；异常事实及其说明审核结论写在同一行。
+- `问题描述`：优先使用本条 `message` 和 `display_evidence` 组织为面向用户的可核查事实；`evidence_facts` 仅用于必要时核对原始值，不得逐项展开其中的机器字段。附件比对统一写成“字段显示名：表单值 X；附件值 Y（单元格/页码）”，不得输出 `field`、`comparison_type`、`configured_cell`、`candidate_cells`、`cell_candidates`、`form_number`、`xls_number`、`form_precision`、`status` 等内部键名。异常事实及其说明审核结论写在同一行。
 - `原始备注/说明`：使用 `remark_context.entries` 中与当前异常相关的字段及原文，格式为“字段显示名/字段名：备注原文”；空值写“未填写”，多条用 `<br>` 分隔。无字段明细时使用 `remark_context.text`，再按 `remark_context.status_label` 展示。`provided` 表示已填写，不等于说明合理；`missing` 表示已检查但未填写；`unavailable` 表示“备注信息未取得，待核验”；只有明确的 `not_applicable` 才表示不适用。禁止因元数据缺失写“未涉及备注审核”。不得只把备注藏在 `evidence` JSON 或 `evidence_facts` 中。
 - `命中规则`：完整列出 `rule_ids`，不得只展示代表条目的 `rule_id`。
 
@@ -62,6 +69,34 @@
 - 原始值需要解析或换算的问题必须同时列出原始填写值、解析/换算值和期望范围，避免只展示处理后的值。
 - `RF_DEVICE_IDENTITY_INCONSISTENT` 必须从 `evidence.comparisons` 提取当前值、对比值、对比工单号和对比工单创建时间，逐项使用“字段名：当前工单填写 当前值，对比工单（工单号，创建时间）填写 对比值”的格式。品牌、型号、编号成组变化时，明确变化方向，便于判断设备更换或填报错误。
 - `RF_RANGE_OUT_OF_SPEC`、`RF_ABNORMAL_VALUE_NO_REMARK` 以及其他依赖备注语义复核的规则，必须在同一行展示原始备注/说明，便于用户直接判断异常是否已有合理说明。
+
+## 问题描述示例
+
+推荐写法：
+
+```text
+O3量值传递斜率与计算附件不一致：表单填写1.001，附件读取0.975（附件第77行）。请核对表单斜率或附件计算结果。
+```
+
+```text
+O3量值传递上级标准设备号与附件记录不一致：表单填写569，附件填写N.A.（C20）。
+```
+
+```text
+颗粒物温度检查值超出设备正常范围：实测值23.8℃，允许范围21.0～25.0℃。当前备注未说明原因或处置情况。
+```
+
+不推荐写法：
+
+```text
+field=DEVICEDELIVERMODEL；label=斜率；comparison_type=number；configured_cell=F；candidate_cells=['pdf:77']；form_number=1.001；xls_number=0.975；status=mismatch
+```
+
+```text
+问题：数值异常。证据：comparison、evidence_facts、rule_id……
+```
+
+不推荐写法的问题在于：只描述程序状态，未告诉环境管理人员具体哪一项业务数据不一致，也没有给出可直接核对的表单值和附件值。
 
 ## 生成与验收
 
