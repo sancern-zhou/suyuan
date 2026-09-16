@@ -13,6 +13,7 @@ import structlog
 from datetime import datetime
 
 from ..memory.context_compressor import ContextCompressor
+from ...utils.reference_time import reference_now
 from ...utils.token_budget import token_budget_manager
 
 logger = structlog.get_logger()
@@ -474,7 +475,7 @@ class SimplifiedContextBuilder:
         )
         if skill_section:
             parts.append(skill_section)
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_time = reference_now().strftime("%Y-%m-%d %H:%M:%S")
         parts.append(
             "<runtime_metadata>\n"
             f"系统参考时间(本轮开始): {current_time}\n"
