@@ -16,6 +16,7 @@ from app.scenarios.yuncheng_trial.fetch_and_alert import (
     fetch_target_city_hourly_rows,
     write_alert_evidence,
 )
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -39,7 +40,7 @@ class YunchengTrialFetcher(DataFetcher):
             schedule="0 * * * *",
             version="1.0.0",
         )
-        self.registry_root = registry_root or Path(__file__).resolve().parents[3] / "backend_data_registry"
+        self.registry_root = registry_root or get_data_registry()
         self.hours = hours
 
     async def fetch_and_store(self) -> dict[str, Any]:

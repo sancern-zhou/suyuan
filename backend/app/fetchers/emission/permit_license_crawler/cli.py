@@ -9,6 +9,7 @@ from .client import PermitPlatformClient, PlatformBlockedError
 from .crawler import XuchangPermitCrawler
 from .repository import PermitRepository
 from .storage import FileStorage
+from app.utils.path_config import get_data_registry
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -21,7 +22,6 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    backend_root = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description="低速分批采集许昌市排污许可证公开数据")
     parser.add_argument("--phase", choices=("list", "detail"), required=True)
     parser.add_argument("--start-page", type=int, default=1)
@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--storage-root",
         type=Path,
-        default=backend_root / "backend_data_registry" / "permit_licenses" / "河南省" / "许昌市",
+        default=get_data_registry() / "permit_licenses" / "河南省" / "许昌市",
     )
     return parser
 

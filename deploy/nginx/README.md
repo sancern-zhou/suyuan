@@ -102,11 +102,11 @@ GET  /api/social/app/push/status
 
 ```bash
 export PROJECT=default
-cd /home/xckj/suyuan/backend
+cd /home/xckj/suyuan-main/backend
 conda run -p /root/miniconda3/envs/backend_py311 python -c \
   "from app.project_config.loader import load_project_context; print(load_project_context('$PROJECT').model_dump_json())"
 
-cd /home/xckj/suyuan/frontend
+cd /home/xckj/suyuan-main/frontend
 npm run build:standalone
 ```
 
@@ -131,7 +131,7 @@ npm run build:standalone
 
 ```dotenv
 # backend/.env（风清气智）
-DATA_REGISTRY_DIR=/home/xckj/suyuan/backend/backend_data_registry
+DATA_REGISTRY_DIR=/home/xckj/suyuan-main/backend/backend_data_registry
 
 # backend/.env.jiangsu-ops（江苏运维）
 DATA_REGISTRY_DIR=/home/xckj/suyuan/backend/backend_data_registry_jiangsu_ops
@@ -140,7 +140,7 @@ DATA_REGISTRY_DIR=/home/xckj/suyuan/backend/backend_data_registry_jiangsu_ops
 启动或切换工作树前先校验配置：
 
 ```bash
-cd /home/xckj/suyuan/backend
+cd /home/xckj/suyuan-main/backend
 /root/miniconda3/envs/backend_py311/bin/python \
   -m app.utils.deployment_preflight --env-file .env
 ```
@@ -154,11 +154,11 @@ cd /home/xckj/suyuan/backend
 - `/home/xckj/suyuan-main`：main 分支工作树，构建 `PROJECT=default`，由它启动 `suyuan-nginx`（5174 → 8000）。首次创建：`git worktree add /home/xckj/suyuan-main main`，并复用主树依赖：`ln -s /home/xckj/suyuan/frontend/node_modules /home/xckj/suyuan-main/frontend/node_modules`。
 - `/home/xckj/suyuan`：project/jiangsu-ops 工作树，构建 `PROJECT=jiangsu-ops`，由它启动 `suyuan-nginx-jiangsu`（5175 → 8001）。
 
-两个后端进程统一从 `/home/xckj/suyuan/backend` 启动（共享数据目录 `backend_data_registry`，不随工作树拆分）。web 进程只提供 HTTP API，fetchers、定时任务等后台服务由配套的 worker 进程提供，web 与 worker 必须成对启动（worker 缺失时 `/api/suyuan/fetchers/*`、`/api/suyuan/scheduled-tasks` 等接口返回 503）：
+两个项目分别从各自工作树启动，并使用各自环境文件显式指定的 registry。web 进程只提供 HTTP API，fetchers、定时任务等后台服务由配套的 worker 进程提供，web 与 worker 必须成对启动（worker 缺失时 `/api/suyuan/fetchers/*`、`/api/suyuan/scheduled-tasks` 等接口返回 503）：
 
 ```bash
 # 风清气智 8000（backend/.env，默认项目）+ worker（内部端口 8011）
-cd /home/xckj/suyuan/backend && bash restart_server.sh
+cd /home/xckj/suyuan-main/backend && bash restart_server.sh
 nohup setsid /root/miniconda3/envs/backend_py311/bin/python -m app.worker \
   > /tmp/backend-worker.log 2>&1 &
 echo $! > /tmp/suyuan_worker.pid
