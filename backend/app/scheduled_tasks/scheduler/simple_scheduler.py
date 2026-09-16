@@ -122,6 +122,39 @@ class SimpleScheduler:
                 f"at {task.hour:02d}:{task.minute:02d}"
             )
 
+        elif task.schedule_type == ScheduleType.MONTHLY_CUSTOM:
+            # 每月自定义日期与时间
+            if task.day_of_month is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: schedule_type=monthly_custom but day_of_month/hour/minute is not set")
+                return
+            trigger = CronTrigger(
+                day=task.day_of_month,
+                hour=task.hour,
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled monthly task: {task.name} on day {task.day_of_month} "
+                f"at {task.hour:02d}:{task.minute:02d}"
+            )
+
+        elif task.schedule_type == ScheduleType.QUARTERLY_CUSTOM:
+            # 每季度首月（1/4/7/10）的自定义日期与时间
+            if task.day_of_month is None or task.hour is None or task.minute is None:
+                logger.error(f"Task {task.task_id}: schedule_type=quarterly_custom but day_of_month/hour/minute is not set")
+                return
+            trigger = CronTrigger(
+                month="1,4,7,10",
+                day=task.day_of_month,
+                hour=task.hour,
+                minute=task.minute,
+                timezone="Asia/Shanghai",
+            )
+            logger.info(
+                f"Scheduled quarterly task: {task.name} on day {task.day_of_month} "
+                f"at {task.hour:02d}:{task.minute:02d}"
+            )
+
         else:
             logger.error(f"Unknown schedule type: {task.schedule_type}")
             return

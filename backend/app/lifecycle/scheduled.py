@@ -24,10 +24,20 @@ async def start_scheduled_task_service() -> None:
 
         from app.agent.react_agent import create_react_agent
         from app.scheduled_tasks import init_service, start_service
+        from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
 
-        init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+        service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+
+        # Project task seeds (projects/<project>/scheduled_tasks/*.json) only
+        # bootstrap tasks that do not exist yet; the runtime store stays the
+        # source of truth for tasks edited through the UI/API.
+        synced = sync_project_scheduled_tasks(
+            project_id=context.manifest.project,
+            task_ids=context.manifest.scheduled_tasks,
+            service=service,
+        )
         start_service()
-        logger.info("scheduled_task_service_started")
+        logger.info("scheduled_task_service_started", project_tasks_synced=synced)
     except Exception as e:
         logger.error("scheduled_task_service_failed", error=str(e), exc_info=True)
         logger.warning("continuing_without_scheduled_tasks")

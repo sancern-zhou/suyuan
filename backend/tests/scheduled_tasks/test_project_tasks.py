@@ -30,7 +30,7 @@ def _task(prompt="生成报告"):
 
 def _write_definition(root, task):
     path = root / "projects" / "demo" / "scheduled_tasks" / "task_report.json"
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(task.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
 
 
@@ -100,3 +100,89 @@ def test_project_task_sync_uses_declared_runtime_fields_only(tmp_path):
     loaded = storage.get("task_report")
     assert loaded.prompt == "运行时提示"
     assert "unused_field" not in loaded.model_dump()
+
+
+def _workflow_task(prompt="生成值守结论"):
+    return ScheduledTask(
+        task_id="task_watch",
+        name="值守",
+        description="值守",
+        execution_mode="workflow",
+        workflow_name="demo_workflow",
+        workflow_args={"period": "day"},
+        schedule_type="daily_8am",
+        prompt=prompt,
+    )
+
+
+def _write_watch_definition(root, task):
+    path = root / "projects" / "demo" / "scheduled_tasks" / "task_watch.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(task.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
+
+
+def test_workflow_task_migrates_agent_task_to_workflow_contract(tmp_path):
+    """Agent 模式种子升级为 workflow 时只迁移执行契约，保留运行时字段。"""
+    storage = TaskStorage(tmp_path / "state")
+    existing = _workflow_task("旧指令")
+    existing.execution_mode = "ops"
+    existing.workflow_name = None
+    existing.workflow_args = {}
+    existing.skill_id = "review-skill"
+    existing.enabled = False
+    existing.total_runs = 9
+    storage.create(existing)
+
+    _write_watch_definition(tmp_path, _workflow_task("新指令"))
+    result = sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_watch"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+
+    updated = storage.get("task_watch")
+    assert result[0]["action"] == "migrated_workflow"
+    assert updated.execution_mode == "workflow"
+    assert updated.workflow_name == "demo_workflow"
+    assert updated.prompt == "新指令"
+    assert updated.skill_id is None
+    assert updated.enabled is False
+    assert updated.total_runs == 9
+
+
+def test_workflow_instruction_change_syncs_to_persisted_task(tmp_path):
+    """workflow 指令由代码侧拥有，种子变更需同步到已存在任务。"""
+    storage = TaskStorage(tmp_path / "state")
+    storage.create(_workflow_task("旧指令"))
+
+    _write_watch_definition(tmp_path, _workflow_task("新指令"))
+    result = sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_watch"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+
+    updated = storage.get("task_watch")
+    assert result[0]["action"] == "updated_workflow_instruction"
+    assert updated.prompt == "新指令"
+
+
+def test_mixed_seed_sync_handles_agent_and_workflow_tasks(tmp_path):
+    """同一项目内 Agent 种子仅补缺，workflow 种子负责指令同步。"""
+    storage = TaskStorage(tmp_path / "state")
+    storage.create(_workflow_task("旧指令"))
+
+    _write_watch_definition(tmp_path, _workflow_task("新指令"))
+    _write_definition(tmp_path, _task("新提示"))
+    result = sync_project_scheduled_tasks(
+        project_id="demo",
+        task_ids=["task_report", "task_watch"],
+        service=_Service(storage),
+        project_root=tmp_path,
+    )
+
+    actions = {row["task_id"]: row["action"] for row in result}
+    assert actions["task_watch"] == "updated_workflow_instruction"
+    assert actions["task_report"] == "created"
