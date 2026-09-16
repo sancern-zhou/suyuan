@@ -448,6 +448,35 @@ def test_model_tier_closes_temporary_client_on_exit(monkeypatch, raises):
     assert service.anthropic_client is original_client
 
 
+def test_opencode_go_headers_require_session_and_user_agent(monkeypatch):
+    service = LLMService()
+    monkeypatch.setattr(settings, "go_api_key", "go-key")
+    service.provider = "go"
+    service._load_provider_config()
+
+    _, default_headers = service._get_request_config()
+    assert default_headers["x-opencode-session"].startswith("suyuan-")
+    assert default_headers["User-Agent"] == "suyuan-agent/1.0"
+
+    with service.use_opencode_session("sess-123"):
+        _, headers = service._get_request_config()
+        assert headers["x-opencode-session"] == "sess-123"
+        assert headers["User-Agent"] == "suyuan-agent/1.0"
+
+    _, after_headers = service._get_request_config()
+    assert after_headers["x-opencode-session"].startswith("suyuan-")
+
+
+def test_non_go_providers_do_not_send_opencode_headers():
+    service = LLMService()
+
+    with service.use_opencode_session("sess-123"):
+        _, headers = service._get_request_config()
+
+    assert "x-opencode-session" not in headers
+    assert "User-Agent" not in headers
+
+
 def test_ocr_configuration_follows_global_bailian_model(monkeypatch):
     from app.services.ops_audit.semantic import ocr_adapter
 

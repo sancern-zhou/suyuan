@@ -252,7 +252,12 @@ class ScheduledTaskExecutor:
                     history_section=history_section,
                 )
                 from app.services.llm_service import llm_service
-                with llm_service.use_model_tier(task.model_tier):
+                with (
+                    llm_service.use_model_tier(task.model_tier),
+                    llm_service.use_opencode_session(
+                        f"scheduled-{execution.execution_id}"
+                    ),
+                ):
                     result = await asyncio.wait_for(
                         self._run_agent(
                             prompt, task_session_id,

@@ -51,15 +51,8 @@ _llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
     default=None,
 )
 
-
-@contextmanager
-def use_opencode_session(session_id: Optional[str]):
-    """Set the OpenCode Go routing session id for LLM calls in this context."""
-    token = _llm_opencode_session_id.set(str(session_id) if session_id else None)
-    try:
-        yield
-    finally:
-        _llm_opencode_session_id.reset(token)
+# OpenCode Go 客户端标识：专属 User-Agent，替代通用 httpx SDK 标识
+OPENCODE_GO_USER_AGENT = "suyuan-agent/1.0"
 
 
 def _rotate_model_tier_candidates(tier: str, candidates: list):
@@ -387,6 +380,21 @@ class LLMService:
             return
         with self.use_model_tier(model_tier, load_balance=True):
             yield
+
+    @contextmanager
+    def use_opencode_session(self, session_id: Optional[str]):
+        """Set the OpenCode Go routing session id for LLM calls in this context.
+
+        OpenCode Go 网关要求每段对话发送稳定的 x-opencode-session 会话 ID，
+        用于请求路由与提示词缓存。
+        """
+        token = _llm_opencode_session_id.set(
+            str(session_id) if session_id else None
+        )
+        try:
+            yield
+        finally:
+            _llm_opencode_session_id.reset(token)
 
     @contextmanager
     def use_auto_profile(self, auto_profile: Optional[str]):
@@ -1798,8 +1806,9 @@ class LLMService:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # OpenCode Go 网关强制校验该会话头（缺失直接拒绝），用于路由与提示词缓存
+        # OpenCode Go 网关要求：专属 User-Agent + 稳定会话头（缺失会被拒绝）
         if self.provider == "go":
+            headers["User-Agent"] = OPENCODE_GO_USER_AGENT
             headers["x-opencode-session"] = (
                 _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
             )

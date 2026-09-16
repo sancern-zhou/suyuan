@@ -282,7 +282,7 @@ class DocumentProcessingQueue:
 
             with llm_service.use_balanced_model_tier(
                 settings.knowledge_base_llm_model_tier
-            ):
+            ), llm_service.use_opencode_session(f"kb-doc-{task.doc_id}"):
                 await service.ingest_document(task.doc_id, **task.processing_options)
 
             task.status = TaskStatus.COMPLETED
