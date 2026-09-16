@@ -100,7 +100,7 @@ def test_upper_standard_49ips_dzaa_model_suffix_matches_base_model(tmp_path):
     assert _check(_form(DELIVER6VALUE="49iPS"), [_attachment(path)]) == []
 
 
-def test_upper_standard_device_number_mismatch_is_deterministic(tmp_path):
+def test_upper_standard_identity_mismatch_is_ignored(tmp_path):
     path = tmp_path / "o3.xlsx"
     _workbook(path, serial_number="CM20457343")
 
@@ -109,12 +109,7 @@ def test_upper_standard_device_number_mismatch_is_deterministic(tmp_path):
         [_attachment(path)],
     )
 
-    assert len(issues) == 1
-    assert issues[0].rule_id == rules.RULE_ID
-    evidence = json.loads(issues[0].evidence)
-    comparison = next(item for item in evidence["comparisons"] if item["field"] == "DELIVERFROM6VALUE")
-    assert comparison["status"] == "mismatch"
-    assert comparison["xls_value"] == "N.A."
+    assert issues == []
 
 
 def test_reference_photometer_t703_layout_does_not_assume_49ips(tmp_path):
@@ -142,6 +137,31 @@ def test_reference_photometer_t703_layout_does_not_assume_49ips(tmp_path):
         BVALUE="2027/2/24",
     )
     assert _check(form, [_attachment(path)]) == []
+
+
+def test_audit_dataset_keeps_o3_xls_numeric_comparison(tmp_path):
+    path = tmp_path / "t703-mismatch.xlsx"
+    _workbook(
+        path,
+        section="参考光电仪：",
+        model="T703",
+        device_number="569",
+        serial_number="569",
+    )
+    form = _form(AVALUE="/", DEVICEDELIVERMODEL="0.8")
+    dataset = {
+        "orders": [{"WORKINGORDERCODE": "WO-1"}],
+        "details": [],
+        "attachments": [],
+        "wo_commonfile": [_attachment(path)],
+        "stations": [],
+        "devices": [],
+        "rf_forms": {"RF_HY_O3VALUEPASS": [form]},
+    }
+
+    result = audit_dataset(dataset, enable_visual=False)
+
+    assert any(issue["rule_id"] == rules.RULE_ID for issue in result["records"][0]["issues"])
 
 
 def test_missing_xls_is_manual_review_with_attachment_paths():

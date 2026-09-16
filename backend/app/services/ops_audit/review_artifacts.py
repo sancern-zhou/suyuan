@@ -455,7 +455,7 @@ def _partition_report_items(
 
 
 def _review_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         key: item.get(key)
         for key in (
             "issue_id",
@@ -505,6 +505,10 @@ def _review_item(item: dict[str, Any]) -> dict[str, Any]:
         "evidence_facts": _compact_evidence(item.get("evidence")),
         "remark_context": _remark_context(item),
     }
+    # The report agent receives this projection for every issue.  Raw evidence is
+    # retained for traceability, but is deliberately not needed to write prose.
+    result["display_evidence"] = _display_evidence(item)
+    return result
 
 
 def _remark_context(item: dict[str, Any]) -> dict[str, Any]:
@@ -648,6 +652,134 @@ def _compact_evidence(value: Any) -> Any:
     if isinstance(value, list):
         return [_compact_evidence(child) for child in value[:50]]
     return value
+
+
+def _display_evidence(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build concise user-facing evidence for every rule family.
+
+    This is the report-facing contract.  Do not expose the raw evidence keys here:
+    the report agent should be able to render this list without parsing JSON or
+    calling ``execute_python``.
+    """
+    evidence = parse_issue_evidence(item.get("evidence"))
+    comparisons = evidence.get("comparisons")
+    if not isinstance(comparisons, list):
+        comparison = evidence.get("comparison")
+        comparisons = [comparison] if isinstance(comparison, dict) else []
+    attachment = evidence.get("attachment") if isinstance(evidence.get("attachment"), dict) else {}
+    attachment_name = (
+        item.get("attachment_filename")
+        or attachment.get("filename")
+        or attachment.get("name")
+    )
+    display: list[dict[str, Any]] = []
+    for comparison in comparisons:
+        if not isinstance(comparison, dict):
+            continue
+        status = str(comparison.get("status") or "").strip()
+        if status == "xls_read_error":
+            display.append({"text": f"附件读取失败：{comparison.get('error') or '无法读取'}"})
+            continue
+        if status not in {"mismatch", "missing_form_value", "missing_xls_value"}:
+            continue
+        item_display: dict[str, Any] = {
+            "label": comparison.get("label") or comparison.get("field") or "比对项",
+            "form_value": comparison.get("form_value"),
+            "attachment_value": comparison.get("xls_value"),
+        }
+        location = comparison.get("cell") or comparison.get("configured_cell")
+        if location:
+            item_display["location"] = location
+        if attachment_name:
+            item_display["attachment"] = attachment_name
+        item_display["text"] = _comparison_text(item_display)
+        display.append(item_display)
+
+    # Range/abnormal rules already expose normalized decision evidence.  Prefer it
+    # over the lower-level out_of_spec_values payload.
+    decision = item.get("decision_evidence")
+    if isinstance(decision, dict) and decision:
+        text = _decision_evidence_text(decision)
+        if text:
+            display.append({"text": text})
+
+    rows: list[Any] = []
+    for key in ("violations", "out_of_spec_values", "missing_fields", "checks"):
+        value = evidence.get(key)
+        if isinstance(value, list):
+            rows.extend(value)
+    # Avoid duplicating the normalized range item when no decision projection exists.
+    if not decision:
+        for row in rows[:20]:
+            text = _rule_evidence_text(row)
+            if text:
+                display.append({"text": text})
+
+    if not display:
+        fallback = _rule_evidence_text(evidence)
+        if fallback:
+            display.append({"text": fallback})
+    if not display and item.get("message"):
+        display.append({"text": str(item["message"])})
+    return display
+
+
+def _value_text(value: Any, default: str = "未填写") -> str:
+    if value in (None, ""):
+        return default
+    return str(value)
+
+
+def _comparison_text(item: dict[str, Any]) -> str:
+    label = _value_text(item.get("label"), "比对项")
+    form_value = _value_text(item.get("form_value"))
+    attachment_value = _value_text(item.get("attachment_value"))
+    location = item.get("location")
+    suffix = f"，附件{item['attachment']}" if item.get("attachment") else ""
+    location_text = f"（位置：{location}）" if location else ""
+    return f"{label}：表单值“{form_value}”，附件值“{attachment_value}”{suffix}{location_text}。"
+
+
+def _decision_evidence_text(value: dict[str, Any]) -> str:
+    label = value.get("field_label") or value.get("field")
+    if not label:
+        return ""
+    observed = value.get("raw_value", value.get("normalized_value"))
+    expected = value.get("expected_range")
+    if expected:
+        brand = f"（{value['brand']}）" if value.get("brand") else ""
+        return f"{label}：实测值“{_value_text(observed)}”，正常范围为“{expected}”{brand}。"
+    return f"{label}：实际值“{_value_text(observed)}”。"
+
+
+def _rule_evidence_text(row: Any) -> str:
+    """Turn common rule evidence shapes into one short Chinese sentence."""
+    if not isinstance(row, dict):
+        return _value_text(row, "")
+    label = row.get("label") or row.get("field_label") or row.get("item_label")
+    field = row.get("field") or row.get("actual_field")
+    name = label or field or row.get("name")
+    if row.get("model_value") is not None or row.get("situation_value") is not None:
+        project = label or "检查项目"
+        return (
+            f"{project}：设备型号“{_value_text(row.get('model_value'))}”，"
+            f"运行情况“{_value_text(row.get('situation_value'))}”。"
+        )
+    if row.get("actual") is not None or row.get("expected") is not None:
+        return (
+            f"{name or '检查项'}：实际值“{_value_text(row.get('actual'))}”，"
+            f"期望值“{_value_text(row.get('expected'))}”。"
+        )
+    if row.get("value") is not None or row.get("raw_value") is not None:
+        value = row.get("raw_value", row.get("value"))
+        expected = row.get("expected_range")
+        if expected is None and (row.get("min") is not None or row.get("max") is not None):
+            expected = f"{_value_text(row.get('min'))}至{_value_text(row.get('max'))}{row.get('unit') or ''}"
+        suffix = f"，要求“{expected}”" if expected else ""
+        return f"{name or '检查项'}：实际值“{_value_text(value)}”{suffix}。"
+    if row.get("missing") is True:
+        return f"{name or '检查项'}：未填写。"
+    return ""
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

@@ -49,6 +49,72 @@ def test_issue_ids_distinguish_same_order_and_rule_across_forms() -> None:
     assert issue_list["items"][0]["issue_id"] != issue_list["items"][1]["issue_id"]
 
 
+def test_report_input_projects_comparison_evidence_for_agent() -> None:
+    issue_list = {
+        "items": [
+            {
+                "working_order_code": "WO-O3",
+                "rule_id": "ATTACHMENT_O3_VALUE_PASS_XLS_VALUE_MISMATCH",
+                "message": "O3量值传递表单与XLS附件不一致",
+                "evidence": json.dumps(
+                    {
+                        "comparisons": [
+                            {
+                                "field": "DEVICEDELIVERMODEL",
+                                "label": "斜率",
+                                "comparison_type": "number",
+                                "cell": "F25",
+                                "form_value": "1.001",
+                                "xls_value": 0.975,
+                                "status": "mismatch",
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ]
+    }
+    report = build_report_input(ensure_issue_ids(issue_list))
+    display = report["items"][0]["display_evidence"]
+    assert display[0]["label"] == "斜率"
+    assert display[0]["location"] == "F25"
+    assert display[0]["text"] == "斜率：表单值“1.001”，附件值“0.975”（位置：F25）。"
+
+
+def test_report_input_projects_range_and_violation_evidence_without_machine_keys() -> None:
+    issue_list = {
+        "items": [
+            {
+                "working_order_code": "WO-RANGE",
+                "rule_id": "RF_RANGE_OUT_OF_SPEC",
+                "message": "高压电源超出正常范围",
+                "decision_evidence": {
+                    "field": "GYCHECKVALUE",
+                    "field_label": "高压电源",
+                    "raw_value": "701 mV",
+                    "expected_range": "500-950 V",
+                    "brand": "ESA",
+                },
+                "evidence": json.dumps({"out_of_spec_values": [{"field": "GYCHECKVALUE", "value": 0.701}]}, ensure_ascii=False),
+            },
+            {
+                "working_order_code": "WO-FLOW",
+                "rule_id": "RF_Q_GASEOUS_FLOW_TARGET_POINT_MISMATCH",
+                "message": "流量点不匹配",
+                "evidence": json.dumps({
+                    "violations": [{"field": "DF_Valuve_60", "actual": 4981.7, "expected": 6000}]
+                }, ensure_ascii=False),
+            },
+        ]
+    }
+    report = build_report_input(ensure_issue_ids(issue_list))
+    texts = [entry["text"] for item in report["items"] for entry in item["display_evidence"]]
+    assert any("高压电源：实测值“701 mV”" in text for text in texts)
+    assert any("实际值“4981.7”，期望值“6000”" in text for text in texts)
+    assert all("field=" not in text and "comparison_type" not in text for text in texts)
+
+
 def test_human_feedback_rebuilds_report_input_without_second_llm_pass(tmp_path: Path) -> None:
     issue_list = _final_issue_list()
     issue_list["items"][0]["needs_manual_review"] = True
