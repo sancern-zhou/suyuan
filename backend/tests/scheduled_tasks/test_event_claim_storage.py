@@ -53,14 +53,14 @@ def test_failed_claim_can_be_retried_explicitly(tmp_path):
 def test_retry_and_reopen_refresh_snapshot_with_latest_dispatch(tmp_path):
     storage = EventClaimStorage(tmp_path)
     claim = storage.try_claim("task-1", _event())
-    assert claim.event_snapshot["attributes"] == {"city": "运城市"}
+    assert claim.event_snapshot["attributes"] == {"city": "许昌市"}
 
     storage.mark_status(claim.claim_id, "failed")
     latest = TaskEvent(
         event_id="event-1",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         occurred_at="2026-07-13T16:05:00+08:00",
-        attributes={"city": "运城市", "smart_event_dispatch_token": "token-2"},
+        attributes={"city": "许昌市", "smart_event_dispatch_token": "token-2"},
         payload={"evidence_dir": "/tmp/evidence-2"},
     )
     retried = storage.retry_failed("task-1", "event-1", event=latest)
