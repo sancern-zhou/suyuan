@@ -164,6 +164,7 @@ backend:
     - task_review_feedback
     - jiangsu_nmc_observed_weather
     - jiangsu_smart_event_alarm_sync
+    - jiangsu_data_audit_review_event
   tools:
     - jiangsu_fetch_city_data
     - jiangsu_fetch_district_data
@@ -222,10 +223,12 @@ backend:
       - create_pptx_with_ppt_master
       - validate_pptx
     smart_event_external:
+      - read_file
       - jiangsu_smart_event_workspace
       - jiangsu_prepare_fault_work_order
       - submit_task_review
     smart_event_instrument:
+      - read_file
       - jiangsu_smart_event_workspace
       - jiangsu_prepare_fault_work_order
       - submit_task_review
@@ -451,6 +454,7 @@ scheduled_tasks:
   - jiangsu_station_fault_diagnosis
   - jiangsu_fault_work_order_review
   - jiangsu_smart_event_ai_judgment
+  - jiangsu_data_audit_review
   - jiangsu_work_order_track_monthly_review
   - jiangsu_network_inspection_watch
   - jiangsu_fault_work_order_monthly_report

@@ -1662,6 +1662,8 @@ async def test_list_pages_are_small_and_filter_before_pagination(tmp_path, monke
     assert [item["event_id"] for item in filtered["events"]] == ["21"]
     assert filtered["stats"]["total"] == 23
     assert filtered["filters"]["types"] == ["数据", "运维"]
+    multi = await service.list_events(**window, limit=10, page=1, summary=True, event_types=["数据", "不存在"])
+    assert multi["total"] == 11
     detail = await service.get_event("21", **window)
     assert detail["evidence_package"]["large"] == "x" * 10000
 

@@ -28,6 +28,9 @@ from app.fetchers.consultation.monthly_supplement_fetchers import (
     MonthlyStationHighValuesFetcher,
 )
 from app.fetchers.dust.cams_dust_fetcher import CAMSDustFetcher
+from app.fetchers.jiangsu_data_audit_review_event import (
+    JiangsuDataAuditReviewEventFetcher,
+)
 from app.fetchers.jiangsu_fault_work_order_review_event import (
     JiangsuFaultWorkOrderReviewEventFetcher,
 )
@@ -118,6 +121,7 @@ def _configured_fetchers(project_context):
         "jiangsu_station_fault_event",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
+        "jiangsu_data_audit_review_event",
     }
     factories = {
         "task_review_feedback": TaskReviewFeedbackFetcher,
@@ -140,6 +144,7 @@ def _configured_fetchers(project_context):
         "jiangsu_station_fault_event": JiangsuStationFaultEventFetcher,
         "jiangsu_smart_event_alarm_sync": JiangsuSmartEventAlarmSyncFetcher,
         "jiangsu_nmc_observed_weather": JiangsuNMCObservedWeatherFetcher,
+        "jiangsu_data_audit_review_event": JiangsuDataAuditReviewEventFetcher,
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,

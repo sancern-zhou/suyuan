@@ -82,6 +82,7 @@ async def list_smart_events(
     limit: int = Query(default=10, ge=1, le=100),
     page: int = Query(default=1, ge=1),
     event_type: str | None = Query(default=None),
+    event_types: list[str] | None = Query(default=None),
     level: str | None = Query(default=None),
     refresh: bool = Query(default=True),
     user: CurrentUser = Depends(require_current_user),
@@ -99,6 +100,7 @@ async def list_smart_events(
             page=page,
             summary=True,
             event_type=event_type,
+            event_types=event_types,
             level=level,
         )
     except SmartEventUpstreamError as exc:

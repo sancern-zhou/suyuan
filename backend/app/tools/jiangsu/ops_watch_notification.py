@@ -72,7 +72,7 @@ async def _generate_duty_conclusion(
         "## 巡检统计证据\n"
         f"```json\n{evidence}\n```"
     )
-    tier = getattr(task, "model_tier", "auto") or "auto"
+    tier = getattr(task, "model_tier", "flash") or "flash"
     with llm_service.use_model_tier(tier):
         response = await llm_service.chat_anthropic(
             [

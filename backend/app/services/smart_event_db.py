@@ -194,6 +194,7 @@ async def query_events_overview_async(
     status=None,
     keyword=None,
     event_type=None,
+    event_types=None,
     level=None,
     limit=100,
     offset=0,
@@ -217,7 +218,10 @@ async def query_events_overview_async(
             clauses.append(SmartEventDB.site_id.in_(station_codes))
         if status:
             clauses.append(SmartEventDB.event_status == status)
-        if event_type:
+        type_values = [str(item).strip() for item in (event_types or []) if str(item).strip()]
+        if type_values:
+            clauses.append(func.coalesce(SmartEventDB.ai_event_type, SmartEventDB.event_type).in_(type_values))
+        elif event_type:
             clauses.append(func.coalesce(SmartEventDB.ai_event_type, SmartEventDB.event_type) == event_type)
         if level:
             clauses.append(SmartEventDB.ai_suggested_level == level)

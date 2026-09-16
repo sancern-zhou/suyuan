@@ -1,4 +1,5 @@
 from app.scheduled_tasks.default_tasks import (
+    build_jiangsu_data_audit_review_task,
     build_jiangsu_fault_work_order_review_task,
     build_jiangsu_smart_event_task,
     build_jiangsu_station_fault_task,
@@ -88,12 +89,37 @@ def test_work_order_review_default_task_targets_ops_mode_skill_and_submit_tool()
     assert task.workspace_entry.enabled is True
 
 
+def test_data_audit_review_default_task_targets_ops_mode_skill_and_submit_tool():
+    task = build_jiangsu_data_audit_review_task()
+
+    assert task.task_id == "jiangsu_data_audit_review"
+    assert task.event_type == "jiangsu.data_audit.review_requested"
+    assert task.execution_mode == "ops"
+    assert task.skill_id == "data-audit-review"
+    assert task.review_subject_attribute == "audit_subject_id"
+    assert task.history_learning.enabled is True
+    assert "payload.evidence_pack_path" in task.prompt
+    assert "data-audit-review Skill" in task.prompt
+    assert "50字以内" in task.prompt
+    assert "submit_task_review" in task.prompt
+    assert "platform_audit_feedback" in task.prompt
+    fields = {rule.field for rule in task.result_requirements}
+    assert {
+        "decision", "sections.station_code", "sections.audit_day",
+        "sections.initial_review_summary", "sections.anomaly_summary",
+    } <= fields
+    decision_rule = next(rule for rule in task.result_requirements if rule.field == "decision")
+    assert set(decision_rule.allowed_values) == {"approve", "reject", "needs_evidence"}
+    assert task.workspace_entry.enabled is True
+
+
 def test_track_monthly_default_task_uses_published_skill_and_report_tools():
     task = build_jiangsu_track_monthly_task()
 
     assert task.task_id == "jiangsu_work_order_track_monthly_review"
     assert task.skill_id == "工单轨迹合理性分析"
     assert task.tool_names == [
+        "read_file",
         "jiangsu_analyze_work_order_tracks",
         "create_report_package",
         "render_report_package",
@@ -179,6 +205,25 @@ def test_default_task_result_requirements_are_task_specific():
     assert 'sections.work_order_no' in {rule.field for rule in order.result_requirements}
     station = build_jiangsu_station_fault_task()
     assert 'sections.verification_standard' in {rule.field for rule in station.result_requirements}
+
+
+def test_all_agent_default_tasks_expose_read_file():
+    """read_file is a mandatory runtime tool: evidence packs are read as files."""
+    from app.scheduled_tasks.executor import ScheduledTaskExecutor
+
+    executor = ScheduledTaskExecutor.__new__(ScheduledTaskExecutor)
+    factories = [
+        build_jiangsu_station_fault_task,
+        build_jiangsu_fault_work_order_review_task,
+        build_jiangsu_smart_event_task,
+        build_jiangsu_data_audit_review_task,
+        build_jiangsu_track_monthly_task,
+    ]
+    for factory in factories:
+        task = factory()
+        if task.execution_mode == "workflow":
+            continue
+        assert "read_file" in executor._runtime_extra_tool_names(task), task.task_id
 
 
 def test_operator_result_configuration_is_not_overwritten():

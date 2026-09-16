@@ -4,6 +4,7 @@
   "description": "按月汇总季度故障工单并关联设备更换记录或台账useDate/stopDate，分析备机48小时启用、30天连续使用和站点频繁更换；生命周期数据未接入前不发布业务结论",
   "execution_mode": "custom",
   "tool_names": [
+    "read_file",
     "jiangsu_fetch_fault_work_orders",
     "jiangsu_fetch_fault_work_order_detail",
     "execute_python",

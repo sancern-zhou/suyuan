@@ -18,8 +18,10 @@
       <div class="list-toolbar">
         <div class="filter-row">
           <label><span>事件状态</span><select v-model="statusFilter" aria-label="状态筛选" @change="loadEvents()"><option value="">全部状态</option><option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option></select></label>
-          <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选" @change="loadEvents()"><option value="">全部事件类型</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选" @change="loadEvents()"><option value="">{{ emptyTypeOptionLabel }}</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
           <label v-if="levelOptions.length"><span>等级</span><select v-model="levelFilter" aria-label="等级筛选" @change="loadEvents()"><option value="">全部等级</option><option v-for="value in levelOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <label class="time-filter"><span>开始时间</span><input v-model="listStartTime" type="datetime-local" aria-label="事件开始时间筛选" /></label>
+          <label class="time-filter"><span>结束时间</span><input v-model="listEndTime" type="datetime-local" aria-label="事件结束时间筛选" /></label>
           <label class="keyword-filter"><span>关键词</span><input v-model="keyword" type="search" placeholder="事件编号、站点或事件名称" @keyup.enter="loadEvents" /></label>
           <button type="button" class="primary-button" :disabled="loading" @click="loadEvents">查询 <i class="search-icon" aria-hidden="true"></i></button>
           <button type="button" class="secondary-button" :disabled="loading" @click="resetFilters">重置 <span>↻</span></button>
@@ -430,6 +432,29 @@ const props = defineProps({
   category: { type: String, default: 'all' }
 })
 const emit = defineEmits(['close', 'open-task'])
+
+const DEFAULT_LIST_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+const toDatetimeLocal = value => {
+  const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(value).map(part => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
+}
+const defaultListTimeRange = () => {
+  const end = new Date()
+  const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(end).map(part => [part.type, part.value]))
+  return {
+    start: `${parts.year}-${parts.month}-${parts.day}T00:00`,
+    end: toDatetimeLocal(end),
+  }
+}
+const initialListTimeRange = defaultListTimeRange()
 const events = ref([])
 const PAGE_SIZE = 10
 const currentPage = ref(1)
@@ -453,9 +478,11 @@ const keyword = ref('')
 const statusFilter = ref('')
 const typeFilter = ref('')
 const levelFilter = ref('')
-// AI 下发的列表时间范围（ISO 字符串），透传给列表查询；界面上通过重置清除
-const listStartTime = ref('')
-const listEndTime = ref('')
+// 侧边栏入口按类别给定时，事件类型由后端接口筛选，不再做前端过滤。
+const commandEventTypes = ref(null)
+// 列表默认与后端默认查询范围一致：当天 00:00 至当前时刻（上海时间）。
+const listStartTime = ref(initialListTimeRange.start)
+const listEndTime = ref(initialListTimeRange.end)
 const lastSync = ref(null)
 const loading = ref(false)
 const detailLoading = ref(false)
@@ -592,16 +619,24 @@ const saveConfig = async () => {
 const aiDispatchDescription = computed(() => judgmentSummary.value || selectedEvent.value?.ai_data_impact || selectedEvent.value?.primary_clue_tag || '请根据事件证据完成现场核查与处置。')
 const operationRecords = computed(() => Array.isArray(selectedEvent.value?.operation_records) ? selectedEvent.value.operation_records : [])
 const statusOptions = computed(() => listFilters.value.statuses)
-const typeOptions = computed(() => listFilters.value.types)
-const levelOptions = computed(() => listFilters.value.levels || [])
 const CATEGORY_TYPES = {
   'external-environment': ['疑似雾炮喷淋', '疑似人员进入采样区干扰操作', '疑似外界环境影响'],
   'instrument-fault': ['疑似仪器故障', '疑似站房停电', '疑似公共系统异常', '疑似站房环境影响']
 }
-const filteredEvents = computed(() => {
-  const types = CATEGORY_TYPES[props.category]
-  return types ? events.value.filter(event => types.includes(event.ai_event_type || event.event_type)) : events.value
+const categoryEventTypes = computed(() => CATEGORY_TYPES[props.category] || null)
+// 入口按类别筛选时，空值是“该类别全部类型”，而不是全部事件类型。
+const CATEGORY_SCOPE_LABELS = {
+  'external-environment': '全部外界环境类型',
+  'instrument-fault': '全部仪器故障类型'
+}
+const emptyTypeOptionLabel = computed(() => CATEGORY_SCOPE_LABELS[props.category] || '全部事件类型')
+const typeOptions = computed(() => {
+  const scoped = categoryEventTypes.value
+  return scoped ? listFilters.value.types.filter(value => scoped.includes(value)) : listFilters.value.types
 })
+const levelOptions = computed(() => listFilters.value.levels || [])
+// 事件类型已由后端接口筛选，列表直接使用接口返回结果。
+const filteredEvents = computed(() => events.value)
 const pendingCount = computed(() => listStats.value.pending)
 const stationCount = computed(() => listStats.value.stations)
 const lastSyncTime = computed(() => formatTime(lastSync.value))
@@ -1304,14 +1339,23 @@ const compare = async eventIds => {
 
 const loadEvents = async (page = 1) => {
   if (loading.value) return
+  if (listStartTime.value && listEndTime.value && new Date(listStartTime.value) > new Date(listEndTime.value)) {
+    error.value = '开始时间不能晚于结束时间'
+    actionMessage.value = error.value
+    return
+  }
   stopSyncWatch()
   loading.value = true
   error.value = ''
+  actionMessage.value = ''
   activeQuery.value = {
     page: Number.isInteger(page) ? page : 1,
     limit: PAGE_SIZE,
     status: statusFilter.value,
-    event_type: typeFilter.value,
+    event_type: typeFilter.value || undefined,
+    event_types: typeFilter.value
+      ? undefined
+      : (commandEventTypes.value?.length ? commandEventTypes.value : (categoryEventTypes.value || undefined)),
     level: levelFilter.value,
     keyword: keyword.value,
     start_time: listStartTime.value || undefined,
@@ -1335,8 +1379,10 @@ const resetFilters = () => {
   typeFilter.value = ''
   levelFilter.value = ''
   keyword.value = ''
-  listStartTime.value = ''
-  listEndTime.value = ''
+  commandEventTypes.value = null
+  const range = defaultListTimeRange()
+  listStartTime.value = range.start
+  listEndTime.value = range.end
   loadEvents()
 }
 
@@ -1443,8 +1489,12 @@ watch(() => props.workspaceCommand, command => {
     statusFilter.value = filters.status || filters.event_status || ''
     typeFilter.value = filters.event_type || filters.type || ''
     levelFilter.value = filters.level || filters.ai_suggested_level || ''
-    listStartTime.value = filters.start_time || filters.startTime || ''
-    listEndTime.value = filters.end_time || filters.endTime || ''
+    commandEventTypes.value = Array.isArray(filters.event_types)
+      ? filters.event_types.map(item => String(item).trim()).filter(Boolean)
+      : null
+    const defaultRange = defaultListTimeRange()
+    listStartTime.value = filters.start_time || filters.startTime || defaultRange.start
+    listEndTime.value = filters.end_time || filters.endTime || defaultRange.end
     loadEvents()
   }
 }, { deep: true, immediate: true })
@@ -1518,6 +1568,7 @@ loadEvents()
 .filter-row { align-items: center; gap: 12px 16px; }
 .filter-row label { display: flex; align-items: center; gap: 8px; color: #555; white-space: nowrap; }
 .filter-row input, .filter-row select { width: 160px; min-width: 0; height: 32px; box-sizing: border-box; border-color: #d9d9d9; border-radius: 2px; padding: 0 10px; color: #333; outline: 0; }
+.filter-row .time-filter input { width: 176px; }
 .filter-row input:focus, .filter-row select:focus { border-color: #1684f8; box-shadow: 0 0 0 2px rgba(22, 132, 248, .12); }
 .filter-row .keyword-filter { flex: 1; min-width: 260px; }
 .filter-row .keyword-filter input { width: auto; min-width: 210px; }

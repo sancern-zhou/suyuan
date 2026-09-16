@@ -374,7 +374,10 @@ const quickPrompts = computed(() => (
 ))
 const sendQuickPrompt = (query) => {
   if (!query || props.disabled || props.isAnalyzing) return
-  emit('send', { query })
+  emit('send', {
+    query,
+    modelTier: getEffectiveModelTier(modelTier.value, activeModelTierMode.value)
+  })
 }
 const showKnowledgeBaseSelector = ref(false)
 const activeTrigger = ref(null)

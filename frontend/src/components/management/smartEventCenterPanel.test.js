@@ -27,6 +27,14 @@ test('event list exposes a manual AI judgment dispatch action', () => {
   assert.match(source, /@click\.stop="dispatchAiJudgment\(event\)"/)
 })
 
+test('event list filters by a start and end event time', () => {
+  assert.match(source, /v-model="listStartTime" type="datetime-local" aria-label="事件开始时间筛选"/)
+  assert.match(source, /v-model="listEndTime" type="datetime-local" aria-label="事件结束时间筛选"/)
+  assert.match(source, /start_time: listStartTime\.value \|\| undefined/)
+  assert.match(source, /end_time: listEndTime\.value \|\| undefined/)
+  assert.match(source, /开始时间不能晚于结束时间/)
+})
+
 test('smart event workspace handles Agent focus, comparison, history, and task commands', () => {
   assert.match(source, /command\.type === 'focus_evidence'/)
   assert.match(source, /command\.type === 'compare_events'/)
@@ -190,19 +198,36 @@ test('stored list is displayed before the background refresh resolves', async ()
   const run = new Function('loading', 'events', 'error', 'lastSync', 'props',
     'stopSyncWatch', 'listJiangsuSmartEvents', 'watchBackgroundSync',
     'activeQuery', 'PAGE_SIZE', 'statusFilter', 'typeFilter', 'levelFilter', 'keyword',
-    'listStartTime', 'listEndTime', 'applyListPage',
+    'categoryEventTypes', 'commandEventTypes',
+    'listStartTime', 'listEndTime', 'applyListPage', 'actionMessage',
     `return (async (page = 1) => {${body}})()`)
   await run(loading, events, { value: '' }, { value: null }, {}, () => {},
     async params => {
       assert.equal(params.refresh, false)
       assert.equal(params.limit, 10)
       assert.equal(params.page, 1)
+      assert.equal(params.event_types, undefined)
       return { events: [{ event_id: 'stored' }] }
     }, () => {
       assert.equal(loading.value, false)
       assert.equal(events.value[0].event_id, 'stored')
       backgroundStarted = true
-    }, { value: {} }, 10, { value: '' }, { value: '' }, { value: '' }, { value: '' }, { value: '' }, { value: '' }, payload => { events.value = payload.events })
+    }, { value: {} }, 10, { value: '' }, { value: '' }, { value: '' }, { value: '' }, { value: null }, { value: null }, { value: '' }, { value: '' }, payload => { events.value = payload.events }, { value: '' })
   assert.equal(backgroundStarted, true)
   assert.match(source, /v-if="loading && !events.length"/)
+})
+
+test('category entry filters event types on the server instead of in the browser', () => {
+  assert.match(source, /const categoryEventTypes = computed\(\(\) => CATEGORY_TYPES\[props\.category\] \|\| null\)/)
+  const body = source.match(/const loadEvents = async \(page = 1\) => \{([\s\S]*?)\n\}\n\nconst resetFilters/)[1]
+  assert.match(body, /event_types: typeFilter\.value/)
+  assert.match(body, /categoryEventTypes\.value \|\| undefined/)
+  assert.match(body, /commandEventTypes\.value\?\.length \? commandEventTypes\.value/)
+  assert.match(source, /const filteredEvents = computed\(\(\) => events\.value\)/)
+  assert.match(source, /const emptyTypeOptionLabel = computed\(\(\) => CATEGORY_SCOPE_LABELS\[props\.category\] \|\| '全部事件类型'\)/)
+  assert.match(source, /<option value="">\{\{ emptyTypeOptionLabel \}\}<\/option>/)
+})
+
+test('event list defaults to the current day time range', () => {
+  assert.match(source, /start: `\$\{parts\.year\}-\$\{parts\.month\}-\$\{parts\.day\}T00:00`/)
 })

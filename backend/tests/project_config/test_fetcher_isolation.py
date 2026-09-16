@@ -20,4 +20,5 @@ def test_jiangsu_project_explicitly_starts_only_its_fetcher():
         "task_review_feedback",
         "jiangsu_nmc_observed_weather_fetcher",
         "jiangsu_smart_event_alarm_sync",
+        "jiangsu_data_audit_review_event",
     ]

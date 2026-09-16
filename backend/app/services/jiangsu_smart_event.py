@@ -1730,7 +1730,7 @@ class JiangsuSmartEventService:
         }
 
     async def _list_events_from_db(self, *, start_time, end_time, station_codes, status,
-                                   keyword, event_type, level, limit, page, sync_state) -> dict[str, Any] | None:
+                                   keyword, event_type, event_types, level, limit, page, sync_state) -> dict[str, Any] | None:
         from app.db.sync_bridge import run_db_async
         from app.services import smart_event_db
 
@@ -1740,8 +1740,8 @@ class JiangsuSmartEventService:
         async def overview_query(current_page):
             return await run_db_async(smart_event_db.query_events_overview_async(
                 start_time=time_lo, end_time=time_hi, station_codes=station_codes,
-                status=status, keyword=keyword, event_type=event_type, level=level,
-                limit=limit, offset=(current_page - 1) * limit,
+                status=status, keyword=keyword, event_type=event_type, event_types=event_types,
+                level=level, limit=limit, offset=(current_page - 1) * limit,
             ))
 
         try:
@@ -1808,6 +1808,7 @@ class JiangsuSmartEventService:
         page: int = 1,
         summary: bool = False,
         event_type: str | None = None,
+        event_types: list[str] | None = None,
         level: str | None = None,
     ) -> dict[str, Any]:
         sync_state = self.background_sync_status()
@@ -1821,8 +1822,8 @@ class JiangsuSmartEventService:
         if summary:
             db_result = await self._list_events_from_db(
                 start_time=start_time, end_time=end_time, station_codes=station_codes,
-                status=status, keyword=keyword, event_type=event_type, level=level,
-                limit=limit, page=page, sync_state=sync_state,
+                status=status, keyword=keyword, event_type=event_type, event_types=event_types,
+                level=level, limit=limit, page=page, sync_state=sync_state,
             )
             if db_result is not None:
                 return db_result
@@ -1836,7 +1837,10 @@ class JiangsuSmartEventService:
             limit=len(store.get("events", [])),
         )
         all_events = [item for item in store.get("events", []) if isinstance(item, dict)]
-        if event_type:
+        type_values = [str(item).strip() for item in (event_types or []) if str(item).strip()]
+        if type_values:
+            events = [item for item in events if (item.get("ai_event_type") or item.get("event_type")) in type_values]
+        elif event_type:
             events = [item for item in events if (item.get("ai_event_type") or item.get("event_type")) == event_type]
         if level:
             events = [item for item in events if str(item.get("ai_suggested_level") or "") == level]

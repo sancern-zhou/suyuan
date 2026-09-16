@@ -10,11 +10,16 @@ async def test_jiangsu_initializes_scheduled_task_service_and_seeds_defaults(mon
     calls = []
 
     class Service:
+        task_storage: dict = {}
+
         def get_task(self, task_id):
             return None
 
         def create_task(self, task):
             calls.append(("create", task.task_id))
+            return task
+
+        def update_task(self, task):
             return task
 
     monkeypatch.setattr("app.scheduled_tasks.init_service", lambda **_: Service())
@@ -24,5 +29,12 @@ async def test_jiangsu_initializes_scheduled_task_service_and_seeds_defaults(mon
 
     assert calls == [
         ("create", "jiangsu_station_fault_diagnosis"),
+        ("create", "jiangsu_fault_work_order_review"),
+        ("create", "jiangsu_smart_event_ai_judgment"),
+        ("create", "jiangsu_data_audit_review"),
+        ("create", "jiangsu_work_order_track_monthly_review"),
+        ("create", "jiangsu_network_inspection_watch"),
+        ("create", "jiangsu_fault_work_order_monthly_report"),
+        ("create", "jiangsu_backup_quarterly_report"),
         ("start", None),
     ]

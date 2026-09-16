@@ -91,9 +91,11 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
     assert context.manifest.backend.fetchers == [
         "jiangsu_station_fault_event",
         "jiangsu_fault_work_order_review_event",
+        "jiangsu_fault_work_order_review_rerun",
         "task_review_feedback",
         "jiangsu_nmc_observed_weather",
         "jiangsu_smart_event_alarm_sync",
+        "jiangsu_data_audit_review_event",
     ]
     assert "execute_sql_query" in context.manifest.backend.agent_mode_tools["jiangsu_query"]
     assert "jiangsu_query_operations_graph" in context.manifest.backend.agent_mode_tools["operations_analysis"]
@@ -123,6 +125,11 @@ def test_jiangsu_project_owns_station_fault_automation_surfaces():
         "jiangsu_station_fault_diagnosis",
         "jiangsu_fault_work_order_review",
         "jiangsu_smart_event_ai_judgment",
+        "jiangsu_data_audit_review",
+        "jiangsu_work_order_track_monthly_review",
+        "jiangsu_network_inspection_watch",
+        "jiangsu_fault_work_order_monthly_report",
+        "jiangsu_backup_quarterly_report",
     ]
     assert project_skills_dir(context) == REPO_ROOT / "projects" / "jiangsu-ops" / "skills"
 

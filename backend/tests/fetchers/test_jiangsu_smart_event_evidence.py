@@ -513,6 +513,18 @@ async def test_comparison_computes_regional_deltas_for_nearby_and_city_rest():
     assert deltas["trend_comparison"]["PM10"]["direction_consistent"] is True
     assert deltas["trend_comparison"]["PM10"]["consistency"] == "一致"
     assert deltas["trend_comparison"]["PM10"]["pearson_correlation"] is None
+    # 事件窗口趋势对比只统计窗口内小时（12:00 记录不参与）。
+    assert deltas["event_trend_comparison"]["PM10"]["target_direction"] == "上升"
+    assert deltas["event_trend_comparison"]["PM10"]["nearby_direction"] == "上升"
+    assert deltas["event_trend_comparison"]["PM10"]["aligned_hours"] == 2
+    # 逐小时对齐序列覆盖事件窗口前后各 3 小时，窗口外小时保留占位行。
+    alignment = {row["time"]: row for row in deltas["event_hourly_alignment"]}
+    assert "2026-09-09T07:00:00" in alignment
+    assert alignment["2026-09-09T07:00:00"]["target"] == {}
+    assert alignment["2026-09-09T10:00:00"]["target"]["PM10"] == 90
+    assert alignment["2026-09-09T10:00:00"]["nearby"]["PM10"] == 100
+    assert alignment["2026-09-09T11:00:00"]["target"]["PM10"] == 110
+    assert alignment["2026-09-09T11:00:00"]["nearby"]["PM10"] == 140
     # 展示数据保留同区站 + 本站的原始记录。
     assert result["record_count"] == 5
     assert {row["stationCode"] for row in result["data"]} == {"A", "B"}

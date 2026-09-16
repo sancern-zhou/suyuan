@@ -132,6 +132,18 @@
         "publish_report",
         "submit_task_review"
       ]
+    },
+    "data-audit-review": {
+      "enabled": true,
+      "aliases": [
+        "数据审核",
+        "数据审核复核",
+        "平台初审复核"
+      ],
+      "required_tools": [
+        "read_file",
+        "submit_task_review"
+      ]
     }
   }
 }

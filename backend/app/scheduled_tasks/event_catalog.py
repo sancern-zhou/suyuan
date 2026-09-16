@@ -41,6 +41,19 @@ _EVENT_DEFINITIONS = {
             "fault_event_type",
         ],
     ),
+    "jiangsu.data_audit.review_requested": EventDefinition(
+        event_type="jiangsu.data_audit.review_requested",
+        label="江苏数据审核AI复核",
+        description="江苏审核平台站点已完成初审，平台证据包（初审结果/恒值/离群值三页签）已准备完成",
+        filter_fields=[
+            "station_code",
+            "station_name",
+            "city_name",
+            "district_name",
+            "audit_day",
+            "station_state",
+        ],
+    ),
 }
 
 

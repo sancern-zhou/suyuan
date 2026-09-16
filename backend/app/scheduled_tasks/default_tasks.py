@@ -12,6 +12,7 @@ from app.scheduled_tasks.models import ScheduledTask, ScheduleType, TriggerType,
 JIANGSU_STATION_FAULT_TASK_ID = "jiangsu_station_fault_diagnosis"
 JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID = "jiangsu_fault_work_order_review"
 JIANGSU_SMART_EVENT_TASK_ID = "jiangsu_smart_event_ai_judgment"
+JIANGSU_DATA_AUDIT_REVIEW_TASK_ID = "jiangsu_data_audit_review"
 JIANGSU_SMART_EVENT_LEGACY_TASK_IDS = {
     "jiangsu_smart_event_power_alarm",
     "jiangsu_smart_event_network_alarm",
@@ -57,6 +58,36 @@ JIANGSU_FAULT_WORK_ORDER_REVIEW_PROMPT = (
     "也不得以辅助证据缺口为由维持待定；确需补充事实时按 Skill 约束做最小化只读补查。"
     "增量轮次仍须满足全部结果字段要求，并以同一工单号作为 subject_id 再次调用 submit_task_review。"
     "当前阶段禁止自动回写平台工单状态，禁止自动剔除或修改监测数据。"
+)
+
+
+JIANGSU_DATA_AUDIT_REVIEW_PROMPT = (
+    "完成本次江苏审核平台数据审核复核。事件对应一个已完成平台初审的站点-审核日。"
+    "先用 read_file 完整读取事件 payload.evidence_pack_path，按已加载的"
+    " data-audit-review Skill 的输出契约分析三个页签（initialReview 初审结果、"
+    "constant 恒值、outlier 离群值）的审核记录：核对审核前后值与标识、"
+    "matchedRules 异常模型规则、以及每条记录自带的监测、仪器、设备、质控、"
+    "工单、门禁、动环、气象等证据链，判断平台初审操作（修约、RM 标识、维持原值等）"
+    "是否有证据支撑、是否存在应处理未处理或过度处理的数据点。"
+    "数值 null 表示缺失或源无效占位，不得当作 0；报警、门禁、工单等关联证据"
+    "只表示同站点同范围关联，不表示逐条因果匹配。"
+    "结束前只调用 submit_task_review 生成人工确认卡片：category 填数据审核，"
+    "subject_id 与 event_id 均填 payload.subject_id，decision 按证据给出"
+    " approve/reject/needs_evidence，并在 sections 填写站点编码、审核日、"
+    "各页签记录数与审核一致性摘要。"
+    "summary 是给审核员看的业务结论，50字以内，只说清楚四件事：数据是否有效、"
+    "有效的原因、无效的原因、无效时建议剔除的时间段（精确到小时区间）；"
+    "禁止出现接口名、字段名、页签代码、schema、证据缺口等 IT 术语和过程性描述，"
+    "多余的技术细节一律放入 checks 与 comment，不得挤占 summary。"
+    "证据包 gaps 中列出的页签失败或截断在 checks 中说明，不得写进 summary。"
+    "若可信事件上下文的 payload 含 continuity_context（reason=platform_audit_feedback）："
+    "江苏省审核平台人工初审日志是权威修正基准，先对照 previous_submission 与"
+    " platform_audit_logs 逐项定位分歧，再基于同一证据包修正审核结论、数据处置与"
+    "核验项；除非存在与人工处理直接矛盾且确凿的证据并在 comment 中逐条列明，"
+    "否则必须按人工口径更新结论；修正后仍以 payload.subject_id 作为 subject_id"
+    " 再次调用 submit_task_review 提交完整结论。"
+    "长期记忆和历史案例只用于形成待核验假设，不能替代本次证据。"
+    "当前阶段禁止自动回写审核平台数据或状态。"
 )
 
 
@@ -195,16 +226,52 @@ def build_jiangsu_fault_work_order_review_task() -> ScheduledTask:
     )
 
 
+def build_jiangsu_data_audit_review_task() -> ScheduledTask:
+    return ScheduledTask(
+        result_requirements=[
+            _result_field("title", "审核标题"),
+            _result_field("summary", "审核结论"),
+            _result_field("decision", "审核建议", ["approve", "reject", "needs_evidence"]),
+            _result_field("sections.station_code", "站点编码"),
+            _result_field("sections.audit_day", "审核日"),
+            _result_field("sections.initial_review_summary", "初审结果页签摘要"),
+            _result_field("sections.anomaly_summary", "恒值/离群页签摘要"),
+        ],
+        task_id=JIANGSU_DATA_AUDIT_REVIEW_TASK_ID,
+        name="江苏数据审核AI复核",
+        description=(
+            "江苏审核平台站点完成初审后，按平台证据包复核数据准确性并形成 AI 审核结论；"
+            "平台人工审核日志次日回流用于结论修正与长期学习。"
+        ),
+        execution_mode="ops",
+        skill_id="data-audit-review",
+        review_subject_attribute="audit_subject_id",
+        history_learning={"enabled": True, "memory_char_budget": 8000},
+        trigger_type=TriggerType.EVENT,
+        event_type="jiangsu.data_audit.review_requested",
+        enabled=True,
+        prompt=JIANGSU_DATA_AUDIT_REVIEW_PROMPT,
+        timeout_seconds=1200,
+        created_by="project-default",
+        owner_user_id="system",
+        owner_username="data-audit-review-agent",
+        owner_display_name="数据审核复核智能体",
+        tags=["江苏", "数据审核", "平台初审复核", "事件驱动", "任务专属记忆"],
+        workspace_entry=WorkspaceEntry(enabled=True, title="数据审核AI复核"),
+    )
+
+
 DEFAULT_TASK_FACTORIES = {
     JIANGSU_STATION_FAULT_TASK_ID: build_jiangsu_station_fault_task,
     JIANGSU_FAULT_WORK_ORDER_REVIEW_TASK_ID: build_jiangsu_fault_work_order_review_task,
 }
 DEFAULT_TASK_FACTORIES[JIANGSU_SMART_EVENT_TASK_ID] = build_jiangsu_smart_event_task
+DEFAULT_TASK_FACTORIES[JIANGSU_DATA_AUDIT_REVIEW_TASK_ID] = build_jiangsu_data_audit_review_task
 
 
 JIANGSU_TRACK_MONTHLY_TASK_ID = "jiangsu_work_order_track_monthly_review"
 def build_jiangsu_track_monthly_task() -> ScheduledTask:
-    return ScheduledTask(task_id=JIANGSU_TRACK_MONTHLY_TASK_ID, name="工单轨迹合理性月度分析", description="分析上月签到轨迹并生成每人一张复核待办", execution_mode="custom", tool_names=["jiangsu_analyze_work_order_tracks", "create_report_package", "render_report_package", "validate_report_package", "publish_report", "submit_task_review"], skill_id="工单轨迹合理性分析", schedule_type=ScheduleType.MONTHLY_CUSTOM, day_of_month=3, hour=7, minute=0, prompt="分析上一个自然月；生成正式报告时依次调用 create_report_package、render_report_package、validate_report_package，校验通过后显式调用 publish_report 才进入智能报告中心；远离站点仅进报告。", history_learning={"enabled": True})
+    return ScheduledTask(task_id=JIANGSU_TRACK_MONTHLY_TASK_ID, name="工单轨迹合理性月度分析", description="分析上月签到轨迹并生成每人一张复核待办", execution_mode="custom", tool_names=["read_file", "jiangsu_analyze_work_order_tracks", "create_report_package", "render_report_package", "validate_report_package", "publish_report", "submit_task_review"], skill_id="工单轨迹合理性分析", schedule_type=ScheduleType.MONTHLY_CUSTOM, day_of_month=3, hour=7, minute=0, prompt="分析上一个自然月；生成正式报告时依次调用 create_report_package、render_report_package、validate_report_package，校验通过后显式调用 publish_report 才进入智能报告中心；远离站点仅进报告。", history_learning={"enabled": True})
 DEFAULT_TASK_FACTORIES[JIANGSU_TRACK_MONTHLY_TASK_ID] = build_jiangsu_track_monthly_task
 
 

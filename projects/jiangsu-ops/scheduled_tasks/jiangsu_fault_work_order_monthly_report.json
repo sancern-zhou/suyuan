@@ -4,6 +4,7 @@
   "description": "按月分析江苏故障工单、站点与运维单位处理时效，剔除重复断电类事件对总体统计的失真并生成正式报告",
   "execution_mode": "custom",
   "tool_names": [
+    "read_file",
     "jiangsu_fetch_fault_work_orders",
     "jiangsu_fetch_fault_work_order_detail",
     "execute_python",
@@ -19,7 +20,7 @@
   "hour": 7,
   "minute": 30,
   "enabled": true,
-  "prompt": "执行 fault-work-order-monthly-analysis Skill。使用江苏部署环境文件 backend/.env.jiangsu-ops，查询上一个自然月已完成 Fault 工单，必须 fetch_all=true，并记录接口、时间范围、total_count、returned_records、source_data_complete 和字段缺失。使用 execute_python 调用 app.services.jiangsu_operations_reports.build_fault_monthly_report 完成确定性聚合。execute_python 在隔离沙箱运行，禁止读取相对路径和报告参考文档，禁止读取backend/app/tools/report/report_package/references/index.md；脚本只做数据标准化、调用该函数并输出JSON。计算脚本失败时记录错误并停止，不得重复调用不同脚本。当前真实接口故障类别可能主要在 orderTitle 中，先按平台字典/稳定关键词归类，未命中进入其他/待归类，不得强行推断。报告必须包含总体故障结构、设备/站点/城市/运维单位、高频站点TOP15、平均与中位处理时长、长尾工单、重复断电专项、重点设备历史维修轨迹、RF/性能检查覆盖和可得的上月同比。异常剔除：同站点同类断电/停电/断数/通信/离线事件，连续间隔不超过24小时且至少3条，从总体和时效排名剔除，但保留工单号、站点和时间范围专项清单；未命中时写‘本期未识别满足规则的连续簇’，不能写‘没有重复故障’。列表字段不足时调用详情工具核验，不能仅凭列表认定维修质量。严格执行 create_report_package → render_report_package(format=docx) → validate_report_package(require_html=true, require_docx=true) → publish_report；校验失败不得发布。report_data.json 保存源元数据、字段缺失、规则参数和分析结果；执行结束写入任务案例，记录数据量、剔除结果、报告ID、卡点和下一期检查项。数据不完整或接口失败时输出数据门禁说明，不得生成‘无异常’结论。",
+  "prompt": "执行 fault-work-order-monthly-analysis Skill。使用江苏部署环境文件 backend/.env.jiangsu-ops，调用 jiangsu_fetch_fault_work_orders 时必须显式传入 start_time、end_time、order_types=[Fault]、workflow_statuses=[Finish]、order_statuses=[Finish]、fetch_all=true、page_size=50，禁止省略workflow_statuses（省略会默认查询处理中节点并返回错误空结果）。记录接口、时间范围、total_count、returned_records、source_data_complete 和字段缺失。使用 execute_python 调用 app.services.jiangsu_operations_reports.build_fault_monthly_report 完成确定性聚合；脚本第一行必须为 import sys; sys.path.insert(0, '/home/xckj/suyuan/backend')，再导入函数，禁止直接导入。读取外置JSON后必须先判断根结构：rows = payload if isinstance(payload, list) else payload.get('data', [])，不得对可能为数组的根对象直接调用.get()。execute_python 在隔离沙箱运行，禁止读取相对路径和报告参考文档，禁止读取backend/app/tools/report/report_package/references/index.md；脚本只做数据标准化、调用该函数并输出JSON。计算脚本失败时记录错误并停止，不得重复调用不同脚本。当前真实接口故障类别可能主要在 orderTitle 中，先按平台字典/稳定关键词归类，未命中进入其他/待归类，不得强行推断。报告必须包含总体故障结构、设备/站点/城市/运维单位、高频站点TOP15、平均与中位处理时长、长尾工单、重复断电专项、重点设备历史维修轨迹、RF/性能检查覆盖和可得的上月同比。异常剔除：同站点同类断电/停电/断数/通信/离线事件，连续间隔不超过24小时且至少3条，从总体和时效排名剔除，但保留工单号、站点和时间范围专项清单；未命中时写‘本期未识别满足规则的连续簇’，不能写‘没有重复故障’。列表字段不足时调用详情工具核验，不能仅凭列表认定维修质量。严格执行 create_report_package → render_report_package(format=docx) → validate_report_package(require_html=true, require_docx=true) → publish_report；校验失败不得发布。report_data.json 保存源元数据、字段缺失、规则参数和分析结果；执行结束写入任务案例，记录数据量、剔除结果、报告ID、卡点和下一期检查项。数据不完整或接口失败时输出数据门禁说明，不得生成‘无异常’结论。",
   "timeout_seconds": 1800,
   "created_by": "project-default",
   "owner_user_id": "system",

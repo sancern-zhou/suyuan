@@ -186,6 +186,42 @@ def _trend_direction(values: list[float]) -> str:
     return "基本稳定"
 
 
+# 事件窗口逐小时对齐序列向前后扩展的小时数，用于呈现异常开始前与结束后的走向。
+ALIGNMENT_PADDING_HOURS = 3
+
+
+def _event_hourly_alignment(
+    event_window: dict[str, Any],
+    target_records: list[dict[str, Any]],
+    peer_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """事件窗口（前后各扩 ``ALIGNMENT_PADDING_HOURS`` 小时）的逐小时对齐序列。
+
+    每行给出同一整点本站（target）与周边站点均值（nearby）的六项污染物值，
+    供研判直接核验异常开始、持续、结束时间上是否同步；某侧缺失数据时该侧
+    为空对象，保持时间轴对齐。
+    """
+    start = _parse_time(event_window.get("start"))
+    end = _parse_time(event_window.get("end"))
+    if start is None or end is None:
+        return []
+    start = start.replace(minute=0, second=0, microsecond=0) - timedelta(hours=ALIGNMENT_PADDING_HOURS)
+    end = end.replace(minute=0, second=0, microsecond=0) + timedelta(hours=ALIGNMENT_PADDING_HOURS)
+    target = _hourly_pollutant_series(target_records)
+    peer = _hourly_pollutant_series(peer_records)
+    rows: list[dict[str, Any]] = []
+    moment = start
+    while moment <= end:
+        timestamp = moment.strftime("%Y-%m-%dT%H:00:00")
+        rows.append({
+            "time": timestamp,
+            "target": target.get(timestamp) or {},
+            "nearby": peer.get(timestamp) or {},
+        })
+        moment += timedelta(hours=1)
+    return rows
+
+
 def _build_trend_comparison(
     target_records: list[dict[str, Any]], peer_records: list[dict[str, Any]]
 ) -> dict[str, dict[str, Any]]:
@@ -646,7 +682,12 @@ class JiangsuSmartEventEvidenceFetcher:
         peer_records: list[dict[str, Any]],
         city_rest: dict[str, Any],
     ) -> dict[str, Any]:
-        """V3.0 4.4：本站均值 - 周边站点/全市其余站点均值及差异比例。"""
+        """V3.0 4.4：本站均值 - 周边站点/全市其余站点均值及差异比例。
+
+        另附 ``event_trend_comparison``（事件窗口内趋势一致性）与
+        ``event_hourly_alignment``（事件窗口逐小时对齐序列），用于核验异常
+        开始、持续、结束时间上本站与周边站点是否同步。
+        """
         event_window = window["event"]
         target_means = _pollutant_means(_in_event_window(target_records, event_window))
         peer_means = _pollutant_means(_in_event_window(peer_records, event_window))
@@ -669,6 +710,11 @@ class JiangsuSmartEventEvidenceFetcher:
         nearby_delta, nearby_pct = build(peer_means)
         city_delta, city_pct = build(city_means)
         nearby_trend = _build_trend_comparison(target_records, peer_records)
+        event_trend = _build_trend_comparison(
+            _in_event_window(target_records, event_window),
+            _in_event_window(peer_records, event_window),
+        )
+        event_alignment = _event_hourly_alignment(event_window, target_records, peer_records)
         peer_codes = {
             str(record.get("stationCode") or record.get("code") or "").strip()
             for record in peer_records
@@ -688,6 +734,8 @@ class JiangsuSmartEventEvidenceFetcher:
             "same_city_delta": city_delta,
             "same_city_delta_pct": city_pct,
             "trend_comparison": nearby_trend,
+            "event_trend_comparison": event_trend,
+            "event_hourly_alignment": event_alignment,
             "trend_window": dict(window["day"]),
         }
 

@@ -5,7 +5,7 @@
 - `event_id`、`event_context`：事件、站点、主线索和原始告警标识。
 - `profile`：按主线索选择的取证范围；它描述采集策略，不是最终事件类型。
 - `time_windows.event`、`time_windows.hour`、`time_windows.day`：事件窗口、前后扩展查询窗口和自然日合规窗口。
-- `sources`：监测、站房报警、数采报警、仪器状态、动环、质控、工单、片区对比和气象等来源。每个来源检查 `success`、`status`、`summary`、`record_count`、`metadata` 和 `data`。
+- `sources`：监测、站房报警、数采报警、仪器状态、动环、质控、工单、片区对比和气象等来源。每个来源检查 `success`、`status`、`summary`、`record_count`、`metadata` 和 `data`。片区对比（comparison）中：`data` 保留本站与同区周边站点的逐小时六项污染物原始记录；`regional_deltas` 提供事件窗口均值差、`event_hourly_alignment`（事件窗口前后各 3 小时本站与周边站点逐小时对齐序列）、`event_trend_comparison`（事件窗口趋势一致性）和 `trend_comparison`（全天趋势一致性）。核验异常开始、持续、结束的同步性时优先使用 `event_hourly_alignment` 的小时级数值；只有 comparison 为空、失败或未接入时才可声明缺少周边站点数据。
 - `gaps`：视频未接入、接口不可用、空结果或其他证据缺口；`empty`、`failed`、`unavailable` 不得混为一谈。
 - `persisted_path`：证据包独立 JSON 文件路径；当内联 payload 被压缩时优先读取该文件。
 - `ai_judgment`：任务完成后由系统回写的研判结果，不作为本次研判的先验事实。

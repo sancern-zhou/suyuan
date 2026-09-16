@@ -40,11 +40,12 @@ def test_runtime_skill_resolution_uses_the_jiangsu_directory(monkeypatch):
     result = __import__("asyncio").run(tool.execute())
 
     assert result["success"] is True
-    assert result["data"]["count"] == 4
+    assert result["data"]["count"] == 8
     files = {item["file"] for item in result["data"]["skills"]}
     assert any(path.endswith("station-alarm-diagnosis/SKILL.md") for path in files)
     assert any(path.endswith("ops-work-order-audit/SKILL.md") for path in files)
     assert any(path.endswith("smart-event-judgment/SKILL.md") for path in files)
+    assert any(path.endswith("data-audit-review/SKILL.md") for path in files)
 
 
 def test_ops_audit_report_reference_preserves_output_contract():
