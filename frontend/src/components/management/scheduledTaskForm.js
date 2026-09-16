@@ -65,7 +65,7 @@ export const buildTaskPayload = (form) => {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
     execution_mode: form.execution_mode || 'assistant',
-    model_tier: form.model_tier || 'auto',
+    model_tier: form.model_tier || 'flash',
     result_requirements: (form.result_requirements || []).map(rule => ({
       field: String(rule.field || '').trim(),
       label: String(rule.label || '').trim(),

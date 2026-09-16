@@ -137,6 +137,7 @@ class ExecutePythonTool(LLMTool):
                 is_file_reader = (
                     func_name in {"open", "io.open", "get_raw_data", "load_data"}
                     or leaf_name.startswith("read_")
+                    or func_name in {"Path.read_text", "Path.read_bytes"}
                     or func_name in {"pd.load", "np.load"}
                 )
                 if is_file_reader and node.args:
@@ -936,6 +937,9 @@ class ExecutePythonTool(LLMTool):
             command.extend(["--unsetenv", name])
         safe_env = {
             "PATH": f"{python_env}/bin:/usr/bin:/bin",
+            # Expose only the application package mounted below.  Secrets,
+            # sessions and the data registry are intentionally not mounted.
+            "PYTHONPATH": str(Path(PROJECT_ROOT) / "backend"),
             "HOME": "/tmp",
             "TMPDIR": "/tmp",
             "MPLCONFIGDIR": "/tmp/matplotlib",
@@ -957,6 +961,23 @@ class ExecutePythonTool(LLMTool):
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
         relative_input_mounts: List[Path] = []
+
+        # Business calculation code may import the backend application
+        # package, but the sandbox must not receive the project root, .env
+        # files, session history, or the persistent data registry.  Authorized
+        # data files continue to be staged separately below.
+        backend_root = Path(PROJECT_ROOT) / "backend"
+        staged_backend_root = Path(working_dir) / "backend_runtime"
+        for source in (backend_root / "app", backend_root / "config"):
+            if not source.is_dir():
+                continue
+            relative = source.relative_to(backend_root)
+            staged_source = staged_backend_root / relative
+            shutil.copytree(source, staged_source, dirs_exist_ok=True)
+            self._append_bubblewrap_parent_dirs(command, source)
+            command.extend(["--ro-bind", str(staged_source), str(source)])
+            mounted_destinations.add(str(source))
+
         context_paths = list(
             dict.fromkeys(
                 [
@@ -1121,6 +1142,7 @@ class ExecutePythonTool(LLMTool):
                         "session_data",
                         "images_output",
                         "_suyuan_assets",
+                        "backend_runtime",
                     }
                 ]
             # 跳过 __pycache__ 目录

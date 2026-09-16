@@ -117,8 +117,15 @@ class ScheduledTaskExecutor:
         return storage
 
     def _runtime_extra_tool_names(self, task: ScheduledTask) -> list[str]:
-        """Tools automatically available only inside this scheduled task run."""
-        names: list[str] = ["submit_task_review"]
+        """Tools automatically available only inside this scheduled task run.
+
+        ``read_file`` is mandatory for every agent scheduled task: task evidence
+        packages are persisted as project-relative files and both prompts and
+        skills instruct the agent to read them directly. Without it the agent
+        only sees the inline event clues and silently reports captured evidence
+        as missing.
+        """
+        names: list[str] = ["read_file", "submit_task_review"]
         if task.broadcast_enabled:
             names.append(SCHEDULED_BROADCAST_TOOL)
         if (

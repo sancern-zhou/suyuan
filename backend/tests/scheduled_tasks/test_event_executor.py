@@ -515,7 +515,12 @@ async def test_custom_broadcast_task_adds_broadcast_tool_at_runtime(tmp_path, mo
     )
 
     assert execution.status.value == "success"
-    assert requested_tools == ["execute_python", "broadcast_social_users"]
+    assert requested_tools == [
+        "execute_python",
+        "read_file",
+        "submit_task_review",
+        "broadcast_social_users",
+    ]
 
 
 @pytest.mark.asyncio
