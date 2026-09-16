@@ -39,7 +39,7 @@ test('jiangsu operations project exposes its dedicated operations modes', () => 
   const config = loadProjectBuildConfig({ projectId: 'jiangsu-ops', repoRoot })
   assert.deepEqual(config.frontend.agentModes, [
     'assistant', 'ops', 'jiangsu_query', 'knowledge', 'expert', 'smart_inspection', 'operations_analysis',
-    'device_control', 'station_fault_diagnosis'
+    'device_control', 'station_fault_diagnosis', 'smart_event_external', 'smart_event_instrument'
   ])
   assert.equal(config.frontend.defaultAgentMode, 'ops')
   assert.equal(config.frontend.agentModeOverrides.ops.name, '工单审核模式')

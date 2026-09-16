@@ -22,6 +22,7 @@ EXPECTED_TOOLS = [
     "execute_python",
     "create_report_chart",
     "create_report_package",
+    "publish_report",
     "render_report_package",
     "validate_report_package",
     "manage_editable_ppt",
@@ -79,3 +80,13 @@ def test_jiangsu_fault_work_order_review_tool_is_registered():
     registered = set(create_global_tool_registry(context=context).list_tools())
 
     assert "submit_task_review" in registered
+
+
+def test_jiangsu_geography_resolver_tool_is_registered_and_exposed():
+    context = load_project_context("jiangsu-ops", repo_root=REPO_ROOT)
+
+    registered = set(create_global_tool_registry(context=context).list_tools())
+
+    assert "jiangsu_resolve_geography" in registered
+    assert "jiangsu_resolve_geography" in context.manifest.backend.tools
+    assert "jiangsu_resolve_geography" in context.manifest.backend.agent_mode_tools["jiangsu_query"]

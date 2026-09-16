@@ -169,6 +169,7 @@ backend:
     - jiangsu_fetch_district_data
     - jiangsu_fetch_station_data
     - jiangsu_query_statistics
+    - jiangsu_resolve_geography
     - jiangsu_fetch_alarm_records
     - jiangsu_smart_event_workspace
     - jiangsu_fetch_attendance_records
@@ -263,6 +264,7 @@ backend:
       - jiangsu_fetch_alarm_records
       - jiangsu_fetch_attendance_records
       - jiangsu_fetch_station_directory
+      - jiangsu_resolve_geography
       - jiangsu_query_operations_graph
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_fault_work_orders
@@ -289,6 +291,7 @@ backend:
       - jiangsu_fetch_station_data
       - jiangsu_fetch_station_directory
       - jiangsu_query_statistics
+      - jiangsu_resolve_geography
       - jiangsu_fetch_alarm_records
       - get_weather_data
       - get_weather_forecast
@@ -307,6 +310,7 @@ backend:
       - jiangsu_fetch_district_data
       - jiangsu_fetch_station_data
       - jiangsu_query_statistics
+      - jiangsu_resolve_geography
       - get_weather_data
       - get_weather_forecast
       - get_current_weather
@@ -347,6 +351,7 @@ backend:
       - jiangsu_fetch_district_data
       - jiangsu_fetch_station_data
       - jiangsu_query_statistics
+      - jiangsu_resolve_geography
       - jiangsu_fetch_alarm_records
       - jiangsu_smart_event_workspace
       - jiangsu_fetch_station_alarm_logs

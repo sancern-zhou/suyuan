@@ -472,6 +472,14 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="jiangsu_data_tools", error=str(e))
 
+    if is_project_tool_enabled(context, "legacy", "jiangsu_resolve_geography"):
+        try:
+            from app.tools.jiangsu.query_tools import JiangsuGeographyResolverTool
+            registry.register(JiangsuGeographyResolverTool(), priority=50)
+            logger.info("tool_loaded", tool="jiangsu_resolve_geography")
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="jiangsu_resolve_geography", error=str(e))
+
     if is_project_tool_enabled(context, "legacy", "jiangsu_fetch_alarm_records"):
         try:
             from app.tools.jiangsu.alarm_records import JiangsuAlarmRecordsTool
