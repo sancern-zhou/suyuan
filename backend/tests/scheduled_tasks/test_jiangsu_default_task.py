@@ -207,23 +207,33 @@ def test_default_task_result_requirements_are_task_specific():
     assert 'sections.verification_standard' in {rule.field for rule in station.result_requirements}
 
 
-def test_all_agent_default_tasks_expose_read_file():
-    """read_file is a mandatory runtime tool: evidence packs are read as files."""
-    from app.scheduled_tasks.executor import ScheduledTaskExecutor
+def test_agent_default_tasks_explicitly_configure_read_file():
+    """Evidence packs are read as files, so every agent task must declare read_file."""
+    from pathlib import Path
 
-    executor = ScheduledTaskExecutor.__new__(ScheduledTaskExecutor)
-    factories = [
+    from app.project_config.loader import load_project_context
+
+    repo_root = Path(__file__).resolve().parents[3]
+    mode_tools = load_project_context("jiangsu-ops", repo_root=repo_root).manifest.backend.agent_mode_tools
+    # Modes reachable by agent scheduled tasks, including smart-event runtime overrides.
+    for mode in (
+        "station_fault_diagnosis",
+        "ops",
+        "smart_event_external",
+        "smart_event_instrument",
+    ):
+        assert "read_file" in mode_tools[mode], mode
+
+    for factory in (
         build_jiangsu_station_fault_task,
         build_jiangsu_fault_work_order_review_task,
         build_jiangsu_smart_event_task,
         build_jiangsu_data_audit_review_task,
         build_jiangsu_track_monthly_task,
-    ]
-    for factory in factories:
+    ):
         task = factory()
-        if task.execution_mode == "workflow":
-            continue
-        assert "read_file" in executor._runtime_extra_tool_names(task), task.task_id
+        if task.execution_mode == "custom":
+            assert "read_file" in (task.tool_names or []), task.task_id
 
 
 def test_operator_result_configuration_is_not_overwritten():
