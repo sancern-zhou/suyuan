@@ -7,6 +7,7 @@ from typing import Dict, Any, List
 import asyncio
 import httpx
 import structlog
+from app.utils.weather_time import OPEN_METEO_SOURCE
 
 logger = structlog.get_logger()
 
@@ -160,6 +161,8 @@ class OpenMeteoClient:
             "end_date": end_date,
             "hourly": ",".join(self.era5_variables),
             "timezone": "UTC",
+            "models": "best_match",
+            "wind_speed_unit": "kmh",
         }
 
         # 创建带连接池的 httpx 客户端
@@ -177,7 +180,9 @@ class OpenMeteoClient:
                             date=start_date,
                             attempt=attempt + 1
                         )
-                        return response.json()
+                        data = response.json()
+                        data["data_source"] = OPEN_METEO_SOURCE
+                        return data
                     elif response.status_code == 429:
                         # 限流错误，等待后重试
                         if attempt < self.max_retries:
@@ -280,7 +285,8 @@ class OpenMeteoClient:
         forecast_days: int = 7,
         past_days: int = 0,
         hourly: bool = True,
-        daily: bool = True
+        daily: bool = True,
+        timezone: str = "UTC",
     ) -> Dict[str, Any]:
         """
         获取天气预报数据（支持获取过去天数）
@@ -306,13 +312,13 @@ class OpenMeteoClient:
         Note:
             使用 past_days=1 可以获取：
             - 昨天完整24小时数据
-            - 今天00:00到当前时刻的数据（分析场数据，非预报）
+            - 当天已过小时的模式数据（不能视为站点实测）
             - 未来7天预报数据
         """
         params = {
             "latitude": lat,
             "longitude": lon,
-            "timezone": "UTC",
+            "timezone": timezone,
             "forecast_days": min(forecast_days, 16),  # 最多16天
             "past_days": min(past_days, 5),  # 最多5天历史数据
         }

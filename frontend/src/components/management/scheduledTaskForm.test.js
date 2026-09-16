@@ -103,21 +103,21 @@ test('filters active bound WeChat users', () => {
 
 test('builds an event task with multiple backend user ids', () => {
   const payload = buildTaskPayload({
-    name: '运城告警推送',
+    name: "许昌告警推送",
     description: '生成并推送报告',
     execution_mode: 'social',
     trigger_type: 'event',
-    event_type: 'yuncheng.alert.created',
-    event_filters: { city: '运城市' },
+    event_type: "xuchang.station_deviation.alert_created",
+    event_filters: { city: "许昌市" },
     broadcast_enabled: true,
     target_user_ids: ['a', 'd'],
     enabled: true,
-    tagsText: 'yuncheng,event'
+    tagsText: 'xuchang,event'
   })
 
   assert.equal(payload.schedule_type, null)
   assert.deepEqual(payload.target_user_ids, ['a', 'd'])
-  assert.deepEqual(payload.event_filters, { city: '运城市' })
+  assert.deepEqual(payload.event_filters, { city: "许昌市" })
   assert.equal(payload.prompt, '生成并推送报告')
   assert.equal(payload.timeout_seconds, 1800)
 })
@@ -300,13 +300,20 @@ test('event trigger defaults to social execution and broadcasting', () => {
   }
 
   applyTriggerDefaults(form, 'event', [
-    { event_type: 'yuncheng.alert.created' }
+    { event_type: "xuchang.station_deviation.alert_created" }
   ])
 
   assert.equal(form.trigger_type, 'event')
   assert.equal(form.execution_mode, 'social')
   assert.equal(form.broadcast_enabled, true)
-  assert.equal(form.event_type, 'yuncheng.alert.created')
+  assert.equal(form.event_type, 'xuchang.station_deviation.alert_created')
+})
+
+test('task payload preserves each model tier and defaults legacy forms to auto', () => {
+  for (const tier of ['auto', 'flash', 'pro']) {
+    assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
+  }
+  assert.equal(buildTaskPayload({}).model_tier, 'auto')
 })
 
 

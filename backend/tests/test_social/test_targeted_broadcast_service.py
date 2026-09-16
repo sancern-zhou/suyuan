@@ -73,7 +73,7 @@ async def test_broadcast_resolves_unique_names_and_persists_context(tmp_path):
     service = TargetedSocialBroadcastService(registry, broadcaster)
 
     result = await service.broadcast(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=[" 周三成 ", "李四", "周三成"],
         media=[str(report)],
         context_metadata={"source": "assistant_tool"},
@@ -126,7 +126,7 @@ async def test_broadcast_rejects_duplicate_and_invalid_names_without_guessing():
     service = TargetedSocialBroadcastService(registry, broadcaster)
 
     result = await service.broadcast(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=[
             "唯一有效用户",
             "重名用户",
@@ -164,7 +164,7 @@ async def test_broadcast_rejects_empty_target_names_without_sending():
     service = TargetedSocialBroadcastService(registry, broadcaster)
 
     result = await service.broadcast(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["", "  "],
     )
 
@@ -185,7 +185,7 @@ async def test_broadcast_rejects_names_sharing_one_social_binding():
     service = TargetedSocialBroadcastService(registry, broadcaster)
 
     result = await service.broadcast(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["甲", "乙", "丙"],
     )
 
@@ -207,7 +207,7 @@ async def test_broadcast_does_not_report_success_when_context_is_not_persisted()
     service = TargetedSocialBroadcastService(registry, broadcaster)
 
     result = await service.broadcast(
-        message="运城告警",
+        message="许昌告警",
         target_user_names=["周三成"],
     )
 

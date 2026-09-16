@@ -1076,3 +1076,35 @@ async def test_chat_completions_retries_malformed_tool_arguments_with_named_tool
     assert result["stop_reason"] == "tool_use"
     assert result["content"][0].type == "tool_use"
     assert result["content"][0].input == {"title": "AQI", "data": {}}
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("provider", ["scnet", "deepseek"])
+def test_deepseek_thinking_parameter_respects_gateway(provider, streaming):
+    service = LLMService.__new__(LLMService)
+    service.provider = provider
+    service.model = "DeepSeek-V4-Flash-0731"
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "previous reasoning"},
+            {"type": "text", "text": "Hello"},
+        ]},
+        {"role": "user", "content": "hello again"},
+    ]
+    params = service._build_anthropic_api_params(
+        messages=messages, tools=None, max_tokens=64,
+        temperature=0.3, system=None, streaming=streaming,
+    )
+    if provider == "scnet":
+        assert "thinking" not in params.get("extra_body", {})
+    else:
+        assert params["extra_body"]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in params
+    assert all(
+        block.get("type") != "thinking"
+        for message in params["messages"]
+        if isinstance(message["content"], list)
+        for block in message["content"]
+    )
+    assert messages[1]["content"][0]["type"] == "thinking"

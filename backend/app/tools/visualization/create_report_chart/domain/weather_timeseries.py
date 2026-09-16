@@ -9,6 +9,8 @@ from typing import Any
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnnotationBbox, DrawingArea
+from matplotlib.patches import FancyArrowPatch
 import numpy as np
 
 from app.tools.visualization.create_report_chart.renderer import _line_width
@@ -42,15 +44,32 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
         raise ChartDataError("weather_timeseries 没有可绘制的有效记录。")
     rows.sort(key=lambda row: row[0])
     days = {row[0].date() for row in rows}
-    if len(days) != 1:
-        raise ChartDataError(
-            "weather_timeseries 一次只能绘制一个自然日；请按日期拆分 records 后分别调用。"
-        )
+    multi_day = len(days) > 1
+    if multi_day and (rows[-1][0].date() - rows[0][0].date()).days >= 7:
+        raise ChartDataError("weather_timeseries 多日模式最多覆盖连续7个自然日。")
+    valid_point_count = len(rows)
+    gap_count = 0
+    if multi_day:
+        try:
+            interval = float(options.get("expected_interval_hours", 3))
+        except (TypeError, ValueError) as exc:
+            raise ChartDataError("expected_interval_hours 必须是有限正数。") from exc
+        if not np.isfinite(interval) or interval <= 0:
+            raise ChartDataError("expected_interval_hours 必须是有限正数。")
+        expanded = []
+        for row in rows:
+            if expanded and (row[0] - expanded[-1][0]).total_seconds() > interval * 3600:
+                # Break curves across missing forecast slots without inventing values.
+                midpoint = expanded[-1][0] + (row[0] - expanded[-1][0]) / 2
+                expanded.append((midpoint, *(np.nan for _ in range(5))))
+                gap_count += 1
+            expanded.append(row)
+        rows = expanded
     ts = [row[0] for row in rows]
     speed, direction, temperature, precipitation, humidity = [np.array([row[i] for row in rows], dtype=float) for i in range(1, 6)]
     width = _line_width(options, default=1.2)
     configure_chinese_font()
-    fig, ax = plt.subplots(1, 1, figsize=(8.2, 5.8 if output_context == "word" else 5.4), dpi=180)
+    fig, ax = plt.subplots(1, 1, figsize=(14 if multi_day else 8.2, 5.8 if output_context == "word" else 5.4), dpi=180)
     wind_ax = ax.twinx()
     colors = {"speed": "#356AE6", "temperature": "#D97706", "precipitation": "#8A5AB5", "humidity": "#159A9C"}
     valid_dir = np.isfinite(direction)
@@ -66,28 +85,28 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     wind_ax.tick_params(axis="y", labelcolor=colors["speed"])
     ax.set_ylim(0, max(100, float(np.nanmax(np.r_[humidity, precipitation])) * 1.15 if np.isfinite(np.r_[humidity, precipitation]).any() else 100))
     wind_ax.set_ylim(0, max(1, float(np.nanmax(speed)) * 1.25 if np.isfinite(speed).any() else 1))
-    top = ax.get_ylim()[1] * 0.86
     # Meteorological direction is the direction the wind comes *from*.
     # Draw a true-degree arrow pointing toward where it goes; do not quantize
     # to cardinal glyphs, which loses information and is font-dependent.
     for value, timestamp in zip(direction[valid_dir], np.asarray(ts, dtype=object)[valid_dir], strict=True):
         angle = np.deg2rad(float(value) % 360.0 + 180.0)
-        dx = 10.0 * np.sin(angle)
-        dy = 10.0 * np.cos(angle)
-        ax.annotate(
-            "",
-            xy=(timestamp, top),
-            xycoords="data",
-            xytext=(-dx, -dy),
-            textcoords="offset points",
-            arrowprops={
-                "arrowstyle": "-|>",
-                "color": "#B7791F",
-                "lw": max(0.8, width),
-                "mutation_scale": 10,
-            },
-            annotation_clip=False,
-        )
+        dx = 9.0 * np.sin(angle)
+        dy = 9.0 * np.cos(angle)
+        # Center fixed-length arrows on an axes-relative horizontal row.
+        # Drawing in points keeps the direction and slim shape independent of
+        # wind speed, y-axis limits and the chart's time span.
+        drawing = DrawingArea(22, 22, 0, 0)
+        drawing.add_artist(FancyArrowPatch(
+            (11 - dx, 11 - dy), (11 + dx, 11 + dy),
+            arrowstyle="-|>,head_length=3.5,head_width=1.3",
+            mutation_scale=1, linewidth=0.7, color="#B7791F",
+            shrinkA=0, shrinkB=0,
+        ))
+        ax.add_artist(AnnotationBbox(
+            drawing, (mdates.date2num(timestamp), 0.95),
+            xycoords=ax.get_xaxis_transform(), frameon=False,
+            box_alignment=(0.5, 0.5), pad=0, annotation_clip=False,
+        ))
     areas = options.get("areas") or data.get("areas") or options.get("risk_periods") or data.get("risk_periods") or []
     for period in areas:
         try:
@@ -104,6 +123,12 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     wind_ax.tick_params(axis="x", labelsize=8)
     ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=5, maxticks=12))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%m月%d日\n%H:%M"))
+    if multi_day:
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+        ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=[6, 12, 18]))
+        ax.xaxis.set_minor_formatter(mdates.DateFormatter("%H"))
+        ax.tick_params(axis="x", which="minor", labelsize=6)
+        ax.grid(axis="x", which="major", color="#DADCE0", linewidth=0.55)
     ax.set_xlabel("时间", fontsize=9)
     handles, legend_labels = [], []
     for target in (ax, wind_ax):
@@ -113,7 +138,7 @@ def render_weather_timeseries(*, title: str, data: dict[str, Any], options: dict
     fig.subplots_adjust(left=0.12, right=0.88, top=0.78, bottom=0.16)
     apply_font_to_figure(fig)
     output = BytesIO(); fig.savefig(output, format="png", dpi=180, bbox_inches="tight"); plt.close(fig)
-    return base64.b64encode(output.getvalue()).decode("ascii"), {"valid_point_count": len(ts), "line_width": width, "date": ts[0].date().isoformat(), "start_time": ts[0].isoformat(sep=" "), "end_time": ts[-1].isoformat(sep=" "), "area_count": len(areas)}, []
+    return base64.b64encode(output.getvalue()).decode("ascii"), {"valid_point_count": valid_point_count, "multi_day": multi_day, "day_count": len(days), "gap_count": gap_count, "line_width": width, "date": ts[0].date().isoformat(), "start_time": ts[0].isoformat(sep=" "), "end_time": ts[-1].isoformat(sep=" "), "area_count": len(areas)}, []
 
 
 def _parse_time(value: Any) -> datetime:

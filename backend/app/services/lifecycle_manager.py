@@ -42,7 +42,6 @@ from app.fetchers.weather.observed_fetcher import ObservedWeatherFetcher
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
-from app.fetchers.yuncheng_trial import YunchengTrialFetcher  # 运城市驻场试用场景小时数据盯守
 from app.project_config.loader import load_project_context
 from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
 
@@ -113,7 +112,6 @@ def _configured_fetchers(project_context):
         "city_pollution_event_monitor": CityPollutionEventFetcher,
         "tender_information": TenderInformationFetcher,
         "jining_quick_trace": JiningQuickTraceFetcher,
-        "yuncheng_trial": YunchengTrialFetcher,
         "consultation": ConsultationFileFetcher,
         "monthly_consultation": MonthlyConsultationFileFetcher,
         "annual_ytd_consultation": AnnualYtdConsultationFileFetcher,
@@ -123,6 +121,12 @@ def _configured_fetchers(project_context):
         "monthly_meteorology_support": MonthlyMeteorologySupportFetcher,
     }
     configured = project_context.manifest.backend.fetchers
+    history_config = project_context.manifest.backend.weather_history
+    if history_config is not None:
+        from app.fetchers.weather.city_history_fetcher import CityHistoryFetcher
+        factories["city_weather_history"] = lambda: CityHistoryFetcher(
+            history_config, project_context.manifest.project
+        )
     if configured is None:
         selected = list(factories)
         if "xuchang-satellite" in enabled_modules:

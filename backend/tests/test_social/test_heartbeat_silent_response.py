@@ -12,4 +12,4 @@ def test_structured_silent_response_is_not_notified():
 
 
 def test_regular_heartbeat_summary_is_notified_in_social_context():
-    assert _heartbeat_should_notify("发现运城市臭氧告警，已生成溯源报告。", use_social_context=True) is True
+    assert _heartbeat_should_notify("发现许昌市臭氧告警，已生成溯源报告。", use_social_context=True) is True

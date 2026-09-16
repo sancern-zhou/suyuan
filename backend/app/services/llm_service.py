@@ -767,13 +767,16 @@ class LLMService:
                     reason="Same tool call continuation, preserving thinking blocks (filtered redacted_thinking)",
                 )
             else:
-                api_params["thinking"] = {"type": "disabled"}
+                # SCNET rejects explicit thinking=disabled with HTTP 400.
+                # Keep history cleanup, but let its gateway choose the mode.
+                if self.provider != "scnet":
+                    api_params["thinking"] = {"type": "disabled"}
                 api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)
                 logger.info(
-                    "deepseek_thinking_mode_disabled",
+                    "deepseek_new_turn_thinking_normalized",
                     provider=self.provider,
                     model=self.model,
-                    reason="New user turn, disabling thinking mode and stripping thinking blocks",
+                    reason="New user turn: strip thinking history; omit thinking override for SCNET",
                 )
         else:
             api_params["messages"] = self._strip_thinking_blocks(sanitized_messages)

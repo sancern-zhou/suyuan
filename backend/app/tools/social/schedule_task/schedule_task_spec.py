@@ -42,7 +42,7 @@ async def test_schedule_task_list_returns_current_users_enabled_and_disabled_tas
   channels: ["weixin"]
   manual_mode: social
 
-- name: 运城市告警溯源报告推送
+- name: 许昌市告警溯源报告推送
   schedule: "10 * * * *"
   description: 生成并推送溯源报告
   enabled: true
@@ -77,7 +77,7 @@ async def test_schedule_task_list_returns_current_users_enabled_and_disabled_tas
     assert result["data"]["disabled_count"] == 1
     assert [task["name"] for task in result["data"]["tasks"]] == [
         "污染告警故障诊断结论推送",
-        "运城市告警溯源报告推送",
+        "许昌市告警溯源报告推送",
     ]
     assert result["data"]["tasks"][0]["enabled"] is False
     assert result["data"]["tasks"][1]["enabled"] is True
@@ -138,7 +138,7 @@ async def test_schedule_task_disable_only_updates_current_users_named_task(tmp_p
   enabled: true
   channels: ["weixin"]
 
-- name: 运城市告警溯源报告推送
+- name: 许昌市告警溯源报告推送
   schedule: "10 * * * *"
   description: 生成并推送溯源报告
   enabled: true
@@ -177,7 +177,7 @@ async def test_schedule_task_disable_only_updates_current_users_named_task(tmp_p
     user_a_content = user_a_file.read_text(encoding="utf-8")
     user_b_content = user_b_file.read_text(encoding="utf-8")
     assert "name: 污染告警性质判定\n  schedule: \"11 * * * *\"\n  description: 每小时推送污染告警性质判定结果\n  enabled: false" in user_a_content
-    assert "name: 运城市告警溯源报告推送\n  schedule: \"10 * * * *\"\n  description: 生成并推送溯源报告\n  enabled: true" in user_a_content
+    assert "name: 许昌市告警溯源报告推送\n  schedule: \"10 * * * *\"\n  description: 生成并推送溯源报告\n  enabled: true" in user_a_content
     assert "description: 其他用户的任务\n  enabled: true" in user_b_content
 
 
@@ -199,7 +199,7 @@ async def test_schedule_task_enable_and_delete_manage_current_users_task_file(tm
   enabled: false
   channels: ["weixin"]
 
-- name: 运城市告警溯源报告推送
+- name: 许昌市告警溯源报告推送
   schedule: "10 * * * *"
   description: 生成并推送溯源报告
   enabled: true
@@ -227,4 +227,4 @@ async def test_schedule_task_enable_and_delete_manage_current_users_task_file(tm
 
     content = heartbeat_file.read_text(encoding="utf-8")
     assert "污染告警性质判定" not in content
-    assert "运城市告警溯源报告推送" in content
+    assert "许昌市告警溯源报告推送" in content

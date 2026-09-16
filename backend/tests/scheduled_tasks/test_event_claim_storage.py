@@ -8,9 +8,9 @@ from app.scheduled_tasks.storage import EventClaimStorage
 def _event(event_id: str = "event-1", minute: int = 0) -> TaskEvent:
     return TaskEvent(
         event_id=event_id,
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         occurred_at=f"2026-07-13T16:{minute:02d}:00+08:00",
-        attributes={"city": "运城市"},
+        attributes={"city": "许昌市"},
         payload={"evidence_dir": "/tmp/evidence"},
     )
 
@@ -35,7 +35,7 @@ def test_claim_status_survives_new_storage_instance(tmp_path):
 
     assert restored.status == "succeeded"
     assert restored.execution_id == "exec-1"
-    assert restored.event_snapshot["attributes"]["city"] == "运城市"
+    assert restored.event_snapshot["attributes"]["city"] == "许昌市"
 
 
 def test_failed_claim_can_be_retried_explicitly(tmp_path):
@@ -55,7 +55,7 @@ def test_latest_event_snapshot_can_drive_manual_execution(tmp_path):
     storage.try_claim("task-1", _event("event-1", minute=0))
     storage.try_claim("task-2", _event("event-2", minute=1))
 
-    latest = storage.latest_event("yuncheng.alert.created")
+    latest = storage.latest_event("xuchang.station_deviation.alert_created")
 
     assert latest.event_id == "event-2"
 

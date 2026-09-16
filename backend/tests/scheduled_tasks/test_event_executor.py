@@ -393,7 +393,7 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
         description="event task",
         execution_mode="social",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         broadcast_enabled=True,
         target_user_ids=["admin-1"],
         prompt="处理告警",
@@ -407,24 +407,24 @@ async def test_executor_appends_event_context_to_agent_prompt(tmp_path):
     )
     event = TaskEvent(
         event_id="alert-1",
-        event_type="yuncheng.alert.created",
-        attributes={"city": "运城市"},
+        event_type="xuchang.station_deviation.alert_created",
+        attributes={"city": "许昌市"},
         payload={"evidence_dir": "/tmp/evidence"},
     )
 
     execution = await executor.execute_task(
         task,
         event=event,
-        broadcast_user_names=["运城值班员"],
+        broadcast_user_names=["许昌值班员"],
     )
 
     assert execution.trigger_type == "event"
     assert execution.event_id == "alert-1"
     assert "alert-1" in agent.prompts[0]
-    assert "yuncheng.alert.created" in agent.prompts[0]
+    assert "xuchang.station_deviation.alert_created" in agent.prompts[0]
     assert "/tmp/evidence" in agent.prompts[0]
     assert "broadcast_social_users" in agent.prompts[0]
-    assert "运城值班员" in agent.prompts[0]
+    assert "许昌值班员" in agent.prompts[0]
     assert "不需要返回 JSON" in agent.prompts[0]
 
 
@@ -441,7 +441,7 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
         description="event task",
         execution_mode="report",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         broadcast_enabled=False,
         prompt="生成回顾报告",
     )
@@ -453,11 +453,11 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
         conversation_persistence=RecordingConversationPersistence(),
     )
     event = TaskEvent(
-        event_id="yuncheng-station-daily-review-20260829",
-        event_type="yuncheng.alert.created",
-        attributes={"city": "运城市", "target_date": "2026-08-29"},
+        event_id="xuchang-station-daily-review-20260829",
+        event_type="xuchang.station_deviation.alert_created",
+        attributes={"city": "许昌市", "target_date": "2026-08-29"},
         payload={
-            "city": "运城市",
+            "city": "许昌市",
             "target_date": "2026-08-29",
             "event_count": 7,
             "events": [
@@ -465,7 +465,7 @@ async def test_executor_compacts_oversized_event_payload_in_agent_prompt(tmp_pat
                 for _ in range(7)
             ],
             "evidence_package_path": (
-                "backend/backend_data_registry/yuncheng_station_daily_reviews/20260829.json"
+                "backend/backend_data_registry/xuchang_station_daily_reviews/20260829.json"
             ),
         },
     )
