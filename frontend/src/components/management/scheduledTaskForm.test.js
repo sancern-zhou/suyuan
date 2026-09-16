@@ -22,7 +22,8 @@ test('execution mode options include every project mode plus task-only modes', (
     'query',
     'expert',
     'social',
-    'custom'
+    'custom',
+    'workflow'
   ])
   assert.equal(options[1].label, 'query（问数）')
 })
@@ -314,6 +315,55 @@ test('task payload preserves each model tier and defaults legacy forms to auto',
     assert.equal(buildTaskPayload({ model_tier: tier }).model_tier, tier)
   }
   assert.equal(buildTaskPayload({}).model_tier, 'auto')
+})
+
+
+test('event trigger keeps workflow mode untouched', () => {
+  const form = {
+    trigger_type: 'schedule',
+    execution_mode: 'workflow',
+    workflow_name: 'demo_workflow',
+    broadcast_enabled: false,
+    event_type: ''
+  }
+
+  applyTriggerDefaults(form, 'event', [])
+
+  assert.equal(form.trigger_type, 'event')
+  assert.equal(form.execution_mode, 'workflow')
+  assert.equal(form.workflow_name, 'demo_workflow')
+})
+
+
+test('workflow payload carries the selected workflow and switching modes clears it', () => {
+  const payload = buildTaskPayload({
+    name: '确定性工作流值守',
+    description: '确定性值守结论',
+    execution_mode: 'workflow',
+    workflow_name: 'demo_workflow',
+    workflow_args: { period: 'day' },
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+
+  assert.equal(payload.workflow_name, 'demo_workflow')
+  assert.deepEqual(payload.workflow_args, { period: 'day' })
+
+  const form = { execution_mode: 'workflow', workflow_name: 'demo_workflow' }
+  applyExecutionMode(form, 'assistant')
+  assert.equal(form.workflow_name, '')
+
+  const cleared = buildTaskPayload({
+    ...form,
+    name: '普通任务',
+    description: '执行',
+    trigger_type: 'schedule',
+    schedule_type: 'daily_8am',
+    enabled: true
+  })
+  assert.equal(Object.hasOwn(cleared, 'workflow_name'), false)
+  assert.equal(Object.hasOwn(cleared, 'workflow_args'), false)
 })
 
 
