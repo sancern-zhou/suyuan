@@ -1455,9 +1455,14 @@ class ReActAgent:
             return
 
         expire_before = datetime.utcnow() - self._session_ttl
+        # Some terminal/error paths may leave a metadata-only entry behind.
+        # Treat entries without a timestamp as stale instead of allowing a
+        # cache cleanup to abort the next request with KeyError.
         expired_ids = [
             sid for sid, meta in self._session_store.items()
-            if meta["last_used"] < expire_before
+            if not isinstance(meta, dict)
+            or not isinstance(meta.get("last_used"), datetime)
+            or meta["last_used"] < expire_before
         ]
 
         for sid in expired_ids:

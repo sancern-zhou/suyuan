@@ -1367,7 +1367,7 @@ async def analyze_stream(
                                 break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
-                                agent._session_store[actual_session_id] = {}
+                                agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
 
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
@@ -1450,7 +1450,7 @@ async def analyze_stream(
                         if not saved:
                             raise RuntimeError("pause_checkpoint_failed")
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
 
                     try:
@@ -1489,7 +1489,7 @@ async def analyze_stream(
                     saved = await session_manager.append_session_transcript(session)
                     if saved and actual_session_id:
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
                     if saved:
                         logger.info("session_saved_on_exception", session_id=actual_session_id)
