@@ -874,7 +874,7 @@ async def analyze_stream(
             else await load_session(actual_session_id) if actual_session_id else None
         )
 
-        # A scheduled event conversation may continue with the same review
+        # A scheduled task conversation may continue with the same review
         # execution. Restore only the exact persisted runtime context; do not
         # synthesize task identity or silently downgrade missing fields.
         if preloaded_session and isinstance(preloaded_session.metadata, dict):
@@ -1123,12 +1123,20 @@ async def analyze_stream(
 
                 asyncio.create_task(_save_initial_session_metadata())
             else:
-                await persist_new_web_session(
-                    manager=session_manager,
-                    session=session,
-                    catalog=catalog,
-                    user=user,
-                    mode=request.mode or "assistant",
+                # 客户端可能在 SSE 早期断开（用户停止/前端 abort），CancelledError
+                # 会在 save_session_metadata 与 catalog.register 之间中断生成器，
+                # 留下无 catalog 行的孤儿会话，使后续 analyze/cancel 全部 404。
+                # shield 保证注册作为整体落库，取消仍正常向外传播。
+                await asyncio.shield(
+                    asyncio.create_task(
+                        persist_new_web_session(
+                            manager=session_manager,
+                            session=session,
+                            catalog=catalog,
+                            user=user,
+                            mode=request.mode or "assistant",
+                        )
+                    )
                 )
 
             # ✅ 添加用户消息到对话历史
@@ -1397,7 +1405,7 @@ async def analyze_stream(
                                 break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
-                                agent._session_store[actual_session_id] = {}
+                                agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
 
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
@@ -1480,7 +1488,7 @@ async def analyze_stream(
                         if not saved:
                             raise RuntimeError("pause_checkpoint_failed")
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
 
                     try:
@@ -1519,7 +1527,7 @@ async def analyze_stream(
                     saved = await session_manager.append_session_transcript(session)
                     if saved and actual_session_id:
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
                     if saved:
                         logger.info("session_saved_on_exception", session_id=actual_session_id)

@@ -112,7 +112,7 @@ class NMCObservedWeatherFetcher(DataFetcher):
     ):
         super().__init__(
             name="nmc_observed_weather_fetcher",
-            description="NMC hourly observed weather fetcher for Xuchang and Yuncheng",
+            description="NMC hourly observed weather fetcher for Xuchang",
             schedule="8 * * * *",
             version="1.0.0",
         )

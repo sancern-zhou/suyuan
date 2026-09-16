@@ -95,6 +95,11 @@ __tmp_*.py
 *.png
 *.jpg
 *.jpeg
+# Tool assets and documentation are source files, not generated artifacts.
+!app/tools/**/*.html
+!app/tools/**/*.png
+!app/tools/**/*.jpg
+!app/tools/**/*.jpeg
 $null
 nul
 
@@ -104,6 +109,8 @@ nul
 !app/tools/**/*_GUIDE.md
 *_UPDATE_SUMMARY.md
 *_LOG_REVIEW.md
+# Documentation under tools is maintained source, including summaries and guides.
+!app/tools/**/*.md
 
 # OS
 Thumbs.db

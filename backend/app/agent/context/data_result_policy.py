@@ -188,6 +188,16 @@ def shape_data_result_for_context(result: Dict[str, Any]) -> Dict[str, Any]:
     shaped["record_count"] = primary["record_count"]
     shaped["returned_records"] = primary["returned_records"]
     shaped["sample_strategy"] = primary["sample_strategy"]
+    structure = shaped.get("data_structure")
+    if isinstance(structure, dict) and structure.get("record_contract") == "weather_hourly_v1":
+        if primary["sample_strategy"] == "provided_sample" and structure.get("sample_strategy") == "head_tail":
+            primary["sample_strategy"] = "head_tail"
+            shaped["sample_strategy"] = "head_tail"
+        shaped["data_structure"] = {
+            **structure,
+            **{key: primary[key] for key in ("data_complete", "record_count", "returned_records", "sample_strategy")},
+            "file_root_type": "array" if has_path else None,
+        }
     shaped["field_schema"] = primary["field_schema"]
     shaped_metadata["context_data"] = {
         "inline_record_limit": INLINE_RECORD_LIMIT,
@@ -204,6 +214,9 @@ def persist_large_inline_data(
 ) -> Dict[str, Any]:
     """Persist an unexternalized large top-level data list when context permits."""
     if not isinstance(result, dict) or _has_file_path(result):
+        return result
+    if any(isinstance(warning, dict) and warning.get("code") == "DATA_SAVE_FAILED"
+           for warning in result.get("warnings", [])):
         return result
     records = result.get("data")
     if not isinstance(records, list) or len(records) <= INLINE_RECORD_LIMIT:

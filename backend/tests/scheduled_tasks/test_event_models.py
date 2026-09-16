@@ -45,7 +45,7 @@ def test_broadcast_task_requires_recipients():
             description="event task",
             trigger_type="event",
             schedule_type=None,
-            event_type="yuncheng.alert.created",
+            event_type="xuchang.station_deviation.alert_created",
             broadcast_enabled=True,
             **_task_kwargs(),
         )
@@ -54,20 +54,13 @@ def test_broadcast_task_requires_recipients():
 def test_event_matches_scalar_and_list_filters():
     event = TaskEvent(
         event_id="alert-1",
-        event_type="yuncheng.alert.created",
-        attributes={"city": "运城市", "alert_level": "medium"},
+        event_type="xuchang.station_deviation.alert_created",
+        attributes={"city": "许昌市", "alert_level": "medium"},
         payload={"evidence_dir": "/tmp/evidence"},
     )
 
-    assert event.matches({"city": "运城市", "alert_level": ["medium", "high"]})
+    assert event.matches({"city": "许昌市", "alert_level": ["medium", "high"]})
     assert not event.matches({"city": "太原市"})
-
-
-def test_yuncheng_event_is_registered():
-    definitions = {item.event_type: item for item in get_event_definitions()}
-
-    assert "yuncheng.alert.created" in definitions
-    assert "city" in definitions["yuncheng.alert.created"].filter_fields
 
 
 def test_jiangsu_work_order_review_event_is_registered():
@@ -88,7 +81,7 @@ def _event_task() -> ScheduledTask:
         name="event",
         description="event task",
         trigger_type="event",
-        event_type="yuncheng.alert.created",
+        event_type="xuchang.station_deviation.alert_created",
         **_task_kwargs(),
     )
 

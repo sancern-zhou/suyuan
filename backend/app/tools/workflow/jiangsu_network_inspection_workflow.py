@@ -9,6 +9,7 @@ from collections import Counter
 from typing import Any, Dict, List
 
 from .workflow_tool import WorkflowTool
+from app.scheduled_tasks.workflow_tasks import register_workflow_handler
 from app.tools.jiangsu.fault_diagnosis import JiangsuNetworkInspectionSummaryTool
 
 
@@ -177,3 +178,23 @@ class JiangsuNetworkInspectionWorkflow(WorkflowTool):
             summary=data["conclusion"],
             extra_metadata={"source": raw.get("metadata", {}), "output_type": "short_conclusion_and_issue_list"},
         )
+
+
+async def _run_ops_watch_workflow(
+    task: Any,
+    execution: Any,
+    event: Any = None,
+    history_section: str | None = None,
+) -> Dict[str, Any]:
+    """Deterministic scheduled-workflow binding for the Jiangsu duty watch."""
+    from app.tools.jiangsu.ops_watch_notification import run_ops_watch_workflow
+
+    return await run_ops_watch_workflow(
+        task=task,
+        execution=execution,
+        event=event,
+        history_section=history_section,
+    )
+
+
+register_workflow_handler("jiangsu_network_inspection_workflow", _run_ops_watch_workflow)

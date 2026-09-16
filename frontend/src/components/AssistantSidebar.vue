@@ -56,11 +56,11 @@
           :class="{ active: isActive('query-dashboard') }"
           type="button"
           @click="handleModuleSelect('query-dashboard')"
-          :title="isCollapsed ? '智能问数' : ''"
+          :title="isCollapsed ? queryDashboardModule.title : ''"
         >
           <span class="module-icon" v-html="getModuleIcon('query-dashboard')"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">智能问数</p>
+            <p class="module-title">{{ queryDashboardModule.label }}</p>
           </div>
         </button>
         <button
@@ -272,6 +272,7 @@
 <script setup>
 import { authFetch } from '@/auth/http.js'
 import { projectConfig } from '@/config/projectConfig.js'
+import { getAgentMode } from '@/config/agentModes.js'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/auth/authStore.js'
@@ -439,6 +440,20 @@ const conversationListEmptyText = computed(() => ({
 })[conversationListView.value])
 
 const platformEntryLabel = computed(() => '智能体平台')
+
+// 问数入口绑定当前项目实际启用的问数模式：江苏使用 jiangsu_query，
+// 其他项目回退到共享的 query 模式，避免江苏误入 main 的问数生图智能体。
+const queryDashboardMode = computed(() => (
+  projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
+))
+
+const queryDashboardModule = computed(() => {
+  if (queryDashboardMode.value === 'query') {
+    return { label: '智能问数', title: '智能问数' }
+  }
+  const mode = getAgentMode(queryDashboardMode.value, projectConfig.agentModeOverrides)
+  return { label: mode?.shortName || '江苏问数生图', title: mode?.name || '江苏问数生图' }
+})
 
 const allModules = [
   {

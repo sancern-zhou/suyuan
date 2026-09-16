@@ -6,6 +6,9 @@ successful execution always represents a business outcome.  Handlers receive
 the triggering ``TaskEvent`` (if any) because event-driven workflows read their
 input from ``event.payload`` instead of an agent prompt, and may declare a
 ``history_section`` parameter to receive task-scoped execution memory.
+
+Handlers are registered by the modules that own them (project or feature code)
+so this shared module stays free of project imports.
 """
 
 from __future__ import annotations
@@ -31,22 +34,6 @@ def register_workflow_handler(name: str, handler: WorkflowHandler) -> None:
 def registered_workflows() -> list[str]:
     """Names of all registered deterministic workflows, sorted for UI display."""
     return sorted(_WORKFLOW_HANDLERS)
-
-
-async def _run_jiangsu_network_inspection_watch(
-    task: ScheduledTask,
-    execution: TaskExecution,
-    event: TaskEvent | None,
-    history_section: str | None = None,
-) -> dict[str, Any]:
-    from app.tools.jiangsu.ops_watch_notification import run_ops_watch_workflow
-
-    return await run_ops_watch_workflow(
-        task=task, execution=execution, event=event, history_section=history_section
-    )
-
-
-register_workflow_handler("jiangsu_network_inspection_workflow", _run_jiangsu_network_inspection_watch)
 
 
 async def execute_workflow_task(

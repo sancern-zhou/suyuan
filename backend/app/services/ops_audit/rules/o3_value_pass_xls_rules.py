@@ -35,12 +35,17 @@ COMPARISONS = [
 ]
 
 UPPER_STANDARD_COMPARISONS = (
-    {"field": "DELIVER6VALUE", "label": "上级标准型号", "comparison_type": "text"},
-    {"field": "DELIVERFROM6VALUE", "label": "上级标准设备号", "comparison_type": "text"},
-    {"field": "AVALUE", "label": "上级标准序列号", "comparison_type": "text"},
     {"field": "WORKDENSITY6VALUE", "label": "上级标准传递日期", "comparison_type": "date"},
     {"field": "DELIVERTO6VALUE", "label": "上级标准传递公式", "comparison_type": "formula"},
     {"field": "BVALUE", "label": "上级标准有效期", "comparison_type": "date"},
+)
+UPPER_STANDARD_FIELDS = (
+    "DELIVER6VALUE",
+    "DELIVERFROM6VALUE",
+    "AVALUE",
+    "WORKDENSITY6VALUE",
+    "DELIVERTO6VALUE",
+    "BVALUE",
 )
 
 UPPER_STANDARD_SECTION_LABELS = ("上级臭氧传递标准", "参考光电仪")
@@ -65,6 +70,7 @@ def check_o3_value_pass_xls_values(
     issues: list[Issue],
     *,
     attachment_read_cache: dict[tuple[Any, ...], dict[str, Any]] | None = None,
+    enable_value_comparison: bool = True,
 ) -> None:
     """Compare RF_HY_O3VALUEPASS values with the uploaded XLS first sheet."""
 
@@ -80,6 +86,8 @@ def check_o3_value_pass_xls_values(
         _check_o3_value_pass_form_fields(order, form, issues)
         if not xls_items:
             _add_missing_xls_review_issue(order, form, records, issues)
+        if not enable_value_comparison:
+            continue
         selected_xls = _select_matching_xls_item(form, xls_items, read_cache=read_cache)
         selected_items = [item for item in (selected_xls, _select_item(pdf_items)) if item]
         if not selected_items:
@@ -693,7 +701,7 @@ def _xls_sheet_dynamic_cells(sheet: Any) -> dict[str, list[dict[str, Any]]]:
 
 
 def _upper_standard_cells(row_count: int, column_count: int, value_at: Any) -> dict[str, list[dict[str, Any]]]:
-    cells = {comparison["field"]: [] for comparison in UPPER_STANDARD_COMPARISONS}
+    cells = {field: [] for field in UPPER_STANDARD_FIELDS}
     anchor_row = None
     for row_index in range(1, row_count + 1):
         row_text = "".join(_normalize_label(value_at(row_index, column_index)) for column_index in range(1, column_count + 1))

@@ -27,7 +27,6 @@ from app.fetchers.weather.nmc_weather_chart_fetcher import NMCWeatherChartFetche
 from app.fetchers.weather.open_meteo_air_quality_forecast_fetcher import (
     OpenMeteoAirQualityForecastFetcher,
 )
-from app.fetchers.yuncheng_trial import YunchengTrialFetcher
 
 
 def create_scheduler() -> FetcherScheduler:

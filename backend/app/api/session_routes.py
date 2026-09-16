@@ -24,6 +24,7 @@ from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.agent.resources.resource_service import SessionResourceService
 from app.db.database import get_db
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -670,7 +671,7 @@ async def export_session(
 
     # 如果未提供路径，使用默认路径
     if not output_path:
-        output_path = f"backend_data_registry/exports/{session_id}.json"
+        output_path = str(get_data_registry() / "exports" / f"{session_id}.json")
 
     success = await session_manager.export_session(session_id, output_path)
 

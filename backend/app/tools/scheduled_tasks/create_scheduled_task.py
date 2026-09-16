@@ -31,7 +31,7 @@ OPS_WEEKLY_AUDIT_TASK_PROMPT = """这是每周运维工单审核定时任务。
 2. 严格按 ops_work_order_audit 技能调用 ops_audit_fetch_dataset 取数，并将其返回的 data.dataset_path 原值传给 ops_audit_run_rules；定时执行的审核产物由工具按 execution_id 自动隔离，不要指定 output_dir。
 3. ops_audit_run_rules 会直接生成 final_issue_list_path 和 report_input_path，并返回 report_ready；不得再调用子 Agent 做全量主观审核，也不得调用已移除的 ops_audit_submit_review。
 4. 返回 final_issue_list_path、report_input_path、report_ready、pending_review_count、pending_semantic_review_count 和关键统计。
-5. 如果 report_ready=true，只读取本轮 report_input_path，按审核报告规范生成 QMD 报告包，渲染 HTML/Word，并调用 validate_report_package 验收；不得重新拼装问题明细。
+5. 如果 report_ready=true，优先读取 ops_audit_run_rules 返回的 report_context_path（它是已注册的精简报告上下文）；如需追溯再读取本轮 report_input_path。按审核报告规范生成 QMD 报告包，渲染 HTML/Word，并调用 validate_report_package 验收；问题描述只使用条目的 display_evidence。report_input 已经是报告专用投影，禁止读取或展开 evidence_facts，禁止用 execute_python/read_file/list_directory 重建、筛选或复制 report_input，也不要自行生成 report_input_filtered 文件。
 6. 如果 report_ready=false，交付 report_input_path 中的 pending_review_items、pending_semantic_reviews 及原因，不生成正式报告，也不等待在线确认。"""
 
 
@@ -112,6 +112,7 @@ class CreateScheduledTaskTool(LLMTool):
                 "name": task_config["name"],
                 "description": task_config["description"],
                 "execution_mode": task_config.get("execution_mode", "expert"),
+                "model_tier": task_config.get("model_tier", "auto"),
                 "schedule_type": ScheduleType(task_config["schedule_type"]),
                 "enabled": True,
                 "prompt": task_config["prompt"],
@@ -185,6 +186,7 @@ class CreateScheduledTaskTool(LLMTool):
 
 1. name: 任务名称（简短，10字以内）
 2. description: 任务描述（详细说明任务目的）
+模型档位 model_tier: 仅支持 "auto"、"flash"、"pro"；用户未指定时为 "auto"。
 3. execution_mode: 执行模式，支持 "assistant"、"expert"、"ops"
    - 广播、通知、社交文案生成任务优先使用 "assistant"
    - 数据分析、专业推理任务优先使用 "expert"

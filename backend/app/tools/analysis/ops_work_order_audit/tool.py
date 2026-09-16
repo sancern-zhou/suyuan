@@ -338,6 +338,53 @@ def _context_summary_record(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _report_context_payload(result: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Return the small, report-facing context registered for the Agent.
+
+    The full report input remains a durable artifact.  This projection is the
+    context-safe copy: it contains only fields needed to write the report and
+    never asks the Agent to parse raw evidence or discover intermediate files.
+    """
+    report_path = result.get("report_input_path")
+    if not report_path:
+        return None
+    try:
+        import json
+
+        report = json.loads(Path(str(report_path)).read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    items = []
+    for item in report.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "issue_id",
+                    "working_order_code",
+                    "station_name",
+                    "operation_unit",
+                    "rf_form_name",
+                    "message",
+                    "rule_id",
+                    "attachment_filename",
+                    "display_evidence",
+                    "remark_context",
+                )
+                if item.get(key) not in (None, "", [], {})
+            }
+        )
+    return {
+        "schema_version": "ops_audit_report_context.v1",
+        "source_report_input_path": str(Path(str(report_path)).resolve()),
+        "summary": report.get("summary", {}),
+        "report_ready": report.get("report_ready"),
+        "items": items,
+    }
+
+
 def _latest_dataset_path() -> Optional[Path]:
     candidates = [
         path
@@ -469,6 +516,16 @@ class OpsAuditRunRulesTool(LLMTool):
                     schema="ops_audit_rule_summary",
                     metadata={"tool": self.name, "dataset_path": str(resolved_dataset_path)},
                 )
+                report_context = _report_context_payload(result)
+                if report_context is not None:
+                    result["report_context_path"] = context.save_data(
+                        data=report_context,
+                        schema="ops_audit_report_context",
+                        metadata={
+                            "tool": self.name,
+                            "source_report_input_path": result.get("report_input_path"),
+                        },
+                    )
             summary_text = self._summary_text(result)
             result["summary_text"] = summary_text
             return _standard_success(self.name, summary_text, result)

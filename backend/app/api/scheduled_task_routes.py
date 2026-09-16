@@ -6,7 +6,7 @@ import math
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -55,7 +55,7 @@ class CreateTaskRequest(BaseModel):
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务描述")
     execution_mode: str = Field(default="expert", description="执行模式（assistant/expert/ops/query/social/custom/workflow）")
-    model_tier: Literal["auto", "flash", "pro"] = "auto"
+    model_tier: Literal["auto", "flash", "pro"] = "flash"
     result_requirements: List[ResultFieldRequirement] = Field(default_factory=list)
     tool_names: Optional[List[str]] = None
     workflow_name: Optional[str] = None
@@ -68,9 +68,11 @@ class CreateTaskRequest(BaseModel):
     hour: Optional[int] = None
     minute: Optional[int] = None
     day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
     event_type: Optional[str] = None
     event_filters: Dict[str, Any] = Field(default_factory=dict)
     broadcast_enabled: bool = False
+    report_type: Optional[str] = None
     target_user_ids: List[str] = Field(default_factory=list)
     enabled: bool = Field(default=True, description="是否启用")
     prompt: str = Field(..., min_length=1)
@@ -101,9 +103,11 @@ class UpdateTaskRequest(BaseModel):
     hour: Optional[int] = None
     minute: Optional[int] = None
     day_of_week: Optional[int] = None
+    day_of_month: Optional[int] = None
     event_type: Optional[str] = None
     event_filters: Optional[Dict[str, Any]] = None
     broadcast_enabled: Optional[bool] = None
+    report_type: Optional[str] = None
     target_user_ids: Optional[List[str]] = None
     enabled: Optional[bool] = None
     prompt: Optional[str] = Field(default=None, min_length=1)
@@ -485,9 +489,11 @@ async def create_task(
             hour=request.hour,
             minute=request.minute,
             day_of_week=request.day_of_week,
+            day_of_month=request.day_of_month,
             event_type=request.event_type,
             event_filters=request.event_filters,
             broadcast_enabled=request.broadcast_enabled,
+            report_type=request.report_type,
             target_user_ids=request.target_user_ids,
             enabled=request.enabled,
             tags=request.tags,

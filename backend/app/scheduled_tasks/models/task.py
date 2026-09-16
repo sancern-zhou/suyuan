@@ -22,8 +22,8 @@ class ScheduleType(str, Enum):
     INTERVAL = "interval"        # 自定义间隔（需指定interval_minutes）
     DAILY_CUSTOM = "daily_custom"  # 每天自定义时间（需指定hour和minute）
     WEEKLY_CUSTOM = "weekly_custom"  # 每周自定义时间（需指定day_of_week、hour和minute）
-    MONTHLY_CUSTOM = "monthly_custom"
-    QUARTERLY_CUSTOM = "quarterly_custom"
+    MONTHLY_CUSTOM = "monthly_custom"  # 每月自定义日期（需指定day_of_month、hour和minute）
+    QUARTERLY_CUSTOM = "quarterly_custom"  # 每季度首月自定义日期（需指定day_of_month、hour和minute）
 
 
 class TriggerType(str, Enum):
@@ -79,6 +79,7 @@ class ScheduledTask(BaseModel):
         default="expert",
         description="执行模式（assistant/expert/ops/query/social/custom/workflow）"
     )
+    model_tier: Literal["auto", "flash", "pro"] = Field(default="flash", description="模型档位")
     tool_names: Optional[List[str]] = Field(
         default=None,
         description="custom 模式固定使用的工具名称列表",
@@ -100,7 +101,6 @@ class ScheduledTask(BaseModel):
         description="项目知识库绑定键；由运行时解析为 knowledge_base_ids",
     )
 
-    model_tier: Literal["auto", "flash", "pro"] = "auto"
     allow_archived_review_reopen: bool = True
     review_subject_attribute: str | None = None
     result_requirements: list[ResultFieldRequirement] = Field(default_factory=list)
@@ -117,7 +117,7 @@ class ScheduledTask(BaseModel):
     event_filters: Dict[str, Any] = Field(default_factory=dict, description="事件属性过滤条件")
     target_user_ids: List[str] = Field(default_factory=list, description="后台社交用户ID")
     broadcast_enabled: bool = Field(default=False, description="是否广播执行结果")
-    day_of_month: Optional[int] = Field(default=None, description="每月执行日期")
+    report_type: Optional[str] = Field(default=None, description="报告成果类型")
     enabled: bool = Field(default=True, description="是否启用")
 
     # 灵活调度参数（根据schedule_type使用）
@@ -128,6 +128,10 @@ class ScheduledTask(BaseModel):
     day_of_week: Optional[int] = Field(
         default=None,
         description="每周执行的星期（schedule_type=weekly_custom时必填，0=周一，6=周日）",
+    )
+    day_of_month: Optional[int] = Field(
+        default=None,
+        description="每月执行的日期（schedule_type=monthly_custom/quarterly_custom时必填，1-31）",
     )
 
     # 一个定时任务就是一次完整的 Agent 执行：Agent 自行规划工具调用，
@@ -203,11 +207,18 @@ class ScheduledTask(BaseModel):
             raise ValueError("schedule_type is required for schedule tasks")
         if self.trigger_type == TriggerType.EVENT and not (self.event_type or "").strip():
             raise ValueError("event_type is required for event tasks")
-        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type in (ScheduleType.MONTHLY_CUSTOM, ScheduleType.QUARTERLY_CUSTOM):
+        if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type in (
+            ScheduleType.MONTHLY_CUSTOM,
+            ScheduleType.QUARTERLY_CUSTOM,
+        ):
             if self.day_of_month is None or self.hour is None or self.minute is None:
                 raise ValueError("day_of_month, hour and minute are required for monthly/quarterly schedule")
-            if not 1 <= self.day_of_month <= 31 or not 0 <= self.hour <= 23 or not 0 <= self.minute <= 59:
-                raise ValueError("invalid monthly_custom schedule values")
+            if not 1 <= self.day_of_month <= 31:
+                raise ValueError("day_of_month must be between 1 and 31")
+            if not 0 <= self.hour <= 23:
+                raise ValueError("hour must be between 0 and 23")
+            if not 0 <= self.minute <= 59:
+                raise ValueError("minute must be between 0 and 59")
         if self.trigger_type == TriggerType.SCHEDULE and self.schedule_type == ScheduleType.WEEKLY_CUSTOM:
             if self.day_of_week is None or self.hour is None or self.minute is None:
                 raise ValueError("day_of_week, hour and minute are required for weekly_custom schedule")

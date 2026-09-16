@@ -21,9 +21,9 @@ class ScheduledTaskConversationPersistence:
         """Use the event's conversational mode when one was explicitly selected.
 
         Event tasks share a scheduled-task definition whose execution_mode is
-        often ``station_fault_diagnosis``.  The dispatcher may select a more
-        specific mode (for example ``smart_event_external``); that mode owns
-        the correct conversational tool whitelist and must survive restore.
+        often a generic business mode.  The dispatcher may select a more
+        specific conversational mode; that mode owns the correct tool whitelist
+        and must survive restore.
         """
         attributes = execution.event_attributes or {}
         selected = attributes.get("agent_mode")

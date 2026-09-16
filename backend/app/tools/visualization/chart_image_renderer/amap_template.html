@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #ffffff;
+        }
+        #amap-container {
+            width: 1200px;
+            height: 700px;
+        }
+    </style>
+</head>
+<body>
+    <div id="amap-container"></div>
+    <script>
+        // AMap config will be injected via Playwright:
+        // window.__AMAP_KEY__ - AMap API key
+        // window.__AMAP_CONFIG__ - {map_center, station, enterprises, upwind_paths, sectors}
+        window.__MAP_RENDERED__ = false;
+    </script>
+    <script>
+        (function() {
+            function loadAMapAndRender() {
+                if (typeof AMap !== 'undefined') {
+                    initMap();
+                    return;
+                }
+
+                var script = document.createElement('script');
+                script.src = 'https://webapi.amap.com/maps?v=2.0&key=' + window.__AMAP_KEY__ + '&plugin=AMap.Scale,AMap.ToolBar';
+                script.onload = function() {
+                    initMap();
+                };
+                script.onerror = function() {
+                    console.error('Failed to load AMap SDK');
+                    window.__MAP_RENDERED__ = true;
+                };
+                document.head.appendChild(script);
+            }
+
+            function initMap() {
+                try {
+                    var config = window.__AMAP_CONFIG__ || {};
+                    var center = config.map_center || {lng: 113.3, lat: 23.1};
+
+                    var map = new AMap.Map('amap-container', {
+                        center: [center.lng, center.lat],
+                        zoom: 12,
+                        viewMode: '2D',
+                        resizeEnable: true,
+                        features: ['bg', 'road', 'building', 'point'],
+                        mapStyle: 'amap://styles/normal'
+                    });
+
+                    // Station marker
+                    var station = config.station || {};
+                    var stationLng = Number(station.lng || station.lon || station.longitude);
+                    var stationLat = Number(station.lat || station.latitude);
+                    if (stationLng && stationLat) {
+                        var stationMarker = new AMap.Marker({
+                            position: [stationLng, stationLat],
+                            title: station.name || '站点',
+                            zIndex: 100
+                        });
+                        map.add(stationMarker);
+                    }
+
+                    // Enterprise markers
+                    if (config.enterprises && Array.isArray(config.enterprises)) {
+                        config.enterprises.forEach(function(ent, idx) {
+                            var lng = Number(ent.lng || ent.lon || ent.longitude);
+                            var lat = Number(ent.lat || ent.latitude);
+                            if (!lng || !lat) return;
+
+                            var marker = new AMap.Marker({
+                                position: [lng, lat],
+                                title: ent.name || '',
+                                zIndex: 50
+                            });
+                            map.add(marker);
+
+                            // Label for top 10 enterprises
+                            if (idx < 10) {
+                                var label = new AMap.Text({
+                                    text: ent.name || '',
+                                    position: [lng, lat],
+                                    offset: [0, -35],
+                                    style: {
+                                        'background-color': 'rgba(255,140,0,0.95)',
+                                        'border': '2px solid white',
+                                        'padding': '2px 6px',
+                                        'border-radius': '3px',
+                                        'font-size': '11px',
+                                        'color': 'white',
+                                        'white-space': 'nowrap'
+                                    }
+                                });
+                                map.add(label);
+                            }
+                        });
+                    }
+
+                    // Upwind paths
+                    if (config.upwind_paths && Array.isArray(config.upwind_paths)) {
+                        config.upwind_paths.forEach(function(path) {
+                            if (!path.coordinates || path.coordinates.length < 2) return;
+                            var coords = path.coordinates.filter(function(c) {
+                                return typeof c.lng === 'number' && typeof c.lat === 'number';
+                            }).map(function(c) { return [c.lng, c.lat]; });
+                            if (coords.length >= 2) {
+                                map.add(new AMap.Polyline({
+                                    path: coords,
+                                    strokeColor: '#FF4444',
+                                    strokeWeight: 4,
+                                    strokeOpacity: 1.0,
+                                    strokeStyle: 'dashed'
+                                }));
+                            }
+                        });
+                    }
+
+                    // Wind sectors
+                    if (config.sectors && Array.isArray(config.sectors)) {
+                        config.sectors.forEach(function(sector) {
+                            if (!sector.coordinates || sector.coordinates.length < 3) return;
+                            var coords = sector.coordinates.filter(function(c) {
+                                return typeof c.lng === 'number' && typeof c.lat === 'number';
+                            }).map(function(c) { return [c.lng, c.lat]; });
+                            if (coords.length >= 3) {
+                                map.add(new AMap.Polygon({
+                                    path: coords,
+                                    fillColor: '#4ECDC4',
+                                    fillOpacity: 0.3,
+                                    strokeColor: '#2BA89F',
+                                    strokeWeight: 2,
+                                    strokeOpacity: 0.7
+                                }));
+                            }
+                        });
+                    }
+
+                    // Fit view to show all markers
+                    map.setFitView(null, false, [50, 50, 50, 50]);
+
+                    // Wait a bit for tiles to load
+                    setTimeout(function() {
+                        window.__MAP_RENDERED__ = true;
+                    }, 1000);
+                } catch (e) {
+                    console.error('Map initialization failed:', e);
+                    window.__MAP_RENDERED__ = true;
+                }
+            }
+
+            loadAMapAndRender();
+        })();
+    </script>
+</body>
+</html>

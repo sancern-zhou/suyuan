@@ -103,8 +103,12 @@ class FrontendManifest(StrictModel):
     agent_mode_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     agent_platform_layout: Literal["scenes", "environment-grid", "coordinator"] = "scenes"
     coordinator: CoordinatorManifest | None = None
+    agent_scenes: list[str] = Field(default_factory=list)
+    sidebar_agent_modes: list[str] = Field(default_factory=list)
 
     _unique_agent_modes = field_validator("agent_modes")(unique)
+    _unique_agent_scenes = field_validator("agent_scenes")(unique)
+    _unique_sidebar_agent_modes = field_validator("sidebar_agent_modes")(unique)
     _valid_agent_mode_overrides = field_validator("agent_mode_overrides")(valid_identifier_map)
 
     @model_validator(mode="after")
@@ -137,21 +141,49 @@ class FrontendManifest(StrictModel):
         return self
 
 
+class WeatherHistoryPoint(StrictModel):
+    city: str = Field(min_length=1)
+    province: str = Field(min_length=1)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class WeatherHistoryConfig(StrictModel):
+    points: list[WeatherHistoryPoint] = Field(min_length=1, max_length=100)
+    bootstrap_days: int = Field(default=90, ge=1, le=366)
+    lookback_days: int = Field(default=7, ge=1, le=31)
+    online_enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_points(self):
+        unique([point.city.removesuffix("市") for point in self.points])
+        return self
+
+
 class BackendManifest(StrictModel):
     tools: list[str] = Field(default_factory=list)
+    disabled_tools: list[str] = Field(default_factory=list)
     # ``None`` preserves the shared legacy directories/registrations.  An
     # explicitly empty list is meaningful: the project owns an empty surface.
     skills_dir: str | None = None
     fetchers: list[str] | None = None
     fetchers_enabled: bool = True
+    weather_history: WeatherHistoryConfig | None = None
     gis_tools_enabled: bool = True
     mode_prompt_files: dict[str, str] = Field(default_factory=dict)
     agent_mode_tools: dict[str, list[str]] = Field(default_factory=dict)
 
     _unique_tools = field_validator("tools")(unique)
+    _unique_disabled_tools = field_validator("disabled_tools")(unique)
     _unique_fetchers = field_validator("fetchers")(unique)
     _valid_mode_prompt_files = field_validator("mode_prompt_files")(valid_identifier_map)
     _unique_agent_mode_tools = field_validator("agent_mode_tools")(unique_string_lists)
+
+    @model_validator(mode="after")
+    def validate_weather_history_worker(self):
+        if self.weather_history is not None and self.fetchers is not None and "city_weather_history" not in self.fetchers:
+            raise ValueError("weather_history requires the city_weather_history fetcher")
+        return self
 
 
 class KnowledgeManifest(StrictModel):

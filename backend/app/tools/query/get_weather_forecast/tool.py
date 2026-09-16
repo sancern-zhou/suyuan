@@ -17,6 +17,10 @@ import uuid
 
 from app.tools.base.tool_interface import LLMTool, ToolCategory
 from app.external_apis.openmeteo_client import OpenMeteoClient
+from app.utils.weather_time import (
+    BEIJING, WEATHER_QUERY_GUIDANCE, normalize_weather_record, open_meteo_time,
+    weather_data_structure, weather_output_metadata,
+)
 from app.schemas.unified import (
     UnifiedData,
     DataMetadata,
@@ -29,6 +33,15 @@ from app.schemas.unified import (
 logger = structlog.get_logger()
 
 INLINE_RECORD_LIMIT = 24
+FORECAST_UNITS = {"boundary_layer_height": "m", "shortwave_radiation": "W/m2", "wind_speed": "m/s", "wind_gusts": "m/s"}
+
+
+def _wind_mps(value, unit):
+    if value is None:
+        return None
+    if unit not in {"km/h", "m/s", "mph", "kn"}:
+        raise ValueError("Missing or unsupported forecast wind unit")
+    return value * {"km/h": 1 / 3.6, "m/s": 1, "mph": 0.44704, "kn": 1.852 / 3.6}[unit]
 
 
 def _weather_data_structure(
@@ -38,39 +51,7 @@ def _weather_data_structure(
     externalized: bool,
 ) -> Dict[str, Any]:
     """Describe both the inline preview and persisted weather JSON shape."""
-    return {
-        "root_type": "array",
-        "record_type": "object",
-        "record_count": record_count,
-        "returned_records": returned_records,
-        "data_complete": not externalized,
-        "sample_strategy": "head_tail" if externalized else "complete",
-        "record_schema": {
-            "timestamp": "datetime",
-            "station_name": "string|null",
-            "lat": "number|null",
-            "lon": "number|null",
-            "measurements": {
-                "temperature": "number|null",
-                "humidity": "number|null",
-                "dew_point": "number|null",
-                "wind_speed": "number|null",
-                "wind_direction": "number|null",
-                "wind_gusts": "number|null",
-                "surface_pressure": "number|null",
-                "precipitation": "number|null",
-                "precipitation_probability": "number|null",
-                "weather_code": "integer|null",
-                "cloud_cover": "number|null",
-                "visibility": "number|null",
-                "boundary_layer_height": "number|null",
-            },
-            "metadata": "object|null",
-            "dimensions": "object|null",
-            "original_fields": "object|null",
-        },
-        "file_root_type": "array" if externalized else None,
-    }
+    return weather_data_structure(record_count, returned_records, externalized)
 
 
 def _head_tail_sample(records: list[UnifiedDataRecord]) -> list[UnifiedDataRecord]:
@@ -90,11 +71,22 @@ class GetWeatherForecastTool(LLMTool):
     def __init__(self):
         function_schema = {
             "name": "get_weather_forecast",
-            "description": """获取指定位置的天气预报（未来7-16天），包含温度、降水、风速、边界层高度等气象要素。
+            "description": """获取指定位置的Open-Meteo模式预报，包含边界层高度(m)、短波辐射(W/m²)、温度、降水、风速(m/s)。
 
-支持获取今天和历史数据：
-- 使用 past_days=1 可以获取昨天完整数据 + 今天00:00到当前时刻的数据 + 未来7天预报
-- 适合需要完整当天数据的场景（如污染溯源分析）
+【工具选择与调用】
+1. 今天（含00:00至当前已过小时）和未来的边界层高度、短波辐射：直接使用本工具，不要先用get_weather_data试查未来，也不要用站点温湿度估算边界层高度。
+2. 仅查今天：forecast_days=1,past_days=0；昨天到今天：forecast_days=1,past_days=1；过去5天缺口：past_days=5。forecast_days从今天开始计数且包含今天（1=今天，4=今天及后三个日历日）。
+3. 今天之前超过5天的历史网格：使用get_weather_data；跨时段分别查询，根据实际覆盖范围合并并按timestamp去重，保留每段来源。纯ERA5发布有延迟，不能用ERA5接口补当天。
+4. 本工具必须提供lat/lon；location_name仅是显示名，不做地理解析。坐标取自项目城市代表点、用户指定位置或历史工具返回的网格坐标，不猜测坐标。
+5. 查询“截至此刻”时只保留timestamp<=用户截止时刻的记录；不得将今天尚未到来的小时计入已发生时段。字段为空就报告缺失，不用0或估算值补齐。
+
+【时间、单位与来源】
+past_days=0包含北京时间今天00:00起的数据；past_days=1增加昨天，最多可补过去5天。
+时间已为北京时间（+08:00），禁止再次加8小时。短波辐射为标注时刻之前一小时平均值。
+短波辐射字段为measurements.shortwave_radiation，单位W/m²；不要使用每日累计辐射(MJ/m²)替代。边界层高度字段为measurements.boundary_layer_height，单位m。
+这是模式数据（Open-Meteo Forecast），即便时间已过去也不能称为实测或ERA5再分析；不同来源衔接时按时间去重并保留来源。
+
+按北京时间日历日返回，包含今天尚未到来的小时；统计“截至某时刻”必须先按截止时间过滤完整数据。
 
 返回约定：
 - 不超过24条时，data包含全部记录，不生成外部数据文件
@@ -119,13 +111,13 @@ class GetWeatherForecastTool(LLMTool):
                     },
                     "forecast_days": {
                         "type": "integer",
-                        "description": "预报天数（1-16），默认7天",
+                        "description": "从北京时间今天起的日历天数（含今天，1-16），默认7；1=仅今天，4=今天及后三天",
                         "minimum": 1,
                         "maximum": 16
                     },
                     "past_days": {
                         "type": "integer",
-                        "description": "获取过去天数（0-5），默认0。设置为1可获取今天和昨天的完整数据",
+                        "description": "额外包含今天之前的天数（0-5），默认0已含今天00:00起全部小时；1增加昨天，用于补历史库近期缺口",
                         "minimum": 0,
                         "maximum": 5
                     },
@@ -142,6 +134,7 @@ class GetWeatherForecastTool(LLMTool):
             }
         }
 
+        function_schema["description"] += WEATHER_QUERY_GUIDANCE
         super().__init__(
             name="get_weather_forecast",
             description="Get weather forecast (real-time API call, UDF v2.0 compliant)",
@@ -184,7 +177,7 @@ class GetWeatherForecastTool(LLMTool):
         Note:
             使用 past_days=1 可以获取：
             - 昨天完整24小时数据
-            - 今天00:00到当前时刻的数据（分析场数据）
+            - 今天00:00到当前时刻的模式数据（非站点实测）
             - 未来7天预报数据
         """
         try:
@@ -204,7 +197,8 @@ class GetWeatherForecastTool(LLMTool):
                 forecast_days=forecast_days,
                 past_days=past_days,
                 hourly=hourly,
-                daily=daily
+                daily=daily,
+                timezone="Asia/Shanghai",
             )
 
             # 构建数据记录列表
@@ -214,13 +208,15 @@ class GetWeatherForecastTool(LLMTool):
             if hourly and "hourly" in forecast_data:
                 hourly_data = forecast_data["hourly"]
                 time_list = hourly_data.get("time", [])
+                hourly_units = forecast_data.get("hourly_units", {})
 
                 for i, time_str in enumerate(time_list):
                     record = UnifiedDataRecord(
-                        timestamp=datetime.fromisoformat(time_str.replace("Z", "+00:00")),
+                        timestamp=open_meteo_time(time_str, forecast_data).astimezone(BEIJING),
                         lat=lat,
                         lon=lon,
                         station_name=location_name,
+                        metadata={"data_source": "Open-Meteo Forecast", "timezone": "Asia/Shanghai", "units": FORECAST_UNITS, "shortwave_radiation_interval": "preceding_hour_mean"},
                         measurements={
                             # 温度
                             "temperature": hourly_data.get("temperature_2m", [])[i] if i < len(hourly_data.get("temperature_2m", [])) else None,
@@ -229,11 +225,11 @@ class GetWeatherForecastTool(LLMTool):
                             # 露点
                             "dew_point": hourly_data.get("dew_point_2m", [])[i] if i < len(hourly_data.get("dew_point_2m", [])) else None,
                             # 风速
-                            "wind_speed": hourly_data.get("wind_speed_10m", [])[i] if i < len(hourly_data.get("wind_speed_10m", [])) else None,
+                            "wind_speed": _wind_mps(hourly_data.get("wind_speed_10m", [])[i], hourly_units.get("wind_speed_10m")) if i < len(hourly_data.get("wind_speed_10m", [])) else None,
                             # 风向
                             "wind_direction": hourly_data.get("wind_direction_10m", [])[i] if i < len(hourly_data.get("wind_direction_10m", [])) else None,
                             # 阵风
-                            "wind_gusts": hourly_data.get("wind_gusts_10m", [])[i] if i < len(hourly_data.get("wind_gusts_10m", [])) else None,
+                            "wind_gusts": _wind_mps(hourly_data.get("wind_gusts_10m", [])[i], hourly_units.get("wind_gusts_10m")) if i < len(hourly_data.get("wind_gusts_10m", [])) else None,
                             # 气压
                             "surface_pressure": hourly_data.get("surface_pressure", [])[i] if i < len(hourly_data.get("surface_pressure", [])) else None,
                             # 降水
@@ -247,6 +243,7 @@ class GetWeatherForecastTool(LLMTool):
                             "visibility": hourly_data.get("visibility", [])[i] if i < len(hourly_data.get("visibility", [])) else None,
                             # 边界层高度（关键！）
                             "boundary_layer_height": hourly_data.get("boundary_layer_height", [])[i] if i < len(hourly_data.get("boundary_layer_height", [])) else None,
+                            "shortwave_radiation": hourly_data.get("shortwave_radiation", [])[i] if i < len(hourly_data.get("shortwave_radiation", [])) else None,
                         }
                     )
                     records.append(record)
@@ -260,8 +257,8 @@ class GetWeatherForecastTool(LLMTool):
                 lat=lat,
                 lon=lon,
                 time_range={
-                    "start": forecast_data.get("hourly", {}).get("time", [""])[0] if hourly else "",
-                    "end": forecast_data.get("hourly", {}).get("time", [""])[-1] if hourly else ""
+                    "start": records[0].timestamp.isoformat() if records else "",
+                    "end": records[-1].timestamp.isoformat() if records else ""
                 },
                 granularity="hourly" if hourly else "daily",
                 source="Open-Meteo Forecast API",
@@ -278,7 +275,7 @@ class GetWeatherForecastTool(LLMTool):
                         "temperature", "humidity", "dew_point", "wind_speed",
                         "wind_direction", "wind_gusts", "surface_pressure",
                         "precipitation", "precipitation_probability", "weather_code",
-                        "cloud_cover", "visibility", "boundary_layer_height"
+                        "cloud_cover", "visibility", "boundary_layer_height", "shortwave_radiation"
                     ],
                     "original_api_fields": {
                         "temperature": "temperature_2m",
@@ -306,12 +303,17 @@ class GetWeatherForecastTool(LLMTool):
 
             # 根据 past_days 调整摘要说明
             if past_days > 0:
-                summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。包含过去{past_days}天 + {daily_summary}。包含今天00:00到当前时刻的完整数据及边界层高度，可用于污染溯源分析。"
+                summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。请求过去{past_days}天及从今天起{forecast_days}天的模式数据。{daily_summary}。实际覆盖范围见actual_time_range；截至时刻的统计需先过滤。"
             else:
                 summary = f"天气预报查询成功 ({location_name or f'({lat},{lon})'})。{daily_summary}。包含边界层高度预报数据，可用于污染扩散条件分析。"
 
+            summary += " 时间为北京时间(+08:00)，勿再加8小时；风速m/s，边界层高度m，短波辐射W/m²（前一小时平均）；来源Open-Meteo Forecast模式数据，非实测。"
+
             # Keep small datasets inline. Persist large datasets and return a
             # bounded preview so the model can inspect the shape immediately.
+            records_dicts = [normalize_weather_record(r.model_dump(mode="json")) for r in records]
+            record_metadata = weather_output_metadata(records_dicts)
+            warnings = []
             saved_file_path = None
             externalized = len(records) > INLINE_RECORD_LIMIT
             inline_records = _head_tail_sample(records) if externalized else records
@@ -328,7 +330,6 @@ class GetWeatherForecastTool(LLMTool):
             if context is not None and records and externalized:
                 try:
                     # 转换 UnifiedDataRecord 为字典
-                    records_dicts = [r.model_dump() if hasattr(r, 'model_dump') else r.dict() for r in records]
 
                     logger.info(
                         "weather_forecast_calling_save_data",
@@ -348,6 +349,8 @@ class GetWeatherForecastTool(LLMTool):
                             "source": "Open-Meteo Forecast API",
                             "field_mapping_applied": True,
                             "root_type": "array",
+                            "timezone": "Asia/Shanghai",
+                            **record_metadata,
                         }
                     )
                     logger.info(
@@ -357,6 +360,8 @@ class GetWeatherForecastTool(LLMTool):
                     )
                     summary = f"{summary} 文件路径: {saved_file_path}。"
                 except Exception as save_error:
+                    saved_file_path = None
+                    warnings.append({"code": "DATA_SAVE_FAILED", "message": "数据文件保存失败，完整记录已内联返回；不得声称已保存文件。"})
                     externalized = False
                     inline_records = records
                     logger.error(
@@ -384,7 +389,15 @@ class GetWeatherForecastTool(LLMTool):
                 summary=summary,
             )
 
-            result_dict = result.model_dump()
+            result_dict = result.model_dump(mode="json")
+            result_dict["data"] = _head_tail_sample(records_dicts) if externalized else records_dicts
+            result_dict["metadata"].update({**record_metadata, "shortwave_radiation_interval": "preceding_hour_mean"})
+            result_dict["warnings"] = warnings
+            if warnings:
+                result_dict["status"] = "partial"
+                result_dict["summary"] += " 数据文件保存失败，完整记录已内联返回。"
+            if hourly and not records_dicts:
+                result_dict.update(status="empty", success=False, error_code="NO_DATA", summary="上游未返回逐小时气象数据。")
             result_dict.update({
                 "data_complete": not externalized,
                 "record_count": len(records),
@@ -428,7 +441,7 @@ class GetWeatherForecastTool(LLMTool):
             )
 
             # 返回 UDF v2.0 格式的错误响应
-            return UnifiedData(
+            result = UnifiedData(
                 status=DataStatus.FAILED,
                 success=False,
                 error=str(e),
@@ -442,4 +455,6 @@ class GetWeatherForecastTool(LLMTool):
                     source="Open-Meteo Forecast API (failed)"
                 ),
                 summary=f"天气预报查询失败: {str(e)}"
-            ).dict()
+            ).model_dump(mode="json")
+            result["error_code"] = "WEATHER_QUERY_FAILED"
+            return result

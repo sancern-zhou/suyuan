@@ -192,6 +192,8 @@ const route = useRoute()
 const router = useRouter()
 const store = useReactStore()
 const defaultAgentMode = resolveProjectDefaultAgentMode(projectConfig, AGENT_MODE_IDS)
+// 问数入口按项目启用情况选择模式：江苏使用 jiangsu_query，其他项目使用共享 query 模式。
+const queryAgentMode = projectConfig.agentModeIds.includes('jiangsu_query') ? 'jiangsu_query' : 'query'
 const kbStore = useKnowledgeBaseStore()
 const scheduledTasksStore = useScheduledTasksStore()
 const taskWorkspaceTask = ref(null)
@@ -646,7 +648,7 @@ const handleSidebarAction = async (actionId) => {
   switch (actionId) {
     case 'query-dashboard':
       if (!await confirmResourcePreviewLeave()) return
-      store.switchMode('query')
+      store.switchMode(queryAgentMode)
       hideManagementPanel()
       resetPanelState()
       break

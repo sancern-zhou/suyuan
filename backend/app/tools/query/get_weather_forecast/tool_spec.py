@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from datetime import datetime, timedelta
 
 from app.agent.context.data_result_policy import shape_data_result_for_context
@@ -25,6 +26,8 @@ def _forecast(point_count: int):
         return [value for _ in times]
 
     return {
+        "utc_offset_seconds": 28800,
+        "hourly_units": {"wind_speed_10m": "km/h", "wind_gusts_10m": "km/h"},
         "hourly": {
             "time": times,
             "temperature_2m": values(25.0),
@@ -40,6 +43,7 @@ def _forecast(point_count: int):
             "cloud_cover": values(20),
             "visibility": values(10000.0),
             "boundary_layer_height": values(500.0),
+            "shortwave_radiation": values(375.0),
         },
         "daily": {
             "temperature_2m_max": [30.0],
@@ -80,6 +84,10 @@ def test_weather_forecast_inlines_up_to_24_records_without_persisting():
     assert result["data_structure"]["record_schema"]["measurements"]["wind_speed"] == "number|null"
     assert "file_path" not in result
     assert context.saved == []
+    assert result["data"][0]["timestamp"] == "2026-08-11T00:00:00+08:00"
+    assert result["data"][0]["measurements"]["shortwave_radiation"] == 375
+    assert result["data"][0]["measurements"]["wind_speed"] == 8 / 3.6
+    assert result["metadata"]["units"]["shortwave_radiation"] == "W/m2"
 
 
 def test_weather_forecast_externalizes_more_than_24_records_and_returns_shape():
@@ -99,8 +107,48 @@ def test_weather_forecast_externalizes_more_than_24_records_and_returns_shape():
     assert context.saved[0]["schema"] == "weather"
     assert context.saved[0]["metadata"]["field_mapping_applied"] is True
     assert context.saved[0]["metadata"]["root_type"] == "array"
+    assert context.saved[0]["data"][0]["timestamp"].endswith("+08:00")
+    assert context.saved[0]["data"][0]["measurements"]["shortwave_radiation"] == 375
+    assert context.saved[0]["data"][0] == result["data"][0]
+    assert result["data"][0]["measurements"]["wind_speed_10m"] == 8 / 3.6
+    assert result["data"][0]["data_source"] == "Open-Meteo Forecast"
 
     context_result = shape_data_result_for_context(result)
     assert len(context_result["data"]) == INLINE_RECORD_LIMIT
     assert context_result["data_structure"] == result["data_structure"]
     assert context_result["data_complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_save_failure_returns_full_data_with_explicit_warning():
+    tool = GetWeatherForecastTool()
+
+    async def fetch(**kwargs):
+        return _forecast(58)
+
+    class FailingContext:
+        def save_data(self, **kwargs):
+            raise OSError("read only")
+
+    tool.client.fetch_forecast = fetch
+    result = await tool.execute(FailingContext(), lat=34, lon=113.75)
+    assert result["success"] is True
+    assert result["status"] == "partial"
+    assert result["warnings"][0]["code"] == "DATA_SAVE_FAILED"
+    assert result["data_complete"] is True
+    assert len(result["data"]) == 58
+    assert not result.get("file_path")
+
+
+@pytest.mark.asyncio
+async def test_upstream_exception_is_not_reported_as_missing_weather():
+    tool = GetWeatherForecastTool()
+
+    async def fetch(**kwargs):
+        raise RuntimeError("upstream unavailable")
+
+    tool.client.fetch_forecast = fetch
+    result = await tool.execute(None, lat=34, lon=113.75)
+    assert result["success"] is False
+    assert result["error_code"] == "WEATHER_QUERY_FAILED"
+    assert "upstream unavailable" in result["error"]

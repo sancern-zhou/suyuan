@@ -22,10 +22,12 @@ test('sidebar exposes smart query and opens the AI query agent workspace', async
   const sidebar = await readSource('../AssistantSidebar.vue')
   const analysisView = await readSource('../../views/ReactAnalysisView.vue')
 
-  assert.match(sidebar, /<p class="module-title">智能问数<\/p>/)
+  assert.match(sidebar, /<p class="module-title">\{\{ queryDashboardModule\.label \}\}<\/p>/)
   assert.match(sidebar, /handleModuleSelect\('query-dashboard'\)/)
   assert.match(sidebar, /id: 'query-dashboard',[\s\S]*name: '智能问数'/)
-  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\('query'\)/)
+  assert.match(sidebar, /queryDashboardMode[\s\S]*'jiangsu_query'[\s\S]*'query'/)
+  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\(queryAgentMode\)/)
+  assert.match(analysisView, /queryAgentMode = .*'jiangsu_query'.*'query'/)
 })
 
 test('sidebar moves system management entries into the bottom user settings menu', async () => {
