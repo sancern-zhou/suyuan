@@ -46,6 +46,21 @@ _llm_request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
 _model_tier_rotation_lock = threading.Lock()
 _model_tier_rotation_offsets: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], int] = {}
 
+_llm_opencode_session_id: ContextVar[Optional[str]] = ContextVar(
+    "llm_opencode_session_id",
+    default=None,
+)
+
+
+@contextmanager
+def use_opencode_session(session_id: Optional[str]):
+    """Set the OpenCode Go routing session id for LLM calls in this context."""
+    token = _llm_opencode_session_id.set(str(session_id) if session_id else None)
+    try:
+        yield
+    finally:
+        _llm_opencode_session_id.reset(token)
+
 
 def _rotate_model_tier_candidates(tier: str, candidates: list):
     """Rotate a tier chain so concurrent KB calls do not share one primary."""
@@ -306,16 +321,14 @@ class LLMService:
                 state["selection_source"] = "tier"
                 state["model_tier"] = tier
             if tier_config.strip():
-                candidates = parse_fallback_candidates("", "", tier_config)
                 candidates = [
                     candidate
-                    for candidate in candidates
-                    if candidate.provider and candidate.provider.lower() != "glm"
+                    for candidate in parse_fallback_candidates("", "", tier_config)
+                    if candidate.provider
                 ]
                 if not candidates:
                     raise ValueError(
-                        f"No non-GLM candidates configured for model tier: {tier}. "
-                        "Flash/Pro tiers must use providers such as mimo or deepseek."
+                        f"No candidates configured for model tier: {tier}."
                     )
                 rotation_offset = 0
                 if load_balance:
@@ -1174,13 +1187,21 @@ class LLMService:
             "model_env": "AGNES_MODEL",
             "model_default": "agnes-2.0-flash",
         },
+        # OpenCode Go 订阅（https://opencode.ai/zen/go，OpenAI Chat Completions 兼容协议）
+        "go": {
+            "url_env": "GO_BASE_URL",
+            "url_default": "https://opencode.ai/zen/go/v1",
+            "key_env": "GO_API_KEY",
+            "model_env": "GO_MODEL",
+            "model_default": "deepseek-v4.1-flash",
+        },
         # 智谱 GLM Coding Plan（OpenAI + Anthropic 兼容协议）
         "glm": {
             "url_env": "GLM_BASE_URL",
             "url_default": "https://open.bigmodel.cn/api/coding/paas/v4",
             "key_env": "GLM_API_KEY",
             "model_env": "GLM_MODEL",
-            "model_default": "glm-4.7",
+            "model_default": "glm-5.3-flash",
         },
         # 中科曙光 SCNET Token Plan（Anthropic 兼容协议）
         "scnet": {
@@ -1537,6 +1558,23 @@ class LLMService:
                 self.model = os.getenv(config["model_env"], config["model_default"])
                 logger.debug("llm_agnes_model_fallback_to_env", model=self.model)
 
+        elif self.provider == "go":
+            self.api_mode = getattr(settings, "go_api_mode", "chat_completions")
+            self.base_url = (
+                settings.go_base_url
+                or os.getenv(config["url_env"])
+                or config["url_default"]
+            )
+            self.api_key = (
+                settings.go_api_key
+                or os.getenv(config["key_env"])
+                or ""
+            )
+            self.model = settings.go_model
+            if not self.model:
+                self.model = os.getenv(config["model_env"], config["model_default"])
+                logger.debug("llm_go_model_fallback_to_env", model=self.model)
+
         elif self.provider == "glm":
             self.api_mode = getattr(settings, "glm_api_mode", "anthropic_messages")
             self.base_url = (
@@ -1759,6 +1797,12 @@ class LLMService:
         # 如果配置了API key，则添加Authorization header
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # OpenCode Go 网关强制校验该会话头（缺失直接拒绝），用于路由与提示词缓存
+        if self.provider == "go":
+            headers["x-opencode-session"] = (
+                _llm_opencode_session_id.get() or f"suyuan-{os.getpid()}"
+            )
 
         return url, headers
 

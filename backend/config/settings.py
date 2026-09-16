@@ -330,7 +330,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_provider: str = Field(
         default="doubao",
-        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet"
+        description="LLM provider: doubao, openai, anthropic, deepseek, minimax, mimo, agnes, glm, bailian, scnet, go"
     )
     doubao_api_key: Optional[str] = Field(default=None, description="Doubao-compatible gateway API key")
     doubao_base_url: str = Field(
@@ -439,6 +439,19 @@ class Settings(BaseSettings):
         default="chat_completions",
         description="Agnes API protocol mode: chat_completions"
     )
+    go_api_key: Optional[str] = Field(default=None, description="OpenCode Go subscription API key")
+    go_base_url: str = Field(
+        default="https://opencode.ai/zen/go/v1",
+        description="OpenCode Go OpenAI-compatible API base URL"
+    )
+    go_model: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Default OpenCode Go model used by Flash tier"
+    )
+    go_api_mode: str = Field(
+        default="chat_completions",
+        description="OpenCode Go API protocol mode: chat_completions"
+    )
     voice_mimo_base_url: str = Field(
         default="https://api.xiaomimimo.com/v1",
         description="Xiaomi Mimo OpenAI-compatible base URL for ASR/TTS"
@@ -498,7 +511,7 @@ class Settings(BaseSettings):
         description="GLM Anthropic-compatible API base URL"
     )
     glm_model: str = Field(
-        default="glm-4.7",
+        default="glm-5.3-flash",
         description="GLM model name"
     )
     glm_api_mode: str = Field(
@@ -983,6 +996,14 @@ class Settings(BaseSettings):
                 "base_url": self.agnes_base_url,
                 "model": self.agnes_model,
                 "api_mode": self.agnes_api_mode,
+            }
+        elif self.llm_provider == "go":
+            return {
+                "provider": "go",
+                "api_key": self.go_api_key,
+                "base_url": self.go_base_url,
+                "model": self.go_model,
+                "api_mode": self.go_api_mode,
             }
         elif self.llm_provider == "glm":
             return {

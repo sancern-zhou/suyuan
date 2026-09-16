@@ -1147,7 +1147,10 @@ async def analyze_stream(
 
             try:
                 await cancellation_registry.arm_run_task(actual_session_id, cancel_event)
-                with llm_service.use_model_tier(request.model_tier):
+                with (
+                    llm_service.use_model_tier(request.model_tier),
+                    llm_service.use_opencode_session(actual_session_id),
+                ):
                     async for event in agent.analyze(**analyze_kwargs):
                         event_count += 1
                         event_type = event.get("type")
