@@ -60,7 +60,7 @@ description: 审核运维工单并生成可追溯的最终问题清单或正式�
 1. 检查 `report_ready`；为 false 时先交付待核验清单，不生成正式报告。
 2. 为 true 时只使用本轮 `report_input_path`；每个条目已合并同一异常的事实与说明，不得将 `components` 拆行。
 3. `report_input.items[].display_evidence` 是所有规则统一的报告证据接口；问题描述只从该字段取值，不要解析或复制 `evidence_facts`。
-4. 报告输入已经由后端完成筛选和分组。禁止调用 `execute_python`、`read_file`、`list_directory` 重建、筛选或复制报告输入，也不要创建 `report_input_filtered` 等中间文件。
+4. 报告输入已经由后端完成筛选和分组。优先读取 `ops_audit_run_rules` 返回的 `report_context_path`；它是已注册的精简报告上下文。禁止调用 `execute_python`、`read_file`、`list_directory` 重建、筛选或复制报告输入，也不要创建 `report_input_filtered` 等中间文件。
 5. 完整读取 [审核报告输出规范](backend/docs/skills/ops_work_order_audit/references/report-format.md)，严格按其中结构和字段约束组织报告。
 4. 使用 `create_report_package` 生成报告包，再用 `validate_report_package` 验收；有渲染或资源错误时先修复。
 
