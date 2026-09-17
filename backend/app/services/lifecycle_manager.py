@@ -58,6 +58,7 @@ from app.fetchers.xuchang_zhongda_station import (
     XuchangZhongdaStationFetcher,
 )
 from app.project_config.loader import load_project_context
+from app.fetchers.task_review_feedback import TaskReviewFeedbackFetcher
 
 # 导入单一工具注册源
 from app.tools import global_tool_registry
@@ -112,6 +113,7 @@ def _configured_fetchers(project_context):
     """Instantiate only fetchers declared by a project manifest."""
     enabled_modules = project_context.enabled_modules
     factories = {
+        "task_review_feedback": TaskReviewFeedbackFetcher,
         "era5": ERA5Fetcher,
         "observed_weather": ObservedWeatherFetcher,
         "jining_era5": JiningERA5Fetcher,

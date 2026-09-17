@@ -28,15 +28,15 @@ def test_scheduled_task_prompt_marks_unattended_execution():
     assert "必须在本次执行内直接调用并等待工具返回" in prompt
 
 
-def test_scheduled_parent_context_marks_sub_agent_unattended():
+def test_scheduled_parent_context_marks_expert_sub_agent_unattended():
     prompt = CallSubAgentTool()._build_child_request_prompt(
-        target_mode="ops",
-        goal="逐条复核 review_input.items 并提交结果",
-        context="review_input_path: /tmp/review_input.json",
+        target_mode="expert",
+        goal="分析污染过程并生成专家草稿",
+        context="数据路径: /tmp/pollution_dataset.json",
         scheduled_task_context={
-            "task_id": "ops-weekly-audit",
-            "task_name": "工单周审",
-            "execution_id": "exec_ops_weekly_audit",
+            "task_id": "weekly-pollution-analysis",
+            "task_name": "污染过程周分析",
+            "execution_id": "exec_weekly_pollution_analysis",
         },
     )
 

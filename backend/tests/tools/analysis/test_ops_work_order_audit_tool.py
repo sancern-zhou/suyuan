@@ -55,16 +55,49 @@ async def test_run_rules_preserves_arguments_and_context_data(monkeypatch, tmp_p
         output_dir=str(output_dir),
         evidence_level="detail",
         enable_visual=False,
+        enable_non_visual=False,
     )
 
     assert captured["path"] == dataset_path.resolve()
     assert captured["output_dir"] == output_dir
     assert captured["evidence_level"] == "detail"
     assert captured["enable_visual"] is False
+    assert captured["enable_non_visual"] is False
     assert captured["saved"]["schema"] == "ops_audit_rule_summary"
     assert captured["saved"]["metadata"]["dataset_path"] == str(dataset_path.resolve())
     assert result["data_id"] == "ops-audit-data-id"
     assert result["metadata"]["data_id"] == "ops-audit-data-id"
+
+
+async def test_run_rules_supports_visual_only_mode(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "dataset.json"
+    dataset_path.write_text("{}", encoding="utf-8")
+    captured = {}
+
+    def fake_run_rules(path, **kwargs):
+        captured["path"] = path
+        captured.update(kwargs)
+        return {
+            "summary": {"audit_level_counts": {}},
+            "business_review": {},
+            "enable_visual": kwargs["enable_visual"],
+            "enable_non_visual": kwargs["enable_non_visual"],
+        }
+
+    tool = audit_tool.OpsAuditRunRulesTool()
+    monkeypatch.setattr(audit_tool, "run_ops_audit_rules", fake_run_rules)
+
+    result = await tool.execute(
+        dataset_path=str(dataset_path),
+        enable_visual=True,
+        enable_non_visual=False,
+    )
+
+    assert result["success"] is True
+    assert captured["enable_visual"] is True
+    assert captured["enable_non_visual"] is False
+    assert "非视觉规则已关闭，图片视觉审核已执行" in result["summary"]
+    assert "enable_non_visual" in tool.get_function_schema()["parameters"]["properties"]
 
 
 async def test_run_rules_preserves_failure_contract(monkeypatch, tmp_path):

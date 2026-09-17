@@ -137,6 +137,7 @@ class ExecutePythonTool(LLMTool):
                 is_file_reader = (
                     func_name in {"open", "io.open", "get_raw_data", "load_data"}
                     or leaf_name.startswith("read_")
+                    or func_name in {"Path.read_text", "Path.read_bytes"}
                     or func_name in {"pd.load", "np.load"}
                 )
                 if is_file_reader and node.args:
@@ -936,6 +937,9 @@ class ExecutePythonTool(LLMTool):
             command.extend(["--unsetenv", name])
         safe_env = {
             "PATH": f"{python_env}/bin:/usr/bin:/bin",
+            # Expose only the application package mounted below.  Secrets,
+            # sessions and the data registry are intentionally not mounted.
+            "PYTHONPATH": str(Path(PROJECT_ROOT) / "backend"),
             "HOME": "/tmp",
             "TMPDIR": "/tmp",
             "MPLCONFIGDIR": "/tmp/matplotlib",
@@ -957,6 +961,32 @@ class ExecutePythonTool(LLMTool):
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
         relative_input_mounts: List[Path] = []
+        # Read-write bind destinations whose host staging directories are
+        # synced back to persistent storage after the run. A read-only bind
+        # targeting one of these subtrees would be materialized by bwrap as a
+        # mountpoint placeholder inside the host staging directory, and the
+        # post-run sync would then publish that placeholder over the real
+        # file (this silently truncated persisted chart images).
+        synced_rw_bind_destinations: list[Path] = []
+        read_only_bind_destinations: list[Path] = []
+
+        # Business calculation code may import the backend application
+        # package, but the sandbox must not receive the project root, .env
+        # files, session history, or the persistent data registry.  Authorized
+        # data files continue to be staged separately below.
+        backend_root = Path(PROJECT_ROOT) / "backend"
+        staged_backend_root = Path(working_dir) / "backend_runtime"
+        for source in (backend_root / "app", backend_root / "config"):
+            if not source.is_dir():
+                continue
+            relative = source.relative_to(backend_root)
+            staged_source = staged_backend_root / relative
+            shutil.copytree(source, staged_source, dirs_exist_ok=True)
+            self._append_bubblewrap_parent_dirs(command, source)
+            command.extend(["--ro-bind", str(staged_source), str(source)])
+            mounted_destinations.add(str(source))
+            read_only_bind_destinations.append(source)
+
         context_paths = list(
             dict.fromkeys(
                 [
@@ -989,6 +1019,7 @@ class ExecutePythonTool(LLMTool):
                     original_relative_paths.add(str(relative_path))
 
                 mounted_destinations.add(str(session_data_dir))
+                synced_rw_bind_destinations.append(session_data_dir)
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
             # The data registry is the agent's shared read-only data area. It
@@ -1007,16 +1038,32 @@ class ExecutePythonTool(LLMTool):
             # images so the writable output mount does not hide prior assets.
             images_dir = Path(get_images_dir()).resolve()
             staged_images_dir = Path(working_dir) / "images_output"
-            if images_dir.is_dir():
-                shutil.copytree(images_dir, staged_images_dir, dirs_exist_ok=True)
-            else:
-                staged_images_dir.mkdir(parents=True, exist_ok=True)
+            staged_images_dir.mkdir(parents=True, exist_ok=True)
+            # Authorized candidate inputs under the images directory are
+            # pre-staged here instead of being ro-bound at their host paths:
+            # the images bind above already backs that subtree, so an extra
+            # bind would be materialized as a host-side mountpoint placeholder
+            # in this staging directory and then synced over the real file.
+            staged_images_original_paths: set[str] = set()
+            for value in candidate_paths:
+                source_path = resolve_agent_path(value)
+                if not source_path.is_file():
+                    continue
+                try:
+                    relative_input = source_path.relative_to(images_dir)
+                except ValueError:
+                    continue
+                staged_input = staged_images_dir / relative_input
+                staged_input.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, staged_input)
+                staged_images_original_paths.add(str(relative_input))
             self._append_bubblewrap_parent_dirs(command, images_dir)
             command.extend(["--bind", str(staged_images_dir), str(images_dir)])
             mounted_destinations.add(str(images_dir))
-            command.extend(["--bind", str(staged_images_dir), "/sandbox/backend/backend_data_registry/images"])
-            mounted_destinations.add("/sandbox/backend/backend_data_registry/images")
-            sync_dirs.append((staged_images_dir, images_dir, set()))
+            synced_rw_bind_destinations.append(images_dir)
+            sync_dirs.append(
+                (staged_images_dir, images_dir, staged_images_original_paths)
+            )
 
             preferred_font_path = Path(get_font_manager().FONT_FILE_PATHS[0]).resolve()
             if preferred_font_path.is_file():
@@ -1033,11 +1080,14 @@ class ExecutePythonTool(LLMTool):
                 path = resolve_agent_path(value)
                 if not path.exists():
                     continue
-                if (
-                    raw_path.is_absolute()
-                    and session_data_dir
-                    and (path == session_data_dir or session_data_dir in path.parents)
+                if any(
+                    path == synced_destination or synced_destination in path.parents
+                    for synced_destination in synced_rw_bind_destinations
                 ):
+                    # Already visible through the synced rw staging bind (and
+                    # pre-staged above); a read-only bind here would be
+                    # materialized as a host-side mountpoint inside the
+                    # staging directory.
                     continue
                 if raw_path.is_absolute():
                     destination_path = path
@@ -1066,6 +1116,7 @@ class ExecutePythonTool(LLMTool):
                     shutil.copy2(path, staged_input)
                 if raw_path.is_absolute():
                     self._append_bubblewrap_parent_dirs(command, path.parent)
+                    read_only_bind_destinations.append(path)
                 command.extend(["--ro-bind", str(staged_input), destination])
                 mounted_destinations.add(destination)
 
@@ -1083,6 +1134,23 @@ class ExecutePythonTool(LLMTool):
             return None
 
         command.extend([str(python_env / "bin/python"), "/sandbox/script.py"])
+
+        # Fail closed on mount overlap: a read-only bind whose destination
+        # falls inside a synced read-write staging bind would be materialized
+        # as a host-side mountpoint placeholder and published by the post-run
+        # sync, silently overwriting persistent files.
+        for read_only_destination in read_only_bind_destinations:
+            for synced_destination in synced_rw_bind_destinations:
+                if read_only_destination == synced_destination or (
+                    synced_destination in read_only_destination.parents
+                ):
+                    logger.error(
+                        "execute_python_sandbox_mount_overlap_rejected",
+                        read_only_bind=str(read_only_destination),
+                        synced_rw_bind=str(synced_destination),
+                    )
+                    return None
+
         return command, sync_dirs, relative_input_mounts
 
     @staticmethod
@@ -1130,7 +1198,13 @@ class ExecutePythonTool(LLMTool):
                 dirs[:] = [
                     name
                     for name in dirs
-                    if name not in {"inputs", "session_data", "images_output"}
+                    if name not in {
+                        "inputs",
+                        "session_data",
+                        "images_output",
+                        "_suyuan_assets",
+                        "backend_runtime",
+                    }
                 ]
             # 跳过 __pycache__ 目录
             if '__pycache__' in dirs:

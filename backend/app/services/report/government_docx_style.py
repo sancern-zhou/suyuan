@@ -22,12 +22,11 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 from docx.text.paragraph import Paragraph
 
+from app.utils.path_config import get_data_registry
+
 
 DEFAULT_REFERENCE_DOCX = (
-    Path(__file__).resolve().parents[3]
-    / "backend_data_registry"
-    / "report_templates"
-    / "government_report_reference.docx"
+    get_data_registry() / "report_templates" / "government_report_reference.docx"
 )
 
 

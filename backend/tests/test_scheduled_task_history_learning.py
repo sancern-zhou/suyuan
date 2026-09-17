@@ -4,6 +4,7 @@
 """
 import asyncio
 import sys
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -251,6 +252,9 @@ class TestConsolidationCall:
         }
 
         class FakeLLMService:
+            def use_model_tier(self, *_args, **_kwargs):
+                return nullcontext()
+
             temperature = None
 
             async def call_llm_with_json_response(self, prompt, max_retries=2):
@@ -291,6 +295,9 @@ class TestConsolidationCall:
         }
 
         class FakeLLMService:
+            def use_model_tier(self, *_args, **_kwargs):
+                return nullcontext()
+
             async def call_llm_with_json_response(self, prompt, max_retries=2):
                 return response
 
@@ -331,6 +338,9 @@ class TestConsolidationCall:
         attempts = 0
 
         class FakeLLMService:
+            def use_model_tier(self, *_args, **_kwargs):
+                return nullcontext()
+
             temperature = None
 
             async def call_llm_with_json_response(self, prompt, max_retries=2):
@@ -412,7 +422,8 @@ class TestExecutorIntegration:
         assert cases[0]["execution_id"] == execution.execution_id
         assert cases[0]["distilled"]["case_brief"] == "本次完成站点分析"
         assert {"kind": "report", "ref": "rpt_run_001"} in cases[0]["outputs"]
-        assert "使命与背景" in case_storage.read_memory()
+        # 长期记忆按日维护：已有记忆不会被单次执行的返回值覆盖
+        assert "站点A 持续超标" in case_storage.read_memory()
         assert task_storage.get(task.task_id).total_runs == 1
 
     def test_active_history_retrieval_is_schema_only_extra_tool(self, tmp_path, monkeypatch):
@@ -459,7 +470,11 @@ class TestExecutorIntegration:
 
         assert execution.status == ExecutionStatus.SUCCESS
         assert "## 历史案例主动检索" not in calls[0]["prompt"]
-        assert calls[0]["kwargs"]["extra_tool_names"] == ["search_scheduled_task_history"]
+        assert calls[0]["kwargs"]["extra_tool_names"] == [
+            "read_file",
+            "submit_task_review",
+            "search_scheduled_task_history",
+        ]
         scheduled_context = calls[0]["kwargs"]["runtime_metadata"]["scheduled_task"]
         assert scheduled_context["task_id"] == task.task_id
         assert scheduled_context["execution_id"] == execution.execution_id

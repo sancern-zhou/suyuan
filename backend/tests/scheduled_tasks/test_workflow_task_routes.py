@@ -11,12 +11,11 @@ try:
     from app.auth.models import CurrentUser
 except Exception as import_error:  # pragma: no cover
     pytest.skip(
-        f"scheduled_task_routes 尚不可导入，合并 main 后自动生效：{import_error}",
+        f"scheduled_task_routes 尚不可导入：{import_error}",
         allow_module_level=True,
     )
 
-WORKFLOW_EVENT = "xuchang.station_deviation.alert_created"
-REGISTERED = ["xuchang_station_deviation_alert"]
+REGISTERED = ["demo_workflow"]
 
 
 class FakeService:
@@ -38,18 +37,30 @@ class FakeService:
         return {"scheduled_tasks": []}
 
 
-def _fake_event_definitions():
-    return [SimpleNamespace(event_type=WORKFLOW_EVENT, label="站点告警", description="", filter_fields=["city"])]
+class FakeCaseStorage:
+    def __init__(self, cases=None):
+        self.cases = cases or []
+        self.saved = None
+
+    def update_case(self, execution_id, case):
+        self.saved = (execution_id, case)
+        for index, item in enumerate(self.cases):
+            if str(item.get("execution_id")) == str(execution_id):
+                self.cases[index] = case
+                return True
+        return False
+
+    def recent_cases(self, limit):
+        return list(self.cases)
 
 
-def _client(monkeypatch):
-    service = FakeService()
+def _client(monkeypatch, service=None):
+    service = service or FakeService()
     monkeypatch.setattr(routes, "get_scheduled_task_service", lambda: service)
     monkeypatch.setattr(routes, "get_social_user_registry", lambda: SimpleNamespace(get_user=None))
     monkeypatch.setattr(
         "app.scheduled_tasks.workflow_tasks.registered_workflows", lambda: REGISTERED
     )
-    monkeypatch.setattr(routes, "get_event_definitions", _fake_event_definitions)
     app = FastAPI()
     app.dependency_overrides[require_current_user] = lambda: CurrentUser(
         id="creator-1",
@@ -64,20 +75,18 @@ def _client(monkeypatch):
 
 def _workflow_payload(**overrides):
     payload = {
-        "name": "站点快速污染抬升告警",
-        "description": "确定性工作流告警通报",
+        "name": "确定性工作流值守",
+        "description": "确定性工作流值守结论",
         "execution_mode": "workflow",
-        "workflow_name": "xuchang_station_deviation_alert",
-        "workflow_args": {},
-        "trigger_type": "event",
-        "schedule_type": None,
-        "event_type": WORKFLOW_EVENT,
-        "event_filters": {"city": "许昌市"},
-        "broadcast_enabled": True,
-        "target_user_ids": ["app:android:android_demo"],
+        "workflow_name": "demo_workflow",
+        "workflow_args": {"period": "day"},
+        "trigger_type": "schedule",
+        "schedule_type": "daily_8am",
+        "broadcast_enabled": False,
+        "target_user_ids": [],
         "enabled": True,
-        "prompt": "确定性工作流任务",
-        "timeout_seconds": 120,
+        "prompt": "生成 200-300 字值守短结论",
+        "timeout_seconds": 600,
         "tags": ["workflow"],
     }
     payload.update(overrides)
@@ -101,8 +110,9 @@ def test_create_workflow_task_with_registered_name(monkeypatch):
     assert response.status_code == 200
     task = response.json()["task"]
     assert task["execution_mode"] == "workflow"
-    assert task["workflow_name"] == "xuchang_station_deviation_alert"
-    assert service.tasks[task["task_id"]].workflow_args == {}
+    assert task["workflow_name"] == "demo_workflow"
+    assert task["model_tier"] == "auto"
+    assert service.tasks[task["task_id"]].workflow_args == {"period": "day"}
 
 
 def test_create_workflow_task_with_unknown_name_is_rejected(monkeypatch):
@@ -117,6 +127,16 @@ def test_create_workflow_task_with_unknown_name_is_rejected(monkeypatch):
     assert detail["code"] == "invalid_task_workflow"
     assert detail["registered"] == REGISTERED
     assert service.tasks == {}
+
+
+def test_create_workflow_task_keeps_model_tier(monkeypatch):
+    client, service = _client(monkeypatch)
+
+    response = client.post("/api/scheduled-tasks", json=_workflow_payload(model_tier="pro"))
+
+    assert response.status_code == 200
+    task = response.json()["task"]
+    assert task["model_tier"] == "pro"
 
 
 def test_update_workflow_task_cannot_change_execution_mode(monkeypatch):
@@ -144,4 +164,44 @@ def test_update_workflow_task_preserves_workflow_fields(monkeypatch):
     assert response.status_code == 200
     task = service.tasks[task_id]
     assert task.enabled is False
-    assert task.workflow_name == "xuchang_station_deviation_alert"
+    assert task.workflow_name == "demo_workflow"
+    assert task.workflow_args == {"period": "day"}
+
+
+def test_update_workflow_task_can_change_model_tier(monkeypatch):
+    client, service = _client(monkeypatch)
+    created = client.post("/api/scheduled-tasks", json=_workflow_payload()).json()["task"]
+    task_id = created["task_id"]
+
+    response = client.put(f"/api/scheduled-tasks/{task_id}", json={"model_tier": "flash"})
+
+    assert response.status_code == 200
+    assert service.tasks[task_id].model_tier == "flash"
+
+
+def test_update_history_case_rewrites_and_reports_missing(monkeypatch):
+    service = FakeService()
+    service.tasks["demo_task"] = SimpleNamespace(
+        task_id="demo_task",
+        owner_user_id="creator-1",
+        created_by="user",
+    )
+    client, _ = _client(monkeypatch, service)
+    storage = FakeCaseStorage([
+        {"execution_id": "exec_1", "status": "success", "summary": "旧结论"},
+    ])
+    monkeypatch.setattr(routes, "TaskCaseStorage", lambda task_id: storage)
+
+    ok = client.put(
+        "/api/scheduled-tasks/demo_task/history/cases/exec_1",
+        json={"case": {"execution_id": "exec_1", "status": "success", "summary": "新结论"}},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["case"]["summary"] == "新结论"
+    assert storage.saved[0] == "exec_1"
+
+    missing = client.put(
+        "/api/scheduled-tasks/demo_task/history/cases/exec_404",
+        json={"case": {"summary": "无效"}},
+    )
+    assert missing.status_code == 404

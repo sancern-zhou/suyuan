@@ -24,6 +24,7 @@ from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.agent.resources.resource_service import SessionResourceService
 from app.db.database import get_db
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -109,7 +110,14 @@ def _strip_lazy_artifacts(obj: Any) -> Any:
             if (
                 key in ARTIFACT_KEYS
                 or key in LEGACY_LOCATOR_KEYS
-                or key.endswith("_path")
+            ):
+                continue
+            if key == "human_feedback":
+                # 待确认面板契约需要完整子树（含 report_input_path），不剥离内部定位字段。
+                stripped[key] = value
+                continue
+            if (
+                key.endswith("_path")
                 or key.endswith("_preview")
             ):
                 continue
@@ -663,7 +671,7 @@ async def export_session(
 
     # 如果未提供路径，使用默认路径
     if not output_path:
-        output_path = f"backend_data_registry/exports/{session_id}.json"
+        output_path = str(get_data_registry() / "exports" / f"{session_id}.json")
 
     success = await session_manager.export_session(session_id, output_path)
 

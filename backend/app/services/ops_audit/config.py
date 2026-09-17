@@ -35,6 +35,7 @@ DEFAULT_BRAND_ALIASES = {
 }
 
 DEFAULT_DEVICE_IDENTITY_PROFILES = {
+    "enabled": False,
     "history_limit": 500,
     "recent_per_device_limit": 5,
     "history_rf_tables": [
@@ -414,7 +415,7 @@ DEFAULT_RULE_CATALOG = [
         "category": "附件读数一致性",
         "default_severity": "高",
         "scope": "RF_HY_O3VALUEPASS/WO_COMMONFILE",
-        "rationale": "O3量值传递表的斜率、截距、改变率及上级标准型号、设备号、序列号、传递日期、公式和有效期应与XLS附件按标签提取的值一致。",
+        "rationale": "O3量值传递表的斜率、截距、改变率、传递日期、公式和有效期应与XLS附件按标签提取的值一致；上级标准型号、设备号和序列号不纳入此项比对。",
     },
     {
         "rule_id": "ATTACHMENT_O3_VALUE_PASS_XLS_MISSING_REVIEW",

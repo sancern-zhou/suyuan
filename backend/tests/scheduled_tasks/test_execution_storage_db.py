@@ -1,167 +1,122 @@
-import uuid
+import asyncio
 from datetime import datetime, timedelta
 
-import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
-from app.db.models.scheduled_task_models import ScheduledTaskExecutionDB
-from app.scheduled_tasks.models import ExecutionStatus, StepExecution, TaskExecution
-from app.scheduled_tasks.storage import create_execution_storage
-
-DB_BACKEND_AVAILABLE = True
-try:
-    from app.scheduled_tasks.storage.execution_storage_db import (
-        ExecutionStorageDB,
-        _get_engine,
-        _import_legacy_rows,
-    )
-except Exception:  # noqa: BLE001
-    DB_BACKEND_AVAILABLE = False
+from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
+from app.scheduled_tasks.models import ExecutionStatus, TaskExecution
+from app.scheduled_tasks.storage.execution_storage_db import (
+    DatabaseExecutionStorage,
+    execution_db_enabled,
+)
 
 
-def _execution(index: int, task_id: str, *, status=ExecutionStatus.SUCCESS) -> TaskExecution:
-    started_at = datetime.now() - timedelta(minutes=index)
+def _execution(index: int, task_id: str = "task-1") -> TaskExecution:
+    started_at = datetime.now() - timedelta(days=1) + timedelta(minutes=index)
     return TaskExecution(
-        execution_id=f"{task_id}-exec-{index}",
+        execution_id=f"execution-{index}",
         task_id=task_id,
-        task_name="入库验证",
+        task_name="告警分析",
         session_id=f"session-{index}",
-        status=status,
+        status=ExecutionStatus.SUCCESS,
         started_at=started_at,
-        completed_at=(
-            started_at + timedelta(seconds=120)
-            if status != ExecutionStatus.RUNNING
-            else None
-        ),
-        duration_seconds=120.0 if status != ExecutionStatus.RUNNING else None,
-        total_steps=1,
-        completed_steps=1 if status == ExecutionStatus.SUCCESS else 0,
-        steps=[
-            StepExecution(
-                step_id="step-1",
-                status=status,
-                agent_prompt="生成报告",
-                agent_response="报告已生成",
-                tool_calls=[{"name": "create_report_package", "media": ["/tmp/x.png"]}],
-            )
-        ],
+        completed_at=started_at + timedelta(seconds=30),
+        duration_seconds=30.0,
         trigger_type="event",
-        event_id=f"event-{index}",
-        event_type="xuchang.station_daily_pollution.review_completed",
-        event_attributes={"city": "许昌市"},
+        total_steps=1,
+        completed_steps=1,
+        steps=[],
     )
 
 
-async def _delete_test_rows():
-    from sqlalchemy import delete
+def _storage(tmp_path):
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'executions.db'}",
+        poolclass=NullPool,
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    loop = asyncio.new_event_loop()
 
-    engine = _get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(
-            delete(ScheduledTaskExecutionDB).where(
-                ScheduledTaskExecutionDB.task_id.like("dbtest-%")
+    async def _prepare():
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                ScheduledTaskExecutionDB.__table__.create,
+                checkfirst=True,
             )
-        )
 
-
-@pytest.fixture
-def db_storage():
-    if not DB_BACKEND_AVAILABLE:
-        pytest.skip("execution db backend unavailable")
-    storage = ExecutionStorageDB(import_legacy=False)
-    yield storage
-    # 只清理本测试写入的 dbtest- 前缀数据，不动真实历史记录
-    storage._run(_delete_test_rows())
-
-
-@pytest.mark.skipif(not DB_BACKEND_AVAILABLE, reason="execution db backend unavailable")
-def test_crud_roundtrip_keeps_full_payload(db_storage):
-    task_id = f"dbtest-{uuid.uuid4().hex[:8]}"
-    execution = _execution(1, task_id)
-    db_storage.create(execution)
-
-    loaded = db_storage.get(execution.execution_id)
-    assert loaded is not None
-    assert loaded.task_id == task_id
-    assert loaded.event_attributes == {"city": "许昌市"}
-    assert loaded.steps[0].tool_calls[0]["name"] == "create_report_package"
-
-    loaded.status = ExecutionStatus.FAILED
-    loaded.error_message = "超时"
-    db_storage.update(loaded)
-
-    reloaded = db_storage.get(execution.execution_id)
-    assert reloaded.status == ExecutionStatus.FAILED
-    assert reloaded.error_message == "超时"
-
-
-@pytest.mark.skipif(not DB_BACKEND_AVAILABLE, reason="execution db backend unavailable")
-def test_history_is_not_trimmed_beyond_legacy_cap(db_storage):
-    task_id = f"dbtest-{uuid.uuid4().hex[:8]}"
-    for index in range(60):
-        db_storage.create(_execution(index, task_id))
-
-    records, total = db_storage.list_by_task_page(task_id, page=1, page_size=10)
-    assert total == 60
-    assert len(records) == 10
-    # 无清理：全部历史可分页取回，且按开始时间倒序
-    _, total_all = db_storage.list_recent_page(page=1, page_size=1)
-    assert total_all >= 60
-    assert records[0].started_at >= records[-1].started_at
-
-
-@pytest.mark.skipif(not DB_BACKEND_AVAILABLE, reason="execution db backend unavailable")
-def test_statistics_and_status_filter(db_storage):
-    task_id = f"dbtest-{uuid.uuid4().hex[:8]}"
-    db_storage.create(_execution(1, task_id, status=ExecutionStatus.SUCCESS))
-    db_storage.create(_execution(2, task_id, status=ExecutionStatus.FAILED))
-    db_storage.create(_execution(3, task_id, status=ExecutionStatus.RUNNING))
-
-    stats = db_storage.get_statistics(task_id=task_id, days=7)
-    assert stats["total"] == 3
-    assert stats["success"] == 1
-    assert stats["failed"] == 1
-    assert stats["running"] == 1
-    assert stats["avg_duration_seconds"] == 120.0
-
-    running = db_storage.get_running_executions()
-    assert any(item.execution_id == f"{task_id}-exec-3" for item in running)
-
-    deleted = db_storage.delete_by_task(task_id)
-    assert deleted == 3
-    assert db_storage.get(f"{task_id}-exec-1") is None
-
-
-@pytest.mark.skipif(not DB_BACKEND_AVAILABLE, reason="execution db backend unavailable")
-def test_legacy_json_rows_import_once(db_storage, tmp_path):
-    task_id = f"dbtest-legacy-{uuid.uuid4().hex[:8]}"
-    legacy = tmp_path / "executions.json"
-    legacy.write_text(
-        __import__("json").dumps([_execution(1, task_id).model_dump(mode="json")]),
-        encoding="utf-8",
+    loop.run_until_complete(_prepare())
+    storage = DatabaseExecutionStorage(
+        session_factory=factory,
+        runner=loop.run_until_complete,
     )
-
-    imported = db_storage._run(
-        _import_legacy_rows(__import__("json").loads(legacy.read_text(encoding="utf-8")))
-    )
-    assert imported == 1
-    assert db_storage.get(f"{task_id}-exec-1") is not None
-
-    # 重复导入幂等
-    imported_again = db_storage._run(
-        _import_legacy_rows(__import__("json").loads(legacy.read_text(encoding="utf-8")))
-    )
-    records, total = db_storage.list_by_task_page(task_id, page=1, page_size=10)
-    assert total == 1
+    return engine, loop, storage
 
 
-def test_factory_propagates_db_failure(monkeypatch):
-    import app.scheduled_tasks.storage.execution_storage_db as db_module
+def test_database_execution_storage_roundtrip(tmp_path):
+    engine, loop, storage = _storage(tmp_path)
+    try:
+        for index in range(3):
+            storage.create(_execution(index))
+        storage.create(_execution(99, task_id="other-task"))
 
-    monkeypatch.setattr(db_module, "_engine", None)
+        records, total = storage.list_by_task_page("task-1", page=1, page_size=10)
+        assert total == 3
+        assert [record.execution_id for record in records] == [
+            "execution-2",
+            "execution-1",
+            "execution-0",
+        ]
 
-    def _raise(*args, **kwargs):
-        raise RuntimeError("db down")
+        recent, recent_total = storage.list_recent_page(page=1, page_size=2)
+        assert recent_total == 4
+        assert len(recent) == 2
 
-    monkeypatch.setattr(db_module, "create_async_engine", _raise)
-    with pytest.raises(RuntimeError, match="db down"):
-        create_execution_storage()
+        execution = storage.get("execution-0")
+        assert execution is not None
+        execution.status = ExecutionStatus.FAILED
+        storage.update(execution)
+        assert storage.get("execution-0").status == ExecutionStatus.FAILED
+
+        assert storage.delete_by_task("other-task") == 1
+        assert storage.get("execution-99") is None
+
+        stats = storage.get_statistics(task_id="task-1", days=30)
+        assert stats["total"] == 3
+        assert stats["success"] == 2
+        assert stats["failed"] == 1
+
+        assert storage.get_running_executions() == []
+    finally:
+        loop.run_until_complete(engine.dispose())
+        loop.close()
+
+
+def test_database_execution_storage_update_requires_existing(tmp_path):
+    engine, loop, storage = _storage(tmp_path)
+    try:
+        try:
+            storage.update(_execution(0))
+        except ValueError:
+            pass
+        else:  # pragma: no cover - defensive
+            raise AssertionError("update should fail for a missing execution")
+    finally:
+        loop.run_until_complete(engine.dispose())
+        loop.close()
+
+
+def test_execution_db_enabled_defaults(monkeypatch):
+    monkeypatch.delenv("SCHEDULED_TASK_EXECUTION_STORAGE", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
+    assert execution_db_enabled() is True
+
+    monkeypatch.setenv("SCHEDULED_TASK_EXECUTION_STORAGE", "file")
+    assert execution_db_enabled() is False
+
+    monkeypatch.setenv("SCHEDULED_TASK_EXECUTION_STORAGE", "db")
+    assert execution_db_enabled() is True
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("SCHEDULED_TASK_EXECUTION_STORAGE", raising=False)
+    assert execution_db_enabled() is False

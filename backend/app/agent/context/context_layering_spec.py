@@ -38,13 +38,13 @@ def test_system_context_uses_one_explicit_precedence_order():
     )
     for marker in (
         "mode-marker",
-        "skill-marker",
         "policy-marker",
         "acceptance-marker",
         "resource-marker",
         "memory-marker",
     ):
         assert prompt.count(marker) == 1
+    assert "skill-marker" not in prompt
 
     kwargs = build_mode_prompt.call_args.kwargs
     assert kwargs["memory_context"] is None
@@ -76,16 +76,49 @@ def test_system_prompt_blocks_cache_static_prefix_before_dynamic_layers():
     ]
     assert len(checkpoint_blocks) == 1
     assert "mode-marker" in checkpoint_blocks[0]["text"]
-    assert "skill-marker" not in checkpoint_blocks[0]["text"]
+    assert "skill-marker" not in prompt
     assert "policy-marker" not in checkpoint_blocks[0]["text"]
     assert "resource-marker" not in checkpoint_blocks[0]["text"]
     assert "memory-marker" not in checkpoint_blocks[0]["text"]
     assert _layer_position(prompt, "mode_policy") < _layer_position(
-        prompt, "selected_skill"
-    )
-    assert _layer_position(prompt, "runtime_metadata") > _layer_position(
         prompt, "long_term_memory"
     )
+
+
+def test_turn_scoped_skill_and_runtime_metadata_live_in_current_turn_message():
+    builder = SimplifiedContextBuilder(Mock(), Mock(), {})
+    builder.current_mode = "assistant"
+    builder.selected_skill_context = "skill-marker"
+
+    with patch(
+        "app.agent.prompts.prompt_builder.build_react_system_prompt",
+        return_value="mode-marker",
+    ):
+        system_prompt = builder._build_system_prompt()
+        first_turn = builder._build_user_conversation(
+            query="分析数据",
+            iteration=1,
+            latest_observation="",
+            conversation_history=[
+                {"type": "user", "role": "user", "content": "更早的轮次"},
+            ],
+        )
+        later_iteration = builder._build_user_conversation(
+            query="分析数据",
+            iteration=3,
+            latest_observation="",
+            conversation_history=[
+                {"type": "user", "role": "user", "content": "分析数据"},
+            ],
+        )
+
+    assert system_prompt.count("skill-marker") == 0
+    assert "<selected_skill>" in first_turn
+    assert first_turn.count("skill-marker") == 1
+    assert "<runtime_metadata>" in first_turn
+    assert "系统参考时间" in first_turn
+    assert "系统参考时间" not in later_iteration
+    assert "<selected_skill>" not in later_iteration
 
 
 def test_board_state_is_only_in_the_session_resources_layer():

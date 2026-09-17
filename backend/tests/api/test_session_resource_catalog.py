@@ -6,6 +6,10 @@ import pytest
 
 from app.agent.resources.resource_service import ResourcePage, StoredResource
 from app.api import session_resource_routes
+from app.auth.share_access import (
+    get_share_access_service,
+    resource_preview_identity,
+)
 
 
 def stored_resource(**updates) -> StoredResource:
@@ -118,7 +122,7 @@ def test_catalog_uses_group_renderer_filters_and_has_no_presentation_type():
     assert "presentation_type" not in parameters
 
 
-def test_directory_artifact_content_url_carries_path_ticket_for_relative_assets():
+def test_directory_artifact_content_url_carries_ticket_in_path():
     item = session_resource_routes.resource_dto(
         "session-1",
         stored_resource(
@@ -129,11 +133,16 @@ def test_directory_artifact_content_url_carries_path_ticket_for_relative_assets(
         ),
     )
     parsed = urlparse(item["content_url"])
-    marker = "/resource-1/content/_preview/"
+    marker = "/content/_t/"
     assert marker in parsed.path
     assert parsed.path.endswith("/")
-    assert parsed.path.split(marker, 1)[1].rstrip("/")
-    assert "preview_ticket" not in parse_qs(parsed.query)
+    assert parsed.query == ""
+    ticket = parsed.path.rsplit(marker, 1)[1].rstrip("/")
+    assert ticket and "/" not in ticket
+    assert get_share_access_service().verify(
+        ticket, "session-resource", resource_preview_identity("session-1", "resource-1")
+    )
+    assert item["actions"]["preview"] == item["content_url"]
 
 
 def test_action_links_ignore_untrusted_metadata_urls_and_unsupported_capabilities():

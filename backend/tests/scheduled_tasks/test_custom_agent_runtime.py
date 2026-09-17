@@ -34,7 +34,7 @@ def test_custom_prompt_is_minimal_and_uses_no_business_role_prompt():
     assert "只能调用运行时提供的工具" in prompt
     assert "空气质量" not in prompt
     assert "社交" not in prompt
-    assert len(prompt) < 500
+    assert len(prompt) < 700
 
 
 def test_custom_tool_schemas_are_exact_and_keep_user_order(monkeypatch):

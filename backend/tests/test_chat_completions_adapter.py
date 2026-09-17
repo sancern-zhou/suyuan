@@ -40,6 +40,32 @@ def test_convert_anthropic_tools_to_chat_tools():
     ]
 
 
+def test_convert_anthropic_messages_to_chat_flattens_system_blocks():
+    system = [
+        {
+            "type": "text",
+            "text": "<context_layer name=\"platform_policy\">规则</context_layer>",
+            "_suyuan_cache_checkpoint": True,
+        },
+        {"type": "text", "text": "<context_layer name=\"mode_policy\">模式</context_layer>"},
+    ]
+
+    converted = convert_anthropic_messages_to_chat([], system=system)
+
+    assert converted == [
+        {
+            "role": "system",
+            "content": (
+                "<context_layer name=\"platform_policy\">规则</context_layer>\n\n"
+                "<context_layer name=\"mode_policy\">模式</context_layer>"
+            ),
+        }
+    ]
+    serialized = str(converted)
+    assert "_suyuan_cache_checkpoint" not in serialized
+    assert "cache_control" not in serialized
+
+
 def test_convert_anthropic_messages_to_chat_messages_with_tool_chain():
     messages = [
         {"role": "user", "content": [{"type": "text", "text": "查广州天气"}]},

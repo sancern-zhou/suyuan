@@ -1,26 +1,27 @@
 """Deterministic scheduled-workflow runners.
 
 Workflow tasks deliberately bypass the Agent.  A handler owns both the fixed
-workflow invocation and any deterministic delivery required by the task, so a
+workflow invocation and any deterministic hand-off required by the task, so a
 successful execution always represents a business outcome.  Handlers receive
 the triggering ``TaskEvent`` (if any) because event-driven workflows read their
-input from ``event.payload`` instead of an agent prompt.
+input from ``event.payload`` instead of an agent prompt, and may declare a
+``history_section`` parameter to receive task-scoped execution memory.
+
+Handlers are registered by the modules that own them (project or feature code)
+so this shared module stays free of project imports.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 import inspect
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .models import ScheduledTask
 from .models.event import TaskEvent
 from .models.execution import TaskExecution
 
-WorkflowHandler = Callable[
-    [ScheduledTask, TaskExecution, TaskEvent | None, str | None],
-    Awaitable[dict[str, Any]],
-]
+WorkflowHandler = Callable[..., Awaitable[dict[str, Any]]]
 
 _WORKFLOW_HANDLERS: dict[str, WorkflowHandler] = {}
 
@@ -35,24 +36,6 @@ def registered_workflows() -> list[str]:
     return sorted(_WORKFLOW_HANDLERS)
 
 
-async def _run_xuchang_station_alert(
-    task: ScheduledTask,
-    execution: TaskExecution,
-    event: TaskEvent | None,
-    history_section: str | None = None,
-) -> dict[str, Any]:
-    from app.scenarios.xuchang_station_deviation.alert_notification import (
-        run_station_alert_workflow,
-    )
-
-    return await run_station_alert_workflow(
-        task=task, execution=execution, event=event, history_section=history_section
-    )
-
-
-register_workflow_handler("xuchang_station_deviation_alert", _run_xuchang_station_alert)
-
-
 async def execute_workflow_task(
     task: ScheduledTask,
     execution: TaskExecution,
@@ -65,6 +48,9 @@ async def execute_workflow_task(
     if handler is None:
         raise RuntimeError(f"未注册的 workflow：{task.workflow_name}")
     parameters = inspect.signature(handler).parameters
+    kwargs: dict[str, Any] = {}
+    if "event" in parameters:
+        kwargs["event"] = event
     if "history_section" in parameters:
-        return await handler(task, execution, event, history_section)
-    return await handler(task, execution, event)
+        kwargs["history_section"] = history_section
+    return await handler(task, execution, **kwargs)

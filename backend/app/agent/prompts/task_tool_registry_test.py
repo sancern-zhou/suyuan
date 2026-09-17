@@ -6,6 +6,29 @@ from app.agent.prompts.ops_prompt import build_ops_prompt
 from app.agent.prompts.social_prompt import build_social_prompt
 
 
+def test_project_specific_mode_is_resolved_before_builtin_validation(monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.prompts.tool_registry._get_project_tool_names_by_mode",
+        lambda mode: ["project_tool", "submit_task_review"] if mode == "project_mode" else None,
+    )
+
+    assert list(get_tools_by_mode("project_mode")) == ["project_tool", "submit_task_review"]
+
+
+def test_undeclared_mode_remains_invalid(monkeypatch):
+    monkeypatch.setattr(
+        "app.agent.prompts.tool_registry._get_project_tool_names_by_mode",
+        lambda mode: None,
+    )
+
+    try:
+        get_tools_by_mode("unknown_mode")
+    except ValueError as exc:
+        assert str(exc) == "Unknown mode: unknown_mode"
+    else:
+        raise AssertionError("undeclared modes must be rejected")
+
+
 
 def test_assistant_mode_does_not_expose_task_tools_or_todowrite():
     tools = get_tools_by_mode("assistant")
@@ -46,34 +69,35 @@ def test_assistant_mode_keeps_lightweight_office_and_web_tools():
     assert "bash" not in tools
 
 
-def test_ops_mode_exposes_call_sub_agent_for_audit_confirmation_gate():
+def test_ops_mode_keeps_call_sub_agent_for_general_ops_tasks():
     tools = get_tools_by_mode("ops")
 
     assert "call_sub_agent" in tools
+    assert "agent_case_library" in tools
 
 
-def test_ops_mode_no_longer_exposes_report_package_tools():
+def test_ops_mode_exposes_report_package_tools():
     tools = get_tools_by_mode("ops")
 
     assert "create_report_chart" not in tools
-    assert "create_report_package" not in tools
-    assert "validate_report_package" not in tools
+    assert "create_report_package" in tools
+    assert "render_report_package" in tools
+    assert "validate_report_package" in tools
 
 
-def test_ops_prompt_stays_review_only_and_hands_off_report_generation():
+def test_ops_prompt_generates_and_validates_audit_reports_directly():
     prompt = build_ops_prompt(["call_sub_agent", "ops_audit_run_rules"])
 
-    assert "## 复核交接" in prompt
+    assert "## 审核与报告交付" in prompt
     assert "report_input_path" in prompt
-    assert "call_sub_agent(target_mode='ops')" in prompt
-    assert "ops_audit_submit_review" in prompt
-    assert "issue_id" in prompt
-    assert "禁止仅返回 excluded_items" in prompt
+    assert "call_sub_agent(target_mode='ops')" not in prompt
+    assert "ops_audit_submit_review" not in prompt
     assert "report_ready=false" in prompt
-    assert "正式报告优先使用" not in prompt
-    assert "生成标准报告包" not in prompt
+    assert "create_report_package" in prompt
+    assert "render_report_package" in prompt
+    assert "validate_report_package" in prompt
     assert "不要把正式报告委托给 `report` 子Agent" in prompt
-    assert "当前模式只负责数据抽取、规则/语义复核和结果文件落盘" in prompt
+    assert "当前模式直接完成数据抽取、规则/语义复核、结果落盘和运维工单审核正式报告" in prompt
 
 
 def test_social_mode_exposes_report_package_tools_for_main_agent_reporting(monkeypatch):
@@ -94,7 +118,7 @@ def test_social_prompt_prefers_main_agent_report_generation():
 
     assert "正式报告、QMD、Word 和报告包由当前主 Agent 直接完成" in prompt
     assert "不委托 `report` 子Agent" in prompt
-    assert "运维审核子Agent只负责复核和持久化记录" in prompt
+    assert "运维 Agent 直接完成规则与语义审核" in prompt
     assert "target_mode=\"report\"" not in prompt
 
 

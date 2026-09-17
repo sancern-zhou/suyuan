@@ -1,7 +1,8 @@
-<template><div class="chart"><p v-if="loading">正在加载...</p><div v-else-if="error" class="error"><span>{{ error }}</span><button type="button" @click="load">重试</button></div><ChartPanel v-else-if="spec" :data="spec" /></div></template>
+<template><div class="chart"><p v-if="loading">正在加载...</p><div v-else-if="error" class="error"><span>{{ error }}</span><button type="button" @click="load">重试</button></div><TaskReviewPanel v-else-if="spec?.type === 'task_review'" :review-id="spec.data.review_id" /><ChartPanel v-else-if="spec" :data="spec" /></div></template>
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import { authFetch } from '@/auth/http.js'
+import TaskReviewPanel from '@/components/reviews/TaskReviewPanel.vue'
 import ChartPanel from '@/components/visualization/ChartPanel.vue'
 const props = defineProps({ resource: { type: Object, required: true }, group: { type: Object, default: null }, contentUrl: { type: String, required: true } })
 const spec = ref(null); const loading = ref(false); const error = ref('')

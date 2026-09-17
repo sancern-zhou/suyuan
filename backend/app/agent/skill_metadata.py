@@ -45,7 +45,7 @@ SKILL_METADATA = {
         "aliases": ["运维工单审核"],
         "required_tools": [
             "read_file", "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect",
-            "call_sub_agent",
+            "create_report_package", "render_report_package", "validate_report_package",
         ],
     },
     "pollution_alert_classification": {"enabled": True, "aliases": [], "required_tools": []},

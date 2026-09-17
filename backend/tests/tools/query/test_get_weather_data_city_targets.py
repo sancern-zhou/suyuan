@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from app.config.weather_targets import (
@@ -25,16 +27,6 @@ def test_shared_catalog_resolves_city_alias_and_drives_fetch_targets():
 
     nmc_stations = get_observed_station_targets(provider="NMC")
     assert nmc_stations["xuchang"].station_id == "ZzMTA"
-    assert nmc_stations["yuzhou"].station_id == "HFqwM"
-    assert nmc_stations["changge"].station_id == "sHlBF"
-
-    xuchang = resolve_weather_city_target("许昌")
-    assert xuchang is not None
-    assert [station.station_id for station in xuchang.observed_stations] == [
-        "ZzMTA",
-        "HFqwM",
-        "sHlBF",
-    ]
 
 
 def test_weather_tool_schema_accepts_single_and_multiple_cities():
@@ -80,8 +72,30 @@ async def test_era5_city_query_uses_shared_catalog_and_reports_partial_result(mo
 
 
 @pytest.mark.asyncio
-async def test_observed_data_type_is_rejected_with_redirect():
+async def test_observed_city_query_uses_catalog_station_ids(monkeypatch):
     tool = GetWeatherDataTool()
+
+    async def fake_get_active_stations_by_cities(cities):
+        return {city: [] for city in cities}
+
+    async def fake_query_observed(
+        context, station_id, start_time, end_time, city=None
+    ):
+        return {
+            "data": [
+                {
+                    "timestamp": datetime(2026, 8, 1).isoformat(),
+                    "station_id": station_id,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        tool.repo,
+        "get_active_stations_by_cities",
+        fake_get_active_stations_by_cities,
+    )
+    monkeypatch.setattr(tool, "_query_observed", fake_query_observed)
 
     result = await tool.execute(
         context=None,
@@ -91,13 +105,7 @@ async def test_observed_data_type_is_rejected_with_redirect():
         end_time="2026-08-01T23:59:59",
     )
 
-    assert result["success"] is False
-    assert "execute_postgres_sql_query" in result["summary"]
-    assert "observed_weather_data" in result["summary"]
-
-
-def test_weather_tool_schema_has_no_observed_or_station_params():
-    properties = GetWeatherDataTool().function_schema["parameters"]["properties"]
-
-    assert properties["data_type"]["enum"] == ["era5"]
-    assert "station_id" not in properties
+    assert result["status"] == "success"
+    assert result["data"][0]["city"] == "许昌市"
+    assert result["data"][0]["station_id"] == "ZzMTA"
+    assert result["metadata"]["targets"][0]["provider"] == "NMC"

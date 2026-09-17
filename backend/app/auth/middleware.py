@@ -5,8 +5,8 @@ from __future__ import annotations
 import ipaddress
 import re
 from http.cookies import SimpleCookie
-from typing import Any
 from urllib.parse import parse_qs, unquote
+from typing import Any
 
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -16,9 +16,10 @@ from .errors import AuthenticationRejected, AuthenticationUnavailable
 from .share_access import (
     RESOURCE_PREVIEW_COOKIE,
     RESOURCE_PREVIEW_TICKET,
+    RESOURCE_PREVIEW_TICKET_PATH_SEGMENT,
     resource_preview_identity,
-    split_resource_preview_path,
 )
+
 
 _PUBLIC_EXACT_PATHS = {
     "/",
@@ -45,7 +46,7 @@ _PUBLIC_SHARE_PATTERNS = (re.compile(r"^/session/[^/]+$"),)
 _DOCS_PATHS = {"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
 _UNTRUSTED_IDENTITY_HEADERS = {b"x-user-id", b"x-is-admin"}
 _RESOURCE_CONTENT_PATTERN = re.compile(
-    r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/(.*))?$"
+    r"^/api/sessions/([^/]+)/resources/([^/]+)/content(?:/.*)?$"
 )
 
 
@@ -148,18 +149,26 @@ class GatewayAuthenticationMiddleware:
         return any(address in network for network in self._trusted_networks)
 
     def _valid_resource_preview(self, scope: Scope, path: str) -> bool:
-        match = _RESOURCE_CONTENT_PATTERN.fullmatch(path)
-        if match is None or self.share_access is None:
+        if self.share_access is None:
             return False
-        session_id, resource_id, asset_path = match.groups()
-        path_ticket, _ = split_resource_preview_path(asset_path)
-        query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
-        ticket = path_ticket or (query.get(RESOURCE_PREVIEW_TICKET) or [""])[0]
+        # Directory previews carry the ticket as a path segment so relative
+        # assets inherit it inside an opaque-origin sandboxed iframe.
+        ticket = ""
+        base_path = path
+        marker = f"/content/{RESOURCE_PREVIEW_TICKET_PATH_SEGMENT}/"
+        if marker in path:
+            before, _, remainder = path.partition(marker)
+            base_path = before + "/content"
+            ticket = remainder.split("/", 1)[0]
+        match = _RESOURCE_CONTENT_PATTERN.fullmatch(base_path)
+        if match is None:
+            return False
+        if not ticket:
+            query = parse_qs(scope.get("query_string", b"").decode("utf-8"))
+            ticket = (query.get(RESOURCE_PREVIEW_TICKET) or [""])[0]
         if not ticket:
             ticket = self._resource_preview_cookie(scope)
-        session_id, resource_id = (
-            unquote(value) for value in (session_id, resource_id)
-        )
+        session_id, resource_id = (unquote(value) for value in match.groups())
         return bool(
             ticket
             and self.share_access.verify(

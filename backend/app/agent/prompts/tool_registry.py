@@ -73,20 +73,34 @@ PPT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # PPT 源码项目和交付
-    "manage_editable_ppt", "validate_pptx", "create_pptx_with_ppt_master",
+    "manage_editable_ppt",
+    "validate_pptx",
+    "create_pptx_with_ppt_master",
     # 文件读取与直接源码编辑
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart", "execute_python",
+    "create_report_chart",
+    "execute_python",
     # 用户材料、知识库与外部资料
-    "knowledge_qa_workflow", "knowledge_document_reader",
-    "web_search", "web_fetch", "browser",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "web_search",
+    "web_fetch",
+    "browser",
 ]
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
+
+    # 知识库检索与命中文档上下文阅读
+    "knowledge_qa_workflow", "knowledge_document_reader",
 
     # 气象、空气质量与遥感证据查询工具
     "get_weather_data", "get_universal_meteorology", "get_observed_meteorology",
@@ -105,9 +119,13 @@ EXPERT_TOOL_NAMES = [
 
     # 代码执行
     "execute_python",
-
     # 文件操作
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
 ]
 
 # ===== 问数模式工具 =====
@@ -115,32 +133,43 @@ QUERY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # === 源码查看工具 ===
-    "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
-
+    "grep",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "search_files",
     # === 参数化查询工具 ===
     "get_5min_data",
     "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_data", "get_weather_forecast", "query_xcai_city_history",
+    "get_weather_data", "get_current_weather", "get_observed_meteorology",
+    "get_weather_forecast", "query_xcai_city_history",
     "execute_sql_query", "execute_postgres_sql_query",
     # === 查询内即时生图工具 ===
     "execute_echarts_python", "create_report_chart",
     "query_gd_suncere_city_hour",
     "query_gd_suncere_station_day_new",
-    "query_gd_suncere_city_day", "query_gd_suncere_district_day",
-    "query_city_standard_report", "query_city_standard_yoy_report",
-    "query_station_standard_report", "query_station_standard_yoy_report",
+    "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day",
+    "query_city_standard_report",
+    "query_city_standard_yoy_report",
+    "query_station_standard_report",
+    "query_station_standard_yoy_report",
     "query_gd_suncere_district_report",
     "analyze_city_pollutant_rankings",
     "knowledge_graph_query",
     "resolve_station_geo",
-
     # === 全国省份空气质量查询 ===
-    "query_national_province_air_quality", "query_national_city_air_quality",
-
+    "query_national_province_air_quality",
+    "query_national_city_air_quality",
     # === Agentic GIS 视觉交互工具 ===
-    "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "visual_interaction",
-    "get_map_program_receipt", "wait_map_program_receipt",
-
+    "resolve_map_data_asset",
+    "create_map_point_asset",
+    "spatial_analysis",
+    "spatial_interpolation",
+    "visual_interaction",
+    "get_map_program_receipt",
+    "wait_map_program_receipt",
     # === 数值计算工具 ===
     "execute_python",
 ]
@@ -157,22 +186,10 @@ KNOWLEDGE_TOOL_NAMES = [
     "web_fetch",
 ]
 
-# ===== 知识问答模式工具 =====
-# 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
-KNOWLEDGE_TOOL_NAMES = [
-    "knowledge_qa_workflow",
-    "knowledge_document_reader",
-    "knowledge_graph_query",
-    "read_session_resource",
-    "web_search",
-    "web_fetch",
-]
-
 # ===== 报告模式工具 =====
 REPORT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-
     # 数据查询
     "get_5min_data",
     "query_gd_suncere_city_hour",
@@ -185,14 +202,20 @@ REPORT_TOOL_NAMES = [
     "query_station_standard_report",
     "query_station_standard_yoy_report",
     "analyze_city_pollutant_rankings",
-
     # 文件和执行
-    "read_file", "write_file", "edit_file", "grep",
-    "list_directory", "search_files", "bash",
-    "create_report_chart", "execute_python",
-
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
+    "bash",
+    "create_report_chart",
+    "execute_python",
     # 报告产物收口
-    "create_report_package", "render_report_package", "validate_report_package",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
 ]
 
 # ===== 图表模式工具 =====
@@ -200,17 +223,25 @@ CHART_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 文件操作
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
     "bash",
-
     # 代码执行和原生多模态视觉参考
-    "create_report_chart", "execute_python", "execute_echarts_python",
-
+    "create_report_chart",
+    "execute_python",
+    "execute_echarts_python",
     # 数据查询工具
     "query_gd_suncere_city_hour", "query_gd_suncere_station_hour_new",
     "query_gd_suncere_city_day", "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_city_standard_report", "query_city_standard_yoy_report",
     "query_station_standard_report", "query_station_standard_yoy_report",
+    "get_5min_data",
+    "get_observed_meteorology",
+    "execute_sql_query",
 ]
 
 # ===== 画板模式工具 =====
@@ -229,23 +260,34 @@ OPS_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 技能发现与按需读取
-    "list_skills", "view_skill", "read_file",
-
+    "list_skills",
+    "view_skill",
+    "read_file",
     # 工单查询
-    "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect", "ops_audit_submit_review",
-    "knowledge_graph_query", "execute_ops_sql_query",
-
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
+    "ops_audit_submit_review",
+    "agent_case_library",
+    "knowledge_graph_query",
+    "execute_ops_sql_query",
+    # 审核正式报告生成与验收
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
     # 子 Agent 复核
     "call_sub_agent",
-
     # 站点小时/日数据核对
-    "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
-
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
     # 代码执行
     "execute_python",
-
     # 文件操作
-    "grep", "write_file", "edit_file", "list_directory", "search_files",
+    "grep",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "search_files",
 ]
 
 # ===== 知识库图谱编辑模式工具 =====
@@ -266,27 +308,36 @@ SOCIAL_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 文件操作
-    "read_file", "edit_file", "grep", "write_file",
-    "list_directory", "search_files", "list_skills", "view_skill",
-
+    "read_file",
+    "edit_file",
+    "grep",
+    "write_file",
+    "list_directory",
+    "search_files",
+    "list_skills",
+    "view_skill",
     # 知识库检索
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
     # 代码执行和模式互调
-    "execute_python", "call_sub_agent",
-
+    "execute_python",
+    "call_sub_agent",
     # 正式报告生成与收口
-    "create_report_chart", "create_report_package", "validate_report_package",
-
+    "create_report_chart",
+    "create_report_package",
+    "validate_report_package",
     # 网络搜索
-    "web_search", "web_fetch",
-
+    "web_search",
+    "web_fetch",
     # 呼吸式特有工具
-    "schedule_task", "send_notification", "spawn", "wait_task",
-
+    "schedule_task",
+    "send_notification",
+    "spawn",
+    "wait_task",
     # CLI会话管理和历史搜索
-    "cli_session", "terminal_session", "session_search",
-
+    "cli_session",
+    "terminal_session",
+    "session_search",
     # 系统操作
     "bash",
 ]
@@ -299,6 +350,7 @@ MEMORY_CONSOLIDATOR_TOOL_NAMES = [
 
     # 记忆管理（核心工具）
     "remember_fact", "replace_memory", "remove_memory",
+    "agent_case_library",
 ]
 
 # ===== 生态环境执法备考模式（微信专业场景） =====
@@ -316,43 +368,77 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "get_weather_forecast", "get_observed_meteorology", "query_gd_suncere_city_hour",
-    "query_gd_suncere_station_hour_new", "meteorological_trajectory_analysis",
-    "analyze_upwind_enterprises", "analyze_trajectory_sources",
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "get_weather_forecast",
+    "get_observed_meteorology",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_station_hour_new",
+    "meteorological_trajectory_analysis",
+    "analyze_upwind_enterprises",
+    "analyze_trajectory_sources",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "query_gd_suncere_city_hour", "query_gd_suncere_city_day",
-    "query_gd_suncere_district_day", "query_gd_suncere_district_report",
-    "query_gd_suncere_station_hour_new", "query_gd_suncere_station_day_new",
-    "query_city_standard_report", "query_city_standard_yoy_report",
-    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "query_gd_suncere_city_hour",
+    "query_gd_suncere_city_day",
+    "query_gd_suncere_district_day",
+    "query_gd_suncere_district_report",
+    "query_gd_suncere_station_hour_new",
+    "query_gd_suncere_station_day_new",
+    "query_city_standard_report",
+    "query_city_standard_yoy_report",
+    "execute_python",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
     "calculate_vocs_pmf",
-    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
-    "calculate_crustal", "calculate_trace",
-    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "calculate_reconstruction",
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "calculate_trace",
+    "execute_python",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 DELIBERATION_REVIEWER_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "read_file", "write_file", "edit_file", "grep",
-    "list_directory", "search_files", "execute_python",
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
+    "execute_python",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 # ========================================
 # 工具字典生成（向后兼容）
 # ========================================
+
 
 def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     """

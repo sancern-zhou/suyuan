@@ -40,6 +40,11 @@
 
   启动后必须检查 `ss -ltnp` 中 web 端口和 worker 内部端口均在监听；停止或重启时使用 PID 文件操作对应进程，不能只关闭当前终端。
 - 许昌（xuchang）分支的部署环境 web 进程使用 3 个 uvicorn worker 启动（`--workers 3`），用于支撑多并发对话任务；对话（agent SSE）请求由 web 进程处理，跨进程 cancel/steer 依赖环境文件中的 Redis 配置（`REDIS_HOST`/`REDIS_PORT`/`REDIS_DB`/`REDIS_PASSWORD`）。`app.worker` 后台进程仍为单实例，不随 web worker 数量扩展。注意：每个 web worker 启动时会加载 bge-m3 嵌入模型（约 1G 内存），worker 数量受服务器内存约束——6.5G 内存的机器上限为 3 个 web worker，禁止在该规格机器上使用 4 个及以上（会触发 OOM 反复杀进程）。
+- 本机当前仅部署两个项目，本条布局只适用于它们，其他项目（如 jiangxi、xuchang 等）部署时按实际环境单独规划，不受本条约束（详见 `deploy/nginx/README.md`）：
+  - 风清气智（main 共享项目，工作树 `/home/xckj/suyuan-main`）：前端 5174（容器 `suyuan-nginx`，挂载该工作树 `frontend/dist`）→ 后端 8000（`backend/.env`，用 `backend/restart_server.sh` 重启）+ 配套 worker（内部端口 8011）。
+  - 江苏运维（project/jiangsu-ops 分支，工作树 `/home/xckj/suyuan`）：前端 5175（容器 `suyuan-nginx-jiangsu`，挂载该工作树 `frontend/dist`）→ 后端 8001（`backend/.env.jiangsu-ops`）+ 配套 worker（`python -m app.worker --env-file .env.jiangsu-ops`，内部端口 8012）。
+  - 两个 Nginx 容器禁止挂载同一个 `frontend/dist`；风清气智 web/worker 固定从 `/home/xckj/suyuan-main/backend` 启动并使用该目录下的 `backend_data_registry`，江苏运维 web/worker 从 `/home/xckj/suyuan/backend` 启动并使用项目专属 registry。
+  - 每个项目的 web 进程与 worker 进程必须成对启动（worker 缺失时 fetchers/scheduled-tasks 等接口会 503）。
 - 所有部署环境的 `DATA_REGISTRY_DIR` 必须在对应后端环境文件中显式配置为绝对路径；同一项目的 web 与 worker 必须使用同一个值。禁止依赖工作树位置推导持久化目录，切换工作树前须先运行 `python -m app.utils.deployment_preflight --env-file <env-file>` 校验。
 - 前端部署后必须确认构建产物包含统一资源接口，并且不再包含旧接口：
 

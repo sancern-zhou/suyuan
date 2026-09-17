@@ -22,15 +22,10 @@ def _normalize_async_database_url(url: str) -> str:
     return url
 
 
-def build_async_database_url() -> str:
-    """Return the normalized async DATABASE_URL used by application engines."""
-    return _normalize_async_database_url(
-        os.getenv("DATABASE_URL")
-        or "postgresql+asyncpg://user:password@localhost:5432/weather_db"
-    )
-
-
-DATABASE_URL = build_async_database_url()
+DATABASE_URL = _normalize_async_database_url(
+    os.getenv("DATABASE_URL")
+    or "postgresql+asyncpg://user:password@localhost:5432/weather_db"
+)
 
 # Create async engine
 engine = create_async_engine(
@@ -271,9 +266,9 @@ async def init_db():
     """
     # Import optional model modules so their tables are registered on Base.metadata
     # before create_all runs.
-    import app.db.models.scheduled_task_models  # noqa: F401
     import app.social.models  # noqa: F401
     import app.social.report_models  # noqa: F401
+    import app.db.models.scheduled_task_execution_db  # noqa: F401
     # Web Agent conversation persistence uses SessionDB / SessionMessageDB.
     # Import it before create_all so isolated project databases receive the
     # required `sessions` tables on their first startup as well.

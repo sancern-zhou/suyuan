@@ -7,6 +7,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 from uuid import uuid4
 
 import structlog
@@ -24,12 +25,11 @@ from app.auth.dependencies import optional_current_user, require_current_user
 from app.auth.models import CurrentUser
 from app.auth.share_access import (
     RESOURCE_PREVIEW_COOKIE,
-    RESOURCE_PREVIEW_PATH_PREFIX,
     RESOURCE_PREVIEW_TICKET,
+    RESOURCE_PREVIEW_TICKET_PATH_SEGMENT,
     external_api_path,
     get_share_access_service,
     resource_preview_identity,
-    split_resource_preview_path,
 )
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
@@ -78,17 +78,18 @@ def resource_dto(session_id: str, item: StoredResource) -> dict:
         "session-resource",
         resource_preview_identity(session_id, item.resource_id),
     )
+    internal_content_url = f"{base}/" if directory else base
     if directory:
-        internal_content_url = (
-            f"{base}/{RESOURCE_PREVIEW_PATH_PREFIX}/{preview_ticket}/"
+        # Relative asset URLs (report_files/, assets/, ...) resolve against the
+        # document URL, so a path segment makes every subresource carry the
+        # ticket even when the sandboxed iframe cannot send cookies.
+        content_url = external_api_path(
+            f"{base}/{RESOURCE_PREVIEW_TICKET_PATH_SEGMENT}/{quote(preview_ticket, safe='')}/"
         )
-        content_url = external_api_path(internal_content_url)
     else:
-        content_url = external_api_path(base)
+        content_url = external_api_path(internal_content_url)
         separator = "&" if "?" in content_url else "?"
-        content_url = (
-            f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
-        )
+        content_url = f"{content_url}{separator}{RESOURCE_PREVIEW_TICKET}={preview_ticket}"
     if "preview" in actions:
         actions["preview"] = content_url
     if "render" in actions:
@@ -384,13 +385,20 @@ async def get_session_resource_content(
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
 ):
     """Serve authorized bytes while keeping the storage locator opaque."""
+    path_ticket = ""
+    if asset_path:
+        segments = asset_path.split("/", 2)
+        if segments[0] == RESOURCE_PREVIEW_TICKET_PATH_SEGMENT:
+            path_ticket = segments[1] if len(segments) > 1 else ""
+            asset_path = segments[2] if len(segments) > 2 and segments[2] else None
     preview_service = get_share_access_service()
-    path_ticket, asset_path = split_resource_preview_path(asset_path)
     ticket = path_ticket
     if request is not None:
-        ticket = ticket or request.query_params.get(
-            RESOURCE_PREVIEW_TICKET
-        ) or request.cookies.get(RESOURCE_PREVIEW_COOKIE, "")
+        ticket = (
+            ticket
+            or request.query_params.get(RESOURCE_PREVIEW_TICKET)
+            or request.cookies.get(RESOURCE_PREVIEW_COOKIE, "")
+        )
     ticket_valid = preview_service.verify(
         ticket,
         "session-resource",
@@ -435,7 +443,7 @@ async def get_session_resource_content(
         content_disposition_type=disposition,
         headers=headers,
     )
-    if ticket_valid:
+    if ticket_valid and request is not None:
         response.set_cookie(
             RESOURCE_PREVIEW_COOKIE,
             ticket,

@@ -132,6 +132,24 @@ def convert_anthropic_tools_to_chat(
     return converted
 
 
+def _system_text_from_blocks(system: Any) -> Any:
+    """Flatten Anthropic-style system blocks into plain chat-completions text.
+
+    内部缓存标记（_suyuan_cache_checkpoint）与 cache_control 属于请求层
+    实现细节，不能泄漏到 OpenAI 兼容协议的请求体里。
+    """
+    if not isinstance(system, list):
+        return system
+    parts = []
+    for block in system:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(str(block.get("text", "")))
+    return "\n\n".join(parts)
+
+
 def convert_anthropic_messages_to_chat(
     messages: List[Dict[str, Any]],
     *,
@@ -139,7 +157,7 @@ def convert_anthropic_messages_to_chat(
 ) -> List[Dict[str, Any]]:
     converted: List[Dict[str, Any]] = []
     if system:
-        converted.append({"role": "system", "content": system})
+        converted.append({"role": "system", "content": _system_text_from_blocks(system)})
 
     for message in messages:
         role = message.get("role")
