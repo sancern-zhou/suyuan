@@ -1,0 +1,1878 @@
+{
+  "component": "SEC_CheckScoreCnemc_jilin.Old",
+  "category": "check",
+  "inferred_rule_item_tag": "SEC_CheckScoreCnemc_jilin.Old",
+  "source_file": "views/operation/qcform/check/SEC_CheckScoreCnemc_jilin.Old.vue",
+  "structure": "column_form",
+  "field_count": 231,
+  "labeled_field_count": 0,
+  "unlabeled_columns": [
+    "string51",
+    "remark1",
+    "string52",
+    "remark2",
+    "string53",
+    "remark3",
+    "string54",
+    "remark4",
+    "string55",
+    "remark5",
+    "string56",
+    "remark6",
+    "string57",
+    "remark7",
+    "string58",
+    "remark8",
+    "string59",
+    "remark9",
+    "string60",
+    "remark10",
+    "string61",
+    "remark11",
+    "string62",
+    "remark12",
+    "string63",
+    "remark13",
+    "string64",
+    "remark14",
+    "string65",
+    "remark15",
+    "string100",
+    "string101",
+    "string102",
+    "string103",
+    "string104",
+    "string105",
+    "string106",
+    "string107",
+    "string108",
+    "string109",
+    "string110",
+    "string111",
+    "string112",
+    "string113",
+    "string114",
+    "string115",
+    "string66",
+    "remark16",
+    "string116",
+    "string117",
+    "string118",
+    "string119",
+    "string120",
+    "string121",
+    "string122",
+    "string123",
+    "string124",
+    "string125",
+    "string126",
+    "string127",
+    "string128",
+    "string129",
+    "string130",
+    "string131",
+    "string132",
+    "string67",
+    "remark17",
+    "string133",
+    "string134",
+    "string135",
+    "string136",
+    "string137",
+    "string138",
+    "string139",
+    "string140",
+    "string141",
+    "string142",
+    "string143",
+    "string144",
+    "string145",
+    "string146",
+    "string147",
+    "string148",
+    "string149",
+    "string150",
+    "string68",
+    "remark18",
+    "string151",
+    "string152",
+    "string153",
+    "string154",
+    "string155",
+    "string156",
+    "string157",
+    "string158",
+    "string159",
+    "string160",
+    "string161",
+    "string162",
+    "string163",
+    "string164",
+    "string165",
+    "string166",
+    "string167",
+    "string69",
+    "remark19",
+    "string168",
+    "string169",
+    "string170",
+    "string171",
+    "string172",
+    "string173",
+    "string174",
+    "string175",
+    "string176",
+    "string177",
+    "string178",
+    "string179",
+    "string180",
+    "string181",
+    "string182",
+    "string183",
+    "string184",
+    "string185",
+    "string186",
+    "string187",
+    "string70",
+    "remark20",
+    "string188",
+    "string189",
+    "string190",
+    "string191",
+    "string192",
+    "string193",
+    "string194",
+    "string195",
+    "string196",
+    "string197",
+    "string198",
+    "string199",
+    "string200",
+    "string71",
+    "remark21",
+    "string201",
+    "string202",
+    "string203",
+    "string204",
+    "string205",
+    "string206",
+    "string207",
+    "string208",
+    "string209",
+    "string210",
+    "string211",
+    "string212",
+    "string213",
+    "string72",
+    "remark22",
+    "string214",
+    "string215",
+    "string216",
+    "string217",
+    "string218",
+    "string219",
+    "string220",
+    "string221",
+    "string222",
+    "string223",
+    "string73",
+    "remark23",
+    "string74",
+    "remark24",
+    "string75",
+    "remark25",
+    "string76",
+    "remark26",
+    "string77",
+    "remark27",
+    "string78",
+    "remark28",
+    "string79",
+    "remark29",
+    "string30",
+    "string80",
+    "remark30",
+    "string31",
+    "string81",
+    "remark31",
+    "string82",
+    "remark32",
+    "string83",
+    "remark33",
+    "string84",
+    "remark34",
+    "string85",
+    "remark35",
+    "remark36",
+    "remark37",
+    "string1",
+    "string2",
+    "string3",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string"
+  ],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string51",
+    "remark1",
+    "string52",
+    "remark2",
+    "string53",
+    "remark3",
+    "string54",
+    "remark4",
+    "string55",
+    "remark5",
+    "string56",
+    "remark6",
+    "string57",
+    "remark7",
+    "string58",
+    "remark8",
+    "string59",
+    "remark9",
+    "string60",
+    "remark10",
+    "string61",
+    "remark11",
+    "string62",
+    "remark12",
+    "string63",
+    "remark13",
+    "string64",
+    "remark14",
+    "string65",
+    "remark15",
+    "string100",
+    "string101",
+    "string102",
+    "string103",
+    "string104",
+    "string105",
+    "string106",
+    "string107",
+    "string108",
+    "string109",
+    "string110",
+    "string111",
+    "string112",
+    "string113",
+    "string114",
+    "string115",
+    "string66",
+    "remark16",
+    "string116",
+    "string117",
+    "string118",
+    "string119",
+    "string120",
+    "string121",
+    "string122",
+    "string123",
+    "string124",
+    "string125",
+    "string126",
+    "string127",
+    "string128",
+    "string129",
+    "string130",
+    "string131",
+    "string132",
+    "string67",
+    "remark17",
+    "string133",
+    "string134",
+    "string135",
+    "string136",
+    "string137",
+    "string138",
+    "string139",
+    "string140",
+    "string141",
+    "string142",
+    "string143",
+    "string144",
+    "string145",
+    "string146",
+    "string147",
+    "string148",
+    "string149",
+    "string150",
+    "string68",
+    "remark18",
+    "string151",
+    "string152",
+    "string153",
+    "string154",
+    "string155",
+    "string156",
+    "string157",
+    "string158",
+    "string159",
+    "string160",
+    "string161",
+    "string162",
+    "string163",
+    "string164",
+    "string165",
+    "string166",
+    "string167",
+    "string69",
+    "remark19",
+    "string168",
+    "string169",
+    "string170",
+    "string171",
+    "string172",
+    "string173",
+    "string174",
+    "string175",
+    "string176",
+    "string177",
+    "string178",
+    "string179",
+    "string180",
+    "string181",
+    "string182",
+    "string183",
+    "string184",
+    "string185",
+    "string186",
+    "string187",
+    "string70",
+    "remark20",
+    "string188",
+    "string189",
+    "string190",
+    "string191",
+    "string192",
+    "string193",
+    "string194",
+    "string195",
+    "string196",
+    "string197",
+    "string198",
+    "string199",
+    "string200",
+    "string71",
+    "remark21",
+    "string201",
+    "string202",
+    "string203",
+    "string204",
+    "string205",
+    "string206",
+    "string207",
+    "string208",
+    "string209",
+    "string210",
+    "string211",
+    "string212",
+    "string213",
+    "string72",
+    "remark22",
+    "string214",
+    "string215",
+    "string216",
+    "string217",
+    "string218",
+    "string219",
+    "string220",
+    "string221",
+    "string222",
+    "string223",
+    "string73",
+    "remark23",
+    "string74",
+    "remark24",
+    "string75",
+    "remark25",
+    "string76",
+    "remark26",
+    "string77",
+    "remark27",
+    "string78",
+    "remark28",
+    "string79",
+    "remark29",
+    "string30",
+    "string80",
+    "remark30",
+    "string31",
+    "string81",
+    "remark31",
+    "string82",
+    "remark32",
+    "string83",
+    "remark33",
+    "string84",
+    "remark34",
+    "string85",
+    "remark35",
+    "remark36",
+    "remark37",
+    "string1",
+    "string2",
+    "string3",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "SEC_CheckScoreCnemc"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string51",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark1",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string52",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark2",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string53",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark3",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string54",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark4",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string55",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark5",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string56",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark6",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string57",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark7",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string58",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark8",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string59",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark9",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string60",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark10",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string61",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark11",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string62",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark12",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string63",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark13",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string64",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark14",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string65",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark15",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string100",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string101",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string102",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string103",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string104",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string105",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string106",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string107",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string108",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string109",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string110",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string111",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string112",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string113",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string114",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string115",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string66",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark16",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string116",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string117",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string118",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string119",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string120",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string121",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string122",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string123",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string124",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string125",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string126",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string127",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string128",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string129",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string130",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string131",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string132",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string67",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark17",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string133",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string134",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string135",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string136",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string137",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string138",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string139",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string140",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string141",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string142",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string143",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string144",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string145",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string146",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string147",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string148",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string149",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string150",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string68",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark18",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string151",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string152",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string153",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string154",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string155",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string156",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string157",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string158",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string159",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string160",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string161",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string162",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string163",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string164",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string165",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string166",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string167",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string69",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark19",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string168",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string169",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string170",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string171",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string172",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string173",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string174",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string175",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string176",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string177",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string178",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string179",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string180",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string181",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string182",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string183",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string184",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string185",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string186",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string187",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string70",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark20",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string188",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string189",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string190",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string191",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string192",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string193",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string194",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string195",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string196",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string197",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string198",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string199",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string200",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string71",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark21",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string201",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string202",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string203",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string204",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string205",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string206",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string207",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string208",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string209",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string210",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string211",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string212",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string213",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string72",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark22",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string214",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string215",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string216",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string217",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string218",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string219",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string220",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string221",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string222",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string223",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string73",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark23",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string74",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark24",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string75",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark25",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string76",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark26",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string77",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark27",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string78",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark28",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string79",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark29",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string30",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string80",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark30",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string31",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string81",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark31",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string82",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark32",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string83",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark33",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string84",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark34",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string85",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "remark35",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "remark36",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "remark37",
+      "label": "",
+      "type": "remark",
+      "label_source": ""
+    },
+    {
+      "column": "string1",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string2",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string3",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string5",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string6",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string7",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string8",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string9",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string10",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string11",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string12",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string13",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string14",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string15",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string16",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string17",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string18",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string19",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string20",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string21",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string22",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string23",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string24",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string25",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string26",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string27",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string28",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string29",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string32",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string33",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string34",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string35",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

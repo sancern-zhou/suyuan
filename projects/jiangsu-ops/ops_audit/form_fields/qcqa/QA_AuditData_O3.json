@@ -1,0 +1,598 @@
+{
+  "component": "QA_AuditData_O3",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_AuditData",
+  "source_file": "views/operation/qcform/qcqa/QA_AuditData_O3.vue",
+  "structure": "column_form",
+  "field_count": 82,
+  "labeled_field_count": 82,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string40",
+    "string41",
+    "string42",
+    "string43",
+    "string44",
+    "string45",
+    "string46",
+    "string47",
+    "string48",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "string60",
+    "string61",
+    "string62",
+    "string63",
+    "string64",
+    "string65",
+    "string66",
+    "string67",
+    "string68",
+    "string69",
+    "string70",
+    "string71",
+    "string72",
+    "string73",
+    "string74",
+    "string75",
+    "string80",
+    "string81",
+    "string82",
+    "string83",
+    "string84",
+    "string85",
+    "string86",
+    "string87",
+    "string88",
+    "string89",
+    "string90",
+    "string91",
+    "string92",
+    "string93",
+    "string94",
+    "string95",
+    "string100",
+    "string56",
+    "string57"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string72",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string73",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string80",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string81",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string82",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string83",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string84",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string85",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string86",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string87",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string88",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string89",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string90",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string91",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string92",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string93",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string94",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string95",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "臭氧产生器设定",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

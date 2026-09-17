@@ -1,0 +1,662 @@
+{
+  "generated_at": "2026-09-17T07:39:29.175390+00:00",
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07",
+  "source_subdir": "code/00latest/front/src/views/operation/qcform",
+  "resolution": {
+    "order_type_to_category": {
+      "Check": "check",
+      "SECCheck": "check",
+      "QC": "qcqa",
+      "QA": "qcqa",
+      "Calibration": "calibrating",
+      "DataEntry": "dataentry"
+    },
+    "common_tag_without_pollutant": [
+      "RF_HY_GasTightnessCheck",
+      "RF_Q_GaseousMultipoint",
+      "RF_Q_GaseousPrecision",
+      "RF_W_PmCheck"
+    ],
+    "component_name": "tag.split('_'); if pollutantType != 'ALL' and tag not in common_tag_without_pollutant: append pollutantType; join('_')",
+    "label_priority": "comment > binding"
+  },
+  "category_counts": {
+    "check": 42,
+    "qcqa": 20,
+    "calibrating": 6,
+    "dataentry": 1,
+    "other": 9
+  },
+  "total_components": 78,
+  "total_fields": 3653,
+  "labeled_fields": 3421,
+  "unlabeled_fields": 232,
+  "total_rows": 116,
+  "components": [
+    {
+      "component": "QT_Repair",
+      "category": "check",
+      "path": "check/QT_Repair.json"
+    },
+    {
+      "component": "RF_HY_GasTightnessCheck",
+      "category": "check",
+      "path": "check/RF_HY_GasTightnessCheck.json"
+    },
+    {
+      "component": "RF_HY_GaseousCaliDeviceCheck",
+      "category": "check",
+      "path": "check/RF_HY_GaseousCaliDeviceCheck.json"
+    },
+    {
+      "component": "RF_HY_NoxConversionRate_NOX",
+      "category": "check",
+      "path": "check/RF_HY_NoxConversionRate_NOX.json"
+    },
+    {
+      "component": "RF_HY_O3ValuePass_O3",
+      "category": "check",
+      "path": "check/RF_HY_O3ValuePass_O3.json"
+    },
+    {
+      "component": "RF_HY_StationDeviceMaintain",
+      "category": "check",
+      "path": "check/RF_HY_StationDeviceMaintain.json"
+    },
+    {
+      "component": "RF_HY_VisibilityCali",
+      "category": "check",
+      "path": "check/RF_HY_VisibilityCali.json"
+    },
+    {
+      "component": "RF_M_GaseousCaliCheck",
+      "category": "check",
+      "path": "check/RF_M_GaseousCaliCheck.json"
+    },
+    {
+      "component": "RF_M_GaseousFlowCheck",
+      "category": "check",
+      "path": "check/RF_M_GaseousFlowCheck.json"
+    },
+    {
+      "component": "RF_M_ManualComparison",
+      "category": "check",
+      "path": "check/RF_M_ManualComparison.json"
+    },
+    {
+      "component": "RF_M_StationDeviceMaintain",
+      "category": "check",
+      "path": "check/RF_M_StationDeviceMaintain.json"
+    },
+    {
+      "component": "RF_MonitoringQuality_GAS",
+      "category": "check",
+      "path": "check/RF_MonitoringQuality_GAS.json"
+    },
+    {
+      "component": "RF_MonitoringQuality_O3",
+      "category": "check",
+      "path": "check/RF_MonitoringQuality_O3.json"
+    },
+    {
+      "component": "RF_MonitoringQuality_O3_Old",
+      "category": "check",
+      "path": "check/RF_MonitoringQuality_O3_Old.json"
+    },
+    {
+      "component": "RF_MonitoringQuality_PM",
+      "category": "check",
+      "path": "check/RF_MonitoringQuality_PM.json"
+    },
+    {
+      "component": "RF_Q_GaseousMultipoint",
+      "category": "check",
+      "path": "check/RF_Q_GaseousMultipoint.json"
+    },
+    {
+      "component": "RF_Q_GaseousPrecision",
+      "category": "check",
+      "path": "check/RF_Q_GaseousPrecision.json"
+    },
+    {
+      "component": "RF_Q_LongOpticalPath_NO2",
+      "category": "check",
+      "path": "check/RF_Q_LongOpticalPath_NO2.json"
+    },
+    {
+      "component": "RF_Q_LongOpticalPath_O3",
+      "category": "check",
+      "path": "check/RF_Q_LongOpticalPath_O3.json"
+    },
+    {
+      "component": "RF_Q_LongOpticalPath_SO2",
+      "category": "check",
+      "path": "check/RF_Q_LongOpticalPath_SO2.json"
+    },
+    {
+      "component": "RF_Q_Pm10RunStatusCheck_PM10",
+      "category": "check",
+      "path": "check/RF_Q_Pm10RunStatusCheck_PM10.json"
+    },
+    {
+      "component": "RF_Q_Pm25RunStatusCheck_PM25",
+      "category": "check",
+      "path": "check/RF_Q_Pm25RunStatusCheck_PM25.json"
+    },
+    {
+      "component": "RF_Q_PmPressure",
+      "category": "check",
+      "path": "check/RF_Q_PmPressure.json"
+    },
+    {
+      "component": "RF_Q_StationDeviceClean",
+      "category": "check",
+      "path": "check/RF_Q_StationDeviceClean.json"
+    },
+    {
+      "component": "RF_W_GaseousCheck_CO",
+      "category": "check",
+      "path": "check/RF_W_GaseousCheck_CO.json"
+    },
+    {
+      "component": "RF_W_GaseousCheck_NOX",
+      "category": "check",
+      "path": "check/RF_W_GaseousCheck_NOX.json"
+    },
+    {
+      "component": "RF_W_GaseousCheck_O3",
+      "category": "check",
+      "path": "check/RF_W_GaseousCheck_O3.json"
+    },
+    {
+      "component": "RF_W_GaseousCheck_SO2",
+      "category": "check",
+      "path": "check/RF_W_GaseousCheck_SO2.json"
+    },
+    {
+      "component": "RF_W_Inspection",
+      "category": "check",
+      "path": "check/RF_W_Inspection.json"
+    },
+    {
+      "component": "RF_W_InspectionSummary",
+      "category": "check",
+      "path": "check/RF_W_InspectionSummary.json"
+    },
+    {
+      "component": "RF_W_LongOpticalPath",
+      "category": "check",
+      "path": "check/RF_W_LongOpticalPath.json"
+    },
+    {
+      "component": "RF_W_OtherDeviceCheck",
+      "category": "check",
+      "path": "check/RF_W_OtherDeviceCheck.json"
+    },
+    {
+      "component": "RF_W_PmCheck",
+      "category": "check",
+      "path": "check/RF_W_PmCheck.json"
+    },
+    {
+      "component": "RF_Y_AccuracyChecks",
+      "category": "check",
+      "path": "check/RF_Y_AccuracyChecks.json"
+    },
+    {
+      "component": "RF_Y_InstrumentAccuracyRecord",
+      "category": "check",
+      "path": "check/RF_Y_InstrumentAccuracyRecord.json"
+    },
+    {
+      "component": "RF_Y_PreventiveMaintenance",
+      "category": "check",
+      "path": "check/RF_Y_PreventiveMaintenance.json"
+    },
+    {
+      "component": "SEC_CheckScoreCnemc",
+      "category": "check",
+      "path": "check/SEC_CheckScoreCnemc.json"
+    },
+    {
+      "component": "SEC_CheckScoreCnemc_Old",
+      "category": "check",
+      "path": "check/SEC_CheckScoreCnemc_Old.json"
+    },
+    {
+      "component": "SEC_CheckScoreCnemc_jilin.Old",
+      "category": "check",
+      "path": "check/SEC_CheckScoreCnemc_jilin.Old.json"
+    },
+    {
+      "component": "SEC_CheckScoreCnemc_jilin",
+      "category": "check",
+      "path": "check/SEC_CheckScoreCnemc_jilin.json"
+    },
+    {
+      "component": "SEC_NMHCQualityCheck",
+      "category": "check",
+      "path": "check/SEC_NMHCQualityCheck.json"
+    },
+    {
+      "component": "SEC_NMHCSystemQuality",
+      "category": "check",
+      "path": "check/SEC_NMHCSystemQuality.json"
+    },
+    {
+      "component": "QA_AuditData_CO",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditData_CO.json"
+    },
+    {
+      "component": "QA_AuditData_NO",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditData_NO.json"
+    },
+    {
+      "component": "QA_AuditData_O3",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditData_O3.json"
+    },
+    {
+      "component": "QA_AuditData_Result",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditData_Result.json"
+    },
+    {
+      "component": "QA_AuditData_SO2",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditData_SO2.json"
+    },
+    {
+      "component": "QA_AuditResults",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditResults.json"
+    },
+    {
+      "component": "QA_AuditStationBaseInfo",
+      "category": "qcqa",
+      "path": "qcqa/QA_AuditStationBaseInfo.json"
+    },
+    {
+      "component": "QA_Check_Results_PM10",
+      "category": "qcqa",
+      "path": "qcqa/QA_Check_Results_PM10.json"
+    },
+    {
+      "component": "QA_Check_Results_PM25",
+      "category": "qcqa",
+      "path": "qcqa/QA_Check_Results_PM25.json"
+    },
+    {
+      "component": "QA_GASAuditResult",
+      "category": "qcqa",
+      "path": "qcqa/QA_GASAuditResult.json"
+    },
+    {
+      "component": "QA_GASAuditResult_Part_NO",
+      "category": "qcqa",
+      "path": "qcqa/QA_GASAuditResult_Part_NO.json"
+    },
+    {
+      "component": "QA_Meteorological",
+      "category": "qcqa",
+      "path": "qcqa/QA_Meteorological.json"
+    },
+    {
+      "component": "QA_Meteorological_Results",
+      "category": "qcqa",
+      "path": "qcqa/QA_Meteorological_Results.json"
+    },
+    {
+      "component": "QA_Tuner",
+      "category": "qcqa",
+      "path": "qcqa/QA_Tuner.json"
+    },
+    {
+      "component": "QA_Tuner_Result",
+      "category": "qcqa",
+      "path": "qcqa/QA_Tuner_Result.json"
+    },
+    {
+      "component": "QC_AnalyzerPerformanceTest",
+      "category": "qcqa",
+      "path": "qcqa/QC_AnalyzerPerformanceTest.json"
+    },
+    {
+      "component": "QC_AnalyzerStatus",
+      "category": "qcqa",
+      "path": "qcqa/QC_AnalyzerStatus.json"
+    },
+    {
+      "component": "QC_StationHouse",
+      "category": "qcqa",
+      "path": "qcqa/QC_StationHouse.json"
+    },
+    {
+      "component": "QC_StationMissing",
+      "category": "qcqa",
+      "path": "qcqa/QC_StationMissing.json"
+    },
+    {
+      "component": "QC_UnqualifiedFeedback",
+      "category": "qcqa",
+      "path": "qcqa/QC_UnqualifiedFeedback.json"
+    },
+    {
+      "component": "Calibration_CO",
+      "category": "calibrating",
+      "path": "calibrating/Calibration_CO.json"
+    },
+    {
+      "component": "Calibration_NO2",
+      "category": "calibrating",
+      "path": "calibrating/Calibration_NO2.json"
+    },
+    {
+      "component": "Calibration_O3",
+      "category": "calibrating",
+      "path": "calibrating/Calibration_O3.json"
+    },
+    {
+      "component": "Calibration_PM10",
+      "category": "calibrating",
+      "path": "calibrating/Calibration_PM10.json"
+    },
+    {
+      "component": "Calibration_PM25",
+      "category": "calibrating",
+      "path": "calibrating/Calibration_PM25.json"
+    },
+    {
+      "component": "Calibration_SO2",
+      "category": "calibrating",
+      "path": "calibrating/Calibration_SO2.json"
+    },
+    {
+      "component": "DataEntry_Common",
+      "category": "dataentry",
+      "path": "dataentry/DataEntry_Common.json"
+    },
+    {
+      "component": "Ozong-base",
+      "category": "other",
+      "path": "other/Ozong-base.json"
+    },
+    {
+      "component": "Ozong-correct",
+      "category": "other",
+      "path": "other/Ozong-correct.json"
+    },
+    {
+      "component": "Ozong-report",
+      "category": "other",
+      "path": "other/Ozong-report.json"
+    },
+    {
+      "component": "QT_DeviceScrap",
+      "category": "other",
+      "path": "other/QT_DeviceScrap.json"
+    },
+    {
+      "component": "QT_Ozone",
+      "category": "other",
+      "path": "other/QT_Ozone.json"
+    },
+    {
+      "component": "QT_PullInApplyFor",
+      "category": "other",
+      "path": "other/QT_PullInApplyFor.json"
+    },
+    {
+      "component": "QT_Repair",
+      "category": "other",
+      "path": "other/QT_Repair.json"
+    },
+    {
+      "component": "QT_StationPowerCut",
+      "category": "other",
+      "path": "other/QT_StationPowerCut.json"
+    },
+    {
+      "component": "QT_StationRemovar",
+      "category": "other",
+      "path": "other/QT_StationRemovar.json"
+    }
+  ],
+  "by_component": {
+    "Calibration_CO": [
+      "calibrating/Calibration_CO.json"
+    ],
+    "Calibration_NO2": [
+      "calibrating/Calibration_NO2.json"
+    ],
+    "Calibration_O3": [
+      "calibrating/Calibration_O3.json"
+    ],
+    "Calibration_PM10": [
+      "calibrating/Calibration_PM10.json"
+    ],
+    "Calibration_PM25": [
+      "calibrating/Calibration_PM25.json"
+    ],
+    "Calibration_SO2": [
+      "calibrating/Calibration_SO2.json"
+    ],
+    "DataEntry_Common": [
+      "dataentry/DataEntry_Common.json"
+    ],
+    "Ozong-base": [
+      "other/Ozong-base.json"
+    ],
+    "Ozong-correct": [
+      "other/Ozong-correct.json"
+    ],
+    "Ozong-report": [
+      "other/Ozong-report.json"
+    ],
+    "QA_AuditData_CO": [
+      "qcqa/QA_AuditData_CO.json"
+    ],
+    "QA_AuditData_NO": [
+      "qcqa/QA_AuditData_NO.json"
+    ],
+    "QA_AuditData_O3": [
+      "qcqa/QA_AuditData_O3.json"
+    ],
+    "QA_AuditData_Result": [
+      "qcqa/QA_AuditData_Result.json"
+    ],
+    "QA_AuditData_SO2": [
+      "qcqa/QA_AuditData_SO2.json"
+    ],
+    "QA_AuditResults": [
+      "qcqa/QA_AuditResults.json"
+    ],
+    "QA_AuditStationBaseInfo": [
+      "qcqa/QA_AuditStationBaseInfo.json"
+    ],
+    "QA_Check_Results_PM10": [
+      "qcqa/QA_Check_Results_PM10.json"
+    ],
+    "QA_Check_Results_PM25": [
+      "qcqa/QA_Check_Results_PM25.json"
+    ],
+    "QA_GASAuditResult": [
+      "qcqa/QA_GASAuditResult.json"
+    ],
+    "QA_GASAuditResult_Part_NO": [
+      "qcqa/QA_GASAuditResult_Part_NO.json"
+    ],
+    "QA_Meteorological": [
+      "qcqa/QA_Meteorological.json"
+    ],
+    "QA_Meteorological_Results": [
+      "qcqa/QA_Meteorological_Results.json"
+    ],
+    "QA_Tuner": [
+      "qcqa/QA_Tuner.json"
+    ],
+    "QA_Tuner_Result": [
+      "qcqa/QA_Tuner_Result.json"
+    ],
+    "QC_AnalyzerPerformanceTest": [
+      "qcqa/QC_AnalyzerPerformanceTest.json"
+    ],
+    "QC_AnalyzerStatus": [
+      "qcqa/QC_AnalyzerStatus.json"
+    ],
+    "QC_StationHouse": [
+      "qcqa/QC_StationHouse.json"
+    ],
+    "QC_StationMissing": [
+      "qcqa/QC_StationMissing.json"
+    ],
+    "QC_UnqualifiedFeedback": [
+      "qcqa/QC_UnqualifiedFeedback.json"
+    ],
+    "QT_DeviceScrap": [
+      "other/QT_DeviceScrap.json"
+    ],
+    "QT_Ozone": [
+      "other/QT_Ozone.json"
+    ],
+    "QT_PullInApplyFor": [
+      "other/QT_PullInApplyFor.json"
+    ],
+    "QT_Repair": [
+      "check/QT_Repair.json",
+      "other/QT_Repair.json"
+    ],
+    "QT_StationPowerCut": [
+      "other/QT_StationPowerCut.json"
+    ],
+    "QT_StationRemovar": [
+      "other/QT_StationRemovar.json"
+    ],
+    "RF_HY_GasTightnessCheck": [
+      "check/RF_HY_GasTightnessCheck.json"
+    ],
+    "RF_HY_GaseousCaliDeviceCheck": [
+      "check/RF_HY_GaseousCaliDeviceCheck.json"
+    ],
+    "RF_HY_NoxConversionRate_NOX": [
+      "check/RF_HY_NoxConversionRate_NOX.json"
+    ],
+    "RF_HY_O3ValuePass_O3": [
+      "check/RF_HY_O3ValuePass_O3.json"
+    ],
+    "RF_HY_StationDeviceMaintain": [
+      "check/RF_HY_StationDeviceMaintain.json"
+    ],
+    "RF_HY_VisibilityCali": [
+      "check/RF_HY_VisibilityCali.json"
+    ],
+    "RF_M_GaseousCaliCheck": [
+      "check/RF_M_GaseousCaliCheck.json"
+    ],
+    "RF_M_GaseousFlowCheck": [
+      "check/RF_M_GaseousFlowCheck.json"
+    ],
+    "RF_M_ManualComparison": [
+      "check/RF_M_ManualComparison.json"
+    ],
+    "RF_M_StationDeviceMaintain": [
+      "check/RF_M_StationDeviceMaintain.json"
+    ],
+    "RF_MonitoringQuality_GAS": [
+      "check/RF_MonitoringQuality_GAS.json"
+    ],
+    "RF_MonitoringQuality_O3": [
+      "check/RF_MonitoringQuality_O3.json"
+    ],
+    "RF_MonitoringQuality_O3_Old": [
+      "check/RF_MonitoringQuality_O3_Old.json"
+    ],
+    "RF_MonitoringQuality_PM": [
+      "check/RF_MonitoringQuality_PM.json"
+    ],
+    "RF_Q_GaseousMultipoint": [
+      "check/RF_Q_GaseousMultipoint.json"
+    ],
+    "RF_Q_GaseousPrecision": [
+      "check/RF_Q_GaseousPrecision.json"
+    ],
+    "RF_Q_LongOpticalPath_NO2": [
+      "check/RF_Q_LongOpticalPath_NO2.json"
+    ],
+    "RF_Q_LongOpticalPath_O3": [
+      "check/RF_Q_LongOpticalPath_O3.json"
+    ],
+    "RF_Q_LongOpticalPath_SO2": [
+      "check/RF_Q_LongOpticalPath_SO2.json"
+    ],
+    "RF_Q_Pm10RunStatusCheck_PM10": [
+      "check/RF_Q_Pm10RunStatusCheck_PM10.json"
+    ],
+    "RF_Q_Pm25RunStatusCheck_PM25": [
+      "check/RF_Q_Pm25RunStatusCheck_PM25.json"
+    ],
+    "RF_Q_PmPressure": [
+      "check/RF_Q_PmPressure.json"
+    ],
+    "RF_Q_StationDeviceClean": [
+      "check/RF_Q_StationDeviceClean.json"
+    ],
+    "RF_W_GaseousCheck_CO": [
+      "check/RF_W_GaseousCheck_CO.json"
+    ],
+    "RF_W_GaseousCheck_NOX": [
+      "check/RF_W_GaseousCheck_NOX.json"
+    ],
+    "RF_W_GaseousCheck_O3": [
+      "check/RF_W_GaseousCheck_O3.json"
+    ],
+    "RF_W_GaseousCheck_SO2": [
+      "check/RF_W_GaseousCheck_SO2.json"
+    ],
+    "RF_W_Inspection": [
+      "check/RF_W_Inspection.json"
+    ],
+    "RF_W_InspectionSummary": [
+      "check/RF_W_InspectionSummary.json"
+    ],
+    "RF_W_LongOpticalPath": [
+      "check/RF_W_LongOpticalPath.json"
+    ],
+    "RF_W_OtherDeviceCheck": [
+      "check/RF_W_OtherDeviceCheck.json"
+    ],
+    "RF_W_PmCheck": [
+      "check/RF_W_PmCheck.json"
+    ],
+    "RF_Y_AccuracyChecks": [
+      "check/RF_Y_AccuracyChecks.json"
+    ],
+    "RF_Y_InstrumentAccuracyRecord": [
+      "check/RF_Y_InstrumentAccuracyRecord.json"
+    ],
+    "RF_Y_PreventiveMaintenance": [
+      "check/RF_Y_PreventiveMaintenance.json"
+    ],
+    "SEC_CheckScoreCnemc": [
+      "check/SEC_CheckScoreCnemc.json"
+    ],
+    "SEC_CheckScoreCnemc_Old": [
+      "check/SEC_CheckScoreCnemc_Old.json"
+    ],
+    "SEC_CheckScoreCnemc_jilin": [
+      "check/SEC_CheckScoreCnemc_jilin.json"
+    ],
+    "SEC_CheckScoreCnemc_jilin.Old": [
+      "check/SEC_CheckScoreCnemc_jilin.Old.json"
+    ],
+    "SEC_NMHCQualityCheck": [
+      "check/SEC_NMHCQualityCheck.json"
+    ],
+    "SEC_NMHCSystemQuality": [
+      "check/SEC_NMHCSystemQuality.json"
+    ]
+  }
+}

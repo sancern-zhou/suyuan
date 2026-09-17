@@ -1,0 +1,43 @@
+{
+  "component": "QT_Ozone",
+  "category": "other",
+  "inferred_rule_item_tag": "QT_Ozone",
+  "source_file": "views/operation/qcform/QTWorkOrder/QT_Ozone.vue",
+  "structure": "column_form",
+  "field_count": 3,
+  "labeled_field_count": 3,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string1",
+    "string2",
+    "string3"
+  ],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "位置",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "搬迁原因",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "预计搬迁时间",
+      "type": "string",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

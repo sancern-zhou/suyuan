@@ -1,0 +1,335 @@
+{
+  "component": "QC_StationHouse",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QC_StationHouse",
+  "source_file": "views/operation/qcform/qcqa/QC_StationHouse.vue",
+  "structure": "row_table",
+  "field_count": 4,
+  "labeled_field_count": 4,
+  "unlabeled_columns": [],
+  "row_count": 38,
+  "comment_only_columns": [
+    "time1",
+    "bool_1",
+    "bool_2",
+    "bool_3",
+    "bool_4",
+    "bool_5",
+    "remark"
+  ],
+  "binding_only_columns": [
+    "string149",
+    "string150"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "bool_1",
+    "bool_2",
+    "bool_3",
+    "bool_4",
+    "bool_5",
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "QualityControl",
+      "type_code": "QC_StationHouse"
+    }
+  ],
+  "rows": [
+    {
+      "label": "1.测站周围环境是否无足以影响设施安全或采样质量之重大变迁？",
+      "status_column": "bool_1",
+      "actual_column": "string1",
+      "remark_column": "remark3",
+      "reference_limit": ""
+    },
+    {
+      "label": "2.避雷及设备系统接地是否正常 (外观、线路接点、接地箱等)？",
+      "status_column": "bool_2",
+      "actual_column": "string2",
+      "remark_column": "remark4",
+      "reference_limit": ""
+    },
+    {
+      "label": "3.站房内、外是否整齐清洁？",
+      "status_column": "bool_3",
+      "actual_column": "string3",
+      "remark_column": "remark5",
+      "reference_limit": ""
+    },
+    {
+      "label": "4.冷气机运转是否正常(冷度、滤网清洁)？",
+      "status_column": "bool_4",
+      "actual_column": "string4",
+      "remark_column": "remark6",
+      "reference_limit": ""
+    },
+    {
+      "label": "5.数据系统的时间是否正确？(以北京时间为准 ±5分钟)",
+      "status_column": "bool_5",
+      "actual_column": "string5",
+      "remark_column": "remark7",
+      "reference_limit": ""
+    },
+    {
+      "label": "6.站房温度与湿度是否正常？",
+      "status_column": "bool_6",
+      "actual_column": "string6",
+      "remark_column": "remark8",
+      "reference_limit": "18~28度，RH<80%"
+    },
+    {
+      "label": "7.站房电流电压是否工作正常？",
+      "status_column": "bool_7",
+      "actual_column": "string7",
+      "remark_column": "remark9",
+      "reference_limit": ""
+    },
+    {
+      "label": "8.能见度是否工作正常？",
+      "status_column": "bool_8",
+      "actual_column": "string8",
+      "remark_column": "remark10",
+      "reference_limit": ""
+    },
+    {
+      "label": "9.拍照系统是否工作正常？（记录最后一张照片时间）",
+      "status_column": "bool_9",
+      "actual_column": "string9",
+      "remark_column": "remark11",
+      "reference_limit": ""
+    },
+    {
+      "label": "10.气象分析仪是否工作正常？",
+      "status_column": "bool_10",
+      "actual_column": "string10",
+      "remark_column": "remark12",
+      "reference_limit": ""
+    },
+    {
+      "label": "11.气体采样总管与分歧管是否洁净？",
+      "status_column": "bool_11",
+      "actual_column": "string11",
+      "remark_column": "remark13",
+      "reference_limit": ""
+    },
+    {
+      "label": "12.站房顶面是否无明显变形或塌陷等情况？",
+      "status_column": "bool_12",
+      "actual_column": "string12",
+      "remark_column": "remark14",
+      "reference_limit": ""
+    },
+    {
+      "label": "13.站房顶面是否无漏水或积水等情况？",
+      "status_column": "bool_13",
+      "actual_column": "string13",
+      "remark_column": "remark15",
+      "reference_limit": ""
+    },
+    {
+      "label": "14.采样总管风机是否工作正常？",
+      "status_column": "bool_14",
+      "actual_column": "string14",
+      "remark_column": "remark16",
+      "reference_limit": ""
+    },
+    {
+      "label": "15.仪器设备排气管路是否通畅？站房排气设备是否正常？",
+      "status_column": "bool_15",
+      "actual_column": "string15",
+      "remark_column": "remark17",
+      "reference_limit": ""
+    },
+    {
+      "label": "16.采样等室外设备是否安装牢固？",
+      "status_column": "bool_16",
+      "actual_column": "string16",
+      "remark_column": "remark18",
+      "reference_limit": ""
+    },
+    {
+      "label": "17.设备采样支管是否正确安装？",
+      "status_column": "bool_17",
+      "actual_column": "string17",
+      "remark_column": "remark19",
+      "reference_limit": ""
+    },
+    {
+      "label": "18.室内采样管路是否避开空调直吹？如无法避免是否有保温措施？",
+      "status_column": "bool_18",
+      "actual_column": "string18",
+      "remark_column": "remark20",
+      "reference_limit": ""
+    },
+    {
+      "label": "19.室外采样平台、扶梯、护栏等安全防护设施现状是否正常？",
+      "status_column": "bool_19",
+      "actual_column": "string19",
+      "remark_column": "remark21",
+      "reference_limit": ""
+    },
+    {
+      "label": "20.室内照明设备是否正常？运维操作区域不存在照明死角。如有是否配备辅助照明设备？",
+      "status_column": "bool_20",
+      "actual_column": "string20",
+      "remark_column": "remark22",
+      "reference_limit": ""
+    },
+    {
+      "label": "21.设备外接管路、电线、通讯线等排布是否合理？无存在影响运维操作和监测数据质量的隐患？",
+      "status_column": "bool_21",
+      "actual_column": "string21",
+      "remark_column": "remark23",
+      "reference_limit": ""
+    },
+    {
+      "label": "22.气态污染物滤膜是否为特氟龙材质？",
+      "status_column": "bool_37",
+      "actual_column": "string37",
+      "remark_column": "remark24",
+      "reference_limit": ""
+    },
+    {
+      "label": "23.颗粒物纸带是否为原厂纸带？",
+      "status_column": "bool_38",
+      "actual_column": "string38",
+      "remark_column": "remark25",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.SO2标气是否压力足够？",
+      "status_column": "bool_22",
+      "actual_column": "string22",
+      "remark_column": "remark26",
+      "reference_limit": ">1.5MPa"
+    },
+    {
+      "label": "2.SO2标气是否在有效期内？",
+      "status_column": "bool_23",
+      "actual_column": "string23",
+      "remark_column": "remark27",
+      "reference_limit": ""
+    },
+    {
+      "label": "3.NO标气是否压力足够？",
+      "status_column": "bool_24",
+      "actual_column": "string24",
+      "remark_column": "remark28",
+      "reference_limit": ">1.5MPa"
+    },
+    {
+      "label": "4.NO标气是否在有效期内？",
+      "status_column": "bool_25",
+      "actual_column": "string25",
+      "remark_column": "remark29",
+      "reference_limit": ""
+    },
+    {
+      "label": "5.CO标气是否压力足够？",
+      "status_column": "bool_26",
+      "actual_column": "string26",
+      "remark_column": "remark30",
+      "reference_limit": ">1.5MPa"
+    },
+    {
+      "label": "6.CO标气是否在有效期内？",
+      "status_column": "bool_27",
+      "actual_column": "string27",
+      "remark_column": "remark31",
+      "reference_limit": ""
+    },
+    {
+      "label": "7.标气是否为国家一级标准物质？",
+      "status_column": "bool_28",
+      "actual_column": "string28",
+      "remark_column": "remark32",
+      "reference_limit": ""
+    },
+    {
+      "label": "8.减压阀是否配备齐全完好？",
+      "status_column": "bool_29",
+      "actual_column": "string29",
+      "remark_column": "remark33",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.检查校准质控记录是否符合规范？",
+      "status_column": "bool_30",
+      "actual_column": "string30",
+      "remark_column": "remark34",
+      "reference_limit": ""
+    },
+    {
+      "label": "2.多点线性校准记录是否符合规范？",
+      "status_column": "bool_31",
+      "actual_column": "string31",
+      "remark_column": "remark35",
+      "reference_limit": ""
+    },
+    {
+      "label": "3.氮氧化物转化率测试记录是否规范？",
+      "status_column": "bool_32",
+      "actual_column": "string32",
+      "remark_column": "remark36",
+      "reference_limit": ""
+    },
+    {
+      "label": "4.点检、维护记录是否符合规范？",
+      "status_column": "bool_33",
+      "actual_column": "string33",
+      "remark_column": "remark37",
+      "reference_limit": ""
+    },
+    {
+      "label": "5.MFC校准记录是否符合规范？",
+      "status_column": "bool_34",
+      "actual_column": "string34",
+      "remark_column": "remark38",
+      "reference_limit": ""
+    },
+    {
+      "label": "6.臭氧传递记录或报告是否规范？",
+      "status_column": "bool_35",
+      "actual_column": "string35",
+      "remark_column": "remark39",
+      "reference_limit": ""
+    },
+    {
+      "label": "7.质控相关设备是否按要求进行计量检定？是否在有效期内？",
+      "status_column": "bool_36",
+      "actual_column": "string36",
+      "remark_column": "remark40",
+      "reference_limit": ""
+    }
+  ],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "检查时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string149",
+      "label": "日期",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string150",
+      "label": "质控单位及检查人员",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

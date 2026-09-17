@@ -1,0 +1,363 @@
+{
+  "component": "RF_MonitoringQuality_GAS",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_MonitoringQuality",
+  "source_file": "views/operation/qcform/check/RF_MonitoringQuality_GAS.vue",
+  "structure": "column_form",
+  "field_count": 48,
+  "labeled_field_count": 48,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string88",
+    "string89",
+    "string90",
+    "string91",
+    "string92",
+    "string93",
+    "string94",
+    "string95",
+    "string96",
+    "string97",
+    "string98",
+    "string99",
+    "string100",
+    "string101",
+    "string102",
+    "string103",
+    "remark"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_MonitoringQuality_GAS"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "室温",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "相对湿度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "大气压",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "上次溯源时间",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "耗材更换时间",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "SO2编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "NO2编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "SO2浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "NO2浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "NO编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "CO编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "NO浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "CO浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "NO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "NO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "NO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "NO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string88",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string89",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string90",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string91",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string92",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string93",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string94",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string95",
+      "label": "相对偏差",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string96",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string97",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string98",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string99",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string101",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string102",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string103",
+      "label": "是否合格",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

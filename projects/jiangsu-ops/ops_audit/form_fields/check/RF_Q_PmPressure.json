@@ -1,0 +1,241 @@
+{
+  "component": "RF_Q_PmPressure",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Q_PmPressure",
+  "source_file": "views/operation/qcform/check/RF_Q_PmPressure.vue",
+  "structure": "column_form",
+  "field_count": 33,
+  "labeled_field_count": 33,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "time2",
+    "time4"
+  ],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Q_PmPressure"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "校准日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "PM10分析仪-气温-仪器显示",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "PM10分析仪-气温-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "PM10分析仪-气温-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "PM10分析仪-气温-校准情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "PM10分析仪-气压-仪器显示",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "PM10分析仪-气压-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "PM10分析仪-气压-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "PM10分析仪-气压-校准情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "PM2.5分析仪-气温-仪器显示",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "PM2.5分析仪-气温-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "PM2.5分析仪-气温-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "PM2.5分析仪-气温-校准情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "PM2.5分析仪-气压-仪器显示",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "PM2.5分析仪-气压-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "PM2.5分析仪-气压-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "PM2.5分析仪-气压-校准情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "PM10分析仪-湿度-仪器显示",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "PM10分析仪-湿度-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "PM10分析仪-湿度-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string20",
+      "label": "PM10分析仪-湿度-校准情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string21",
+      "label": "PM2.5分析仪-湿度-仪器显示",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string22",
+      "label": "PM2.5分析仪-湿度-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string23",
+      "label": "PM2.5分析仪-湿度-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string24",
+      "label": "PM2.5分析仪-湿度-校准情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string25",
+      "label": "标准温度计型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string26",
+      "label": "标准温度计编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string27",
+      "label": "标准湿度计型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string28",
+      "label": "标准湿度计编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string29",
+      "label": "标准气压计型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string30",
+      "label": "标准气压计编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "温度计检定日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time4",
+      "label": "气压计检定日期",
+      "type": "time",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

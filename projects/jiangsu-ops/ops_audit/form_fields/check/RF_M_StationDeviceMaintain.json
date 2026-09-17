@@ -1,0 +1,161 @@
+{
+  "component": "RF_M_StationDeviceMaintain",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_M_StationDeviceMaintain",
+  "source_file": "views/operation/qcform/check/RF_M_StationDeviceMaintain.vue",
+  "structure": "column_form",
+  "field_count": 19,
+  "labeled_field_count": 19,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "time1",
+    "time2",
+    "time3",
+    "time4",
+    "time5",
+    "time6",
+    "time7",
+    "time8",
+    "time9",
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9"
+  ],
+  "binding_only_columns": [
+    "remark"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_M_StationDeviceMaintain"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "维护时间-每月清洗—次制冷系统过滤网",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "维护时间-每月清洁一次颗粒物采样头、清理滤水瓶积水",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time3",
+      "label": "维护时间-检查、清洁颗粒物分析仪仪器喷嘴、压环、振荡原件腔室等部件",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time4",
+      "label": "维护时间-每月清洁仪器风扇防尘网",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time5",
+      "label": "维护时间-颗粒物仪器时钟检查;数据采集仪时钟检查",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time6",
+      "label": "维护时间-仪器显示数据和数据采集仪之间的——致性检查",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time7",
+      "label": "维护时间-检查设备电机运转功能",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time8",
+      "label": "维护时间-每月清洁望远镜前窗披璃",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time9",
+      "label": "维护时间-每月调整光路",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "巡检人-每月清洗—次制冷系统过滤网",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "巡检人-每月清洁一次颗粒物采样头、清理滤水瓶积水",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "巡检人-检查、清洁颗粒物分析仪仪器喷嘴、压环、振荡原件腔室等部件",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "巡检人-每月清洁仪器风扇防尘网",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "巡检人-颗粒物仪器时钟检查;数据采集仪时钟检查",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "巡检人-仪器显示数据和数据采集仪之间的——致性检查",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "巡检人-检查设备电机运转功能",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "巡检人-每月清洁望远镜前窗披璃",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "巡检人-每月调整光路",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "巡检人 (签字)",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

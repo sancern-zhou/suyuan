@@ -1,0 +1,117 @@
+{
+  "component": "RF_Q_LongOpticalPath_O3",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Q_LongOpticalPath",
+  "source_file": "views/operation/qcform/check/RF_Q_LongOpticalPath_O3.vue",
+  "structure": "column_form",
+  "field_count": 16,
+  "labeled_field_count": 16,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "监测仪器名称",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "校准日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "监测仪器编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "标准臭氧发生器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "标准臭氧发生器编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "环境温度（℃）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "环境压力（kPa）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "校准前Span",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "校准前Offset",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string48",
+      "label": "校准后Span",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string49",
+      "label": "校准后Offset",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string50",
+      "label": "外光光强-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string51",
+      "label": "外光光强-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string52",
+      "label": "汞灯通道偏差-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string53",
+      "label": "汞灯通道偏差-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

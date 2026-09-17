@@ -1,0 +1,477 @@
+{
+  "component": "Calibration_NO2",
+  "category": "calibrating",
+  "inferred_rule_item_tag": "Calibration",
+  "source_file": "views/operation/qcform/calibrating/Calibration_NO2.vue",
+  "structure": "column_form",
+  "field_count": 65,
+  "labeled_field_count": 65,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "time1",
+    "string6",
+    "time2",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string36",
+    "string37",
+    "string38",
+    "string39",
+    "string40",
+    "string41",
+    "string42",
+    "string43",
+    "string44",
+    "string45",
+    "string46",
+    "string47",
+    "string48",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "string56",
+    "string57",
+    "string58",
+    "string59",
+    "string60",
+    "string61",
+    "string62",
+    "string63"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "监测仪型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "监测仪编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "校准仪型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "校准仪编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "NO₂/N₂标准气钢瓶编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time1",
+      "label": "NO₂/N₂标准气钢瓶有效期限",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "NO₂标称浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "校准日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "NO BKG",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "PMT SUPPLY",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "NOx BKG",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "INTERNAL",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "NO COEF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "CHAMBER",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "NOx COEF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "COOLER",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "NO₂ COEF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "CONVERTER",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "AVG TIME",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "FSAMPLE",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "PRESSURE",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "F.OZONATOR",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "1.通入375ppb的NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "1.通入375ppb的NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "1.通入375ppb的NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "2.增加约300ppb的03",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "2.增加约300ppb的03",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "2.增加约300ppb的03",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "NO₂——>NO转换率 (%)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "NO₂——>NO转换率 (%)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "NO₂——>NO转换率 (%)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "NOx",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "斜率",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "斜率",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "截距",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "截距",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "相关系数",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "相关系数",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

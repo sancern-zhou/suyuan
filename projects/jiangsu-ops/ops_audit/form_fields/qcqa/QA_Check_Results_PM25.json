@@ -1,0 +1,228 @@
+{
+  "component": "QA_Check_Results_PM25",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_Check_Results",
+  "source_file": "views/operation/qcform/qcqa/QA_Check_Results_PM25.vue",
+  "structure": "column_form",
+  "field_count": 29,
+  "labeled_field_count": 29,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string35",
+    "string39"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel",
+    "workingOrderCode"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "●流量查核数据",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "●流量查核数据",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "压力mmHg(P)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

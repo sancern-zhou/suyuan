@@ -1,0 +1,205 @@
+{
+  "component": "RF_W_Inspection",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_Inspection",
+  "source_file": "views/operation/qcform/check/RF_W_Inspection.vue",
+  "structure": "column_form",
+  "field_count": 25,
+  "labeled_field_count": 25,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "bool_1",
+    "bool_2",
+    "bool_3",
+    "bool_4",
+    "bool_5",
+    "bool_6",
+    "bool_7",
+    "bool_8",
+    "bool_9",
+    "bool_10",
+    "bool_11",
+    "bool_12",
+    "bool_13",
+    "bool_14",
+    "bool_15",
+    "bool_16",
+    "bool_17",
+    "bool_18",
+    "bool_19",
+    "bool_20",
+    "bool_21",
+    "bool_22",
+    "bool_23",
+    "bool_24"
+  ],
+  "binding_only_columns": [
+    "remark"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Inspection"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "bool_1",
+      "label": "点位周围环境变化情况",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_2",
+      "label": "点位周围安全隐患",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_3",
+      "label": "点位周围道路、供电线路、通讯线路、给排水设施完好或损坏状况",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_4",
+      "label": "站房外围的防护栏、隔离带有无损坏情况",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_5",
+      "label": "视频监控系统是否正常",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_6",
+      "label": "周围树木是否需要修剪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_7",
+      "label": "站房防雷接地是否完好",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_8",
+      "label": "站房屋顶是否完好，有无漏雨",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_9",
+      "label": "站房内部的供电、通讯是否畅通",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_10",
+      "label": "站房内部给排水、供暖设施、空调工作状况",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_11",
+      "label": "站房内有无气泵产生的异常声音",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_12",
+      "label": "站房内有无异常气味",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_13",
+      "label": "站房温度、湿度是否符合要求",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_14",
+      "label": "气体采样总管采样风扇工作是否正常",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_15",
+      "label": "气体采样总管及支管是否由于室外温差产生冷凝水",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_16",
+      "label": "站房排风扇是否正常运行",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_17",
+      "label": "稳压电源参数是否正常",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_18",
+      "label": "各电源插头、线板工作是否正常",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_19",
+      "label": "检查颗粒物采样头、清理雨水瓶积水",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_20",
+      "label": "仪器气泵工作是否正常",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_21",
+      "label": "检查/更换干燥机，蓝色剩1/3~1/4时及时更换",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_22",
+      "label": "检查钢瓶气减压阀压力指示情况",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_23",
+      "label": "检查颗粒物分析仪只带位置是否正常，如长度不足时应提前更换",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_24",
+      "label": "检查振荡天平法仪器气水分离器是否有积水，必要时进行清理",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "巡查内容",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,3 +1,5 @@
+import re
+
 from app.agent.prompts.prompt_builder import build_react_system_prompt
 from app.project_config.loader import load_project_context
 from app.tools import create_global_tool_registry
@@ -35,7 +37,10 @@ def test_jiangsu_ops_mode_loads_project_owned_prompt(monkeypatch):
     assert "不要重新查询同一条件" in prompt
     assert "优先使用直接返回的审核投影" in prompt
     assert "才用 `read_file` 读取附件" in prompt
-    assert "ops_audit_fetch_dataset" not in prompt
+    # 项目自有的 `jiangsu_ops_audit_*` 工具允许出现在提示词中；
+    # 这里只禁止未加项目前缀的共享旧工具。
+    assert re.search(r"(?<!jiangsu_)ops_audit_fetch_dataset", prompt) is None
+    assert re.search(r"(?<!jiangsu_)ops_audit_run_rules", prompt) is None
     assert "query_gd_suncere_station_hour_new" not in prompt
 
 

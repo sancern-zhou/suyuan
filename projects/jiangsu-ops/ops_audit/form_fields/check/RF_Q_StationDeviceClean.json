@@ -1,0 +1,103 @@
+{
+  "component": "RF_Q_StationDeviceClean",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Q_StationDeviceClean",
+  "source_file": "views/operation/qcform/check/RF_Q_StationDeviceClean.vue",
+  "structure": "column_form",
+  "field_count": 11,
+  "labeled_field_count": 11,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "time1",
+    "time2",
+    "time3",
+    "time4",
+    "time5",
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5"
+  ],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Q_StationDeviceClean"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "维护时间-清洁采样总管",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "维护时间-清洁采样支管",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time3",
+      "label": "维护时间-清洁采样风机",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time4",
+      "label": "维护时间-清洁颗粒物采样管",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time5",
+      "label": "维护时间-清洁角反射镜(长光程)",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "巡检人-清洁采样总管",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "巡检人-清洁采样支管",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "巡检人-清洁采样风机",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "巡检人-清洁颗粒物采样管",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "巡检人-清洁角反射镜(长光程)",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "异常情况",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

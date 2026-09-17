@@ -40,12 +40,14 @@ def test_runtime_skill_resolution_uses_the_jiangsu_directory(monkeypatch):
     result = __import__("asyncio").run(tool.execute())
 
     assert result["success"] is True
-    assert result["data"]["count"] == 8
+    assert result["data"]["count"] == 10
     files = {item["file"] for item in result["data"]["skills"]}
     assert any(path.endswith("station-alarm-diagnosis/SKILL.md") for path in files)
     assert any(path.endswith("ops-work-order-audit/SKILL.md") for path in files)
     assert any(path.endswith("smart-event-judgment/SKILL.md") for path in files)
     assert any(path.endswith("data-audit-review/SKILL.md") for path in files)
+    assert any(path.endswith("daily-operations-supervision-report/SKILL.md") for path in files)
+    assert any(path.endswith("operations-risk-prevention-report/SKILL.md") for path in files)
 
 
 def test_ops_audit_report_reference_preserves_output_contract():
@@ -54,13 +56,17 @@ def test_ops_audit_report_reference_preserves_output_contract():
         / "projects/jiangsu-ops/skills/ops-work-order-audit/references/report-format.md"
     ).read_text(encoding="utf-8")
 
-    assert "retained_items" in report_reference
-    assert "按 `operation_unit` 运维单位分组" in report_reference
-    assert "| 站点 | 中文表单 | 工单号 | 问题描述 | 原始备注/说明 | 命中规则 |" in report_reference
+    assert "与共享版运维工单审核报告口径一致" in report_reference
+    assert "正文仅包含以下两个章节" in report_reference
+    assert "## 审核范围" in report_reference
+    assert "## 问题工单明细" in report_reference
     assert "结论与整改建议" not in report_reference
+    assert "本次审核未发现需保留的问题工单" in report_reference
+    assert "问题明细只使用本轮 `jiangsu_ops_audit_run_rules` 返回的 `report_input_path` 指向的条目" in report_reference
+    assert "必须按 `operation_unit_name` 运维单位分组" in report_reference
+    assert "| 站点 | 检查表单 | 工单号 | 问题描述 | 原始备注/说明 | 命中规则 |" in report_reference
     assert "不得只把备注藏在 `evidence` JSON" in report_reference
-    assert "公式复算类问题必须列出实填值、复算值、容差/允许偏差和关键输入字段" in report_reference
-    assert "表单与附件/XLS 比对问题必须列出附件文件名、表单字段、表单值、附件单元格和值" in report_reference
-    assert "不得向用户展示内部英文表名 `rf_table`" in report_reference
+    assert "不得向用户展示内部 `rule_item_tag`" in report_reference
     assert "必须完整列出所有保留问题" in report_reference
-    assert "RF_DEVICE_IDENTITY_INCONSISTENT" in report_reference
+    assert "必须标注待人工确认" in report_reference
+    assert "语义复核结论不单设章节" in report_reference

@@ -1,0 +1,104 @@
+{
+  "component": "SEC_NMHCSystemQuality",
+  "category": "check",
+  "inferred_rule_item_tag": "SEC_NMHCSystemQuality",
+  "source_file": "views/operation/qcform/check/SEC_NMHCSystemQuality.vue",
+  "structure": "column_form",
+  "field_count": 11,
+  "labeled_field_count": 11,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "SEC_NMHCSystemQuality"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "系统型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "站点名称",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "多点校准仪型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "校准仪编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "标准气名称",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "标准气编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "标准化合物浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "有效期",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "室内温湿度及气压",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "校准开始时间",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "校准结束时间",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

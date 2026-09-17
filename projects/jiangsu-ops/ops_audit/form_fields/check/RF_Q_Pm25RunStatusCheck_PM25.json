@@ -1,0 +1,98 @@
+{
+  "component": "RF_Q_Pm25RunStatusCheck_PM25",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Q_Pm25RunStatusCheck",
+  "source_file": "views/operation/qcform/check/RF_Q_Pm25RunStatusCheck_PM25.vue",
+  "structure": "column_form",
+  "field_count": 12,
+  "labeled_field_count": 12,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Q_Pm25RunStatusCheck_PM25"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "仪器编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "检查日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "标准膜检查-原始值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "标准膜检查-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "标准膜检查-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "标准膜检查-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "K0值检查-原始值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "K0值检查-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "K0值检查-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "K0值检查-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "异常情况",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

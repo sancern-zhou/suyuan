@@ -1,0 +1,178 @@
+{
+  "component": "RF_M_GaseousFlowCheck",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_M_GaseousFlowCheck",
+  "source_file": "views/operation/qcform/check/RF_M_GaseousFlowCheck.vue",
+  "structure": "column_form",
+  "field_count": 25,
+  "labeled_field_count": 25,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "remark"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_M_GaseousFlowCheck"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "二氧化硫-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "二氧化硫-流量范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "二氧化硫-显示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "二氧化硫-测量值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "二氧化硫-测量误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "二氧化硫-处理情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "二氧化氮-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "二氧化氮-流量范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "二氧化氮-显示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "二氧化氮-测量值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "二氧化氮-测量误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "二氧化氮-处理情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "一氧化碳-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "一氧化碳-流量范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "一氧化碳-显示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "一氧化碳-测量值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "一氧化碳-测量误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "一氧化碳-处理情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "臭氧-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string20",
+      "label": "臭氧-流量范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string21",
+      "label": "臭氧-显示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string22",
+      "label": "臭氧-测量值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string23",
+      "label": "臭氧-测量误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string24",
+      "label": "臭氧-处理情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "误差计算公式：（显示值-测量值/测量值）",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,0 +1,138 @@
+{
+  "component": "RF_W_PmCheck",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_PmCheck",
+  "source_file": "views/operation/qcform/check/RF_W_PmCheck.vue",
+  "structure": "column_form",
+  "field_count": 16,
+  "labeled_field_count": 16,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string6",
+    "string9"
+  ],
+  "binding_only_columns": [
+    "remark6",
+    "remark7"
+  ],
+  "device_columns": [
+    "deviceBrand",
+    "deviceModel",
+    "deviceCode"
+  ],
+  "common_columns": [
+    "isCancel",
+    "deviceId"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_W_PmCheck"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器品牌",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "仪器编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "流量-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "流量-是否正常",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "流量-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "采样管温度-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "采样管温度-是否正常",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "采样管温度-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "其他参数",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark2",
+      "label": "检查PM2.5、PM10分析仪相对湿度、温度传感器、压力和动态加热装置是否正常",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark3",
+      "label": "纸带使用量及处置情况",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark4",
+      "label": "TEOM滤膜负载及处置情况(FDMS滤膜需与TEOM滤膜同时更换)",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark5",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark6",
+      "label": "流量(Main Flow)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark7",
+      "label": "采样管温度(Air.Temp)",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

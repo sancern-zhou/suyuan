@@ -1,0 +1,20 @@
+{
+  "component": "Ozong-base",
+  "category": "other",
+  "inferred_rule_item_tag": "Ozong-base",
+  "source_file": "views/operation/qcform/QTWorkOrder/Ozong-base.vue",
+  "structure": "column_form",
+  "field_count": 0,
+  "labeled_field_count": 0,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [],
+  "rows": [],
+  "fields": [],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,0 +1,99 @@
+{
+  "component": "RF_W_InspectionSummary",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_InspectionSummary",
+  "source_file": "views/operation/qcform/check/RF_W_InspectionSummary.vue",
+  "structure": "column_form",
+  "field_count": 10,
+  "labeled_field_count": 10,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "remark1",
+    "remark2",
+    "remark3",
+    "remark4",
+    "remark5",
+    "remark6",
+    "remark7",
+    "remark8",
+    "time1",
+    "time2"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_W_InspectionSummary"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "remark1",
+      "label": "常规巡检",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark2",
+      "label": "清洗维护类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark3",
+      "label": "仪器检查校准类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark4",
+      "label": "更换耗材备件类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark5",
+      "label": "设备维修类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark6",
+      "label": "更换备机类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark7",
+      "label": "其他需要记录的内容",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark8",
+      "label": "巡检人",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "time1",
+      "label": "进站房时间",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "出站房时间",
+      "type": "time",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

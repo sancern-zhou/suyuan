@@ -1,0 +1,1216 @@
+{
+  "component": "QA_Tuner",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_Tuner",
+  "source_file": "views/operation/qcform/qcqa/QA_Tuner.vue",
+  "structure": "column_form",
+  "field_count": 170,
+  "labeled_field_count": 169,
+  "unlabeled_columns": [
+    "string1"
+  ],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string36",
+    "string37",
+    "string39",
+    "string40",
+    "string41",
+    "string42",
+    "string43",
+    "string44",
+    "string45",
+    "string46",
+    "string47",
+    "string48",
+    "string49",
+    "string50",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "string56",
+    "string57",
+    "string58",
+    "string59",
+    "string60",
+    "string61",
+    "string62",
+    "string63",
+    "string65",
+    "string66",
+    "string67",
+    "string68",
+    "string69",
+    "string70",
+    "string71",
+    "string72",
+    "string73",
+    "string74",
+    "string75",
+    "string76",
+    "string78",
+    "string79",
+    "string80",
+    "string81",
+    "string82",
+    "string83",
+    "string84",
+    "string85",
+    "string86",
+    "string87",
+    "string88",
+    "string89",
+    "string91",
+    "string92",
+    "string200",
+    "string93",
+    "string94",
+    "string95",
+    "string96",
+    "string97",
+    "string98",
+    "string99",
+    "string100",
+    "string101",
+    "string102",
+    "string104",
+    "string105",
+    "string106",
+    "string107",
+    "string108",
+    "string109",
+    "string110",
+    "string111",
+    "string112",
+    "string113",
+    "string114",
+    "string115",
+    "string117",
+    "string118",
+    "string119",
+    "string120",
+    "string121",
+    "string122",
+    "string123",
+    "string124",
+    "string125",
+    "string126",
+    "string127",
+    "string128",
+    "string130",
+    "string131",
+    "string132",
+    "string133",
+    "string134",
+    "string135",
+    "string136",
+    "string137",
+    "string138",
+    "string139",
+    "string140",
+    "string141",
+    "string143",
+    "string144",
+    "string145",
+    "string146",
+    "string147",
+    "string148",
+    "string149",
+    "string150",
+    "string151",
+    "string152",
+    "string153",
+    "string154",
+    "string156",
+    "string157",
+    "string158",
+    "string159",
+    "string160",
+    "string161",
+    "string162",
+    "string163",
+    "string164",
+    "string165",
+    "string166",
+    "string167",
+    "string169",
+    "string170",
+    "string171",
+    "string172",
+    "string173",
+    "string174",
+    "string175",
+    "string176",
+    "string177",
+    "string178",
+    "string179",
+    "string180",
+    "string182",
+    "string183"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "",
+      "type": "string",
+      "label_source": ""
+    },
+    {
+      "column": "string2",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string72",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string73",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string79",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string80",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string81",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string82",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string83",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string84",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string85",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string86",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string87",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string88",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string89",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string91",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string92",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string200",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string93",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string94",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string95",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string96",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string97",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string98",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string99",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string101",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string102",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string104",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string105",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string106",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string107",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string108",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string109",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string110",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string111",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string112",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string113",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string114",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string115",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string117",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string118",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string119",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string120",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string121",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string122",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string123",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string124",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string125",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string126",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string127",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string128",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string130",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string131",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string132",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string133",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string134",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string135",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string136",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string137",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string138",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string139",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string140",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string141",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string143",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string144",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string145",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string146",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string147",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string148",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string149",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string150",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string151",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string152",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string153",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string154",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string156",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string157",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string158",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string159",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string160",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string161",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string162",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string163",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string164",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string165",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string166",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string167",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string169",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string170",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string171",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string172",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string173",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string174",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string175",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string176",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string177",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string178",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string179",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string180",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string182",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string183",
+      "label": "温度",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

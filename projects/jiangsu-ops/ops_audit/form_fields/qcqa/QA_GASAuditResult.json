@@ -1,0 +1,367 @@
+{
+  "component": "QA_GASAuditResult",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_GASAuditResult",
+  "source_file": "views/operation/qcform/qcqa/QA_GASAuditResult.vue",
+  "structure": "column_form",
+  "field_count": 49,
+  "labeled_field_count": 49,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "time1",
+    "string46",
+    "string3",
+    "string47",
+    "string16",
+    "time2",
+    "string18",
+    "string67",
+    "time6",
+    "string4",
+    "string1",
+    "string7",
+    "string14",
+    "string15",
+    "string19",
+    "string22",
+    "string29",
+    "string30",
+    "string34",
+    "string31",
+    "string37",
+    "string44",
+    "string45",
+    "string49",
+    "string52",
+    "string59",
+    "string60",
+    "string64",
+    "string61",
+    "string74",
+    "string75",
+    "string10",
+    "string12",
+    "string54",
+    "string55",
+    "time3",
+    "string9",
+    "string17",
+    "string38",
+    "string57",
+    "string58",
+    "string77",
+    "string78",
+    "string97",
+    "string98",
+    "string56",
+    "string36",
+    "string76",
+    "string96"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "查核日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "校正器型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "查核人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "校正器序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "仪器型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "Pre-Audit日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "仪器序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "气体钢瓶编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time6",
+      "label": "气体有效日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string1",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "仪器型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "仪器序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "臭氧传输标准型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "臭氧传输标准序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time3",
+      "label": "臭氧传输标准验证日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "仪器序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string77",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string97",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string98",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string96",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

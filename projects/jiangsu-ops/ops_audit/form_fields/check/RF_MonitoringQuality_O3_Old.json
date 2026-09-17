@@ -1,0 +1,236 @@
+{
+  "component": "RF_MonitoringQuality_O3_Old",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_MonitoringQuality_O3_Old",
+  "source_file": "views/operation/qcform/check/RF_MonitoringQuality_O3_Old.vue",
+  "structure": "column_form",
+  "field_count": 35,
+  "labeled_field_count": 35,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_MonitoringQuality_O3"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "室内温度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "相对湿度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "大气压",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "检查标准-型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "检查标准-编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "检查标准-生产厂商",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "现场分析仪-型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "现场分析仪-编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "现场分析仪-生产厂商",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "现场分析仪-采样流量",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "现场分析仪-截距",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "现场分析仪-斜率",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "现场分析仪-量值源头",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "现场分析仪-温度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "现场分析仪-光池气压",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "现场分析仪-光强",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "分析仪量程",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "校准曲线-SRP示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "校准曲线-检查标准示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string80",
+      "label": "均值-检查标准-45ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string81",
+      "label": "均值-检查标准-75ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string82",
+      "label": "均值-检查标准-125ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string83",
+      "label": "均值-监测现场仪器-45ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string84",
+      "label": "均值-监测现场仪器-75ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string85",
+      "label": "均值-监测现场仪器-125ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string86",
+      "label": "SRP示值-检查标准-45ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string87",
+      "label": "SRP示值-检查标准-75ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string88",
+      "label": "SRP示值-检查标准-125ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string89",
+      "label": "相对偏差-监测现场仪器-45ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string90",
+      "label": "相对偏差-监测现场仪器-75ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string91",
+      "label": "相对偏差-监测现场仪器-125ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string92",
+      "label": "是否合格-监测现场仪器-45ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string93",
+      "label": "是否合格-监测现场仪器-75ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string94",
+      "label": "是否合格-监测现场仪器-125ppb",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

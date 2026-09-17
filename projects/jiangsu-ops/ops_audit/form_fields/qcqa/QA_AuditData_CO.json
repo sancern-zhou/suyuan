@@ -1,0 +1,549 @@
+{
+  "component": "QA_AuditData_CO",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_AuditData",
+  "source_file": "views/operation/qcform/qcqa/QA_AuditData_CO.vue",
+  "structure": "column_form",
+  "field_count": 75,
+  "labeled_field_count": 75,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string36",
+    "string37",
+    "string38",
+    "string39",
+    "string40",
+    "string41",
+    "string42",
+    "string43",
+    "string44",
+    "string45",
+    "string46",
+    "string47",
+    "string48",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "string56",
+    "string57",
+    "string58",
+    "string59",
+    "string60",
+    "string61",
+    "string62",
+    "string63",
+    "string64",
+    "string65",
+    "string66",
+    "string67",
+    "string68",
+    "string69",
+    "string70",
+    "string71",
+    "string72",
+    "string73",
+    "string74",
+    "string75"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "CO查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "CO查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "CO查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "CO查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "sccpm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "CO查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string72",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string73",
+      "label": "ppm",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "平均",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

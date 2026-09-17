@@ -1,0 +1,598 @@
+{
+  "component": "QA_AuditStationBaseInfo",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_AuditStationBaseInfo",
+  "source_file": "views/operation/qcform/qcqa/QA_AuditStationBaseInfo.vue",
+  "structure": "column_form",
+  "field_count": 82,
+  "labeled_field_count": 82,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "time1",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string46",
+    "string47",
+    "time2",
+    "string48",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "time3",
+    "string56",
+    "string57",
+    "string58",
+    "string59",
+    "time4",
+    "string60",
+    "string61",
+    "string62",
+    "string63",
+    "time5",
+    "string64",
+    "string65",
+    "string66",
+    "string67",
+    "time6",
+    "string68",
+    "string69",
+    "string70",
+    "string71",
+    "string72",
+    "time7",
+    "string73",
+    "string74",
+    "string75",
+    "string76",
+    "time8",
+    "string77",
+    "string78",
+    "string35",
+    "string38",
+    "string40",
+    "string42",
+    "string36",
+    "string39",
+    "string41",
+    "string43"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "测站环境温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "测站大气压力",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time1",
+      "label": "查核日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "查核人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "数据采集仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "数据采集仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "数据采集仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "臭氧分析仪(O₃)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "臭氧分析仪(O₃)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "臭氧分析仪(O₃)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "二氧化硫分析仪(SO₂)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "二氧化硫分析仪(SO₂)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "二氧化硫分析仪(SO₂)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "氮氧化物分析仪(NOx)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "氮氧化物分析仪(NOx)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "氮氧化物分析仪(NOx)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "一氧化碳分析仪(CO)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "一氧化碳分析仪(CO)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "一氧化碳分析仪(CO)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "PM10悬浮微粒监测仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "PM10悬浮微粒监测仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "PM10悬浮微粒监测仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "PM2.5悬浮微粒监测仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "PM2.5悬浮微粒监测仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "PM2.5悬浮微粒监测仪",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "动态稀释校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "动态稀释校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "动态稀释校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "动态稀释校正器(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "动态稀释校正器(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "动态稀释校正器(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "风向(WD)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "风向(WD)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "风向(WD)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "校正器(AIR)",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "校正器(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "校正器(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "校正器(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "零气体产生器",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "零气体产生器",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "臭氧传输标准",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "臭氧传输标准",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time3",
+      "label": "臭氧传输标准",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "臭氧传输标准",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "臭氧传输标准",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "流量查核仪器(5~500 cc/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "流量查核仪器(5~500 cc/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time4",
+      "label": "流量查核仪器(5~500 cc/min)",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "流量查核仪器(5~500 cc/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "流量查核仪器(5~500 cc/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "流量查核仪器(0.3~30 L/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "流量查核仪器(0.3~30 L/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time5",
+      "label": "流量查核仪器(0.3~30 L/min)",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "流量查核仪器(0.3~30 L/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "流量查核仪器(0.3~30 L/min)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "查核气体(混合)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "查核气体(混合)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time6",
+      "label": "查核气体(混合)",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "风速风向传感器",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string72",
+      "label": "风速风向传感器",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time7",
+      "label": "风速风向传感器",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string73",
+      "label": "阿斯曼干湿球计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "阿斯曼干湿球计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time8",
+      "label": "空壳式大气压力计",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string77",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "空壳式大气压力计",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

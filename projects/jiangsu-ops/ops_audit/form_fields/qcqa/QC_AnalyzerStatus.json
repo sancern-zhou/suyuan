@@ -1,0 +1,785 @@
+{
+  "component": "QC_AnalyzerStatus",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QC_AnalyzerStatus",
+  "source_file": "views/operation/qcform/qcqa/QC_AnalyzerStatus.vue",
+  "structure": "row_table",
+  "field_count": 28,
+  "labeled_field_count": 28,
+  "unlabeled_columns": [],
+  "row_count": 78,
+  "comment_only_columns": [
+    "time1",
+    "bool_1",
+    "bool_2",
+    "bool_3",
+    "bool_4",
+    "bool_5"
+  ],
+  "binding_only_columns": [
+    "remark1",
+    "string150",
+    "string149",
+    "string148",
+    "string147",
+    "string146",
+    "string145",
+    "string144",
+    "string143",
+    "string142",
+    "string141",
+    "string140",
+    "string139",
+    "string138",
+    "string137",
+    "string136",
+    "string135",
+    "string134",
+    "string133",
+    "string132",
+    "string131",
+    "string130",
+    "string129",
+    "bool_80",
+    "remark77",
+    "remark79"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "bool_1",
+    "bool_2",
+    "bool_3",
+    "bool_4",
+    "bool_5",
+    "isCancel",
+    "stringJson",
+    "boolJson",
+    "remarkJson"
+  ],
+  "attachments": [
+    {
+      "function_code": "QualityControl",
+      "type_code": "QC_AnalyzerStatus"
+    }
+  ],
+  "rows": [
+    {
+      "label": "1.机体内部Internal温度是否正常？",
+      "status_column": "bool_1",
+      "actual_column": "string1",
+      "remark_column": "remark78",
+      "reference_limit": "(8~47℃)"
+    },
+    {
+      "label": "2.反应室Chamber温度是否正常？",
+      "status_column": "bool_2",
+      "actual_column": "string2",
+      "remark_column": "remark2",
+      "reference_limit": "(45~55℃)"
+    },
+    {
+      "label": "3.反应室压力Pressure是否正常？",
+      "status_column": "bool_3",
+      "actual_column": "string3",
+      "remark_column": "remark3",
+      "reference_limit": "(50~105kpa)"
+    },
+    {
+      "label": "4.采样Sample流量是否正常？",
+      "status_column": "bool_4",
+      "actual_column": "string4",
+      "remark_column": "remark4",
+      "reference_limit": "(300~800ml/min)"
+    },
+    {
+      "label": "5.倍增管高压（PMF）是否正常？",
+      "status_column": "bool_5",
+      "actual_column": "string5",
+      "remark_column": "remark5",
+      "reference_limit": "(-500~-1100V)"
+    },
+    {
+      "label": "6.紫外灯电压 Lamp Voltage是否正常？",
+      "status_column": "bool_6",
+      "actual_column": "string6",
+      "remark_column": "remark6",
+      "reference_limit": "(300~3000mv)"
+    },
+    {
+      "label": "7.仪器斜率SLOPE是否正常？",
+      "status_column": "bool_7",
+      "actual_column": "string7",
+      "remark_column": "remark7",
+      "reference_limit": "(0.5~2)"
+    },
+    {
+      "label": "8.仪器截距OFFSET是否正常？",
+      "status_column": "bool_8",
+      "actual_column": "string8",
+      "remark_column": "remark8",
+      "reference_limit": "(-50~50ppb)"
+    },
+    {
+      "label": "9.仪器散热风扇运转是否正常？",
+      "status_column": "bool_9",
+      "actual_column": "string9",
+      "remark_column": "remark9",
+      "reference_limit": ""
+    },
+    {
+      "label": "10.47mm颗粒物滤纸是否干净？",
+      "status_column": "bool_10",
+      "actual_column": "string10",
+      "remark_column": "remark10",
+      "reference_limit": ""
+    },
+    {
+      "label": "11.散热风扇滤网是否干净？",
+      "status_column": "bool_11",
+      "actual_column": "string11",
+      "remark_column": "remark11",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.机体内部Internal温度是否正常？",
+      "status_column": "bool_12",
+      "actual_column": "string12",
+      "remark_column": "remark12",
+      "reference_limit": "(8~47℃)"
+    },
+    {
+      "label": "2.反应室Chamber温度是否正常？",
+      "status_column": "bool_13",
+      "actual_column": "string13",
+      "remark_column": "remark13",
+      "reference_limit": "(45~55℃)"
+    },
+    {
+      "label": "3.转化炉NO2 Converter温度是否正常？",
+      "status_column": "bool_14",
+      "actual_column": "string14",
+      "remark_column": "remark14",
+      "reference_limit": "(180~325℃)"
+    },
+    {
+      "label": "4.采样压力Pressure是否正常？",
+      "status_column": "bool_15",
+      "actual_column": "string15",
+      "remark_column": "remark15",
+      "reference_limit": "(50~105kpa)"
+    },
+    {
+      "label": "5.采样Sample流量是否正常？",
+      "status_column": "bool_16",
+      "actual_column": "string16",
+      "remark_column": "remark16",
+      "reference_limit": "(300~800ml/min)"
+    },
+    {
+      "label": "6.臭氧Ozone流量是否正常？",
+      "status_column": "bool_17",
+      "actual_column": "string17",
+      "remark_column": "remark17",
+      "reference_limit": "(50~120ml/min)"
+    },
+    {
+      "label": "7.PMT光电倍增管高压是否正常？",
+      "status_column": "bool_18",
+      "actual_column": "string18",
+      "remark_column": "remark18",
+      "reference_limit": "(-500~-900V)"
+    },
+    {
+      "label": "8.NO Bkg（截距）是否正常？",
+      "status_column": "bool_19",
+      "actual_column": "string19",
+      "remark_column": "remark19",
+      "reference_limit": "(-50~50ppb)"
+    },
+    {
+      "label": "9.NOX Bkg（截距）是否正常？",
+      "status_column": "bool_20",
+      "actual_column": "string20",
+      "remark_column": "remark20",
+      "reference_limit": "(-50~50ppb"
+    },
+    {
+      "label": "10.NO Coef（斜率）是否正常？",
+      "status_column": "bool_21",
+      "actual_column": "string21",
+      "remark_column": "remark21",
+      "reference_limit": "(0.5~2)"
+    },
+    {
+      "label": "11.NOX Coef（斜率）是否正常？",
+      "status_column": "bool_22",
+      "actual_column": "string22",
+      "remark_column": "remark22",
+      "reference_limit": "(0.5~2)"
+    },
+    {
+      "label": "12.仪器散热风扇运转是否正常？",
+      "status_column": "bool_23",
+      "actual_column": "string23",
+      "remark_column": "remark23",
+      "reference_limit": ""
+    },
+    {
+      "label": "13.47mm颗粒物滤纸是否干净？",
+      "status_column": "bool_24",
+      "actual_column": "string24",
+      "remark_column": "remark24",
+      "reference_limit": ""
+    },
+    {
+      "label": "14.干燥剂是否有效？",
+      "status_column": "bool_25",
+      "actual_column": "string25",
+      "remark_column": "remark25",
+      "reference_limit": ""
+    },
+    {
+      "label": "15.散热风扇滤网是否干净？",
+      "status_column": "bool_26",
+      "actual_column": "string26",
+      "remark_column": "remark26",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.反应室基座Bench温度是否正常？",
+      "status_column": "bool_27",
+      "actual_column": "string27",
+      "remark_column": "remark27",
+      "reference_limit": "(45~55℃)"
+    },
+    {
+      "label": "2.采样压力Pressure是否正常？",
+      "status_column": "bool_28",
+      "actual_column": "string28",
+      "remark_column": "remark28",
+      "reference_limit": "(50~105kpa)"
+    },
+    {
+      "label": "3.采样Sample流量是否正常？",
+      "status_column": "bool_29",
+      "actual_column": "string29",
+      "remark_column": "remark29",
+      "reference_limit": "(400~1500ml/min)"
+    },
+    {
+      "label": "4.测量电压是否正常？",
+      "status_column": "bool_30",
+      "actual_column": "string30",
+      "remark_column": "remark30",
+      "reference_limit": "(2000~10000mv)"
+    },
+    {
+      "label": "5.参比电压是否正常？",
+      "status_column": "bool_31",
+      "actual_column": "string31",
+      "remark_column": "remark31",
+      "reference_limit": "(2000~10000mv)"
+    },
+    {
+      "label": "6.仪器斜率SLOPE是否正常？",
+      "status_column": "bool_32",
+      "actual_column": "string32",
+      "remark_column": "remark32",
+      "reference_limit": "(0.5~2)"
+    },
+    {
+      "label": "7.仪器截距OFFSET是否正常？",
+      "status_column": "bool_33",
+      "actual_column": "string33",
+      "remark_column": "remark33",
+      "reference_limit": "(-5~5ppm)"
+    },
+    {
+      "label": "8.仪器散热风扇运转是否正常？",
+      "status_column": "bool_34",
+      "actual_column": "string34",
+      "remark_column": "remark34",
+      "reference_limit": ""
+    },
+    {
+      "label": "9.47mm颗粒物滤纸是否干净？",
+      "status_column": "bool_35",
+      "actual_column": "string35",
+      "remark_column": "remark35",
+      "reference_limit": ""
+    },
+    {
+      "label": "10.散热风扇滤网是否干净？",
+      "status_column": "bool_36",
+      "actual_column": "string36",
+      "remark_column": "remark36",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.反应室基座Bench温度是否正常？",
+      "status_column": "bool_37",
+      "actual_column": "string37",
+      "remark_column": "remark37",
+      "reference_limit": "(20~60℃)"
+    },
+    {
+      "label": "2.采样压力Pressure是否正常？",
+      "status_column": "bool_38",
+      "actual_column": "string38",
+      "remark_column": "remark38",
+      "reference_limit": "(50~105kpa)"
+    },
+    {
+      "label": "3.采样流量Flow是否正常？",
+      "status_column": "bool_39",
+      "actual_column": "string39",
+      "remark_column": "remark39",
+      "reference_limit": "(300~1500ml/min)"
+    },
+    {
+      "label": "4.测量电压是否正常？",
+      "status_column": "bool_40",
+      "actual_column": "string40",
+      "remark_column": "remark40",
+      "reference_limit": "(300~6500mv)"
+    },
+    {
+      "label": "5.参比电压是否正常？",
+      "status_column": "bool_41",
+      "actual_column": "string41",
+      "remark_column": "remark41",
+      "reference_limit": "(300~6500mv)"
+    },
+    {
+      "label": "6.仪器斜率SLOPE是否正常？",
+      "status_column": "bool_42",
+      "actual_column": "string42",
+      "remark_column": "remark42",
+      "reference_limit": "(0.5~2)"
+    },
+    {
+      "label": "7.仪器截距OFFSET是否正常？",
+      "status_column": "bool_43",
+      "actual_column": "string43",
+      "remark_column": "remark43",
+      "reference_limit": "(-50~50ppb)"
+    },
+    {
+      "label": "8.仪器散热风扇运转是否正常？",
+      "status_column": "bool_44",
+      "actual_column": "string44",
+      "remark_column": "remark44",
+      "reference_limit": ""
+    },
+    {
+      "label": "9.47mm颗粒物滤纸是否干净？",
+      "status_column": "bool_45",
+      "actual_column": "string45",
+      "remark_column": "remark45",
+      "reference_limit": ""
+    },
+    {
+      "label": "10.散热风扇滤网是否干净？",
+      "status_column": "bool_46",
+      "actual_column": "string46",
+      "remark_column": "remark46",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.采样时流量是否正常？",
+      "status_column": "bool_47",
+      "actual_column": "string47",
+      "remark_column": "remark47",
+      "reference_limit": "16.7±5%L/min"
+    },
+    {
+      "label": "2.采样斑点是否正常无残缺？",
+      "status_column": "bool_48",
+      "actual_column": "string48",
+      "remark_column": "remark48",
+      "reference_limit": ""
+    },
+    {
+      "label": "3.滤带是否正常无穿孔现象？",
+      "status_column": "bool_49",
+      "actual_column": "string49",
+      "remark_column": "remark49",
+      "reference_limit": ""
+    },
+    {
+      "label": "4.系统是否正常无错误报告？",
+      "status_column": "bool_50",
+      "actual_column": "string50",
+      "remark_column": "remark50",
+      "reference_limit": ""
+    },
+    {
+      "label": "5.是否清洁切割头？",
+      "status_column": "bool_51",
+      "actual_column": "string51",
+      "remark_column": "remark51",
+      "reference_limit": ""
+    },
+    {
+      "label": "6.温度传感器读值与气象温度偏差是否小于±2℃？",
+      "status_column": "bool_52",
+      "actual_column": "string52",
+      "remark_column": "remark52",
+      "reference_limit": "气象温度值：35.6"
+    },
+    {
+      "label": "7.湿度传感器读值与气象湿度偏差是否小于±5",
+      "status_column": "bool_53",
+      "actual_column": "string53",
+      "remark_column": "remark53",
+      "reference_limit": "气象湿度值：63.2"
+    },
+    {
+      "label": "8.压力传感器读值与气象压力偏差是否小于±10hPa？",
+      "status_column": "bool_54",
+      "actual_column": "string54",
+      "remark_column": "remark54",
+      "reference_limit": "气象压力值：999.0"
+    },
+    {
+      "label": "9.膜值是否正常？（测量值与设定值偏差小于±2%）",
+      "status_column": "bool_55",
+      "actual_column": "string55",
+      "remark_column": "remark55",
+      "reference_limit": "膜片设定值：1124"
+    },
+    {
+      "label": "10.加热湿度补偿设置？",
+      "status_column": "bool_56",
+      "actual_column": "string56",
+      "remark_column": "remark56",
+      "reference_limit": ""
+    },
+    {
+      "label": "11.加热温度补偿设置？",
+      "status_column": "bool_57",
+      "actual_column": "string57",
+      "remark_column": "",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.采样时流量是否正常？",
+      "status_column": "bool_57",
+      "actual_column": "string57",
+      "remark_column": "remark57",
+      "reference_limit": "16.7±5%L/min"
+    },
+    {
+      "label": "2.采样斑点是否正常无残缺？",
+      "status_column": "bool_58",
+      "actual_column": "string58",
+      "remark_column": "remark58",
+      "reference_limit": ""
+    },
+    {
+      "label": "3.滤带是否正常无穿孔现象？",
+      "status_column": "bool_59",
+      "actual_column": "string59",
+      "remark_column": "remark59",
+      "reference_limit": ""
+    },
+    {
+      "label": "4.系统是否正常无错误报告？",
+      "status_column": "bool_60",
+      "actual_column": "string60",
+      "remark_column": "remark60",
+      "reference_limit": ""
+    },
+    {
+      "label": "5.是否清洁切割头？",
+      "status_column": "bool_61",
+      "actual_column": "string61",
+      "remark_column": "remark61",
+      "reference_limit": ""
+    },
+    {
+      "label": "6.温度传感器读值与气象温度偏差是否小于±2℃？",
+      "status_column": "bool_62",
+      "actual_column": "string62",
+      "remark_column": "remark62",
+      "reference_limit": "气象温度值：35.6"
+    },
+    {
+      "label": "7.湿度传感器读值与气象湿度偏差是否小于±5",
+      "status_column": "bool_63",
+      "actual_column": "string63",
+      "remark_column": "remark63",
+      "reference_limit": "气象湿度值：63.2"
+    },
+    {
+      "label": "8.压力传感器读值与气象压力偏差是否小于±10hPa？",
+      "status_column": "bool_64",
+      "actual_column": "string64",
+      "remark_column": "remark64",
+      "reference_limit": "气象压力值：999.0"
+    },
+    {
+      "label": "9.膜值是否正常？（测量值与设定值偏差小于±2%）",
+      "status_column": "bool_65",
+      "actual_column": "string65",
+      "remark_column": "remark65",
+      "reference_limit": "膜片设定值：1124"
+    },
+    {
+      "label": "10.加热湿度补偿设置？",
+      "status_column": "bool_66",
+      "actual_column": "string66",
+      "remark_column": "remark66",
+      "reference_limit": ""
+    },
+    {
+      "label": "11.加热温度补偿设置？",
+      "status_column": "bool_67",
+      "actual_column": "string67",
+      "remark_column": "",
+      "reference_limit": ""
+    },
+    {
+      "label": "1.稀释气体MFC流量控制稳定正常？",
+      "status_column": "bool_67",
+      "actual_column": "string67",
+      "remark_column": "remark67",
+      "reference_limit": ""
+    },
+    {
+      "label": "2.标准气体MFC流量控制稳定正常？",
+      "status_column": "bool_68",
+      "actual_column": "string68",
+      "remark_column": "remark68",
+      "reference_limit": ""
+    },
+    {
+      "label": "3.臭氧稀释气体MFC流量控制稳定正常？",
+      "status_column": "bool_69",
+      "actual_column": "string69",
+      "remark_column": "remark69",
+      "reference_limit": ""
+    },
+    {
+      "label": "4.臭氧发生器强度是否正常？",
+      "status_column": "bool_70",
+      "actual_column": "string70",
+      "remark_column": "remark70",
+      "reference_limit": "（400ppb/5LPM)"
+    },
+    {
+      "label": "5.臭氧发生器温度是否正常？",
+      "status_column": "bool_71",
+      "actual_column": "string71",
+      "remark_column": "remark71",
+      "reference_limit": "(60~80°）"
+    },
+    {
+      "label": "6.臭氧光度计灯管温度是否正常？",
+      "status_column": "bool_72",
+      "actual_column": "string72",
+      "remark_column": "remark72",
+      "reference_limit": "(50~60°）"
+    },
+    {
+      "label": "7.臭氧光度计采样流量是否正常？",
+      "status_column": "bool_73",
+      "actual_column": "string73",
+      "remark_column": "remark73",
+      "reference_limit": "气象湿度值：63.2"
+    },
+    {
+      "label": "8.零气发生器供给压力是否正常？",
+      "status_column": "bool_74",
+      "actual_column": "string74",
+      "remark_column": "remark74",
+      "reference_limit": "(25~40PSI）"
+    },
+    {
+      "label": "9.零气发生器触媒氧化炉温度是否正常？",
+      "status_column": "bool_75",
+      "actual_column": "string75",
+      "remark_column": "remark75",
+      "reference_limit": "（375°C）"
+    },
+    {
+      "label": "10.零气体泄水功能是否正常？",
+      "status_column": "bool_76",
+      "actual_column": "string76",
+      "remark_column": "remark76",
+      "reference_limit": ""
+    }
+  ],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "检查时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "日期",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string150",
+      "label": "质控单位及检查人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string149",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string148",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string147",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string146",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string145",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string144",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string143",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string142",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string141",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string140",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string139",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string138",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string137",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string136",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string135",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string134",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string133",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string132",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string131",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string130",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string129",
+      "label": "修改记录",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_80",
+      "label": "1.其他类别是否正常？",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark77",
+      "label": "1.其他类别是否正常？",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark79",
+      "label": "补充说明",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

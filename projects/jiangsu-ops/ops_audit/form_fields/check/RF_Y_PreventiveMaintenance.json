@@ -1,0 +1,76 @@
+{
+  "component": "RF_Y_PreventiveMaintenance",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Y_PreventiveMaintenance",
+  "source_file": "views/operation/qcform/check/RF_Y_PreventiveMaintenance.vue",
+  "structure": "column_form",
+  "field_count": 8,
+  "labeled_field_count": 8,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Y_PreventiveMaintenance"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "检查时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_1",
+      "label": "二氧化硫(SO2)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_2",
+      "label": "氮氧化物(NO)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_3",
+      "label": "臭氧(O3)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_4",
+      "label": "一氧化碳(CO)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_5",
+      "label": "一氧化碳(CO)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "维护总结",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

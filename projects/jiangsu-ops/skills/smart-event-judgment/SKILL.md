@@ -5,7 +5,7 @@ description: Analyze Jiangsu smart-event clue bundles and evidence packages, def
 
 # 江苏智能事件研判
 
-读取可信任务上下文中的 `payload.evidence_package_path`（或 `evidence_package_path`），用 `read_file` 查看完整证据包，核对事件编号与站点。告警是线索，不是最终事件类型或根因。
+读取可信任务上下文中的 `payload.evidence_package_path`（或 `evidence_package_path`），它指向证据包 `index.json`；先用 `read_file` 读 index，核对事件编号与站点，并据其 `sources.<name>`（status/summary/record_count/metadata）判断需要哪些来源明细，再按需 `read_file` 同目录 `sources/<name>.json` 的 `data` 字段，不要一次性读取全部来源。告警是线索，不是最终事件类型或根因。
 
 证据可得性采用“先取证、再判断”原则：对当前类型相关的来源，先调用已配置的江苏只读接口尝试获取；根据来源的 `success`、`status`、`record_count` 和实际 `data` 区分成功、空结果、失败和未接入。失败、未接入、不可用或确实为空的来源从本次必需证据集合中移除，只记录为非阻断性缺口；不得把缺失来源当作反证，也不得仅因为缺少一个来源就选择“数据异常待研判”。在其余可用证据已经支持某一类型、且没有可用反证时，应完成该类型判断，并在结论中说明未获取来源及其置信度影响。
 

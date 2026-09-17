@@ -1,0 +1,83 @@
+{
+  "component": "QT_StationPowerCut",
+  "category": "other",
+  "inferred_rule_item_tag": "QT_StationPowerCut",
+  "source_file": "views/operation/qcform/QTWorkOrder/QT_StationPowerCut.vue",
+  "structure": "column_form",
+  "field_count": 9,
+  "labeled_field_count": 9,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string1",
+    "string9"
+  ],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "PowerCut",
+      "type_code": "RF_TW_PmFlowCalibratePM25"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "故障类型",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "工单来源",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "故障开始时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "故障结束时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "时间跨度（H）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "故障",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "故障设备类型",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "运维人员",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "证明来源",
+      "type": "string",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,0 +1,1716 @@
+{
+  "component": "SEC_CheckScoreCnemc",
+  "category": "check",
+  "inferred_rule_item_tag": "SEC_CheckScoreCnemc",
+  "source_file": "views/operation/qcform/check/SEC_CheckScoreCnemc.vue",
+  "structure": "column_form",
+  "field_count": 241,
+  "labeled_field_count": 241,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string51",
+    "remark1",
+    "string52",
+    "remark2",
+    "string53",
+    "remark3",
+    "string54",
+    "remark4",
+    "string55",
+    "remark5",
+    "string56",
+    "remark6",
+    "string57",
+    "remark7",
+    "string58",
+    "remark8",
+    "string59",
+    "remark9",
+    "string60",
+    "remark10",
+    "string61",
+    "remark11",
+    "string62",
+    "remark12",
+    "string63",
+    "remark13",
+    "string64",
+    "remark14",
+    "string65",
+    "remark15",
+    "string100",
+    "string101",
+    "string102",
+    "string103",
+    "string104",
+    "string105",
+    "string106",
+    "string107",
+    "string108",
+    "string109",
+    "string110",
+    "string111",
+    "string112",
+    "string113",
+    "string114",
+    "string115",
+    "string66",
+    "remark16",
+    "string116",
+    "string117",
+    "string118",
+    "string119",
+    "string120",
+    "string121",
+    "string122",
+    "string123",
+    "string124",
+    "string125",
+    "string126",
+    "string127",
+    "string128",
+    "string129",
+    "string130",
+    "string131",
+    "string132",
+    "string67",
+    "remark17",
+    "string133",
+    "string134",
+    "string135",
+    "string136",
+    "string137",
+    "string138",
+    "string139",
+    "string140",
+    "string141",
+    "string142",
+    "string143",
+    "string144",
+    "string145",
+    "string146",
+    "string147",
+    "string148",
+    "string149",
+    "string150",
+    "string68",
+    "remark18",
+    "string151",
+    "string152",
+    "string153",
+    "string154",
+    "string155",
+    "string156",
+    "string157",
+    "string158",
+    "string159",
+    "string160",
+    "string161",
+    "string162",
+    "string163",
+    "string164",
+    "string165",
+    "string166",
+    "string167",
+    "string69",
+    "remark19",
+    "string168",
+    "string169",
+    "string170",
+    "string171",
+    "string172",
+    "string173",
+    "string174",
+    "string175",
+    "string176",
+    "string177",
+    "string178",
+    "string179",
+    "string180",
+    "string181",
+    "string182",
+    "string183",
+    "string184",
+    "string185",
+    "string186",
+    "string187",
+    "string70",
+    "remark20",
+    "string188",
+    "string189",
+    "string190",
+    "string191",
+    "string192",
+    "string193",
+    "string194",
+    "string195",
+    "string196",
+    "string197",
+    "string198",
+    "string199",
+    "string200",
+    "string71",
+    "remark21",
+    "string201",
+    "string202",
+    "string203",
+    "string204",
+    "string205",
+    "string206",
+    "string207",
+    "string208",
+    "string209",
+    "string210",
+    "string211",
+    "string212",
+    "string213",
+    "string72",
+    "remark22",
+    "string214",
+    "string215",
+    "string216",
+    "string217",
+    "string218",
+    "string219",
+    "string220",
+    "string221",
+    "string222",
+    "string223",
+    "string73",
+    "remark23",
+    "string86",
+    "remark38",
+    "string74",
+    "remark24",
+    "string75",
+    "remark25",
+    "string76",
+    "remark26",
+    "string77",
+    "remark27",
+    "string224",
+    "string78",
+    "remark28",
+    "string225",
+    "string226",
+    "string79",
+    "remark29",
+    "string80",
+    "remark30",
+    "string31",
+    "string81",
+    "remark31",
+    "string82",
+    "remark32",
+    "string83",
+    "remark33",
+    "string84",
+    "remark34",
+    "string85",
+    "remark35",
+    "remark36",
+    "remark39",
+    "string87",
+    "string88",
+    "remark37",
+    "string1",
+    "string2",
+    "string3",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "string36",
+    "string37",
+    "string"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "SEC_CheckScoreCnemc"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string51",
+      "label": "a）站房环境是否清洁，是否符合监测要求",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark1",
+      "label": "a）站房环境是否清洁，是否符合监测要求",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "b）站房温度是否控制在25±5℃，相对湿度控制在80%以下",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark2",
+      "label": "b）站房温度是否控制在25±5℃，相对湿度控制在80%以下",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "c）防水、防雷供电是否满足《规范》（注1）要求，是否具备外接电源，其他基础设施是否满足监测要求",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark3",
+      "label": "c）防水、防雷供电是否满足《规范》（注1）要求，是否具备外接电源，其他基础设施是否满足监测要求",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "c）防水、防雷供电是否满足《规范》（注1）要求，是否具备外接电源，其他基础设施是否满足监测要求",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark4",
+      "label": "c）防水、防雷供电是否满足《规范》（注1）要求，是否具备外接电源，其他基础设施是否满足监测要求",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "2.采样系统维护效果(11分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark5",
+      "label": "2.采样系统维护效果(11分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "b）采样系统清洁程度：采样头、采样管道是否清洁，有无积灰、积水或障碍物，采样风机是否正常工作",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark6",
+      "label": "b）采样系统清洁程度：采样头、采样管道是否清洁，有无积灰、积水或障碍物，采样风机是否正常工作",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "c）气态污染物采样支管是否插入采样总管的中心，监测仪器与支管接头连接的管线长度是否小于3m",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark7",
+      "label": "c）气态污染物采样支管是否插入采样总管的中心，监测仪器与支管接头连接的管线长度是否小于3m",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "c）气态污染物采样支管是否插入采样总管的中心，监测仪器与支管接头连接的管线长度是否小于3m",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark8",
+      "label": "c）气态污染物采样支管是否插入采样总管的中心，监测仪器与支管接头连接的管线长度是否小于3m",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "c）气态污染物采样支管是否插入采样总管的中心，监测仪器与支管接头连接的管线长度是否小于3m",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark9",
+      "label": "c）气态污染物采样支管是否插入采样总管的中心，监测仪器与支管接头连接的管线长度是否小于3m",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "a）仪器工作状态是否正常，是否存在或未勾选报警信息",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark10",
+      "label": "a）仪器工作状态是否正常，是否存在或未勾选报警信息",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "b）仪器过滤膜是否及时更换，散热风扇是否及时清洗",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark11",
+      "label": "b）仪器过滤膜是否及时更换，散热风扇是否及时清洗",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "c）颗粒物采样管加热装置是否工作正常",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark12",
+      "label": "c）颗粒物采样管加热装置是否工作正常",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "d）零气发生器相关耗材是否及时更换",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark13",
+      "label": "d）零气发生器相关耗材是否及时更换",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "e）采样泵相关耗材是否及时更换，空压机及时维护，气象五参数是否正常",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark14",
+      "label": "e）采样泵相关耗材是否及时更换，空压机及时维护，气象五参数是否正常",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "f）采样纸带或滤膜是否及时更换",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark15",
+      "label": "f）采样纸带或滤膜是否及时更换",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string101",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string102",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string103",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string104",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string105",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string106",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string107",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string108",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string109",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string110",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string111",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string112",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string113",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string114",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string115",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark16",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string116",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string117",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string118",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string119",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string120",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string121",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string122",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string123",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string124",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string125",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string126",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string127",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string128",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string129",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string130",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string131",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string132",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark17",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string133",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string134",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string135",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string136",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string137",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string138",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string139",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string140",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string141",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string142",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string143",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string144",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string145",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string146",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string147",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string148",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string149",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string150",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark18",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string151",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string152",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string153",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string154",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string155",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string156",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string157",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string158",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string159",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string160",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string161",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string162",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string163",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string164",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string165",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string166",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string167",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark19",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string168",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string169",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string170",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string171",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string172",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string173",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string174",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string175",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string176",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string177",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string178",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string179",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string180",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string181",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string182",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string183",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string184",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string185",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string186",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string187",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark20",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string188",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string189",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string190",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string191",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string192",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string193",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string194",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string195",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string196",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string197",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string198",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string199",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string200",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark21",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string201",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string202",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string203",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string204",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string205",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string206",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string207",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string208",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string209",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string210",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string211",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string212",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string213",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string72",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark22",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string214",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string215",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string216",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string217",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string218",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string219",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string220",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string221",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string222",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string223",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string73",
+      "label": "4.质控控制效果(40分)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark23",
+      "label": "4.质控控制效果(40分)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string86",
+      "label": "5.备机使用和监测项目标识情况（6分）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark38",
+      "label": "5.备机使用和监测项目标识情况（6分）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "能否正常采集数据并上报发布数据",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark24",
+      "label": "能否正常采集数据并上报发布数据",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "运维人员未持有上岗证，扣2分，扣分上限为单项分值。",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark25",
+      "label": "运维人员未持有上岗证，扣2分，扣分上限为单项分值。",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "现场填写的电子版档案记录不规范齐全，每项扣1分，扣分上限为单项分值。",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark26",
+      "label": "现场填写的电子版档案记录不规范齐全，每项扣1分，扣分上限为单项分值。",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string77",
+      "label": "是否按照运维要求完成运维工作",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark27",
+      "label": "是否按照运维要求完成运维工作",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string224",
+      "label": "臭氧传递完成时间",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "臭氧传递完成时间",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark28",
+      "label": "臭氧传递完成时间",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string225",
+      "label": "11.颗粒物手工比对",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string226",
+      "label": "11.颗粒物手工比对",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string79",
+      "label": "本项作为检查内容，现场检查如实记录问题，不作为评分项。",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark29",
+      "label": "本项作为检查内容，现场检查如实记录问题，不作为评分项。",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string80",
+      "label": "本项作为检查内容，现场检查如实记录问题，不作为评分项。",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark30",
+      "label": "本项作为检查内容，现场检查如实记录问题，不作为评分项。",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "对省站要求的运维人员保密规定是否了解",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string81",
+      "label": "对省站要求的运维人员保密规定是否了解",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark31",
+      "label": "对省站要求的运维人员保密规定是否了解",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string82",
+      "label": "站房保障类问题",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark32",
+      "label": "站房保障类问题",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string83",
+      "label": "采样系统类",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark33",
+      "label": "采样系统类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string84",
+      "label": "仪器类",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark34",
+      "label": "仪器类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string85",
+      "label": "其它类",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark35",
+      "label": "其它类",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark36",
+      "label": "总分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark39",
+      "label": "现场检查问题记录",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string87",
+      "label": "运维问题",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string88",
+      "label": "其他问题",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark37",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string1",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string",
+      "label": "备注",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

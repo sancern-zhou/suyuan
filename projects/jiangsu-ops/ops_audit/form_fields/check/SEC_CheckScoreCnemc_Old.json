@@ -1,0 +1,439 @@
+{
+  "component": "SEC_CheckScoreCnemc_Old",
+  "category": "check",
+  "inferred_rule_item_tag": "SEC_CheckScoreCnemc_Old",
+  "source_file": "views/operation/qcform/check/SEC_CheckScoreCnemc_Old.vue",
+  "structure": "column_form",
+  "field_count": 64,
+  "labeled_field_count": 64,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "time2",
+    "time3",
+    "time4",
+    "time5",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "remark"
+  ],
+  "binding_only_columns": [
+    "string5",
+    "string6",
+    "string10",
+    "string11",
+    "remark15",
+    "remark16",
+    "remark17",
+    "remark18",
+    "remark19",
+    "remark20",
+    "remark21",
+    "remark22",
+    "remark23",
+    "remark24",
+    "remark25",
+    "remark26",
+    "remark27"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "SEC_CheckScoreCnemc"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "使用满量程（PPB）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "标气瓶编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "标气瓶浓度（PPM）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "标气瓶压力（Mpa）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "零点-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time3",
+      "label": "零点-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "零点-标准浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "零点-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "零点-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time4",
+      "label": "满量程的80%-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time5",
+      "label": "满量程的80%-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "满量程的80%-标准浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "满量程的80%-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "满量程的80%-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "零点漂移（PPB）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "跨度漂移（%）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "采样流量(试样流量/样气流量/总量)-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "采样流量(试样流量/样气流量/总量)-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "臭氧流量-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark2",
+      "label": "臭氧流量-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "参考PMT信号(光电倍增管测量信号/模拟电压)-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark3",
+      "label": "参考PMT信号(光电倍增管测量信号/模拟电压)-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string20",
+      "label": "高压电源-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark4",
+      "label": "高压电源-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string21",
+      "label": "反应室温度-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark5",
+      "label": "反应室温度-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string22",
+      "label": "转化炉温度-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark6",
+      "label": "转化炉温度-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string23",
+      "label": "反应室压力-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark7",
+      "label": "反应室压力-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string24",
+      "label": "采样压力-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark8",
+      "label": "采样压力-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string25",
+      "label": "NOx斜率-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark9",
+      "label": "NOx斜率-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string26",
+      "label": "NOx截距-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark10",
+      "label": "NOx截距-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string27",
+      "label": "NO斜率-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark11",
+      "label": "NO斜率-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string28",
+      "label": "NO截距-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark12",
+      "label": "NO截距-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string29",
+      "label": "增益-正常范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string30",
+      "label": "增益-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark13",
+      "label": "增益-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string31",
+      "label": "背景-正常范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string32",
+      "label": "背景-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark14",
+      "label": "背景-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "站房需配有温、湿度计",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "温、湿度计具备检定报告",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "供电：仪器用电需配有稳压器",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "各种消防、安全设施是否完好安全、灭火器符合要求",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark15",
+      "label": "有无排气扇",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark16",
+      "label": "有无摄像头刻录机或城市摄影系统",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark17",
+      "label": "站房无Z字扶梯，无防护栏或防护栏且高度不足1.2m；（站房交接报告中无扶梯的不扣分）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark18",
+      "label": "颗粒物采样头、采样管是否完好是否清洁（有否明显积灰），是否及时清除缓冲瓶内积水",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark19",
+      "label": "气态采样总管是否清洁",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark20",
+      "label": "气态采样支管是否清洁",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark21",
+      "label": "采样风机是否正常工作",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark22",
+      "label": "β射线仪器的时钟进行检查，如仪器与数据采集仪连接，同时检查数采仪的时钟（每月）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark23",
+      "label": "清洁β射线仪器的压头及纸带下的垫块（每月）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark24",
+      "label": "每月对采样支管和仪器气路进行气密性检查（按仪器说明书要求）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark25",
+      "label": "采样总管材质不满足要求",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark26",
+      "label": "采样支管材质不满足要求",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark27",
+      "label": "采样支管与采样总管接口材质不满足要求",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

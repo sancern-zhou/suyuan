@@ -1,0 +1,332 @@
+{
+  "component": "RF_W_GaseousCheck_CO",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_GaseousCheck",
+  "source_file": "views/operation/qcform/check/RF_W_GaseousCheck_CO.vue",
+  "structure": "column_form",
+  "field_count": 48,
+  "labeled_field_count": 48,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string27",
+    "string28",
+    "string29",
+    "string30"
+  ],
+  "binding_only_columns": [
+    "time1",
+    "time2",
+    "time3",
+    "time4",
+    "time5"
+  ],
+  "device_columns": [
+    "deviceBrand",
+    "deviceModel",
+    "deviceCode"
+  ],
+  "common_columns": [
+    "isCancel",
+    "deviceId"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_W_GaseousCheck_CO"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "使用满量程（PPB）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "标气瓶编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "标气瓶浓度（PPM）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "标气瓶压力（Mpa）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "零点-开始时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "零点-结束时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "零点-标准浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "零点-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "零点-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "满量程的80%-开始时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "满量程的80%-结束时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "满量程的80%-标准浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "满量程的80%-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "满量程的80%-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "零点漂移（PPB）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "跨度漂移（%）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "测量信号(测量电压)-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "测量信号(测量电压)-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "参比信号-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark2",
+      "label": "参比信号-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "测量信号(参比信号)-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark3",
+      "label": "测量信号(参比信号)-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string20",
+      "label": "采样压力-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark4",
+      "label": "采样压力-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string21",
+      "label": "采样流量-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark5",
+      "label": "采样流量-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string22",
+      "label": "样品温度-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark6",
+      "label": "样品温度-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string23",
+      "label": "光室温度-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark7",
+      "label": "光室温度-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string24",
+      "label": "相关轮温度-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark8",
+      "label": "相关轮温度-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string25",
+      "label": "斜率-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark9",
+      "label": "斜率-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string26",
+      "label": "截距-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark10",
+      "label": "截距-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string27",
+      "label": "增益-正常范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string28",
+      "label": "增益-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark11",
+      "label": "增益-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string29",
+      "label": "背景-正常范围",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string30",
+      "label": "背景-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark12",
+      "label": "背景-异常时处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "检查日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "零点",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time3",
+      "label": "零点",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time4",
+      "label": "满量程的80%",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time5",
+      "label": "满量程的80%",
+      "type": "time",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

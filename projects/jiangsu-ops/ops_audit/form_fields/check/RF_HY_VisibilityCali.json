@@ -1,0 +1,131 @@
+{
+  "component": "RF_HY_VisibilityCali",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_HY_VisibilityCali",
+  "source_file": "views/operation/qcform/check/RF_HY_VisibilityCali.vue",
+  "structure": "column_form",
+  "field_count": 17,
+  "labeled_field_count": 17,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [
+    "deviceModel",
+    "deviceCode"
+  ],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_HY_VisibilityCali"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "校准日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "环境-温度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "环境-湿度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "环境-大气压力",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "环境-当前能见度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "环境-其他",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "校准设备-型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "校准设备-消光系数",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "校准设备-不确定性",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "标准校验-零点-校验结果",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "标准校验-零点-校验要求",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "标准校验-零点-是否合格",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "标准校验-标点-校验结果",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "标准校验-标点-校验要求",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "标准校验-标点-是否合格",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "校验结论",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

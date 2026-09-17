@@ -1,0 +1,350 @@
+{
+  "component": "RF_W_GaseousCheck_SO2",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_GaseousCheck",
+  "source_file": "views/operation/qcform/check/RF_W_GaseousCheck_SO2.vue",
+  "structure": "column_form",
+  "field_count": 46,
+  "labeled_field_count": 46,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string1",
+    "string2",
+    "string4",
+    "string9",
+    "string10"
+  ],
+  "binding_only_columns": [
+    "time2",
+    "time3",
+    "string11",
+    "string12",
+    "string13",
+    "time4",
+    "time5",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "remark1",
+    "string23",
+    "remark2",
+    "string25",
+    "remark3",
+    "string27",
+    "remark4",
+    "string29",
+    "remark5",
+    "string31",
+    "remark6",
+    "string33",
+    "remark7",
+    "string35",
+    "remark8",
+    "string37",
+    "string38",
+    "remark9",
+    "string40",
+    "string41",
+    "remark10"
+  ],
+  "device_columns": [
+    "deviceBrand",
+    "deviceModel",
+    "deviceCode"
+  ],
+  "common_columns": [
+    "isCancel",
+    "deviceId"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_W_GaseousCheck_SO2"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "仪器编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "检查日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "标准膜检查-原始值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "标准膜检查-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "标准膜检查-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "标准膜检查-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "K0值检查-原始值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "K0值检查-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "K0值检查-误差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "K0值检查-异常时处理记录",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "异常情况",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "零点",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time3",
+      "label": "零点",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "零点",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "零点",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "零点",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time4",
+      "label": "满量程的80%",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time5",
+      "label": "满量程的80%",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "满量程的80%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "满量程的80%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "满量程的80%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "零点漂移（PPB）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "跨度漂移（%）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "采样压力 （样气压力）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark1",
+      "label": "采样压力 （样气压力）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "室采样流量 （样气流量）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark2",
+      "label": "室采样流量 （样气流量）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "参考PMT信号 （或模拟电/PMT通零状态）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark3",
+      "label": "参考PMT信号 （或模拟电/PMT通零状态）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "紫外灯光强 （紫外灯参比电压/紫外灯信号/锌灯电压/光强）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark4",
+      "label": "紫外灯光强 （紫外灯参比电压/紫外灯信号/锌灯电压/光强）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "斜率",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark5",
+      "label": "斜率",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "截距",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark6",
+      "label": "截距",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "高压电源 （倍增管高压）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark7",
+      "label": "高压电源 （倍增管高压）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "反应室温度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark8",
+      "label": "反应室温度",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "增益",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "增益",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark9",
+      "label": "增益",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "背景",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "背景",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark10",
+      "label": "背景",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

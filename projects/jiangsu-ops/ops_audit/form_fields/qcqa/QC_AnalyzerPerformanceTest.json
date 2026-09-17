@@ -1,0 +1,805 @@
+{
+  "component": "QC_AnalyzerPerformanceTest",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QC_AnalyzerPerformanceTest",
+  "source_file": "views/operation/qcform/qcqa/QC_AnalyzerPerformanceTest.vue",
+  "structure": "column_form",
+  "field_count": 111,
+  "labeled_field_count": 111,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "time1",
+    "bool_3",
+    "bool_4",
+    "bool_5",
+    "remark"
+  ],
+  "binding_only_columns": [
+    "string149",
+    "string150",
+    "string100",
+    "string101",
+    "string102",
+    "string103",
+    "string104",
+    "string105",
+    "string1",
+    "string4",
+    "string5",
+    "string6",
+    "remark4",
+    "remark1",
+    "string7",
+    "string8",
+    "string10",
+    "string11",
+    "string12",
+    "remark5",
+    "string13",
+    "string14",
+    "string16",
+    "string17",
+    "string18",
+    "remark6",
+    "string19",
+    "string20",
+    "string22",
+    "string23",
+    "string24",
+    "remark7",
+    "string26",
+    "string27",
+    "remark8",
+    "string29",
+    "string30",
+    "remark9",
+    "string32",
+    "string33",
+    "remark10",
+    "string35",
+    "string36",
+    "remark11",
+    "string37",
+    "remark12",
+    "string38",
+    "remark13",
+    "string39",
+    "remark14",
+    "string40",
+    "remark15",
+    "string106",
+    "string107",
+    "string108",
+    "string109",
+    "string110",
+    "string111",
+    "string112",
+    "string113",
+    "string114",
+    "string115",
+    "string116",
+    "string117",
+    "string118",
+    "string119",
+    "string41",
+    "string42",
+    "string71",
+    "remark16",
+    "string43",
+    "string44",
+    "string72",
+    "remark17",
+    "string45",
+    "string46",
+    "string47",
+    "string48",
+    "remark18",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "remark19",
+    "string53",
+    "string54",
+    "string55",
+    "string56",
+    "string57",
+    "string58",
+    "string59",
+    "string60",
+    "remark20",
+    "string61",
+    "string62",
+    "string63",
+    "string64",
+    "string65",
+    "string66",
+    "string67",
+    "string68",
+    "remark21",
+    "string69",
+    "string70"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "QualityControl",
+      "type_code": "QC_AnalyzerPerformanceTest"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "检查时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_1",
+      "label": "二氧化硫(SO2)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_2",
+      "label": "氮氧化物(NO)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_3",
+      "label": "臭氧(O3)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_4",
+      "label": "一氧化碳(CO)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_5",
+      "label": "一氧化碳(CO)分析仪",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string149",
+      "label": "日期",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string150",
+      "label": "质控单位及检查人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "BIOS-510-L",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string101",
+      "label": "BIOS-510-L",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string102",
+      "label": "BIOS-510-L",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string103",
+      "label": "BIOS-510-H",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string104",
+      "label": "BIOS-510-H",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string105",
+      "label": "BIOS-510-H",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string1",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark4",
+      "label": "SO2",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark1",
+      "label": "SO2",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark5",
+      "label": "NO",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark6",
+      "label": "O3",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark7",
+      "label": "CO",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark8",
+      "label": "SO2",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark9",
+      "label": "NO",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark10",
+      "label": "O3",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark11",
+      "label": "CO",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "SO2",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark12",
+      "label": "SO2",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "NO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark13",
+      "label": "NO",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "O3",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark14",
+      "label": "O3",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "CO",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark15",
+      "label": "CO",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string106",
+      "label": "零气（AIR）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string107",
+      "label": "零气（AIR）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string108",
+      "label": "零气（AIR）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string109",
+      "label": "零气（AIR）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string110",
+      "label": "零气（AIR）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string111",
+      "label": "零气（AIR）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string112",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string113",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string114",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string115",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string116",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string117",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string118",
+      "label": "标气（GAS）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string119",
+      "label": "大气压力（hpa）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark16",
+      "label": "PM10",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string72",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark17",
+      "label": "PM2.5",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "室外温度(°C)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "室外压力(hPa)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "仪器温度(°C)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "压力(hPa)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark18",
+      "label": "压力(hPa)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "室外温度(°C)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "室外压力(hPa)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "仪器温度(°C)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "压力(hPa)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark19",
+      "label": "压力(hPa)",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "PM10",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark20",
+      "label": "PM10",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "PM2.5",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark21",
+      "label": "PM2.5",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "检查人员签字",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "业主代表签字",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

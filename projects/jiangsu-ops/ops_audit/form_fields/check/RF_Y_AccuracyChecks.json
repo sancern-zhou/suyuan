@@ -1,0 +1,338 @@
+{
+  "component": "RF_Y_AccuracyChecks",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Y_AccuracyChecks",
+  "source_file": "views/operation/qcform/check/RF_Y_AccuracyChecks.vue",
+  "structure": "column_form",
+  "field_count": 51,
+  "labeled_field_count": 51,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [
+    "deviceCode"
+  ],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Q_GaseousMultipoint"
+    },
+    {
+      "function_code": "Check",
+      "type_code": "RF_Y_AccuracyChecks"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器名称",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "校准日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "使用量程",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "校准器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "校准器编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "零气源型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "零气源编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "标气瓶编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "标气瓶浓度（PPM）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "标气瓶有效期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time3",
+      "label": "零点-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time4",
+      "label": "零点-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "零点-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "零点-响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "零点-备用记录1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "零点-备用记录2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time5",
+      "label": "满量程10%-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time6",
+      "label": "满量程10%-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "满量程10%-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "满量程10%-响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "满量程10%-备用记录1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "满量程10%-备用记录2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time7",
+      "label": "满量程20%-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time8",
+      "label": "满量程20%-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "满量程20%-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "满量程20%-响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "满量程20%-备用记录1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string20",
+      "label": "满量程20%-备用记录2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time9",
+      "label": "满量程40%-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time10",
+      "label": "满量程40%-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string21",
+      "label": "满量程40%-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string22",
+      "label": "满量程40%-响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string23",
+      "label": "满量程40%-备用记录1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string24",
+      "label": "满量程40%-备用记录2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time11",
+      "label": "满量程60%-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time12",
+      "label": "满量程60%-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string25",
+      "label": "满量程60%-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string26",
+      "label": "满量程60%-响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string27",
+      "label": "满量程60%-备用记录1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string28",
+      "label": "满量程60%-备用记录2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time13",
+      "label": "满量程80%-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time14",
+      "label": "满量程80%-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string29",
+      "label": "满量程80%-标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string30",
+      "label": "满量程80%-响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string31",
+      "label": "满量程80%-备用记录1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string32",
+      "label": "满量程80%-备用记录2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string33",
+      "label": "多点线性校准结果-斜率b",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string34",
+      "label": "多点线性校准结果-截距a",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string35",
+      "label": "多点线性校准结果-相关系数r",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string36",
+      "label": "校准结果",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,0 +1,353 @@
+{
+  "component": "Calibration_PM10",
+  "category": "calibrating",
+  "inferred_rule_item_tag": "Calibration",
+  "source_file": "views/operation/qcform/calibrating/Calibration_PM10.vue",
+  "structure": "column_form",
+  "field_count": 47,
+  "labeled_field_count": 47,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "time1",
+    "time2",
+    "time3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "bool_1",
+    "bool_2",
+    "string10",
+    "string11",
+    "string12",
+    "bool_3",
+    "bool_4",
+    "string13",
+    "string14",
+    "bool_5",
+    "string15",
+    "bool_6",
+    "string16",
+    "bool_7",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "bool_8",
+    "string34",
+    "bool_9",
+    "string35",
+    "string36",
+    "string37",
+    "bool_10"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "校准日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "时间",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "time3",
+      "label": "时间",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "监测仪器类型",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "流量计型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "流量计编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "结论",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "结论",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "结论",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_1",
+      "label": "结论",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_2",
+      "label": "结论",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "结论",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "结论",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "结论",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_3",
+      "label": "结论",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_4",
+      "label": "结论",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "Measured（测量结果）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "Measured（测量结果）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_5",
+      "label": "检漏结论",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_6",
+      "label": "操作",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "总流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_7",
+      "label": "操作",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "总流量-主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "主流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "总流量",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_8",
+      "label": "流量校准结论",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "Percent difference（%）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_9",
+      "label": "Percent difference（%）",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "Percent difference（%）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "Percent difference（%）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "Percent difference（%）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_10",
+      "label": "审核结论（常数误差Percent difference≤2%）",
+      "type": "boolean",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

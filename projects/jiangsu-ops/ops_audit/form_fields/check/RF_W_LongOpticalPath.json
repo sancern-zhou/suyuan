@@ -1,0 +1,175 @@
+{
+  "component": "RF_W_LongOpticalPath",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_LongOpticalPath",
+  "source_file": "views/operation/qcform/check/RF_W_LongOpticalPath.vue",
+  "structure": "column_form",
+  "field_count": 23,
+  "labeled_field_count": 23,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string1",
+    "string5"
+  ],
+  "binding_only_columns": [
+    "time11",
+    "bool_1"
+  ],
+  "device_columns": [
+    "deviceModel",
+    "deviceCode"
+  ],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_W_LongOpticalPath"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器校准",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "光路光强-检查值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "光路光强-异常处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "光谱采样的稳定性-是否通过",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "光谱定位的准确性-是否通过",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark2",
+      "label": "光谱采样的稳定性-异常处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark3",
+      "label": "光谱定位的准确性-异常处理记录",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "是否为蓝盾没备",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "零点校准-SO2-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "零点校准-SO2-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "零点校准-SO2-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "零点校准-SO2-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time3",
+      "label": "零点校准-NO2-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time4",
+      "label": "零点校准-NO2-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "零点校准-NO2-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "零点校准-NO2-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time5",
+      "label": "零点校准-O3-开始时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time6",
+      "label": "零点校准-O3-结束时间",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "零点校准-O3-显示响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "零点校准-O3-标定响应值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "time11",
+      "label": "检查时间",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "bool_1",
+      "label": "是否为蓝盾没备",
+      "type": "boolean",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

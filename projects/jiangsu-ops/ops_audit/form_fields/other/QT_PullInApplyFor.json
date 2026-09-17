@@ -1,0 +1,62 @@
+{
+  "component": "QT_PullInApplyFor",
+  "category": "other",
+  "inferred_rule_item_tag": "QT_PullInApplyFor",
+  "source_file": "views/operation/qcform/QTWorkOrder/QT_PullInApplyFor.vue",
+  "structure": "column_form",
+  "field_count": 6,
+  "labeled_field_count": 6,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "ApplyFor",
+      "type_code": "RF_TW_PmFlowCalibratePM25"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "工单来源",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "进入站点时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "离开站点时间",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "时间跨度（H）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "运维人员",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "外来人员情况说明",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

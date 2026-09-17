@@ -2,6 +2,7 @@ schema_version: 1
 project: jiangsu-ops
 modules:
   - legacy
+  - demo
 frontend:
   theme: default
   brand_name: 江苏省运维审核管理服务平台
@@ -197,6 +198,18 @@ backend:
     - jiangsu_fetch_qc_task_status
     - jiangsu_fetch_qc_run_logs
     - jiangsu_fetch_qc_monitoring_curve
+    # 非故障例行工单审核（真实平台接口）。
+    - jiangsu_ops_audit_fetch_dataset
+    - jiangsu_ops_audit_run_rules
+    # 运维监管场景演示数据工具（2026-08 预设数据集，非真实接口）。
+    - jiangsu_demo_operation_plans
+    - jiangsu_demo_attendance_signins
+    - jiangsu_demo_personnel_certificates
+    - jiangsu_demo_performance_two_rates
+    - jiangsu_demo_qc_pass_rate_stats
+    - jiangsu_demo_operation_approvals
+    - jiangsu_demo_door_remote_open_logs
+    - jiangsu_demo_standard_materials
   # 江苏项目按模式向工单审核、故障诊断和其他运维智能体暴露经评审的工具。
   # 该白名单同时用于提示词和函数 schema；新增工具必须经过项目评审后加入。
   agent_mode_tools:
@@ -230,6 +243,8 @@ backend:
     smart_event_instrument:
       - read_file
       - jiangsu_smart_event_workspace
+      - jiangsu_fetch_fault_work_orders
+      - jiangsu_fetch_fault_work_order_detail
       - jiangsu_prepare_fault_work_order
       - submit_task_review
     # 知识问答以授权知识库为主，允许读取已注册的会话资源，并按需联网补充。
@@ -365,6 +380,12 @@ backend:
       - jiangsu_fetch_qc_task_status
       - jiangsu_fetch_qc_run_logs
       - jiangsu_fetch_qc_monitoring_curve
+      # 非故障例行工单审核（真实平台接口）。
+      - jiangsu_ops_audit_fetch_dataset
+      - jiangsu_ops_audit_run_rules
+      # 技能发现与阅读：加载例行工单审核技能。
+      - list_skills
+      - view_skill
       - submit_task_review
       - create_report_package
       - publish_report
@@ -388,15 +409,45 @@ backend:
       - jiangsu_fetch_station_alarm_logs
       - jiangsu_fetch_station_environment_history
       - jiangsu_fetch_station_directory
+      # 质控历史为只读查询；状态接口会同步驱动右侧质控详情面板。
+      - jiangsu_fetch_qc_task_history
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_qc_monitoring_curve
       - knowledge_graph_query
     # 分析到站记录和空间台账，不能替代工单、告警处置等确定性流程约束。
     operations_analysis:
       - read_file
       - edit_file
       - write_file
+      # 技能发现与阅读：加载日常监管/风险监管两份场景 Skill。
+      - list_skills
+      - view_skill
       - jiangsu_query_operations_graph
       - jiangsu_fetch_attendance_records
       - jiangsu_fetch_station_directory
+      - jiangsu_fetch_fault_work_orders
+      - jiangsu_fetch_fault_work_order_detail
+      - jiangsu_fetch_alarm_records
+      - jiangsu_fetch_station_alarm_logs
+      - jiangsu_fetch_station_data
+      - jiangsu_analyze_work_order_tracks
+      # 运维监管场景演示数据工具（2026-08 预设数据集）。
+      - jiangsu_demo_operation_plans
+      - jiangsu_demo_attendance_signins
+      - jiangsu_demo_personnel_certificates
+      - jiangsu_demo_performance_two_rates
+      - jiangsu_demo_qc_pass_rate_stats
+      - jiangsu_demo_operation_approvals
+      - jiangsu_demo_door_remote_open_logs
+      - jiangsu_demo_standard_materials
+      # 报告出具链路。
+      - create_report_chart
+      - execute_python
+      - create_report_package
+      - render_report_package
+      - validate_report_package
+      - publish_report
       - knowledge_graph_query
     # 设备反控仅允许固定指令集。所有执行动作必须先生成待确认指令，再由用户明确确认。
     device_control:
@@ -407,6 +458,11 @@ backend:
       - jiangsu_prepare_device_control
       - jiangsu_execute_device_control
       - jiangsu_fetch_station_directory
+      # 质控历史为只读查询；状态接口会同步驱动右侧质控详情面板。
+      - jiangsu_fetch_qc_task_history
+      - jiangsu_fetch_qc_task_status
+      - jiangsu_fetch_qc_run_logs
+      - jiangsu_fetch_qc_monitoring_curve
       - jiangsu_query_operations_graph
       - knowledge_graph_query
     station_fault_diagnosis:

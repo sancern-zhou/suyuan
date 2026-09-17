@@ -1,0 +1,487 @@
+{
+  "component": "QA_Meteorological",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_Meteorological",
+  "source_file": "views/operation/qcform/qcqa/QA_Meteorological.vue",
+  "structure": "column_form",
+  "field_count": 66,
+  "labeled_field_count": 66,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "bool_1",
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string119",
+    "string34",
+    "string35",
+    "string36",
+    "string120",
+    "string37",
+    "string38",
+    "string39",
+    "string121",
+    "string40",
+    "string41",
+    "string42",
+    "string122",
+    "string43",
+    "string44",
+    "string45",
+    "string123",
+    "string46",
+    "string47",
+    "string48",
+    "string124",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "remark1",
+    "string125",
+    "string126",
+    "string127"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel",
+    "workingOrderCode"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "bool_1",
+      "label": "传感器架设是否水平,垂直？",
+      "type": "boolean",
+      "label_source": "binding"
+    },
+    {
+      "column": "string1",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "WS（m/s）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "数据采集仪(仪器反应值)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "数据采集仪(仪器反应值)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "数据采集仪(仪器反应值)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "数据采集仪(仪器反应值)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "数据采集仪(仪器反应值)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "数据采集仪(仪器反应值)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string119",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string120",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string121",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string122",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string123",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string124",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "(仪器反应值)RH%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "差值 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "差值 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "差值 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "差值 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "差值 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "差值 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark1",
+      "label": "●备注",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string125",
+      "label": "●备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string126",
+      "label": "●备注",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string127",
+      "label": "●备注",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

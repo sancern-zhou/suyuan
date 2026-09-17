@@ -1,0 +1,116 @@
+{
+  "component": "RF_W_OtherDeviceCheck",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_W_OtherDeviceCheck",
+  "source_file": "views/operation/qcform/check/RF_W_OtherDeviceCheck.vue",
+  "structure": "column_form",
+  "field_count": 13,
+  "labeled_field_count": 13,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "string5",
+    "string6",
+    "string7",
+    "string8"
+  ],
+  "binding_only_columns": [
+    "remark1",
+    "remark2",
+    "remark3",
+    "remark4"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_W_OtherDeviceCheck"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "气象五参数-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "气象五参数-运行状况及处置情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "能见度仪器-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "能见度仪器-运行状况及处置情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "城市摄影系统-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "城市摄影系统-运行状况及处置情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "数采系统软硬件-仪器型号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "数采系统软硬件-运行状况及处置情况",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "异常情况",
+      "type": "remark",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark1",
+      "label": "气象五参数",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark2",
+      "label": "能见度仪器",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark3",
+      "label": "城市摄影系统",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark4",
+      "label": "数采系统软硬件",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,0 +1,70 @@
+{
+  "component": "RF_HY_StationDeviceMaintain",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_HY_StationDeviceMaintain",
+  "source_file": "views/operation/qcform/check/RF_HY_StationDeviceMaintain.vue",
+  "structure": "column_form",
+  "field_count": 7,
+  "labeled_field_count": 7,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "remark"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_HY_StationDeviceMaintain"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "维护时间-检查PM2.5、PM10分析仪相对湿度、温度传感器和动态加热装置是否正常工作",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "维护时间-更换振荡天平法颗粒物分析仪旁路过滤器",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time3",
+      "label": "维护时间-更换零气源争化剂和氧化剂",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "巡检人-检查PM2.5、PM10分析仪相对湿度、温度传感器和动态加热装置是否正常工作",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "巡检人-更换振荡天平法颗粒物分析仪旁路过滤器",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "巡检人-更换零气源争化剂和氧化剂",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "更换零气源净化剂和氧化剂",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

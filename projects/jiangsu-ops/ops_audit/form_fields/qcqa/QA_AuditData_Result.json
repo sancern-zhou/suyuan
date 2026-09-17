@@ -1,0 +1,605 @@
+{
+  "component": "QA_AuditData_Result",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_AuditData_Result",
+  "source_file": "views/operation/qcform/qcqa/QA_AuditData_Result.vue",
+  "structure": "column_form",
+  "field_count": 83,
+  "labeled_field_count": 83,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string3",
+    "time1",
+    "string100",
+    "string101",
+    "string111",
+    "string112",
+    "string133",
+    "string113",
+    "string114",
+    "string134",
+    "string115",
+    "string116",
+    "string135",
+    "string117",
+    "string118",
+    "string136",
+    "string102",
+    "string103",
+    "string104",
+    "string105",
+    "string106",
+    "string107",
+    "string108",
+    "string109",
+    "string110",
+    "string29",
+    "string22",
+    "string44",
+    "string37",
+    "string59",
+    "string52",
+    "string74",
+    "string67",
+    "string7",
+    "string14",
+    "string16",
+    "string56",
+    "string57",
+    "string36",
+    "string76",
+    "string77",
+    "string96",
+    "string97",
+    "string17",
+    "string70",
+    "string78",
+    "string148",
+    "string156",
+    "string187",
+    "string195",
+    "string31",
+    "string39",
+    "string32",
+    "string71",
+    "string149",
+    "string188",
+    "string231",
+    "string227",
+    "string267",
+    "string263",
+    "string307",
+    "string303",
+    "string343",
+    "string339",
+    "string383",
+    "string379",
+    "string419",
+    "string415",
+    "string459",
+    "string455",
+    "string495",
+    "string491",
+    "string264",
+    "string340",
+    "string416",
+    "string492",
+    "string33",
+    "string152",
+    "string191",
+    "string35",
+    "string75",
+    "string153",
+    "string192"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string3",
+      "label": "查核人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time1",
+      "label": "查核日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "仪器流量与查核流量读值误差(±5%)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string101",
+      "label": "查核流量与仪器设定流量误差(±5%)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string111",
+      "label": "≦±0.5 ℃",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string112",
+      "label": "≦±0.5 ℃",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string133",
+      "label": "≦±0.5 ℃",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string113",
+      "label": "≦± 5 %",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string114",
+      "label": "≦± 5 %",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string134",
+      "label": "≦± 5 %",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string115",
+      "label": "≦± 5 %",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string116",
+      "label": "≦± 5 %",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string135",
+      "label": "≦± 5 %",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string117",
+      "label": "≦± 7 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string118",
+      "label": "≦± 7 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string136",
+      "label": "≦± 7 hPa",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string102",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string103",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string104",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string105",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string106",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string107",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string108",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string109",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string110",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string77",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string96",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string97",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string148",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string156",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string187",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string195",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string149",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string188",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string231",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string227",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string267",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string263",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string307",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string303",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string343",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string339",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string383",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string379",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string419",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string415",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string459",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string455",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string495",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string491",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string264",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string340",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string416",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string492",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string152",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string191",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string153",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string192",
+      "label": "CAL-GAS",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

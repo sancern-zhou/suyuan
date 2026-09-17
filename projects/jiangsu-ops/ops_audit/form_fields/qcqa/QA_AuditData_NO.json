@@ -1,0 +1,2978 @@
+{
+  "component": "QA_AuditData_NO",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_AuditData",
+  "source_file": "views/operation/qcform/qcqa/QA_AuditData_NO.vue",
+  "structure": "column_form",
+  "field_count": 422,
+  "labeled_field_count": 422,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "string2",
+    "string3",
+    "string4",
+    "string5",
+    "string6",
+    "string7",
+    "string8",
+    "string9",
+    "string10",
+    "string11",
+    "string12",
+    "string13",
+    "string14",
+    "string15",
+    "string16",
+    "string17",
+    "string18",
+    "string19",
+    "string20",
+    "string21",
+    "string22",
+    "string23",
+    "string24",
+    "string25",
+    "string26",
+    "string27",
+    "string28",
+    "string29",
+    "string30",
+    "string37",
+    "string38",
+    "string39",
+    "string40",
+    "string41",
+    "string42",
+    "string43",
+    "string44",
+    "string45",
+    "string46",
+    "string47",
+    "string48",
+    "string49",
+    "string50",
+    "string51",
+    "string52",
+    "string53",
+    "string54",
+    "string55",
+    "string56",
+    "string57",
+    "string58",
+    "string59",
+    "string60",
+    "string61",
+    "string62",
+    "string63",
+    "string64",
+    "string65",
+    "string66",
+    "string67",
+    "string68",
+    "string69",
+    "string76",
+    "string77",
+    "string78",
+    "string79",
+    "string80",
+    "string81",
+    "string82",
+    "string83",
+    "string84",
+    "string85",
+    "string86",
+    "string87",
+    "string88",
+    "string89",
+    "string90",
+    "string91",
+    "string92",
+    "string93",
+    "string94",
+    "string95",
+    "string96",
+    "string97",
+    "string98",
+    "string99",
+    "string100",
+    "string101",
+    "string102",
+    "string103",
+    "string104",
+    "string105",
+    "string106",
+    "string107",
+    "string108",
+    "string115",
+    "string116",
+    "string117",
+    "string118",
+    "string119",
+    "string120",
+    "string121",
+    "string122",
+    "string123",
+    "string124",
+    "string125",
+    "string126",
+    "string127",
+    "string128",
+    "string129",
+    "string130",
+    "string131",
+    "string132",
+    "string133",
+    "string134",
+    "string135",
+    "string136",
+    "string137",
+    "string138",
+    "string139",
+    "string140",
+    "string141",
+    "string142",
+    "string143",
+    "string144",
+    "string145",
+    "string146",
+    "string147",
+    "string154",
+    "string155",
+    "string156",
+    "string157",
+    "string158",
+    "string159",
+    "string160",
+    "string161",
+    "string162",
+    "string163",
+    "string164",
+    "string165",
+    "string166",
+    "string167",
+    "string168",
+    "string169",
+    "string170",
+    "string171",
+    "string172",
+    "string173",
+    "string174",
+    "string175",
+    "string176",
+    "string177",
+    "string178",
+    "string179",
+    "string180",
+    "string181",
+    "string182",
+    "string183",
+    "string184",
+    "string185",
+    "string186",
+    "string193",
+    "string194",
+    "string195",
+    "string196",
+    "string197",
+    "string198",
+    "string199",
+    "string200",
+    "string201",
+    "string202",
+    "string203",
+    "string204",
+    "string205",
+    "string206",
+    "string207",
+    "string208",
+    "string209",
+    "string210",
+    "string211",
+    "string212",
+    "string213",
+    "string214",
+    "string215",
+    "string216",
+    "string217",
+    "string218",
+    "string219",
+    "string220",
+    "string221",
+    "string222",
+    "string223",
+    "string224",
+    "string225",
+    "string232",
+    "string233",
+    "string234",
+    "string235",
+    "string236",
+    "string237",
+    "string238",
+    "string239",
+    "string240",
+    "string241",
+    "string242",
+    "string243",
+    "string244",
+    "string245",
+    "string246",
+    "string247",
+    "string248",
+    "string249",
+    "string250",
+    "string251",
+    "string252",
+    "string253",
+    "string254",
+    "string255",
+    "string256",
+    "string257",
+    "string258",
+    "string259",
+    "string260",
+    "string261",
+    "string268",
+    "string269",
+    "string270",
+    "string272",
+    "string273",
+    "string274",
+    "string275",
+    "string276",
+    "string277",
+    "string278",
+    "string279",
+    "string280",
+    "string281",
+    "string282",
+    "string283",
+    "string284",
+    "string285",
+    "string286",
+    "string287",
+    "string288",
+    "string289",
+    "string290",
+    "string291",
+    "string292",
+    "string293",
+    "string294",
+    "string295",
+    "string296",
+    "string297",
+    "string298",
+    "string299",
+    "string300",
+    "string301",
+    "string308",
+    "string309",
+    "string310",
+    "string311",
+    "string312",
+    "string313",
+    "string314",
+    "string315",
+    "string316",
+    "string317",
+    "string318",
+    "string319",
+    "string320",
+    "string321",
+    "string322",
+    "string323",
+    "string324",
+    "string325",
+    "string326",
+    "string327",
+    "string328",
+    "string329",
+    "string330",
+    "string331",
+    "string332",
+    "string333",
+    "string334",
+    "string335",
+    "string336",
+    "string337",
+    "string344",
+    "string345",
+    "string346",
+    "string348",
+    "string349",
+    "string350",
+    "string351",
+    "string352",
+    "string353",
+    "string354",
+    "string355",
+    "string356",
+    "string357",
+    "string358",
+    "string359",
+    "string360",
+    "string361",
+    "string362",
+    "string363",
+    "string364",
+    "string365",
+    "string366",
+    "string367",
+    "string368",
+    "string369",
+    "string370",
+    "string371",
+    "string372",
+    "string373",
+    "string374",
+    "string375",
+    "string376",
+    "string377",
+    "string384",
+    "string385",
+    "string386",
+    "string387",
+    "string388",
+    "string389",
+    "string390",
+    "string391",
+    "string392",
+    "string393",
+    "string394",
+    "string395",
+    "string396",
+    "string397",
+    "string398",
+    "string399",
+    "string400",
+    "string401",
+    "string402",
+    "string403",
+    "string404",
+    "string405",
+    "string406",
+    "string407",
+    "string408",
+    "string409",
+    "string410",
+    "string411",
+    "string412",
+    "string413",
+    "string420",
+    "string421",
+    "string422",
+    "string424",
+    "string425",
+    "string426",
+    "string427",
+    "string428",
+    "string429",
+    "string430",
+    "string431",
+    "string432",
+    "string433",
+    "string434",
+    "string435",
+    "string436",
+    "string437",
+    "string438",
+    "string439",
+    "string440",
+    "string441",
+    "string442",
+    "string443",
+    "string444",
+    "string445",
+    "string446",
+    "string447",
+    "string448",
+    "string449",
+    "string450",
+    "string451",
+    "string452",
+    "string453",
+    "string460",
+    "string461",
+    "string462",
+    "string463",
+    "string464",
+    "string465",
+    "string466",
+    "string467",
+    "string468",
+    "string469",
+    "string470",
+    "string471",
+    "string472",
+    "string473",
+    "string474",
+    "string475",
+    "string476",
+    "string477",
+    "string478",
+    "string479",
+    "string480",
+    "string481",
+    "string482",
+    "string483",
+    "string484",
+    "string485",
+    "string486",
+    "string487",
+    "string488",
+    "string489",
+    "string496",
+    "string497",
+    "string498",
+    "string32",
+    "string71",
+    "string110",
+    "string149",
+    "string188"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "NO/NOx查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string46",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string48",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string49",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string50",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string51",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string53",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string54",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string55",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string56",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string57",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string58",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string61",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string62",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string63",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string64",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string65",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string66",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string68",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string69",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string77",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "NO/NOx查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string79",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string80",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string81",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string82",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string83",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string84",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string85",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string86",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string87",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string88",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string89",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string90",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string91",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string92",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string93",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string94",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string95",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string96",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string97",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string98",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string99",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string100",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string101",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string102",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string103",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string104",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string105",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string106",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string107",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string108",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string115",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string116",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string117",
+      "label": "NO/NOx查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string118",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string119",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string120",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string121",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string122",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string123",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string124",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string125",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string126",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string127",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string128",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string129",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string130",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string131",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string132",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string133",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string134",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string135",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string136",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string137",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string138",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string139",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string140",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string141",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string142",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string143",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string144",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string145",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string146",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string147",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string154",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string155",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string156",
+      "label": "NO/NOx查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string157",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string158",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string159",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string160",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string161",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string162",
+      "label": "仪器显示值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string163",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string164",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string165",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string166",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string167",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string168",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string169",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string170",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string171",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string172",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string173",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string174",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string175",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string176",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string177",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string178",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string179",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string180",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string181",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string182",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string183",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string184",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string185",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string186",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string193",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string194",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string195",
+      "label": "NO/NOx查核浓度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string196",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string197",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string198",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string199",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string200",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string201",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string202",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string203",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string204",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string205",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string206",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string207",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string208",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string209",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string210",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string211",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string212",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string213",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string214",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string215",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string216",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string217",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string218",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string219",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string220",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string221",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string222",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string223",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string224",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string225",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string232",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string233",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string234",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string235",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string236",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string237",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string238",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string239",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string240",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string241",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string242",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string243",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string244",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string245",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string246",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string247",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string248",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string249",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string250",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string251",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string252",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string253",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string254",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string255",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string256",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string257",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string258",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string259",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string260",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string261",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string268",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string269",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string270",
+      "label": "校正器臭氧设定值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string272",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string273",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string274",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string275",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string276",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string277",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string278",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string279",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string280",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string281",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string282",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string283",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string284",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string285",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string286",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string287",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string288",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string289",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string290",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string291",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string292",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string293",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string294",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string295",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string296",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string297",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string298",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string299",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string300",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string301",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string308",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string309",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string310",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string311",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string312",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string313",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string314",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string315",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string316",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string317",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string318",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string319",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string320",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string321",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string322",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string323",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string324",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string325",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string326",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string327",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string328",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string329",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string330",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string331",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string332",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string333",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string334",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string335",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string336",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string337",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string344",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string345",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string346",
+      "label": "校正器臭氧设定值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string348",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string349",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string350",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string351",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string352",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string353",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string354",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string355",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string356",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string357",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string358",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string359",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string360",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string361",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string362",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string363",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string364",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string365",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string366",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string367",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string368",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string369",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string370",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string371",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string372",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string373",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string374",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string375",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string376",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string377",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string384",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string385",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string386",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string387",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string388",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string389",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string390",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string391",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string392",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string393",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string394",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string395",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string396",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string397",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string398",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string399",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string400",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string401",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string402",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string403",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string404",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string405",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string406",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string407",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string408",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string409",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string410",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string411",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string412",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string413",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string420",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string421",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string422",
+      "label": "校正器臭氧设定值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string424",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string425",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string426",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string427",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string428",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string429",
+      "label": "GPT OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string430",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string431",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string432",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string433",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string434",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string435",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string436",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string437",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string438",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string439",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string440",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string441",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string442",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string443",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string444",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string445",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string446",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string447",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string448",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string449",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string450",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string451",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string452",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string453",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string460",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string461",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string462",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string463",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string464",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string465",
+      "label": "GPT ON",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string466",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string467",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string468",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string469",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string470",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string471",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string472",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string473",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string474",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string475",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string476",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string477",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string478",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string479",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string480",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string481",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string482",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string483",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string484",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string485",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string486",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string487",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string488",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string489",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string496",
+      "label": "校正器显示流量(AIR)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string497",
+      "label": "校正器显示流量(GAS)",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string498",
+      "label": "校正器臭氧设定值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string110",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string149",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string188",
+      "label": "ppb",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

@@ -1,0 +1,45 @@
+{
+  "component": "QC_UnqualifiedFeedback",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QC_UnqualifiedFeedback",
+  "source_file": "views/operation/qcform/qcqa/QC_UnqualifiedFeedback.vue",
+  "structure": "column_form",
+  "field_count": 3,
+  "labeled_field_count": 3,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "time1",
+    "string150",
+    "remark1"
+  ],
+  "device_columns": [],
+  "common_columns": [
+    "isCancel"
+  ],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string150",
+      "label": "质控单位及检查人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark1",
+      "label": "现 场 照 片",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

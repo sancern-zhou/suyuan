@@ -1,0 +1,594 @@
+{
+  "component": "SEC_NMHCQualityCheck",
+  "category": "check",
+  "inferred_rule_item_tag": "SEC_NMHCQualityCheck",
+  "source_file": "views/operation/qcform/check/SEC_NMHCQualityCheck.vue",
+  "structure": "column_form",
+  "field_count": 81,
+  "labeled_field_count": 81,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string1",
+    "remark1",
+    "string2",
+    "remark2",
+    "string3",
+    "remark3",
+    "string4",
+    "remark4",
+    "string5",
+    "remark5",
+    "string6",
+    "remark6",
+    "string7",
+    "remark7",
+    "string8",
+    "remark8",
+    "string9",
+    "remark9",
+    "string10",
+    "remark10",
+    "string11",
+    "remark11",
+    "string12",
+    "remark12",
+    "string13",
+    "remark13",
+    "string14",
+    "remark14",
+    "string15",
+    "remark15",
+    "string16",
+    "remark16",
+    "string17",
+    "remark17",
+    "string18",
+    "remark18",
+    "string19",
+    "remark19",
+    "string20",
+    "remark20",
+    "string21",
+    "remark21",
+    "string22",
+    "remark22",
+    "string23",
+    "remark23",
+    "string24",
+    "remark24",
+    "string25",
+    "remark25",
+    "string26",
+    "remark26",
+    "string27",
+    "remark27",
+    "string28",
+    "remark28",
+    "string29",
+    "string30",
+    "string31",
+    "string32",
+    "string33",
+    "string34",
+    "string35",
+    "remark35",
+    "string36",
+    "remark36",
+    "string37",
+    "string38",
+    "string39",
+    "string40",
+    "remark40",
+    "string41",
+    "remark41",
+    "string42",
+    "remark42",
+    "string43",
+    "remark43",
+    "string44",
+    "remark44",
+    "string45",
+    "remark45"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "SEC_NMHCQualityCheck"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "每项1分，共3分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark1",
+      "label": "每项1分，共3分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string2",
+      "label": "每项1分，共3分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark2",
+      "label": "每项1分，共3分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "仪器外观无污，桌面清洁、线路规整",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark3",
+      "label": "仪器外观无污，桌面清洁、线路规整",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string4",
+      "label": "2分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark4",
+      "label": "2分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string5",
+      "label": "5分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark5",
+      "label": "5分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string6",
+      "label": "2分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark6",
+      "label": "2分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "每项2分，共8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark7",
+      "label": "每项2分，共8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string8",
+      "label": "2）用于校准设备的流量计、温湿度计、大气压计校准证书是否在有效期；",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark8",
+      "label": "2）用于校准设备的流量计、温湿度计、大气压计校准证书是否在有效期；",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string9",
+      "label": "3）是否与运维工单记录中所用仪器一致（检查工单和校准证书）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark9",
+      "label": "3）是否与运维工单记录中所用仪器一致（检查工单和校准证书）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string10",
+      "label": "每项2分，共4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark10",
+      "label": "每项2分，共4分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string11",
+      "label": "每项2分，共6分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark11",
+      "label": "每项2分，共6分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string12",
+      "label": "每项2分，共6分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark12",
+      "label": "每项2分，共6分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "每项2分，共8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark13",
+      "label": "每项2分，共8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "2分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark14",
+      "label": "2分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "每项2分，共4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark15",
+      "label": "每项2分，共4分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string16",
+      "label": "每项2分，共4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark16",
+      "label": "每项2分，共4分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string17",
+      "label": "每项2分，共8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark17",
+      "label": "每项2分，共8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string18",
+      "label": "每项2分，共8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark18",
+      "label": "每项2分，共8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string19",
+      "label": "3）管路和滤膜是否洁净",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark19",
+      "label": "3）管路和滤膜是否洁净",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string20",
+      "label": "4）采样支管不超过3米",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark20",
+      "label": "4）采样支管不超过3米",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string21",
+      "label": "每项2分，共8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark21",
+      "label": "每项2分，共8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "每项2分，共8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark22",
+      "label": "每项2分，共8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string23",
+      "label": "3）检查最近一次单点保留时间和最近5次样品的保留时间偏离是否≤0.15min",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark23",
+      "label": "3）检查最近一次单点保留时间和最近5次样品的保留时间偏离是否≤0.15min",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string24",
+      "label": "4）检查非甲烷曲线是否按照ppbC单位计算，与标气换算是否正确",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark24",
+      "label": "4）检查非甲烷曲线是否按照ppbC单位计算，与标气换算是否正确",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string25",
+      "label": "每项2分，共6分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark25",
+      "label": "每项2分，共6分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string26",
+      "label": "2）使用的气体钢瓶压力是否低于2MPa，是否在有效期内",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark26",
+      "label": "2）使用的气体钢瓶压力是否低于2MPa，是否在有效期内",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string27",
+      "label": "3）气体发生器耗材是否及时更换（如硅胶、分子筛、排水情况等）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark27",
+      "label": "3）气体发生器耗材是否及时更换（如硅胶、分子筛、排水情况等）",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string28",
+      "label": "1分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark28",
+      "label": "1分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "动态稀释仪（半年一次）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "动态稀释仪（半年一次）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "动态稀释仪（半年一次）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "动态稀释仪（半年一次）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "动态稀释仪（半年一次）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "动态稀释仪（半年一次）",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark35",
+      "label": "4分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark36",
+      "label": "4分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "单点准确度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "单点准确度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "单点准确度",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string40",
+      "label": "8分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark40",
+      "label": "8分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string41",
+      "label": "每项1分，共4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark41",
+      "label": "每项1分，共4分",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string42",
+      "label": "2）数采平台标识是否正常",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark42",
+      "label": "2）数采平台标识是否正常",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string43",
+      "label": "3）抽查数采平台和仪器原始数据的一致性",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark43",
+      "label": "3）抽查数采平台和仪器原始数据的一致性",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "4）检查设备在线传输是否正常",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark44",
+      "label": "4）检查设备在线传输是否正常",
+      "type": "remark",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "4分",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "remark45",
+      "label": "4分",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

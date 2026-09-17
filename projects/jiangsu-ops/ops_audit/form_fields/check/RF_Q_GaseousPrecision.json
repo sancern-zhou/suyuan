@@ -1,0 +1,110 @@
+{
+  "component": "RF_Q_GaseousPrecision",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_Q_GaseousPrecision",
+  "source_file": "views/operation/qcform/check/RF_Q_GaseousPrecision.vue",
+  "structure": "column_form",
+  "field_count": 14,
+  "labeled_field_count": 14,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_Q_GaseousPrecision"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string1",
+      "label": "仪器名称及编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "time1",
+      "label": "审核日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "标气来源及编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "标气浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "标准值（满量程20%）",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "仪器示值1",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "仪器示值2",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "仪器示值3",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "仪器示值4",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "仪器示值5",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "仪器示值6",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "相对标准偏差",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "bool_1",
+      "label": "是否合格",
+      "type": "boolean",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "comment"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

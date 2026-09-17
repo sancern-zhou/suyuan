@@ -28,16 +28,18 @@
       "enabled": true,
       "aliases": [
         "运维工单审核",
+        "例行工单审核",
+        "巡检工单审核",
         "工单审核"
       ],
       "required_tools": [
         "read_file",
-        "ops_audit_fetch_dataset",
-        "ops_audit_run_rules",
-        "ops_audit_inspect",
-        "call_sub_agent",
+        "jiangsu_ops_audit_fetch_dataset",
+        "jiangsu_ops_audit_run_rules",
         "create_report_package",
-        "validate_report_package"
+        "render_report_package",
+        "validate_report_package",
+        "publish_report"
       ]
     },
     "fault-work-order-monthly-analysis": {
@@ -143,6 +145,69 @@
       "required_tools": [
         "read_file",
         "submit_task_review"
+      ]
+    },
+    "daily-operations-supervision-report": {
+      "enabled": true,
+      "aliases": [
+        "日常运维监管月报",
+        "日常监管报告",
+        "月度运维监管",
+        "计划执行与持证率分析",
+        "运维日常监管"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "jiangsu_demo_operation_plans",
+        "jiangsu_demo_attendance_signins",
+        "jiangsu_demo_personnel_certificates",
+        "jiangsu_demo_performance_two_rates",
+        "jiangsu_demo_qc_pass_rate_stats",
+        "jiangsu_demo_operation_approvals",
+        "jiangsu_demo_door_remote_open_logs",
+        "jiangsu_demo_standard_materials",
+        "jiangsu_fetch_fault_work_orders",
+        "jiangsu_fetch_alarm_records",
+        "execute_python",
+        "create_report_chart",
+        "create_report_package",
+        "render_report_package",
+        "validate_report_package",
+        "publish_report"
+      ]
+    },
+    "operations-risk-prevention-report": {
+      "enabled": true,
+      "aliases": [
+        "运维风险监管报告",
+        "风险防范报告",
+        "疑似风险线索",
+        "高值窗口合规",
+        "轨迹异常与报警积压"
+      ],
+      "required_tools": [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "jiangsu_demo_attendance_signins",
+        "jiangsu_demo_operation_approvals",
+        "jiangsu_demo_door_remote_open_logs",
+        "jiangsu_demo_operation_plans",
+        "jiangsu_demo_performance_two_rates",
+        "jiangsu_fetch_fault_work_orders",
+        "jiangsu_fetch_alarm_records",
+        "jiangsu_fetch_station_data",
+        "jiangsu_fetch_station_directory",
+        "jiangsu_query_operations_graph",
+        "jiangsu_analyze_work_order_tracks",
+        "execute_python",
+        "create_report_chart",
+        "create_report_package",
+        "render_report_package",
+        "validate_report_package",
+        "publish_report"
       ]
     }
   }

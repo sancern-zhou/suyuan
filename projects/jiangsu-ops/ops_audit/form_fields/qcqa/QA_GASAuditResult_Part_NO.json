@@ -1,0 +1,778 @@
+{
+  "component": "QA_GASAuditResult_Part_NO",
+  "category": "qcqa",
+  "inferred_rule_item_tag": "QA_GASAuditResult_Part",
+  "source_file": "views/operation/qcform/qcqa/QA_GASAuditResult_Part_NO.vue",
+  "structure": "column_form",
+  "field_count": 108,
+  "labeled_field_count": 108,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [],
+  "binding_only_columns": [
+    "string46",
+    "time1",
+    "string47",
+    "string3",
+    "time2",
+    "string13",
+    "string67",
+    "string15",
+    "time6",
+    "string38",
+    "string37",
+    "string39",
+    "string31",
+    "string32",
+    "string77",
+    "string76",
+    "string78",
+    "string70",
+    "string71",
+    "string116",
+    "string115",
+    "string117",
+    "string109",
+    "string110",
+    "string155",
+    "string154",
+    "string156",
+    "string148",
+    "string149",
+    "string194",
+    "string193",
+    "string195",
+    "string187",
+    "string188",
+    "string269",
+    "string268",
+    "string270",
+    "string345",
+    "string344",
+    "string346",
+    "string421",
+    "string420",
+    "string422",
+    "string497",
+    "string496",
+    "string498",
+    "string33",
+    "string34",
+    "string264",
+    "string265",
+    "string340",
+    "string341",
+    "string416",
+    "string417",
+    "string492",
+    "string493",
+    "string35",
+    "string36",
+    "string74",
+    "string75",
+    "string113",
+    "string114",
+    "string152",
+    "string153",
+    "string191",
+    "string192",
+    "string7",
+    "string14",
+    "string22",
+    "string29",
+    "string44",
+    "string52",
+    "string59",
+    "string30",
+    "string45",
+    "string60",
+    "string230",
+    "string231",
+    "string226",
+    "string227",
+    "string266",
+    "string267",
+    "string262",
+    "string263",
+    "string306",
+    "string307",
+    "string302",
+    "string303",
+    "string342",
+    "string343",
+    "string338",
+    "string339",
+    "string382",
+    "string383",
+    "string378",
+    "string379",
+    "string418",
+    "string419",
+    "string414",
+    "string415",
+    "string458",
+    "string459",
+    "string454",
+    "string455",
+    "string494",
+    "string495",
+    "string490",
+    "string491"
+  ],
+  "device_columns": [],
+  "common_columns": [],
+  "attachments": [],
+  "rows": [],
+  "fields": [
+    {
+      "column": "string46",
+      "label": "校正器型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time1",
+      "label": "查核日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string47",
+      "label": "校正器序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string3",
+      "label": "查核人员",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time2",
+      "label": "Pre-Audit日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string13",
+      "label": "仪器型号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string67",
+      "label": "气体钢瓶编号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string15",
+      "label": "仪器序号",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "time6",
+      "label": "气体检定日期",
+      "type": "time",
+      "label_source": "binding"
+    },
+    {
+      "column": "string38",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string37",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string39",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string31",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string32",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string77",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string76",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string78",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string70",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string71",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string116",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string115",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string117",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string109",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string110",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string155",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string154",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string156",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string148",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string149",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string194",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string193",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string195",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string187",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string188",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string269",
+      "label": "仪器回归值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string268",
+      "label": "仪器回归值",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string270",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string345",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string344",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string346",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string421",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string420",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string422",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string497",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string496",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string498",
+      "label": "OFF",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string33",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string34",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string264",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string265",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string340",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string341",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string416",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string417",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string492",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string493",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string35",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string36",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string74",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string75",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string113",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string114",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string152",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string153",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string191",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string192",
+      "label": "误差%",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string7",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string14",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string22",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string29",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string44",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string52",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string59",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string30",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string45",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string60",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string230",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string231",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string226",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string227",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string266",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string267",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string262",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string263",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string306",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string307",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string302",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string303",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string342",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string343",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string338",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string339",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string382",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string383",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string378",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string379",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string418",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string419",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string414",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string415",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string458",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string459",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string454",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string455",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string494",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string495",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string490",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    },
+    {
+      "column": "string491",
+      "label": "≧0.995",
+      "type": "string",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}

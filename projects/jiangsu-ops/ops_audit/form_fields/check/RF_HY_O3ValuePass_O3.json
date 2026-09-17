@@ -1,0 +1,269 @@
+{
+  "component": "RF_HY_O3ValuePass_O3",
+  "category": "check",
+  "inferred_rule_item_tag": "RF_HY_O3ValuePass",
+  "source_file": "views/operation/qcform/check/RF_HY_O3ValuePass_O3.vue",
+  "structure": "column_form",
+  "field_count": 39,
+  "labeled_field_count": 39,
+  "unlabeled_columns": [],
+  "row_count": 0,
+  "comment_only_columns": [
+    "time2"
+  ],
+  "binding_only_columns": [
+    "remark"
+  ],
+  "device_columns": [
+    "deviceModel",
+    "deviceCode"
+  ],
+  "common_columns": [
+    "checkDate"
+  ],
+  "attachments": [
+    {
+      "function_code": "Check",
+      "type_code": "RF_HY_O3ValuePass_O3"
+    }
+  ],
+  "rows": [],
+  "fields": [
+    {
+      "column": "time1",
+      "label": "传递日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "time2",
+      "label": "传递标准溯源日期",
+      "type": "time",
+      "label_source": "comment"
+    },
+    {
+      "column": "string1",
+      "label": "传递标准溯源方程",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string2",
+      "label": "传递用臭氧监测仪型号及编号",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string3",
+      "label": "零点-传递标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string4",
+      "label": "零点-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string5",
+      "label": "零点-工作标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string6",
+      "label": "零点-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string7",
+      "label": "零点-传递用监测仪示值对应的标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string8",
+      "label": "10%-传递标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string9",
+      "label": "10%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string10",
+      "label": "10%-工作标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string11",
+      "label": "10%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string12",
+      "label": "10%-传递用监测仪示值对应的标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string13",
+      "label": "20%-传递标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string14",
+      "label": "20%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string15",
+      "label": "20%-工作标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string16",
+      "label": "20%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string17",
+      "label": "20%-传递用监测仪示值对应的标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string18",
+      "label": "40%-传递标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string19",
+      "label": "40%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string20",
+      "label": "40%-工作标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string21",
+      "label": "40%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string22",
+      "label": "40%-传递用监测仪示值对应的标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string23",
+      "label": "60%-传递标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string24",
+      "label": "60%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string25",
+      "label": "60%-工作标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string26",
+      "label": "60%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string27",
+      "label": "60%-传递用监测仪示值对应的标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string28",
+      "label": "80%-传递标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string29",
+      "label": "80%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string30",
+      "label": "80%-工作标准输出浓度",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string31",
+      "label": "80%-传递用监测仪示值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string32",
+      "label": "80%-传递用监测仪示值对应的标准值",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string33",
+      "label": "校准曲线a",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string34",
+      "label": "校准曲线b",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string35",
+      "label": "校准曲线r",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "string36",
+      "label": "校准结果",
+      "type": "string",
+      "label_source": "comment"
+    },
+    {
+      "column": "remark",
+      "label": "备注",
+      "type": "remark",
+      "label_source": "binding"
+    }
+  ],
+  "source_repo": "/home/xckj/suyuan/suncereairproductintegrationprovince.v5.3",
+  "source_commit": "a4ebbf2af180d32daad66c1ae7e8161efc68ee07"
+}
