@@ -40,7 +40,10 @@ def _storage(tmp_path):
 
     async def _prepare():
         async with engine.begin() as conn:
-            await conn.run_sync(ScheduledTaskExecutionDB.metadata.create_all)
+            await conn.run_sync(
+                ScheduledTaskExecutionDB.__table__.create,
+                checkfirst=True,
+            )
 
     loop.run_until_complete(_prepare())
     storage = DatabaseExecutionStorage(
