@@ -3,7 +3,8 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.agent.resources.resource_service import StoredResource
@@ -263,3 +264,112 @@ async def test_html_preview_allows_quarto_assets_from_opaque_sandbox_origin(
     assert html.headers["access-control-allow-origin"] == "*"
     assert script.headers["access-control-allow-origin"] == "*"
     assert "font-src 'self' data:" in html.headers["content-security-policy"]
+
+
+def _ticket_path_artifact(tmp_path, monkeypatch):
+    registry = tmp_path / "registry"
+    artifact = registry / "artifact"
+    asset = artifact / "report_files" / "quarto.css"
+    asset.parent.mkdir(parents=True)
+    (artifact / "report.html").write_text("<link href='report_files/quarto.css'>")
+    asset.write_text("body { color: red }")
+    install_service(
+        monkeypatch,
+        stored(
+            artifact,
+            kind="artifact",
+            format="html",
+            media_type="text/html",
+            renderer="html",
+            metadata={"entrypoint": "report.html"},
+        ),
+    )
+    monkeypatch.setattr(session_resource_routes, "get_data_registry", lambda: registry)
+    ticket = get_share_access_service().issue(
+        "session-resource",
+        resource_preview_identity("session-1", "resource-1"),
+    )
+    return ticket
+
+
+@pytest.mark.asyncio
+async def test_directory_assets_authorized_by_ticket_in_path(tmp_path, monkeypatch):
+    ticket = _ticket_path_artifact(tmp_path, monkeypatch)
+
+    entry = await session_resource_routes.get_session_resource_content(
+        "session-1",
+        "resource-1",
+        asset_path=f"_t/{ticket}/",
+        user=None,
+        catalog=Catalog(),
+    )
+    asset = await session_resource_routes.get_session_resource_content(
+        "session-1",
+        "resource-1",
+        asset_path=f"_t/{ticket}/report_files/quarto.css",
+        user=None,
+        catalog=Catalog(),
+    )
+    asset_media_type = next(
+        value for key, value in asset.headers.items() if key.lower() == "content-type"
+    )
+
+    assert entry.path.name == "report.html"
+    assert asset.path.name == "quarto.css"
+    assert asset_media_type.startswith("text/css")
+
+
+@pytest.mark.asyncio
+async def test_directory_asset_rejects_invalid_ticket_in_path(tmp_path, monkeypatch):
+    _ticket_path_artifact(tmp_path, monkeypatch)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await session_resource_routes.get_session_resource_content(
+            "session-1",
+            "resource-1",
+            asset_path="_t/not-a-valid-ticket/report_files/quarto.css",
+            user=None,
+            catalog=Catalog(),
+        )
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_directory_asset_ticket_path_still_rejects_traversal(tmp_path, monkeypatch):
+    ticket = _ticket_path_artifact(tmp_path, monkeypatch)
+    (tmp_path / "registry" / "secret.txt").write_text("secret")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await session_resource_routes.get_session_resource_content(
+            "session-1",
+            "resource-1",
+            asset_path=f"_t/{ticket}/../secret.txt",
+            user=None,
+            catalog=Catalog(),
+        )
+    assert exc_info.value.status_code == 403
+
+
+def test_path_ticket_route_serves_entry_and_relative_assets(tmp_path, monkeypatch):
+    """Route-level check: relative asset URLs under the ticketed path resolve."""
+    ticket = _ticket_path_artifact(tmp_path, monkeypatch)
+    app = FastAPI()
+    app.include_router(session_resource_routes.router)
+    app.dependency_overrides[
+        session_resource_routes.optional_current_user
+    ] = lambda: None
+    app.dependency_overrides[
+        session_resource_routes.get_conversation_catalog
+    ] = lambda: Catalog()
+    client = TestClient(app)
+
+    base = f"/api/sessions/session-1/resources/resource-1/content/_t/{ticket}"
+    entry = client.get(f"{base}/")
+    asset = client.get(f"{base}/report_files/quarto.css")
+
+    assert entry.status_code == 200
+    assert "report_files/quarto.css" in entry.text
+    assert asset.status_code == 200
+    assert asset.text == "body { color: red }"
+    assert asset.headers["content-type"].startswith("text/css")
+    assert client.get(f"{base}/report_files/missing.css").status_code == 404
