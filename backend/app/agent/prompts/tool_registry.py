@@ -490,6 +490,10 @@ SMART_INSPECTION_TOOLS = _build_tool_dict([
     "jiangsu_fetch_station_alarm_logs",
     "jiangsu_fetch_station_environment_history",
     "jiangsu_fetch_station_directory",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
     "knowledge_graph_query",
 ])
 OPERATIONS_ANALYSIS_TOOLS = _build_tool_dict([
@@ -503,6 +507,10 @@ DEVICE_CONTROL_TOOLS = _build_tool_dict([
     "jiangsu_prepare_device_control",
     "jiangsu_execute_device_control",
     "jiangsu_fetch_station_directory",
+    "jiangsu_fetch_qc_task_history",
+    "jiangsu_fetch_qc_task_status",
+    "jiangsu_fetch_qc_run_logs",
+    "jiangsu_fetch_qc_monitoring_curve",
     "jiangsu_query_operations_graph",
     "knowledge_graph_query",
 ])

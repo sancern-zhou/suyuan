@@ -1600,15 +1600,219 @@ class JiangsuQcTaskHistoryTool(LLMTool):
             return {"records": [], "success": False, "error": str(exc)}
 
 
+_QC_TASK_STATUS_LABELS = {
+    0: "结束", 3: "未能开始", 5: "已中止", 11: "尚未开始", 12: "运行中", 13: "暂停", 16: "中止中",
+}
+
+
+def _pick(data: Any, *keys: str) -> Any:
+    """Read the first non-empty value across camelCase/PascalCase platform keys."""
+    if not isinstance(data, dict):
+        return None
+    for key in keys:
+        if key in data and data[key] not in (None, ""):
+            return data[key]
+    return None
+
+
+def _decode_qc_payload(value: Any) -> dict[str, Any]:
+    """Decode the QC service's nested JSON-string status payload."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    text = value.strip()
+    brace = text.find("{")
+    if brace > 0:
+        text = text[brace:]
+    try:
+        decoded = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _compact_qc_steps(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    for step in (_pick(detail, "Steps", "steps") or []):
+        if not isinstance(step, dict):
+            continue
+        actions = []
+        for action in (_pick(step, "Actions", "actions") or []):
+            if not isinstance(action, dict):
+                continue
+            actions.append({
+                "name": str(_pick(action, "ActionName", "actionName") or "").strip(),
+                "value": str(_pick(action, "ActionParameter", "actionParameter") or "").strip(),
+                "status": _numeric(_pick(action, "Status", "status")),
+            })
+        steps.append({
+            "name": str(_pick(step, "StepName", "stepName") or "").strip(),
+            "status": _numeric(_pick(step, "Status", "status")),
+            "actions": actions,
+        })
+    return steps
+
+
+def _compact_qc_value_rows(detail: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in (_pick(detail, *keys) or []):
+        if not isinstance(row, dict):
+            continue
+        name = str(_pick(row, "DataName", "dataName", "Name", "name") or "").strip()
+        value = _pick(row, "DataValue", "dataValue", "Value", "value")
+        if name or value not in (None, ""):
+            rows.append({"name": name, "value": "" if value is None else str(value)})
+    return rows
+
+
+def _compact_qc_run_logs(records: list[Any]) -> list[dict[str, Any]]:
+    logs: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        logs.append({
+            "record_time": _qc_time_text(_pick(record, "recordTime", "RecordTime")),
+            "target": str(_pick(record, "target", "Target") or "").strip(),
+            "message": str(_pick(record, "message", "Message") or "").strip(),
+            "event": str(_pick(record, "strEvent", "StrEvent") or "").strip(),
+            "user_name": str(_pick(record, "userName", "UserName") or "").strip(),
+        })
+    logs.sort(key=lambda item: item["record_time"])
+    return logs
+
+
+def _compact_qc_curve(records: list[Any]) -> list[dict[str, Any]]:
+    curve: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        value = _numeric(_pick(record, "dataValue", "DataValue"))
+        time_point = _qc_time_text(_pick(record, "timePoint", "TimePoint", "time", "Time"))
+        if value is None or not time_point:
+            continue
+        curve.append({
+            "time_point": time_point,
+            "value": value,
+            "unit": str(_pick(record, "unit", "Unit") or "").strip(),
+            "is_qcing": bool(_pick(record, "isQCing", "IsQCing")),
+            "flag": _numeric(_pick(record, "flag", "Flag")),
+        })
+    curve.sort(key=lambda item: item["time_point"])
+    return curve
+
+
+def _parse_qc_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _qc_time_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = _parse_qc_datetime(text)
+    if parsed is None:
+        return text.replace("T", " ")[:19]
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _qc_curve_window(detail: dict[str, Any], status: dict[str, Any], r_start: str) -> tuple[str, str]:
+    """Mirror the platform page: QC window ±2 minutes, defaulting to 30 minutes."""
+    start = _parse_qc_datetime(_pick(detail, "StrStartTime", "strStartTime")
+                               or _pick(status, "sStart", "SStart") or r_start)
+    end = _parse_qc_datetime(_pick(detail, "StrEndTime", "strEndTime")
+                             or _pick(status, "endTime", "EndTime"))
+    if start is None:
+        return "", ""
+    if end is None or end <= start:
+        end = start + timedelta(minutes=30)
+    return (
+        (start - timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S"),
+        (end + timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
+def _qc_task_detail_visual(
+    *,
+    r_id: str,
+    r_start: str,
+    status: dict[str, Any],
+    detail: dict[str, Any],
+    run_logs: list[dict[str, Any]],
+    curve: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the right-side QC task-detail visual mirroring the platform page."""
+    history = _pick(detail, "HistoryDetail", "historyDetail") or {}
+    if not isinstance(history, dict):
+        history = {}
+    task_status = _numeric(_pick(history, "TaskStatus", "taskStatus"))
+    qc_result = str(_pick(history, "QCResult", "qcResult", "QCStatus", "qcStatus") or "").strip()
+    station_name = str(_pick(status, "stationName", "StationName") or "").strip()
+    poll = str(_pick(status, "poll", "Poll") or _pick(detail, "PollutantCode", "pollutantCode") or "").strip()
+    qc_type = str(_pick(status, "qcType", "QCType") or "").strip()
+    start_text = _qc_time_text(_pick(detail, "StrStartTime", "strStartTime")
+                               or _pick(status, "rStart", "RStart") or r_start)
+    end_text = _qc_time_text(_pick(detail, "StrEndTime", "strEndTime")
+                             or _pick(status, "endTime", "EndTime"))
+    task = {
+        "r_id": r_id,
+        "r_start": r_start,
+        "station_code": str(_pick(status, "stationCode", "StationCode") or "").strip(),
+        "unique_code": str(_pick(status, "uniqueCode", "UniqueCode") or "").strip(),
+        "station_name": station_name,
+        "poll": poll,
+        "qc_type": qc_type,
+        "task_status": task_status,
+        "task_status_label": _QC_TASK_STATUS_LABELS.get(int(task_status), "") if task_status is not None else "",
+        "qc_result": qc_result,
+        "relevant_value": _numeric(_pick(history, "RelevantValue", "relevantValue")),
+        "inaccuracy": _numeric(_pick(history, "Inaccuracy", "inaccuracy")),
+        "start_time": start_text,
+        "end_time": end_text,
+        "zero_air_flow": _pick(detail, "ZeroAirFlow", "zeroAirFlow"),
+        "std_air_flow": _pick(detail, "StdAirFlow", "stdAirFlow"),
+        "task_type_name": str(_pick(detail, "TaskTypeName", "taskTypeName") or "").strip(),
+    }
+    detail_payload = {
+        "task": task,
+        "steps": _compact_qc_steps(detail),
+        "result_values": _compact_qc_value_rows(detail, "ResultValues", "resultValues"),
+        "data_values": _compact_qc_value_rows(detail, "DataValues", "dataValues"),
+        "run_logs": run_logs,
+        "curve": curve,
+        "updated_at": datetime.now().astimezone().isoformat(),
+    }
+    title = " ".join(part for part in (station_name or "站点", poll, qc_type, "质控详情") if part)
+    return {
+        "id": f"qc_task_detail_{r_id}",
+        "type": "qc_task_detail",
+        "title": title,
+        "data": {"animation": False, "qc_task_detail": detail_payload},
+        "meta": {"generator": "jiangsu_fetch_qc_task_status", "scenario": "qc_task_detail",
+                 "r_id": r_id, "r_start": r_start, "poll": poll, "qc_type": qc_type,
+                 "run_log_count": len(run_logs), "curve_point_count": len(curve)},
+    }
+
+
 class JiangsuQcTaskStatusTool(LLMTool):
     _PATH = "operation/QualityControl/GetNewQCHisTaskStatusResultAsync"
 
     def __init__(self) -> None:
         super().__init__(
             name="jiangsu_fetch_qc_task_status",
-            description="读取指定历史质控任务的执行步骤与状态快照；只读。",
+            description=(
+                "读取指定历史质控任务的执行步骤、状态快照、质控日志与监测曲线；只读。"
+                "返回结果会同步驱动右侧可视化面板自动展开质控详情页。"
+            ),
             category=ToolCategory.QUERY,
-            function_schema={"name": "jiangsu_fetch_qc_task_status", "description": "按质控任务 rStart 和 rId 查询执行状态。",
+            function_schema={"name": "jiangsu_fetch_qc_task_status",
+                             "description": "按质控任务 rStart 和 rId 查询执行状态，并返回可直接展示的质控详情。",
                              "parameters": {"type": "object", "properties": {
                                  "r_start": {"type": "string", "description": "质控任务开始时间（来自任务历史）。"},
                                  "r_id": {"type": "string", "description": "质控任务标识 rId（来自任务历史）。"},
@@ -1618,13 +1822,84 @@ class JiangsuQcTaskStatusTool(LLMTool):
     async def execute(self, context=None, r_start: str | None = None, r_id: str | None = None, **_: Any) -> dict[str, Any]:
         try:
             r_start, r_id = _identifier(r_start, "r_start"), _identifier(r_id, "r_id")
-            payload = await _JiangsuAuthenticatedApi(source="ops").get(self._PATH, [("rStart", r_start), ("rId", r_id)])
-            result = payload.get("result") or {}
-            if not isinstance(result, dict):
+            api = _JiangsuAuthenticatedApi(source="ops")
+            payload = await api.get(self._PATH, [("rStart", r_start), ("rId", r_id)])
+            status = payload.get("result") or {}
+            if not isinstance(status, dict) or not status:
                 raise ValueError("质控任务状态接口 result 无效")
-            return {"status": "success", "success": True, "data": result,
-                    "metadata": {"source": "jiangsu_operations_api", "endpoint": self._PATH, "r_start": r_start, "r_id": r_id,
-                                 "queried_at": datetime.now().astimezone().isoformat()}, "summary": "质控任务状态查询完成。"}
+            detail = _decode_qc_payload(_pick(status, "jsonStr", "JsonStr"))
+
+            warnings: list[str] = []
+            run_logs: list[dict[str, Any]] = []
+            try:
+                log_payload = await api.get(
+                    JiangsuQcRunLogTool._PATH, [("rStart", r_start), ("rId", r_id)]
+                )
+                run_logs = _compact_qc_run_logs(_list_result(log_payload, "质控运行日志"))
+            except (ValueError, httpx.HTTPError) as exc:
+                warnings.append(f"质控日志未获取（{exc}）")
+
+            curve: list[dict[str, Any]] = []
+            station_code = str(_pick(status, "stationCode", "StationCode") or "").strip()
+            poll = str(_pick(status, "poll", "Poll")
+                       or _pick(detail, "PollutantCode", "pollutantCode") or "").strip()
+            qc_type = str(_pick(status, "qcType", "QCType") or "").strip()
+            curve_start, curve_end = _qc_curve_window(detail, status, r_start)
+            if station_code and poll and qc_type and curve_start and curve_end:
+                try:
+                    curve_payload = await api.get(
+                        JiangsuQcMonitoringCurveTool._PATH,
+                        [("stationCode", station_code), ("poll", _identifier(poll, "pollutant")),
+                         ("qcType", _identifier(qc_type, "qc_type")),
+                         ("timePoint", curve_start), ("timePoint", curve_end)],
+                    )
+                    curve = _compact_qc_curve(_list_result(curve_payload, "质控监测曲线"))
+                except (ValueError, httpx.HTTPError) as exc:
+                    warnings.append(f"监测曲线未获取（{exc}）")
+            else:
+                warnings.append("缺少站点、监测项或质控类型，未获取监测曲线")
+
+            visual = _qc_task_detail_visual(
+                r_id=r_id, r_start=r_start, status=status, detail=detail,
+                run_logs=run_logs, curve=curve,
+            )
+            task = visual["data"]["qc_task_detail"]["task"]
+            summary = (
+                f"质控任务状态查询完成：{task['station_name'] or station_code} {poll} {qc_type}"
+                f"；任务状态 {task['task_status_label'] or task['task_status'] or '未返回'}"
+                f"，质控结果 {task['qc_result'] or '未返回'}；"
+                f"步骤 {len(visual['data']['qc_task_detail']['steps'])} 项、"
+                f"质控日志 {len(run_logs)} 条、监测曲线 {len(curve)} 点"
+            )
+            if warnings:
+                summary += "；" + "；".join(warnings)
+            metadata = {
+                "source": "jiangsu_operations_api", "endpoint": self._PATH,
+                "r_start": r_start, "r_id": r_id,
+                "station_code": station_code, "unique_code": task["unique_code"],
+                "poll": poll, "qc_type": qc_type,
+                "run_log_count": len(run_logs), "curve_point_count": len(curve),
+                "visual_type": "qc_task_detail",
+                "queried_at": datetime.now().astimezone().isoformat(),
+            }
+            return {
+                "status": "success", "success": True,
+                "data": {
+                    "r_id": r_id, "r_start": r_start,
+                    "station_code": station_code, "unique_code": task["unique_code"],
+                    "station_name": task["station_name"], "poll": poll, "qc_type": qc_type,
+                    "task": task,
+                    "steps": visual["data"]["qc_task_detail"]["steps"],
+                    "result_values": visual["data"]["qc_task_detail"]["result_values"],
+                    "data_values": visual["data"]["qc_task_detail"]["data_values"],
+                    "run_logs": run_logs,
+                    "curve_point_count": len(curve),
+                },
+                "metadata": metadata,
+                "visuals": [visual],
+                "resources": resources_for_visuals([visual], tool_name=self.name),
+                "summary": summary + "。",
+            }
         except (ValueError, httpx.HTTPError) as exc:
             return _failed("质控任务状态查询", exc)
 

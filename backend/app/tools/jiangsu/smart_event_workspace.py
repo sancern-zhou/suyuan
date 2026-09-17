@@ -15,6 +15,7 @@ from typing import Any
 
 from app.services.jiangsu_smart_event import AI_EVENT_TYPES, JiangsuSmartEventService
 from app.tools.base import LLMTool, ToolCategory
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_window
 
 
 COMMANDS = {
@@ -96,6 +97,7 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
                     "需要定位单个事件或任务时，先用 show_event_list / filter_event_list 查询，"
                     "工具会在 events 中返回带 event_id 的事件摘要，再据此调用 open_event_detail / focus_evidence / "
                     "compare_events / show_operation_history；open_task 可传 event_id 自动定位其关联任务。"
+                    "show_operation_history 会同时在 operation_records 中返回该事件的处置/派单/反馈记录，可直接引用其内容回答。"
                     "不要用该工具修改事件或确认处置。"
                 ),
                 "parameters": {
@@ -146,8 +148,11 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
         )
 
     async def _query_events(self, normalized: dict[str, Any]) -> dict[str, Any]:
-        end_at = datetime.now().astimezone()
-        start_at = end_at - timedelta(days=7)
+        if demo_freeze_active():
+            start_at, end_at = demo_freeze_window()
+        else:
+            end_at = datetime.now().astimezone()
+            start_at = end_at - timedelta(days=7)
         service = JiangsuSmartEventService()
         query_args = {
             "start_time": normalized.get("start_time") or start_at.isoformat(),
@@ -239,6 +244,31 @@ class JiangsuSmartEventWorkspaceTool(LLMTool):
                 for task in tasks
             ]
             summary_text = "已打开事件关联的任务卡片，tasks 返回了 task_id。"
+        elif command == "show_operation_history":
+            event = await JiangsuSmartEventService().get_event(str(event_id).strip())
+            if event is None:
+                return {"status": "failed", "success": False, "summary": f"未找到事件 {event_id}。"}
+            records = event.get("operation_records") or []
+            data["operation_records"] = [
+                {
+                    "operation_id": record.get("operation_id"),
+                    "action": record.get("action"),
+                    "summary": record.get("summary"),
+                    "actor": (record.get("actor") or {}).get("username"),
+                    "created_at": record.get("created_at"),
+                    "details": record.get("details") or {},
+                }
+                for record in records
+                if isinstance(record, dict)
+            ]
+            data["event_status"] = event.get("event_status")
+            if data["operation_records"]:
+                summary_text = (
+                    f"事件 {event_id}（当前状态：{data['event_status']}）共 {len(data['operation_records'])} 条处置记录，"
+                    "operation_records 返回了每条记录的动作、摘要、操作人和时间，可在回答中据此汇总研判、派单与反馈进展。"
+                )
+            else:
+                summary_text = f"事件 {event_id}（当前状态：{data['event_status']}）暂无处置记录。"
 
         payload = {
             "type": command,

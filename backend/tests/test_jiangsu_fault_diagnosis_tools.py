@@ -13,12 +13,14 @@ from app.tools.jiangsu.fault_diagnosis import (
     JiangsuQcMonitoringCurveTool,
     JiangsuQcRunLogTool,
     JiangsuQcTaskHistoryTool,
+    JiangsuQcTaskStatusTool,
     JiangsuStationAlarmLogsTool,
 )
 
 
 def test_station_fault_diagnosis_exposes_only_read_only_evidence_and_knowledge_tools():
     assert get_tool_order("station_fault_diagnosis") == [
+        "jiangsu_smart_event_workspace",
         "knowledge_qa_workflow",
         "knowledge_document_reader",
         "jiangsu_fetch_station_data",
@@ -743,6 +745,85 @@ async def test_qc_run_log_uses_task_identifiers(monkeypatch):
     monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
     result = await JiangsuQcRunLogTool().execute(r_start="2026-08-12 10:00:00", r_id="task-1")
     assert result["metadata"]["record_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_qc_task_status_builds_detail_visual_with_logs_and_curve(monkeypatch):
+    seen = []
+    status_detail = {
+        "StrStartTime": "2026-09-16 00:10:09",
+        "StrEndTime": "2026-09-16 00:23:52",
+        "PollutantCode": "O3",
+        "HistoryDetail": {
+            "QCResult": "合格", "TaskStatus": 0, "RelevantValue": 1.58, "Inaccuracy": 0.0158,
+        },
+        "Steps": [{
+            "StepName": "准备", "Status": 2,
+            "Actions": [{"ActionName": "检查", "ActionParameter": "正常", "Status": 2}],
+        }],
+        "ResultValues": [{"DataName": "零点响应", "DataValue": "1.58"}],
+        "DataValues": [{"DataName": "漂移", "DataValue": "0.01"}],
+    }
+
+    async def fake_get(self, path, params):
+        seen.append((path, params))
+        if path.endswith("GetNewQCHisTaskStatusResultAsync"):
+            return {"success": True, "result": {
+                "rId": "task-1", "rStart": "2026-09-16 00:10:09",
+                "stationCode": "7099A", "uniqueCode": "320100397",
+                "stationName": "江苏省环境监测中心超站",
+                "poll": "O3", "qcType": "零点检查",
+                "jsonStr": json.dumps(status_detail, ensure_ascii=False),
+            }}
+        if path.endswith("GetNewQCHisRunLogResultListAsync"):
+            return {"success": True, "result": [
+                {"recordTime": "2026-09-16 00:11:00", "target": "质控", "message": "开始零点检查"},
+            ]}
+        assert path.endswith("GetNewQCAirDataResultListAsync")
+        return {"success": True, "result": [
+            {"timePoint": "2026-09-16 00:10:00", "dataValue": 1.2, "unit": "ppb", "isQCing": True, "flag": 0},
+            {"timePoint": "2026-09-16 00:20:00", "dataValue": 1.6, "unit": "ppb", "isQCing": True, "flag": 0},
+        ]}
+
+    captured = {}
+
+    def fake_resources_for_visuals(visuals, *, tool_name):
+        captured["visuals"] = list(visuals)
+        captured["tool_name"] = tool_name
+        return [{
+            "kind": "visual", "group_key": "visual:qc_task_detail_task-1",
+            "resource_key": "chart-spec", "relation": "primary", "role": "output",
+            "label": "质控详情", "locator": {"visual_id": "qc_task_detail_task-1"},
+            "format": "json", "media_type": "application/json", "renderer": "chart",
+            "capabilities": ["preview"], "tool_name": tool_name,
+        }]
+
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis._JiangsuAuthenticatedApi.get", fake_get)
+    monkeypatch.setattr("app.tools.jiangsu.fault_diagnosis.resources_for_visuals", fake_resources_for_visuals)
+    result = await JiangsuQcTaskStatusTool().execute(r_start="2026-09-16 00:10:09", r_id="task-1")
+
+    assert result["success"] is True
+    visual = result["visuals"][0]
+    assert visual["type"] == "qc_task_detail"
+    assert visual["id"] == "qc_task_detail_task-1"
+    detail = visual["data"]["qc_task_detail"]
+    assert detail["task"]["qc_result"] == "合格"
+    assert detail["task"]["task_status_label"] == "结束"
+    assert detail["steps"][0]["name"] == "准备"
+    assert detail["result_values"][0]["name"] == "零点响应"
+    assert detail["run_logs"][0]["message"] == "开始零点检查"
+    assert len(detail["curve"]) == 2
+    assert result["metadata"]["curve_point_count"] == 2
+    assert result["resources"][0]["renderer"] == "chart"
+    assert captured["tool_name"] == "jiangsu_fetch_qc_task_status"
+    assert seen[1][1] == [("rStart", "2026-09-16 00:10:09"), ("rId", "task-1")]
+    curve_params = seen[2][1]
+    assert ("stationCode", "7099A") in curve_params
+    assert ("poll", "O3") in curve_params
+    assert ("qcType", "零点检查") in curve_params
+    assert curve_params[-2][1] == "2026-09-16 00:08:09"
+    assert curve_params[-1][1] == "2026-09-16 00:25:52"
+
 
 
 @pytest.mark.asyncio

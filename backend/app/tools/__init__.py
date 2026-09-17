@@ -520,6 +520,23 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
         except ImportError as e:
             logger.warning("tool_import_failed", tool="jiangsu_operations_analysis_tools", error=str(e))
 
+    if any(is_project_tool_enabled(context, "demo", tool_name) for tool_name in {
+        "jiangsu_demo_operation_plans", "jiangsu_demo_attendance_signins",
+        "jiangsu_demo_personnel_certificates", "jiangsu_demo_performance_two_rates",
+        "jiangsu_demo_qc_pass_rate_stats", "jiangsu_demo_operation_approvals",
+        "jiangsu_demo_door_remote_open_logs", "jiangsu_demo_standard_materials",
+    }):
+        try:
+            from app.tools.jiangsu.demo_data_tools import DEMO_DATA_TOOLS
+
+            for tool_cls in DEMO_DATA_TOOLS:
+                tool = tool_cls()
+                if is_project_tool_enabled(context, "demo", tool.name):
+                    registry.register(tool, priority=52)
+                    logger.info("tool_loaded", tool=tool.name)
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="jiangsu_demo_data_tools", error=str(e))
+
     if any(is_project_tool_enabled(context, "legacy", tool_name) for tool_name in {
         "jiangsu_get_device_control_state",
         "jiangsu_prepare_device_control",
@@ -581,6 +598,22 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                     logger.info("tool_loaded", tool=tool.name)
         except ImportError as e:
             logger.warning("tool_import_failed", tool="jiangsu_fault_diagnosis_tools", error=str(e))
+
+    if any(is_project_tool_enabled(context, "legacy", tool_name) for tool_name in {
+        "jiangsu_ops_audit_fetch_dataset",
+        "jiangsu_ops_audit_run_rules",
+    }):
+        try:
+            from app.tools.jiangsu.ops_audit_review import (
+                JiangsuOpsAuditFetchTool,
+                JiangsuOpsAuditRunRulesTool,
+            )
+            for tool in (JiangsuOpsAuditFetchTool(), JiangsuOpsAuditRunRulesTool()):
+                if is_project_tool_enabled(context, "legacy", tool.name):
+                    registry.register(tool, priority=55)
+                    logger.info("tool_loaded", tool=tool.name)
+        except ImportError as e:
+            logger.warning("tool_import_failed", tool="jiangsu_ops_audit_tools", error=str(e))
 
     try:
         from app.tools.knowledge.knowledge_graph_query.tool import KnowledgeGraphQueryTool
