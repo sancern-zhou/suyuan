@@ -168,8 +168,6 @@
             v-else-if="managementPanel === 'file-manager'"
             @close="$emit('close-management-panel')"
           />
-
-          <SmartReportsPanel v-else-if="managementPanel === 'smart-reports'" />
         </template>
           </ChatArea>
         </div>
@@ -201,6 +199,7 @@
         :human-feedback-error="humanFeedbackError"
         :knowledge-sources="knowledgeSources"
         :smart-event-command="smartEventCommand"
+        :device-control-command="deviceControlCommand"
         :task-workspace-task="taskWorkspaceTask"
         @tab-change="handleTabChange"
         @board-xml-change="handleBoardXmlChange"
@@ -210,6 +209,7 @@
         @open-smart-event-task-side="$emit('open-smart-event-task-side', $event)"
         @close-smart-event-panel="$emit('close-smart-event-panel')"
         @close-smart-event-task="$emit('close-smart-event-task')"
+        @close-device-control-panel="$emit('close-device-control-panel')"
         @restore-execution-session="$emit('restore-execution-session', $event)"
         />
       </template>
@@ -235,7 +235,6 @@ import SocialPlatformPanel from '@/components/management/SocialPlatformPanel.vue
 import ToolsManagementPanel from '@/components/management/ToolsManagementPanel.vue'
 import SkillsManagementPanel from '@/components/management/SkillsManagementPanel.vue'
 import FileManagerPanel from '@/components/FileManagerPanel.vue'
-import SmartReportsPanel from '@/components/management/SmartReportsPanel.vue'
 import { useAuthStore } from '@/auth/authStore.js'
 
 const AirQualityForecastView = projectConfig.hasModule('xuchang-air-quality')
@@ -252,6 +251,7 @@ const props = defineProps({
   taskWorkspaceEntries: { type: Array, default: () => [] },
   taskWorkspaceTask: { type: Object, default: null },
   smartEventCommand: { type: Object, default: null },
+  deviceControlCommand: { type: Object, default: null },
   workspace: {
     type: String,
     default: 'platform'
@@ -505,6 +505,7 @@ const emit = defineEmits([
   'open-smart-event-task-side',
   'close-smart-event-panel',
   'close-smart-event-task',
+  'close-device-control-panel',
   'refresh-session-history',
   'cleanup-sessions',
   'restore-session',

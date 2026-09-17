@@ -367,11 +367,23 @@ const emit = defineEmits(['update:modelValue', 'send', 'pause', 'update:useReran
 const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const localValue = ref(props.modelValue)
-const quickPrompts = computed(() => (
-  ['smart_event_external', 'smart_event_instrument'].includes(props.agentMode)
-    ? ['今日识别结果', '每周事件统计', '待办统计', '数据影响诊断']
-    : []
-))
+const quickPrompts = computed(() => {
+  if (props.agentMode === 'smart_event_external') {
+    return ['今日识别结果', '每周事件统计', '待办统计', '数据影响诊断']
+  }
+  if (props.agentMode === 'smart_event_instrument') {
+    return ['今日故障识别结果', '故障原因研判', '历史故障查询', '故障响应跟踪']
+  }
+  if (props.agentMode === 'jiangsu_query') {
+    return [
+      '南京有哪些省控站点',
+      '查询高淳淳溪站点的最近的5分钟数据',
+      '绘制今天5分钟数据的时序图',
+      '昨天区县的PM2.5排名'
+    ]
+  }
+  return []
+})
 const sendQuickPrompt = (query) => {
   if (!query || props.disabled || props.isAnalyzing) return
   emit('send', {

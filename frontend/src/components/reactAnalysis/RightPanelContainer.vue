@@ -149,6 +149,15 @@
         >
           <span>智能事件</span>
         </button>
+        <button
+          v-if="deviceControlAvailable"
+          :class="['tab-btn', { active: activeTab === 'device-control' }]"
+          role="tab"
+          :aria-selected="activeTab === 'device-control'"
+          @click="handleTabChange('device-control')"
+        >
+          <span>远程质控</span>
+        </button>
       </div>
 
       <div
@@ -208,6 +217,15 @@
         @close="$emit('close-smart-event-panel')"
         @open-task="$emit('open-smart-event-task-side', $event)"
       />
+
+      <!-- 远程质控工作区：设备反控 Agent 在右侧展示质控过程（状态核查/待确认/下发/回读/审计） -->
+      <DeviceControlProcessPanel
+        v-else-if="activeTab === 'device-control'"
+        class="panel-content"
+        :workspace-command="deviceControlCommand"
+        :messages="messages"
+        @close="$emit('close-device-control-panel')"
+      />
     </template>
   </div>
 </template>
@@ -220,6 +238,7 @@ import ResourceProductsPanel from '@/components/resources/ResourceProductsPanel.
 import ResourcePreviewHost from '@/components/resources/ResourcePreviewHost.vue'
 import VisualizationGallery from '@/components/resources/VisualizationGallery.vue'
 import HumanFeedbackPanel from './HumanFeedbackPanel.vue'
+import DeviceControlProcessPanel from '@/components/management/DeviceControlProcessPanel.vue'
 import SmartEventCenterPanel from '@/components/management/SmartEventCenterPanel.vue'
 import TaskExecutionWorkspace from '@/components/management/TaskExecutionWorkspace.vue'
 import { projectConfig } from '@/config/projectConfig.js'
@@ -290,6 +309,10 @@ const props = defineProps({
     type: Object,
     default: null
   },
+  deviceControlCommand: {
+    type: Object,
+    default: null
+  },
   taskWorkspaceTask: {
     type: Object,
     default: null
@@ -305,6 +328,7 @@ const emit = defineEmits([
   'open-smart-event-task-side',
   'close-smart-event-panel',
   'close-smart-event-task',
+  'close-device-control-panel',
   'restore-execution-session'
 ])
 const resourceStore = useSessionResourceStore()
@@ -359,6 +383,9 @@ const smartEventAvailable = computed(() => (
   projectConfig.project === 'jiangsu-ops' &&
   ['smart_event_external', 'smart_event_instrument'].includes(props.assistantMode)
 ))
+const deviceControlAvailable = computed(() => (
+  projectConfig.project === 'jiangsu-ops' && props.assistantMode === 'device_control'
+))
 const smartEventCategory = computed(() => {
   if (props.assistantMode === 'smart_event_external') return 'external-environment'
   if (props.assistantMode === 'smart_event_instrument') return 'instrument-fault'
@@ -367,7 +394,7 @@ const smartEventCategory = computed(() => {
 
 const showTabs = computed(() => {
   // 只要有任意一个面板可见，就显示标签页切换按钮
-  return visualizationAvailable.value || documentAvailable.value || fileProductCount.value > 0 || knowledgeCount.value > 0 || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value
+  return visualizationAvailable.value || documentAvailable.value || fileProductCount.value > 0 || knowledgeCount.value > 0 || showBoardTab.value || feedbackAvailable.value || smartEventAvailable.value || deviceControlAvailable.value
 })
 
 const fileProductCount = computed(() => resourceSummary.value.counts.files)
@@ -392,6 +419,7 @@ watch(
       || (tab === 'feedback' && !feedback)
       || (tab === 'files' && fileProductCount.value === 0)
       || (tab === 'smart-event' && !smartEventAvailable.value)
+      || (tab === 'device-control' && !deviceControlAvailable.value)
     )
     if (unavailable) emit('tab-change', 'files')
   },

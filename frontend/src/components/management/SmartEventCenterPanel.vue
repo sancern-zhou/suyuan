@@ -18,7 +18,23 @@
       <div class="list-toolbar">
         <div class="filter-row">
           <label><span>事件状态</span><select v-model="statusFilter" aria-label="状态筛选" @change="loadEvents()"><option value="">全部状态</option><option v-for="value in statusOptions" :key="value" :value="value">{{ value }}</option></select></label>
-          <label><span>事件类型</span><select v-model="typeFilter" aria-label="事件类型筛选" @change="loadEvents()"><option value="">{{ emptyTypeOptionLabel }}</option><option v-for="value in typeOptions" :key="value" :value="value">{{ value }}</option></select></label>
+          <div ref="typeFilterRef" class="type-filter">
+            <span>事件类型</span>
+            <button type="button" class="type-select-trigger" :aria-expanded="typeMenuOpen" aria-label="事件类型筛选" @click="toggleTypeMenu">
+              <span class="type-trigger-text">{{ typeTriggerLabel }}</span>
+              <i class="type-trigger-arrow" :class="{ open: typeMenuOpen }"></i>
+            </button>
+            <div v-if="typeMenuOpen" class="type-menu">
+              <label v-for="value in typeOptions" :key="value" class="type-option">
+                <input type="checkbox" :value="value" v-model="selectedEventTypes" @change="scheduleTypeLoad" />
+                <span>{{ value }}</span>
+              </label>
+              <div class="type-menu-actions">
+                <button type="button" @click="clearTypeSelection">清空</button>
+                <button type="button" @click="closeTypeMenu">完成</button>
+              </div>
+            </div>
+          </div>
           <label v-if="levelOptions.length"><span>等级</span><select v-model="levelFilter" aria-label="等级筛选" @change="loadEvents()"><option value="">全部等级</option><option v-for="value in levelOptions" :key="value" :value="value">{{ value }}</option></select></label>
           <label class="time-filter"><span>开始时间</span><input v-model="listStartTime" type="datetime-local" aria-label="事件开始时间筛选" /></label>
           <label class="time-filter"><span>结束时间</span><input v-model="listEndTime" type="datetime-local" aria-label="事件结束时间筛选" /></label>
@@ -418,6 +434,7 @@ import {
   dispatchJiangsuSmartEventOrder,
   getJiangsuSmartEvent,
   getJiangsuSmartEventConfig,
+  getJiangsuSmartEventDemoWindow,
   listJiangsuSmartEventTasks,
   listJiangsuSmartEvents,
   collectJiangsuSmartEventEvidence,
@@ -446,7 +463,10 @@ const toDatetimeLocal = value => {
   const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(value).map(part => [part.type, part.value]))
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
 }
+// 演示冻结窗口（由后端 /demo-window 下发）；null = 未开启冻结，使用当天滚动窗口。
+const freezeRange = ref(null)
 const defaultListTimeRange = () => {
+  if (freezeRange.value) return { ...freezeRange.value }
   const end = new Date()
   const parts = Object.fromEntries(DEFAULT_LIST_TIME_FORMATTER.formatToParts(end).map(part => [part.type, part.value]))
   return {
@@ -476,10 +496,9 @@ const reviewEvidence = ref([])
 const tasks = ref([])
 const keyword = ref('')
 const statusFilter = ref('')
-const typeFilter = ref('')
+// 事件类型筛选以数组为准；空数组 = 入口类别全部类型（智能事件中心则为全部事件类型）。
+const selectedEventTypes = ref([])
 const levelFilter = ref('')
-// 侧边栏入口按类别给定时，事件类型由后端接口筛选，不再做前端过滤。
-const commandEventTypes = ref(null)
 // 列表默认与后端默认查询范围一致：当天 00:00 至当前时刻（上海时间）。
 const listStartTime = ref(initialListTimeRange.start)
 const listEndTime = ref(initialListTimeRange.end)
@@ -624,17 +643,54 @@ const CATEGORY_TYPES = {
   'instrument-fault': ['疑似仪器故障', '疑似站房停电', '疑似公共系统异常', '疑似站房环境影响']
 }
 const categoryEventTypes = computed(() => CATEGORY_TYPES[props.category] || null)
-// 入口按类别筛选时，空值是“该类别全部类型”，而不是全部事件类型。
-const CATEGORY_SCOPE_LABELS = {
-  'external-environment': '全部外界环境类型',
-  'instrument-fault': '全部仪器故障类型'
-}
-const emptyTypeOptionLabel = computed(() => CATEGORY_SCOPE_LABELS[props.category] || '全部事件类型')
+const emptyTypeOptionLabel = computed(() => '全部类型')
+// 入口默认勾选该类别全部类型（仪器故障 4 类 / 外界环境 3 类），勾选态与后端筛选范围一致。
+selectedEventTypes.value = [...(categoryEventTypes.value || [])]
 const typeOptions = computed(() => {
-  const scoped = categoryEventTypes.value
-  return scoped ? listFilters.value.types.filter(value => scoped.includes(value)) : listFilters.value.types
+  // 并集：接口可用类型 ∪ 入口类别类型 ∪ 当前筛选值，保证 Agent 指定的类别外类型也能显示。
+  return [...new Set([
+    ...listFilters.value.types,
+    ...(categoryEventTypes.value || []),
+    ...selectedEventTypes.value,
+  ])]
 })
 const levelOptions = computed(() => listFilters.value.levels || [])
+// 事件类型下拉：收起时显示“全部类型”或已选摘要，展开为复选框列表。
+const typeFilterRef = ref(null)
+const typeMenuOpen = ref(false)
+let typeLoadTimer = null
+let appliedTypeKey = ''
+const typeTriggerLabel = computed(() => {
+  const picked = selectedEventTypes.value
+  if (!picked.length) return emptyTypeOptionLabel.value
+  return picked.length === 1 ? picked[0] : `${picked[0]} 等 ${picked.length} 类`
+})
+const toggleTypeMenu = () => {
+  typeMenuOpen.value = !typeMenuOpen.value
+}
+const closeTypeMenu = () => {
+  if (!typeMenuOpen.value) return
+  typeMenuOpen.value = false
+  scheduleTypeLoad()
+}
+const clearTypeSelection = () => {
+  selectedEventTypes.value = []
+  scheduleTypeLoad()
+}
+const scheduleTypeLoad = () => {
+  // 未点“完成”就点外部关闭、或勾选变化时，300ms 防抖后按最终选择刷新一次。
+  const key = JSON.stringify(selectedEventTypes.value)
+  if (key === appliedTypeKey) return
+  if (typeLoadTimer) clearTimeout(typeLoadTimer)
+  typeLoadTimer = setTimeout(() => {
+    typeLoadTimer = null
+    loadEvents()
+  }, 300)
+}
+const handleTypeMenuPointerDown = event => {
+  if (!typeMenuOpen.value) return
+  if (!typeFilterRef.value?.contains(event.target)) closeTypeMenu()
+}
 // 事件类型已由后端接口筛选，列表直接使用接口返回结果。
 const filteredEvents = computed(() => events.value)
 const pendingCount = computed(() => listStats.value.pending)
@@ -773,9 +829,9 @@ const sourceColumnDefinitions = {
   ],
   instrument_status: [
     { key: 'pollutantName', label: '污染物' }, { key: 'dataResolution', label: '数据类型' },
-    { key: 'timePoint', label: '时间' }, { key: 'statusName', label: '监测项' },
-    { key: 'moniterValue', label: '监测值' }, { key: 'targetUnit', label: '单位' },
-    { key: 'lowLimit', label: '下限' }, { key: 'topLimit', label: '上限' },
+    { key: 'statusName', label: '监测项' }, { key: 'targetUnit', label: '单位' },
+    { key: 'timePoint', label: '时间' }, { key: 'valueSummary', label: '监测值' },
+    { key: 'abnormalSummary', label: '异常点' }, { key: 'pointCount', label: '点数' },
   ],
   door: [
     { key: 'eventTime', label: '事件时间' }, { key: 'doorName', label: '门禁点' },
@@ -813,6 +869,7 @@ const sourceStatusClass = source => source?.status === 'success' || (source?.suc
 const sourceRecordCount = source => {
   if (!source) return 0
   if (source.record_count != null) return source.record_count
+  if (source.data?.raw_points != null) return source.data.raw_points
   if (source.data?.station_hour?.record_count != null) return Number(source.data.station_hour.record_count || 0) + Number(source.data.station_5minute?.record_count || 0)
   return Array.isArray(source.data) ? source.data.length : 0
 }
@@ -841,15 +898,45 @@ const normalizeQcRow = row => ({
   missionName: row?.missionName || row?.Mission_Name || row?.rName || row?.taskName || row?.missionGroupName || row?.Mission_Group_Name || row?.poll || '-',
   result: row?.result || row?.Result || row?.qcResult || '-',
 })
+const instrumentStatusRows = source => {
+  // 新证据包为映射投影（series），存量旧包为逐行原始记录，两种都兼容展示。
+  const resolutions = [['five_minute', '五分钟'], ['hour', '小时']]
+  const rawRows = data => Array.isArray(data) ? data : (data?.items || data?.list || data?.rows || data?.records || data?.data || [])
+  const seriesRows = data => Array.isArray(data?.series) ? data.series.map(item => {
+    const first = item.first_t || ''
+    const last = item.last_t || ''
+    const range = !first && !last
+      ? '-'
+      : (first && last && last !== first ? `${formatTime(first)} ~ ${formatTime(last)}` : formatTime(first || last))
+    const values = [item.min, item.max].filter(value => value != null)
+    const valueSummary = values.length
+      ? `${values[0]}${values.length > 1 && values[0] !== values[1] ? ` ~ ${values[1]}` : ''}${item.mean != null ? `（均 ${item.mean}）` : ''}`
+      : '-'
+    const abnormal = Array.isArray(item.abnormal) ? item.abnormal : []
+    return {
+      pollutantName: item.p || '-', dataResolution: '', statusName: item.param || '-',
+      targetUnit: item.unit || '-', timePoint: range, valueSummary,
+      abnormalSummary: abnormal.length
+        ? abnormal.slice(0, 3).map(point => `${formatTime(point.t)} ${point.v}${point.m ? `(${point.m})` : ''}`).join('；') + (abnormal.length > 3 ? ` 等${abnormal.length}个` : '')
+        : '-',
+      pointCount: item.n ?? '-',
+    }
+  }) : []
+  return resolutions.flatMap(([key, label]) => {
+    const data = source.data?.[key]
+    const rows = Array.isArray(data?.series)
+      ? seriesRows(data)
+      : rawRows(data).map(row => ({
+        ...row, pollutantName: row.pollutantName || row.pollutantCode || '-',
+        dataResolution: label, valueSummary: row.moniterValue, abnormalSummary: '-', pointCount: '-',
+      }))
+    return rows.map(row => ({ ...row, dataResolution: row.dataResolution || label }))
+  })
+}
 const sourceRows = section => {
   const source = section?.value
   if (!source) return []
-  if (section.key === 'instrument_status') {
-    const rowsFor = data => Array.isArray(data) ? data : (data?.items || data?.list || data?.rows || data?.records || data?.data || [])
-    return [['five_minute', '五分钟'], ['hour', '小时']].flatMap(([key, label]) =>
-      rowsFor(source.data?.[key]).map(row => ({ ...row, pollutantName: row.pollutantName || row.pollutantCode || '-', dataResolution: label }))
-    )
-  }
+  if (section.key === 'instrument_status') return instrumentStatusRows(source)
   if (Array.isArray(source.data)) {
     let rows = source.data.flatMap(row => row?.result?.alarmLogs || row?.alarmLogs || [row])
     if (section.key === 'qc_history') rows = rows.map(normalizeQcRow)
@@ -1111,6 +1198,7 @@ const rootRef = ref(null)
 let chartResizeObserver = null
 onMounted(() => {
   window.addEventListener('resize', handleChartResize)
+  document.addEventListener('pointerdown', handleTypeMenuPointerDown)
   // 嵌入右侧面板时宽度可拖动调整，通过容器尺寸观察同步图表尺寸
   if (typeof ResizeObserver !== 'undefined') {
     chartResizeObserver = new ResizeObserver(handleChartResize)
@@ -1352,15 +1440,13 @@ const loadEvents = async (page = 1) => {
     page: Number.isInteger(page) ? page : 1,
     limit: PAGE_SIZE,
     status: statusFilter.value,
-    event_type: typeFilter.value || undefined,
-    event_types: typeFilter.value
-      ? undefined
-      : (commandEventTypes.value?.length ? commandEventTypes.value : (categoryEventTypes.value || undefined)),
+    event_types: selectedEventTypes.value.length ? selectedEventTypes.value : undefined,
     level: levelFilter.value,
     keyword: keyword.value,
     start_time: listStartTime.value || undefined,
     end_time: listEndTime.value || undefined,
   }
+  appliedTypeKey = JSON.stringify(activeQuery.value.event_types || [])
   try {
     const payload = await listJiangsuSmartEvents({ ...activeQuery.value, refresh: false })
     applyListPage(payload)
@@ -1376,10 +1462,9 @@ const loadEvents = async (page = 1) => {
 
 const resetFilters = () => {
   statusFilter.value = ''
-  typeFilter.value = ''
+  selectedEventTypes.value = [...(categoryEventTypes.value || [])]
   levelFilter.value = ''
   keyword.value = ''
-  commandEventTypes.value = null
   const range = defaultListTimeRange()
   listStartTime.value = range.start
   listEndTime.value = range.end
@@ -1424,6 +1509,11 @@ onUnmounted(() => {
   stopSyncWatch()
   detailRequestId += 1
   window.removeEventListener('resize', handleChartResize)
+  document.removeEventListener('pointerdown', handleTypeMenuPointerDown)
+  if (typeLoadTimer) {
+    clearTimeout(typeLoadTimer)
+    typeLoadTimer = null
+  }
   chartResizeObserver?.disconnect()
   chartResizeObserver = null
   deltaChartInstance?.dispose()
@@ -1487,18 +1577,42 @@ watch(() => props.workspaceCommand, command => {
     const filters = command.filters || {}
     keyword.value = filters.keyword || command.query?.keyword || ''
     statusFilter.value = filters.status || filters.event_status || ''
-    typeFilter.value = filters.event_type || filters.type || ''
     levelFilter.value = filters.level || filters.ai_suggested_level || ''
-    commandEventTypes.value = Array.isArray(filters.event_types)
+    // Agent 单值 event_type 与数组 event_types 统一回填到多选；未指定类型时回到入口默认勾选。
+    const commandTypes = Array.isArray(filters.event_types) && filters.event_types.length
       ? filters.event_types.map(item => String(item).trim()).filter(Boolean)
-      : null
+      : (String(filters.event_type || filters.type || '').trim() ? [String(filters.event_type || filters.type).trim()] : [])
+    selectedEventTypes.value = commandTypes.length ? commandTypes : [...(categoryEventTypes.value || [])]
     const defaultRange = defaultListTimeRange()
     listStartTime.value = filters.start_time || filters.startTime || defaultRange.start
     listEndTime.value = filters.end_time || filters.endTime || defaultRange.end
     loadEvents()
   }
 }, { deep: true, immediate: true })
-loadEvents()
+// 切换入口（外界环境 ↔ 仪器故障）时，按新类别重置默认勾选并刷新列表。
+watch(() => props.category, () => {
+  selectedEventTypes.value = [...(categoryEventTypes.value || [])]
+  loadEvents()
+})
+// 演示冻结模式：读取后端固定窗口并作为默认时间范围；接口缺失（未部署）时静默回退。
+const applyDemoFreezeWindow = async () => {
+  try {
+    const payload = await getJiangsuSmartEventDemoWindow()
+    if (payload?.frozen && payload?.window?.start && payload?.window?.end) {
+      freezeRange.value = {
+        start: toDatetimeLocal(new Date(payload.window.start)),
+        end: toDatetimeLocal(new Date(payload.window.end)),
+      }
+      if (!activeQuery.value?.start_time) {
+        listStartTime.value = freezeRange.value.start
+        listEndTime.value = freezeRange.value.end
+      }
+    }
+  } catch {
+    // 非冻结模式或旧后端：保持默认当天窗口。
+  }
+}
+applyDemoFreezeWindow().then(() => loadEvents())
 </script>
 
 <style scoped>
@@ -1568,6 +1682,18 @@ loadEvents()
 .filter-row { align-items: center; gap: 12px 16px; }
 .filter-row label { display: flex; align-items: center; gap: 8px; color: #555; white-space: nowrap; }
 .filter-row input, .filter-row select { width: 160px; min-width: 0; height: 32px; box-sizing: border-box; border-color: #d9d9d9; border-radius: 2px; padding: 0 10px; color: #333; outline: 0; }
+.filter-row .type-filter { position: relative; display: flex; align-items: center; gap: 8px; color: #555; white-space: nowrap; }
+.type-select-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 160px; height: 32px; box-sizing: border-box; border: 1px solid #d9d9d9; border-radius: 2px; padding: 0 10px; background: #fff; color: #333; cursor: pointer; font-size: 13px; }
+.type-select-trigger:hover { border-color: #1684f8; }
+.type-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-trigger-arrow { width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #8a94a6; transition: transform .15s; }
+.type-trigger-arrow.open { transform: rotate(180deg); }
+.type-menu { position: absolute; top: calc(100% + 4px); left: 56px; z-index: 40; width: 280px; max-height: 300px; overflow-y: auto; background: #fff; border: 1px solid #d9d9d9; border-radius: 4px; box-shadow: 0 6px 16px rgba(25, 42, 70, .12); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.type-option { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; color: #333; }
+.type-option:hover { background: #f5f9ff; }
+.type-option input { width: 13px; height: 13px; margin: 0; flex: 0 0 auto; accent-color: #1684f8; }
+.type-menu-actions { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid #eef2f7; padding: 6px 4px 2px; margin-top: 4px; }
+.type-menu-actions button { border: 1px solid #c9d5e3; border-radius: 4px; background: #fff; color: #2f6bff; cursor: pointer; padding: 3px 10px; font-size: 12px; }
 .filter-row .time-filter input { width: 176px; }
 .filter-row input:focus, .filter-row select:focus { border-color: #1684f8; box-shadow: 0 0 0 2px rgba(22, 132, 248, .12); }
 .filter-row .keyword-filter { flex: 1; min-width: 260px; }
@@ -1586,9 +1712,9 @@ loadEvents()
 .list-metrics > b { margin-left: auto; color: #666; font-size: 12px; font-weight: 400; }
 .event-table-wrap { border-top: 1px solid #e8e8e8; border-radius: 0 0 4px 4px; background: #fff; }
 .event-table { min-width: 1000px; }
-.event-table th, .event-table td { height: 44px; box-sizing: border-box; padding: 8px 10px; border-right: 1px solid #e8e8e8; border-bottom: 1px solid #e8e8e8; text-align: center; font-size: 12px; }
+.event-table th, .event-table td { height: 44px; box-sizing: border-box; padding: 8px 10px; border-bottom: 1px solid #f0f3f6; text-align: center; font-size: 12px; }
 .event-table th { color: #333; background: #deefff; font-weight: 600; }
-.event-table td { color: #444; }.event-table th:last-child, .event-table td:last-child { border-right: 0; }
+.event-table td { color: #444; }
 .event-table tbody tr:hover { background: #eaf5ff; }
 .event-table th:nth-child(1) { width: 46px; }.event-table th:nth-child(2) { width: 72px; }.event-table th:nth-child(3) { width: 165px; }.event-table th:nth-child(4) { width: 100px; }.event-table th:nth-child(5) { width: 112px; }.event-table th:nth-child(6) { width: 82px; }.event-table th:nth-child(7) { width: 55px; }.event-table th:nth-child(8) { width: 105px; }.event-table th:nth-child(9) { width: 130px; }.event-table th:nth-child(10) { width: 150px; }
 .event-name { display: block; }.event-name strong { display: block; color: #333; font-weight: 500; }
@@ -1619,15 +1745,15 @@ loadEvents()
 .disposal-button { min-width: 112px; min-height: 34px; border: 1px solid #1684f8; border-radius: 2px; background: #fff; color: #1684f8; cursor: pointer; font-size: 12px; }
 .disposal-button.primary { background: #1684f8; color: #fff; }
 .action-page-heading { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; color: #333; }.action-page-heading span { color: #888; font-size: 12px; }
-.dispatch-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 0 12px; border-top: 1px solid #d9e2eb; border-left: 1px solid #d9e2eb; }.dispatch-facts div { display: grid; grid-template-columns: 90px minmax(0, 1fr); min-width: 0; border-right: 1px solid #d9e2eb; border-bottom: 1px solid #d9e2eb; }.dispatch-facts dt, .dispatch-facts dd { margin: 0; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }.dispatch-facts dt { background: #f2f8fd; color: #555; }.dispatch-facts dd { color: #333; }
+.dispatch-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 0 12px; }.dispatch-facts div { display: grid; grid-template-columns: 90px minmax(0, 1fr); min-width: 0; border-bottom: 1px solid #eef2f6; }.dispatch-facts div:nth-last-child(-n+2) { border-bottom: 0; }.dispatch-facts dt, .dispatch-facts dd { margin: 0; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }.dispatch-facts dt { background: #f6f9fc; color: #555; }.dispatch-facts dd { color: #333; }
 .dispatch-description { display: block; color: #555; font-size: 12px; }.dispatch-description span { display: block; margin-bottom: 6px; }.dispatch-description textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #d9d9d9; border-radius: 2px; padding: 8px; font: inherit; font-size: 12px; }
 .archive-overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .28); }.archive-dialog { width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 0 20px 18px; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,.18); }.archive-dialog > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin: 0 -20px 16px; padding: 0 20px; border-bottom: 1px solid #e8e8e8; color: #333; }.archive-dialog > header button { border: 0; background: transparent; color: #888; cursor: pointer; font-size: 22px; }
 .dialog-note { margin: -4px 0 12px; color: #888; font-size: 12px; }
 .workbench-section:first-child { padding-top: 0; }
 .workbench-section-header { min-height: 44px; margin: 0 -16px 12px; padding: 0 16px; border-bottom: 1px solid #e8e8e8; }
 .workbench-section-header h3 { color: #333; font-size: 14px; }
-.event-grid { border-color: #d9e2eb; }.event-grid-item { border-color: #d9e2eb; }
-.event-grid-item span { background: #f2f8fd; color: #555; }.event-grid-item strong { color: #333; }
+.event-grid { border: 0; }.event-grid-item { border: 0; border-bottom: 1px solid #eef2f6; }
+.event-grid-item span { background: #f6f9fc; color: #555; }.event-grid-item strong { color: #333; }
 .source-summary { color: #666; }.source-meta { flex-wrap: wrap; color: #888; font-size: 12px; }
 .source-status { padding: 2px 8px; border-radius: 2px; font-size: 12px; line-height: 20px; }
 .source-status.ok { color: #389e0d; background: #f6ffed; }
@@ -1635,8 +1761,8 @@ loadEvents()
 .source-status.bad { color: #d4380d; background: #fff2e8; }
 .regional-delta-block h4 { margin-bottom: 8px; color: #333; font-size: 14px; font-weight: 600; line-height: 20px; }
 .delta-legend { color: #888; font-size: 12px; }
-.source-table-wrap { border-color: #d9e2eb; }
-.source-table th, .source-table td { height: 38px; font-size: 12px; box-sizing: border-box; border-color: #e8e8e8; text-align: center; }
+.source-table-wrap { border: 0; }
+.source-table th, .source-table td { height: 38px; font-size: 12px; box-sizing: border-box; border-right: 0; border-bottom: 1px solid #f0f3f6; text-align: center; }
 .source-table th { color: #333; background: #deefff; font-weight: 600; }.source-table td { color: #444; }
 .judgment, .confirmation, .task-section { margin-top: 10px; padding: 0 16px 16px; border: 0; border-radius: 4px; background: #fff; }
 .section-title { min-height: 44px; margin: 0 -16px 12px; padding: 0 16px; border-bottom: 1px solid #e8e8e8; }
@@ -1782,4 +1908,15 @@ loadEvents()
   .workbench-fit .event-detail, .workbench-fit .evidence-detail-board { display: block; flex: none; }
   .workbench-fit .workbench-layout { display: block; flex: none; height: auto; min-height: 0; }
 }
+
+/* 降噪：去掉多余描边，统一改用浅底色分区（与质控详情面板同风格）。 */
+.detail-tag-row { border: 0; border-radius: 6px; background: #f6f8fb; }
+.merged-alarm-content { border: 0; border-radius: 6px; background: #f7f9fc; }
+.j-block { border: 0; border-radius: 6px; background: #f6f8fb; }
+.comparison-overview > div { border: 0; border-radius: 6px; background: #f6f8fb; }
+.evidence-source-card { border: 0; border-radius: 6px; background: #f7f9fb; }
+.evidence-summary { border: 0; border-radius: 6px; background: #f7faff; }
+.event-grid-item span, .dispatch-facts dt { background: #f6f8fb; }
+.judgment-history { border-top-color: #eef2f6; }
+.analysis-item + .analysis-item { border-top-color: #eef2f6; }
 </style>

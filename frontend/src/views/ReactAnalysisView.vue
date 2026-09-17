@@ -35,6 +35,7 @@
       :task-workspace-entries="taskWorkspaceEntries"
       :task-workspace-task="taskWorkspaceTask"
       :smart-event-command="smartEventCommand"
+      :device-control-command="deviceControlCommand"
       :agent-mode="store.currentMode"
       :left-sidebar-collapsed="leftSidebarCollapsed"
       :management-panel="managementPanel"
@@ -106,6 +107,7 @@
       @open-smart-event-task-side="handleSmartEventSideTaskOpen"
       @close-smart-event-panel="handleSmartEventPanelClose"
       @close-smart-event-task="handleSmartEventTaskClose"
+      @close-device-control-panel="handleDeviceControlPanelClose"
       @select-review="handleTodoReviewOpen"
       @refresh-session-history="refreshSessionHistory"
       @cleanup-sessions="handleSessionCleanup"
@@ -171,6 +173,7 @@ import {
 } from '@/components/agentPlatform/workspacePolicy.js'
 import { resolveCoordinatorMode } from '@/components/coordinator/coordinatorWorkspace.js'
 import { extractSmartEventWorkspaceCommand } from '@/services/jiangsuSmartEventWorkspace.js'
+import { extractDeviceControlWorkspaceCommand } from '@/services/jiangsuDeviceControlWorkspace.js'
 
 // 引入composables
 import { usePanelManagement } from '@/composables/reactAnalysis/usePanelManagement'
@@ -200,6 +203,8 @@ const taskWorkspaceTask = ref(null)
 const smartEventCommand = ref(null)
 const suppressSmartEventCommandOpen = ref(false)
 const lastSmartEventCommandKey = ref('')
+const deviceControlCommand = ref(null)
+const lastDeviceControlCommandKey = ref('')
 const taskWorkspaceEntries = computed(() => scheduledTasksStore.tasks.filter(task => task.workspace_entry?.enabled))
 
 // ========== 使用Composables ==========
@@ -387,6 +392,31 @@ const handleSmartEventPanelClose = () => {
 const handleSmartEventTaskClose = () => {
   taskWorkspaceTask.value = null
 }
+
+// AI 工作区命令驱动的远程质控页面在右侧面板打开，保留对话窗口供确认与后续交互
+const openDeviceControlSidePanel = () => {
+  workspace.value = 'chat'
+  hideManagementPanel()
+  activeRightTab.value = 'device-control'
+  rightPanelVisible.value = true
+  leftSidebarCollapsed.value = true
+  vizWidth.value = Math.max(vizWidth.value, PANEL_SIZES.COLLAPSED_VIZ_WIDTH)
+}
+
+const handleDeviceControlPanelClose = () => {
+  rightPanelVisible.value = false
+  leftSidebarCollapsed.value = false
+}
+
+watch(currentModeMessages, messages => {
+  const command = extractDeviceControlWorkspaceCommand(messages)
+  if (!command) return
+  const commandKey = JSON.stringify(command)
+  if (commandKey === lastDeviceControlCommandKey.value) return
+  lastDeviceControlCommandKey.value = commandKey
+  deviceControlCommand.value = command
+  openDeviceControlSidePanel()
+}, { deep: true })
 
 watch(currentModeMessages, messages => {
   const command = extractSmartEventWorkspaceCommand(messages)
@@ -630,6 +660,27 @@ const handleSidebarAction = async (actionId) => {
     return
   }
 
+  if (actionId === 'smart-inspection' || actionId === 'operations-analysis' || actionId === 'device-control' || actionId === 'station-fault-diagnosis') {
+    if (!await confirmResourcePreviewLeave()) return
+    if (route.name !== 'analysis') await router.replace({ name: 'analysis' })
+    hideManagementPanel()
+    resetPanelState()
+    workspace.value = 'chat'
+    const targetMode = {
+      'smart-inspection': 'smart_inspection',
+      'operations-analysis': 'operations_analysis',
+      'device-control': 'device_control',
+      'station-fault-diagnosis': 'station_fault_diagnosis'
+    }[actionId]
+    if (store.currentMode !== targetMode) store.switchMode(targetMode)
+    if (actionId === 'device-control') {
+      activeRightTab.value = 'device-control'
+      rightPanelVisible.value = true
+      leftSidebarCollapsed.value = true
+    }
+    return
+  }
+
   if (actionId === 'smart-event-external' || actionId === 'smart-event-instrument') {
     if (!await confirmResourcePreviewLeave()) return
     if (route.name !== 'analysis') await router.replace({ name: 'analysis' })
@@ -677,9 +728,6 @@ const handleSidebarAction = async (actionId) => {
       break
     case 'smart-events':
       showManagementPanel('smart-events')
-      break
-    case 'smart-reports':
-      showManagementPanel('smart-reports')
       break
     case 'session-history':
       console.log('[ReactAnalysisView] Showing session-history panel')

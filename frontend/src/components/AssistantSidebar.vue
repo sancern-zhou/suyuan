@@ -29,6 +29,32 @@
           </div>
         </button>
         <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('task-scheduler-center') }"
+          type="button"
+          @click="handleModuleSelect('task-scheduler-center')"
+          :title="isCollapsed ? '任务调度中心' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('task-scheduler-center')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">任务调度中心</p>
+          </div>
+        </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('smart-events') }"
+          type="button"
+          @click="handleModuleSelect('smart-events')"
+          :title="isCollapsed ? '智能事件中心' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('scheduled-tasks')"></span>
+          <div v-if="!isCollapsed" class="module-info">
+            <p class="module-title">智能事件中心</p>
+          </div>
+        </button>
+        <button
           class="module-card"
           type="button"
           @click="handleModuleSelect('restart-session')"
@@ -78,29 +104,15 @@
           </div>
         </button>
         <button
-          class="module-card"
-          :class="{ active: isActive('knowledge-base') }"
-          type="button"
-          @click="handleModuleSelect('knowledge-base')"
-          :title="isCollapsed ? '知识管理' : ''"
-        >
-          <span class="module-icon" v-html="getModuleIcon('knowledge-base')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">知识管理</p>
-          </div>
-        </button>
-        <button
           v-if="projectConfig.project === 'jiangsu-ops'"
           class="module-card"
-          :class="{ active: isActive('task-scheduler-center') }"
+          :class="{ active: isActive('operations-analysis') }"
           type="button"
-          @click="handleModuleSelect('task-scheduler-center')"
-          :title="isCollapsed ? '任务调度中心' : ''"
+          @click="handleModuleSelect('operations-analysis')"
+          :title="isCollapsed ? '运维操作分析' : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon('task-scheduler-center')"></span>
-          <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">任务调度中心</p>
-          </div>
+          <span class="module-icon" v-html="getModuleIcon('operations-analysis')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">运维操作分析</p></div>
         </button>
         <button
           v-if="projectConfig.project === 'jiangsu-ops'"
@@ -127,25 +139,46 @@
         <button
           v-if="projectConfig.project === 'jiangsu-ops'"
           class="module-card"
-          :class="{ active: isActive('smart-reports') }"
+          :class="{ active: isActive('smart-inspection') }"
           type="button"
-          @click="handleModuleSelect('smart-reports')"
-          :title="isCollapsed ? '智能报告' : ''"
+          @click="handleModuleSelect('smart-inspection')"
+          :title="isCollapsed ? '智能巡检' : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon('smart-reports')"></span>
-          <div v-if="!isCollapsed" class="module-info"><p class="module-title">智能报告</p></div>
+          <span class="module-icon" v-html="getModuleIcon('smart-inspection')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">智能巡检</p></div>
         </button>
         <button
           v-if="projectConfig.project === 'jiangsu-ops'"
           class="module-card"
-          :class="{ active: isActive('smart-events') }"
+          :class="{ active: isActive('device-control') }"
           type="button"
-          @click="handleModuleSelect('smart-events')"
-          :title="isCollapsed ? '智能事件中心' : ''"
+          @click="handleModuleSelect('device-control')"
+          :title="isCollapsed ? '智能遥控' : ''"
         >
-          <span class="module-icon" v-html="getModuleIcon('scheduled-tasks')"></span>
+          <span class="module-icon" v-html="getModuleIcon('device-control')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">智能遥控</p></div>
+        </button>
+        <button
+          v-if="projectConfig.project === 'jiangsu-ops'"
+          class="module-card"
+          :class="{ active: isActive('station-fault-diagnosis') }"
+          type="button"
+          @click="handleModuleSelect('station-fault-diagnosis')"
+          :title="isCollapsed ? '故障诊断' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('station-fault-diagnosis')"></span>
+          <div v-if="!isCollapsed" class="module-info"><p class="module-title">故障诊断</p></div>
+        </button>
+        <button
+          class="module-card"
+          :class="{ active: isActive('knowledge-base') }"
+          type="button"
+          @click="handleModuleSelect('knowledge-base')"
+          :title="isCollapsed ? '知识管理' : ''"
+        >
+          <span class="module-icon" v-html="getModuleIcon('knowledge-base')"></span>
           <div v-if="!isCollapsed" class="module-info">
-            <p class="module-title">智能事件中心</p>
+            <p class="module-title">知识管理</p>
           </div>
         </button>
       </div>
@@ -678,8 +711,34 @@ const moduleIcons = {
       <path d="M13 15h7v4h-7z" />
     </svg>
   `,
-  'smart-reports': `
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v4h3M9 12h6M9 15h6"/></svg>
+  'smart-inspection': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 4.5h14v15H5z" />
+      <path d="M8 8h5M8 11.5h8M8 15h5" />
+      <path d="m14.5 17.5 1.7 1.7 3.3-3.7" />
+    </svg>
+  `,
+  'operations-analysis': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 19.5V7.5l7-4 7 4v12" />
+      <path d="M10 19.5v-4h4v4" />
+      <path d="M3.5 5.5c3 0 3 4 6 4s3-4 6-4 3 4 5 4" />
+    </svg>
+  `,
+  'device-control': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4.5 8.5h15v10h-15z" />
+      <path d="M8 8.5V5h8v3.5" />
+      <path d="M8 13.5h.01M12 13.5h.01M16 13.5h.01" />
+      <path d="M12 18.5v2M9 20.5h6" />
+    </svg>
+  `,
+  'station-fault-diagnosis': `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4.5 5.5h15v13h-15z" />
+      <path d="M8 9.5h8M8 13h4" />
+      <path d="M17.5 16.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm2.1 5.1 1.9 1.9" />
+    </svg>
   `,
   'social-platform': `
     <svg viewBox="0 0 24 24" aria-hidden="true">

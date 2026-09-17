@@ -34,6 +34,10 @@ export async function getJiangsuSmartEventConfig() {
   return parse(await authFetch(`${BASE}/config/current`))
 }
 
+export async function getJiangsuSmartEventDemoWindow() {
+  return parse(await authFetch(`${BASE}/demo-window`))
+}
+
 export async function saveJiangsuSmartEventConfig(values) {
   return parse(await authFetch(`${BASE}/config/current`, {
     method: 'PUT',
