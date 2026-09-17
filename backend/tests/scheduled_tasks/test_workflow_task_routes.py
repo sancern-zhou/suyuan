@@ -111,7 +111,7 @@ def test_create_workflow_task_with_registered_name(monkeypatch):
     task = response.json()["task"]
     assert task["execution_mode"] == "workflow"
     assert task["workflow_name"] == "demo_workflow"
-    assert task["model_tier"] == "auto"
+    assert task["model_tier"] == "flash"
     assert service.tasks[task["task_id"]].workflow_args == {"period": "day"}
 
 

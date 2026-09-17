@@ -33,6 +33,8 @@ backend:
       - list_session_resources
       - read_session_resource
       - publish_session_file
+      - knowledge_qa_workflow
+      - knowledge_document_reader
       - get_weather_data
       - get_weather_forecast
       - get_universal_meteorology

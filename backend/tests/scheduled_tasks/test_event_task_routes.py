@@ -463,7 +463,7 @@ def test_execute_now_returns_immediately_without_waiting(monkeypatch):
 def test_task_result_and_model_configuration_create_update(monkeypatch):
     client, service = _client(monkeypatch)
     payload = {**_event_payload(), 'model_tier': 'flash', 'result_requirements': [
-        {'field': 'sections.level', 'label': '等级', 'required': True, 'allowed_values': ['P1', 'P2']}
+        {'field': 'sections.level', 'label': '等级', 'required': True, 'required_when': {}, 'allowed_values': ['P1', 'P2']}
     ]}
     created = client.post('/api/scheduled-tasks', json=payload)
     assert created.status_code == 200, created.text

@@ -21,6 +21,20 @@ class DummyResponse:
         return {"data": {"result": {"resultOne": []}}}
 
 
+class StubGeoMatcher:
+    """Deterministic station mapping so the test does not depend on deployment geo data."""
+
+    def find_station_by_substring(self, station):
+        return "公园前" if "公园前" in station else None
+
+    def stations_to_codes(self, stations):
+        codes = {"公园前": "1006b"}
+        try:
+            return [codes[station] for station in stations]
+        except KeyError as error:
+            raise ValueError(f"unknown station: {error}") from error
+
+
 @pytest.mark.asyncio
 async def test_locations_station_name_maps_to_component_station_code(monkeypatch):
     captured = {}
@@ -30,6 +44,7 @@ async def test_locations_station_name_maps_to_component_station_code(monkeypatch
         return DummyResponse()
 
     monkeypatch.setattr("app.tools.query.get_particulate_components.tool.get_particulate_token_manager", lambda: DummyTokenManager())
+    monkeypatch.setattr("app.tools.query.get_particulate_components.tool.get_particulate_geo_matcher", lambda: StubGeoMatcher())
     monkeypatch.setattr("requests.post", fake_post)
 
     result = await GetParticulateComponentsTool().execute(

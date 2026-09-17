@@ -77,7 +77,7 @@ def test_graph_prompt_routes_from_prompt_builder():
     assert "知识库优先" in prompt
     assert "解释/查看/总结类任务" in prompt
     assert "knowledge_graph_query" in prompt
-    assert "禁止读取或修改旧 cognitive_maps" in prompt
+    assert "不读取或编辑独立 JSON 文件" in prompt
     assert "execute_python" not in prompt
     assert "/api/cognitive-maps" not in prompt
     assert "edit_file" in prompt
