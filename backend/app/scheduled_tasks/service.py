@@ -17,7 +17,13 @@ from .models import (
     TaskExecution,
     TriggerType,
 )
-from .storage import EventClaimStorage, TaskStorage, ExecutionStorage, TaskCaseStorage
+from .storage import (
+    EventClaimStorage,
+    TaskStorage,
+    ExecutionStorage,
+    TaskCaseStorage,
+    create_execution_storage,
+)
 from .scheduler import SimpleScheduler
 from .executor import ScheduledTaskExecutor
 from .event_delivery import EventTaskDelivery
@@ -48,7 +54,7 @@ class ScheduledTaskService:
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
-        self.execution_storage = execution_storage or ExecutionStorage()
+        self.execution_storage = execution_storage or create_execution_storage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
         self._recover_interrupted_executions()
