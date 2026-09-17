@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.fetchers.base.fetcher_interface import DataFetcher
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_skip_result
 
 SYNC_CRON = os.getenv("JIANGSU_SMART_EVENT_AUTOMATION_CRON", "* * * * *")
 SYNC_OVERLAP_MINUTES = int(os.getenv("JIANGSU_SMART_EVENT_SYNC_OVERLAP_MINUTES", "5"))
@@ -41,4 +42,12 @@ class JiangsuSmartEventAlarmSyncFetcher(DataFetcher):
         if self._service is None:
             self._service = JiangsuSmartEventService()
         from app.services.jiangsu_smart_event_automation import JiangsuSmartEventAutomation
+
+        if demo_freeze_active():
+            # 演示冻结暂停抓新数据，但人工反馈/审核退回的增量研判仍须派发，
+            # 它只读取已有证据包，不触发外部数据拉取。
+            result = await JiangsuSmartEventAutomation(self._service).dispatch_queue(
+                now=datetime.now().astimezone(), human_only=True,
+            )
+            return {**result, "demo_freeze": True, "fetcher": self.name}
         return await JiangsuSmartEventAutomation(self._service).tick()

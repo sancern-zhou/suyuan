@@ -9,6 +9,7 @@ from app.services.jiangsu_fault_work_order_review_rerun import (
     POLL_SCHEDULE,
     publish_pending_reruns,
 )
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_skip_result
 
 logger = structlog.get_logger(__name__)
 
@@ -30,6 +31,8 @@ class JiangsuFaultWorkOrderReviewRerunFetcher(DataFetcher):
         )
 
     async def fetch_and_store(self) -> dict[str, int]:
+        if demo_freeze_active():
+            return demo_freeze_skip_result(self.name)
         stats = await publish_pending_reruns()
         if stats.get("dispatched") or stats.get("failed"):
             logger.info("fault_work_order_review_rerun_cycle", **stats)

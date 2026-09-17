@@ -1393,10 +1393,12 @@ class JiangsuSmartEventService:
             if not event or _is_archived(event) or not event.get("event_trigger_type"):
                 continue
             package_path = self._evidence_package_path(str(event["event_id"]))
-            package = json.loads(await asyncio.to_thread(package_path.read_text, encoding="utf-8"))
-            if str(package.get("event_id")) != str(event["event_id"]):
-                raise ValueError("smart_event_evidence_identity_mismatch")
             package_ref = format_agent_path(package_path)
+            package = await asyncio.to_thread(
+                self.packages.read_evidence_package,
+                package_ref,
+                str(event["event_id"]),
+            )
             continuity = self._continuity_context(event, card)
             card["dispatch_token"] = uuid4().hex
             card["dispatched_at"] = datetime.now().astimezone().isoformat()
@@ -1422,7 +1424,12 @@ class JiangsuSmartEventService:
                     "evidence_package_path": package_ref,
                     "smart_event": self._event_summary(event),
                     "evidence_event_id": event["event_id"],
-                    "evidence_instruction": "仅使用本任务 evidence_package_path 指定的独立证据包。先校验包内 event_id 与 smart_event.event_id 一致；不一致立即停止。不得读取全局 store.json 或其他事件目录。大证据按 sources 分节读取，不将截断内容当完整证据。",
+                    "evidence_instruction": (
+                        "仅使用本任务 evidence_package_path 指定的独立证据包（index.json）。先校验包内 event_id 与 "
+                        "smart_event.event_id 一致；不一致立即停止。index.json 的 sources.<name> 是来源索引"
+                        "（status/summary/record_count/metadata）；需要来源明细时读取同目录 sources/<name>.json 的 "
+                        "data 字段，按需逐个读取，不将截断内容当完整证据。不得读取全局 store.json 或其他事件目录。"
+                    ),
                     "continuity_context": continuity,
                 },
             )
@@ -1737,6 +1744,11 @@ class JiangsuSmartEventService:
         if not smart_event_db.smart_event_db_enabled():
             return None
 
+        def _with_effective_status(events):
+            # 归档/退回由 task_review 记录维护，事件表 event_status 列可能滞后；
+            # 展示前同步审核状态，否则会显示过期的“待复核”。仅处理当前页，开销可控。
+            return self._with_review_states({"events": events})["events"]
+
         async def overview_query(current_page):
             return await run_db_async(smart_event_db.query_events_overview_async(
                 start_time=time_lo, end_time=time_hi, station_codes=station_codes,
@@ -1748,11 +1760,12 @@ class JiangsuSmartEventService:
             time_lo, time_hi = _parse_time(start_time), _parse_time(end_time)
             page = max(1, page)
             overview = await overview_query(page)
-            events, total = overview["events"], overview["total"]
+            events = await asyncio.to_thread(_with_effective_status, overview["events"])
+            total = overview["total"]
             if not events and total > 0 and page > 1:
                 page = max(1, min(page, max(1, (total + limit - 1) // limit)))
                 overview = await overview_query(page)
-                events = overview["events"]
+                events = await asyncio.to_thread(_with_effective_status, overview["events"])
             last_sync = overview.get("last_sync")
             last_sync = last_sync if isinstance(last_sync, dict) else None
             upstream_error = str(last_sync.get("error")) if last_sync and last_sync.get("error") else None
@@ -2103,10 +2116,11 @@ class JiangsuSmartEventService:
     ) -> dict[str, Any] | None:
         """审核退回自动触发的增量研判：以人工判定为基准继续上一轮会话。
 
-        仅落一张“待执行”增量卡，不在当前进程派发；worker 每分钟一次的
-        自动化队列 tick 会领取并派发，因此 Web 进程（审核接口所在）调用
-        是安全的。人工判定意见通过 ``continuity.feedback`` 进入增量指令，
-        AI 必须以其为权威基准更新结论。
+        仅落一张“待执行”增量卡，不在当前进程派发；worker 的自动化队列 tick
+        会领取并派发，因此 Web 进程（审核接口所在）调用是安全的。该卡带有
+        ``continuity.feedback``，属于人工动作，即使 ``auto_ai_enabled=false``
+        也会被自动化 tick 派发，不会被自动派发开关阻塞。人工判定意见通过
+        ``continuity.feedback`` 进入增量指令，AI 必须以其为权威基准更新结论。
         """
         _, incremental_task = self._record_feedback(
             event_id, feedback=feedback, actor=actor,

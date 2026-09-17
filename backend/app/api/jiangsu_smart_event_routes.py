@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field
 from app.auth.dependencies import require_admin_user, require_current_user
 from app.auth.models import CurrentUser
 from app.services.jiangsu_smart_event import JiangsuSmartEventService, SmartEventUpstreamError
+from app.tools.jiangsu.demo_freeze import (
+    demo_freeze_active,
+    demo_freeze_date,
+    demo_freeze_window,
+)
 from app.utils.path_config import get_data_registry, is_path_within, resolve_agent_path
 
 router = APIRouter(prefix="/api/jiangsu/smart-events", tags=["jiangsu-smart-events"])
@@ -68,8 +73,26 @@ class SmartEventFeedbackRequest(BaseModel):
 
 
 def _default_times() -> tuple[str, str]:
+    if demo_freeze_active():
+        frozen_start, frozen_end = demo_freeze_window()
+        return frozen_start.isoformat(), frozen_end.isoformat()
     end = datetime.now().astimezone()
     return (end - timedelta(hours=24)).isoformat(), end.isoformat()
+
+
+@router.get("/demo-window")
+async def get_smart_event_demo_window(
+    user: CurrentUser = Depends(require_current_user),
+) -> dict:
+    """Expose the demo freeze window so the frontend can default to it."""
+    if not demo_freeze_active():
+        return {"frozen": False, "freeze_date": None, "window": None}
+    frozen_start, frozen_end = demo_freeze_window()
+    return {
+        "frozen": True,
+        "freeze_date": demo_freeze_date().isoformat(),
+        "window": {"start": frozen_start.isoformat(), "end": frozen_end.isoformat()},
+    }
 
 
 @router.get("")
@@ -96,7 +119,7 @@ async def list_smart_events(
             status=status,
             keyword=keyword,
             limit=limit,
-            refresh=refresh,
+            refresh=refresh and not demo_freeze_active(),
             page=page,
             summary=True,
             event_type=event_type,
@@ -117,6 +140,11 @@ async def sync_smart_events(
     dispatch_ai: bool = Query(default=False, description="是否将待执行事件发布到事件驱动 Agent；事件中心展示阶段默认关闭"),
     user: CurrentUser = Depends(require_current_user),
 ) -> dict:
+    if demo_freeze_active():
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "demo_freeze_active", "message": "演示冻结模式已开启，实时同步已禁用"},
+        )
     default_start, default_end = _default_times()
     try:
         result = await JiangsuSmartEventService().sync_alarm_events(
@@ -217,6 +245,11 @@ async def collect_all_smart_event_evidence(
     user: CurrentUser = Depends(require_current_user),
 ) -> dict:
     """Collect packages for all currently uncollected events; AI is untouched."""
+    if demo_freeze_active():
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "demo_freeze_active", "message": "演示冻结模式已开启，批量证据采集已禁用"},
+        )
     return {"status": "collected", **await JiangsuSmartEventService().collect_all_event_evidence(limit=limit)}
 
 

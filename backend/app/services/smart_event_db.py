@@ -199,13 +199,15 @@ async def query_events_overview_async(
     limit=100,
     offset=0,
 ) -> dict:
-    from sqlalchemy import and_, distinct, or_
+    from sqlalchemy import and_, case, distinct, or_
 
     from app.db.models.smart_event_db import SmartEventDB, SmartEventStateDB
+    from app.db.models.task_review_db import TaskReviewDB
     from app.db.sync_bridge import bridge_session
 
     async with bridge_session() as session:
         clauses = []
+        review_join = None
         time_col = _time_column(SmartEventDB)
         window_clause = []
         if start_time is not None:
@@ -217,7 +219,20 @@ async def query_events_overview_async(
         if station_codes:
             clauses.append(SmartEventDB.site_id.in_(station_codes))
         if status:
-            clauses.append(SmartEventDB.event_status == status)
+            # 归档/退回后有效状态由 task_reviews 决定，smart_events.event_status
+            # 列可能滞后；过滤按有效状态进行，与 _with_review_states 保持一致。
+            review_join = TaskReviewDB
+            effective_status = case(
+                (or_(SmartEventDB.archived.is_(True),
+                     SmartEventDB.event_status == "已归档",
+                     TaskReviewDB.status == "archived"), "已归档"),
+                (and_(TaskReviewDB.status == "in_disposal",
+                      or_(SmartEventDB.event_status.is_(None),
+                          SmartEventDB.event_status != "已反馈")), "待反馈"),
+                (TaskReviewDB.status == "rejected", "待复核"),
+                else_=SmartEventDB.event_status,
+            )
+            clauses.append(effective_status == status)
         type_values = [str(item).strip() for item in (event_types or []) if str(item).strip()]
         if type_values:
             clauses.append(func.coalesce(SmartEventDB.ai_event_type, SmartEventDB.event_type).in_(type_values))
@@ -239,10 +254,14 @@ async def query_events_overview_async(
             ))
         where = and_(*clauses) if clauses else None
 
-        total = (await session.execute(
-            select(func.count(SmartEventDB.event_id)).where(where)
-        )).scalar_one()
-        stmt = select(SmartEventDB.data).where(where)
+        count_stmt = select(func.count(SmartEventDB.event_id))
+        event_stmt = select(SmartEventDB.data)
+        if review_join is not None:
+            join_condition = SmartEventDB.data["review_id"].astext == TaskReviewDB.review_id
+            count_stmt = count_stmt.outerjoin(review_join, join_condition)
+            event_stmt = event_stmt.outerjoin(review_join, join_condition)
+        total = (await session.execute(count_stmt.where(where))).scalar_one()
+        stmt = event_stmt.where(where)
         stmt = stmt.order_by(_time_column(SmartEventDB).desc().nullslast()).offset(offset).limit(limit)
         events = [row[0] for row in (await session.execute(stmt)).all()]
 
@@ -305,6 +324,26 @@ async def list_tasks_async(*, event_id=None, status=None, limit=100) -> list[dic
             stmt = stmt.where(SmartEventTaskDB.status == status)
         stmt = stmt.order_by(SmartEventTaskDB.created_at.desc()).limit(limit)
         return [row[0] for row in (await session.execute(stmt)).all()]
+
+
+async def list_ai_judgment_card_refs_async() -> list[dict]:
+    """轻量列出 AI 研判卡（不加载事件正文），用于人工退回升量派发。"""
+    from sqlalchemy import func, select
+
+    from app.db.models.smart_event_db import SmartEventTaskDB
+    from app.db.sync_bridge import bridge_session
+
+    feedback = func.jsonb_extract_path_text(SmartEventTaskDB.data, "continuity", "feedback")
+    task_type = func.jsonb_extract_path_text(SmartEventTaskDB.data, "task_type")
+    stmt = select(
+        SmartEventTaskDB.event_id, SmartEventTaskDB.task_id, SmartEventTaskDB.status, feedback,
+    ).where(task_type == "ai_judgment")
+    async with bridge_session() as session:
+        rows = (await session.execute(stmt)).all()
+    return [
+        {"event_id": row[0], "task_id": row[1], "status": row[2], "human": row[3] is not None}
+        for row in rows
+    ]
 
 
 async def get_task_by_id_async(task_id: str) -> dict | None:

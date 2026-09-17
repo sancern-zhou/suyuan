@@ -1669,6 +1669,64 @@ async def test_list_pages_are_small_and_filter_before_pagination(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_db_list_syncs_review_archive_state_and_filters_by_effective_status(tmp_path, monkeypatch):
+    service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
+    archived_id = "review_" + "a" * 32
+    pending_id = "review_" + "b" * 32
+    reviews = {archived_id: {"status": "archived"}, pending_id: {"status": "pending_review"}}
+    events = [
+        {"event_id": "alarm:1", "event_name": "已归档事件", "event_status": "待复核",
+         "review_id": archived_id, "archived": False},
+        {"event_id": "alarm:2", "event_name": "待复核事件", "event_status": "待复核",
+         "review_id": pending_id, "archived": False},
+    ]
+
+    from app.services import smart_event_db as db_module
+
+    monkeypatch.setattr(db_module, "smart_event_db_enabled", lambda: True)
+    monkeypatch.setattr("app.services.task_review.load_reviews",
+                        lambda review_ids: {rid: reviews[rid] for rid in review_ids if rid in reviews})
+
+    async def immediate(coro, timeout=30.0):
+        return await coro
+
+    monkeypatch.setattr("app.db.sync_bridge.run_db_async", immediate)
+
+    def effective_status(event):
+        review = reviews.get(event["review_id"], {})
+        if review.get("status") == "archived":
+            return "已归档"
+        return event["event_status"]
+
+    async def fake_overview(**kwargs):
+        matched = [json.loads(json.dumps(event)) for event in events]
+        if kwargs.get("status"):
+            matched = [event for event in matched if effective_status(event) == kwargs["status"]]
+        total = len(matched)
+        offset, limit = kwargs.get("offset", 0), kwargs.get("limit")
+        return {"events": matched[offset:offset + limit] if limit is not None else matched[offset:],
+                "total": total,
+                "stats": {"total": len(events), "pending": 0, "stations": 1},
+                "filters": {"statuses": ["待复核"], "types": [], "levels": []}, "last_sync": None}
+
+    monkeypatch.setattr(db_module, "query_events_overview_async", fake_overview)
+
+    window = {"start_time": "2026-09-10", "end_time": "2026-09-11", "refresh": False}
+    payload = await service.list_events(**window, limit=10, page=1, summary=True)
+    by_id = {item["event_id"]: item for item in payload["events"]}
+    assert by_id["alarm:1"]["event_status"] == "已归档"
+    assert by_id["alarm:1"]["archived"] is True
+    assert by_id["alarm:2"]["event_status"] == "待复核"
+
+    archived_only = await service.list_events(**window, limit=10, page=1, summary=True, status="已归档")
+    assert [item["event_id"] for item in archived_only["events"]] == ["alarm:1"]
+    assert archived_only["total"] == 1
+
+    pending_only = await service.list_events(**window, limit=10, page=1, summary=True, status="待复核")
+    assert [item["event_id"] for item in pending_only["events"]] == ["alarm:2"]
+
+
+@pytest.mark.asyncio
 async def test_get_event_hydrates_stub_evidence_package_from_file(tmp_path, monkeypatch):
     service = JiangsuSmartEventService(FakeAlarmTool(), data_root=tmp_path)
     event = normalize_alarm_event({"id": 9, "code": "3011A", "alarmtime": "2026-09-13 08:00:00"})

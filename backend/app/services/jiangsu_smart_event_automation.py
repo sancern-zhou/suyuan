@@ -30,6 +30,16 @@ def parse_time(value):
         return None
 
 
+def is_human_review_continuation(card: dict) -> bool:
+    """人工反馈/审核退回产生的增量卡：即使自动派发关闭也必须执行。
+
+    ``_record_feedback`` 会把反馈写入 ``continuity.feedback``，这类卡代表
+    明确的人工动作，不应被 ``auto_ai_enabled`` 阻塞。
+    """
+    continuity = card.get("continuity") if isinstance(card.get("continuity"), dict) else {}
+    return bool(continuity.get("feedback"))
+
+
 def evidence_signature(package):
     """Ignore collection timestamps; only changed evidence should start a new round."""
     def substantive(value):
@@ -173,40 +183,55 @@ class JiangsuSmartEventAutomation:
             results["status"] = "partial"
         return results
 
-    async def dispatch_queue(self, *, now):
+    async def dispatch_queue(self, *, now, human_only: bool = False):
+        """派发待执行 AI 卡。
+
+        ``human_only=True`` 时只派发人工反馈/审核退回产生的增量卡，用于演示
+        冻结等暂停自动抓取的场景：人工动作仍应执行，但不派生自动卡。
+        """
         from app.services.jiangsu_smart_event import SMART_EVENT_TASK_ID, _is_archived, detect_data_clue_tags
         from app.scheduled_tasks import get_scheduled_task_service
         service = self.service
         config = service.load_config()
-        if not config["auto_ai_enabled"]:
-            return {"status": "disabled", "dispatched": 0}
+        auto_enabled = bool(config["auto_ai_enabled"]) and not human_only
         task_service = self.task_service or get_scheduled_task_service()
         task = task_service.get_task(SMART_EVENT_TASK_ID)
         if task is None or not task.enabled:
             return {"status": "task_disabled", "dispatched": 0}
+        if human_only:
+            # 轻量路径：只按需加载相关事件，避免在冻结/演示场景整表加载拖垮每分钟任务。
+            refs, active = await self._human_card_refs()
+            if not refs:
+                return {"status": "disabled", "dispatched": 0}
+            slots = max(0, config["ai_max_concurrency"] - active)
+            return await self._dispatch_card_refs(refs, config, now, slots)
         await asyncio.to_thread(self._recover_running, task_service, task, now)
         store = await service.aload_store()
         events = {event["event_id"]: event for event in store.get("events", [])}
         cards = store.setdefault("tasks", [])
-        for event in events.values():
-            if _is_archived(event):
-                continue
-            package = event.get("evidence_package") or {}
-            update_initial_assessment(event, package, detect_data_clue_tags(event, package, config))
-            event["evidence_signature"] = evidence_signature(package)
-            related = [card for card in cards if card.get("event_id") == event["event_id"] and card.get("task_type") == "ai_judgment"]
-            if not related or (event.get("pending_delta") and all(card.get("status") in {"已完成", "已取消"} for card in related)):
-                base = next((card for card in reversed(related) if card.get("status") == "已完成"), None)
-                if not service._bucket_judged(event) or event.get("pending_delta"):
-                    cards.append(service._create_ai_task(event, base_task=base, reason="delayed_evidence"))
-        await service.asave_store(store)
+        if auto_enabled:
+            for event in events.values():
+                if _is_archived(event):
+                    continue
+                package = event.get("evidence_package") or {}
+                update_initial_assessment(event, package, detect_data_clue_tags(event, package, config))
+                event["evidence_signature"] = evidence_signature(package)
+                related = [card for card in cards if card.get("event_id") == event["event_id"] and card.get("task_type") == "ai_judgment"]
+                if not related or (event.get("pending_delta") and all(card.get("status") in {"已完成", "已取消"} for card in related)):
+                    base = next((card for card in reversed(related) if card.get("status") == "已完成"), None)
+                    if not service._bucket_judged(event) or event.get("pending_delta"):
+                        cards.append(service._create_ai_task(event, base_task=base, reason="delayed_evidence"))
+            await service.asave_store(store)
         active = sum(card.get("status") == "执行中" and not _is_archived(events.get(card.get("event_id"), {})) for card in cards)
         slots = max(0, config["ai_max_concurrency"] - active)
         pending = [card for card in cards if card.get("task_type") == "ai_judgment"
                    and card.get("status") in {"待执行", "待调度", "执行失败"}
                    and not card.get("retry_exhausted")
                    and (not parse_time(card.get("next_retry_at")) or parse_time(card["next_retry_at"]) <= now)
+                   and (auto_enabled or is_human_review_continuation(card))
                    and card.get("event_id") in events and not _is_archived(events[card["event_id"]])]
+        if not auto_enabled and not pending:
+            return {"status": "disabled", "dispatched": 0}
         pending.sort(key=lambda card: (
             events[card["event_id"]].get("ai_task_priority") != "urgent", card.get("created_at") or "", card["task_id"]))
         outcomes, dispatched_events = [], set()
@@ -242,6 +267,80 @@ class JiangsuSmartEventAutomation:
                 result = [{"event_id": event_id, "status": "failed", "error": str(exc)}]
             latest = await service.aload_store(event_ids={event_id})
             latest_card = next(item for item in latest["tasks"] if item["task_id"] == card["task_id"])
+            if latest_card.get("status") in {"待执行", "待调度"}:
+                schedule_retry(latest_card, config, error=str(result), now=now)
+                await service.asave_store(latest)
+            outcomes.extend(result)
+            dispatched_events.add(event_id)
+            slots -= 1
+        return {"status": "success", "attempted": len(dispatched_events),
+                "dispatched": sum(bool(item.get("accepted_task_ids")) for item in outcomes), "outcomes": outcomes}
+
+    async def _human_card_refs(self):
+        """返回 (待派发的人工增量卡引用, 执行中的 AI 卡数)，不加载事件正文。"""
+        service = self.service
+        from app.services.smart_event_db import smart_event_db_enabled
+
+        if smart_event_db_enabled():
+            from app.db.sync_bridge import run_db_async
+            from app.services.smart_event_db import list_ai_judgment_card_refs_async
+
+            rows = await run_db_async(list_ai_judgment_card_refs_async())
+        else:
+            store = await service.aload_store()
+            rows = [
+                {"event_id": card.get("event_id"), "task_id": card.get("task_id"),
+                 "status": card.get("status"), "human": is_human_review_continuation(card)}
+                for card in store.get("tasks", []) if card.get("task_type") == "ai_judgment"
+            ]
+        active = sum(1 for row in rows if row.get("status") == "执行中")
+        refs = [
+            {"event_id": row["event_id"], "task_id": row["task_id"]}
+            for row in rows
+            if row.get("human") and row.get("status") in {"待执行", "待调度", "执行失败"}
+            and row.get("event_id") and row.get("task_id")
+        ]
+        return refs, active
+
+    async def _dispatch_card_refs(self, refs, config, now, slots):
+        from app.services.jiangsu_smart_event import _is_archived
+
+        service = self.service
+        outcomes, dispatched_events = [], set()
+        for ref in refs:
+            if slots <= 0:
+                break
+            event_id, task_id = ref["event_id"], ref["task_id"]
+            if event_id in dispatched_events:
+                continue
+            latest = await service.aload_store(event_ids={event_id})
+            event = service._stored_event(latest, event_id)
+            if event is None or _is_archived(event) or service._needs_event_evidence(event):
+                continue
+            related = [card for card in latest["tasks"] if card.get("event_id") == event_id]
+            if any(card.get("status") == "执行中" for card in related):
+                continue
+            card = next((card for card in related if card["task_id"] == task_id), None)
+            if card is None:
+                continue
+            if int(card.get("automatic_attempts") or 0) >= 1 + config["ai_max_retries"]:
+                card["retry_exhausted"] = True
+                await service.asave_store(latest)
+                continue
+            card["automatic_attempts"] = int(card.get("automatic_attempts") or 0) + 1
+            card["last_attempt_at"] = now.isoformat()
+            card["status"] = "待调度"
+            card["next_retry_at"] = None
+            card["priority"] = event.get("ai_task_priority", "normal")
+            await service.asave_store(latest)
+            try:
+                result = await service._dispatch_pending_tasks(
+                    await service.aload_store(event_ids={event_id}), event_ids={event_id},
+                    task_ids={task_id}, force_retry=True)
+            except Exception as exc:
+                result = [{"event_id": event_id, "status": "failed", "error": str(exc)}]
+            latest = await service.aload_store(event_ids={event_id})
+            latest_card = next(item for item in latest["tasks"] if item["task_id"] == task_id)
             if latest_card.get("status") in {"待执行", "待调度"}:
                 schedule_retry(latest_card, config, error=str(result), now=now)
                 await service.asave_store(latest)

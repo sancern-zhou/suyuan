@@ -32,6 +32,7 @@ import structlog
 from app.fetchers.base.fetcher_interface import DataFetcher
 from app.scheduled_tasks.models.event import TaskEvent
 from app.services.task_review import decide_review, has_active_review, load_review
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_skip_result
 from app.tools.jiangsu.external_audit import (
     TAB_TYPE_LABELS,
     TAB_TYPES,
@@ -308,6 +309,8 @@ class JiangsuDataAuditReviewEventFetcher(DataFetcher):
     # ------------------------------------------------------------------ main
 
     async def fetch_and_store(self) -> dict[str, Any]:
+        if demo_freeze_active():
+            return demo_freeze_skip_result(self.name)
         now = self.clock()
         state = self._read_state()
         state.setdefault("dispatched", {})

@@ -31,6 +31,7 @@ from app.tools.jiangsu.fault_diagnosis import (
 from app.tools.jiangsu.operations_analysis import JiangsuStationDirectoryTool
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
 from app.tools.jiangsu.station_type import filter_station_rows
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_skip_result
 from app.utils.path_config import format_agent_path, get_data_registry
 
 logger = structlog.get_logger(__name__)
@@ -433,6 +434,8 @@ class JiangsuStationFaultEventFetcher(DataFetcher):
         return self._ops_jurisdiction_snapshot
 
     async def fetch_and_store(self) -> dict[str, Any]:
+        if demo_freeze_active():
+            return demo_freeze_skip_result(self.name)
         now = self.clock()
         state = self._read_state()
         since = now - timedelta(minutes=POLL_OVERLAP_MINUTES)

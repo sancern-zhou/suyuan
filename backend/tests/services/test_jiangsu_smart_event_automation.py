@@ -277,6 +277,63 @@ async def test_auto_disabled_and_archived_events_never_dispatch(setup):
     assert scheduler.events == []
 
 
+@pytest.mark.asyncio
+async def test_review_reject_rerun_dispatches_even_when_auto_ai_disabled(setup):
+    service, evidence, scheduler = setup
+    await seed(service, [(1, 'A')])
+    store = service._load_store()
+    event = store['events'][0]
+    event['ai_event_type'] = '数据异常待研判'
+    event['event_status'] = '待复核'
+    for card in store.get('tasks', []):
+        if card.get('event_id') == event['event_id']:
+            card['status'] = '已完成'
+    service._save_store(store)
+
+    service.save_config({'auto_ai_enabled': False})
+    card = service.queue_review_reject_feedback(
+        event['event_id'], feedback='真实外界环境污染',
+        actor={'user_id': '1', 'username': 'tester'},
+        human_decision={'action': 'reject', 'comment': '真实外界环境污染'},
+    )
+    assert card is not None
+    assert card['continuity']['feedback']['source'] == 'review_reject'
+
+    now = datetime.now().astimezone()
+    result = await JiangsuSmartEventAutomation(service).dispatch_queue(now=now)
+    assert result['status'] != 'disabled'
+    assert result['dispatched'] == 1
+    assert [item.event_id for item in scheduler.events] == [event['event_id']]
+
+
+@pytest.mark.asyncio
+async def test_frozen_alarm_sync_dispatches_human_rerun_without_fetching(setup, monkeypatch):
+    service, evidence, scheduler = setup
+    await seed(service, [(1, 'A')])
+    store = service._load_store()
+    event = store['events'][0]
+    event['ai_event_type'] = '数据异常待研判'
+    event['event_status'] = '待复核'
+    for card in store.get('tasks', []):
+        if card.get('event_id') == event['event_id']:
+            card['status'] = '已完成'
+    service._save_store(store)
+    service.save_config({'auto_ai_enabled': False})
+    service.queue_review_reject_feedback(
+        event['event_id'], feedback='真实外界环境污染',
+        actor={'user_id': '1', 'username': 'tester'},
+        human_decision={'action': 'reject', 'comment': '真实外界环境污染'},
+    )
+    fetched_before = list(evidence.calls)
+    monkeypatch.setenv('JIANGSU_DEMO_FREEZE_DATE', '2026-09-10')
+    from app.fetchers.jiangsu_smart_event_alarm_sync import JiangsuSmartEventAlarmSyncFetcher
+
+    result = await JiangsuSmartEventAlarmSyncFetcher(service=service).fetch_and_store()
+    assert result.get('demo_freeze') is True
+    assert [item.event_id for item in scheduler.events] == [event['event_id']]
+    assert evidence.calls == fetched_before  # 冻结期间不抓新数据
+
+
 @pytest.mark.parametrize('values', [{'ai_max_retries': -1}, {'ai_max_concurrency': 0},
     {'rescan_lookback_hours': 1000}, {'auto_ai_enabled': 'false'}])
 def test_invalid_automation_config_is_rejected(setup, values):

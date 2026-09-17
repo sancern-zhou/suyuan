@@ -99,6 +99,32 @@ def test_dispatched_evidence_reference_is_immutable(tmp_path):
     assert storage.load()["events"][0]["evidence_package"]["persisted_path"] != str(old_path)
 
 
+def test_evidence_package_splits_sources_into_index_and_files(tmp_path):
+    storage = JiangsuEventPackages(tmp_path / "store.json")
+    payload = {
+        "event_id": "a", "status": "success",
+        "sources": {
+            "monitoring": {"status": "success", "record_count": 3, "data": {"rows": [1, 2, 3]}},
+            "instrument_status": {"status": "success", "data": {"series": [{"p": "PM10"}]}},
+            "weather": {"status": "empty"},
+        },
+    }
+    storage.save({"events": [{"event_id": "a", "event_name": "a", "evidence_package": payload}], "tasks": []})
+
+    reference = storage.load()["events"][0]["evidence_package"]["persisted_path"]
+    index_path = resolve_agent_path(reference)
+    assert index_path.name == "index.json"
+    index = json.loads(index_path.read_text())
+    assert index["sources"]["monitoring"]["record_count"] == 3
+    assert "data" not in index["sources"]["monitoring"]
+    assert index["sources"]["weather"] == {"status": "empty"}
+    assert json.loads((index_path.parent / "sources" / "monitoring.json").read_text())["data"] == {"rows": [1, 2, 3]}
+
+    restored = storage.read_evidence_package(reference, "a")
+    assert restored["sources"]["monitoring"]["data"] == {"rows": [1, 2, 3]}
+    assert restored["sources"]["instrument_status"]["data"] == {"series": [{"p": "PM10"}]}
+
+
 def test_mismatched_evidence_is_rejected_before_manifest_commit(tmp_path):
     storage = JiangsuEventPackages(tmp_path / "store.json")
     wrong = event("a", "first")

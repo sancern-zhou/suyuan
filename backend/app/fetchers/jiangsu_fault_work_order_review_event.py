@@ -34,6 +34,7 @@ from app.tools.jiangsu.fault_diagnosis import (
 from app.tools.jiangsu.result_filter import compact_air_quality_records
 from app.tools.jiangsu.review_station_selection import select_district_stations
 from app.tools.jiangsu.station_data import JiangsuStationDataTool
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_skip_result
 from app.utils.path_config import format_agent_path, get_data_registry
 
 logger = structlog.get_logger(__name__)
@@ -1482,6 +1483,8 @@ class JiangsuFaultWorkOrderReviewEventFetcher(DataFetcher):
         }
 
     async def fetch_and_store(self) -> dict[str, Any]:
+        if demo_freeze_active():
+            return demo_freeze_skip_result(self.name)
         now = self.clock()
         state = self._read_state()
         query_kwargs: dict[str, Any] = dict(

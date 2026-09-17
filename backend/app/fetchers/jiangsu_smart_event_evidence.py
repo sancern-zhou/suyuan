@@ -16,6 +16,7 @@ video evidence.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import unicodedata
 from collections.abc import Awaitable, Callable
@@ -455,6 +456,176 @@ def _compact_result(result: Any, *, max_records: int = MAX_INLINE_RECORDS) -> di
     }
 
 
+INSTRUMENT_STATUS_PROJECTION = "instrument_status_series/v1"
+
+# 宽表接口每行重复的内部/派生字段：入包前统一剔除，不交给 Agent 读原始行。
+WIDE_ROW_NOISE_FIELDS = frozenset({"id", "createTime", "modifyTime"})
+
+# 仪器状态长表每行重复的站点/污染物常量字段：提升到投影头部，不再逐行内联。
+_INSTRUMENT_HEADER_FIELDS = (
+    ("stationCode", "station_code"),
+    ("stationName", "station_name"),
+    ("areaName", "area_name"),
+    ("cityName", "city_name"),
+    ("uniqueCode", "unique_code"),
+)
+
+
+def _numeric(value: Any) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _stable_key(value: Any) -> str:
+    return json.dumps(_compact(value, depth=4), ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _project_instrument_status_rows(rows: Any) -> dict[str, Any]:
+    """把一个（污染物×仪器参数×时间点）长表投影为参数级统计 + 异常点。
+
+    原始行有 19 个字段、>40% 恒定，且逐行内联内部 id 与重复站点字段；
+    研判只需每个参数的量程与偏离正常标记的点，因此不再内联原始记录。
+    """
+    valid = [
+        row for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict) and (row.get("pollutantCode") or row.get("pollutantName"))
+    ]
+    if not valid:
+        return {"points": 0, "series": [], "abnormal_count": 0}
+    header: dict[str, Any] = {}
+    for source_key, target_key in _INSTRUMENT_HEADER_FIELDS:
+        for row in valid:
+            if row.get(source_key) not in (None, ""):
+                header[target_key] = row[source_key]
+                break
+    pollutants: dict[str, dict[str, Any]] = {}
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in valid:
+        pollutant = str(row.get("pollutantCode") or row.get("pollutantName") or "").strip()
+        param = str(row.get("statusName") or "").strip()
+        grouped.setdefault((pollutant, param), []).append(row)
+        info = pollutants.setdefault(pollutant, {})
+        if row.get("brand") not in (None, ""):
+            info["brand"] = row.get("brand")
+        if row.get("series") not in (None, ""):
+            info["series"] = row.get("series")
+    series: list[dict[str, Any]] = []
+    abnormal_count = 0
+    for (pollutant, param), group in sorted(grouped.items()):
+        values = [_numeric(row.get("moniterValue")) for row in group]
+        numeric = [value for value in values if value is not None]
+        timepoints = [str(row.get("timePoint") or "") for row in group]
+        abnormal = [
+            {"t": timepoint, "v": row.get("moniterValue"), "m": row.get("mark")}
+            for row, timepoint in zip(group, timepoints, strict=True)
+            if str(row.get("mark") or "N").strip().upper() not in {"", "N"}
+        ]
+        abnormal_count += len(abnormal)
+        entry: dict[str, Any] = {
+            "p": pollutant,
+            "param": param,
+            "unit": group[0].get("targetUnit") or "",
+            "n": len(group),
+            "first_t": timepoints[0],
+            "last_t": timepoints[-1],
+        }
+        if numeric:
+            entry.update(
+                {
+                    "min": min(numeric),
+                    "max": max(numeric),
+                    "mean": round(sum(numeric) / len(numeric), 4),
+                    "first": numeric[0],
+                    "last": numeric[-1],
+                }
+            )
+        if abnormal:
+            entry["abnormal"] = abnormal
+        series.append(entry)
+    return {
+        **header,
+        "pollutants": pollutants,
+        "points": len(valid),
+        "series": series,
+        "abnormal_count": abnormal_count,
+    }
+
+
+def _project_instrument_status(data: Any) -> Any:
+    """将 legacy 仪器状态接口返回的原始长表替换为映射投影，避免整包入上下文。"""
+    if not isinstance(data, dict):
+        return data
+    projection: dict[str, Any] = {"schema_version": INSTRUMENT_STATUS_PROJECTION}
+    raw_points = 0
+    for resolution in ("five_minute", "hour"):
+        rows = data.get(resolution)
+        if isinstance(rows, list) and rows:
+            projected = _project_instrument_status_rows(rows)
+            projection[resolution] = projected
+            raw_points += int(projected.get("points") or 0)
+    if len(projection) == 1:  # 只有 schema_version，无可用分辨率
+        return data
+    projection["raw_points"] = raw_points
+    projection["note"] = (
+        "原始仪器状态为逐行长表；此处按（污染物×参数）投影为量程统计与非 N 标记异常点，"
+        "不再内联逐行记录。需要原始行时另行查询接口。"
+    )
+    return projection
+
+
+def _project_wide_rows(rows: Any, *, hoist_constants: bool = False) -> dict[str, Any]:
+    """剔除宽表内部字段（id/时间戳/IAQI 派生列），可选把逐行恒定列集中到常量头部。
+
+    默认不搬移恒定列：监测序列消费者可能依赖某一恒定列判断缺测，搬移会改变语义。
+    """
+    if not isinstance(rows, list) or not rows:
+        return {"rows": rows, "constants": {}, "dropped_fields": []}
+    dict_rows = [row for row in rows if isinstance(row, dict)]
+    if not dict_rows:
+        return {"rows": rows, "constants": {}, "dropped_fields": []}
+    keys = list(dict_rows[0].keys())
+    noise = {key for key in keys if key in WIDE_ROW_NOISE_FIELDS or key.endswith("_IAQI")}
+    constants: dict[str, Any] = {}
+    variable: list[str] = []
+    for key in keys:
+        if key in noise:
+            continue
+        if hoist_constants and len({_stable_key(row.get(key)) for row in dict_rows}) == 1:
+            constants[key] = dict_rows[0].get(key)
+        else:
+            variable.append(key)
+    projected = [{key: row.get(key) for key in variable} for row in dict_rows]
+    return {"rows": projected, "constants": constants, "dropped_fields": sorted(noise)}
+
+
+def _project_monitoring_result(result: Any) -> Any:
+    """监测接口按天返回宽表；剔除内部/派生列，减少内联体积而不改变序列语义。"""
+    if not isinstance(result, dict):
+        return result
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return result
+    projected_data: dict[str, Any] = {}
+    changed = False
+    for name, inner in data.items():
+        if not isinstance(inner, dict) or not isinstance(inner.get("data"), list):
+            projected_data[name] = inner
+            continue
+        projection = _project_wide_rows(inner["data"])
+        if projection.get("dropped_fields"):
+            projected_data[name] = {
+                **inner, "data": projection["rows"], "dropped_fields": projection["dropped_fields"],
+            }
+            changed = True
+        else:
+            projected_data[name] = inner
+    if not changed:
+        return result
+    return {**result, "data": projected_data}
+
+
 def _profile(event: dict[str, Any]) -> dict[str, Any]:
     trigger = str(event.get("clue_trigger_type") or event.get("event_trigger_type") or "").rsplit(
         ".", 1
@@ -587,13 +758,13 @@ class JiangsuSmartEventEvidenceFetcher:
                 }
 
         hour = await fetch("station_hour")
-        return {
+        return _project_monitoring_result({
             "success": hour.get("success", False),
             "status": hour["status"],
             "summary": f"本站监测数据采集完成：小时数据（当天）{hour.get('record_count', 0)} 条。" if hour.get("success") else hour["summary"],
             "record_count": int(hour.get("record_count") or 0),
             "data": {"station_hour": hour},
-        }
+        })
 
     async def _compliance(self, station_code: str, day_window: dict[str, str]) -> dict[str, Any]:
         """Fetch every work-order type; an empty type list removes the platform filter."""
@@ -864,6 +1035,12 @@ class JiangsuSmartEventEvidenceFetcher:
             pollutant_codes=_instrument_pollutant_codes(query_targets),
         )
         result["gate"] = gate
+        raw_record_count = result.get("record_count")
+        result["data"] = _project_instrument_status(result.get("data"))
+        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        metadata["projection"] = INSTRUMENT_STATUS_PROJECTION
+        metadata["raw_record_count"] = raw_record_count
+        result["metadata"] = metadata
         return result
 
     async def _environment(

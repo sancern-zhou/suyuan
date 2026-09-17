@@ -6,6 +6,8 @@ from app.fetchers.jiangsu_smart_event_evidence import (
     _filter_station_alarm_noise,
     _instrument_pollutant_codes,
     _profile,
+    _project_instrument_status,
+    _project_monitoring_result,
     _qc_severe_only,
     _target_pollutants,
 )
@@ -612,3 +614,79 @@ async def test_instrument_alarm_api_validates_response(monkeypatch):
     monkeypatch.setattr(adapter, '_get_retry', get)
     result = await adapter.instrument_alarm_logs(station_code='3013A', start_time='start', end_time='end')
     assert result['status'] == 'failed'
+
+
+def _instrument_status_rows():
+    base = {
+        "pollutantName": "PM10", "stationCode": "3013A", "stationName": "测试站",
+        "areaCode": "01", "areaName": "A区", "cityCode": "02", "cityName": "B市",
+        "uniqueCode": "U1", "brand": "METONE", "series": "1020",
+        "lowLimit": 0.0, "topLimit": 0.0, "targetUnit": "l/min",
+    }
+    return [
+        {**base, "id": 1, "pollutantCode": "PM10", "statusName": "采样流量",
+         "moniterValue": "1.000", "mark": "N", "timePoint": "2026-09-10T10:00:00"},
+        {**base, "id": 2, "pollutantCode": "PM10", "statusName": "采样流量",
+         "moniterValue": "1.200", "mark": "R", "timePoint": "2026-09-10T10:05:00"},
+        {**base, "id": 3, "pollutantCode": "SO2", "pollutantName": "SO2", "statusName": "斜率",
+         "moniterValue": "1.05", "mark": "N", "targetUnit": "", "timePoint": "2026-09-10T10:00:00"},
+    ]
+
+
+def test_project_instrument_status_replaces_raw_long_table():
+    projection = _project_instrument_status({"five_minute": _instrument_status_rows(), "hour": []})
+    assert projection["schema_version"] == "instrument_status_series/v1"
+    assert projection["raw_points"] == 3
+    assert projection["five_minute"]["station_code"] == "3013A"
+    assert projection["five_minute"]["pollutants"]["PM10"]["brand"] == "METONE"
+    series = projection["five_minute"]["series"]
+    assert [item["param"] for item in series] == ["采样流量", "斜率"]
+    flow = next(item for item in series if item["param"] == "采样流量")
+    assert flow["n"] == 2 and flow["min"] == 1.0 and flow["max"] == 1.2
+    assert flow["abnormal"] == [{"t": "2026-09-10T10:05:00", "v": "1.200", "m": "R"}]
+    assert "id" not in flow and "stationCode" not in flow
+
+
+def test_project_instrument_status_passthrough_without_rows():
+    assert _project_instrument_status({}) == {}
+    assert _project_instrument_status([]) == []
+    assert _project_instrument_status({"five_minute": []}) == {"five_minute": []}
+
+
+@pytest.mark.asyncio
+async def test_instrument_status_projects_adapter_payload():
+    class Adapter:
+        async def instrument_alarm_logs(self, **kwargs):
+            assert kwargs["start_time"] == "2026-09-03 10:00:00"
+            return {"success": True, "data": [
+                {"subCatalog": 735, "lauchTime": "2026-09-10T10:01:00", "descriptionDE": "PM10异常"}
+            ]}
+
+        async def instrument_status(self, **kwargs):
+            return {
+                "success": True, "status": "success", "record_count": 3, "metadata": {},
+                "data": {"five_minute": _instrument_status_rows(), "hour": []},
+            }
+
+    fetcher = JiangsuSmartEventEvidenceFetcher(legacy_adapter=Adapter())
+    event = {"alarm_content": "PM10异常", "event_start_time": "2026-09-10T10:00:00+08:00"}
+    result = await fetcher._instrument_status(event, "3013A", fetcher._windows(event))
+    assert result["data"]["schema_version"] == "instrument_status_series/v1"
+    assert result["metadata"]["projection"] == "instrument_status_series/v1"
+    assert result["metadata"]["raw_record_count"] == 3
+
+
+def test_project_monitoring_result_drops_internal_columns():
+    result = {
+        "success": True, "status": "success", "record_count": 1,
+        "data": {"station_hour": {"success": True, "status": "success", "data": [
+            {"id": 1, "createTime": "t", "modifyTime": "t", "pM10": "10",
+             "pM10_IAQI": "5", "timePoint": "2026-09-10T10:00:00"},
+        ]}},
+    }
+    projected = _project_monitoring_result(result)
+    inner = projected["data"]["station_hour"]
+    row = inner["data"][0]
+    assert "id" not in row and "createTime" not in row and "pM10_IAQI" not in row
+    assert row["pM10"] == "10" and row["timePoint"] == "2026-09-10T10:00:00"
+    assert inner["dropped_fields"] == ["createTime", "id", "modifyTime", "pM10_IAQI"]

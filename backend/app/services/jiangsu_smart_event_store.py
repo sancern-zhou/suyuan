@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from copy import deepcopy
@@ -14,6 +15,8 @@ from uuid import uuid4
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 SCHEMA = "jiangsu_smart_events/v2"
+EVIDENCE_INDEX_NAME = "index.json"
+EVIDENCE_SOURCES_DIRNAME = "sources"
 HEAVY_FIELDS = {"evidence", "evidence_package", "judgment_history", "operation_records"}
 EVIDENCE_STUB_FIELDS = {
     "event_id", "schema_version", "package_version", "status", "collected_at",
@@ -43,6 +46,72 @@ def atomic_json(path: Path, value):
             os.close(directory_fd)
     finally:
         Path(name).unlink(missing_ok=True)
+
+
+def source_file_name(name: str) -> str:
+    safe = re.sub(r"[^0-9A-Za-z_.-]", "_", str(name)) or "source"
+    return f"{safe}.json"
+
+
+def split_package(package: dict) -> tuple[dict, dict]:
+    """把证据包拆成轻量 index 与按来源分文件的 data 负载。
+
+    每个来源的 `data` 单独落盘，index 只保留 status/summary/record_count/
+    metadata 等索引字段，Agent 可先读 index 再按需打开单个来源文件。
+    """
+    index: dict = {}
+    source_data: dict = {}
+    for key, value in package.items():
+        if key == "sources" and isinstance(value, dict):
+            index["sources"] = {}
+            for name, source in value.items():
+                if isinstance(source, dict) and "data" in source:
+                    index["sources"][name] = {k: v for k, v in source.items() if k != "data"}
+                    source_data[name] = source["data"]
+                else:
+                    index["sources"][name] = source
+        else:
+            index[key] = value
+    return index, source_data
+
+
+def write_package_dir(folder: Path, package: dict) -> Path:
+    """Content-addressed evidence directory: index.json + sources/<name>.json."""
+    package = dict(package)
+    package.pop("persisted_path", None)
+    digest = hashlib.sha256(encoded(package)).hexdigest()
+    dir_path = folder / f"evidence-{digest}"
+    index, source_data = split_package(package)
+    index_path = dir_path / EVIDENCE_INDEX_NAME
+    index["persisted_path"] = format_agent_path(index_path)
+    if not index_path.exists():
+        atomic_json(index_path, index)
+    for name, data in source_data.items():
+        source_path = dir_path / EVIDENCE_SOURCES_DIRNAME / source_file_name(name)
+        if not source_path.exists():
+            atomic_json(source_path, {
+                "event_id": package.get("event_id"),
+                "source": name,
+                "data": data,
+            })
+    return index_path
+
+
+def read_package_file(path: Path) -> dict:
+    package = json.loads(path.read_text(encoding="utf-8"))
+    if path.name != EVIDENCE_INDEX_NAME:
+        return package
+    sources_dir = path.parent / EVIDENCE_SOURCES_DIRNAME
+    sources = package.get("sources")
+    if isinstance(sources, dict) and sources_dir.is_dir():
+        for name, source in list(sources.items()):
+            if not isinstance(source, dict) or "data" in source:
+                continue
+            source_path = sources_dir / source_file_name(name)
+            if source_path.exists():
+                payload = json.loads(source_path.read_text(encoding="utf-8"))
+                sources[name] = {**source, "data": payload.get("data")}
+    return package
 
 
 class EventReference(dict):
@@ -83,8 +152,11 @@ class JiangsuEventPackages:
         return path
 
     def read_evidence_package(self, reference: str, event_id: str) -> dict:
-        """Read a full evidence package back from its immutable file (DB stub mode)."""
-        package = json.loads(self._package_path(reference, event_id).read_text(encoding="utf-8"))
+        """Read a full evidence package back from its immutable store.
+
+        支持两种布局：分文件目录（index.json + sources/）与旧的单文件 JSON。
+        """
+        package = read_package_file(self._package_path(reference, event_id))
         if str(package.get("event_id")) != str(event_id):
             raise ValueError("smart_event_evidence_identity_mismatch")
         return package
@@ -131,12 +203,7 @@ class JiangsuEventPackages:
             if package.get("event_id") not in (None, event_id):
                 raise ValueError("smart_event_evidence_identity_mismatch")
             package["event_id"] = event_id
-            package.pop("persisted_path", None)
-            digest = hashlib.sha256(encoded(package)).hexdigest()
-            path = folder / f"evidence-{digest}.json"
-            package["persisted_path"] = format_agent_path(path)
-            if not path.exists():
-                atomic_json(path, package)
+            path = write_package_dir(folder, package)
             detail["_evidence_ref"] = format_agent_path(path)
             if isinstance(event.get("evidence_package"), dict):
                 event["evidence_package"]["persisted_path"] = format_agent_path(path)
@@ -161,10 +228,7 @@ class JiangsuEventPackages:
         package = dict(package)
         package.pop("persisted_path", None)
         package.setdefault("event_id", event_id)
-        digest = hashlib.sha256(encoded(package)).hexdigest()
-        path = folder / f"evidence-{digest}.json"
-        if not path.exists():
-            atomic_json(path, package)
+        path = write_package_dir(folder, package)
         reference = format_agent_path(path)
         event["evidence_package"] = {
             **{key: package[key] for key in EVIDENCE_STUB_FIELDS if key in package},

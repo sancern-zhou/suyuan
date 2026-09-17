@@ -20,6 +20,7 @@ import structlog
 
 from app.db.repositories.jiangsu_nmc_weather_repo import JiangsuNMCWeatherRepository
 from app.fetchers.base.fetcher_interface import DataFetcher
+from app.tools.jiangsu.demo_freeze import demo_freeze_active, demo_freeze_skip_result
 from app.tools.jiangsu.query_tools import JiangsuGeographyResolverTool
 
 logger = structlog.get_logger(__name__)
@@ -314,6 +315,8 @@ class JiangsuNMCObservedWeatherFetcher(DataFetcher):
         self.max_concurrency = max(1, max_concurrency)
 
     async def fetch_and_store(self) -> dict[str, Any]:
+        if demo_freeze_active():
+            return demo_freeze_skip_result(self.name)
         stations, regions = await asyncio.gather(
             self.client.fetch_station_directory(),
             self.region_directory.fetch_regions(),
