@@ -13,7 +13,6 @@ Usage (inside the backend working directory, with DATABASE_URL configured)::
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -69,7 +68,7 @@ def import_json_executions(source: Path, storage: DatabaseExecutionStorage) -> i
     return imported
 
 
-async def _load_event_claims() -> dict[str, dict]:
+def _load_event_claims() -> dict[str, dict]:
     """Map execution_id -> latest event claim row."""
     claims: dict[str, dict] = {}
     claims_dir = _scheduled_dir() / "event_claims"
@@ -216,19 +215,21 @@ def _build_execution(
     )
 
 
-async def rebuild_missing_from_history(
+def rebuild_missing_from_history(
     storage: DatabaseExecutionStorage,
     *,
     task_ids: Optional[set[str]] = None,
 ) -> int:
     """Recreate executions recorded in memory cases but absent from storage."""
+    from app.db.sync_bridge import run_db
+
     memory_root = _scheduled_dir() / "memory"
     if not memory_root.is_dir():
         logger.warning("memory_dir_not_found", path=str(memory_root))
         return 0
 
-    claims = await _load_event_claims()
-    transcripts = await _load_session_transcripts()
+    claims = _load_event_claims()
+    transcripts = run_db(_load_session_transcripts())
     task_meta = _task_meta_by_id()
 
     rebuilt = 0
@@ -271,15 +272,28 @@ async def rebuild_missing_from_history(
     return rebuilt
 
 
-async def _ensure_schema() -> None:
-    from app.db.database import engine
+async def _ensure_schema_async() -> None:
+    """Create the execution table on the sync bridge loop.
+
+    The bridge owns its own engine, and the storage layer writes through the
+    same loop, so schema creation stays on one event loop.
+    """
     from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
+    from app.db.sync_bridge import bridge_session
 
-    async with engine.begin() as conn:
+    async with bridge_session() as session:
+        conn = await session.connection()
         await conn.run_sync(ScheduledTaskExecutionDB.metadata.create_all)
+        await session.commit()
 
 
-async def main() -> None:
+def _ensure_schema() -> None:
+    from app.db.sync_bridge import run_db
+
+    run_db(_ensure_schema_async())
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--executions-json",
@@ -315,13 +329,13 @@ async def main() -> None:
         args.rebuild_missing = True
 
     if not args.no_schema:
-        await _ensure_schema()
+        _ensure_schema()
 
     storage = DatabaseExecutionStorage()
     if args.import_json:
         import_json_executions(args.executions_json, storage)
     if args.rebuild_missing:
-        rebuilt = await rebuild_missing_from_history(
+        rebuilt = rebuild_missing_from_history(
             storage,
             task_ids=set(args.task_id) if args.task_id else None,
         )
@@ -330,4 +344,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
