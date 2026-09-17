@@ -48,7 +48,7 @@ class ScheduledTaskService:
     ):
         # 初始化存储层
         self.task_storage = task_storage or TaskStorage()
-        self.execution_storage = execution_storage or ExecutionStorage()
+        self.execution_storage = execution_storage or self._default_execution_storage()
         self.claim_storage = claim_storage or EventClaimStorage()
         self.event_delivery = event_delivery or EventTaskDelivery()
         self._recover_interrupted_executions()
@@ -90,6 +90,22 @@ class ScheduledTaskService:
 
         self._started = False
         self._event_tasks: set[asyncio.Task] = set()
+
+    @staticmethod
+    def _default_execution_storage():
+        """Choose the execution backend, preferring the database when configured.
+
+        The import stays local so the legacy JSON store remains importable in
+        deployments without a database.
+        """
+        from .storage.execution_storage_db import (
+            DatabaseExecutionStorage,
+            execution_db_enabled,
+        )
+
+        if execution_db_enabled():
+            return DatabaseExecutionStorage()
+        return ExecutionStorage()
 
     def _recover_interrupted_executions(self) -> None:
         """Close execution records left running by a previous worker process."""
