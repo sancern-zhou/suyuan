@@ -283,7 +283,10 @@ async def _ensure_schema_async() -> None:
 
     async with bridge_session() as session:
         conn = await session.connection()
-        await conn.run_sync(ScheduledTaskExecutionDB.metadata.create_all)
+        await conn.run_sync(
+            ScheduledTaskExecutionDB.__table__.create,
+            checkfirst=True,
+        )
         await session.commit()
 
 
