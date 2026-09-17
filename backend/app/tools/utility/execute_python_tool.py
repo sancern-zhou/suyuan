@@ -961,6 +961,14 @@ class ExecutePythonTool(LLMTool):
         mounted_destinations = set()
         sync_dirs: List[Tuple[Path, Path, set[str]]] = []
         relative_input_mounts: List[Path] = []
+        # Read-write bind destinations whose host staging directories are
+        # synced back to persistent storage after the run. A read-only bind
+        # targeting one of these subtrees would be materialized by bwrap as a
+        # mountpoint placeholder inside the host staging directory, and the
+        # post-run sync would then publish that placeholder over the real
+        # file (this silently truncated persisted chart images).
+        synced_rw_bind_destinations: list[Path] = []
+        read_only_bind_destinations: list[Path] = []
 
         # Business calculation code may import the backend application
         # package, but the sandbox must not receive the project root, .env
@@ -977,6 +985,7 @@ class ExecutePythonTool(LLMTool):
             self._append_bubblewrap_parent_dirs(command, source)
             command.extend(["--ro-bind", str(staged_source), str(source)])
             mounted_destinations.add(str(source))
+            read_only_bind_destinations.append(source)
 
         context_paths = list(
             dict.fromkeys(
@@ -1010,6 +1019,7 @@ class ExecutePythonTool(LLMTool):
                     original_relative_paths.add(str(relative_path))
 
                 mounted_destinations.add(str(session_data_dir))
+                synced_rw_bind_destinations.append(session_data_dir)
                 sync_dirs.append((staged_session_dir, session_data_dir, original_relative_paths))
 
             # Matplotlib helpers write to the canonical images path inside the
@@ -1018,10 +1028,31 @@ class ExecutePythonTool(LLMTool):
             images_dir = Path(get_images_dir()).resolve()
             staged_images_dir = Path(working_dir) / "images_output"
             staged_images_dir.mkdir(parents=True, exist_ok=True)
+            # Authorized candidate inputs under the images directory are
+            # pre-staged here instead of being ro-bound at their host paths:
+            # the images bind above already backs that subtree, so an extra
+            # bind would be materialized as a host-side mountpoint placeholder
+            # in this staging directory and then synced over the real file.
+            staged_images_original_paths: set[str] = set()
+            for value in candidate_paths:
+                source_path = resolve_agent_path(value)
+                if not source_path.is_file():
+                    continue
+                try:
+                    relative_input = source_path.relative_to(images_dir)
+                except ValueError:
+                    continue
+                staged_input = staged_images_dir / relative_input
+                staged_input.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, staged_input)
+                staged_images_original_paths.add(str(relative_input))
             self._append_bubblewrap_parent_dirs(command, images_dir)
             command.extend(["--bind", str(staged_images_dir), str(images_dir)])
             mounted_destinations.add(str(images_dir))
-            sync_dirs.append((staged_images_dir, images_dir, set()))
+            synced_rw_bind_destinations.append(images_dir)
+            sync_dirs.append(
+                (staged_images_dir, images_dir, staged_images_original_paths)
+            )
 
             preferred_font_path = select_preferred_chinese_font_path()
             if preferred_font_path is not None:
@@ -1040,11 +1071,14 @@ class ExecutePythonTool(LLMTool):
                 path = resolve_agent_path(value)
                 if not path.exists():
                     continue
-                if (
-                    raw_path.is_absolute()
-                    and session_data_dir
-                    and (path == session_data_dir or session_data_dir in path.parents)
+                if any(
+                    path == synced_destination or synced_destination in path.parents
+                    for synced_destination in synced_rw_bind_destinations
                 ):
+                    # Already visible through the synced rw staging bind (and
+                    # pre-staged above); a read-only bind here would be
+                    # materialized as a host-side mountpoint inside the
+                    # staging directory.
                     continue
                 if raw_path.is_absolute():
                     destination_path = path
@@ -1073,6 +1107,7 @@ class ExecutePythonTool(LLMTool):
                     shutil.copy2(path, staged_input)
                 if raw_path.is_absolute():
                     self._append_bubblewrap_parent_dirs(command, path.parent)
+                    read_only_bind_destinations.append(path)
                 command.extend(["--ro-bind", str(staged_input), destination])
                 mounted_destinations.add(destination)
 
@@ -1090,6 +1125,23 @@ class ExecutePythonTool(LLMTool):
             return None
 
         command.extend([str(python_env / "bin/python"), "/sandbox/script.py"])
+
+        # Fail closed on mount overlap: a read-only bind whose destination
+        # falls inside a synced read-write staging bind would be materialized
+        # as a host-side mountpoint placeholder and published by the post-run
+        # sync, silently overwriting persistent files.
+        for read_only_destination in read_only_bind_destinations:
+            for synced_destination in synced_rw_bind_destinations:
+                if read_only_destination == synced_destination or (
+                    synced_destination in read_only_destination.parents
+                ):
+                    logger.error(
+                        "execute_python_sandbox_mount_overlap_rejected",
+                        read_only_bind=str(read_only_destination),
+                        synced_rw_bind=str(synced_destination),
+                    )
+                    return None
+
         return command, sync_dirs, relative_input_mounts
 
     @staticmethod
