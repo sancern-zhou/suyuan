@@ -28,6 +28,8 @@ backend:
     - get_gems_image
     - get_sentinel5p_image
     - analyze_xuchang_upwind_permit_sources
+    - query_airdata_platform
+    - airdata_calc_report_summary
   agent_mode_tools:
     expert:
       - list_session_resources

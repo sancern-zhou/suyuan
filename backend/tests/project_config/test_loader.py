@@ -77,6 +77,8 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "get_gems_image",
         "get_sentinel5p_image",
         "analyze_xuchang_upwind_permit_sources",
+        "query_airdata_platform",
+        "airdata_calc_report_summary",
     ]
     assert context.manifest.backend.agent_mode_tools["expert"][-1] == (
         "broadcast_social_users"

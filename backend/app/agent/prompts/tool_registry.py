@@ -162,6 +162,9 @@ QUERY_TOOL_NAMES = [
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality",
     "query_national_city_air_quality",
+    # === 大气环境监测数据接口中台（许昌专属） ===
+    "query_airdata_platform",
+    "airdata_calc_report_summary",
     # === Agentic GIS 视觉交互工具 ===
     "resolve_map_data_asset",
     "create_map_point_asset",

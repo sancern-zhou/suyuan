@@ -412,6 +412,41 @@ def create_global_tool_registry(context: ProjectContext | None = None) -> ToolRe
                 error=str(e),
             )
 
+    # 许昌项目专属：大气环境监测数据接口中台查询工具
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "query_airdata_platform",
+    ):
+        try:
+            from app.tools.xuchang.airdata_platform.tool import QueryAirDataPlatformTool
+
+            registry.register(QueryAirDataPlatformTool(), priority=48)
+            logger.info("tool_loaded", tool="query_airdata_platform")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="query_airdata_platform",
+                error=str(e),
+            )
+
+    if is_project_tool_enabled(
+        context,
+        "xuchang-air-quality",
+        "airdata_calc_report_summary",
+    ):
+        try:
+            from app.tools.xuchang.airdata_platform.tool import AirDataCalcReportSummaryTool
+
+            registry.register(AirDataCalcReportSummaryTool(), priority=48)
+            logger.info("tool_loaded", tool="airdata_calc_report_summary")
+        except (ImportError, KeyError) as e:
+            logger.warning(
+                "tool_import_failed",
+                tool="airdata_calc_report_summary",
+                error=str(e),
+            )
+
     # XcAiDb SQL Server 城市历史数据查询工具
     try:
         from app.tools.query.query_xcai_city_history.tool import QueryXcAiCityHistoryTool
