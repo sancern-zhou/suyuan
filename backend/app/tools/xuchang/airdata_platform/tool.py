@@ -90,6 +90,8 @@ class QueryAirDataPlatformTool(LLMTool):
                 "name/code 为城市或站点或乡镇名称与编码，timepoint 为时间点（日粒度 yyyy-MM-dd，时粒度 yyyy-MM-dd HH）。"
                 "filters 多条件为 AND；field 必须是该接口可过滤字段，否则条件被静默忽略；"
                 "时间字段格式 yyyy-MM-dd 或 yyyy-MM-dd HH:mm:ss；同一字段可传多条（如 gte+lte）。"
+                "注意 v_t_d_app（乡镇日-审核）当前中台侧配置故障暂不可用，乡镇日数据请改用 v_t_d_src。"
+                "乡镇站/站点编码应先用 xuchang_station_catalog 解析，不要凭名称猜测编码。"
                 "自动翻页聚合，超过 24 行时完整数据落盘并返回 file_path。"
             ),
             "parameters": {

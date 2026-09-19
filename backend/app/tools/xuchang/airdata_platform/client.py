@@ -44,6 +44,41 @@ API_PAGE_SIZE_LIMITS: dict[str, int] = {
 
 DATA_API_FILTERABLE_FIELDS = ("code", "timepoint", "createtime", "modifytime")
 
+DATA_VIEW_QUERY_FIELDS = (
+    "id",
+    "name",
+    "code",
+    "timepoint",
+    "so2",
+    "no2",
+    "pm10",
+    "co",
+    "o3_8h",
+    "o3",
+    "pm2_5",
+    "no",
+    "nox",
+    "so2_mark",
+    "no2_mark",
+    "pm10_mark",
+    "co_mark",
+    "o3_8h_mark",
+    "o3_mark",
+    "pm2_5_mark",
+    "no_mark",
+    "nox_mark",
+    "so2_iaqi",
+    "no2_iaqi",
+    "pm10_iaqi",
+    "co_iaqi",
+    "o3_8h_iaqi",
+    "o3_iaqi",
+    "pm2_5_iaqi",
+    "aqi",
+    "qualitytype",
+    "primarypollutant",
+)
+
 REFERENCE_API_FILTERABLE_FIELDS: dict[str, tuple] = {
     "region": ("areacode",),
     "station": ("areacode", "stationcode"),
@@ -178,6 +213,7 @@ class AirDataPlatformClient:
 
     @staticmethod
     def _build_query_payload(
+        api_code: str,
         filters: list[dict[str, Any]] | None,
         selected_fields: list[str] | None,
         sort_config: list[dict[str, Any]] | None,
@@ -190,6 +226,9 @@ class AirDataPlatformClient:
             payload["filters"] = normalized_filters
         if selected_fields:
             payload["selectedFields"] = [str(field) for field in selected_fields]
+        elif api_code in DATA_API_CODES:
+            # 中台乡镇视图未配置默认输出字段，空字段列表会生成非法 SQL，这里显式带上全量字段
+            payload["selectedFields"] = list(DATA_VIEW_QUERY_FIELDS)
         normalized_sort = normalize_sort_config(sort_config)
         if normalized_sort:
             payload["sortConfig"] = normalized_sort
@@ -211,7 +250,7 @@ class AirDataPlatformClient:
             effective_size = 1
         effective_size = min(effective_size, size_limit)
         payload = self._build_query_payload(
-            filters, selected_fields, sort_config, page, effective_size
+            api_code, filters, selected_fields, sort_config, page, effective_size
         )
         data = self._post(f"/openapi/v1/custom-apis/{api_code}/query", payload)
         if not isinstance(data, dict):

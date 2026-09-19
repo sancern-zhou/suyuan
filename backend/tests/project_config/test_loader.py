@@ -79,6 +79,7 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "analyze_xuchang_upwind_permit_sources",
         "query_airdata_platform",
         "airdata_calc_report_summary",
+        "xuchang_station_catalog",
     ]
     assert context.manifest.backend.agent_mode_tools["expert"][-1] == (
         "broadcast_social_users"

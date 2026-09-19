@@ -165,6 +165,7 @@ QUERY_TOOL_NAMES = [
     # === 大气环境监测数据接口中台（许昌专属） ===
     "query_airdata_platform",
     "airdata_calc_report_summary",
+    "xuchang_station_catalog",
     # === Agentic GIS 视觉交互工具 ===
     "resolve_map_data_asset",
     "create_map_point_asset",
