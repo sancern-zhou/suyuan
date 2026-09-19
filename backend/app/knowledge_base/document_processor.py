@@ -488,6 +488,17 @@ class DocumentProcessor:
 
     def _parse_sync(self, file_path: str) -> str:
         """同步解析文档（非 PDF 文件）"""
+        # 纯文本/Markdown 直接读取，保留原始结构并避免加载重量级解析依赖
+        if Path(file_path).suffix.lower() in (".md", ".txt"):
+            content = Path(file_path).read_text(encoding="utf-8")
+            logger.info(
+                "document_parsed",
+                file_path=file_path,
+                element_count=1,
+                content_length=len(content)
+            )
+            return content
+
         partition = self._get_unstructured()
 
         try:
