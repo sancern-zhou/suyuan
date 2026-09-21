@@ -192,6 +192,11 @@ class WorkflowRuntime:
     def get_run(self, run_id: str) -> Optional[WorkflowRun]:
         return self._runs.get(run_id)
 
+    def find_run(self, *, task_id: str) -> Optional[WorkflowRun]:
+        """Return the latest run for a task, useful during snapshot recovery."""
+        matches = [run for run in self._runs.values() if run.task_id == task_id]
+        return matches[-1] if matches else None
+
     def transition(self, run_id: str, status: str, *, payload: Optional[Mapping[str, Any]] = None) -> WorkflowRun:
         if status not in TASK_STATUSES:
             raise ValueError(f"unknown workflow status: {status}")

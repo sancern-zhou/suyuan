@@ -63,6 +63,7 @@ ASSISTANT_TOOL_NAMES = [
     "list_skills",
     "view_skill",
     "call_sub_agent",
+    "run_agent_workflow",
 ]
 
 # ===== 幻灯片模式工具 =====
@@ -198,6 +199,7 @@ REPORT_TOOL_NAMES = [
     "validate_report_package",
     # 报告工作流可按结构化任务协议委托专家分析
     "call_sub_agent",
+    "run_agent_workflow",
 ]
 
 # ===== 图表模式工具 =====
