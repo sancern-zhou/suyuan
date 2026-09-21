@@ -23,7 +23,7 @@ from app.conversations.adapters import (
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.agent.resources.resource_service import SessionResourceService
-from app.db.database import get_db
+from app.db.session_database import get_session_db
 from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
@@ -427,7 +427,7 @@ async def restore_session(
     user: CurrentUser = Depends(require_current_user),
     catalog: ConversationCatalogService = Depends(get_conversation_catalog),
     adapters: ConversationAdapterRegistry = Depends(get_conversation_adapters),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session_db),
 ):
     """
     恢复会话（数据库层分页加载：只返回最新N条消息）

@@ -46,7 +46,7 @@ from app.conversations import ConversationSource
 from app.conversations.dependencies import get_conversation_catalog
 from app.conversations.service import ConversationCatalogService
 from app.core.sse import create_sse_response
-from app.db.database import async_session
+from app.db.session_database import session_async_session as async_session
 from app.services.llm_service import llm_service
 from app.tools import global_tool_registry
 
