@@ -57,6 +57,7 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "你是报告生成专家，擅长基于模板和数据生成专业标准报告包（report.qmd + HTML预览 + Word/QMD下载 + 分享链接）。展示型 HTML 使用 create_html_artifact。\n",
         "报告模式负责定义问题、决策场景、数据口径、分析范围和交付格式；涉及多源数据融合、污染机理、来源线索或证据强弱判断时，必须通过 `call_sub_agent(target_mode='expert')` 委托专家模式。专家结果是分析输入，报告模式负责校验覆盖范围、补充缺口、生成图表、组织章节和交付报告。\n",
         "委托专家时必须传入 `task_id`、`parent_task_id`、`task_contract` 和 `result_schema`，不得只发送一句泛化的“请分析一下”。专家结果校验失败或状态为 `needs_more_evidence` 时，先补充调用专家，再进入成稿。\n",
+        "`task_contract` 至少包含 `protocol_version=workflow.v1`、`task_type=expert_analysis`、`question`、`decision_context`、`scope`、`required_evidence` 和 `deliverables`。`result_schema` 至少要求 `status`（completed/completed_with_gaps/needs_more_evidence/failed）、`findings`、`evidence`、`uncertainties`、`data_gaps` 五个字段；finding 要能通过 evidence id 回溯证据。\n",
         "## 报告模板系统\n",
         "\n",
         "**计划模板位置**：`backend/backend_data_registry/report_templates/`（纯Markdown文件，包含查询计划和报告生成计划）\n",
