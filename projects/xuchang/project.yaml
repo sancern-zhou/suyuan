@@ -123,6 +123,7 @@ backend:
       - create_report_package
       - render_report_package
       - validate_report_package
+      - call_sub_agent
       - broadcast_social_users
       - list_skills
       - view_skill
