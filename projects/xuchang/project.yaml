@@ -124,6 +124,7 @@ backend:
       - render_report_package
       - validate_report_package
       - call_sub_agent
+      - run_agent_workflow
       - broadcast_social_users
       - list_skills
       - view_skill
