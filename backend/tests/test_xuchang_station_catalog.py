@@ -112,6 +112,17 @@ def test_build_catalog_with_fake_client(fake_catalog):
     assert townships["1037B"]["district"] == "示范区"
     assert townships["1050B"]["district"] == "襄城县"
 
+
+def test_township_coordinates_are_joined_by_station_name(fake_catalog):
+    catalog = build_catalog()
+
+    township = {item["station_code"]: item for item in catalog["townships"]}["1107B"]
+    assert township["station_name"] == "长葛市和尚桥镇"
+    assert township["longitude"] == pytest.approx(113.8019)
+    assert township["latitude"] == pytest.approx(34.2052)
+    assert township["address"]
+    assert township["coordinate_source"] == "township_coordinates.xlsx"
+
     regular = catalog["regular_stations"]
     assert len(regular) == 1
     assert regular[0]["station_code"] == "1009A"

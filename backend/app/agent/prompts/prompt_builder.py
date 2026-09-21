@@ -47,9 +47,22 @@ HUMAN_FEEDBACK_CONTRACT = (
     "自主决定是否维护对应学习域的长期记忆和案例库。接口只负责传递反馈，不会直接导入记忆或案例。\n"
 )
 
+AUDIENCE_CONTRACT = (
+    "## 用户面向与表达约定\n"
+    "本系统面向的用户是许昌市的生态环境管理用户（如局领导、科室与二级机构管理人员、执法人员、监测和业务人员）。"
+    "回复前先根据对话上下文判断用户角色，按角色组织输出的详略与侧重点：面向领导侧重结论、态势判断与决策建议；"
+    "面向业务人员侧重数据明细、过程分析与办理建议。\n"
+    "所有输出必须使用用户能理解的业务语言；禁止直接输出内部接口名称、工具名、字段名、表结构、URL 或技术参数；"
+    "确需引用相关数据时，必须转换为业务术语和指标中文名称并说明其业务含义。"
+)
+
 
 def _with_platform_contracts(prompt: str) -> str:
-    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}"
+    return (
+        f"{prompt.rstrip()}\n\n"
+        f"{AUDIENCE_CONTRACT}\n\n"
+        f"{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}"
+    )
 
 
 def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:

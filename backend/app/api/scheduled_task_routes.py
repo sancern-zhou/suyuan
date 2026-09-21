@@ -1040,6 +1040,90 @@ async def get_recent_executions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class TaskResultItem(BaseModel):
+    """结构化执行结论"""
+
+    execution_id: str = Field(..., description="执行ID")
+    task_id: str = Field(..., description="任务ID")
+    task_name: str = Field(default="", description="任务名称")
+    session_id: Optional[str] = None
+    status: str = Field(default="", description="执行状态")
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    city: Optional[str] = Field(default=None, description="城市")
+    station_id: Optional[str] = Field(default=None, description="站点ID")
+    station_name: Optional[str] = Field(default=None, description="站点名称")
+    pollutant: Optional[str] = Field(default=None, description="污染物")
+    conclusion: Optional[str] = Field(default=None, description="LLM 最终结论")
+    conclusion_source: Optional[str] = None
+    findings: List[str] = Field(default_factory=list)
+    image_paths: List[str] = Field(default_factory=list, description="图片产物路径")
+    document_paths: List[str] = Field(default_factory=list, description="报告文档路径")
+    evidence_package_paths: List[str] = Field(default_factory=list, description="证据包路径")
+    report_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    trigger_type: str = Field(default="scheduled")
+    event_id: Optional[str] = None
+    event_type: Optional[str] = None
+
+
+class TaskResultListResponse(BaseModel):
+    results: List[TaskResultItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+@router.get("/results", response_model=TaskResultListResponse)
+async def list_task_results(
+    task_id: Optional[str] = Query(default=None, description="任务ID（可选）"),
+    city: Optional[str] = Query(default=None, description="按城市筛选"),
+    station_id: Optional[str] = Query(default=None, description="按站点ID筛选"),
+    pollutant: Optional[str] = Query(default=None, description="按污染物筛选"),
+    status: Optional[str] = Query(default=None, description="按执行状态筛选"),
+    start: Optional[datetime] = Query(default=None, description="结论时间起始（含）"),
+    end: Optional[datetime] = Query(default=None, description="结论时间截止（含）"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页记录数"),
+    user: CurrentUser = Depends(require_current_user),
+):
+    """查询定时任务的结构化执行结论（时间/城市/站点/污染物/结论/图片/文档路径）"""
+    try:
+        service = get_scheduled_task_service()
+        if task_id:
+            task = service.get_task(task_id)
+            if not task:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            _require_task_access(task, user)
+            accessible_ids: Optional[set[str]] = None
+        else:
+            accessible_ids = _accessible_task_ids(user)
+
+        records, total = service.list_task_results(
+            task_id=task_id,
+            task_ids=list(accessible_ids) if accessible_ids is not None else None,
+            city=city,
+            station_id=station_id,
+            pollutant=pollutant,
+            status=status,
+            started_after=start,
+            started_before=end,
+            page=page,
+            page_size=page_size,
+        )
+        return TaskResultListResponse(
+            results=[TaskResultItem(**record.model_dump()) for record in records],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=math.ceil(total / page_size),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/statistics/summary", response_model=StatisticsResponse)
 async def get_statistics(
     task_id: Optional[str] = Query(default=None, description="任务ID（可选）"),

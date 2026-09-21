@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import time
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -37,6 +39,7 @@ ZONE_NAME_ALIASES = ("示范区",)
 CACHE_DIR_NAME = "xuchang_station_catalog"
 CACHE_FILE_NAME = "catalog_cache.json"
 CACHE_TTL_HOURS = 168.0
+TOWNSHIP_COORDINATES_FILE = Path(__file__).with_name("township_coordinates.tsv")
 
 
 class StationCatalogError(RuntimeError):
@@ -59,6 +62,46 @@ def cache_path():
     return get_data_registry() / CACHE_DIR_NAME / CACHE_FILE_NAME
 
 
+def _normalize_station_name(value: Any) -> str:
+    """Normalize names shared by the platform view and the coordinate table."""
+    return "".join(str(value or "").split()).replace("臺", "台")
+
+
+@lru_cache(maxsize=1)
+def load_township_coordinates() -> dict[str, dict[str, Any]]:
+    """Load the supplied township coordinate table shipped with the tool."""
+    coordinates: dict[str, dict[str, Any]] = {}
+    try:
+        lines = TOWNSHIP_COORDINATES_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.warning("xuchang_township_coordinates_read_failed", error=str(exc))
+        return coordinates
+
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        # The checked-in asset is TSV; tolerate the escaped separator used by
+        # older generated copies as well.
+        fields = line.split("\t") if "\t" in line else line.split(r"\t")
+        if len(fields) != 4:
+            continue
+        name, address, longitude, latitude = (item.strip() for item in fields)
+        try:
+            lon = float(longitude)
+            lat = float(latitude)
+        except ValueError:
+            continue
+        record = {"address": address, "longitude": lon, "latitude": lat}
+        coordinates[_normalize_station_name(name)] = record
+        # Platform deployments have used both full administrative prefixes
+        # and the shorter town name in the township view.
+        for prefix in ("许昌市", "禹州市", "长葛市", "鄢陵县", "襄城县", "建安区", "示范区"):
+            if name.startswith(prefix):
+                coordinates.setdefault(_normalize_station_name(name[len(prefix):]), record)
+                break
+    return coordinates
+
+
 def normalize_districts(region_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     districts: list[dict[str, Any]] = []
     for row in region_rows:
@@ -75,15 +118,21 @@ def normalize_districts(region_rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def normalize_townships(
-    rows: list[dict[str, Any]], district_names: list[str]
+    rows: list[dict[str, Any]],
+    district_names: list[str],
+    coordinate_rows: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     townships: dict[str, dict[str, Any]] = {}
+    coordinate_rows = coordinate_rows or {}
     for row in rows:
         code = str(row.get("code") or "").strip()
         name = str(row.get("name") or "").strip()
         if not code or not name or code in townships:
             continue
         district, town = split_township_name(name, district_names)
+        coordinate = coordinate_rows.get(_normalize_station_name(name)) or coordinate_rows.get(
+            _normalize_station_name(town)
+        ) or {}
         townships[code] = {
             "station_code": code,
             "station_name": name,
@@ -91,8 +140,10 @@ def normalize_townships(
             "city": CITY_NAME,
             "station_type": "township",
             "type_name": "乡镇站",
-            "longitude": None,
-            "latitude": None,
+            "longitude": coordinate.get("longitude"),
+            "latitude": coordinate.get("latitude"),
+            "address": coordinate.get("address", ""),
+            "coordinate_source": "township_coordinates.xlsx" if coordinate else None,
             "data_source": f"airdata_platform:{TOWNSHIP_SOURCE_VIEW}",
         }
     return sorted(
@@ -144,6 +195,7 @@ def build_catalog() -> dict[str, Any]:
         selected_fields=list(DATA_VIEW_QUERY_FIELDS),
         max_rows=5000,
     )["rows"]
+    coordinate_rows = load_township_coordinates()
     station_rows = client.query_page(
         "station",
         filters=[{"field": "areacode", "operator": "eq", "value": CITY_CODE}],
@@ -154,7 +206,7 @@ def build_catalog() -> dict[str, Any]:
         "generated_at": time.time(),
         "city": {"name": CITY_NAME, "areacode": CITY_CODE},
         "districts": districts,
-        "townships": normalize_townships(town_rows, district_names),
+        "townships": normalize_townships(town_rows, district_names, coordinate_rows),
         "regular_stations": normalize_regular_stations(station_rows, districts),
     }
 

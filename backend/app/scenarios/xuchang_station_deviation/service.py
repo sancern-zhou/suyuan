@@ -726,13 +726,13 @@ class XuchangStationDeviationAlertService:
         )
         primary_evidence = alerts[0].get("evidence", {}) if alerts else {}
         self._write_json(path, {
+            # Spread the first alert's evidence fields first (kept at the top
+            # level for backwards-compatible readers) so the envelope keys
+            # below win and the embedded evidence cannot shadow them.
+            **primary_evidence,
             "schema_version": "xuchang_station_deviation_episode_evidence/v1",
             "station_id": station_id,
             "occurred_at": occurred_at,
-            # Keep the first alert's evidence fields at the top level for
-            # backwards-compatible readers; all pollutant evidence follows
-            # in the alerts array.
-            **primary_evidence,
             "alerts": alerts,
             "dispatch_media": list(dict.fromkeys(
                 path for item in alerts for path in item.get("evidence", {}).get("dispatch_media", [])

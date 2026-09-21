@@ -174,6 +174,19 @@ def test_hourly_factors_keep_separate_evidence_and_combined_media(tmp_path, aler
     assert json.loads(paths[1].read_text())["alerts"][0]["alert"]["target_pollutant"] == "CO"
 
 
+def test_episode_evidence_envelope_schema_survives_embedded_evidence(tmp_path, alert):
+    service = XuchangStationDeviationAlertService(output_root=tmp_path)
+    item = {"alert": alert,
+            "evidence": {"schema_version": "xuchang_station_deviation_evidence/v3",
+                         "dispatch_media": []}}
+    path = service.write_episode_evidence_package(
+        station_id=alert["station_id"], occurred_at=alert["occurred_at"], alerts=[item])
+    payload = json.loads(path.read_text())
+    assert payload["schema_version"] == "xuchang_station_deviation_episode_evidence/v1"
+    assert payload["station_id"] == alert["station_id"]
+    assert payload["alerts"][0]["alert"]["event_id"] == alert["event_id"]
+
+
 @pytest.mark.asyncio
 async def test_fetcher_attaches_same_map_to_two_factors(tmp_path, alert, evidence):
     from app.fetchers.xuchang_station_deviation_alert import XuchangStationDeviationAlertFetcher

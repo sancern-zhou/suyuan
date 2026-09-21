@@ -3,7 +3,9 @@
 
 - query_airdata_platform：区域/站点基础表 + 城市/站点/乡镇日小时空气质量数据查询
 - airdata_calc_report_summary：按时间范围统计站点/区县/城市/区域报表并输出同比对比
+  默认只回传当期值常用字段投影，同比字段需 include_compare=true；完整数据落盘 file_path
 """
+import json
 from typing import TYPE_CHECKING, Any, Optional
 
 import structlog
@@ -25,6 +27,69 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 PREVIEW_ROW_LIMIT = 24
+
+# 报表同比四件套后缀（对比期/变幅/变幅类型），默认从回传结果中剥离，include_compare=true 时保留
+REPORT_COMPARE_SUFFIXES = ("_Compare", "_Increase", "_ChangeType")
+
+# 报表常用字段投影白名单（PascalCase，与中台年报模板一致；顺序即预览输出顺序）
+REPORT_IDENTIFIER_COLUMNS = (
+    "TimePoint",
+    "CityName",
+    "CityCode",
+    "DistrictName",
+    "DistrictCode",
+    "StationName",
+    "StationCode",
+    "UniqueCode",
+)
+REPORT_CONCENTRATION_COLUMNS = (
+    "SO2_Curr",
+    "NO2_Curr",
+    "PM10_Curr",
+    "CO_Curr",
+    "O3_8h_Curr",
+    "PM2_5_Curr",
+    "SO2_Curr_ForNow",
+    "NO2_Curr_ForNow",
+    "PM10_Curr_ForNow",
+    "CO_Curr_ForNow",
+    "O3_8h_Curr_ForNow",
+    "PM2_5_Curr_ForNow",
+)
+REPORT_STAT_COLUMNS = (
+    "SO2_P_Curr",
+    "NO2_P_Curr",
+    "PM10_P_Curr",
+    "CO_P_Curr",
+    "O3_8h_P_Curr",
+    "PM2_5_P_Curr",
+    "SO2_SingleIndex",
+    "NO2_SingleIndex",
+    "PM10_SingleIndex",
+    "CO_SingleIndex",
+    "O3_8h_SingleIndex",
+    "PM2_5_SingleIndex",
+    "CompositeIndex",
+    "DayCounts_Curr",
+    "EffectDays",
+    "EffDay",
+    "FineDays",
+    "StandardDay",
+    "StandardRate",
+    "OverDays",
+    "Lvl1",
+    "Lvl2",
+    "Lvl3",
+    "Lvl4",
+    "Lvl5",
+    "Lvl6",
+)
+REPORT_COMMON_COLUMNS = (
+    REPORT_IDENTIFIER_COLUMNS + REPORT_CONCENTRATION_COLUMNS + REPORT_STAT_COLUMNS
+)
+
+# 报表预览的字符量上限，超出后减少预览行数并把完整数据落盘
+REPORT_PREVIEW_MAX_CHARS = 6000
 
 _API_CODE_HINTS = {
     "region": "区域表（行政区划，含经纬度与气象编码）",
@@ -71,6 +136,41 @@ def _describe_result(
     else:
         result["summary"] += "，已全部返回"
     return result
+
+
+def _strip_report_compare_fields(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """剥离同比字段（*_Compare/_Increase/_ChangeType），仅保留当期值与标识列"""
+    return [
+        {k: v for k, v in row.items() if not k.endswith(REPORT_COMPARE_SUFFIXES)}
+        for row in rows
+    ]
+
+
+def _project_report_row(row: dict[str, Any], include_compare: bool) -> dict[str, Any]:
+    """投影到常用字段；include_compare 时附带常用字段的同比对比（浓度列另带变幅与变幅类型）"""
+    projected: dict[str, Any] = {}
+    for col in REPORT_COMMON_COLUMNS:
+        if col in row:
+            projected[col] = row[col]
+        if not include_compare:
+            continue
+        compare_key = f"{col}_Compare"
+        if compare_key in row:
+            projected[compare_key] = row[compare_key]
+        if col in REPORT_CONCENTRATION_COLUMNS:
+            for suffix in ("_Increase", "_ChangeType"):
+                key = f"{col}{suffix}"
+                if key in row:
+                    projected[key] = row[key]
+    return projected
+
+
+def _limit_report_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按行数与字符量限制预览规模，超出时从尾部截行"""
+    preview = rows[:PREVIEW_ROW_LIMIT]
+    while preview and len(json.dumps(preview, ensure_ascii=False)) > REPORT_PREVIEW_MAX_CHARS:
+        preview.pop()
+    return preview
 
 
 class QueryAirDataPlatformTool(LLMTool):
@@ -273,13 +373,19 @@ class AirDataCalcReportSummaryTool(LLMTool):
         function_schema = {
             "name": "airdata_calc_report_summary",
             "description": (
-                "按时间范围对站点/区县/城市/区域做空气质量报表统计，并输出与 year 指定年份同期的同比对比数据"
+                "按时间范围对站点/区县/城市/区域做空气质量报表统计，并与 year 指定年份同期做同比对比"
                 "（大气环境监测数据接口中台，许昌项目）。"
-                "返回行为扁平字典，键名为 PascalCase：当前期值（如 SO2_Curr）、对比期值（*_Compare）、"
-                "变幅（*_Increase）与变幅类型（*_ChangeType，Rate 为百分比、Difference 为差值）；"
-                "统计值均为字符串，无效值统一为 —。"
-                f"基础统计模块含 8 项污染物均值、百分位、单项指数与综合指数 CompositeIndex；"
-                "还含级别统计（Lvl1~Lvl6、FineDays、StandardRate、OverDays 等）、极值统计、超标天数与首要污染物统计模块。"
+                "返回行为扁平字典，键名为 PascalCase，统计值均为字符串，无效值统一为 —。"
+                "默认只返回当期值，且仅投影常用字段到上下文：标识列（站点/城市/区县名称编码、TimePoint）+ "
+                "六项污染物（SO2/NO2/PM10/CO/O3_8h/PM2_5）浓度（*_Curr 取整口径、*_Curr_ForNow 全精度口径）、"
+                "百分位（*_P_Curr）、单项指数（*_SingleIndex）、综合指数 CompositeIndex、"
+                "天数统计（FineDays/StandardDay/StandardRate/OverDays/DayCounts_Curr、Lvl1~Lvl6）。"
+                "同比对比字段（*_Compare 对比期值、*_Increase 变幅、*_ChangeType 变幅类型）仅在 include_compare=true 时返回。"
+                "完整报表模板有 300+ 统计项（含极值、超标天数、首要污染物、沙尘等模块）；"
+                "需要白名单之外的字段时，用 need_keys 精确指定（区分大小写，如 PM2_5_Curr_ForNow、PM25ExcessDays、"
+                "PM2_5_Curr_ForNow_Compare），传入后跳过默认过滤与投影、原样返回。"
+                "因字段投影省略或行数/字符量超限，完整当期数据（含字段清单）自动落盘并在 metadata 返回 file_path，"
+                "可结合 file_path 原始视图与 need_keys 二次查询。"
                 f"{table_hint}。"
                 "统计窗口和 reportTimeType 决定报表粒度：4 月报、5 季度报、6 半年报、7 年报、8 任意时间段。"
             ),
@@ -312,6 +418,13 @@ class AirDataCalcReportSummaryTool(LLMTool):
                         "enum": [4, 5, 6, 7, 8],
                         "description": "报表时间类型：4 月报、5 季度报、6 半年报、7 年报、8 任意时间段",
                     },
+                    "include_compare": {
+                        "type": "boolean",
+                        "description": (
+                            "是否返回同比字段：*_Compare 对比期值、*_Increase 变幅、*_ChangeType 变幅类型"
+                            "（浓度列含全套，其余常用列仅 *_Compare）；默认 false 只返回当期值"
+                        ),
+                    },
                     "ns_type": {
                         "type": "integer",
                         "enum": [1, 2],
@@ -328,7 +441,10 @@ class AirDataCalcReportSummaryTool(LLMTool):
                     "need_keys": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "需要的字段名列表（区分大小写，如 PM2_5_Curr、FineDays），为空返回全部字段",
+                        "description": (
+                            "精确指定返回字段（区分大小写），为空返回常用当期字段投影；"
+                            "传入后跳过默认的同比剥离与字段投影，原样返回平台结果"
+                        ),
                     },
                 },
                 "required": [
@@ -347,7 +463,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
             description="Calc air quality report summary with YoY comparison via AirDataPlatform",
             category=ToolCategory.QUERY,
             function_schema=function_schema,
-            version="1.0.0",
+            version="1.1.0",
             requires_context=True,
         )
 
@@ -364,6 +480,7 @@ class AirDataCalcReportSummaryTool(LLMTool):
         region_area: dict[str, Any] | None = None,
         region_area_name: dict[str, Any] | None = None,
         need_keys: list[str] | None = None,
+        include_compare: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
         logger.info(
@@ -374,6 +491,8 @@ class AirDataCalcReportSummaryTool(LLMTool):
             year=year,
             area_type=area_type,
             report_time_type=report_time_type,
+            include_compare=include_compare,
+            need_keys=need_keys,
         )
         try:
             client = get_airdata_platform_client()
@@ -409,10 +528,28 @@ class AirDataCalcReportSummaryTool(LLMTool):
                     "summary": "报表统计完成但指定范围无数据",
                 }
 
+            # need_keys 显式指定时完全透传，不做剥离与投影
+            explicit_keys = bool(need_keys)
+            if explicit_keys or include_compare:
+                filtered = data
+            else:
+                filtered = _strip_report_compare_fields(data)
+
+            preview_rows = (
+                filtered if explicit_keys else [_project_report_row(r, include_compare) for r in filtered]
+            )
+            total_fields = max(len(row) for row in filtered)
+            preview_fields = max((len(row) for row in preview_rows), default=0)
+            fields_omitted = not explicit_keys and preview_fields < total_fields
+            full_count = len(filtered)
+
+            preview_rows = _limit_report_preview(preview_rows)
+            rows_truncated = full_count > len(preview_rows)
+
             file_path = None
-            if context is not None and len(data) > PREVIEW_ROW_LIMIT:
+            if context is not None and (rows_truncated or fields_omitted):
                 file_path = context.save_data(
-                    data=data,
+                    data=filtered,
                     schema="airdata_calc_report_summary",
                     metadata={
                         "source": "airdata_platform",
@@ -420,18 +557,48 @@ class AirDataCalcReportSummaryTool(LLMTool):
                         "input_table_name": input_table_name,
                         "year": year,
                         "area_type": area_type,
+                        "report_time_type": report_time_type,
+                        "include_compare": bool(include_compare) and not explicit_keys,
+                        "columns": sorted(filtered[0].keys()) if filtered else [],
+                        "record_count": full_count,
                     },
                 )
 
-            return _describe_result(
-                data,
-                len(data),
-                False,
-                "airdata_calc_report_summary",
-                metadata,
-                "报表统计成功，",
-                file_path=file_path,
+            metadata.update(
+                {
+                    "include_compare": bool(include_compare) and not explicit_keys,
+                    "need_keys_passthrough": explicit_keys,
+                    "total_records": full_count,
+                    "returned_records": len(preview_rows),
+                    "total_fields": total_fields,
+                    "preview_fields": preview_fields,
+                }
             )
+            if rows_truncated:
+                metadata["truncated"] = True
+            if file_path:
+                metadata["file_path"] = file_path
+
+            summary_parts = [f"报表统计成功，共 {full_count} 条"]
+            if fields_omitted:
+                summary_parts.append(
+                    f"上下文仅展示 {preview_fields} 个常用当期字段，其余 {total_fields - preview_fields} 个统计项见落盘数据"
+                )
+            if explicit_keys:
+                summary_parts.append(f"按 need_keys 原样返回 {preview_fields} 个字段")
+            if rows_truncated:
+                summary_parts.append(f"预览截断为 {len(preview_rows)} 条")
+            if file_path:
+                summary_parts.append(f"完整数据已保存为 {file_path}")
+
+            return {
+                "status": "success",
+                "success": True,
+                "data": preview_rows,
+                "metadata": metadata,
+                "summary": "，".join(summary_parts),
+                **({"file_path": file_path} if file_path else {}),
+            }
         except AirDataPlatformError as exc:
             return self._failed(str(exc))
         except Exception as exc:

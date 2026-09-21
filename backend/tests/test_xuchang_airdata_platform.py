@@ -240,6 +240,7 @@ def test_tool_schemas():
         "area_type",
         "report_time_type",
     }
+    assert "include_compare" in report_tool.function_schema["parameters"]["properties"]
 
 
 def test_xuchang_registers_airdata_tools():
@@ -265,3 +266,163 @@ def test_airdata_tools_exposed_in_query_mode_order():
 
     assert "query_airdata_platform" in order
     assert "airdata_calc_report_summary" in order
+
+
+def _report_row():
+    return {
+        "TimePoint": "2025年",
+        "CityName": "许昌市",
+        "CityCode": "411000",
+        "StationName": "许昌市监测站",
+        "StationCode": "1048A",
+        "PM2_5_Curr": "46",
+        "PM2_5_Curr_ForNow": "45.5650890000",
+        "PM2_5_Curr_ForNow_Compare": "49.3",
+        "PM2_5_Curr_ForNow_Increase": "-7.3",
+        "PM2_5_Curr_ForNow_ChangeType": "Rate",
+        "CompositeIndex": "9.445",
+        "CompositeIndex_Compare": "10.064",
+        "CompositeIndex_Increase": "-6.2",
+        "CompositeIndex_ChangeType": "Rate",
+        "FineDays": "234",
+        "FineDays_Compare": "207",
+        "FineDays_Increase": "+27",
+        "FineDays_ChangeType": "Difference",
+        "PM25ExcessDays": "92",
+    }
+
+
+def _report_response(data):
+    def handler(url, json=None, headers=None, timeout=None):
+        return httpx.Response(200, json=_envelope(data))
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_report_tool_strips_compare_fields_and_projects_by_default(monkeypatch):
+    _patch_post(monkeypatch, _report_response([_report_row()]))
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2024,
+        area_type=0,
+        report_time_type=7,
+    )
+
+    assert result["success"] is True
+    row = result["data"][0]
+    assert "PM2_5_Curr_ForNow" in row
+    assert "CompositeIndex" in row
+    assert not any(k.endswith(("_Compare", "_Increase", "_ChangeType")) for k in row)
+    assert "PM25ExcessDays" not in row  # 白名单外字段被投影掉
+    metadata = result["metadata"]
+    assert metadata["include_compare"] is False
+    assert metadata["total_fields"] > metadata["preview_fields"]
+
+
+@pytest.mark.asyncio
+async def test_report_tool_include_compare_keeps_yoy_fields(monkeypatch):
+    _patch_post(monkeypatch, _report_response([_report_row()]))
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2024,
+        area_type=0,
+        report_time_type=7,
+        include_compare=True,
+    )
+
+    row = result["data"][0]
+    assert "PM2_5_Curr_ForNow_Compare" in row
+    assert "PM2_5_Curr_ForNow_Increase" in row
+    assert "PM2_5_Curr_ForNow_ChangeType" in row
+    assert "CompositeIndex_Compare" in row
+    # 非浓度列只带 _Compare，不带变幅与变幅类型
+    assert "FineDays_Compare" in row
+    assert "FineDays_Increase" not in row
+    assert "FineDays_ChangeType" not in row
+    assert result["metadata"]["include_compare"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_tool_need_keys_passthrough_skips_projection(captured):
+    captured["response"] = _envelope([{"PM25ExcessDays": "92"}])
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2024,
+        area_type=0,
+        report_time_type=7,
+        need_keys=["PM25ExcessDays"],
+    )
+
+    assert captured["payload"]["needKeys"] == ["PM25ExcessDays"]
+    assert set(result["data"][0]) == {"PM25ExcessDays"}
+    assert result["metadata"]["need_keys_passthrough"] is True
+
+
+@pytest.mark.asyncio
+async def test_report_tool_saves_stripped_full_data_with_context(captured):
+    captured["response"] = _envelope([_report_row()])
+
+    class Context:
+        def __init__(self):
+            self.saved = None
+
+        def save_data(self, **kwargs):
+            self.saved = kwargs
+            return "report-data-id"
+
+    context = Context()
+    result = await AirDataCalcReportSummaryTool().execute(
+        context=context,
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2024,
+        area_type=0,
+        report_time_type=7,
+    )
+
+    assert result["file_path"] == "report-data-id"
+    assert result["metadata"]["file_path"] == "report-data-id"
+    saved_row = context.saved["data"][0]
+    # 落盘的是剥离同比后的完整当期数据：白名单外字段保留，同比字段剥离
+    assert saved_row["PM25ExcessDays"] == "92"
+    assert "PM2_5_Curr_ForNow_Compare" not in saved_row
+    assert "PM2_5_Curr_ForNow_Compare" not in context.saved["metadata"]["columns"]
+    assert "PM25ExcessDays" in context.saved["metadata"]["columns"]
+
+
+@pytest.mark.asyncio
+async def test_report_tool_truncates_preview_and_externalizes(monkeypatch):
+    _patch_post(monkeypatch, _report_response([_report_row() for _ in range(30)]))
+    saved = {}
+
+    class Context:
+        def save_data(self, **kwargs):
+            saved.update(kwargs)
+            return "report-data-id"
+
+    result = await AirDataCalcReportSummaryTool().execute(
+        context=Context(),
+        start_time="2025-01-01",
+        end_time="2025-12-31",
+        input_table_name="view_dat_station_day_app_pantype145",
+        year=2024,
+        area_type=0,
+        report_time_type=7,
+    )
+
+    assert result["metadata"]["total_records"] == 30
+    assert result["metadata"]["returned_records"] == 24
+    assert result["metadata"]["truncated"] is True
+    assert saved["schema"] == "airdata_calc_report_summary"
+    assert len(saved["data"]) == 30

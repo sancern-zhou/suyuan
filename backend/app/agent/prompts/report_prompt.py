@@ -4,6 +4,8 @@
 
 from typing import List, Optional
 
+from .report_workflow_skill import report_workflow_skill_section
+
 
 def build_report_prompt(available_tools: List[str], memory_context: Optional[str] = None, memory_file_path: Optional[str] = None) -> str:
     """
@@ -63,6 +65,20 @@ def build_report_prompt(available_tools: List[str], memory_context: Optional[str
         "- 用户上传的DOCX文件：**要更新的报告**（参考文档，不是模板）\n",
         "- 计划模板：之前保存的**查询计划**（Markdown文件）\n",
         "\n",
+    ])
+
+    if "list_skills" in available_tools and "view_skill" in available_tools:
+        prompt_parts.append(
+            report_workflow_skill_section(
+                "正式报告生成遵循分析报告通用工作流技能（先调用 `list_skills(keyword='报告')` 检索技能，"
+                "再用 `view_skill` 读取「分析报告通用工作流」完整内容）。本模式下方\"核心工作流程\"约束模板搜索、"
+                "计划确认与报告包收口等交互和交付动作；本技能补足任务边界定义、数据校验清洗、分析建模、"
+                "结论提炼与质检环节，两者叠加执行、不相互替代。"
+            ) + "\n"
+        )
+        prompt_parts.append("\n")
+
+    prompt_parts.extend([
         "## 核心工作流程\n",
         "\n",
         "### 报告审核任务优先规则\n",

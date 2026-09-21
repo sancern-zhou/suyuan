@@ -673,6 +673,38 @@ class ScheduledTaskService:
         """获取统计信息"""
         return self.execution_storage.get_statistics(task_id=task_id, days=days)
 
+    def list_task_results(
+        self,
+        *,
+        task_id: Optional[str] = None,
+        task_ids: Optional[list[str]] = None,
+        city: Optional[str] = None,
+        station_id: Optional[str] = None,
+        pollutant: Optional[str] = None,
+        status: Optional[str] = None,
+        started_after=None,
+        started_before=None,
+        page: int = 1,
+        page_size: int = 20,
+    ):
+        """查询结构化执行结论（数据库后端）"""
+        from .storage.task_result_storage_db import DatabaseTaskResultStorage
+
+        if isinstance(self.executor.task_result_storage, DatabaseTaskResultStorage):
+            return self.executor.task_result_storage.query_page(
+                task_id=task_id,
+                task_ids=task_ids,
+                city=city,
+                station_id=station_id,
+                pollutant=pollutant,
+                status=status,
+                started_after=started_after,
+                started_before=started_before,
+                page=page,
+                page_size=page_size,
+            )
+        return [], 0
+
     def get_scheduler_status(self) -> dict:
         """获取调度器状态"""
         return {

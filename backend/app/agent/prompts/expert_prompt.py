@@ -2,6 +2,8 @@
 
 from typing import List, Optional
 
+from .report_workflow_skill import report_workflow_skill_section
+
 
 def build_expert_prompt(
     available_tools: List[str],
@@ -84,6 +86,19 @@ def build_expert_prompt(
         "",
         "作为子Agent返回时，最终回复必须列出所有可追溯 file_path，并按查询数据、分析结果、图表数据等类型简要说明。",
         "",
+    ])
+
+    if "list_skills" in available_tools and "view_skill" in available_tools:
+        prompt_parts.extend([
+            report_workflow_skill_section(
+                "涉及数据分析成稿、专项研判报告或多步数据论证任务时，先调用 `list_skills(keyword='报告')` 检索技能，"
+                "再用 `view_skill` 读取「分析报告通用工作流」技能完整内容，按其中流程执行；"
+                "本模式的专业推理要求与该工作流的校验、分析、结论环节叠加生效。"
+            ),
+            "",
+        ])
+
+    prompt_parts.extend([
         "## 输出要求",
         "",
         "默认回答按“结论摘要、观测事实与统计口径、气象机制或预报影响、遥感/来源线索、反证与不确定性、下一步补证”组织。作为子Agent时，优先返回可汇总的证据和判断，不写完整报告。",

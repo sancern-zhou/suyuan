@@ -36,7 +36,7 @@ class XuchangStationCatalogTool(LLMTool):
                 "站点编码（含唯一编码）或区县解析站点，返回站点编码、名称、归属区县、坐标（如有）与站点类型。"
                 "乡镇站编码为自定义编码（如 1107B），必须先通过本工具解析后再调用 query_airdata_platform 查数据"
                 "（filters 用 field=code, operator=in）；不要凭猜测把乡镇名称直接当编码使用。"
-                "station_type=township 乡镇站（无坐标，归属从名称解析），regular 常规站（国控等，含唯一编码），all 全部。"
+                "station_type=township 乡镇站（含坐标，归属从名称解析），regular 常规站（国控等，含唯一编码），all 全部。"
                 "action=sync_knowledge_graph 可将站点目录文档同步进项目知识库并触发图谱构建（维护操作，平时无需调用）。"
             ),
             "parameters": {

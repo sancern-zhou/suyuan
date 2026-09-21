@@ -89,11 +89,15 @@ def _get_session_factory():
 async def _ensure_schema() -> None:
     """Create the scheduled execution table on the bridge engine."""
     from app.db.models.scheduled_task_execution_db import ScheduledTaskExecutionDB
+    from app.db.models.scheduled_task_result_db import ScheduledTaskResultDB
+    from app.db.models.xuchang_station_alert_episode_db import XuchangStationAlertEpisodeDB
 
     factory = _get_session_factory()
     async with factory() as session:
         conn = await session.connection()
         await conn.run_sync(ScheduledTaskExecutionDB.__table__.create, checkfirst=True)
+        await conn.run_sync(ScheduledTaskResultDB.__table__.create, checkfirst=True)
+        await conn.run_sync(XuchangStationAlertEpisodeDB.__table__.create, checkfirst=True)
         await session.commit()
 
 

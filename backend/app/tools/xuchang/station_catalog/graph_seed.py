@@ -58,12 +58,14 @@ def render_station_directory(catalog: dict[str, Any]) -> str:
     townships = catalog.get("townships") or []
     lines.append(f"## 乡镇站（{len(townships)}）")
     lines.append("")
-    lines.append("| 站点名称 | 站点编码 | 归属区县 | 所属城市 |")
-    lines.append("| --- | --- | --- | --- |")
+    lines.append("| 站点名称 | 站点编码 | 归属区县 | 所属城市 | 经度 | 纬度 |")
+    lines.append("| --- | --- | --- | --- | ---: | ---: |")
     for item in townships:
         lines.append(
             f"| {item['station_name']} | {item['station_code']} "
-            f"| {item['district'] or '未知'} | {item['city']} |"
+            f"| {item['district'] or '未知'} | {item['city']} "
+            f"| {item.get('longitude') if item.get('longitude') is not None else ''} "
+            f"| {item.get('latitude') if item.get('latitude') is not None else ''} |"
         )
     lines.append("")
 

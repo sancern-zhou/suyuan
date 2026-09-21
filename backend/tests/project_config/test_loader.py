@@ -82,10 +82,10 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_station_catalog",
     ]
     assert context.manifest.backend.agent_mode_tools["expert"][-1] == (
-        "broadcast_social_users"
+        "view_skill"
     )
     assert context.manifest.backend.agent_mode_tools["report"][-1] == (
-        "broadcast_social_users"
+        "view_skill"
     )
     assert context.manifest.backend.fetchers == [
         "city_weather_history",
@@ -99,7 +99,6 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_weather_com_daily_forecast_fetcher",
         "xuchang_station_deviation_alert_fetcher",
         "xuchang_station_daily_pollution_fetcher",
-        "xuchang_station_daily_exceedance_fetcher",
         "xuchang_transport_analysis_fetcher",
         "xuchang_zhongda_station_minute_fetcher",
         "xuchang_zhongda_station_hour_fetcher",
@@ -116,7 +115,6 @@ def test_xuchang_project_composes_shared_and_customer_modules():
     assert context.manifest.scheduled_tasks == [
         "task_xuchang_station_deviation_alert",
         "task_xuchang_station_daily_source_report",
-        "task_xuchang_station_daily_source_analysis_report",
         "task_xuchang_weekly_weather_situation_report",
     ]
     assert context.manifest.knowledge.collections == ["xuchang"]

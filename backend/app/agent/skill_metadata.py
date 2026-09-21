@@ -2,6 +2,11 @@
 
 SKILL_METADATA = {
     "air_quality_data_quality_analysis": {"enabled": True, "aliases": [], "required_tools": []},
+    "analysis_report_workflow": {
+        "enabled": True,
+        "aliases": ["分析报告工作流", "报告生成工作流", "通用报告技能"],
+        "required_tools": ["read_file", "execute_python", "create_report_chart"],
+    },
     "archify": {
         "enabled": True,
         "aliases": [
@@ -67,6 +72,11 @@ SKILL_METADATA = {
     "skill_template": {"enabled": False, "aliases": [], "required_tools": []},
     "top3_city_identification_rules": {"enabled": True, "aliases": [], "required_tools": []},
     "weather_analysis_expert": {"enabled": True, "aliases": [], "required_tools": []},
+    "xuchang_station_daily_source_report": {
+        "enabled": True,
+        "aliases": ["许昌市昨日污染回顾分析"],
+        "required_tools": ["read_file", "execute_python", "create_report_package", "render_report_package", "validate_report_package"],
+    },
     "上个月污染特征与溯源分析": {
         "enabled": True, "aliases": [], "required_tools": ["call_sub_agent"],
     },

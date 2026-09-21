@@ -8,7 +8,44 @@ Dependency note:
 
 import structlog
 
+from typing import Any
+
 logger = structlog.get_logger()
+
+
+def register_project_workflow_handlers(project: str) -> None:
+    """Workflow-mode task seeds run as deterministic code units.
+
+    The owning project module registers its handlers here so both the web
+    process (workflow listing/validation) and the worker process (execution)
+    see the same registry before the scheduler starts.  Handlers must match
+    the ``handler(task, execution, **kwargs)`` calling contract of
+    ``execute_workflow_task``; scenario functions that expose keyword-only
+    parameters get a thin positional adapter.
+    """
+    from app.scheduled_tasks.workflow_tasks import register_workflow_handler
+
+    if project == "xuchang":
+        from app.scenarios.xuchang_station_deviation.alert_notification import (
+            run_station_alert_workflow,
+        )
+
+        async def run_xuchang_station_alert(
+            task: Any,
+            execution: Any,
+            event: Any = None,
+            history_section: str | None = None,
+        ) -> dict[str, Any]:
+            return await run_station_alert_workflow(
+                task=task,
+                execution=execution,
+                event=event,
+                history_section=history_section,
+            )
+
+        register_workflow_handler(
+            "xuchang_station_deviation_alert", run_xuchang_station_alert
+        )
 
 
 async def start_scheduled_task_service() -> None:
@@ -27,6 +64,8 @@ async def start_scheduled_task_service() -> None:
         from app.scheduled_tasks.project_tasks import sync_project_scheduled_tasks
 
         service = init_service(agent_factory=lambda **kwargs: create_react_agent(**kwargs))
+
+        register_project_workflow_handlers(context.manifest.project)
 
         # Project task seeds (projects/<project>/scheduled_tasks/*.json) only
         # bootstrap tasks that do not exist yet; the runtime store stays the

@@ -63,6 +63,13 @@ class XuchangStationDeviationEpisodeService:
             return "hourly_deviation"
         return "station_deviation"
 
+    def _close_after(self, granularity: str) -> timedelta:
+        # Minute alerts need the existing short inactivity boundary; hourly
+        # alerts arriving once per hour must remain in the same episode.
+        if granularity in {"minute", "5min"}:
+            return timedelta(hours=self.close_after_hours)
+        return timedelta(hours=max(self.close_after_hours, 1.5))
+
     def record(self, alert: dict[str, Any]) -> dict[str, Any]:
         occurred_at = _hour(alert["occurred_at"])
         station_id = str(alert["station_id"])
@@ -76,9 +83,7 @@ class XuchangStationDeviationEpisodeService:
             if episode and alert.get("event_id") in episode.get("event_ids", []):
                 return {"status": "duplicate", "should_analyze": False, "episode": episode}
 
-            if episode and occurred_at - _hour(episode["last_seen_at"]) >= timedelta(
-                hours=self.close_after_hours
-            ):
+            if episode and occurred_at - _hour(episode["last_seen_at"]) >= self._close_after(granularity):
                 self._close(state, key, episode, occurred_at, "inactivity")
                 episode = None
 
@@ -136,6 +141,8 @@ class XuchangStationDeviationEpisodeService:
 
             state["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
             self._save(state)
+            from .episode_storage_db import upsert_episode
+            upsert_episode(episode)
             return {
                 "status": result_status,
                 "reason": reason,
@@ -155,6 +162,9 @@ class XuchangStationDeviationEpisodeService:
             if closed:
                 state["updated_at"] = datetime.now(TZ_SHANGHAI).isoformat()
                 self._save(state)
+                from .episode_storage_db import upsert_episode
+                for episode in closed:
+                    upsert_episode(episode)
             return closed
 
     @staticmethod

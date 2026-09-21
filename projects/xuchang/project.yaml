@@ -32,6 +32,41 @@ backend:
     - airdata_calc_report_summary
     - xuchang_station_catalog
   agent_mode_tools:
+    query:
+      - list_session_resources
+      - read_session_resource
+      - publish_session_file
+      - grep
+      - read_file
+      - write_file
+      - edit_file
+      - list_directory
+      - search_files
+      - list_skills
+      - view_skill
+      - get_weather_data
+      - get_current_weather
+      - get_weather_forecast
+      - query_xcai_city_history
+      - execute_sql_query
+      - execute_postgres_sql_query
+      - execute_echarts_python
+      - create_report_chart
+      - knowledge_graph_query
+      - resolve_station_geo
+      - query_national_province_air_quality
+      - query_national_city_air_quality
+      - query_airdata_platform
+      - airdata_calc_report_summary
+      - xuchang_station_catalog
+      - resolve_map_data_asset
+      - create_map_point_asset
+      - spatial_analysis
+      - spatial_interpolation
+      - visual_interaction
+      - get_map_program_receipt
+      - wait_map_program_receipt
+      - execute_python
     expert:
       - list_session_resources
       - read_session_resource
@@ -62,6 +97,8 @@ backend:
       - list_directory
       - search_files
       - broadcast_social_users
+      - list_skills
+      - view_skill
     report:
       - list_session_resources
       - read_session_resource
@@ -81,6 +118,8 @@ backend:
       - render_report_package
       - validate_report_package
       - broadcast_social_users
+      - list_skills
+      - view_skill
     social:
       - list_session_resources
       - read_session_resource
