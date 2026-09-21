@@ -59,6 +59,10 @@ class RunAgentWorkflowTool(LLMTool):
                             "maximum": 8,
                             "description": "同时运行的节点数量，默认4。",
                         },
+                        "snapshot": {
+                            "type": "object",
+                            "description": "可选的上次运行快照；传入后从中断位置恢复。",
+                        },
                     },
                     "required": ["workflow"],
                 },
@@ -71,6 +75,7 @@ class RunAgentWorkflowTool(LLMTool):
         context: Optional[Any] = None,
         workflow: Optional[Mapping[str, Any]] = None,
         max_concurrency: int = 4,
+        snapshot: Optional[Mapping[str, Any]] = None,
         **_: Any,
     ) -> Dict[str, Any]:
         if not isinstance(workflow, Mapping):
@@ -110,6 +115,7 @@ class RunAgentWorkflowTool(LLMTool):
                 definition,
                 executor=execute_node,
                 max_concurrency=max(1, min(int(max_concurrency or 4), 8)),
+                snapshot=snapshot,
             )
             snapshot = await coordinator.run()
             succeeded = snapshot["status"] == "succeeded"
