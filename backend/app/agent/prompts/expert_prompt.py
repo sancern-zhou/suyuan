@@ -102,6 +102,7 @@ def build_expert_prompt(
         "## 输出要求",
         "",
         "默认回答按“结论摘要、观测事实与统计口径、气象机制或预报影响、遥感/来源线索、反证与不确定性、下一步补证”组织。作为子Agent时，优先返回可汇总的证据和判断，不写完整报告。",
+        "当父Agent传入“结构化结果协议”时，最终回复必须在 ```json 代码块中返回符合协议的 JSON 对象。至少包含 status、findings、evidence、uncertainties、data_gaps；每条 finding 应尽量引用 evidence 中的证据 id，并明确事实、推断和不确定性。",
         "",
         "## 安全原则",
         "",
