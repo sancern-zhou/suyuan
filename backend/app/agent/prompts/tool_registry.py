@@ -11,10 +11,6 @@
 
 from typing import Dict, Iterable, List
 
-# ========================================
-# 工具有序白名单（仅包含工具名称）
-# ========================================
-
 # 工具实现可由显式后端工作流继续使用，但不得向任何 Agent 暴露。
 AGENT_HIDDEN_TOOL_NAMES = frozenset({
     "aggregate_data",
@@ -28,6 +24,10 @@ AGENT_HIDDEN_TOOL_NAMES = frozenset({
     "query_gd_suncere_district_day", "query_gd_suncere_district_report",
     "query_gd_suncere_station_hour_new",
 })
+
+# ========================================
+# 工具有序白名单（仅包含工具名称）
+# ========================================
 
 # 广东省数据源工具（项目专属）。这些工具依赖广东联网接口/数据库，
 # 不允许进入任何共享模式白名单：
@@ -55,39 +55,27 @@ PROJECT_SCOPED_TOOL_NAMES = frozenset({
 # ===== 助手模式工具 =====
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
-    "publish_session_file",
-    # 浏览
-    "list_directory", "search_files", "read_file",
-
-    # Office
-    "manage_editable_ppt", "create_pptx_with_ppt_master", "validate_pptx",
-
-    # 报告/展示产物
-    "create_report_package", "render_report_package", "validate_report_package", "create_html_artifact",
-
-    # 编辑
-    "write_file", "edit_file", "grep",
-
-    # 执行
-    "bash", "create_report_chart", "execute_python",
-    "get_platform_weather_image", "browser",
-
-    # 知识库检索
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
-    # 数据查询
-    "qianlima_realtime_tender", "execute_tender_sql_query", "execute_postgres_sql_query",
-
-    # 任务和技能
-    "create_scheduled_task", "wait_task", "list_skills", "view_skill", "create_skill_draft",
-
-    # 网络和通知
-    "web_search", "web_fetch", "broadcast_social_users",
-
-    # CLI会话管理
-    "cli_session", "terminal_session",
-
-    # 模式互调
+    # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
+    "list_directory",
+    "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "create_html_artifact",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
+    # 轻量数据计算与网页检索抓取。
+    "execute_python",
+    "web_search",
+    "web_fetch",
+    "browser",
+    # 任务调度、技能目录和重型工作空间委托。
+    "create_scheduled_task",
+    "wait_task",
+    "list_skills",
+    "view_skill",
     "call_sub_agent",
 ]
 
@@ -121,24 +109,34 @@ PPT_TOOL_NAMES = [
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-
     # 知识库检索与命中文档上下文阅读
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
-    # 气象、空气质量与遥感证据查询工具
-    "get_weather_data", "get_universal_meteorology", "get_observed_meteorology",
-    "get_current_weather", "get_weather_forecast", "get_weather_situation_map",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    # 数据查询工具
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    "get_weather_forecast",
+    "get_observed_meteorology",
     "get_platform_weather_image",
-    "get_satellite_data", "get_gems_image", "get_sentinel5p_image", "get_fire_hotspots",
-    "query_xcai_city_history", "execute_sql_query", "execute_postgres_sql_query",
-
+    "query_xcai_city_history",
+    "execute_sql_query",
     # 分析工具
+    "calculate_pm_pmf",
+    "calculate_vocs_pmf",
     "analyze_upwind_enterprises",
     "meteorological_trajectory_analysis",
-
+    "analyze_trajectory_sources",
+    "calculate_reconstruction",
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "calculate_trace",
+    "predict_air_quality",
     # 可视化
+    "generate_map",
     "create_report_chart",
-
     # 代码执行
     "execute_python",
     # 文件操作
@@ -162,21 +160,21 @@ QUERY_TOOL_NAMES = [
     "list_directory",
     "search_files",
     # === 参数化查询工具 ===
-    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_data", "get_current_weather", "get_observed_meteorology",
-    "get_weather_forecast", "query_xcai_city_history",
-    "execute_sql_query", "execute_postgres_sql_query",
-    # === 查询内即时生图工具 ===
-    "execute_echarts_python", "create_report_chart",
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    "get_weather_data",
+    "get_observed_meteorology",
+    "get_weather_forecast",
+    "get_current_weather",
+    "query_xcai_city_history",
+    "execute_sql_query",
     "knowledge_graph_query",
     "resolve_station_geo",
     # === 全国省份空气质量查询 ===
     "query_national_province_air_quality",
     "query_national_city_air_quality",
-    # === 大气环境监测数据接口中台（许昌专属） ===
-    "query_airdata_platform",
-    "airdata_calc_report_summary",
-    "xuchang_station_catalog",
     # === Agentic GIS 视觉交互工具 ===
     "resolve_map_data_asset",
     "create_map_point_asset",
@@ -187,11 +185,13 @@ QUERY_TOOL_NAMES = [
     "wait_map_program_receipt",
     # === 数值计算工具 ===
     "execute_python",
+    # === 图表生成工具 ===
+    "create_report_chart",
+    "execute_echarts_python",
 ]
 
 # ===== 知识问答模式工具 =====
-# 知识库检索为主（向量 + 图谱），read_session_resource 按需读取用户上传文档，网络搜索/抓取补充知识库的不足。
-# 不含 list_session_resources：会话资源索引已由系统提示词 <session_resources> 自动注入。
+# 知识库检索为主；按需读取已注册的会话资源，并用网页搜索/抓取补充知识库不足。
 KNOWLEDGE_TOOL_NAMES = [
     "knowledge_qa_workflow",
     "knowledge_document_reader",
@@ -206,7 +206,7 @@ REPORT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 数据查询
-    "execute_sql_query", "execute_postgres_sql_query",
+    "execute_sql_query",
     # 文件和执行
     "read_file",
     "write_file",
@@ -267,7 +267,6 @@ OPS_TOOL_NAMES = [
     "ops_audit_fetch_dataset",
     "ops_audit_run_rules",
     "ops_audit_inspect",
-    "ops_audit_submit_review",
     "agent_case_library",
     "knowledge_graph_query",
     "execute_ops_sql_query",
@@ -339,17 +338,6 @@ SOCIAL_TOOL_NAMES = [
     "bash",
 ]
 
-# ===== 记忆整合器工具（后台专用） =====
-MEMORY_CONSOLIDATOR_TOOL_NAMES = [
-    "list_session_resources",
-    # 文件操作（只保留读取和搜索）
-    "read_file", "grep",
-
-    # 记忆管理（核心工具）
-    "remember_fact", "replace_memory", "remove_memory",
-    "agent_case_library",
-]
-
 # ===== 生态环境执法备考模式（微信专业场景） =====
 ENFORCEMENT_EXAM_TOOL_NAMES = [
     "exam_practice",
@@ -359,6 +347,19 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
     "web_search",
     "web_fetch",
     "schedule_task",
+]
+
+# ===== 记忆整合器工具（后台专用） =====
+MEMORY_CONSOLIDATOR_TOOL_NAMES = [
+    "list_session_resources",
+    # 文件操作（只保留读取和搜索）
+    "read_file",
+    "grep",
+    # 记忆管理（核心工具）
+    "remember_fact",
+    "replace_memory",
+    "remove_memory",
+    "agent_case_library",
 ]
 
 # ===== 会商专用模式工具 =====
@@ -449,8 +450,8 @@ BOARD_TOOLS = _build_tool_dict(BOARD_TOOL_NAMES)
 OPS_TOOLS = _build_tool_dict(OPS_TOOL_NAMES)
 GRAPH_TOOLS = _build_tool_dict(GRAPH_TOOL_NAMES)
 SOCIAL_TOOLS = _build_tool_dict(SOCIAL_TOOL_NAMES)
-MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 ENFORCEMENT_EXAM_TOOLS = _build_tool_dict(ENFORCEMENT_EXAM_TOOL_NAMES)
+MEMORY_CONSOLIDATOR_TOOLS = _build_tool_dict(MEMORY_CONSOLIDATOR_TOOL_NAMES)
 DELIBERATION_METEOROLOGY_TOOLS = _build_tool_dict(DELIBERATION_METEOROLOGY_TOOL_NAMES)
 DELIBERATION_MONITORING_TOOLS = _build_tool_dict(DELIBERATION_MONITORING_TOOL_NAMES)
 DELIBERATION_CHEMISTRY_TOOLS = _build_tool_dict(DELIBERATION_CHEMISTRY_TOOL_NAMES)
@@ -468,8 +469,8 @@ BOARD_TOOL_ORDER = BOARD_TOOL_NAMES
 OPS_TOOL_ORDER = OPS_TOOL_NAMES
 GRAPH_TOOL_ORDER = GRAPH_TOOL_NAMES
 SOCIAL_TOOL_ORDER = SOCIAL_TOOL_NAMES
-MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 ENFORCEMENT_EXAM_TOOL_ORDER = ENFORCEMENT_EXAM_TOOL_NAMES
+MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 
 
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
@@ -477,7 +478,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
     根据模式获取工具有序白名单。
 
     Args:
-        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
+        mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"
 
     Returns:
         工具字典 {tool_name: ""}，key 顺序即工具顺序。
@@ -490,6 +491,7 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "knowledge": KNOWLEDGE_TOOLS,
         "report": REPORT_TOOLS,
         "social": SOCIAL_TOOLS,
+        "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
         "chart": CHART_TOOLS,
         "board": BOARD_TOOLS,
         "ops": OPS_TOOLS,
@@ -499,7 +501,6 @@ def get_tools_by_mode(mode: str) -> Dict[str, str]:
         "deliberation_monitoring": DELIBERATION_MONITORING_TOOLS,
         "deliberation_chemistry": DELIBERATION_CHEMISTRY_TOOLS,
         "deliberation_reviewer": DELIBERATION_REVIEWER_TOOLS,
-        "enforcement_exam": ENFORCEMENT_EXAM_TOOLS,
     }
 
     project_tool_names = _get_project_tool_names_by_mode(mode)
