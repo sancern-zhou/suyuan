@@ -20,6 +20,7 @@ from .runtime import (
     WorkflowRuntime,
 )
 from .graph import WorkflowConcurrencyGovernor, WorkflowGraph, WorkflowNode
+from .actors import AgentActorRegistry, child_actor_registry
 
 __all__ = [
     "EXPERT_ANALYSIS_RESULT_SCHEMA",
@@ -42,4 +43,6 @@ __all__ = [
     "WorkflowConcurrencyGovernor",
     "WorkflowGraph",
     "WorkflowNode",
+    "AgentActorRegistry",
+    "child_actor_registry",
 ]
