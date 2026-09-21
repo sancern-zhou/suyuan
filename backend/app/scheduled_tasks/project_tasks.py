@@ -43,6 +43,31 @@ def sync_project_scheduled_tasks(
         if existing is None:
             service.create_task(definition)
             action = "created"
+        elif definition.execution_mode == "workflow" and existing.execution_mode != "workflow":
+            # Workflow task definitions are deterministic code units.  When a
+            # seeded task is upgraded from an Agent mode, migrate only the
+            # execution contract and retain runtime-owned delivery/stat fields.
+            task_data = existing.model_dump()
+            task_data.update({
+                "execution_mode": "workflow",
+                "workflow_name": definition.workflow_name,
+                "workflow_args": definition.workflow_args,
+                "tool_names": None,
+                "skill_id": None,
+                "prompt": definition.prompt,
+                "timeout_seconds": definition.timeout_seconds,
+                "history_learning": definition.history_learning,
+            })
+            service.update_task(ScheduledTask.model_validate(task_data))
+            action = "migrated_workflow"
+        elif definition.execution_mode == "workflow" and existing.prompt != definition.prompt:
+            # Workflow instructions are code-owned LLM guidance, so keep the
+            # persisted task synchronized when the shared definition changes.
+            task_data = existing.model_dump()
+            task_data["prompt"] = definition.prompt
+            task_data["timeout_seconds"] = definition.timeout_seconds
+            service.update_task(ScheduledTask.model_validate(task_data))
+            action = "updated_workflow_instruction"
         else:
             action = "unchanged"
         results.append({"task_id": task_id, "action": action, "path": str(path)})

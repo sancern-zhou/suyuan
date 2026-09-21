@@ -21,7 +21,7 @@ from app.tools.resource_refs import (
     build_url_ref,
     build_visual_ref,
 )
-from app.tools.utility.project_root import get_project_root
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -432,11 +432,7 @@ class GetPlatformWeatherImageTool(LLMTool):
         client_factory: Callable[..., Any] | None = None,
     ):
         self.output_root = Path(output_root) if output_root else (
-            get_project_root()
-            / "backend"
-            / "backend_data_registry"
-            / "external_images"
-            / "weather_platform"
+            get_data_registry() / "external_images" / "weather_platform"
         )
         self.client_factory = client_factory or httpx.AsyncClient
 

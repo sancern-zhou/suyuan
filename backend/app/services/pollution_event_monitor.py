@@ -33,6 +33,7 @@ from app.services.pollution_event_evidence_enhancer import PollutionEventEvidenc
 from app.services.pollution_event_state_store import PollutionEventStateStore
 from app.external_apis.openmeteo_client import OpenMeteoClient
 from app.utils.component_station_directory import PM25_DOMAIN, VOCS_DOMAIN, resolve_component_station_names
+from app.utils.path_config import get_data_registry
 
 logger = structlog.get_logger()
 
@@ -1613,7 +1614,7 @@ class PollutionEventMonitorService:
             if not root.is_absolute():
                 root = self.backend_dir / root
         else:
-            root = self.backend_dir / "backend_data_registry" / "pollution_process_events"
+            root = get_data_registry() / "pollution_process_events"
         root.mkdir(parents=True, exist_ok=True)
         return root
 

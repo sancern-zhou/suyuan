@@ -41,9 +41,16 @@ FILESYSTEM_PATH_CONTRACT = (
     "也禁止对已自动发布的产物再次调用 `publish_session_file`。"
 )
 
+HUMAN_FEEDBACK_CONTRACT = (
+    "## 人工反馈续跑\n"
+    "当用户消息或工具结果包含 `human_feedback` 时，先按反馈中的判定和审核意见继续当前任务，"
+    "不要重复要求用户确认已提交的条目。任务完成时主动概括可复用经验；随后由记忆整合 Agent 根据原始反馈"
+    "自主决定是否维护对应学习域的长期记忆和案例库。接口只负责传递反馈，不会直接导入记忆或案例。\n"
+)
+
 
 def _with_platform_contracts(prompt: str) -> str:
-    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}"
+    return f"{prompt.rstrip()}\n\n{FILESYSTEM_PATH_CONTRACT}\n\n{HUMAN_FEEDBACK_CONTRACT}"
 
 
 def _with_memory_file_contract(prompt: str, memory_file_path: Optional[str]) -> str:

@@ -228,7 +228,8 @@ export function useSessionManagement(store) {
       // 后端返回格式：{ message: "...", session: {...} }
       const sessionData = restoreResult.session || restoreResult
       let messages = sessionData.conversation_history || []
-      if (messages.length === 0) {
+      const restoredBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
+      if (messages.length === 0 && !restoredBoard?.board_id) {
         throw new Error('该历史会话没有可恢复的消息，消息持久化可能失败')
       }
 
@@ -282,7 +283,6 @@ export function useSessionManagement(store) {
         read_only_on_web: sessionData.read_only_on_web === true
       }
       store.setMessages(messages)
-      const restoredBoard = sessionData.metadata?.drawio_board || sessionData.drawio_board || null
       if (restoredMode === 'board' && restoredBoard?.board_id &&
           typeof store.ensureDrawioBoardState === 'function' &&
           typeof store.loadDrawioBoardVersions === 'function') {

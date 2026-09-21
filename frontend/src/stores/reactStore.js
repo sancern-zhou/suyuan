@@ -31,6 +31,7 @@ import {
 import { createQueryVoicePlaybackQueue } from '../services/voicePlaybackQueue.js'
 import { autoSaveSession } from '../api/session.js'
 import { resolveAgentInteraction } from '../api/agentInteraction.js'
+import { submitHumanFeedback } from '../api/humanFeedback.js'
 import { useSessionResourceStore } from './sessionResourceStore.js'
 import { applyResourceStreamEvent } from '../services/sessionResourceLifecycle.js'
 import {
@@ -337,6 +338,9 @@ const createEmptyModeState = () => ({
   pendingPausedRunId: null,
   workspace: null,
   pendingInteraction: null,
+  pendingHumanFeedback: null,
+  humanFeedbackSubmitting: false,
+  humanFeedbackError: null,
   isAnalyzing: false,
   error: null,
   isInterruption: false,
@@ -442,6 +446,18 @@ export const useReactStore = defineStore('react', {
 
     pendingInteraction() {
       return this.currentState?.pendingInteraction || null
+    },
+
+    pendingHumanFeedback() {
+      return this.currentState?.pendingHumanFeedback || null
+    },
+
+    isHumanFeedbackSubmitting() {
+      return this.currentState?.humanFeedbackSubmitting || false
+    },
+
+    humanFeedbackSubmitError() {
+      return this.currentState?.humanFeedbackError || null
     },
 
     // ✅ 向后兼容：sessionId
@@ -740,6 +756,41 @@ export const useReactStore = defineStore('react', {
       return true
     },
 
+    async submitHumanFeedback(payload = {}) {
+      const state = this.currentState
+      const feedback = state?.pendingHumanFeedback
+      if (!state?.sessionId || !feedback?.items?.length || state.humanFeedbackSubmitting) return false
+      state.humanFeedbackSubmitting = true
+      state.humanFeedbackError = null
+      try {
+        const result = await submitHumanFeedback(state.sessionId, {
+          scenario: feedback.scenario || 'generic',
+          learning_mode: feedback.learning_mode || state.mode || this.currentMode,
+          feedback_id: feedback.feedback_id || null,
+          report_input_path: feedback.report_input_path,
+          source_sha256: feedback.source_sha256,
+          items: payload.items || [],
+          comment: payload.comment || ''
+        })
+        state.pendingHumanFeedback = null
+        state.humanFeedbackSubmitting = false
+        await this.startAnalysis(result.resume_query || '请继续生成正式报告。', {
+          agentMode: state.mode || this.currentMode,
+          synthetic: true,
+          syntheticMeta: {
+            source: 'human_feedback_resume',
+            feedback_id: result.feedback_id
+          },
+          skipAutoFollowup: true
+        })
+        return result
+      } catch (error) {
+        state.humanFeedbackSubmitting = false
+        state.humanFeedbackError = error?.message || '人工反馈提交失败'
+        throw error
+      }
+    },
+
     /**
      * 保存模式状态到 localStorage
      * - 只保存最近50条消息
@@ -918,6 +969,32 @@ export const useReactStore = defineStore('react', {
         return
       }
       this.currentState.messages = normalizeRestoredMessages(messages)
+      let restoredFeedback = null
+      for (const message of this.currentState.messages) {
+        const feedback = message?.data?.result?.data?.human_feedback
+        if (
+          message?.type === 'tool_result'
+          && feedback?.required
+          && Array.isArray(feedback.items)
+          && feedback.items.length > 0
+        ) {
+          restoredFeedback = {
+            ...feedback,
+            session_id: this.currentState.sessionId
+          }
+          continue
+        }
+        if (
+          message?.type === 'user'
+          && (
+            message?.data?.source === 'human_feedback_resume'
+            || String(message?.content || '').trimStart().startsWith('【人工反馈续跑】')
+          )
+        ) {
+          restoredFeedback = null
+        }
+      }
+      this.currentState.pendingHumanFeedback = restoredFeedback
       console.log(`[setMessages] Set ${messages.length} messages for mode ${this.currentMode}`)
     },
 
@@ -1603,6 +1680,16 @@ export const useReactStore = defineStore('react', {
           const resultToolUseId = toolResultData.tool_use_id
           const result = toolResultData.result || {}
           const isError = toolResultData.is_error || false
+
+          const humanFeedback = result?.data?.human_feedback
+          if (humanFeedback?.required && Array.isArray(humanFeedback.items) && humanFeedback.items.length > 0) {
+            targetState.pendingHumanFeedback = {
+              ...humanFeedback,
+              session_id: targetState.sessionId || data?.session_id,
+              report_input_path: humanFeedback.report_input_path || result?.data?.report_input_path || null
+            }
+            targetState.humanFeedbackError = null
+          }
 
           // 格式化工具结果信息
           let toolResultContent = isError ? 'Tool Error' : 'Tool Result'

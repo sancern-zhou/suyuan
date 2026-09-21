@@ -9,8 +9,16 @@ from typing import Any
 from app.services.ops_audit.config import load_rule_catalog, rules_for_review_stage
 from app.services.ops_audit.evidence_builder import build_dataset_evidence, build_inspection_item
 from app.services.ops_audit.final_issue_list import build_final_issue_list
-from app.services.ops_audit.review_artifacts import REVIEW_INPUT_FILENAME, build_review_input, persist_review_input
-from app.services.ops_audit.semantic.reviewer import build_semantic_review_results, build_semantic_review_tasks
+from app.services.ops_audit.review_artifacts import (
+    REPORT_INPUT_FILENAME,
+    build_human_feedback_request,
+    build_report_input,
+    persist_report_input,
+)
+from app.services.ops_audit.semantic.reviewer import (
+    build_semantic_review_results,
+    build_semantic_review_tasks,
+)
 from app.services.ops_audit.semantic_candidates import build_semantic_candidates
 from app.services.ops_audit.visual_evidence import archive_visual_evidence
 from app.services.ops_work_order_audit_engine import OUTPUT_DIR, audit_dataset
@@ -34,14 +42,16 @@ def run_rule_engine(
     persist_outputs: bool = True,
     evidence_level: str = "summary",
     enable_visual: bool = True,
+    enable_non_visual: bool = True,
 ) -> dict[str, Any]:
-    """Run deterministic rules, classify issues, and persist audit outputs."""
+    """Run selected audit rule families, classify issues, and persist outputs."""
 
     output_dir = (output_dir or OUTPUT_DIR).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     audit = audit_dataset(
         dataset,
         enable_visual=enable_visual,
+        enable_non_visual=enable_non_visual,
         visual_evidence_dir=output_dir / "visual_evidence" / "multipoint_curves",
     )
     audit["evidence"] = build_dataset_evidence(dataset, audit=audit, evidence_level=evidence_level)
@@ -54,19 +64,38 @@ def run_rule_engine(
     audit_path = output_dir / "latest_finished_work_orders_deterministic_audit.json"
     candidates_path = output_dir / "latest_finished_work_orders_semantic_candidates.json"
     semantic_review_path = output_dir / "latest_finished_work_orders_semantic_review_tasks.json"
-    semantic_review_results_path = output_dir / "latest_finished_work_orders_semantic_review_results.json"
+    semantic_review_results_path = (
+        output_dir / "latest_finished_work_orders_semantic_review_results.json"
+    )
     final_issue_list_path = output_dir / "latest_finished_work_orders_final_issue_list.json"
-    review_input_path = output_dir / REVIEW_INPUT_FILENAME
+    report_input_path = output_dir / REPORT_INPUT_FILENAME
 
     if persist_outputs:
         audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
-        candidates_path.write_text(json.dumps(semantic_candidates, ensure_ascii=False, indent=2), encoding="utf-8")
-        semantic_review_path.write_text(json.dumps(semantic_review_tasks, ensure_ascii=False, indent=2), encoding="utf-8")
-        semantic_review_results_path.write_text(json.dumps(semantic_review_results, ensure_ascii=False, indent=2), encoding="utf-8")
-        final_issue_list_path.write_text(json.dumps(final_issue_list, ensure_ascii=False, indent=2), encoding="utf-8")
-        review_input = persist_review_input(final_issue_list, review_input_path)
+        candidates_path.write_text(
+            json.dumps(semantic_candidates, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        semantic_review_path.write_text(
+            json.dumps(semantic_review_tasks, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        semantic_review_results_path.write_text(
+            json.dumps(semantic_review_results, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        final_issue_list_path.write_text(
+            json.dumps(final_issue_list, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        report_input = persist_report_input(
+            final_issue_list,
+            report_input_path,
+            source_path=final_issue_list_path,
+        )
     else:
-        review_input = build_review_input(final_issue_list)
+        report_input = build_report_input(final_issue_list, source_path=final_issue_list_path)
+
+    human_feedback = build_human_feedback_request(
+        report_input,
+        report_input_path=report_input_path,
+    )
 
     return {
         "success": True,
@@ -75,12 +104,17 @@ def run_rule_engine(
         "semantic_review_tasks_path": str(semantic_review_path),
         "semantic_review_results_path": str(semantic_review_results_path),
         "final_issue_list_path": str(final_issue_list_path),
-        "review_input_path": str(review_input_path),
-        "review_source_sha256": review_input.get("source", {}).get("sha256") if review_input else None,
+        "report_input_path": str(report_input_path),
+        "report_ready": report_input["report_ready"],
+        "human_feedback": human_feedback if human_feedback["required"] else None,
+        "pending_review_count": report_input["summary"]["pending_review_count"],
+        "pending_semantic_review_count": report_input["summary"]["pending_semantic_review_count"],
+        "report_issue_count": report_input["summary"]["report_issue_count"],
         "visual_evidence_manifest_path": visual_evidence["manifest_path"],
         "summary": audit.get("summary", {}),
         "audit_info": audit.get("audit_info", {}),
         "enable_visual": enable_visual,
+        "enable_non_visual": enable_non_visual,
         "semantic_candidate_count": semantic_candidates.get("candidate_count", 0),
         "semantic_review_task_count": semantic_review_tasks.get("task_count", 0),
         "semantic_review_result_count": semantic_review_results.get("result_count", 0),
@@ -88,8 +122,12 @@ def run_rule_engine(
         "final_affected_order_count": final_issue_list.get("affected_order_count", 0),
         "visual_evidence_success_count": visual_evidence["success_count"],
         "visual_evidence_failed_count": visual_evidence["failed_count"],
-        "device_consistency_issue_count": audit.get("summary", {}).get("device_consistency_issue_count", 0),
-        "attachment_review_candidate_count": audit.get("summary", {}).get("attachment_review_candidate_count", 0),
+        "device_consistency_issue_count": audit.get("summary", {}).get(
+            "device_consistency_issue_count", 0
+        ),
+        "attachment_review_candidate_count": audit.get("summary", {}).get(
+            "attachment_review_candidate_count", 0
+        ),
         "attachment_issue_count": audit.get("summary", {}).get("attachment_issue_count", 0),
         "common_patterns": [],
         "business_review": _business_review_summary(audit),
@@ -112,13 +150,17 @@ def inspect_rule_engine(
     """Inspect audit outputs and build evidence-focused samples."""
 
     audit = json.loads(audit_result_path.resolve().read_text(encoding="utf-8"))
-    dataset = json.loads(dataset_path.resolve().read_text(encoding="utf-8")) if dataset_path else None
+    dataset = (
+        json.loads(dataset_path.resolve().read_text(encoding="utf-8")) if dataset_path else None
+    )
     records = audit.get("records", [])
 
     if mode == "rules":
         return list_rule_catalog()
     if mode == "order":
-        selected = [record for record in records if record.get("working_order_code") == working_order_code]
+        selected = [
+            record for record in records if record.get("working_order_code") == working_order_code
+        ]
     elif mode == "risk":
         selected = [record for record in records if record.get("audit_level") == risk_level]
     elif mode == "semantic_candidates":
@@ -145,10 +187,19 @@ def inspect_rule_engine(
             "items": selected,
         }
     else:
-        selected = [record for record in records if any(issue.get("rule_id") == rule_id for issue in record.get("issues", []))]
+        selected = [
+            record
+            for record in records
+            if any(issue.get("rule_id") == rule_id for issue in record.get("issues", []))
+        ]
 
     selected = selected[: max(1, min(int(limit or 10), 50))]
-    items = [build_inspection_item(record, dataset, focus_rule_id=rule_id if mode == "sample_rule" else None) for record in selected]
+    items = [
+        build_inspection_item(
+            record, dataset, focus_rule_id=rule_id if mode == "sample_rule" else None
+        )
+        for record in selected
+    ]
     return {
         "success": True,
         "mode": mode,
@@ -206,16 +257,26 @@ def _finalize_rule_group(group: dict[str, dict[str, Any]]) -> list[dict[str, Any
         order_codes = item.pop("affected_order_codes")
         item["affected_order_count"] = len(order_codes)
         finalized.append(item)
-    return sorted(finalized, key=lambda item: (item["affected_order_count"], item["hit_count"]), reverse=True)
+    return sorted(
+        finalized, key=lambda item: (item["affected_order_count"], item["hit_count"]), reverse=True
+    )
 
 
 def _representative_issues(audit: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     representatives = []
     seen_rules: set[str] = set()
     for record in audit.get("records", []):
-        if not (record.get("deterministic_issues") or record.get("candidate_issues") or record.get("issues")):
+        if not (
+            record.get("deterministic_issues")
+            or record.get("candidate_issues")
+            or record.get("issues")
+        ):
             continue
-        issue = (record.get("deterministic_issues") or record.get("candidate_issues") or record.get("issues"))[0]
+        issue = (
+            record.get("deterministic_issues")
+            or record.get("candidate_issues")
+            or record.get("issues")
+        )[0]
         rule_id = issue.get("rule_id")
         if rule_id in seen_rules and len(representatives) >= limit:
             continue
@@ -237,7 +298,9 @@ def _representative_issues(audit: dict[str, Any], limit: int) -> list[dict[str, 
     return representatives
 
 
-def _review_samples(audit: dict[str, Any], dataset: dict[str, Any] | None, limit: int) -> list[dict[str, Any]]:
+def _review_samples(
+    audit: dict[str, Any], dataset: dict[str, Any] | None, limit: int
+) -> list[dict[str, Any]]:
     business_review = _business_review_summary(audit)
     records = audit.get("records", [])
     samples = []
@@ -259,7 +322,10 @@ def _review_samples(audit: dict[str, Any], dataset: dict[str, Any] | None, limit
                     "group": group_name,
                     "rule": rule,
                     "review_hint": review_hint,
-                    "samples": [build_inspection_item(record, dataset, focus_rule_id=rule_id) for record in matched],
+                    "samples": [
+                        build_inspection_item(record, dataset, focus_rule_id=rule_id)
+                        for record in matched
+                    ],
                 }
             )
             if len(samples) >= limit:
@@ -271,7 +337,9 @@ def _load_semantic_review_results(audit: dict[str, Any], audit_result_path: Path
     embedded = audit.get("semantic_review_results")
     if isinstance(embedded, dict) and embedded.get("results"):
         return embedded
-    candidate_path = audit_result_path.with_name("latest_finished_work_orders_semantic_review_results.json")
+    candidate_path = audit_result_path.with_name(
+        "latest_finished_work_orders_semantic_review_results.json"
+    )
     if candidate_path.exists():
         try:
             return json.loads(candidate_path.read_text(encoding="utf-8"))

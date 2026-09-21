@@ -13,6 +13,7 @@ import structlog
 from datetime import datetime
 
 from ..memory.context_compressor import ContextCompressor
+from ...utils.reference_time import reference_now
 from ...utils.token_budget import token_budget_manager
 
 logger = structlog.get_logger()
@@ -22,12 +23,10 @@ SOCIAL_CONTEXT_MODES = {"social", "enforcement_exam"}
 SYSTEM_CONTEXT_LAYER_ORDER = (
     "platform_policy",
     "mode_policy",
-    "selected_skill",
     "fixed_policies",
     "acceptance_checklist",
     "session_resources",
     "long_term_memory",
-    "runtime_metadata",
 )
 
 MESSAGE_CONTEXT_LAYER_ORDER = (
@@ -392,18 +391,14 @@ class SimplifiedContextBuilder:
         return {
             "platform_policy": self._build_platform_policy_prompt(),
             "mode_policy": mode_prompt,
-            "selected_skill": self._wrap_optional_context(
-                "selected_skill", self.selected_skill_context
-            ),
             "fixed_policies": self._wrap_optional_context(
                 "fixed_policies", self.fixed_policy_context
             ),
             "acceptance_checklist": self._wrap_optional_context(
-                "acceptance_checklist", self.acceptance_context
+                "acceptance_context", self.acceptance_context
             ),
             "session_resources": self._build_session_resources_layer(),
             "long_term_memory": self._build_long_term_memory_layer(),
-            "runtime_metadata": self._build_runtime_metadata_prompt(),
         }
 
     @staticmethod
@@ -467,14 +462,26 @@ class SimplifiedContextBuilder:
             + "\n\n".join(parts)
         )
 
-    def _build_runtime_metadata_prompt(self) -> str:
-        """Build system-only runtime metadata used for temporal reasoning."""
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return (
+    def _build_current_turn_dynamic_prefix(self) -> str:
+        """Build turn-scoped context that must not live in the cached system prefix.
+
+        selected_skill 与系统参考时间都是当前轮作用域：skill 每轮可被
+        用户更换，时间戳逐秒变化。放进当前轮 user 消息后，旧消息字节
+        稳定，缓存前缀不会被破坏。
+        """
+        parts = []
+        skill_section = self._wrap_optional_context(
+            "selected_skill", self.selected_skill_context
+        )
+        if skill_section:
+            parts.append(skill_section)
+        current_time = reference_now().strftime("%Y-%m-%d %H:%M:%S")
+        parts.append(
             "<runtime_metadata>\n"
-            f"系统参考时间: {current_time}\n"
+            f"系统参考时间(本轮开始): {current_time}\n"
             "</runtime_metadata>"
         )
+        return "\n\n".join(parts)
 
     def _build_agent_control_prompt(self) -> str:
         """Build system-level loop control rules for every agent mode."""
@@ -833,6 +840,7 @@ class SimplifiedContextBuilder:
             # 当前用户消息不再预写入 conversation_history。第 1 轮需要在
             # 最后一条 user message 中表达本轮输入；后续轮次 history 已包含。
             if iteration == 1:
+                sections.append(self._build_current_turn_dynamic_prefix())
                 sections.append(current_input_section)
                 if self.current_turn_resource_context:
                     sections.append(
@@ -862,6 +870,8 @@ class SimplifiedContextBuilder:
             graph_map_context_summary = self._build_graph_map_context_user_summary()
             if graph_map_context_summary:
                 sections.append(graph_map_context_summary)
+            if iteration == 1:
+                sections.append(self._build_current_turn_dynamic_prefix())
             sections.append(current_input_section)
             if iteration == 1 and self.current_turn_resource_context:
                 sections.append(

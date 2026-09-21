@@ -122,7 +122,7 @@ def test_graph_mode_preserves_map_context_and_builds_summary():
     assert "visible_entity_ids=3" in summary
 
 
-def test_runtime_metadata_is_not_exposed_in_user_conversation():
+def test_runtime_metadata_moves_to_first_turn_user_message():
     builder = SimplifiedContextBuilder(None, None)
 
     first_iteration = builder._build_user_conversation(
@@ -139,13 +139,14 @@ def test_runtime_metadata_is_not_exposed_in_user_conversation():
     )
     system_prompt = builder._build_system_prompt()
 
-    assert "当前时间" not in first_iteration
-    assert "当前时间" not in later_iteration
+    assert "系统参考时间" in first_iteration
+    assert "<runtime_metadata>" in first_iteration
+    assert "</runtime_metadata>" in first_iteration
+    assert "系统参考时间" not in later_iteration
     assert "迭代次数" not in first_iteration
     assert "迭代次数" not in later_iteration
-    assert "系统参考时间" in system_prompt
-    assert "<runtime_metadata>" in system_prompt
-    assert "</runtime_metadata>" in system_prompt
+    assert "系统参考时间" not in system_prompt
+    assert "<runtime_metadata>" not in system_prompt
 
 
 def test_non_graph_non_query_modes_strip_map_context():

@@ -20,10 +20,12 @@ test('sidebar exposes smart query and opens the AI query agent workspace', async
   const sidebar = await readSource('../AssistantSidebar.vue')
   const analysisView = await readSource('../../views/ReactAnalysisView.vue')
 
-  assert.match(sidebar, /<p class="module-title">智能问数<\/p>/)
+  assert.match(sidebar, /<p class="module-title">\{\{ queryDashboardModule\.label \}\}<\/p>/)
   assert.match(sidebar, /handleModuleSelect\('query-dashboard'\)/)
   assert.match(sidebar, /id: 'query-dashboard',[\s\S]*name: '智能问数'/)
-  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\('query'\)/)
+  assert.match(sidebar, /queryDashboardMode[\s\S]*'jiangsu_query'[\s\S]*'query'/)
+  assert.match(analysisView, /case 'query-dashboard':[\s\S]*store\.switchMode\(queryAgentMode\)/)
+  assert.match(analysisView, /queryAgentMode = .*'jiangsu_query'.*'query'/)
 })
 
 test('sidebar moves system management entries into the bottom user settings menu', async () => {
@@ -112,6 +114,14 @@ test('session restore does not replace the current chat with an empty persisted 
   assert.ok(resetIndex > guardIndex)
   assert.match(source, /if \(hasRestorableLocalState\(store\.sessionStates\?\.\[sessionId\]\)\)/)
   assert.match(source, /if \(!hasRestorableLocalState\(localSessionState\)\) return false/)
+})
+
+test('session restore permits a persisted board without migrated chat messages', async () => {
+  const source = await readSource('../../composables/reactAnalysis/useSessionManagement.js')
+
+  assert.match(source, /const restoredBoard = sessionData\.metadata\?\.drawio_board \|\| sessionData\.drawio_board \|\| null/)
+  assert.match(source, /if \(messages\.length === 0 && !restoredBoard\?\.board_id\)/)
+  assert.match(source, /restoredBoard\?\.board_id[\s\S]*loadDrawioBoardVersions/)
 })
 
 test('primary sidebar actions share one uniform spacing system', async () => {

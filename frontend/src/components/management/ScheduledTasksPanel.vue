@@ -200,24 +200,56 @@
 
             <label class="form-field">
               <span>执行模式</span>
-              <select v-model="createForm.execution_mode" @change="handleExecutionModeChange">
+              <select
+                v-model="createForm.execution_mode"
+                :disabled="editingWorkflowTask"
+                @change="handleExecutionModeChange"
+              >
                 <option value="assistant">assistant</option>
                 <option value="expert">expert</option>
                 <option value="query">query</option>
                 <option value="ops">ops（运维）</option>
                 <option value="social">social</option>
                 <option value="custom">custom（自选工具）</option>
+                <option value="workflow">workflow（确定性工作流）</option>
               </select>
+              <small v-if="editingWorkflowTask" class="form-hint">工作流任务由代码注册，不允许修改执行模式。</small>
+            </label>
+
+            <label v-if="createForm.execution_mode === 'workflow'" class="form-field">
+              <span>已注册工作流</span>
+              <select v-model="createForm.workflow_name" :disabled="editingWorkflowTask">
+                <option value="" disabled>请选择工作流</option>
+                <option v-for="workflow in availableWorkflowOptions" :key="workflow" :value="workflow">
+                  {{ workflow }}
+                </option>
+              </select>
+              <small class="form-hint">
+                工作流由后端代码注册并确定性执行；值守类工作流结论由 LLM 基于可信统计证据生成。任务定义的正统来源是项目种子文件，此处仅支持选择与参数调整。
+              </small>
             </label>
 
             <label class="form-field">
               <span>模型档位</span>
-              <select v-model="createForm.model_tier">
+              <select v-model="createForm.model_tier" aria-label="模型档位">
                 <option value="auto">自动</option>
-                <option value="flash">flash</option>
-                <option value="pro">pro</option>
+                <option value="flash">Flash</option>
+                <option value="pro">Pro</option>
               </select>
+              <small class="form-hint">自动使用系统路由；Flash 和 Pro 使用对应档位的模型配置。</small>
             </label>
+            <div class="form-field form-wide">
+              <span>结果字段要求</span>
+              <small class="form-hint">提交待办前校验。通用字段可填 title、summary、decision、comment；详情字段填 sections.event_type 等。字段内容均为文本，允许值留空表示不限。</small>
+              <div v-for="(rule, index) in createForm.result_requirements" :key="index" class="result-requirement-row">
+                <label>字段标识<input v-model="rule.field" aria-label="结果字段标识" placeholder="sections.event_type" /></label>
+                <label>展示名称<input v-model="rule.label" aria-label="结果字段名称" placeholder="AI 事件类型" /></label>
+                <label>允许值<input v-model="rule.allowedValuesText" aria-label="结果字段允许值" placeholder="用逗号分隔，留空不限" /></label>
+                <label class="switch-field"><input v-model="rule.required" type="checkbox" />{{ Object.keys(rule.required_when || {}).length ? '条件满足时必填' : '必填' }}</label>
+                <button type="button" @click="createForm.result_requirements.splice(index, 1)">删除</button>
+              </div>
+              <button type="button" @click="createForm.result_requirements.push({ field: '', label: '', required: true, allowedValuesText: '' })">添加结果字段</button>
+            </div>
 
             <div v-if="createForm.execution_mode === 'custom'" class="form-field form-wide">
               <span>Agent 工具（本次任务所有步骤固定共享）</span>
@@ -241,7 +273,7 @@
               <small class="form-hint">仅加载所选工具，不继承其他模式能力；系统不会自动补充依赖工具。</small>
             </div>
 
-            <label class="form-field form-wide">
+            <label v-if="createForm.execution_mode !== 'workflow'" class="form-field form-wide">
               <span>上下文 Skill（可选）</span>
               <select v-model="createForm.skill_id" :disabled="scheduledTasksStore.skillsLoading">
                 <option value="">不注入 Skill</option>
@@ -401,12 +433,12 @@
                   <span>记忆字符预算</span>
                   <input v-model.number="createForm.historyMemoryCharBudget" type="number" min="200" step="100" />
                 </label>
-                <label class="switch-field inline-switch form-wide">
+                <label v-if="createForm.execution_mode !== 'workflow'" class="switch-field inline-switch form-wide">
                   <input v-model="createForm.historyActiveRetrievalEnabled" type="checkbox" />
                   <span>允许 Agent 执行中主动检索历史案例</span>
                 </label>
                 <small class="form-hint">
-                  每次执行后自动沉淀本次案例并更新长期记忆；主动检索开启后，任务执行中可按站点、污染物、事件类型或历史结论查找相似案例。
+                  每次执行后自动沉淀本次案例并更新长期记忆；工作流任务按配置自动注入最近案例，Agent 任务可另开主动检索。
                 </small>
               </div>
             </div>
@@ -415,7 +447,8 @@
           <div class="task-preview">
             <div class="task-preview-title">执行步骤预览</div>
             <div class="task-preview-body">
-              <p v-if="createForm.trigger_type === 'event'">事件匹配后只运行一次 Agent，结果由后台广播给所选微信或 App 用户并写入各自会话。</p>
+              <p v-if="createForm.execution_mode === 'workflow'">按调度（或事件）执行已注册的确定性工作流：代码负责取数与待办提交，结论由 LLM 基于可信统计证据生成并沉淀案例。</p>
+              <p v-else-if="createForm.trigger_type === 'event'">事件匹配后只运行一次 Agent，结果由后台广播给所选微信或 App 用户并写入各自会话。</p>
               <p v-else>任务将在设定时间运行，并按配置处理广播。</p>
             </div>
           </div>
@@ -467,6 +500,16 @@
 
           <!-- 案例库页签 -->
           <div v-else-if="historyTab === 'cases'" class="history-cases">
+            <div v-if="caseEditing" class="history-memory-editor">
+              <textarea v-model="caseDraft" rows="14" placeholder="编辑案例 JSON"></textarea>
+              <div v-if="caseEditError" class="form-error" role="alert">{{ caseEditError }}</div>
+              <div class="history-memory-editor-actions">
+                <button class="panel-btn small" @click="cancelCaseEdit">取消</button>
+                <button class="panel-btn small primary" :disabled="caseSaving" @click="saveCaseEdit">
+                  {{ caseSaving ? '保存中...' : '保存案例' }}
+                </button>
+              </div>
+            </div>
             <div v-if="historyCases.length === 0" class="history-state">
               暂无历史案例，任务每次执行后会自动累积。
             </div>
@@ -500,6 +543,7 @@
               <div v-if="caseItem.errors?.length" class="history-case-errors">
                 <p v-for="(error, index) in caseItem.errors" :key="index">{{ error }}</p>
               </div>
+              <button class="panel-btn small" @click="startCaseEdit(caseItem)">编辑案例</button>
             </div>
             <p v-if="historyCasesTotal > historyCases.length" class="history-cases-more">
               仅显示最近 {{ historyCases.length }} 条，共 {{ historyCasesTotal }} 条
@@ -601,6 +645,17 @@ const executionHistoryPagination = ref({ page: 1, pageSize: 10, total: 0, totalP
 const eventTypes = computed(() => scheduledTasksStore.eventTypes)
 const socialUsers = computed(() => selectableSocialUsers(scheduledTasksStore.socialUsers))
 const availableSkills = computed(() => scheduledTasksStore.availableSkills)
+const availableWorkflows = computed(() => scheduledTasksStore.availableWorkflows)
+const availableWorkflowOptions = computed(() => {
+  const current = String(createForm.value.workflow_name || '').trim()
+  return [...new Set([
+    ...availableWorkflows.value,
+    ...(current ? [current] : [])
+  ])]
+})
+const editingWorkflowTask = computed(() => (
+  Boolean(editingTaskId.value) && createForm.value.execution_mode === 'workflow'
+))
 const selectedSkill = computed(() => availableSkills.value.find(
   skill => skill.id === createForm.value.skill_id
 ) || null)
@@ -641,10 +696,13 @@ const defaultForm = () => ({
   description: '',
   agent_prompt: '',
   execution_mode: 'assistant',
-  model_tier: 'auto',
+  model_tier: 'flash',
+  result_requirements: [],
   skill_id: '',
   tool_names: [],
   toolSearch: '',
+  workflow_name: '',
+  workflow_args: {},
   trigger_type: 'schedule',
   schedule_type: 'daily_custom',
   event_type: '',
@@ -680,6 +738,18 @@ const handleExecutionModeChange = async () => {
   applyExecutionMode(createForm.value, createForm.value.execution_mode)
   if (createForm.value.execution_mode === 'custom') {
     await loadAvailableTools()
+  }
+  if (createForm.value.execution_mode === 'workflow') {
+    await loadAvailableWorkflows()
+  }
+}
+
+const loadAvailableWorkflows = async () => {
+  try {
+    await scheduledTasksStore.fetchAvailableWorkflows()
+  } catch (error) {
+    console.error('Failed to fetch available workflows:', error)
+    formError.value = '已注册工作流列表加载失败，请重试'
   }
 }
 
@@ -748,6 +818,11 @@ const memoryEditing = ref(false)
 const memoryDraft = ref('')
 const memorySaving = ref(false)
 const memoryEditError = ref('')
+const caseEditing = ref(false)
+const caseDraft = ref('')
+const caseSaving = ref(false)
+const caseEditError = ref('')
+const caseEditingId = ref('')
 let historyRequestToken = 0
 
 const md = new MarkdownIt({ breaks: true })
@@ -834,6 +909,7 @@ const openHistoryDialog = async (task) => {
   historyMemory.value = null
   memoryEditing.value = false
   memoryEditError.value = ''
+  cancelCaseEdit()
   showHistoryDialog.value = true
   await loadHistoryData()
 }
@@ -848,6 +924,7 @@ const closeHistoryDialog = () => {
   historyError.value = ''
   memoryEditing.value = false
   memoryEditError.value = ''
+  cancelCaseEdit()
 }
 
 const startMemoryEdit = () => {
@@ -884,6 +961,53 @@ const saveMemoryEdit = async () => {
       : '保存失败：' + (error.message || '未知错误')
   } finally {
     memorySaving.value = false
+  }
+}
+
+const startCaseEdit = (caseItem) => {
+  caseEditingId.value = String(caseItem.execution_id || '')
+  caseDraft.value = JSON.stringify(caseItem, null, 2)
+  caseEditError.value = ''
+  caseEditing.value = true
+}
+
+const cancelCaseEdit = () => {
+  caseEditing.value = false
+  caseEditError.value = ''
+  caseDraft.value = ''
+  caseEditingId.value = ''
+}
+
+const saveCaseEdit = async () => {
+  if (!historyTask.value || !caseEditingId.value) return
+  let parsed
+  try {
+    parsed = JSON.parse(caseDraft.value)
+  } catch {
+    caseEditError.value = '案例内容必须是合法 JSON'
+    return
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    caseEditError.value = '案例内容必须是 JSON 对象'
+    return
+  }
+  caseSaving.value = true
+  caseEditError.value = ''
+  try {
+    await scheduledTasksStore.updateTaskHistoryCase(
+      historyTask.value.task_id,
+      caseEditingId.value,
+      parsed
+    )
+    cancelCaseEdit()
+    await loadHistoryData()
+  } catch (error) {
+    console.error('Failed to save task case:', error)
+    caseEditError.value = error.status === 404
+      ? '案例不存在，可能已被清理，请重新加载'
+      : '保存失败：' + (error.message || '未知错误')
+  } finally {
+    caseSaving.value = false
   }
 }
 
@@ -950,7 +1074,8 @@ const getExecutionModeLabel = (mode) => {
     query: '问数模式',
     ops: '运维模式',
     social: '社交模式',
-    custom: '自定义工具模式'
+    custom: '自定义工具模式',
+    workflow: '确定性工作流'
   }
   return labels[mode] || mode || '默认'
 }
@@ -1020,9 +1145,12 @@ const openEditDialog = async (task) => {
     description: task.description || '',
       agent_prompt: task.prompt || task.description || '',
     execution_mode: task.execution_mode || 'assistant',
-    model_tier: task.model_tier || 'auto',
+    model_tier: task.model_tier || 'flash',
+    result_requirements: (task.result_requirements || []).map(rule => ({ ...rule, allowedValuesText: (rule.allowed_values || []).join('，') })),
     skill_id: task.skill_id || '',
     tool_names: [...(task.tool_names || [])],
+    workflow_name: task.workflow_name || '',
+    workflow_args: { ...(task.workflow_args || {}) },
     trigger_type: task.trigger_type || 'schedule',
     schedule_type: task.schedule_type || 'daily_custom',
     event_type: task.event_type || '',
@@ -1053,6 +1181,9 @@ const openEditDialog = async (task) => {
   if (createForm.value.execution_mode === 'custom') {
     await loadAvailableTools()
   }
+  if (createForm.value.execution_mode === 'workflow') {
+    await loadAvailableWorkflows()
+  }
 }
 
 const closeDialog = () => {
@@ -1081,6 +1212,14 @@ const saveTask = async () => {
   }
   if (createForm.value.execution_mode === 'custom' && createForm.value.tool_names.length === 0) {
     formError.value = '请至少选择一个 Agent 工具'
+    return
+  }
+  if (
+    createForm.value.execution_mode === 'workflow' &&
+    !editingWorkflowTask.value &&
+    !String(createForm.value.workflow_name || '').trim()
+  ) {
+    formError.value = '请选择一个已注册工作流'
     return
   }
 
@@ -1608,6 +1747,9 @@ const saveTask = async () => {
   gap: 14px;
 }
 
+.result-requirement-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px 0; }
+.result-requirement-row > label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 150px; }
+.result-requirement-row input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

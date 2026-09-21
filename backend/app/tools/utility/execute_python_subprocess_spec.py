@@ -335,3 +335,115 @@ def test_bubblewrap_is_fail_closed_when_dependency_is_missing(monkeypatch, tmp_p
     )
 
     assert sandbox_spec is None
+
+
+def _extract_bind_pairs(command):
+    pairs = []
+    index = 0
+    while index < len(command):
+        token = command[index]
+        if token in {"--ro-bind", "--bind"} and index + 2 < len(command):
+            pairs.append((token, Path(command[index + 1]), Path(command[index + 2])))
+            index += 3
+        else:
+            index += 1
+    return pairs
+
+
+def _image_context(images_dir: Path, session_dir: Path, image_names):
+    image_paths = [str(images_dir / name) for name in image_names]
+    return SimpleNamespace(
+        available_file_paths=image_paths,
+        data_manager=SimpleNamespace(
+            memory=SimpleNamespace(session=SimpleNamespace(data_dir=session_dir)),
+        ),
+    )
+
+
+def test_bubblewrap_stages_image_inputs_instead_of_ro_binding_them(
+    monkeypatch, tmp_path
+):
+    images_dir = tmp_path / "registry_images"
+    images_dir.mkdir()
+    persisted = images_dir / "既有图表.png"
+    persisted.write_bytes(b"\x89PNG\r\n\x1a\npersisted")
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    monkeypatch.setattr(
+        "app.tools.utility.execute_python_tool.get_images_dir",
+        lambda: images_dir,
+    )
+
+    working_dir = tmp_path / "workdir"
+    working_dir.mkdir()
+    sandbox_spec = ExecutePythonTool()._build_bubblewrap_command(
+        code="print('test')",
+        script_file=str(working_dir / "script.py"),
+        working_dir=str(working_dir),
+        timeout=5,
+        context=_image_context(images_dir, session_dir, ["既有图表.png"]),
+    )
+
+    assert sandbox_spec is not None
+    _, sync_dirs, _ = sandbox_spec
+    bind_pairs = _extract_bind_pairs(sandbox_spec[0])
+
+    images_binds = [
+        (source, destination)
+        for mode, source, destination in bind_pairs
+        if destination == images_dir
+    ]
+    assert images_binds and images_binds[0][0] == working_dir / "images_output"
+
+    for _, _, destination in bind_pairs:
+        if destination == images_dir:
+            continue
+        assert not destination.is_relative_to(images_dir)
+
+    staged_copy = working_dir / "images_output" / "既有图表.png"
+    assert staged_copy.read_bytes() == b"\x89PNG\r\n\x1a\npersisted"
+
+    images_sync = next(
+        (staged, destination, originals)
+        for staged, destination, originals in sync_dirs
+        if destination == images_dir
+    )
+    assert images_sync[0] == working_dir / "images_output"
+    assert "既有图表.png" in images_sync[2]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_run_never_truncates_persisted_images(
+    monkeypatch, tmp_path
+):
+    images_dir = tmp_path / "registry_images"
+    images_dir.mkdir()
+    persisted = images_dir / "既有图表.png"
+    persisted_bytes = b"\x89PNG\r\n\x1a\npersisted-charts-must-survive"
+    persisted.write_bytes(persisted_bytes)
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    monkeypatch.setattr(
+        "app.tools.utility.execute_python_tool.get_images_dir",
+        lambda: images_dir,
+    )
+
+    result = await ExecutePythonTool().execute(
+        context=_image_context(images_dir, session_dir, ["既有图表.png"]),
+        code=(
+            "import matplotlib\n"
+            "matplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, ax = plt.subplots()\n"
+            "ax.bar(['a', 'b'], [1, 2])\n"
+            "save_chart(fig, '新图表.png')\n"
+            "print('done')\n"
+        ),
+        timeout=30,
+    )
+
+    assert result["success"] is True
+    assert persisted.read_bytes() == persisted_bytes
+    published = images_dir / "新图表.png"
+    assert published.is_file()
+    assert published.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

@@ -15,7 +15,7 @@ from typing import Dict, Iterable, List
 # 工具有序白名单（仅包含工具名称）
 # ========================================
 
-# 项目专属工具（广东省数据源）。这些工具依赖广东联网接口/数据库，
+# 广东省数据源工具（项目专属）。这些工具依赖广东联网接口/数据库，
 # 不允许进入任何共享模式白名单：
 # - 工具实例仅在项目 manifest 声明启用时注册（app/tools/__init__.py）；
 # - 项目通过 manifest 的 backend.agent_mode_extra_tools 按模式追加。
@@ -42,12 +42,26 @@ PROJECT_SCOPED_TOOL_NAMES = frozenset({
 ASSISTANT_TOOL_NAMES = [
     "list_session_resources",
     # 轻量办公：搜索、阅读、编辑文档和生成 HTML 结果。
-    "list_directory", "search_files", "read_file", "write_file", "edit_file", "grep",
-    "create_html_artifact", "create_report_package", "render_report_package", "validate_report_package",
+    "list_directory",
+    "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "create_html_artifact",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
     # 轻量数据计算与网页检索抓取。
-    "execute_python", "web_search", "web_fetch", "browser",
+    "execute_python",
+    "web_search",
+    "web_fetch",
+    "browser",
     # 任务调度、技能目录和重型工作空间委托。
-    "create_scheduled_task", "wait_task", "list_skills", "view_skill",
+    "create_scheduled_task",
+    "wait_task",
+    "list_skills",
+    "view_skill",
     "call_sub_agent",
 ]
 
@@ -56,45 +70,68 @@ PPT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # PPT 源码项目和交付
-    "manage_editable_ppt", "validate_pptx", "create_pptx_with_ppt_master",
+    "manage_editable_ppt",
+    "validate_pptx",
+    "create_pptx_with_ppt_master",
     # 文件读取与直接源码编辑
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
     # 图表、图片检查和必要计算
-    "create_report_chart", "execute_python",
+    "create_report_chart",
+    "execute_python",
     # 用户材料、知识库与外部资料
-    "knowledge_qa_workflow", "knowledge_document_reader",
-    "web_search", "web_fetch", "browser",
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
+    "web_search",
+    "web_fetch",
+    "browser",
 ]
 
 # ===== 专家模式工具 =====
 EXPERT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-
     # 知识库检索与命中文档上下文阅读
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
     # 数据查询工具
     "get_vocs_data",
-    "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_forecast", "get_observed_meteorology", "get_platform_weather_image",
-    "query_xcai_city_history", "execute_sql_query",
-
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    "get_weather_forecast",
+    "get_observed_meteorology",
+    "get_platform_weather_image",
+    "query_xcai_city_history",
+    "execute_sql_query",
     # 分析工具
-    "calculate_pm_pmf", "calculate_vocs_pmf",
+    "calculate_pm_pmf",
+    "calculate_vocs_pmf",
     "analyze_upwind_enterprises",
-    "meteorological_trajectory_analysis", "analyze_trajectory_sources",
-    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
-    "calculate_crustal", "calculate_trace", "predict_air_quality",
-
+    "meteorological_trajectory_analysis",
+    "analyze_trajectory_sources",
+    "calculate_reconstruction",
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "calculate_trace",
+    "predict_air_quality",
     # 可视化
-    "generate_map", "create_report_chart",
-
+    "generate_map",
+    "create_report_chart",
     # 代码执行
     "execute_python",
-
     # 文件操作
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
 ]
 
 # ===== 问数模式工具 =====
@@ -102,27 +139,41 @@ QUERY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # === 源码查看工具 ===
-    "grep", "read_file", "write_file", "edit_file", "list_directory", "search_files",
-
+    "grep",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "search_files",
     # === 参数化查询工具 ===
-    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
-    "get_weather_data", "get_observed_meteorology", "get_weather_forecast", "get_current_weather",
-    "query_xcai_city_history", "execute_sql_query",
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
+    "get_weather_data",
+    "get_observed_meteorology",
+    "get_weather_forecast",
+    "get_current_weather",
+    "query_xcai_city_history",
+    "execute_sql_query",
     "knowledge_graph_query",
     "resolve_station_geo",
-
     # === 全国省份空气质量查询 ===
-    "query_national_province_air_quality", "query_national_city_air_quality",
-
+    "query_national_province_air_quality",
+    "query_national_city_air_quality",
     # === Agentic GIS 视觉交互工具 ===
-    "resolve_map_data_asset", "create_map_point_asset", "spatial_analysis", "spatial_interpolation", "visual_interaction",
-    "get_map_program_receipt", "wait_map_program_receipt",
-
+    "resolve_map_data_asset",
+    "create_map_point_asset",
+    "spatial_analysis",
+    "spatial_interpolation",
+    "visual_interaction",
+    "get_map_program_receipt",
+    "wait_map_program_receipt",
     # === 数值计算工具 ===
     "execute_python",
-
     # === 图表生成工具 ===
-    "create_report_chart", "execute_echarts_python",
+    "create_report_chart",
+    "execute_echarts_python",
 ]
 
 # ===== 知识问答模式工具 =====
@@ -140,17 +191,22 @@ KNOWLEDGE_TOOL_NAMES = [
 REPORT_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-
     # 数据查询
     "execute_sql_query",
-
     # 文件和执行
-    "read_file", "write_file", "edit_file", "grep",
-    "list_directory", "search_files", "bash",
-    "create_report_chart", "execute_python",
-
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
+    "bash",
+    "create_report_chart",
+    "execute_python",
     # 报告产物收口
-    "create_report_package", "render_report_package", "validate_report_package",
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
 ]
 
 # ===== 图表模式工具 =====
@@ -158,12 +214,17 @@ CHART_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 文件操作
-    "read_file", "write_file", "edit_file", "grep", "list_directory", "search_files",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
     "bash",
-
     # 代码执行和原生多模态视觉参考
-    "create_report_chart", "execute_python", "execute_echarts_python",
-
+    "create_report_chart",
+    "execute_python",
+    "execute_echarts_python",
     # 数据查询工具
     "get_observed_meteorology",
     "execute_sql_query",
@@ -185,20 +246,30 @@ OPS_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 技能发现与按需读取
-    "list_skills", "view_skill", "read_file",
-
+    "list_skills",
+    "view_skill",
+    "read_file",
     # 工单查询
-    "ops_audit_fetch_dataset", "ops_audit_run_rules", "ops_audit_inspect", "ops_audit_submit_review",
-    "knowledge_graph_query", "execute_ops_sql_query",
-
+    "ops_audit_fetch_dataset",
+    "ops_audit_run_rules",
+    "ops_audit_inspect",
+    "agent_case_library",
+    "knowledge_graph_query",
+    "execute_ops_sql_query",
+    # 审核正式报告生成与验收
+    "create_report_package",
+    "render_report_package",
+    "validate_report_package",
     # 子 Agent 复核
     "call_sub_agent",
-
     # 代码执行
     "execute_python",
-
     # 文件操作
-    "grep", "write_file", "edit_file", "list_directory", "search_files",
+    "grep",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "search_files",
 ]
 
 # ===== 知识库图谱编辑模式工具 =====
@@ -219,27 +290,36 @@ SOCIAL_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
     # 文件操作
-    "read_file", "edit_file", "grep", "write_file",
-    "list_directory", "search_files", "list_skills", "view_skill",
-
+    "read_file",
+    "edit_file",
+    "grep",
+    "write_file",
+    "list_directory",
+    "search_files",
+    "list_skills",
+    "view_skill",
     # 知识库检索
-    "knowledge_qa_workflow", "knowledge_document_reader",
-
+    "knowledge_qa_workflow",
+    "knowledge_document_reader",
     # 代码执行和模式互调
-    "execute_python", "call_sub_agent",
-
+    "execute_python",
+    "call_sub_agent",
     # 正式报告生成与收口
-    "create_report_chart", "create_report_package", "validate_report_package",
-
+    "create_report_chart",
+    "create_report_package",
+    "validate_report_package",
     # 网络搜索
-    "web_search", "web_fetch",
-
+    "web_search",
+    "web_fetch",
     # 呼吸式特有工具
-    "schedule_task", "send_notification", "spawn", "wait_task",
-
+    "schedule_task",
+    "send_notification",
+    "spawn",
+    "wait_task",
     # CLI会话管理和历史搜索
-    "cli_session", "terminal_session", "session_search",
-
+    "cli_session",
+    "terminal_session",
+    "session_search",
     # 系统操作
     "bash",
 ]
@@ -259,49 +339,80 @@ ENFORCEMENT_EXAM_TOOL_NAMES = [
 MEMORY_CONSOLIDATOR_TOOL_NAMES = [
     "list_session_resources",
     # 文件操作（只保留读取和搜索）
-    "read_file", "grep",
-
+    "read_file",
+    "grep",
     # 记忆管理（核心工具）
-    "remember_fact", "replace_memory", "remove_memory",
+    "remember_fact",
+    "replace_memory",
+    "remove_memory",
+    "agent_case_library",
 ]
 
 # ===== 会商专用模式工具 =====
 DELIBERATION_METEOROLOGY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "get_weather_forecast", "get_observed_meteorology",
+    "get_weather_forecast",
+    "get_observed_meteorology",
     "meteorological_trajectory_analysis",
-    "analyze_upwind_enterprises", "analyze_trajectory_sources",
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "analyze_upwind_enterprises",
+    "analyze_trajectory_sources",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 DELIBERATION_MONITORING_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "execute_python",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 DELIBERATION_CHEMISTRY_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "get_vocs_data", "get_pm25_ionic", "get_pm25_carbon", "get_pm25_crustal",
+    "get_vocs_data",
+    "get_pm25_ionic",
+    "get_pm25_carbon",
+    "get_pm25_crustal",
     "calculate_vocs_pmf",
-    "calculate_reconstruction", "calculate_carbon", "calculate_soluble",
-    "calculate_crustal", "calculate_trace",
-    "execute_python", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "calculate_reconstruction",
+    "calculate_carbon",
+    "calculate_soluble",
+    "calculate_crustal",
+    "calculate_trace",
+    "execute_python",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 DELIBERATION_REVIEWER_TOOL_NAMES = [
     "list_session_resources",
     "publish_session_file",
-    "read_file", "write_file", "edit_file", "grep",
-    "list_directory", "search_files", "execute_python",
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "grep",
+    "list_directory",
+    "search_files",
+    "execute_python",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 # ========================================
 # 工具字典生成（向后兼容）
 # ========================================
+
 
 def _build_tool_dict(tool_names: Iterable[str]) -> Dict[str, str]:
     """
@@ -351,12 +462,6 @@ MEMORY_CONSOLIDATOR_TOOL_ORDER = MEMORY_CONSOLIDATOR_TOOL_NAMES
 def get_tools_by_mode(mode: str) -> Dict[str, str]:
     """
     根据模式获取工具有序白名单。
-
-    优先级：
-    1. 项目 manifest 的 ``backend.agent_mode_tools[mode]`` 全量覆盖
-       （允许项目声明共享层未定义的自定义模式）；
-    2. 共享白名单 + 项目 ``backend.agent_mode_extra_tools[mode]`` 追加
-       （项目专属工具按需挂载，不进入共享层）。
 
     Args:
         mode: "assistant" | "ppt" | "expert" | "query" | "report" | "social" | "enforcement_exam" | "chart" | "board" | "ops" | "memory_consolidator" | "deliberation_*"

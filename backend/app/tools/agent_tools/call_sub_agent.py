@@ -536,6 +536,9 @@ class CallSubAgentTool(LLMTool):
                 "image_paths": self._extract_image_paths(result_events),  # 本地路径（文件操作）
                 "tool_calls": self._extract_tool_calls(result_events)
             }
+            human_feedback = self._extract_human_feedback(result_events)
+            if human_feedback is not None:
+                structured_data["human_feedback"] = human_feedback
             # Preserve the latest board payload so a promoted workspace can
             # render immediately after the user approves the handoff.
             for child_event in reversed(result_events):
@@ -942,6 +945,19 @@ class CallSubAgentTool(LLMTool):
                     "args": event.get("args", {})
                 })
         return tool_calls
+
+    def _extract_human_feedback(self, events: list) -> Optional[Dict[str, Any]]:
+        """Preserve a child Agent's pending UI handoff for the parent session."""
+
+        for event in reversed(events):
+            if event.get("type") != "tool_result":
+                continue
+            result = (event.get("data") or {}).get("result")
+            data = result.get("data") if isinstance(result, dict) else None
+            feedback = data.get("human_feedback") if isinstance(data, dict) else None
+            if isinstance(feedback, dict) and feedback.get("required"):
+                return feedback
+        return None
 
     def _get_parent_mode(self, context: Optional[Any]) -> str:
         """从context获取父Agent模式"""

@@ -874,6 +874,32 @@ async def analyze_stream(
             else await load_session(actual_session_id) if actual_session_id else None
         )
 
+        # A scheduled task conversation may continue with the same review
+        # execution. Restore only the exact persisted runtime context; do not
+        # synthesize task identity or silently downgrade missing fields.
+        if preloaded_session and isinstance(preloaded_session.metadata, dict):
+            persisted_context = preloaded_session.metadata.get("scheduled_task_context")
+            persisted_tools = preloaded_session.metadata.get("scheduled_task_tools")
+            if persisted_context is not None or persisted_tools is not None:
+                if (
+                    not isinstance(persisted_context, dict)
+                    or not persisted_context.get("task_id")
+                    or not persisted_context.get("execution_id")
+                    or not isinstance(persisted_tools, list)
+                    or not persisted_tools
+                    or any(not isinstance(name, str) or not name for name in persisted_tools)
+                ):
+                    raise HTTPException(status_code=409, detail="scheduled_context_incomplete")
+                registered_tool_names = set(global_tool_registry.list_tools())
+                missing_tools = sorted(set(persisted_tools) - registered_tool_names)
+                if missing_tools:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "scheduled_context_tools_unavailable", "tools": missing_tools},
+                    )
+                analyze_kwargs["runtime_metadata"] = {"scheduled_task": persisted_context}
+                analyze_kwargs["extra_tool_names"] = list(dict.fromkeys(persisted_tools))
+
         requested_active_contexts = (
             [item.model_dump(exclude_none=True) for item in request.active_contexts]
             if request.active_contexts is not None
@@ -945,7 +971,11 @@ async def analyze_stream(
         analyze_kwargs["selected_skill_context"] = selected_skill.content if selected_skill else None
         analyze_kwargs["fixed_policy_context"] = resolved_active_contexts.fixed_policy_context
         analyze_kwargs["selected_resource_refs"] = selected_resource_refs or None
-        analyze_kwargs["extra_tool_names"] = on_demand_tool_names
+        persisted_extra_tools = analyze_kwargs.get("extra_tool_names") or []
+        analyze_kwargs["extra_tool_names"] = list(dict.fromkeys([
+            *persisted_extra_tools,
+            *on_demand_tool_names,
+        ]))
         if (
             preloaded_session
             and request.mode == "board"
@@ -1093,12 +1123,20 @@ async def analyze_stream(
 
                 asyncio.create_task(_save_initial_session_metadata())
             else:
-                await persist_new_web_session(
-                    manager=session_manager,
-                    session=session,
-                    catalog=catalog,
-                    user=user,
-                    mode=request.mode or "assistant",
+                # 客户端可能在 SSE 早期断开（用户停止/前端 abort），CancelledError
+                # 会在 save_session_metadata 与 catalog.register 之间中断生成器，
+                # 留下无 catalog 行的孤儿会话，使后续 analyze/cancel 全部 404。
+                # shield 保证注册作为整体落库，取消仍正常向外传播。
+                await asyncio.shield(
+                    asyncio.create_task(
+                        persist_new_web_session(
+                            manager=session_manager,
+                            session=session,
+                            catalog=catalog,
+                            user=user,
+                            mode=request.mode or "assistant",
+                        )
+                    )
                 )
 
             # ✅ 添加用户消息到对话历史
@@ -1117,7 +1155,10 @@ async def analyze_stream(
 
             try:
                 await cancellation_registry.arm_run_task(actual_session_id, cancel_event)
-                with llm_service.use_model_tier(request.model_tier):
+                with (
+                    llm_service.use_model_tier(request.model_tier),
+                    llm_service.use_opencode_session(actual_session_id),
+                ):
                     async for event in agent.analyze(**analyze_kwargs):
                         event_count += 1
                         event_type = event.get("type")
@@ -1364,7 +1405,7 @@ async def analyze_stream(
                                 break
                             # ✅ 将收集的数据存入 _session_store，供 react_agent.py 的 finally 块统一保存
                             if actual_session_id not in agent._session_store:
-                                agent._session_store[actual_session_id] = {}
+                                agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
 
                             agent._session_store[actual_session_id]["has_error"] = event["type"] != "interrupted"
                             agent._session_store[actual_session_id]["error_type"] = event["type"]
@@ -1447,7 +1488,7 @@ async def analyze_stream(
                         if not saved:
                             raise RuntimeError("pause_checkpoint_failed")
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
 
                     try:
@@ -1486,7 +1527,7 @@ async def analyze_stream(
                     saved = await session_manager.append_session_transcript(session)
                     if saved and actual_session_id:
                         if actual_session_id not in agent._session_store:
-                            agent._session_store[actual_session_id] = {}
+                            agent._session_store[actual_session_id] = {"last_used": datetime.utcnow()}
                         agent._session_store[actual_session_id]["display_history_persisted"] = True
                     if saved:
                         logger.info("session_saved_on_exception", session_id=actual_session_id)

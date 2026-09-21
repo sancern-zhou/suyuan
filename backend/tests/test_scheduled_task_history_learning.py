@@ -459,7 +459,11 @@ class TestExecutorIntegration:
 
         assert execution.status == ExecutionStatus.SUCCESS
         assert "## 历史案例主动检索" not in calls[0]["prompt"]
-        assert calls[0]["kwargs"]["extra_tool_names"] == ["search_scheduled_task_history"]
+        assert calls[0]["kwargs"]["extra_tool_names"] == [
+            "read_file",
+            "submit_task_review",
+            "search_scheduled_task_history",
+        ]
         scheduled_context = calls[0]["kwargs"]["runtime_metadata"]["scheduled_task"]
         assert scheduled_context["task_id"] == task.task_id
         assert scheduled_context["execution_id"] == execution.execution_id
