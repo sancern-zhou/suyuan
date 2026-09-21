@@ -632,7 +632,13 @@ class CallSubAgentTool(LLMTool):
                     child_mode=target_mode,
                     user_query=effective_goal,  # ✅ 使用effective_goal
                     assistant_answer=final_result["answer"],
-                    result_events=result_events
+                    result_events=result_events,
+                    task_id=task_id,
+                    parent_task_id=parent_task_id,
+                    task_contract=task_contract,
+                    result_schema=result_schema,
+                    result_status=("success" if not structured_data.get("validation_errors") else "invalid_result"),
+                    validation_errors=structured_data.get("validation_errors", []),
                 )
 
             # ✅ 构建增强的metadata（包含子Agent的思考过程）
@@ -1104,7 +1110,13 @@ class CallSubAgentTool(LLMTool):
         child_mode: str,
         user_query: str,
         assistant_answer: str,
-        result_events: List[Dict]
+        result_events: List[Dict],
+        task_id: Optional[str] = None,
+        parent_task_id: Optional[str] = None,
+        task_contract: Optional[Dict[str, Any]] = None,
+        result_schema: Optional[Dict[str, Any]] = None,
+        result_status: Optional[str] = None,
+        validation_errors: Optional[List[Dict[str, str]]] = None,
     ):
         """更新子Agent session"""
         # 加载或创建session
@@ -1126,6 +1138,21 @@ class CallSubAgentTool(LLMTool):
             "content": user_query,
             "timestamp": datetime.now().isoformat()
         })
+
+        if task_id or parent_task_id or task_contract or result_schema:
+            workflow = dict(session.metadata.get("workflow") or {})
+            workflow.update({
+                "protocol_version": "workflow.v1",
+                "task_id": task_id,
+                "parent_task_id": parent_task_id,
+                "task_type": (task_contract or {}).get("task_type"),
+                "task_contract": task_contract,
+                "result_schema": result_schema,
+                "status": result_status or "completed",
+                "validation_errors": validation_errors or [],
+                "updated_at": datetime.now().isoformat(),
+            })
+            session.metadata["workflow"] = workflow
         session.conversation_history.append({
             "role": "assistant",
             "content": assistant_answer,
