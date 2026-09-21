@@ -116,6 +116,7 @@ class RunAgentWorkflowTool(LLMTool):
                 executor=execute_node,
                 max_concurrency=max(1, min(int(max_concurrency or 4), 8)),
                 snapshot=snapshot,
+                persist=lambda current: self._persist_parent_snapshot(context, current),
             )
             snapshot = await coordinator.run()
             succeeded = snapshot["status"] == "succeeded"
@@ -147,6 +148,26 @@ class RunAgentWorkflowTool(LLMTool):
         from app.tools.agent_tools.call_sub_agent import CallSubAgentTool
 
         return CallSubAgentTool()
+
+    @staticmethod
+    def _persist_parent_snapshot(context: Optional[Any], snapshot: Mapping[str, Any]) -> None:
+        """Keep the coordinator checkpoint with the parent conversation when available."""
+        session_id = getattr(context, "session_id", None) if context is not None else None
+        if not session_id:
+            return
+        try:
+            from app.agent.session.session_manager import get_session_manager
+
+            manager = get_session_manager()
+            session = manager.get_session(session_id)
+            if session is None:
+                return
+            session.metadata["workflow_coordinator"] = dict(snapshot)
+            manager.save_session_metadata(session, update_timestamp=True)
+        except Exception:
+            # Checkpointing must never turn a successfully running node into a
+            # failed node; the coordinator still returns the in-memory snapshot.
+            return
 
     @staticmethod
     def _failure(message: str) -> Dict[str, Any]:
