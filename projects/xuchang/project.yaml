@@ -98,23 +98,10 @@ backend:
       - web_fetch
       - schedule_task
       - send_notification
+  # 广东数据源工具已改为项目专属（共享白名单不含、默认不注册），无需再逐项禁用；
+  # 仅保留非项目工具的显式禁用项。
   disabled_tools:
-    - query_gd_suncere
-    - query_gd_suncere_city_hour
-    - query_gd_suncere_station_hour_new
-    - query_gd_suncere_station_day_new
-    - query_gd_suncere_regional_comparison
-    - query_gd_suncere_city_day
-    - query_gd_suncere_district_day
-    - query_gd_suncere_district_report
-    - query_gd_suncere_report_compare
-    - analyze_city_pollutant_rankings
-    - get_5min_data
     - get_observed_meteorology
-    - query_city_standard_report
-    - query_city_standard_yoy_report
-    - query_station_standard_report
-    - query_station_standard_yoy_report
   mode_prompt_files:
     query: projects/xuchang/prompts/query.md
     knowledge: projects/xuchang/prompts/knowledge.md
@@ -132,7 +119,8 @@ backend:
     - xuchang_weather_com_daily_forecast_fetcher
     - xuchang_station_deviation_alert_fetcher
     - xuchang_station_daily_pollution_fetcher
-    - xuchang_station_daily_exceedance_fetcher
+    # 备用功能，暂不启用：场景二站点日污染超标确认与溯源任务触发
+    # - xuchang_station_daily_exceedance_fetcher
     - xuchang_transport_analysis_fetcher
     - xuchang_zhongda_station_minute_fetcher
     - xuchang_zhongda_station_hour_fetcher
@@ -170,5 +158,6 @@ knowledge:
 scheduled_tasks:
   - task_xuchang_station_deviation_alert
   - task_xuchang_station_daily_source_report
-  - task_xuchang_station_daily_source_analysis_report
+  # 备用功能，暂不启用：城市超标污染溯源分析（事件触发，依赖超标确认 fetcher）
+  # - task_xuchang_station_daily_source_analysis_report
   - task_xuchang_weekly_weather_situation_report

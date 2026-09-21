@@ -26,7 +26,7 @@ def test_default_project_loads_legacy_module():
         "ops",
     ]
     assert context.manifest.frontend.agent_platform_layout == "scenes"
-    assert context.manifest.backend.tools == []
+    assert context.manifest.backend.tools  # project-scoped tools declared explicitly
     assert context.manifest.backend.fetchers_enabled is True
     assert context.manifest.backend.mode_prompt_files == {}
     assert context.manifest.knowledge.collections == []
@@ -108,23 +108,10 @@ def test_xuchang_project_composes_shared_and_customer_modules():
         "xuchang_zhongda_city_day_fetcher",
         "gems_xuchang_image_fetcher",
     ]
+    # 广东数据源工具已收敛为项目专属（共享白名单不含、默认不注册），
+    # 许昌不再需要逐项禁用；仅保留非项目工具的显式禁用项。
     assert context.manifest.backend.disabled_tools == [
-        "query_gd_suncere",
-        "query_gd_suncere_city_hour",
-        "query_gd_suncere_station_hour_new",
-        "query_gd_suncere_station_day_new",
-        "query_gd_suncere_regional_comparison",
-        "query_gd_suncere_city_day",
-        "query_gd_suncere_district_day",
-        "query_gd_suncere_district_report",
-        "query_gd_suncere_report_compare",
-        "analyze_city_pollutant_rankings",
-        "get_5min_data",
         "get_observed_meteorology",
-        "query_city_standard_report",
-        "query_city_standard_yoy_report",
-        "query_station_standard_report",
-        "query_station_standard_yoy_report",
     ]
     assert context.manifest.scheduled_tasks == [
         "task_xuchang_station_deviation_alert",
@@ -158,10 +145,12 @@ def test_xuchang_project_enables_only_declared_satellite_tools():
     assert not tools_module.is_project_tool_enabled(
         context, "satellite", "undeclared_satellite_tool"
     )
-    assert tools_module.is_project_tool_disabled(
+    # 项目专属工具不再依赖 disabled_tools 屏蔽：未声明即不注册。
+    assert not tools_module.is_project_tool_disabled(
         context, "analyze_city_pollutant_rankings"
     )
-    assert tools_module.is_project_tool_disabled(context, "get_5min_data")
+    assert not tools_module.is_project_tool_disabled(context, "get_5min_data")
+    assert not tools_module.is_project_tool_enabled(context, "legacy", "get_5min_data")
 
 
 def test_unknown_module_fails_closed(tmp_path: Path):
