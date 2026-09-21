@@ -109,19 +109,8 @@ EXPERT_TOOL_NAMES = [
     "query_xcai_city_history",
     "execute_sql_query",
     # 分析工具
-    "calculate_pm_pmf",
-    "calculate_vocs_pmf",
-    "analyze_upwind_enterprises",
     "meteorological_trajectory_analysis",
-    "analyze_trajectory_sources",
-    "calculate_reconstruction",
-    "calculate_carbon",
-    "calculate_soluble",
-    "calculate_crustal",
-    "calculate_trace",
-    "predict_air_quality",
     # 可视化
-    "generate_map",
     "create_report_chart",
     # 代码执行
     "execute_python",
