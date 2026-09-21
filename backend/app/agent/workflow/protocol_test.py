@@ -1,4 +1,20 @@
-from app.agent.workflow.protocol import EXPERT_ANALYSIS_RESULT_SCHEMA, build_expert_analysis_task, extract_structured_result, validate_result_schema
+from app.agent.workflow.protocol import (
+    AGENT_RESULT_ENVELOPE_SCHEMA,
+    AGENT_TASK_CONTRACT_SCHEMA,
+    EXPERT_ANALYSIS_RESULT_SCHEMA,
+    build_agent_task,
+    build_expert_analysis_task,
+    build_result_envelope,
+    extract_structured_result,
+    validate_result_schema,
+)
+
+
+def test_shared_contract_and_result_envelope_are_domain_neutral():
+    task = build_agent_task(objective="汇总输入数据", task_type="data_analysis", task_id="task-1")
+    result = build_result_envelope(status="completed", summary="完成")
+    assert validate_result_schema(task, AGENT_TASK_CONTRACT_SCHEMA) == []
+    assert validate_result_schema(result, AGENT_RESULT_ENVELOPE_SCHEMA) == []
 
 
 def test_expert_task_contains_stable_contract_and_lineage():
