@@ -98,6 +98,8 @@ class WorkflowGraph:
     @classmethod
     def from_snapshot(cls, snapshot: Mapping[str, Mapping[str, object]]) -> "WorkflowGraph":
         graph = cls()
+        for task_id in snapshot:
+            graph.add_task(task_id)
         for task_id, value in snapshot.items():
             graph.add_task(task_id, dependencies=value.get("dependencies") or [])
             graph.set_status(task_id, str(value.get("status") or "pending"))
