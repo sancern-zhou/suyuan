@@ -34,6 +34,7 @@ from app.agent.workflow.protocol import (
     validate_result_schema,
 )
 from app.agent.workflow.runtime import WorkflowRuntime
+from app.agent.workflow.actors import child_actor_registry
 from app.utils.path_config import format_agent_path, resolve_agent_path
 
 logger = structlog.get_logger()
@@ -653,45 +654,67 @@ class CallSubAgentTool(LLMTool):
                     fallbacks=parent_fallbacks,
                 )
 
-            # 5. 执行子Agent（传入所有必要参数）
-            # ✅ 双重保障机制（参考Hermes）：
-            #   - 系统提示（assistant_prompt.py已包含关键要求）
-            #   - 用户消息（effective_goal）仍是纯净的原始任务
-            result_events = []
-            with model_chain_context:
-                async for event in sub_agent.analyze(
-                    user_query=child_request_prompt,
-                    session_id=session_id if session_id else None,  # ✅ 传递session_id用于会话恢复
-                    manual_mode=target_mode,  # ✅ 强制使用指定模式（如 query）
-                    enhance_with_history=True,  # ✅ 启用记忆增强
-                    initial_messages=conversation_history if conversation_history else None,  # ✅ 传入历史
-                    user_identifier=None,  # ⚠️ 使用模式专属记忆（不跨模式共享）
-                    runtime_metadata={**runtime_metadata, "agent_depth": agent_depth + 1, "max_agent_depth": max_agent_depth},
-                    selected_skill_context=(
-                        selected_child_skill.content if selected_child_skill else None
-                    ),
-                    extra_tool_names=(
-                        selected_child_skill.required_tools if selected_child_skill else None
-                    ),
-                ):
-                    result_events.append(event)
+            # 5. 执行子Agent（同一 session + mode 的 turn 串行化，避免上下文交叉）。
+            actor_key = f"{session_id or workflow_run.run_id}:{target_mode}"
+
+            async def run_child_turn(
+                prompt: str,
+                initial_messages: Optional[List[Dict[str, Any]]] = None,
+                *,
+                include_skill: bool = False,
+            ) -> List[Dict[str, Any]]:
+                turn_events: List[Dict[str, Any]] = []
+                async with child_actor_registry.lease(actor_key):
+                    with model_chain_context:
+                        async for event in sub_agent.analyze(
+                            user_query=prompt,
+                            session_id=session_id if session_id else None,
+                            manual_mode=target_mode,
+                            enhance_with_history=True,
+                            initial_messages=initial_messages,
+                            user_identifier=None,
+                            runtime_metadata={
+                                **runtime_metadata,
+                                "agent_depth": agent_depth + 1,
+                                "max_agent_depth": max_agent_depth,
+                                "workflow_run_id": workflow_run.run_id,
+                            },
+                            selected_skill_context=(
+                                selected_child_skill.content
+                                if include_skill and selected_child_skill
+                                else None
+                            ),
+                            extra_tool_names=(
+                                selected_child_skill.required_tools
+                                if include_skill and selected_child_skill
+                                else None
+                            ),
+                        ):
+                            turn_events.append(event)
+                return turn_events
+
+            result_events = await run_child_turn(
+                child_request_prompt,
+                conversation_history if conversation_history else None,
+                include_skill=True,
+            )
             workflow_runtime.append(
                 workflow_run.run_id,
                 "task.child_turn_completed",
                 payload={"event_count": len(result_events)},
             )
+
+            # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
+            final_result = self._extract_final_result(result_events)
             if workflow_runtime.check_deadline(workflow_run.run_id):
                 final_result = {
                     **final_result,
                     "status": "cancelled",
                     "answer": "工作流已超过截止时间，子 Agent 结果已取消。",
                 }
-
-            # 7. 提取最终结果；结构化协议失败时在同一 child runtime 上做有限修复。
-            final_result = self._extract_final_result(result_events)
             structured_result = None
             validation_errors = []
-            if result_schema:
+            if result_schema and final_result["status"] != "cancelled":
                 structured_result, validation_errors = self._validate_structured_result(
                     final_result.get("answer", ""), result_schema
                 )
@@ -714,16 +737,7 @@ class CallSubAgentTool(LLMTool):
                         f"校验错误：{json.dumps(validation_errors, ensure_ascii=False)}\n"
                         f"结果协议：{json.dumps(result_schema, ensure_ascii=False)}"
                     )
-                    async for event in sub_agent.analyze(
-                        user_query=repair_prompt,
-                        session_id=session_id if session_id else None,
-                        manual_mode=target_mode,
-                        enhance_with_history=True,
-                        initial_messages=None,
-                        user_identifier=None,
-                        runtime_metadata={**runtime_metadata, "agent_depth": agent_depth + 1, "max_agent_depth": max_agent_depth},
-                    ):
-                        result_events.append(event)
+                    result_events.extend(await run_child_turn(repair_prompt))
                     final_result = self._extract_final_result(result_events)
                     structured_result, validation_errors = self._validate_structured_result(
                         final_result.get("answer", ""), result_schema
